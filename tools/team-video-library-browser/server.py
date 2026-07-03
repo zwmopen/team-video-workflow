@@ -158,8 +158,9 @@ def scan_library() -> None:
             location = folder.name.removesuffix("智能镜头分类")
             add_videos(folder, "分镜素材", location)
         elif folder.name.endswith("音频素材库"):
-            location = folder.name.removesuffix("音频素材库")
-            add_audio_files(folder, "原片音频素材", location)
+            # Legacy audio libraries are kept on disk but hidden from the main workflow
+            # to avoid double-counting against the canonical 已整理原片音频 library.
+            continue
         elif folder.name.startswith(DELIVERY_FOLDER_PREFIXES) or folder.name.endswith(DELIVERY_FOLDER_SUFFIXES):
             add_delivery_videos(folder)
 
@@ -417,9 +418,17 @@ class Handler(BaseHTTPRequestHandler):
         if is_audio_path(item.path):
             self.send_audio_thumbnail(item)
             return
+        source = Path(item.path)
         thumb = CACHE_ROOT / f"{item_id}.jpg"
+        try:
+            source_mtime = source.stat().st_mtime
+            thumb_stale = thumb.exists() and thumb.stat().st_mtime < source_mtime
+        except OSError:
+            thumb_stale = False
+        if thumb_stale:
+            thumb.unlink(missing_ok=True)
         if not thumb.exists():
-            make_thumbnail(Path(item.path), thumb)
+            make_thumbnail(source, thumb)
         if not thumb.exists():
             self.send_error(404)
             return
@@ -719,6 +728,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json_body()
             dry_run = bool(payload.get("dry_run", False))
             confidence_threshold = float(payload.get("confidence_threshold", 0.35))
+            item_ids = [str(item_id) for item_id in payload.get("item_ids", []) if str(item_id)]
             if BATCH_PROGRESS["running"]:
                 self.send_json({"ok": False, "error": "已有批量任务在运行中，请等待完成"})
                 return
@@ -732,10 +742,11 @@ class Handler(BaseHTTPRequestHandler):
                 "current_item": "",
                 "message": "",
                 "dry_run": dry_run,
+                "scope": "visible" if item_ids else "all",
                 "results": [],
             }
             import threading
-            threading.Thread(target=run_batch_crop_subtitles, args=(dry_run, confidence_threshold), daemon=True).start()
+            threading.Thread(target=run_batch_crop_subtitles, args=(dry_run, confidence_threshold, item_ids), daemon=True).start()
             self.send_json({"ok": True, "message": "批量任务已启动，请轮询 /api/batch-progress 获取进度"})
         except Exception as exc:
             BATCH_PROGRESS["running"] = False
@@ -940,7 +951,11 @@ def query_items(query: dict[str, list[str]]) -> dict[str, object]:
 
 def public_item(item: LibraryItem) -> dict[str, object]:
     data = asdict(item)
-    data["thumb"] = f"/thumb/{quote(item.id)}.jpg"
+    try:
+        thumb_version = int(Path(item.path).stat().st_mtime)
+    except OSError:
+        thumb_version = 0
+    data["thumb"] = f"/thumb/{quote(item.id)}.jpg?v={thumb_version}"
     data["media"] = f"/media/{quote(item.id)}"
     data["preview_media"] = f"/preview/{quote(item.id)}"
     data["reveal"] = f"/reveal/{quote(item.id)}"
@@ -2707,11 +2722,14 @@ def is_generated_crop_output(path: Path) -> bool:
     return any(part in GENERATED_CROP_FOLDER_NAMES for part in path.parts)
 
 
-def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float) -> None:
+def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float, item_ids: list[str] | None = None) -> None:
     import os
     global BATCH_PROGRESS
     try:
         items_to_process = [item for item in ITEMS if item.kind == "分镜素材"]
+        if item_ids:
+            allowed_ids = set(item_ids)
+            items_to_process = [item for item in items_to_process if item.id in allowed_ids]
         items_to_process = [item for item in items_to_process if not is_generated_crop_output(Path(item.path))]
         processed_ids = load_cropped_records()
         items_to_process = [item for item in items_to_process if item.id not in processed_ids]
@@ -3649,6 +3667,7 @@ INDEX_HTML = r"""<!doctype html>
 </div>
 <script>
 let page = 1, pageSize = 72, lastTotal = 0, selectedId = "", selectedItem = null;
+let currentVisibleItemIds = [];
 let contextMenuItem = null;
 let audioWanted = localStorage.getItem("teamVideoBrowserAudioWanted") === "1";
 let refreshingOptions = false;
@@ -3963,6 +3982,7 @@ async function refreshOptions(){
 }
 async function load(){
   const data = await getJson("/api/items?" + params().toString());
+  currentVisibleItemIds = (data.items || []).map(item => item.id);
   lastTotal = data.total; $("resultCount").textContent = data.total; $("hint").textContent = `找到 ${data.total} 条素材`;
   $("pageText").textContent = `第 ${page} 页 / 共 ${Math.max(1, Math.ceil(data.total/pageSize))} 页`;
   const grid = $("grid"); grid.innerHTML = "";
@@ -5191,14 +5211,20 @@ function openBatchProcess(){
       </div>
     </div>
   `;
+  const batchCards = $("batchTranscribeContent").querySelectorAll(".batch-action-card");
+  if(batchCards[1]) batchCards[1].remove();
+  const audioOnlyBtn = $("batchProcessAudioOnly");
+  if(audioOnlyBtn) audioOnlyBtn.remove();
+  const audioTextBtn = $("batchProcessAudioText");
+  if(audioTextBtn) audioTextBtn.textContent = "展开处理";
   $("batchTranscribeToolbar").style.display = "none";
   $("batchProcessOpenCrop").addEventListener("click", () => {
     closeBatchTranscribe();
     openBatchCrop();
   });
-  $("batchProcessOpenTranscribe").addEventListener("click", openBatchTranscribe);
-  $("batchProcessAudioOnly").addEventListener("click", () => startBatchExtractAudio(false));
-  $("batchProcessAudioText").addEventListener("click", () => startBatchExtractAudio(true));
+  const openTranscribeBtn = $("batchProcessOpenTranscribe");
+  if(openTranscribeBtn) openTranscribeBtn.addEventListener("click", openBatchTranscribe);
+  if(audioTextBtn) audioTextBtn.addEventListener("click", () => startBatchExtractAudio(true));
 }
 function openBatchCrop(){
   $("batchCropBackdrop").classList.add("open");
@@ -5233,7 +5259,7 @@ async function startBatchCrop(dryRun){
   $("batchCropContent").innerHTML = `<div style="padding:20px; text-align:center;"><div style="width:50px;height:50px;border:4px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div><p>任务启动中...</p></div>`;
   $("batchCropToolbar").style.display = "grid";
   $("batchProgressText").textContent = "连接中...";
-  const result = await postJson("/api/batch-crop-subtitles", {dry_run: dryRun, confidence_threshold: 0.35});
+  const result = await postJson("/api/batch-crop-subtitles", {dry_run: dryRun, confidence_threshold: 0.35, item_ids: currentVisibleItemIds});
   if(!result.ok){
     await showMessage("启动失败", result.error || "启动失败");
     openBatchCrop();

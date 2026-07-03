@@ -805,3 +805,20 @@ Current verified state on 2026-07-03:
 - `references/deep-repair-mode.md`: the VSR/AI inpainting workflow for `深度修复模式`, including the 2026-07-03 sample result and batch acceptance rules.
 - `prompts/classify-clip.md`: structure for future keyframe-based AI classification.
 - `prompts/match-script-beat.md`: structure for future semantic script-to-shot matching.
+
+## 2026-07-03 Horizontal Scene Clip Policy
+
+User-confirmed rule update:
+
+1. Any horizontal video already inside a `*智能镜头分类` scene library is not considered reusable editing material.
+2. Horizontal scene clips in the smart scene library should be removed from the user-facing library, preferably to Windows Recycle Bin with a deletion log.
+3. Do not delete or overwrite `*-原视频素材` original source videos.
+4. Horizontal original videos should be evaluated through `深度修复模式` instead of crop-based scene outputs.
+5. After deleting horizontal scene clips, run a full rescan/self-check and confirm that horizontal clips remaining in `*智能镜头分类` are zero.
+
+Current execution record:
+
+- Inventory: `D:\Download\素材下载\团建视频\._采集记录\horizontal_scene_clips_inventory_20260703.csv`
+- Deleted to Recycle Bin: `D:\Download\素材下载\团建视频\._采集记录\horizontal_scene_clips_deleted_to_recycle_20260703.csv`
+- Post-delete check: `D:\Download\素材下载\团建视频\._采集记录\horizontal_scene_clips_post_delete_check_20260703.json`
+- Result: 686 horizontal scene clips removed; 0 horizontal scene clips remain in smart scene libraries.
