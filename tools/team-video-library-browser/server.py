@@ -384,6 +384,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/batch-extract-audio":
             self.batch_extract_audio()
             return
+        if path == "/api/batch-stop":
+            self.batch_stop()
+            return
         if path == "/api/rescan":
             scan_library()
             self.send_json({"ok": True, **summary()})
@@ -807,6 +810,11 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             BATCH_PROGRESS["running"] = False
             self.send_json({"ok": False, "error": str(exc)})
+
+    def batch_stop(self) -> None:
+        global BATCH_PROGRESS
+        BATCH_PROGRESS["running"] = False
+        self.send_json({"ok": True, **BATCH_PROGRESS})
 
     def send_file(self, path: Path, content_type: str, range_enabled: bool = False) -> None:
         if not path.exists():
@@ -2787,12 +2795,10 @@ def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float, item_id
                 y_pct = rect.get("y", 0.0)
                 h_pct = rect["h"]
                 crop_expr = f"crop=iw:trunc(ih*{h_pct / 100:.4f}/2)*2:0:trunc(ih*{y_pct / 100:.4f}/2)*2"
-                temp_dir = Path(os.environ.get("TEMP", "/tmp")) / "video_crop_batch"
-                temp_dir.mkdir(parents=True, exist_ok=True)
                 output_dir = source.parent / "\u88c1\u5207\u5e9f\u6599"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output = unique_path(output_dir / f"{source.stem}__\u88c1\u5207\u5e9f\u6599{source.suffix}")
-                temp = temp_dir / f"{item.id}.tmp_crop.mp4"
+                temp = output_dir / f".{item.id}.tmp_crop.mp4"
                 temp.unlink(missing_ok=True)
 
                 result = subprocess.run(
@@ -2838,7 +2844,7 @@ def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float, item_id
                     })
                     BATCH_PROGRESS["processed"] += 1
                     continue
-                reason = f"裁剪完成，已替换原素材；保留区域 y={round(y_pct, 1)}% h={round(h_pct, 1)}%"
+                reason = f"裁剪完成，已输出新素材；原分镜未覆盖；保留区域 y={round(y_pct, 1)}% h={round(h_pct, 1)}%"
                 if "bars" in detection.get("details", {}):
                     reason += f"（含黑边检测）"
                 BATCH_PROGRESS["results"].append({
