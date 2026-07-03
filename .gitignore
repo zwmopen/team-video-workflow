@@ -1,0 +1,53 @@
+# Runtime caches
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+cache/
+preview_cache/
+crop_check/
+test_output/
+
+# Local generated test folders
+_tmp*/
+
+# Logs
+*.log
+*.err
+
+# Video/audio/image assets are intentionally not stored in GitHub.
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.flv
+*.m4a
+*.aac
+*.wav
+*.mp3
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bin
+
+# Archives and large model outputs
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.pth
+*.pt
+*.onnx
+*.safetensors
+
+# Local secrets
+.env
+.env.*
+secrets.*
+credentials.*
+token.*

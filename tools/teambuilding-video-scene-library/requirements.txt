@@ -1,0 +1,9 @@
+opencv-python
+scenedetect[opencv]
+numpy
+pandas
+Pillow
+PyYAML
+rich
+tqdm
+imagehash

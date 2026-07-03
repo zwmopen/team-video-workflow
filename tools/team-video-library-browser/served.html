@@ -1,0 +1,542 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>团建视频剪辑工作流</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --window-top:#e5edf3; --window-bottom:#d1dce5;
+      --panel:#e2ebf1; --panel-light:#eef4f8; --line:#c3d0dc;
+      --ink:#1c2938; --muted:#606f80; --accent:#307eff; --accent-dark:#195dde;
+      --cyan:#41d5cf; --amber:#ecaa1c; --selection:#d7e2ed;
+      --shadow: 9px 12px 24px rgba(112,130,150,.24), -7px -7px 18px rgba(255,255,255,.78);
+      --soft-shadow: 5px 7px 15px rgba(112,130,150,.18), -5px -5px 13px rgba(255,255,255,.72);
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif; color:var(--ink); background:linear-gradient(155deg,var(--window-top),var(--window-bottom)); overflow:hidden; }
+    header { min-height:70px; display:grid; grid-template-columns:300px 1fr minmax(220px,420px); gap:16px; align-items:center; padding:12px 20px; background:linear-gradient(180deg,rgba(238,244,248,.86),rgba(226,235,241,.72)); position:sticky; top:0; z-index:2; box-shadow:0 1px 0 rgba(255,255,255,.82),0 10px 24px rgba(104,122,142,.10); }
+    h1 { font-size:18px; margin:0; font-weight:750; letter-spacing:0; }
+    .subtitle { font-size:12px; color:var(--muted); margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .top-tabs { display:flex; justify-content:center; gap:10px; }
+    .tab { min-width:104px; height:38px; border-radius:18px; border:1px solid rgba(255,255,255,.8); background:var(--panel-light); color:var(--ink); box-shadow:var(--soft-shadow); }
+    .tab.active { color:#fff; background:linear-gradient(180deg,#428eff,var(--accent)); border-color:rgba(255,255,255,.45); box-shadow:5px 8px 16px rgba(48,126,255,.24),-4px -4px 12px rgba(255,255,255,.55); }
+    .root-path { font-size:12px; color:var(--muted); text-align:right; word-break:break-all; }
+    .layout { display:grid; grid-template-columns: var(--sidebar-width, 286px) 8px minmax(280px, 1fr) 8px var(--preview-width, 430px); height: calc(100vh - 70px); min-height:0; gap:8px; padding:16px; }
+    aside, .preview, .panel-card { background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:22px; padding:16px; overflow:auto; box-shadow:var(--shadow); }
+    aside, .preview { max-height:calc(100vh - 102px); }
+    main { padding:12px; overflow:auto; min-width:0; min-height:0; }
+    .pane-resizer { cursor:col-resize; border-radius:999px; background:transparent; position:relative; z-index:4; margin:-8px 0; touch-action:none; }
+    .pane-resizer::before { content:""; position:absolute; inset:0 -9px; border-radius:999px; }
+    .pane-resizer::after { content:""; position:absolute; left:50%; top:50%; width:2px; height:64px; transform:translate(-50%,-50%); border-radius:999px; opacity:0; background:linear-gradient(180deg,rgba(48,126,255,.10),rgba(48,126,255,.68),rgba(48,126,255,.10)); box-shadow:0 0 0 5px rgba(48,126,255,.08), 0 8px 20px rgba(48,126,255,.15); transition:opacity .16s ease, height .16s ease, box-shadow .16s ease; pointer-events:none; }
+    .pane-resizer:hover::after, .pane-resizer.is-dragging::after { opacity:1; height:86px; box-shadow:0 0 0 7px rgba(48,126,255,.12), 0 10px 24px rgba(48,126,255,.18); }
+    body.resizer-hint .pane-resizer::after { animation:resizerPulse 1.15s ease-in-out 2; }
+    @keyframes resizerPulse {
+      0%,100% { opacity:0; height:54px; }
+      48%,62% { opacity:1; height:86px; box-shadow:0 0 0 8px rgba(48,126,255,.14), 0 10px 24px rgba(48,126,255,.20); }
+    }
+    body.resizing-pane { cursor:col-resize; user-select:none; }
+    label { display:block; font-size:12px; color:var(--muted); margin:14px 0 6px; }
+    input, select { width:100%; height:36px; border:1px solid rgba(255,255,255,.82); border-radius:16px; padding:0 12px; background:rgba(238,244,248,.92); color:var(--ink); outline:none; box-shadow:inset 2px 2px 5px rgba(112,130,150,.16), inset -2px -2px 5px rgba(255,255,255,.72); }
+    select.native-select { display:none; }
+    input:focus { border-color:rgba(48,126,255,.52); border-radius:18px; box-shadow:0 0 0 3px rgba(48,126,255,.10), inset 2px 2px 5px rgba(112,130,150,.14), inset -2px -2px 5px rgba(255,255,255,.72); }
+    .select-wrap { position:relative; width:100%; }
+    .select-button { width:100%; height:38px; display:flex; align-items:center; justify-content:space-between; gap:10px; border-radius:18px; padding:0 13px 0 16px; border:1px solid rgba(255,255,255,.82); background:rgba(238,244,248,.92); color:var(--ink); box-shadow:inset 2px 2px 5px rgba(112,130,150,.14), inset -2px -2px 5px rgba(255,255,255,.72); }
+    .select-button.open { border-color:rgba(48,126,255,.55); box-shadow:0 0 0 4px rgba(48,126,255,.12), inset 2px 2px 5px rgba(112,130,150,.13), inset -2px -2px 5px rgba(255,255,255,.72); }
+    .select-value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .select-arrow { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:7px solid var(--muted); flex:0 0 auto; }
+    .select-menu { position:absolute; left:0; right:0; top:44px; z-index:20; max-height:260px; overflow:auto; padding:6px; border-radius:20px; border:1px solid rgba(255,255,255,.78); background:rgba(238,244,248,.98); box-shadow:12px 16px 30px rgba(112,130,150,.28), -8px -8px 20px rgba(255,255,255,.82); display:none; }
+    .select-wrap.open .select-menu { display:block; }
+    .select-option { min-height:34px; display:flex; align-items:center; padding:7px 11px; border-radius:14px; color:var(--ink); cursor:pointer; line-height:1.35; }
+    .select-option:hover { background:#dce8f5; }
+    .select-option.selected { background:linear-gradient(180deg,#428eff,var(--accent)); color:#fff; }
+    .filter-note { margin-top:12px; padding:10px 12px; border-radius:16px; background:var(--panel-light); border:1px solid rgba(255,255,255,.72); box-shadow:var(--soft-shadow); color:var(--muted); font-size:12px; line-height:1.55; }
+    .filter-note b { color:var(--ink); font-weight:650; }
+    button { height:36px; border:1px solid rgba(255,255,255,.78); border-radius:16px; padding:0 14px; background:var(--panel-light); color:var(--ink); cursor:pointer; box-shadow:var(--soft-shadow); }
+    button:hover { background:#f5f9fc; }
+    button:disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
+    button.primary { background:linear-gradient(180deg,#428eff,var(--accent)); color:#fff; border-color:rgba(255,255,255,.55); }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+    .stat { border:1px solid rgba(255,255,255,.72); border-radius:18px; padding:11px; background:var(--panel-light); box-shadow:var(--soft-shadow); }
+    .stat strong { display:block; font-size:18px; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:10px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap:8px; align-items:start; }
+    .card { background:var(--panel-light); border:1px solid rgba(255,255,255,.76); border-radius:14px; overflow:hidden; cursor:grab; box-shadow:3px 4px 10px rgba(112,130,150,.16), -3px -3px 9px rgba(255,255,255,.70); }
+    .card:active { cursor:grabbing; }
+    .card.selected { outline:2px solid var(--accent); background:#f6faff; }
+    .thumb { width:100%; aspect-ratio:9/13; background:#e5e7eb; object-fit:cover; display:block; }
+    .meta { padding:5px 6px 6px; }
+    .name { font-size:11px; min-height:28px; height:auto; overflow:visible; line-height:14px; word-break:break-word; }
+    .tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; overflow:visible; }
+    .tag { font-size:10px; line-height:1.25; color:#344054; background:#dbe8f4; border:1px solid rgba(255,255,255,.7); border-radius:999px; padding:2px 5px; max-width:100%; overflow:visible; text-overflow:clip; white-space:normal; word-break:keep-all; }
+    video { width:100%; max-height:36vh; background:#000; border-radius:18px; box-shadow:var(--soft-shadow); }
+    .path { font-size:12px; color:var(--muted); word-break:break-all; line-height:1.55; margin-top:10px; }
+    .preview-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+    .pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:14px; }
+    .empty { padding:40px; text-align:center; color:var(--muted); }
+    .view-panel { display:none; }
+    .view-panel.active { display:block; }
+    body[data-view="collect"] .layout, body[data-view="match"] .layout, body[data-view="delivery"] .layout { grid-template-columns:minmax(320px, 1fr) 12px var(--preview-width, 430px); }
+    body[data-view="collect"] aside, body[data-view="match"] aside, body[data-view="delivery"] aside,
+    body[data-view="collect"] .sidebar-resizer, body[data-view="match"] .sidebar-resizer, body[data-view="delivery"] .sidebar-resizer { display:none; }
+    .workflow-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .workflow-step { position:relative; min-height:148px; }
+    .step-no { width:32px; height:32px; border-radius:16px; background:linear-gradient(180deg,#428eff,var(--accent)); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:750; box-shadow:var(--soft-shadow); }
+    .workflow-step h3 { margin:12px 0 8px; font-size:16px; }
+    .workflow-step p { margin:0; color:var(--muted); font-size:13px; line-height:1.55; }
+    .action-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .mini-list { display:grid; gap:9px; margin-top:12px; }
+    .mini-item { padding:10px 12px; border-radius:16px; background:var(--panel-light); border:1px solid rgba(255,255,255,.72); box-shadow:var(--soft-shadow); }
+    .mini-item strong { display:block; font-size:13px; margin-bottom:3px; }
+    .mini-item span { color:var(--muted); font-size:12px; }
+    .right-title { margin:0 0 10px; font-size:16px; }
+    .right-section { margin-bottom:16px; }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 240px 1fr; }
+      .pane-resizer { display:none; }
+      .preview { grid-column: 1 / -1; border-left:0; border-top:1px solid var(--line); min-height:360px; }
+      video { max-height:52vh; }
+    }
+    @media (max-width: 760px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { border-right:0; border-bottom:1px solid var(--line); }
+    }
+  </style>
+</head>
+<body data-view="organize">
+<header>
+  <div>
+    <h1>团建视频剪辑工作流</h1>
+    <div class="subtitle">采集素材、分镜分类、配镜粗剪、自检交付</div>
+  </div>
+  <nav class="top-tabs">
+    <button class="tab" data-view="collect">采集入库</button>
+    <button class="tab active" data-view="organize">素材整理</button>
+    <button class="tab" data-view="match">文案配镜/初剪</button>
+    <button class="tab" data-view="delivery">成品检查</button>
+  </nav>
+  <div class="root-path" id="rootPath"></div>
+</header>
+<div class="layout">
+  <aside>
+    <div class="stats">
+      <div class="stat"><span>总素材</span><strong id="total">0</strong></div>
+      <div class="stat"><span>当前结果</span><strong id="resultCount">0</strong></div>
+    </div>
+    <label>搜索</label>
+    <input id="q" placeholder="鱼头 / 烧烤 / 莫干山 / XHS..." />
+    <label>素材类型</label><select id="kind" class="native-select"><option value="">全部</option></select>
+    <label>地点</label><select id="location" class="native-select"><option value="">全部</option></select>
+    <label>一级分类</label><select id="category" class="native-select"><option value="">全部</option></select>
+    <label id="keywordLabel">具体场景/素材组</label><select id="keyword" class="native-select"><option value="">全部</option></select>
+    <div class="filter-note" id="filterNote"><b>筛选层级：</b>素材类型 → 地点 → 一级分类 → 具体场景/素材组。</div>
+    <div style="display:flex; gap:8px; margin-top:16px;">
+      <button class="primary" id="apply">筛选</button>
+      <button id="reset">重置</button>
+    </div>
+  </aside>
+  <div class="pane-resizer sidebar-resizer" id="sidebarResizer" title="拖动调整筛选栏宽度"></div>
+  <main>
+    <div id="collectView" class="view-panel">
+      <div class="workflow-grid">
+        <div class="panel-card workflow-step"><div class="step-no">1</div><h3>采集入库</h3><p>把新下载的原视频和同名文案先放进待分类整理库。预览、筛选、判断统一去“素材整理”里看。</p><div class="action-row"><button class="primary" data-open="inbox">打开待分类库</button><button data-open="library">打开团建视频库</button></div></div>
+        <div class="panel-card workflow-step"><div class="step-no">2</div><h3>按地点归档</h3><p>千岛湖、安吉、莫干山等地点分别进入对应原视频素材库。原下载目录不再留重复副本。</p><div class="action-row"><button data-open="records">打开采集记录</button></div></div>
+        <div class="panel-card workflow-step"><div class="step-no">3</div><h3>刷新索引</h3><p>采集或移动后刷新页面，“素材整理”会同时显示已整理原片、分镜素材、未分类/未整理素材。</p><div class="action-row"><button onclick="location.reload()">刷新工作流</button></div></div>
+      </div>
+    </div>
+    <div id="organizeView" class="view-panel active">
+      <div class="toolbar">
+        <div id="hint">加载中...</div>
+        <div>
+          <button id="prev">上一页</button>
+          <button id="next">下一页</button>
+        </div>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="pager"><span id="pageText"></span></div>
+    </div>
+    <div id="matchView" class="view-panel">
+      <div class="workflow-grid">
+        <div class="panel-card workflow-step"><div class="step-no">1</div><h3>文案配镜</h3><p>把文案拆成一句一句的画面需求，按地点和具体场景从素材库里挑素材。</p><div class="action-row"><button data-open="templates">打开模板库</button></div></div>
+        <div class="panel-card workflow-step"><div class="step-no">2</div><h3>初剪成片</h3><p>文案配镜和初剪是同一段流程：选素材、编号、粗拼，生成剪映素材包和 rough_cut 预览。</p><div class="action-row"><button data-open="native_browser">打开剪辑素材浏览器</button></div></div>
+        <div class="panel-card workflow-step"><div class="step-no">3</div><h3>人工确认</h3><p>每句台词对应哪些画面，后续会接成可复核表。你确认错的地方会回写到规则里。</p></div>
+      </div>
+    </div>
+    <div id="deliveryView" class="view-panel">
+      <div class="workflow-grid">
+        <div class="panel-card workflow-step"><div class="step-no">1</div><h3>剪映素材包</h3><p>输出编号素材，按文案顺序排列。导入剪映后只需要细裁、字幕、BGM 和导出。</p><div class="action-row"><button data-open="library">打开素材库</button></div></div>
+        <div class="panel-card workflow-step"><div class="step-no">2</div><h3>粗剪检查</h3><p>检查是否竖屏、有音频、镜头不重复、没有明显废料、画面对台词。</p></div>
+        <div class="panel-card workflow-step"><div class="step-no">3</div><h3>规则回写</h3><p>成品里发现的问题，回到素材整理和文案配镜规则里修，下一条视频少踩坑。</p><div class="action-row"><button data-open="records">打开记录</button></div></div>
+      </div>
+    </div>
+  </main>
+  <div class="pane-resizer preview-resizer" id="previewResizer" title="拖动调整预览宽度"></div>
+  <section class="preview">
+    <div class="right-section">
+      <h2 class="right-title">预览</h2>
+      <video id="video" controls playsinline autoplay muted></video>
+      <div class="preview-actions">
+        <button id="muteToggle">打开声音</button>
+        <button id="revealBtn">打开文件夹</button>
+        <button id="copyPathBtn">复制路径</button>
+        <button id="copyTranscriptBtn">复制视频文案</button>
+      </div>
+      <div id="detail" class="path">点一个素材查看。</div>
+    </div>
+    <div class="right-section">
+      <h2 class="right-title">当前步骤</h2>
+      <div class="mini-list" id="sideGuide">
+        <div class="mini-item"><strong>素材预览</strong><span>中间点击素材，右侧播放确认画面。</span></div>
+        <div class="mini-item"><strong>下一步</strong><span>素材清洗、分镜、配镜、粗剪入口会逐步接到工作流里。</span></div>
+        <div class="mini-item"><strong>原则</strong><span>画面优先，文案辅助；可复用素材沉淀进库。</span></div>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+let page = 1, pageSize = 72, lastTotal = 0, selectedId = "", selectedItem = null;
+let audioWanted = localStorage.getItem("teamVideoBrowserAudioWanted") === "1";
+let refreshingOptions = false;
+const $ = id => document.getElementById(id);
+async function getJson(url){ const r = await fetch(url); return await r.json(); }
+function opt(sel, values){
+  const current = sel.value;
+  sel.innerHTML = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "全部";
+  sel.appendChild(all);
+  values.forEach(entry => {
+    const value = typeof entry === "string" ? entry : entry.value;
+    const count = typeof entry === "string" ? null : entry.count;
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = count === null ? value : `${value}（${count}）`;
+    sel.appendChild(o);
+  });
+  sel.value = Array.from(sel.options).some(o => o.value === current) ? current : "";
+  renderCustomSelect(sel);
+}
+function ensureCustomSelect(sel){
+  if(sel.nextElementSibling && sel.nextElementSibling.classList.contains("select-wrap")) return sel.nextElementSibling;
+  const wrap = document.createElement("div");
+  wrap.className = "select-wrap";
+  wrap.innerHTML = '<button type="button" class="select-button"><span class="select-value"></span><span class="select-arrow"></span></button><div class="select-menu"></div>';
+  sel.insertAdjacentElement("afterend", wrap);
+  wrap.querySelector(".select-button").addEventListener("click", e => {
+    e.stopPropagation();
+    document.querySelectorAll(".select-wrap.open").forEach(other => { if(other !== wrap) other.classList.remove("open"); });
+    wrap.classList.toggle("open");
+    wrap.querySelector(".select-button").classList.toggle("open", wrap.classList.contains("open"));
+  });
+  return wrap;
+}
+function renderCustomSelect(sel){
+  const wrap = ensureCustomSelect(sel);
+  const valueBox = wrap.querySelector(".select-value");
+  const menu = wrap.querySelector(".select-menu");
+  const selected = sel.options[sel.selectedIndex] || sel.options[0];
+  valueBox.textContent = selected ? selected.textContent : "全部";
+  menu.innerHTML = "";
+  Array.from(sel.options).forEach(option => {
+    const item = document.createElement("div");
+    item.className = "select-option" + (option.value === sel.value ? " selected" : "");
+    item.textContent = option.textContent;
+    item.addEventListener("click", e => {
+      e.stopPropagation();
+      sel.value = option.value;
+      wrap.classList.remove("open");
+      wrap.querySelector(".select-button").classList.remove("open");
+      renderCustomSelect(sel);
+      sel.dispatchEvent(new Event("change", {bubbles:true}));
+    });
+    menu.appendChild(item);
+  });
+}
+async function init(){
+  initPaneResize();
+  syncAudioButton();
+  const s = await getJson("/api/summary"); $("total").textContent = s.total; $("rootPath").textContent = s.library_root;
+  await refreshOptions();
+  await load();
+  bindTabs();
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".select-wrap.open").forEach(wrap => {
+      wrap.classList.remove("open");
+      wrap.querySelector(".select-button").classList.remove("open");
+    });
+  });
+}
+function initPaneResize(){
+  setSidebarWidth(Number(localStorage.getItem("teamVideoSidebarWidth") || "286"));
+  setPreviewWidth(Number(localStorage.getItem("teamVideoPreviewWidth") || "430"));
+  bindPaneResizer("sidebarResizer", currentSidebarWidth, setSidebarWidth, (dx, startWidth) => startWidth + dx, "teamVideoSidebarWidth");
+  bindPaneResizer("previewResizer", currentPreviewWidth, setPreviewWidth, (dx, startWidth) => startWidth - dx, "teamVideoPreviewWidth");
+  document.body.classList.add("resizer-hint");
+  setTimeout(() => document.body.classList.remove("resizer-hint"), 2400);
+}
+function bindPaneResizer(id, currentFn, setFn, nextFn, storageKey){
+  const handle = $(id);
+  if(!handle) return;
+  let startX = 0, startWidth = 0;
+  handle.addEventListener("pointerdown", e => {
+    startX = e.clientX;
+    startWidth = currentFn();
+    document.body.classList.add("resizing-pane");
+    handle.classList.add("is-dragging");
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener("pointermove", e => {
+    if(!document.body.classList.contains("resizing-pane")) return;
+    setFn(nextFn(e.clientX - startX, startWidth));
+  });
+  handle.addEventListener("pointerup", e => {
+    if(!document.body.classList.contains("resizing-pane")) return;
+    document.body.classList.remove("resizing-pane");
+    handle.classList.remove("is-dragging");
+    localStorage.setItem(storageKey, String(currentFn()));
+    try{ handle.releasePointerCapture(e.pointerId); }catch(_){}
+  });
+  handle.addEventListener("pointercancel", () => {
+    document.body.classList.remove("resizing-pane");
+    handle.classList.remove("is-dragging");
+  });
+}
+function currentSidebarWidth(){
+  const value = getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width").trim();
+  return Number(value.replace("px","")) || 286;
+}
+function setSidebarWidth(width){
+  const next = Math.round(Math.min(430, Math.max(220, Number(width) || 286)));
+  document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
+}
+function currentPreviewWidth(){
+  const value = getComputedStyle(document.documentElement).getPropertyValue("--preview-width").trim();
+  return Number(value.replace("px","")) || 430;
+}
+function setPreviewWidth(width){
+  const vw = Math.max(document.documentElement.clientWidth || 1200, 900);
+  const maxWidth = Math.min(760, Math.max(340, vw - currentSidebarWidth() - 520));
+  const next = Math.round(Math.min(maxWidth, Math.max(300, Number(width) || 430)));
+  document.documentElement.style.setProperty("--preview-width", `${next}px`);
+}
+function params(){
+  const p = new URLSearchParams(); p.set("page", page); p.set("page_size", pageSize);
+  ["q","kind","location","category","keyword"].forEach(id => { if($(id).value) p.set(id,$(id).value); });
+  return p;
+}
+async function refreshOptions(){
+  const o = await getJson("/api/options?" + params().toString());
+  refreshingOptions = true;
+  opt($("kind"), o.kinds);
+  opt($("location"), o.locations);
+  opt($("category"), o.categories);
+  opt($("keyword"), o.keywords);
+  refreshingOptions = false;
+  updateFilterCopy();
+}
+async function load(){
+  const data = await getJson("/api/items?" + params().toString());
+  lastTotal = data.total; $("resultCount").textContent = data.total; $("hint").textContent = `找到 ${data.total} 条素材`;
+  $("pageText").textContent = `第 ${page} 页 / 共 ${Math.max(1, Math.ceil(data.total/pageSize))} 页`;
+  const grid = $("grid"); grid.innerHTML = "";
+  if(!data.items.length){ grid.innerHTML = '<div class="empty">没有匹配素材</div>'; return; }
+  data.items.forEach(item => {
+    const card = document.createElement("div"); card.className = "card" + (item.id===selectedId ? " selected" : "");
+    card.draggable = true;
+    card.innerHTML = `<img class="thumb" draggable="false" loading="lazy" src="${item.thumb}" onerror="thumbFail(this)"><div class="meta"><div class="name">${esc(item.name)}</div><div class="tags"><span class="tag">${esc(item.kind)}</span><span class="tag">${esc(item.location)}</span><span class="tag">${esc(item.keyword || item.category)}</span></div></div>`;
+    card.onclick = () => selectItem(item, card);
+    card.addEventListener("dragstart", e => { selectItem(item, card); prepareDrag(e, item); });
+    grid.appendChild(card);
+  });
+}
+function updateFilterCopy(){
+  const kind = $("kind").value;
+  const category = $("category").value;
+  if(kind === "已整理原片"){
+    $("keywordLabel").textContent = "素材组/来源";
+    $("filterNote").innerHTML = "<b>当前关系：</b>已整理原片按地点和素材组管理，适合复制文案、打开原素材、后续重新清洗分镜。";
+  }else if(kind === "未分类/未整理素材"){
+    $("keywordLabel").textContent = "待整理来源";
+    $("filterNote").innerHTML = "<b>当前关系：</b>未分类素材还没入库或分镜，先人工/AI判断，再移动到对应地点素材库。";
+  }else if(kind === "分镜素材"){
+    $("keywordLabel").textContent = "具体场景/项目";
+    $("filterNote").innerHTML = "<b>当前关系：</b>分镜先看一级分类，再看具体场景/项目，例如项目活动 → 皮划艇。";
+  }else{
+    $("keywordLabel").textContent = "具体场景/素材组";
+    $("filterNote").innerHTML = "<b>筛选层级：</b>素材类型 → 地点 → 一级分类 → 具体场景/素材组。素材类型包含已整理原片、分镜素材、未分类/未整理素材。";
+  }
+  if(category && kind !== "已整理原片"){
+    $("filterNote").innerHTML += ` 当前一级分类：<b>${esc(category)}</b>。`;
+  }
+}
+function bindTabs(){
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => setActiveView(btn.dataset.view));
+  });
+  document.querySelectorAll("[data-open]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const old = btn.textContent;
+      btn.textContent = "打开中...";
+      await fetch("/open-target?key=" + encodeURIComponent(btn.dataset.open)).catch(()=>{});
+      setTimeout(() => btn.textContent = old, 800);
+    });
+  });
+}
+function setActiveView(view){
+  document.body.dataset.view = view;
+  document.querySelectorAll(".tab").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
+  ["collect","organize","match","delivery"].forEach(name => {
+    const panel = $(name + "View");
+    if(panel) panel.classList.toggle("active", name === view);
+  });
+  updateSideGuide(view);
+}
+function updateSideGuide(view){
+  const guide = $("sideGuide");
+  const data = {
+    collect: [
+      ["采集入库", "新素材先进入待分类整理库，再按地点归档。"],
+      ["不要重复", "移动优先，避免下载目录和素材库各留一份。"],
+      ["下一步", "采集后进入素材整理，做清洗、分镜、分类。"]
+    ],
+    organize: [
+      ["素材浏览", "中间点击素材，右侧播放确认画面。"],
+      ["素材整理", "这里负责筛选、判断、打开文件夹、复制原片文案。"],
+      ["原则", "画面优先，文案辅助；可复用素材沉淀进库。"]
+    ],
+    match: [
+      ["文案配镜", "一句台词匹配多个可用画面，不再反复循环一小段。"],
+      ["初剪成片", "配镜和粗剪合在一起，输出编号素材包。"],
+      ["下一步", "后续会接飞书/本地复核表，逐句看画面对不对。"]
+    ],
+    delivery: [
+      ["成品检查", "检查竖屏、音频、重复镜头、废料、水印字幕残留。"],
+      ["剪映交付", "导入编号素材包后，你只做细裁、字幕、BGM。"],
+      ["规则回写", "发现错配和废料，回写到素材整理和配镜规则。"]
+    ]
+  }[view] || [];
+  guide.innerHTML = data.map(row => `<div class="mini-item"><strong>${esc(row[0])}</strong><span>${esc(row[1])}</span></div>`).join("");
+}
+function selectItem(item, card){
+  selectedId = item.id; selectedItem = item; document.querySelectorAll(".card").forEach(c=>c.classList.remove("selected"));
+  if(card) card.classList.add("selected");
+  const video = $("video");
+  video.pause();
+  video.muted = !audioWanted;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.oncanplay = () => {
+    const retry = video.play();
+    if(retry && typeof retry.catch === "function") retry.catch(() => {});
+    video.oncanplay = null;
+  };
+  video.src = item.preview_media || item.media;
+  video.load();
+  const playPromise = video.play();
+  if(playPromise && typeof playPromise.catch === "function"){
+    playPromise.catch(() => {});
+  }
+  $("detail").innerHTML = `<b>${esc(item.name)}</b><br>${esc(item.kind)} / ${esc(item.location)} / ${esc(item.category)} / ${esc(item.keyword)}<br>${item.size_mb} MB<br>${esc(item.path)}`;
+  updateTranscriptButton(item);
+  document.querySelector(".preview").scrollIntoView({block:"nearest", behavior:"smooth"});
+}
+function updateTranscriptButton(item){
+  const btn = $("copyTranscriptBtn");
+  if(!item || !["已整理原片","未分类/未整理素材"].includes(item.kind)){
+    btn.disabled = true;
+    btn.textContent = "复制视频文案";
+    btn.title = "只有原片和未整理素材需要复制视频文案";
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = item.has_transcript ? "复制视频文案" : "识别并复制文案";
+  btn.title = item.has_transcript ? "已有文案缓存或同名 txt" : "第一次会先语音转文字并缓存";
+}
+function syncAudioButton(){
+  const video = $("video");
+  if(video) video.muted = !audioWanted;
+  $("muteToggle").textContent = audioWanted ? "静音播放" : "打开声音";
+}
+function prepareDrag(e, item){
+  const fileUrl = item.file_uri;
+  const httpUrl = location.origin + item.media;
+  e.dataTransfer.effectAllowed = "copy";
+  e.dataTransfer.setData("text", item.path);
+  e.dataTransfer.setData("text/plain", item.path);
+  e.dataTransfer.setData("text/uri-list", `${fileUrl}\n${httpUrl}`);
+  e.dataTransfer.setData("text/x-moz-url", `${fileUrl}\n${item.name}`);
+  e.dataTransfer.setData("text/html", `<a href="${fileUrl}" data-path="${esc(item.path)}">${esc(item.name)}</a>`);
+  e.dataTransfer.setData("DownloadURL", `${item.mime}:${item.name}:${httpUrl}`);
+}
+function thumbFail(img){
+  img.onerror = null;
+  img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="360" height="560"><rect width="100%" height="100%" fill="#e5e7eb"/><text x="50%" y="50%" text-anchor="middle" fill="#667085" font-size="28">无预览图</text></svg>`);
+}
+function esc(s){ return String(s||"").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+async function reloadWithOptions(){
+  page = 1;
+  await refreshOptions();
+  await load();
+}
+$("apply").onclick = () => { reloadWithOptions(); };
+$("reset").onclick = async () => { ["q","kind","location","category","keyword"].forEach(id=>$(id).value=""); await reloadWithOptions(); };
+$("prev").onclick = () => { if(page>1){ page--; load(); } };
+$("next").onclick = () => { if(page < Math.ceil(lastTotal/pageSize)){ page++; load(); } };
+$("q").addEventListener("keydown", e => { if(e.key==="Enter"){ page=1; load(); } });
+["kind","location","category","keyword"].forEach(id => {
+  $(id).addEventListener("change", () => { if(!refreshingOptions) reloadWithOptions(); });
+});
+let searchTimer = null;
+$("q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { reloadWithOptions(); }, 260);
+});
+$("muteToggle").onclick = () => {
+  const video = $("video");
+  audioWanted = video.muted;
+  localStorage.setItem("teamVideoBrowserAudioWanted", audioWanted ? "1" : "0");
+  syncAudioButton();
+  $("muteToggle").textContent = video.muted ? "打开声音" : "静音播放";
+  syncAudioButton();
+  const p = video.play();
+  if(p && typeof p.catch === "function") p.catch(() => {});
+};
+$("revealBtn").onclick = async () => {
+  if(!selectedItem) return;
+  await fetch(selectedItem.reveal).catch(()=>{});
+};
+$("copyPathBtn").onclick = async () => {
+  if(!selectedItem) return;
+  await navigator.clipboard.writeText(selectedItem.path).catch(()=>{});
+  $("copyPathBtn").textContent = "已复制";
+  setTimeout(() => $("copyPathBtn").textContent = "复制路径", 900);
+};
+$("copyTranscriptBtn").onclick = async () => {
+  if(!selectedItem || !["已整理原片","未分类/未整理素材"].includes(selectedItem.kind)) return;
+  const btn = $("copyTranscriptBtn");
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = selectedItem.has_transcript ? "复制中..." : "识别中...";
+  try{
+    const data = await getJson(selectedItem.transcript);
+    if(!data.ok || !data.text){
+      btn.textContent = data.error || "没有识别到文案";
+      setTimeout(() => updateTranscriptButton(selectedItem), 1800);
+      return;
+    }
+    await navigator.clipboard.writeText(data.text);
+    selectedItem.has_transcript = true;
+    btn.textContent = "文案已复制";
+    $("detail").innerHTML = `<b>${esc(selectedItem.name)}</b><br>${esc(selectedItem.kind)} / ${esc(selectedItem.location)} / ${esc(selectedItem.category)} / ${esc(selectedItem.keyword)}<br>${selectedItem.size_mb} MB<br>文案来源：${esc(data.source)}<br>${esc(selectedItem.path)}`;
+    setTimeout(() => updateTranscriptButton(selectedItem), 1200);
+  }catch(err){
+    btn.textContent = "复制失败";
+    setTimeout(() => { btn.textContent = oldText; btn.disabled = false; }, 1800);
+  }
+};
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+display_name: 团建视频分镜素材库
+short_description: 把团建地点视频分镜、静音并整理成可剪辑素材库
+default_prompt: 使用这个 Skill 处理一个团建地点视频文件夹，生成同级智能镜头分类素材库。

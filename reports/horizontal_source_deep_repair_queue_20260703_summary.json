@@ -1,0 +1,16 @@
+{
+  "sources": 32,
+  "exists": 32,
+  "missing": 0,
+  "total_duration_seconds": 1790.1,
+  "estimated_total_hours_cpu_sttn_auto": 52.21,
+  "by_orientation": {
+    "horizontal": 17,
+    "vertical": 15
+  },
+  "by_location": {
+    "千岛湖": 9,
+    "莫干山": 16,
+    "安吉": 7
+  }
+}

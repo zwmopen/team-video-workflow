@@ -1,0 +1,9 @@
+[project]
+name = "teambuilding-video-scene-library"
+version = "0.1.0"
+description = "Local MVP for team-building video scene splitting and material library organization."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
