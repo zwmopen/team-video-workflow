@@ -33,6 +33,8 @@ JH_TOOLS_ROOT = Path(r"D:\Program Files\江湖工具箱\MinApp")
 JH_TOOLBOX_MAIN = Path(r"D:\Program Files\江湖工具箱\江湖工具箱.exe")
 AUDIO_LIBRARY_ROOT = LIBRARY_ROOT / "已整理原片音频"
 
+VSR_CLEAN_SCRIPT = Path(r"C:\Users\z\.codex\skills\teambuilding-video-scene-library\scripts\vsr_clean.ps1")
+
 OPEN_TARGETS = {
     "library": LIBRARY_ROOT,
     "inbox": INBOX_ROOT,
@@ -365,6 +367,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/manual-process":
             self.manual_process()
+            return
+        if path == "/api/deep-repair":
+            self.deep_repair()
             return
         if path == "/api/trim-time":
             self.trim_time()
@@ -810,6 +815,40 @@ class Handler(BaseHTTPRequestHandler):
             import threading
             threading.Thread(target=run_batch_extract_audio, args=(location_filter, transcribe), daemon=True).start()
             self.send_json({"ok": True, "message": "批量提取音频/文案任务已启动，请轮询 /api/batch-progress 获取进度"})
+        except Exception as exc:
+            BATCH_PROGRESS["running"] = False
+            self.send_json({"ok": False, "error": str(exc)})
+
+    def deep_repair(self) -> None:
+        global BATCH_PROGRESS
+        try:
+            payload = self.read_json_body()
+            item_id = str(payload.get("id") or "")
+            area = str(payload.get("area") or "auto").strip().lower()
+            mode = str(payload.get("mode") or "sttn_auto").strip().lower()
+            item = ITEM_BY_ID.get(item_id)
+            if not item:
+                self.send_json({"ok": False, "error": "素材不存在，可能需要刷新素材索引"})
+                return
+            if BATCH_PROGRESS["running"]:
+                self.send_json({"ok": False, "error": "已有批量/修复任务在运行中，请等它结束"})
+                return
+            BATCH_PROGRESS = {
+                "running": True,
+                "total": 1,
+                "processed": 0,
+                "success": 0,
+                "skipped": 0,
+                "failed": 0,
+                "current_item": item.name,
+                "message": "深度修复任务已启动，正在准备 VSR/AI 去字...",
+                "dry_run": False,
+                "scope": "single",
+                "results": [],
+            }
+            import threading
+            threading.Thread(target=run_deep_repair_item, args=(item.id, area, mode), daemon=True).start()
+            self.send_json({"ok": True, "message": "深度修复任务已启动，请看总控任务队列"})
         except Exception as exc:
             BATCH_PROGRESS["running"] = False
             self.send_json({"ok": False, "error": str(exc)})
@@ -2016,6 +2055,134 @@ def unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     raise FileExistsError("同名文件太多，无法生成新文件名")
+
+
+def get_video_dimensions(video: Path) -> tuple[int, int]:
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video))
+        try:
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            if width > 0 and height > 0:
+                return width, height
+        finally:
+            cap.release()
+    except Exception:
+        pass
+    frames = extract_detection_frames(video, stable_id(video))
+    if frames:
+        try:
+            import cv2
+            import numpy as np
+            image = cv2.imdecode(np.fromfile(str(frames[0]), dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is not None:
+                height, width = image.shape[:2]
+                return int(width), int(height)
+        except Exception:
+            pass
+    return 1080, 1920
+
+
+def deep_repair_coords(item: LibraryItem, area: str, width: int, height: int) -> tuple[int, int, int, int, str]:
+    area = (area or "auto").lower()
+    if area in {"top", "watermark", "顶部", "top_watermark"}:
+        return 0, max(1, int(height * 0.32)), 0, width, "top"
+    if area in {"full", "all", "整屏", "full_frame"}:
+        return 0, height, 0, width, "full"
+    if area in {"bottom", "subtitle", "字幕", "底部"}:
+        return max(0, int(height * 0.64)), height, 0, width, "bottom"
+    try:
+        detected = detect_subtitle_crop_rect(item)
+        rect = detected.get("rect", {}) if isinstance(detected, dict) else {}
+        confidence = float(detected.get("confidence", 0) or 0) if isinstance(detected, dict) else 0
+        keep_bottom_pct = float(rect.get("y", 0) or 0) + float(rect.get("h", 100) or 100)
+        details = detected.get("details", {}) if isinstance(detected, dict) else {}
+        watermark = details.get("watermark") if isinstance(details, dict) else []
+        if confidence >= 0.35 and keep_bottom_pct < 98.5:
+            y_min = max(0, int(height * max(0, keep_bottom_pct - 4) / 100))
+            return y_min, height, 0, width, "auto-bottom"
+        if isinstance(watermark, list) and watermark:
+            top_pct = max(0.0, min(float(entry.get("top_pct", 0) or 0) for entry in watermark) - 3)
+            bottom_pct = min(100.0, max(float(entry.get("bottom_pct", 18) or 18) for entry in watermark) + 4)
+            return int(height * top_pct / 100), max(1, int(height * bottom_pct / 100)), 0, width, "auto-top"
+    except Exception:
+        pass
+    return max(0, int(height * 0.64)), height, 0, width, "auto-bottom-fallback"
+
+
+def run_deep_repair_item(item_id: str, area: str = "auto", mode: str = "sttn_auto") -> None:
+    global BATCH_PROGRESS
+    try:
+        item = ITEM_BY_ID.get(item_id)
+        if not item:
+            BATCH_PROGRESS["failed"] += 1
+            BATCH_PROGRESS["message"] = "深度修复失败：素材不存在，请刷新索引"
+            return
+        source = Path(item.path)
+        if not source.exists():
+            BATCH_PROGRESS["failed"] += 1
+            BATCH_PROGRESS["message"] = "深度修复失败：源文件不存在"
+            return
+        if not VSR_CLEAN_SCRIPT.exists():
+            BATCH_PROGRESS["failed"] += 1
+            BATCH_PROGRESS["message"] = f"深度修复失败：找不到 VSR 脚本 {VSR_CLEAN_SCRIPT}"
+            return
+        output_dir = source.parent / "深度修复"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output = unique_path(output_dir / f"{source.stem}__深度修复{source.suffix}")
+        width, height = get_video_dimensions(source)
+        y_min, y_max, x_min, x_max, area_used = deep_repair_coords(item, area, width, height)
+        vsr_mode = "sttn-auto" if mode in {"sttn", "sttn_auto", "sttn-auto", "auto"} else "opencv"
+        BATCH_PROGRESS["message"] = f"深度修复运行中：{item.name}；区域 {area_used}；这一步可能很慢"
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(VSR_CLEAN_SCRIPT),
+                "-InputVideo",
+                str(source),
+                "-OutputVideo",
+                str(output),
+                "-Mode",
+                vsr_mode,
+                "-YMin",
+                str(y_min),
+                "-YMax",
+                str(y_max),
+                "-XMin",
+                str(x_min),
+                "-XMax",
+                str(x_max),
+            ],
+            capture_output=True,
+            timeout=3600,
+            check=False,
+        )
+        if result.returncode != 0 or not output.exists() or output.stat().st_size <= 0:
+            output.unlink(missing_ok=True)
+            stderr = result.stderr.decode("utf-8", errors="ignore").strip()
+            stdout = result.stdout.decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(stderr or stdout or "VSR 深度修复失败")
+        BATCH_PROGRESS["success"] += 1
+        BATCH_PROGRESS["results"].append({
+            "name": item.name,
+            "status": "success",
+            "reason": f"已输出深度修复副本：{output.name}；区域 {area_used}",
+            "output": str(output),
+        })
+        BATCH_PROGRESS["message"] = f"深度修复完成：{output.name}"
+    except Exception as exc:
+        BATCH_PROGRESS["failed"] += 1
+        BATCH_PROGRESS["results"].append({"name": item_id, "status": "failed", "reason": str(exc)})
+        BATCH_PROGRESS["message"] = f"深度修复失败：{exc}"
+    finally:
+        BATCH_PROGRESS["processed"] = 1
+        BATCH_PROGRESS["running"] = False
+        scan_library()
 
 
 def has_cached_or_sidecar_transcript(item: LibraryItem) -> bool:
@@ -3639,6 +3806,7 @@ INDEX_HTML = r"""<!doctype html>
         <button id="copyPathBtn">复制路径</button>
         <button id="copyTranscriptBtn">复制视频文案</button>
         <button id="cropBtn">裁切废料</button>
+        <button id="deepRepairBtn">深度修复</button>
       </div>
       <div id="detail" class="path">点一个素材查看。</div>
     </div>
@@ -4655,6 +4823,27 @@ function syncAudioButton(){
   if(video) video.muted = !audioWanted;
   $("muteToggle").textContent = audioWanted ? "静音播放" : "打开声音";
 }
+async function startDeepRepairForSelected(){
+  if(!selectedItem){
+    await showMessage("还没选素材", "先在中间点一个素材，再启动深度修复。");
+    return;
+  }
+  const area = await openModal({
+    title:"深度修复",
+    body:"会调用 VSR/AI 去字幕水印，速度比较慢，只生成副本，不覆盖原素材。输入修复区域：auto 自动 / bottom 底部字幕 / top 顶部水印 / full 整屏。",
+    value:"auto",
+    input:true,
+    okText:"启动修复"
+  });
+  if(area === null) return;
+  const result = await postJson("/api/deep-repair", {id:selectedItem.id, area:String(area || "auto"), mode:"sttn_auto"});
+  if(!result.ok){
+    await showMessage("深度修复启动失败", result.error || "任务没有启动成功");
+    return;
+  }
+  $("hint").textContent = "深度修复已加入任务队列";
+  await refreshBatchQueueStatus();
+}
 function bindCropUi(){
   $("cropBtn").addEventListener("click", () => {
     if(!selectedItem){
@@ -4663,6 +4852,7 @@ function bindCropUi(){
     }
     openCropEditor(selectedItem, "subtitle");
   });
+  $("deepRepairBtn").addEventListener("click", startDeepRepairForSelected);
   $("cropClose").addEventListener("click", closeCropEditor);
   $("cropCancel").addEventListener("click", closeCropEditor);
   $("cropBackdrop").addEventListener("click", e => {
