@@ -3291,8 +3291,10 @@ INDEX_HTML = r"""<!doctype html>
     .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
     .stat { border:1px solid rgba(255,255,255,.72); border-radius:18px; padding:11px; background:var(--panel-light); box-shadow:var(--soft-shadow); }
     .stat strong { display:block; font-size:18px; }
-    .toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:10px; }
+    .sticky-results-head { position:sticky; top:-12px; z-index:12; margin:-12px -12px 10px; padding:12px 12px 10px; background:linear-gradient(180deg,rgba(226,235,241,.96),rgba(226,235,241,.86)); backdrop-filter:blur(10px); border-bottom:1px solid rgba(255,255,255,.62); box-shadow:0 12px 22px rgba(112,130,150,.10); }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:0; gap:10px; }
     .toolbar-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    #prev, #next { display:none; }
     .sort-select { height:36px; min-width:132px; border:1px solid rgba(255,255,255,.78); border-radius:16px; padding:0 34px 0 12px; color:var(--ink); background:var(--panel-light); box-shadow:var(--soft-shadow); outline:none; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap:8px; align-items:start; }
     .card { position:relative; background:var(--panel-light); border:1px solid rgba(255,255,255,.76); border-radius:14px; overflow:hidden; cursor:grab; box-shadow:3px 4px 10px rgba(112,130,150,.16), -3px -3px 9px rgba(255,255,255,.70); }
@@ -3351,7 +3353,7 @@ INDEX_HTML = r"""<!doctype html>
     .trim-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .trim-time-box { min-width:86px; padding:8px 10px; border-radius:15px; background:rgba(255,255,255,.48); color:var(--text); font-size:13px; box-shadow:inset 3px 3px 8px rgba(119,137,156,.12), inset -3px -3px 8px rgba(255,255,255,.7); }
     .trim-tip { color:var(--muted); font-size:12px; line-height:1.55; }
-    .pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:14px; }
+    .pager { display:flex; gap:8px; align-items:center; justify-content:center; margin:16px 0 8px; min-height:38px; color:var(--muted); font-size:12px; }
     .empty { padding:40px; text-align:center; color:var(--muted); }
     .view-panel { display:none; }
     .view-panel.active { display:block; }
@@ -3515,6 +3517,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
       </div>
     <div id="organizeView" class="view-panel active">
+      <div class="sticky-results-head">
       <div class="process-dashboard">
         <section class="process-panel">
           <h3>总控任务队列</h3>
@@ -3548,6 +3551,7 @@ INDEX_HTML = r"""<!doctype html>
           <button id="prev">上一页</button>
           <button id="next">下一页</button>
         </div>
+      </div>
       </div>
       <div class="grid" id="grid"></div>
       <div class="pager"><span id="pageText"></span></div>
@@ -3778,6 +3782,7 @@ INDEX_HTML = r"""<!doctype html>
 </div>
 <script>
 let page = 1, pageSize = 72, lastTotal = 0, selectedId = "", selectedItem = null;
+let isLoadingItems = false, hasMoreItems = true;
 let currentVisibleItemIds = [];
 let contextMenuItem = null;
 let audioWanted = localStorage.getItem("teamVideoBrowserAudioWanted") === "1";
@@ -3864,6 +3869,7 @@ async function init(){
   await refreshOptions();
   restoreFilterState();
   await load();
+  bindInfiniteScroll();
   bindTabs();
   document.addEventListener("click", () => {
     hideCardMenu();
@@ -4083,6 +4089,22 @@ function params(){
   if($("sort") && $("sort").value) p.set("sort", $("sort").value);
   return p;
 }
+function bindInfiniteScroll(){
+  const pane = document.querySelector("main");
+  if(!pane) return;
+  pane.addEventListener("scroll", () => {
+    if(document.body.dataset.view !== "organize") return;
+    if(!hasMoreItems || isLoadingItems) return;
+    const remaining = pane.scrollHeight - pane.scrollTop - pane.clientHeight;
+    if(remaining < 760) loadNextPage();
+  }, {passive:true});
+}
+async function loadNextPage(){
+  if(isLoadingItems || !hasMoreItems) return;
+  page += 1;
+  await load({append:true});
+  saveFilterState();
+}
 async function refreshOptions(){
   const o = await getJson("/api/options?" + params().toString());
   refreshingOptions = true;
@@ -4115,6 +4137,61 @@ async function load(){
   const visibleSelection = data.items.some(item => item.id === selectedId);
   if(!visibleSelection && renderedCards.length){
     selectItem(renderedCards[0].item, renderedCards[0].card);
+  }
+}
+async function load(options = {}){
+  const append = !!options.append;
+  if(isLoadingItems) return;
+  if(!append) page = 1;
+  isLoadingItems = true;
+  try{
+    const data = await getJson("/api/items?" + params().toString());
+    const items = data.items || [];
+    lastTotal = data.total;
+    const grid = $("grid");
+    if(!append){
+      currentVisibleItemIds = [];
+      grid.innerHTML = "";
+      const pane = document.querySelector("main");
+      if(pane) pane.scrollTop = 0;
+    }
+    const incomingIds = items.map(item => item.id);
+    currentVisibleItemIds = Array.from(new Set([...currentVisibleItemIds, ...incomingIds]));
+    hasMoreItems = currentVisibleItemIds.length < data.total && items.length > 0;
+    $("resultCount").textContent = data.total;
+    $("hint").textContent = `找到 ${data.total} 条素材，已加载 ${currentVisibleItemIds.length} 条`;
+    $("pageText").textContent = hasMoreItems
+      ? `已加载 ${currentVisibleItemIds.length} / 共 ${data.total} 条，继续下滑自动加载`
+      : `已全部加载 ${currentVisibleItemIds.length} 条`;
+    if(!items.length && !append){
+      grid.innerHTML = '<div class="empty">没有匹配素材</div>';
+      return;
+    }
+    const renderedCards = [];
+    items.forEach(item => {
+      if(grid.querySelector(`[data-item-id="${CSS.escape(item.id)}"]`)) return;
+      const card = document.createElement("div");
+      card.className = "card" + (item.id===selectedId ? " selected" : "");
+      card.draggable = true;
+      card.dataset.itemId = item.id;
+      card.innerHTML = `<img class="thumb" draggable="false" loading="lazy" src="${item.thumb}" onerror="thumbFail(this)"><button class="card-more" title="素材操作">...</button><div class="meta"><div class="name">${esc(item.name)}</div><div class="tags">${renderTags(item)}</div></div>`;
+      card.onclick = () => selectItem(item, card);
+      card.querySelector(".card-more").addEventListener("click", e => showCardMenu(e, item, card));
+      card.addEventListener("dragstart", e => { selectItem(item, card); prepareDrag(e, item); });
+      card.addEventListener("contextmenu", e => showCardMenu(e, item, card));
+      grid.appendChild(card);
+      renderedCards.push({item, card});
+    });
+    const visibleSelection = currentVisibleItemIds.includes(selectedId);
+    if(!visibleSelection && renderedCards.length){
+      selectItem(renderedCards[0].item, renderedCards[0].card);
+    }
+    const pane = document.querySelector("main");
+    if(hasMoreItems && pane && pane.scrollHeight <= pane.clientHeight + 240){
+      setTimeout(loadNextPage, 80);
+    }
+  }finally{
+    isLoadingItems = false;
   }
 }
 function renderTags(item){
