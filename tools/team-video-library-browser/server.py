@@ -3885,7 +3885,7 @@ INDEX_HTML = r"""<!doctype html>
         <button id="copyPathBtn">复制路径</button>
         <button id="copyTranscriptBtn">复制视频文案</button>
         <button id="cropBtn">裁切废料</button>
-        <button id="deepRepairBtn">深度修复</button>
+        <button id="deepRepairBtn">复制提示词</button>
       </div>
       <div id="detail" class="path">点一个素材查看。</div>
     </div>
@@ -4949,24 +4949,26 @@ function syncAudioButton(){
 }
 async function startDeepRepairForSelected(){
   if(!selectedItem){
-    await showMessage("还没选素材", "先在中间点一个素材，再启动深度修复。");
+    await showMessage("还没选素材", "先在中间点一个素材，再复制提示词。");
     return;
   }
-  const area = await openModal({
-    title:"深度修复",
-    body:"会调用 VSR/AI 去字幕水印，速度比较慢，只生成副本，不覆盖原素材。输入修复区域：auto 自动 / bottom 底部字幕 / top 顶部水印 / full 整屏。",
-    value:"auto",
-    input:true,
-    okText:"启动修复"
-  });
-  if(area === null) return;
-  const result = await postJson("/api/deep-repair", {id:selectedItem.id, area:String(area || "auto"), mode:"sttn_auto"});
-  if(!result.ok){
-    await showMessage("深度修复启动失败", result.error || "任务没有启动成功");
-    return;
-  }
-  $("hint").textContent = "深度修复已加入任务队列";
-  await refreshBatchQueueStatus();
+  const prompt = [
+    "请使用「团建视频素材智能分镜分类 Skill」里的深度修复模式处理这个素材。",
+    "",
+    `素材路径：${selectedItem.path}`,
+    "",
+    "工作流要求：",
+    "1. 不要直接依赖本地按钮的自动检测；先从视频抽取 3-5 张代表帧。",
+    "2. 用视觉 AI 判断画面里是否有水印、硬字幕、贴字或封面废料。",
+    "3. 如果是小水印/硬字幕，请给出 VSR 修复框：x_min, y_min, x_max, y_max，并说明原因和置信度。",
+    "4. 调用本地 VSR/AI inpainting 只修复这个框，输出到原素材旁边的「深度修复」文件夹，不覆盖原文件。",
+    "5. 修复后再次抽帧复核，明确说明水印是否还可见、是否有涂抹痕迹、是否适合进入干净素材库。",
+    "6. 如果修复不合格，不要替换素材库，只保留测试结果和问题说明。"
+  ].join("\\n");
+  await navigator.clipboard.writeText(prompt).catch(()=>{});
+  $("deepRepairBtn").textContent = "已复制";
+  $("hint").textContent = "深度修复提示词已复制，贴到对话框后由 Codex 视觉定位并执行修复";
+  setTimeout(() => $("deepRepairBtn").textContent = "复制提示词", 1000);
 }
 function bindCropUi(){
   $("cropBtn").addEventListener("click", () => {
@@ -5579,8 +5581,8 @@ async function deleteItem(item){
     video.load();
     $("detail").textContent = `已移到电脑回收站：${item.name}`;
   }
+  removeDeletedItemFromView(item);
   await refreshOptions();
-  await load();
 }
 async function deleteItemDirect(item){
   releaseVideoHandlesForItem(item);
@@ -5598,8 +5600,26 @@ async function deleteItemDirect(item){
     video.load();
     $("detail").textContent = `已移到电脑回收站：${item.name}`;
   }
+  removeDeletedItemFromView(item);
   await refreshOptions();
-  await load();
+}
+function removeDeletedItemFromView(item){
+  const grid = $("grid");
+  const card = grid ? grid.querySelector(`[data-item-id="${CSS.escape(item.id)}"]`) : null;
+  const pane = document.querySelector("main");
+  const scrollTop = pane ? pane.scrollTop : 0;
+  if(card) card.remove();
+  currentVisibleItemIds = currentVisibleItemIds.filter(id => id !== item.id);
+  lastTotal = Math.max(0, Number(lastTotal || 0) - 1);
+  $("resultCount").textContent = lastTotal;
+  $("hint").textContent = `找到 ${lastTotal} 条素材，已加载 ${currentVisibleItemIds.length} 条`;
+  $("pageText").textContent = hasMoreItems
+    ? `已加载 ${currentVisibleItemIds.length} / 共 ${lastTotal} 条，继续下滑自动加载`
+    : `已全部加载 ${currentVisibleItemIds.length} 条`;
+  if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+  if(hasMoreItems && currentVisibleItemIds.length < lastTotal){
+    loadNextPage();
+  }
 }
 function bindDeleteKey(){
   document.addEventListener("keydown", async e => {
