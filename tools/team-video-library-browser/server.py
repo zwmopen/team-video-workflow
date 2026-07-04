@@ -1489,6 +1489,8 @@ def extract_detection_frames(video: Path, item_id: str) -> list[Path]:
                 str(video),
                 "-frames:v",
                 "1",
+                "-update",
+                "1",
                 "-vf",
                 "scale=540:-1",
                 "-q:v",
@@ -1505,7 +1507,7 @@ def extract_detection_frames(video: Path, item_id: str) -> list[Path]:
         return frames
     output = out_dir / "frame_1.jpg"
     subprocess.run(
-        [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-frames:v", "1", "-vf", "scale=540:-1", "-q:v", "3", str(output)],
+        [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-frames:v", "1", "-update", "1", "-vf", "scale=540:-1", "-q:v", "3", str(output)],
         capture_output=True,
         timeout=45,
         check=False,
@@ -1786,6 +1788,61 @@ def detect_top_watermark_in_frame(frame: Path) -> dict[str, float] | None:
         "top_pct": round(text_top / height * 100, 3),
         "bottom_pct": round(text_bottom / height * 100, 3),
         "score": round(min(balance_diff * 10, 1.0), 5),
+    }
+
+
+def detect_faint_watermark_in_frame(frame: Path) -> dict[str, float] | None:
+    import cv2
+    import numpy as np
+
+    image = cv2.imdecode(np.fromfile(str(frame), dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    height, width = image.shape[:2]
+    y0 = int(height * 0.05)
+    y1 = int(height * 0.55)
+    crop = image[y0:y1, :]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    bg = cv2.GaussianBlur(gray, (0, 0), 9)
+    diff = cv2.absdiff(gray, bg)
+    mask = (diff > 3).astype("uint8") * 255
+    dilate_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (max(32, width // 13), max(5, height // 110)),
+    )
+    mask = cv2.dilate(mask, dilate_kernel, iterations=1)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[tuple[float, int, int, int, int]] = []
+    for contour in contours:
+        x, y, box_w, box_h = cv2.boundingRect(contour)
+        abs_y = y + y0
+        aspect = box_w / max(1, box_h)
+        if box_w < width * 0.12 or box_w > width * 0.72:
+            continue
+        if box_h < height * 0.015 or box_h > height * 0.18:
+            continue
+        if aspect < 2.0 or aspect > 20.0:
+            continue
+        if abs_y < height * 0.10 or abs_y > height * 0.48:
+            continue
+        area_ratio = (box_w * box_h) / max(1, width * height)
+        score = min(aspect / 8, 1.0) + area_ratio * 18
+        candidates.append((score, x, abs_y, box_w, box_h))
+    if not candidates:
+        return None
+    _, x, y, box_w, box_h = max(candidates, key=lambda entry: entry[0])
+    pad_x = int(width * 0.025)
+    pad_y = int(height * 0.018)
+    left = max(0, x - pad_x)
+    top = max(0, y - pad_y)
+    right = min(width, x + box_w + pad_x)
+    bottom = min(height, y + box_h + pad_y)
+    return {
+        "left_pct": round(left / width * 100, 3),
+        "right_pct": round(right / width * 100, 3),
+        "top_pct": round(top / height * 100, 3),
+        "bottom_pct": round(bottom / height * 100, 3),
+        "score": 0.62,
     }
 
 
@@ -2093,6 +2150,24 @@ def deep_repair_coords(item: LibraryItem, area: str, width: int, height: int) ->
     if area in {"bottom", "subtitle", "字幕", "底部"}:
         return max(0, int(height * 0.64)), height, 0, width, "bottom"
     try:
+        frames = extract_detection_frames(Path(item.path), item.id)
+        faint_watermarks = []
+        for frame in frames:
+            detected_watermark = detect_faint_watermark_in_frame(frame)
+            if detected_watermark:
+                faint_watermarks.append(detected_watermark)
+        if faint_watermarks:
+            top_pct = max(0.0, min(float(entry.get("top_pct", 0) or 0) for entry in faint_watermarks) - 1.5)
+            bottom_pct = min(100.0, max(float(entry.get("bottom_pct", 0) or 0) for entry in faint_watermarks) + 1.5)
+            left_pct = max(0.0, min(float(entry.get("left_pct", 0) or 0) for entry in faint_watermarks) - 1.5)
+            right_pct = min(100.0, max(float(entry.get("right_pct", 100) or 100) for entry in faint_watermarks) + 1.5)
+            return (
+                int(height * top_pct / 100),
+                max(1, int(height * bottom_pct / 100)),
+                int(width * left_pct / 100),
+                max(1, int(width * right_pct / 100)),
+                "auto-faint-watermark",
+            )
         detected = detect_subtitle_crop_rect(item)
         rect = detected.get("rect", {}) if isinstance(detected, dict) else {}
         confidence = float(detected.get("confidence", 0) or 0) if isinstance(detected, dict) else 0
@@ -3540,7 +3615,7 @@ INDEX_HTML = r"""<!doctype html>
     .workflow-step p { margin:0; color:var(--muted); font-size:13px; line-height:1.55; }
     .workflow-code { margin-top:12px; padding:10px; border-radius:14px; background:rgba(210,223,235,.72); color:#344054; font-size:11px; line-height:1.5; word-break:break-all; box-shadow:inset 2px 2px 5px rgba(112,130,150,.12), inset -2px -2px 5px rgba(255,255,255,.68); }
     .action-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
-    .process-dashboard { display:grid; grid-template-columns:minmax(150px,.75fr) minmax(0,1.55fr) minmax(120px,.65fr); gap:8px; align-items:center; margin-bottom:8px; padding:9px 10px; background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:20px; box-shadow:var(--shadow); }
+    .process-dashboard { display:grid; grid-template-columns:minmax(150px,.78fr) minmax(0,1.55fr); gap:8px; align-items:center; margin-bottom:8px; padding:9px 10px; background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:20px; box-shadow:var(--shadow); }
     .process-panel { min-width:0; }
     .process-panel h3 { margin:0 0 5px; font-size:13px; line-height:1.2; }
     .process-panel p { margin:0; color:var(--muted); font-size:11px; line-height:1.35; }
@@ -3552,6 +3627,10 @@ INDEX_HTML = r"""<!doctype html>
       50% { transform:scale(1.18); box-shadow:0 0 0 6px rgba(48,126,255,.16),0 0 0 11px rgba(48,126,255,.06); }
     }
     .queue-current { display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; min-height:16px; }
+    .queue-progress-wrap { display:none; }
+    .queue-progress { position:relative; flex:1; height:7px; border-radius:999px; overflow:hidden; background:rgba(255,255,255,.42); box-shadow:inset 2px 2px 5px rgba(112,130,150,.16), inset -2px -2px 5px rgba(255,255,255,.7); }
+    .queue-progress-fill { position:absolute; inset:0 auto 0 0; width:0%; border-radius:999px; background:linear-gradient(90deg,#307eff,#41d5cf); box-shadow:0 0 12px rgba(48,126,255,.24); transition:width .25s ease; }
+    .queue-percent { min-width:38px; text-align:left; color:var(--accent-dark); font-weight:800; font-size:12px; }
     .process-panel .action-row { margin-top:6px; }
     .process-panel button { height:28px; padding:0 10px; border-radius:14px; font-size:12px; }
     .stage-strip { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; min-width:0; }
@@ -3690,7 +3769,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="process-dashboard">
         <section class="process-panel">
           <h3>总控任务队列</h3>
-          <div class="queue-status"><span class="queue-dot" id="queueDot"></span><span id="queueStatusText">空闲，可开始批量处理</span></div>
+          <div class="queue-status"><span class="queue-dot" id="queueDot"></span><span class="queue-percent" id="queuePercent">0%</span><span id="queueStatusText">空闲，可开始批量处理</span></div>
           <p class="queue-current" id="queueCurrentText">这里显示当前批量任务、进度和最近结果。</p>
           <div class="action-row">
             <button class="primary" id="batchProcessQuickBtn">批量处理</button>
@@ -3700,7 +3779,7 @@ INDEX_HTML = r"""<!doctype html>
           <h3>素材初加工闭环</h3>
           <div class="stage-strip" id="processStageStrip"></div>
         </section>
-        <section class="process-panel">
+        <section class="process-panel task-result-panel" hidden>
           <h3>任务结果面板</h3>
           <p id="qualityPanelHint">进度、成功、跳过、失败</p>
           <div class="quality-grid" id="qualityGrid"></div>
@@ -4152,9 +4231,13 @@ function updateBatchQueueFromProgress(p){
   const dot = $("queueDot");
   const status = $("queueStatusText");
   const current = $("queueCurrentText");
+  const percentBox = $("queuePercent");
   if(!dot || !status || !current) return;
+  const total = Number(p.total || 0);
+  const processed = Number(p.processed || 0);
+  const percent = total > 0 ? Math.min(100, Math.max(0, Math.round(processed / total * 100))) : 0;
+  if(percentBox) percentBox.textContent = `${percent}%`;
   dot.classList.toggle("busy", !!p.running);
-  updateTaskResultPanel(p);
   if(p.running){
     status.textContent = `运行中 ${p.processed || 0}/${p.total || 0}`;
     current.textContent = p.current_item ? `当前：${p.current_item}` : (p.message || "批量任务正在执行...");
@@ -4164,7 +4247,48 @@ function updateBatchQueueFromProgress(p){
   }
 }
 let batchRefreshTimer = null;
+function updateBatchQueueFromProgress(p){
+  const dot = $("queueDot");
+  const status = $("queueStatusText");
+  const current = $("queueCurrentText");
+  const fill = $("queueProgressFill");
+  const percentBox = $("queuePercent");
+  if(!dot || !status || !current) return;
+  const total = Number(p.total || 0);
+  const processed = Number(p.processed || 0);
+  const percent = total > 0 ? Math.min(100, Math.max(0, Math.round(processed / total * 100))) : 0;
+  if(fill) fill.style.width = `${percent}%`;
+  if(percentBox) percentBox.textContent = `${percent}%`;
+  dot.classList.toggle("busy", !!p.running);
+  updateTaskResultPanel(p);
+  if(p.running){
+    status.textContent = `运行中 ${processed}/${total} · ${percent}%`;
+    current.textContent = p.current_item ? `当前：${p.current_item}` : (p.message || "批量任务正在执行...");
+  }else{
+    status.textContent = "空闲，可开始批量处理";
+    current.textContent = p.message || "这里显示当前批量任务、进度和最近结果。";
+  }
+}
 let dashboardRefreshTimer = null;
+function updateBatchQueueFromProgress(p){
+  const dot = $("queueDot");
+  const status = $("queueStatusText");
+  const current = $("queueCurrentText");
+  const percentBox = $("queuePercent");
+  if(!dot || !status || !current) return;
+  const total = Number(p.total || 0);
+  const processed = Number(p.processed || 0);
+  const percent = total > 0 ? Math.min(100, Math.max(0, Math.round(processed / total * 100))) : 0;
+  if(percentBox) percentBox.textContent = `${percent}%`;
+  dot.classList.toggle("busy", !!p.running);
+  if(p.running){
+    status.textContent = `运行中 ${processed}/${total}`;
+    current.textContent = p.current_item ? `当前：${p.current_item}` : (p.message || "任务正在执行...");
+  }else{
+    status.textContent = "空闲，可开始批量处理";
+    current.textContent = p.message || "这里显示当前任务、进度和最近结果。";
+  }
+}
 let dashboardWasRunning = false;
 let dashboardLastProgressKey = "";
 function startDashboardAutoRefresh(){
