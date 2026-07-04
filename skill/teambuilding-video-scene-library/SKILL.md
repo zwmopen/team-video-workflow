@@ -56,6 +56,7 @@ This skill has two connected loops:
 - `文案智能配镜`: read a script, match library clips, copy them into a numbered folder for Jianying import.
 
 Read `references/content-production-line.md` when the user talks about the larger content workflow.
+Read `references\ai-dependent-workflow-policy.md` before adding buttons, local tools, or "automation" for any workflow step that may need visual/semantic AI judgment.
 Read `references\open-source-upgrade-map.md` before adding new video-editing capabilities or installing new tools; reuse proven open-source libraries where they fit.
 Read `references\modular-skill-architecture.md` when the user asks whether to split this into multiple skills or when a module starts getting too large.
 Read `references\feishu-review-board.md` when the user wants to review script-to-shot matching, rough cuts, or storyboard decisions in Feishu/Lark.
