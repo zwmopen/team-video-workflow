@@ -92,6 +92,8 @@ BATCH_PROGRESS: dict[str, object] = {
 }
 
 DEFAULT_HEAD_TRIM_SECONDS = 0.08
+BOTTOM_TEXT_MIN_SCORE = 0.03
+TOP_TEXT_MIN_SCORE = 0.025
 
 
 def transcript_supported(item: LibraryItem) -> bool:
@@ -991,10 +993,10 @@ def public_item(item: LibraryItem) -> dict[str, object]:
 
 def process_tag(item: LibraryItem) -> str:
     text = f"{item.name} {item.path}"
-    if any(token in text for token in ("裁剪分割", "裁切废料", "字幕之上", "裁去字幕", "手动处理")):
-        return "已裁切"
     if "深度修复" in text:
         return "深度修复"
+    if any(token in text for token in ("裁剪分割", "裁切废料", "字幕之上", "裁去字幕", "手动处理")):
+        return "已裁切"
     if item.kind == "分镜素材":
         return "原分镜"
     if item.kind == "已整理原片":
@@ -1287,12 +1289,12 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
 
     for frame in frames:
         top_text_detected = detect_top_text_bottom_in_frame(frame)
-        if top_text_detected:
+        if top_text_detected and float(top_text_detected.get("score", 0)) >= TOP_TEXT_MIN_SCORE:
             top_text_candidates.append(top_text_detected["bottom_pct"])
             watermark_details.append(top_text_detected)
 
         text_detected = detect_text_top_in_frame(frame)
-        if text_detected:
+        if text_detected and float(text_detected.get("score", 0)) >= BOTTOM_TEXT_MIN_SCORE:
             text_candidates.append(text_detected["top_pct"])
             text_details.append(text_detected)
 
@@ -1335,15 +1337,23 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
             bottom_limit = avg_bottom_bar
 
     if not text_candidates:
-        keep_h = max(45.0, min(bottom_limit - 2.0, 88.0))
-        confidence = 0.18 + (0.15 if black_bar_results else 0) + (0.15 if watermark_candidates else 0)
-        reason = f"未明显检测到底部字幕，使用默认 {round(keep_h, 1)}%{y_reason}"
-        if black_bar_results:
-            reason += f"，底部黑边截止 {round(bottom_limit, 1)}%"
+        if black_bar_results and bottom_limit < 92.0:
+            keep_h = max(45.0, min(bottom_limit - 2.0, 100.0))
+            reason = f"未检测到可靠底部字幕，仅检测到明显底部黑边，保留到 {round(keep_h, 1)}%{y_reason}"
+            return {
+                "confidence": 0.5,
+                "rect": {"x": 0, "y": round(y_offset, 3), "w": 100, "h": round(keep_h - y_offset, 3)},
+                "reason": reason,
+                "suggested_start": intro_trim.get("suggested_start", 0),
+                "suggested_start_reason": intro_trim.get("reason", ""),
+                "details": {"text": text_details, "watermark": watermark_details, "bars": bar_details},
+            }
+        reason = f"未检测到可靠底部字幕，不裁切；低分疑似文字已忽略{y_reason}"
         return {
-            "confidence": round(confidence, 3),
-            "rect": {"x": 0, "y": round(y_offset, 3), "w": 100, "h": round(keep_h - y_offset, 3)},
+            "confidence": 0.05,
+            "rect": {"x": 0, "y": 0, "w": 100, "h": 100},
             "reason": reason,
+            "no_crop": True,
             "suggested_start": intro_trim.get("suggested_start", 0),
             "suggested_start_reason": intro_trim.get("reason", ""),
             "details": {"text": text_details, "watermark": watermark_details, "bars": bar_details},
@@ -3266,11 +3276,6 @@ INDEX_HTML = r"""<!doctype html>
     .tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; overflow:visible; }
     .tag { font-size:10px; line-height:1.25; color:#344054; background:#dbe8f4; border:1px solid rgba(255,255,255,.7); border-radius:999px; padding:2px 5px; max-width:100%; overflow:visible; text-overflow:clip; white-space:normal; word-break:keep-all; }
     video { width:100%; max-height:36vh; background:#000; border-radius:18px; box-shadow:var(--soft-shadow); display:block; }
-    .preview-video-wrap { position:relative; }
-    .preview-scrub { position:relative; height:22px; margin:8px 4px 2px; border-radius:999px; background:rgba(255,255,255,.46); box-shadow:inset 4px 4px 9px rgba(119,137,156,.16), inset -4px -4px 9px rgba(255,255,255,.72); overflow:hidden; }
-    .preview-scrub-fill { position:absolute; left:0; top:0; bottom:0; width:0%; border-radius:999px; background:linear-gradient(90deg, rgba(48,126,255,.78), rgba(65,213,207,.70)); pointer-events:none; }
-    .preview-scrub input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:.02; cursor:pointer; }
-    .preview-scrub-time { margin:0 4px 2px; color:var(--muted); font-size:11px; text-align:right; }
     .path { font-size:12px; color:var(--muted); word-break:break-all; line-height:1.55; margin-top:10px; }
     .preview-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
     .context-menu { position:fixed; z-index:50; min-width:168px; display:none; padding:6px; border-radius:16px; background:rgba(238,244,248,.98); border:1px solid rgba(255,255,255,.78); box-shadow:12px 16px 30px rgba(112,130,150,.28), -8px -8px 20px rgba(255,255,255,.82); }
@@ -3591,14 +3596,7 @@ INDEX_HTML = r"""<!doctype html>
   <section class="preview">
     <div class="right-section">
       <h2 class="right-title">预览</h2>
-      <div class="preview-video-wrap">
-        <video id="video" controls playsinline autoplay muted preload="metadata"></video>
-        <div class="preview-scrub" id="previewScrub" title="点击这里跳转播放位置">
-          <span class="preview-scrub-fill" id="previewScrubFill"></span>
-          <input id="previewSeek" type="range" min="0" max="1000" value="0" step="1">
-        </div>
-        <div class="preview-scrub-time" id="previewScrubTime">0:00 / 0:00</div>
-      </div>
+      <video id="video" controls playsinline autoplay muted preload="metadata"></video>
       <div class="preview-actions">
         <button id="muteToggle">打开声音</button>
         <button id="revealBtn">打开文件夹</button>
@@ -3827,7 +3825,6 @@ function renderCustomSelect(sel){
 async function init(){
   initPaneResize();
   syncAudioButton();
-  bindPreviewSeek();
   const s = await getJson("/api/summary");
   $("total").textContent = s.total;
   $("rootPath").textContent = s.library_root;
@@ -4400,41 +4397,6 @@ function setFastVideoSource(video, item, options={}){
       playPromise.catch(() => {});
     }
   }
-  if(video.id === "video") updatePreviewSeek();
-}
-function bindPreviewSeek(){
-  const video = $("video");
-  const seek = $("previewSeek");
-  if(!video || !seek) return;
-  ["loadedmetadata","durationchange","timeupdate","seeking","seeked","pause","play"].forEach(eventName => {
-    video.addEventListener(eventName, updatePreviewSeek);
-  });
-  seek.addEventListener("input", () => {
-    if(!Number.isFinite(video.duration) || video.duration <= 0) return;
-    video.currentTime = Number(seek.value || 0) / 1000 * video.duration;
-    updatePreviewSeek();
-  });
-  seek.addEventListener("pointerdown", e => {
-    const rect = seek.getBoundingClientRect();
-    if(rect.width && Number.isFinite(video.duration) && video.duration > 0){
-      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      video.currentTime = ratio * video.duration;
-      updatePreviewSeek();
-    }
-  });
-}
-function updatePreviewSeek(){
-  const video = $("video");
-  const seek = $("previewSeek");
-  const fill = $("previewScrubFill");
-  const time = $("previewScrubTime");
-  if(!video || !seek || !fill || !time) return;
-  const duration = Number(video.duration || 0);
-  const current = Number(video.currentTime || 0);
-  const ratio = duration > 0 ? Math.max(0, Math.min(1, current / duration)) : 0;
-  seek.value = String(Math.round(ratio * 1000));
-  fill.style.width = `${ratio * 100}%`;
-  time.textContent = `${formatSeconds(current)} / ${duration > 0 ? formatSeconds(duration) : "0:00"}`;
 }
 function makeTimelineEntry(clip, beat=null){
   const start = beat ? Number(beat.start || 0) : 0;
@@ -5211,7 +5173,6 @@ async function deleteItemDirect(item){
     video.pause();
     video.removeAttribute("src");
     video.load();
-    updatePreviewSeek();
     $("detail").textContent = `已移到电脑回收站：${item.name}`;
   }
   await refreshOptions();
