@@ -94,6 +94,7 @@ BATCH_PROGRESS: dict[str, object] = {
 DEFAULT_HEAD_TRIM_SECONDS = 0.08
 BOTTOM_TEXT_MIN_SCORE = 0.03
 TOP_TEXT_MIN_SCORE = 0.025
+CROP_ALGORITHM_VERSION = "crop-v3-conservative-bottom"
 
 
 def transcript_supported(item: LibraryItem) -> bool:
@@ -1329,6 +1330,11 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
             y_offset = avg_top_bar
             y_reason = f"，顶部黑边 {round(avg_top_bar, 1)}%"
 
+    # Conservative batch mode: do not remove useful top picture for tiny top
+    # watermarks. Top watermark cleanup belongs to deep repair/manual review.
+    if y_offset > 0:
+        y_offset = 0.0
+
     bottom_limit = 100.0
     if black_bar_results:
         bottom_bars = [b["bottom_bar_pct"] for b in black_bar_results]
@@ -1361,16 +1367,25 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
 
     text_candidates.sort()
     top_pct = text_candidates[-1]
-    subtitle_safety_margin = 18.0
+    subtitle_spans = [
+        max(0.0, float(detail.get("bottom_pct", 0)) - float(detail.get("top_pct", 0)))
+        for detail in text_details
+    ]
+    avg_subtitle_span = sum(subtitle_spans) / len(subtitle_spans) if subtitle_spans else 2.0
+    # Bottom captions are often only a thin strip. Keep the margin dynamic so
+    # clean picture area is not destroyed by an overly large fixed crop.
+    subtitle_safety_margin = round(min(4.0, max(1.4, avg_subtitle_span * 0.65 + 0.8)), 3)
     keep_h_raw = top_pct - subtitle_safety_margin
-    keep_h = max(45.0, min(bottom_limit - 2.0, keep_h_raw))
+    max_bottom_crop_pct = 14.0
+    min_keep_pct = max(80.0, 100.0 - max_bottom_crop_pct)
+    keep_h = max(min_keep_pct, min(bottom_limit - 1.0, keep_h_raw))
     confidence = min(0.92, 0.42 + 0.16 * len(text_candidates))
     if black_bar_results:
         confidence = min(0.95, confidence + 0.12)
     if y_offset > 0 and watermark_candidates:
         confidence = min(0.95, confidence + 0.12)
 
-    final_h = round(max(45.0, keep_h - y_offset), 3)
+    final_h = round(max(80.0, keep_h - y_offset), 3)
     reason = f"抽取 {len(frames)} 帧，{len(text_candidates)} 帧检测到底部字幕；保留到字幕顶部上方约 {round(keep_h, 1)}%（含 {subtitle_safety_margin}% 安全边距）{y_reason}"
     if y_offset > 0 and watermark_candidates:
         reason += f"（顶部水印已移除）"
@@ -2752,6 +2767,9 @@ def launch_jianghu_tool(target: Path) -> None:
 
 PROCESSED_RECORDS_PATH = CACHE_ROOT / "cropped_records.json"
 
+def cropped_record_key(item: LibraryItem) -> str:
+    return f"{CROP_ALGORITHM_VERSION}:{item.id}"
+
 def load_cropped_records() -> set[str]:
     if not PROCESSED_RECORDS_PATH.exists():
         return set()
@@ -2805,7 +2823,7 @@ def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float, item_id
             items_to_process = [item for item in items_to_process if item.id in allowed_ids]
         items_to_process = [item for item in items_to_process if not is_generated_crop_output(Path(item.path))]
         processed_ids = load_cropped_records()
-        items_to_process = [item for item in items_to_process if item.id not in processed_ids]
+        items_to_process = [item for item in items_to_process if cropped_record_key(item) not in processed_ids]
         BATCH_PROGRESS["total"] = len(items_to_process)
         BATCH_PROGRESS["message"] = f"找到 {len(items_to_process)} 个未处理的分镜素材，开始处理..."
 
@@ -2862,7 +2880,7 @@ def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float, item_id
                 crop_expr = f"crop=iw:trunc(ih*{h_pct / 100:.4f}/2)*2:0:trunc(ih*{y_pct / 100:.4f}/2)*2"
                 output_dir = source.parent / "\u88c1\u5207\u5e9f\u6599"
                 output_dir.mkdir(parents=True, exist_ok=True)
-                output = unique_path(output_dir / f"{source.stem}__\u88c1\u5207\u5e9f\u6599{source.suffix}")
+                output = output_dir / f"{source.stem}__\u88c1\u5207\u5e9f\u6599{source.suffix}"
                 temp = output_dir / f".{item.id}.tmp_crop.mp4"
                 temp.unlink(missing_ok=True)
 
@@ -2898,7 +2916,7 @@ def run_batch_crop_subtitles(dry_run: bool, confidence_threshold: float, item_id
                     success = False
                 if success:
                     BATCH_PROGRESS["success"] += 1
-                    processed_ids.add(item.id)
+                    processed_ids.add(cropped_record_key(item))
                     save_cropped_records(processed_ids)
                 else:
                     temp.unlink(missing_ok=True)

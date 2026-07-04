@@ -595,6 +595,8 @@ Workflow:
 15. Batch execution is rule-based and fast. Quality review is a separate Codex/visual-AI layer: inspect contact sheets, tighten rules when subtitles/title cards remain, then rerun incrementally.
 16. For source batches with higher subtitle placement, prefer a stronger subtitle safety line over preserving every bottom pixel. Current verified rule uses an 18% safety margin above detected subtitle text. If subtitles remain after that, stop crop-only retries and send the clips to deep subtitle/watermark removal or manual review.
 17. Scene-level waste cutting must happen before output: extract a representative frame from each scene and skip scenes with large title cards, poster/sticker overlays, or obvious non-material text blocks. Record these as `skip_title_overlay` instead of writing them into the clean comparison library.
+18. Do not crop a clip just because the detector sees weak low-score text-like edges. If no reliable bottom subtitle is detected, return full-frame/no-crop and let the batch skip it. This prevents clean clips such as bus boarding or indoor signs from being wrongly cropped.
+19. Distinguish small channel watermarks from bottom subtitles. Small low-contrast watermarks such as `千岛湖阿明`, Douyin, or Xiaohongshu marks should go to a tested deep-repair workflow; do not solve them by bottom-cropping if the useful frame is otherwise clean.
 
 Browser UI support:
 
@@ -769,6 +771,7 @@ Decision rule:
 5. Always generate before/after or before/opencv/sttn comparison images for review.
 6. Do not call any repaired clip "clean" until it has a before/after contact sheet and a second visual check.
 7. Silent scene clips may trigger audio-merge warnings inside VSR; accept the repaired video only when the visual output exists and plays. For original videos with audio, preserve or reattach audio in a separate post-step.
+8. Low-contrast sky watermarks may not be removed by VSR detection even when the area is provided. Test one clip first; if the watermark only becomes lighter or leaves a rectangular smear, mark the method as not batch-ready and keep the original/crop path instead.
 
 Default command:
 
@@ -822,3 +825,12 @@ Current execution record:
 - Deleted to Recycle Bin: `D:\Download\素材下载\团建视频\._采集记录\horizontal_scene_clips_deleted_to_recycle_20260703.csv`
 - Post-delete check: `D:\Download\素材下载\团建视频\._采集记录\horizontal_scene_clips_post_delete_check_20260703.json`
 - Result: 686 horizontal scene clips removed; 0 horizontal scene clips remain in smart scene libraries.
+## Recent Corrections Learned From User Review
+
+- Do not trust filename, spoken text, or hashtag keywords as the primary visual classifier. Use extracted frames / visual evidence first.
+- If visual classification is unavailable, route low-confidence clips to review instead of forcing a project keyword.
+- A clip that has no reliable bottom subtitle must not be cropped just because weak edges look text-like.
+- Bottom-subtitle crop must keep the maximum usable picture. Use a dynamic margin near the subtitle top, not a fixed large margin.
+- Treat generated crop outputs as replaceable derivatives. Original scene clips remain the source of truth.
+- When crop rules change, re-run generated crop derivatives with the new rule version instead of trusting old processed records.
+- Small faint sky watermarks such as a channel name can be tested with deep repair, but if STTN/VSR still leaves readable text or obvious smear, do not batch it. For pure sky watermarks, a feathered sky-patch repair may be acceptable after visual comparison.
