@@ -3247,13 +3247,15 @@ INDEX_HTML = r"""<!doctype html>
     .health-pill { padding:3px 7px; border-radius:999px; background:rgba(238,244,248,.86); border:1px solid rgba(255,255,255,.78); color:#344054; box-shadow:var(--soft-shadow); }
     .health-next { font-size:12px; color:var(--accent-dark); font-weight:650; }
     .layout { display:grid; grid-template-columns: var(--sidebar-width, 260px) 2px minmax(280px, 1.2fr) 2px var(--preview-width, 360px); height: calc(100vh - 70px); min-height:0; gap:6px; padding:16px; }
-    aside, .preview, .panel-card { background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:22px; padding:16px; overflow:auto; box-shadow:var(--shadow); scrollbar-width:thin; scrollbar-color:rgba(96,111,128,.26) transparent; }
-    aside::-webkit-scrollbar, .preview::-webkit-scrollbar, .panel-card::-webkit-scrollbar { width:8px; height:8px; }
-    aside::-webkit-scrollbar-track, .preview::-webkit-scrollbar-track, .panel-card::-webkit-scrollbar-track { background:transparent; }
-    aside::-webkit-scrollbar-thumb, .preview::-webkit-scrollbar-thumb, .panel-card::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(96,111,128,.22); border:2px solid transparent; background-clip:content-box; }
+    aside, .preview, .panel-card { background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:22px; padding:16px; overflow:auto; box-shadow:var(--shadow); scrollbar-width:thin; scrollbar-color:rgba(96,111,128,.18) transparent; }
+    main, aside, .preview, .panel-card { scrollbar-width:thin; scrollbar-color:rgba(96,111,128,.18) transparent; }
+    main::-webkit-scrollbar, aside::-webkit-scrollbar, .preview::-webkit-scrollbar, .panel-card::-webkit-scrollbar { width:9px; height:9px; }
+    main::-webkit-scrollbar-track, aside::-webkit-scrollbar-track, .preview::-webkit-scrollbar-track, .panel-card::-webkit-scrollbar-track { background:transparent; }
+    main::-webkit-scrollbar-thumb, aside::-webkit-scrollbar-thumb, .preview::-webkit-scrollbar-thumb, .panel-card::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(96,111,128,.18); border:3px solid transparent; background-clip:content-box; }
+    main:hover, aside:hover, .preview:hover, .panel-card:hover { scrollbar-color:rgba(96,111,128,.34) transparent; }
+    main:hover::-webkit-scrollbar-thumb, aside:hover::-webkit-scrollbar-thumb, .preview:hover::-webkit-scrollbar-thumb, .panel-card:hover::-webkit-scrollbar-thumb { background:rgba(96,111,128,.34); border:2px solid transparent; background-clip:content-box; }
     aside, .preview { max-height:calc(100vh - 102px); }
-    main { padding:12px; overflow:auto; min-width:0; min-height:0; scrollbar-width:none; -ms-overflow-style:none; }
-    main::-webkit-scrollbar { width:0; height:0; }
+    main { padding:12px; overflow:auto; min-width:0; min-height:0; }
     .pane-resizer { cursor:col-resize; border-radius:999px; background:transparent; position:relative; z-index:4; margin:-8px -4px; touch-action:none; }
     .pane-resizer::before { content:""; position:absolute; inset:0 -12px; border-radius:999px; }
     .pane-resizer::after { content:""; position:absolute; left:50%; top:50%; width:1px; height:42px; transform:translate(-50%,-50%); border-radius:999px; opacity:0; background:linear-gradient(180deg,rgba(48,126,255,0),rgba(48,126,255,.52),rgba(48,126,255,0)); box-shadow:0 0 0 4px rgba(48,126,255,.06); transition:opacity .16s ease, height .16s ease, box-shadow .16s ease; pointer-events:none; }
