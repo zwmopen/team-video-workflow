@@ -3491,11 +3491,17 @@ INDEX_HTML = r"""<!doctype html>
     .layout { display:grid; grid-template-columns: var(--sidebar-width, 260px) 2px minmax(280px, 1.2fr) 2px var(--preview-width, 360px); height: calc(100vh - 70px); min-height:0; gap:6px; padding:16px; }
     aside, .preview, .panel-card { background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:22px; padding:16px; overflow:auto; box-shadow:var(--shadow); scrollbar-width:thin; scrollbar-color:rgba(96,111,128,.18) transparent; }
     main, aside, .preview, .panel-card { scrollbar-width:thin; scrollbar-color:rgba(96,111,128,.18) transparent; }
+    .preview { scrollbar-width:auto; scrollbar-color:rgba(72,92,116,.46) rgba(220,231,239,.58); padding-right:12px; }
     main::-webkit-scrollbar, aside::-webkit-scrollbar, .preview::-webkit-scrollbar, .panel-card::-webkit-scrollbar { width:9px; height:9px; }
     main::-webkit-scrollbar-track, aside::-webkit-scrollbar-track, .preview::-webkit-scrollbar-track, .panel-card::-webkit-scrollbar-track { background:transparent; }
     main::-webkit-scrollbar-thumb, aside::-webkit-scrollbar-thumb, .preview::-webkit-scrollbar-thumb, .panel-card::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(96,111,128,.18); border:3px solid transparent; background-clip:content-box; }
     main:hover, aside:hover, .preview:hover, .panel-card:hover { scrollbar-color:rgba(96,111,128,.34) transparent; }
     main:hover::-webkit-scrollbar-thumb, aside:hover::-webkit-scrollbar-thumb, .preview:hover::-webkit-scrollbar-thumb, .panel-card:hover::-webkit-scrollbar-thumb { background:rgba(96,111,128,.34); border:2px solid transparent; background-clip:content-box; }
+    .preview::-webkit-scrollbar { width:15px; height:15px; }
+    .preview::-webkit-scrollbar-track { border-radius:999px; background:rgba(220,231,239,.58); box-shadow:inset 2px 2px 5px rgba(112,130,150,.12), inset -2px -2px 5px rgba(255,255,255,.55); }
+    .preview::-webkit-scrollbar-thumb { min-height:52px; border-radius:999px; border:3px solid rgba(220,231,239,.82); background:rgba(72,92,116,.42); background-clip:padding-box; }
+    .preview::-webkit-scrollbar-thumb:hover { background:rgba(48,126,255,.58); border-color:rgba(220,231,239,.86); }
+    .preview::-webkit-scrollbar-thumb:active { background:rgba(48,126,255,.74); }
     aside, .preview { max-height:calc(100vh - 102px); }
     main { padding:12px; overflow:auto; min-width:0; min-height:0; }
     .pane-resizer { cursor:col-resize; border-radius:999px; background:transparent; position:relative; z-index:4; margin:-8px -4px; touch-action:none; }
