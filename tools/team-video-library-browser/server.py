@@ -3816,11 +3816,11 @@ INDEX_HTML = r"""<!doctype html>
           <div class="edit-panel-head">
             <div>
               <h3>音频轨</h3>
-              <p>选一条原片音频，作为整条视频的主声音。</p>
+              <p>选一条原片音频，复制给 Codex 按台词配镜。</p>
             </div>
           </div>
           <div class="action-row" style="margin-top:0;">
-            <button class="primary" id="matchStartBtn">开始匹配素材</button>
+            <button class="primary" id="matchStartBtn">复制提示词并开始匹配素材</button>
             <button id="matchReloadBtn">刷新音频</button>
           </div>
           <div class="audio-list" id="audioList"><div class="empty">正在读取音频素材...</div></div>
@@ -3829,7 +3829,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="edit-panel-head">
             <div>
               <h3>片段素材架</h3>
-              <p>匹配后出现候选分镜；拖到下方主轨道即可拼接。</p>
+              <p>Codex 产出初剪素材包后，可在这里预览和拖拽调整。</p>
             </div>
           </div>
           <div class="clip-shelf" id="clipShelf"><div class="empty">选择音频后显示候选素材</div></div>
@@ -3840,8 +3840,8 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div class="match-info">
             <div>
-              <h3 style="margin:0 0 6px;">预览 / 台词匹配</h3>
-              <p style="margin:0;color:var(--muted);font-size:12px;">默认 3:4 小红书画幅。选中主轨片段后可预览、切割、裁剪。</p>
+              <h3 style="margin:0 0 6px;">预览 / 合并播放</h3>
+              <p style="margin:0;color:var(--muted);font-size:12px;">单点素材看单段；合并播放按主轨顺序串画面并播放音频。</p>
             </div>
             <audio id="editAudio" controls style="width:100%;"></audio>
             <div class="match-copy" id="matchCopy">还没选择音频。</div>
@@ -3851,6 +3851,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="timeline-head">
             <strong>剪辑时间线</strong>
             <div class="timeline-actions">
+              <button id="timelinePlayBtn">合并播放</button>
               <button id="timelineSplitBtn">切割片段</button>
               <button id="timelineCropBtn">裁剪/切割</button>
               <button id="timelineRemoveBtn">删除片段</button>
@@ -4052,6 +4053,7 @@ let currentMatchPlan = null;
 let editTimeline = [];
 let selectedTimelineIndex = -1;
 let timelineDragClip = null;
+let timelinePlayToken = 0;
 const $ = id => document.getElementById(id);
 async function getJson(url){ const r = await fetch(url); return await r.json(); }
 async function postJson(url, payload){
@@ -4624,8 +4626,8 @@ function updateSideGuide(view){
     ],
     match: [
       ["智能剪辑", "左边选音频，上方看候选素材，中间预览，底部看时间线。"],
-      ["自动配镜", "点击开始匹配素材，系统按台词时间戳找分镜，先生成粗剪轨道。"],
-      ["后续导出", "当前先做剪辑台骨架，下一步再接真实导出和剪映素材包。"]
+      ["复制任务", "点击复制提示词，把音频和配镜规则交给 Codex 做语义匹配。"],
+      ["剪映交付", "Codex 生成编号初剪素材包后，拖进剪映细剪。"]
     ],
     delivery: [
       ["成品检查", "检查竖屏、音频、重复镜头、废料、水印字幕残留。"],
@@ -4639,7 +4641,7 @@ function bindMatchUi(){
   const reloadBtn = $("matchReloadBtn");
   const startBtn = $("matchStartBtn");
   if(reloadBtn) reloadBtn.addEventListener("click", loadMatchAudioItems);
-  if(startBtn) startBtn.addEventListener("click", startMatchAudio);
+  if(startBtn) startBtn.addEventListener("click", copySmartMatchPrompt);
   const timeline = $("matchTimeline");
   if(timeline){
     timeline.addEventListener("dragover", e => {
@@ -4658,6 +4660,7 @@ function bindMatchUi(){
       }
     });
   }
+  $("timelinePlayBtn").addEventListener("click", playTimelineSequence);
   $("timelineSplitBtn").addEventListener("click", splitSelectedTimelineClip);
   $("timelineCropBtn").addEventListener("click", cropSelectedTimelineClip);
   $("timelineRemoveBtn").addEventListener("click", removeSelectedTimelineClip);
@@ -4705,8 +4708,48 @@ function selectMatchAudio(item){
     audio.load();
   }
   renderAudioTrack();
-  $("matchCopy").textContent = `已选择音频：${item.name}\n地点：${item.location}\n点击“开始匹配素材”，系统会读取文案/时间戳并匹配分镜。`;
-  $("matchStatus").textContent = "等待匹配";
+  $("matchCopy").textContent = `已选择音频：${item.name}\n地点：${item.location}\n点击“复制提示词并开始匹配素材”，再把提示词发给 Codex。Codex 会读取时间戳文案，按一句话一个或多个画面生成初剪素材包。`;
+  $("matchStatus").textContent = "等待复制提示词";
+}
+async function copySmartMatchPrompt(){
+  if(!selectedMatchAudio){
+    await showMessage("还没选音频", "先在左侧选择一条原片音频。");
+    return;
+  }
+  const audioPath = selectedMatchAudio.path || selectedMatchAudio.name;
+  const location = selectedMatchAudio.location || "自动判断";
+  const safeTitle = selectedMatchAudio.name.replace(/\.[^.]+$/, "");
+  const prompt = [
+    "请使用「团建视频素材智能分镜分类 Skill」执行【文案配镜初检】工作流。",
+    "",
+    `原片音频素材：${audioPath}`,
+    `地点：${location}`,
+    `任务标题：${safeTitle}`,
+    "",
+    "素材库根目录：D:\\Download\\素材下载\\团建视频",
+    "",
+    "目标：",
+    "1. 读取这条音频对应的时间戳文案；如果已有同名 TXT/缓存，优先复用，不重复识别。",
+    "2. 按一句台词一个画面为基础做配镜；一句话较长或关键词较多时，可以匹配 2-3 个画面。",
+    "3. 先做语义匹配，再做关键词匹配和场景匹配；具体活动必须匹配具体素材，例如皮划艇不能用骑行或吃饭代替。",
+    "4. 没有明确关键词的台词，用同地点环境空镜、人物反应、团队互动、细节特写做补充，不要重复循环同一个 1-2 秒素材。",
+    "5. 优先使用已经清洗好的分镜素材；明显带字幕、水印、废料、横屏小画面的素材不要选。",
+    "6. 复制素材到一个新的初剪素材包，不移动源素材。",
+    "7. 初剪素材包文件夹命名：日期时间 + 音频标题；放在 D:\\Download\\素材下载\\团建视频\\智能剪辑初剪库 下。",
+    "8. 输出素材按剪辑顺序编号：001_、002_、003_，保留原关键词和来源信息。",
+    "9. 同时输出：文案.txt、配镜表.csv、配镜说明.md、质检报告.md；如果可行，再输出一个 rough_cut_preview.mp4 作为快速预览。",
+    "10. 完成后自检：画面是否对应台词、是否有重复循环、是否有脏字幕/水印、时长是否覆盖音频、是否适合拖进剪映继续细剪。",
+    "",
+    "验收标准：",
+    "- 我能直接打开初剪素材包，把编号素材按顺序拖进剪映。",
+    "- 每句台词旁边都有匹配理由和本地素材路径。",
+    "- 不确定的台词要写明为什么弱匹配，并给替代建议。"
+  ].join("\\n");
+  await navigator.clipboard.writeText(prompt).catch(()=>{});
+  $("matchStatus").textContent = "已复制 Codex 配镜提示词";
+  $("matchCopy").textContent = `已复制配镜任务提示词。\n\n音频：${selectedMatchAudio.name}\n地点：${location}\n\n下一步：直接把提示词发到对话窗口，我会按 Skill 生成编号初剪素材包并自检。`;
+  $("matchStartBtn").textContent = "已复制";
+  setTimeout(() => $("matchStartBtn").textContent = "复制提示词并开始匹配素材", 1100);
 }
 async function startMatchAudio(){
   if(!selectedMatchAudio){
@@ -4857,6 +4900,35 @@ function renderAudioTrack(){
     return;
   }
   track.innerHTML = `<div class="audio-track-chip">🎙 ${esc(selectedMatchAudio.name)} · ${esc(selectedMatchAudio.location)} · ${selectedMatchAudio.size_mb} MB</div>`;
+}
+async function playTimelineSequence(){
+  if(!editTimeline.length){
+    await showMessage("主轨为空", "先让 Codex 生成初剪素材包，或者把上方素材拖到主轨后再合并播放。");
+    return;
+  }
+  const video = $("editPreviewVideo");
+  const audio = $("editAudio");
+  if(!video) return;
+  const token = ++timelinePlayToken;
+  if(audio && selectedMatchAudio){
+    try{
+      audio.currentTime = 0;
+      await audio.play();
+    }catch(_){}
+  }
+  $("matchStatus").textContent = "合并播放中";
+  for(let index = 0; index < editTimeline.length; index++){
+    if(token !== timelinePlayToken) return;
+    selectedTimelineIndex = index;
+    renderEditTimeline();
+    const entry = editTimeline[index];
+    setFastVideoSource(video, entry.clip, {muted:true, autoplay:true});
+    const waitMs = Math.max(600, Number(entry.duration || 2.5) * 1000);
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+  }
+  if(token === timelinePlayToken){
+    $("matchStatus").textContent = "合并播放完成";
+  }
 }
 function selectTimelineClip(index){
   if(index < 0 || index >= editTimeline.length) return;
