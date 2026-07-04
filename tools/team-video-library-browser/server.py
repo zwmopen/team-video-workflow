@@ -826,11 +826,22 @@ class Handler(BaseHTTPRequestHandler):
         status = 200
         if range_enabled:
             range_header = self.headers.get("Range", "")
-            match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+            match = re.match(r"bytes=(\d*)-(\d*)", range_header)
             if match:
-                start = int(match.group(1))
-                if match.group(2):
-                    end = min(size - 1, int(match.group(2)))
+                raw_start, raw_end = match.group(1), match.group(2)
+                if raw_start:
+                    start = int(raw_start)
+                    if raw_end:
+                        end = min(size - 1, int(raw_end))
+                elif raw_end:
+                    suffix = min(size, int(raw_end))
+                    start = max(0, size - suffix)
+                if start >= size or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.end_headers()
+                    return
                 status = 206
         length = end - start + 1
         self.send_response(status)
@@ -941,12 +952,14 @@ def item_matches(item: LibraryItem, query: dict[str, list[str]], ignore_field: s
 def query_items(query: dict[str, list[str]]) -> dict[str, object]:
     page = max(1, int(query.get("page", ["1"])[0] or "1"))
     page_size = min(80, max(12, int(query.get("page_size", ["36"])[0] or "36")))
+    sort_by = (query.get("sort", ["scene"])[0] or "scene").strip()
 
     result = []
     for item in ITEMS:
         if not item_matches(item, query):
             continue
         result.append(item)
+    result.sort(key=lambda item: material_sort_key(item, sort_by))
     start = (page - 1) * page_size
     page_items = result[start : start + page_size]
     return {
@@ -972,7 +985,49 @@ def public_item(item: LibraryItem) -> dict[str, object]:
     data["user_tags"] = USER_TAGS.get(item.path, [])
     data["file_uri"] = Path(item.path).as_uri()
     data["mime"] = mimetypes.guess_type(item.path)[0] or "video/mp4"
+    data["process_tag"] = process_tag(item)
     return data
+
+
+def process_tag(item: LibraryItem) -> str:
+    text = f"{item.name} {item.path}"
+    if any(token in text for token in ("裁剪分割", "裁切废料", "字幕之上", "裁去字幕", "手动处理")):
+        return "已裁切"
+    if "深度修复" in text:
+        return "深度修复"
+    if item.kind == "分镜素材":
+        return "原分镜"
+    if item.kind == "已整理原片":
+        return "原片"
+    return ""
+
+
+def material_sort_key(item: LibraryItem, sort_by: str = "scene") -> tuple:
+    path = Path(item.path)
+    try:
+        stat = path.stat()
+        mtime = stat.st_mtime
+        size = stat.st_size
+    except OSError:
+        mtime = 0
+        size = 0
+    if sort_by == "name":
+        return (item.name.lower(), item.location, item.category, item.keyword)
+    if sort_by == "newest":
+        return (-mtime, item.name.lower())
+    if sort_by == "oldest":
+        return (mtime, item.name.lower())
+    if sort_by == "size_desc":
+        return (-size, item.name.lower())
+    if sort_by == "size_asc":
+        return (size, item.name.lower())
+    stem = path.stem
+    scene_match = re.search(r"([A-Za-z]*V\d+_S\d+)", stem, re.IGNORECASE)
+    scene_key = scene_match.group(1).upper() if scene_match else stem
+    normalized_stem = re.sub(r"^\d+[_-]?", "", stem)
+    normalized_stem = re.sub(r"(_?裁剪分割|_?裁切废料|_?裁去字幕|_?字幕之上|_?深度修复|_?手动处理)", "", normalized_stem)
+    version_order = {"原分镜": 0, "原片": 0, "已裁切": 1, "深度修复": 2}.get(process_tag(item), 3)
+    return (item.kind, item.location, item.category, item.keyword, str(path.parent), scene_key, normalized_stem, version_order, item.name)
 
 
 def load_user_tags() -> None:
@@ -3197,6 +3252,8 @@ INDEX_HTML = r"""<!doctype html>
     .stat { border:1px solid rgba(255,255,255,.72); border-radius:18px; padding:11px; background:var(--panel-light); box-shadow:var(--soft-shadow); }
     .stat strong { display:block; font-size:18px; }
     .toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:10px; }
+    .toolbar-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .sort-select { height:36px; min-width:132px; border:1px solid rgba(255,255,255,.78); border-radius:16px; padding:0 34px 0 12px; color:var(--ink); background:var(--panel-light); box-shadow:var(--soft-shadow); outline:none; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap:8px; align-items:start; }
     .card { position:relative; background:var(--panel-light); border:1px solid rgba(255,255,255,.76); border-radius:14px; overflow:hidden; cursor:grab; box-shadow:3px 4px 10px rgba(112,130,150,.16), -3px -3px 9px rgba(255,255,255,.70); }
     .card:active { cursor:grabbing; }
@@ -3208,7 +3265,12 @@ INDEX_HTML = r"""<!doctype html>
     .name { font-size:11px; min-height:28px; height:auto; overflow:visible; line-height:14px; word-break:break-word; }
     .tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; overflow:visible; }
     .tag { font-size:10px; line-height:1.25; color:#344054; background:#dbe8f4; border:1px solid rgba(255,255,255,.7); border-radius:999px; padding:2px 5px; max-width:100%; overflow:visible; text-overflow:clip; white-space:normal; word-break:keep-all; }
-    video { width:100%; max-height:36vh; background:#000; border-radius:18px; box-shadow:var(--soft-shadow); }
+    video { width:100%; max-height:36vh; background:#000; border-radius:18px; box-shadow:var(--soft-shadow); display:block; }
+    .preview-video-wrap { position:relative; }
+    .preview-scrub { position:relative; height:22px; margin:8px 4px 2px; border-radius:999px; background:rgba(255,255,255,.46); box-shadow:inset 4px 4px 9px rgba(119,137,156,.16), inset -4px -4px 9px rgba(255,255,255,.72); overflow:hidden; }
+    .preview-scrub-fill { position:absolute; left:0; top:0; bottom:0; width:0%; border-radius:999px; background:linear-gradient(90deg, rgba(48,126,255,.78), rgba(65,213,207,.70)); pointer-events:none; }
+    .preview-scrub input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:.02; cursor:pointer; }
+    .preview-scrub-time { margin:0 4px 2px; color:var(--muted); font-size:11px; text-align:right; }
     .path { font-size:12px; color:var(--muted); word-break:break-all; line-height:1.55; margin-top:10px; }
     .preview-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
     .context-menu { position:fixed; z-index:50; min-width:168px; display:none; padding:6px; border-radius:16px; background:rgba(238,244,248,.98); border:1px solid rgba(255,255,255,.78); box-shadow:12px 16px 30px rgba(112,130,150,.28), -8px -8px 20px rgba(255,255,255,.82); }
@@ -3229,8 +3291,8 @@ INDEX_HTML = r"""<!doctype html>
     .crop-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
     .crop-head h3 { margin:0; font-size:17px; }
     .crop-tip { margin:5px 0 0; color:var(--muted); font-size:12px; line-height:1.45; }
-    .crop-stage { position:relative; min-height:220px; max-height:58vh; border-radius:18px; overflow:hidden; background:#111827; display:flex; align-items:center; justify-content:center; box-shadow:inset 4px 4px 10px rgba(0,0,0,.22), inset -3px -3px 9px rgba(255,255,255,.08); }
-    .crop-stage video { width:auto; height:auto; max-width:100%; max-height:58vh; object-fit:contain; border-radius:0; box-shadow:none; display:block; }
+    .crop-stage { position:relative; min-height:220px; height:min(62vh, 620px); border-radius:18px; overflow:hidden; background:#111827; display:flex; align-items:center; justify-content:center; box-shadow:inset 4px 4px 10px rgba(0,0,0,.22), inset -3px -3px 9px rgba(255,255,255,.08); }
+    .crop-stage video { width:100%; height:100%; max-width:100%; max-height:100%; object-fit:contain; border-radius:0; box-shadow:none; display:block; }
     .crop-layer { position:absolute; pointer-events:none; border:2px solid rgba(48,126,255,.95); background:rgba(48,126,255,.08); box-shadow:0 0 0 9999px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.45) inset; cursor:move; }
     .crop-layer.ready { pointer-events:auto; }
     .crop-handle { position:absolute; width:14px; height:14px; border-radius:50%; background:#fff; border:2px solid var(--accent); box-shadow:0 3px 9px rgba(0,0,0,.22); }
@@ -3439,7 +3501,15 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <div class="toolbar">
         <div id="hint">加载中...</div>
-        <div>
+        <div class="toolbar-actions">
+          <select id="sort" class="sort-select" title="排序">
+            <option value="scene">同镜头对比</option>
+            <option value="name">按名称</option>
+            <option value="newest">按时间：最新</option>
+            <option value="oldest">按时间：最早</option>
+            <option value="size_desc">按大小：大到小</option>
+            <option value="size_asc">按大小：小到大</option>
+          </select>
           <button id="prev">上一页</button>
           <button id="next">下一页</button>
         </div>
@@ -3521,7 +3591,14 @@ INDEX_HTML = r"""<!doctype html>
   <section class="preview">
     <div class="right-section">
       <h2 class="right-title">预览</h2>
-      <video id="video" controls playsinline autoplay muted preload="metadata"></video>
+      <div class="preview-video-wrap">
+        <video id="video" controls playsinline autoplay muted preload="metadata"></video>
+        <div class="preview-scrub" id="previewScrub" title="点击这里跳转播放位置">
+          <span class="preview-scrub-fill" id="previewScrubFill"></span>
+          <input id="previewSeek" type="range" min="0" max="1000" value="0" step="1">
+        </div>
+        <div class="preview-scrub-time" id="previewScrubTime">0:00 / 0:00</div>
+      </div>
       <div class="preview-actions">
         <button id="muteToggle">打开声音</button>
         <button id="revealBtn">打开文件夹</button>
@@ -3750,6 +3827,7 @@ function renderCustomSelect(sel){
 async function init(){
   initPaneResize();
   syncAudioButton();
+  bindPreviewSeek();
   const s = await getJson("/api/summary");
   $("total").textContent = s.total;
   $("rootPath").textContent = s.library_root;
@@ -3782,6 +3860,7 @@ async function init(){
   bindTrimUi();
   bindBatchCropUi();
   bindMatchUi();
+  bindDeleteKey();
 }
 function updateWorkflowHealth(summary){
   const byKind = summary.by_kind || {};
@@ -3974,6 +4053,7 @@ function setPreviewWidth(width){
 function params(){
   const p = new URLSearchParams(); p.set("page", page); p.set("page_size", pageSize);
   ["q","kind","location","category","keyword"].forEach(id => { if($(id).value) p.set(id,$(id).value); });
+  if($("sort") && $("sort").value) p.set("sort", $("sort").value);
   return p;
 }
 async function refreshOptions(){
@@ -4011,7 +4091,7 @@ async function load(){
   }
 }
 function renderTags(item){
-  const tags = [item.kind, item.location, item.keyword || item.category, ...(item.user_tags || [])].filter(Boolean);
+  const tags = [item.process_tag, item.kind, item.location, item.keyword || item.category, ...(item.user_tags || [])].filter(Boolean);
   return tags.slice(0, 5).map(tag => `<span class="tag">${esc(tag)}</span>`).join("");
 }
 function updateFilterCopy(){
@@ -4047,6 +4127,7 @@ function saveFilterState(){
     category: $("category").value,
     keyword: $("keyword").value,
     q: $("q").value,
+    sort: $("sort") ? $("sort").value : "scene",
     page: page
   };
   localStorage.setItem("videoLibraryFilter", JSON.stringify(state));
@@ -4062,6 +4143,7 @@ function restoreFilterState(){
         if(el) el.value = state[id];
       }
     });
+    if(state.sort && $("sort")) $("sort").value = state.sort;
     if(state.page) page = state.page;
     ["kind","location","category","keyword"].forEach(id => {
       const sel = $(id);
@@ -4318,6 +4400,41 @@ function setFastVideoSource(video, item, options={}){
       playPromise.catch(() => {});
     }
   }
+  if(video.id === "video") updatePreviewSeek();
+}
+function bindPreviewSeek(){
+  const video = $("video");
+  const seek = $("previewSeek");
+  if(!video || !seek) return;
+  ["loadedmetadata","durationchange","timeupdate","seeking","seeked","pause","play"].forEach(eventName => {
+    video.addEventListener(eventName, updatePreviewSeek);
+  });
+  seek.addEventListener("input", () => {
+    if(!Number.isFinite(video.duration) || video.duration <= 0) return;
+    video.currentTime = Number(seek.value || 0) / 1000 * video.duration;
+    updatePreviewSeek();
+  });
+  seek.addEventListener("pointerdown", e => {
+    const rect = seek.getBoundingClientRect();
+    if(rect.width && Number.isFinite(video.duration) && video.duration > 0){
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      video.currentTime = ratio * video.duration;
+      updatePreviewSeek();
+    }
+  });
+}
+function updatePreviewSeek(){
+  const video = $("video");
+  const seek = $("previewSeek");
+  const fill = $("previewScrubFill");
+  const time = $("previewScrubTime");
+  if(!video || !seek || !fill || !time) return;
+  const duration = Number(video.duration || 0);
+  const current = Number(video.currentTime || 0);
+  const ratio = duration > 0 ? Math.max(0, Math.min(1, current / duration)) : 0;
+  seek.value = String(Math.round(ratio * 1000));
+  fill.style.width = `${ratio * 100}%`;
+  time.textContent = `${formatSeconds(current)} / ${duration > 0 ? formatSeconds(duration) : "0:00"}`;
 }
 function makeTimelineEntry(clip, beat=null){
   const start = beat ? Number(beat.start || 0) : 0;
@@ -4446,7 +4563,7 @@ function selectItem(item, card){
   video.autoplay = true;
   video.playsInline = true;
   setFastVideoSource(video, item, {muted:!audioWanted, autoplay:true});
-  $("detail").innerHTML = `<b>${esc(item.name)}</b><br>${esc(item.kind)} / ${esc(item.location)} / ${esc(item.category)} / ${esc(item.keyword)}<br>${item.size_mb} MB<br>${esc(item.path)}`;
+  $("detail").innerHTML = `<b>${esc(item.name)}</b><br>${esc(item.process_tag || "")} / ${esc(item.kind)} / ${esc(item.location)} / ${esc(item.category)} / ${esc(item.keyword)}<br>${item.size_mb} MB<br>${esc(item.path)}`;
   updateTranscriptButton(item);
   document.querySelector(".preview").scrollIntoView({block:"nearest", behavior:"smooth"});
 }
@@ -5080,6 +5197,36 @@ async function deleteItem(item){
   await refreshOptions();
   await load();
 }
+async function deleteItemDirect(item){
+  releaseVideoHandlesForItem(item);
+  const result = await postJson("/api/delete", {id:item.id});
+  if(!result.ok){
+    await showMessage("删除失败", result.error || "删除失败");
+    return;
+  }
+  if(selectedId === item.id){
+    selectedId = "";
+    selectedItem = null;
+    const video = $("video");
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    updatePreviewSeek();
+    $("detail").textContent = `已移到电脑回收站：${item.name}`;
+  }
+  await refreshOptions();
+  await load();
+}
+function bindDeleteKey(){
+  document.addEventListener("keydown", async e => {
+    if(e.key !== "Delete" || !selectedItem) return;
+    const target = e.target;
+    const editing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    if(editing || $("modalBackdrop").classList.contains("open") || $("cropBackdrop").classList.contains("open")) return;
+    e.preventDefault();
+    await deleteItemDirect(selectedItem);
+  });
+}
 function releaseVideoHandlesForItem(item){
   ["video", "cropVideo", "editPreviewVideo"].forEach(id => {
     const video = $(id);
@@ -5123,6 +5270,9 @@ $("q").addEventListener("keydown", e => { if(e.key==="Enter"){ page=1; load(); s
 ["kind","location","category","keyword"].forEach(id => {
   $(id).addEventListener("change", () => { if(!refreshingOptions) reloadWithOptions(); });
 });
+if($("sort")){
+  $("sort").addEventListener("change", () => { page = 1; load(); saveFilterState(); });
+}
 let searchTimer = null;
 $("q").addEventListener("input", () => {
   clearTimeout(searchTimer);
