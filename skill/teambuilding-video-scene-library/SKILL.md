@@ -831,6 +831,9 @@ Current execution record:
 - If visual classification is unavailable, route low-confidence clips to review instead of forcing a project keyword.
 - A clip that has no reliable bottom subtitle must not be cropped just because weak edges look text-like.
 - Bottom-subtitle crop must keep the maximum usable picture. Use a dynamic margin near the subtitle top, not a fixed large margin.
+- Batch crop is only safe for clips from the same source video or the same stable subtitle template. For a mixed scene library, inspect/detect each clip first; clean clips must be skipped.
+- Plausible bottom subtitles should be a thin bottom band. Large bottom texture blocks, grass slopes, water ripples, roads, or scenery edges must be treated as visual texture, not subtitles.
+- Do not delete original scene clips just because cropped derivatives exist. Original clips can be removed only after a reviewed replacement set is confirmed clean.
 - Treat generated crop outputs as replaceable derivatives. Original scene clips remain the source of truth.
 - When crop rules change, re-run generated crop derivatives with the new rule version instead of trusting old processed records.
 - Small faint sky watermarks such as a channel name can be tested with deep repair, but if STTN/VSR still leaves readable text or obvious smear, do not batch it. For pure sky watermarks, a feathered sky-patch repair may be acceptable after visual comparison.

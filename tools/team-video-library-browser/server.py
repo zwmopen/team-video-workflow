@@ -94,7 +94,7 @@ BATCH_PROGRESS: dict[str, object] = {
 DEFAULT_HEAD_TRIM_SECONDS = 0.08
 BOTTOM_TEXT_MIN_SCORE = 0.03
 TOP_TEXT_MIN_SCORE = 0.025
-CROP_ALGORITHM_VERSION = "crop-v3-conservative-bottom"
+CROP_ALGORITHM_VERSION = "crop-v4-plausible-subtitle"
 
 
 def transcript_supported(item: LibraryItem) -> bool:
@@ -1309,6 +1309,18 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
             black_bar_results.append(bar_detected)
             bar_details.append(bar_detected)
 
+    plausible_text_details = []
+    for detail in text_details:
+        top = float(detail.get("top_pct", 0))
+        bottom = float(detail.get("bottom_pct", 0))
+        span = max(0.0, bottom - top)
+        score = float(detail.get("score", 0))
+        if top >= 84.0 and 0.4 <= span <= 8.0 and score >= BOTTOM_TEXT_MIN_SCORE:
+            plausible_text_details.append(detail)
+    ignored_text_details = [detail for detail in text_details if detail not in plausible_text_details]
+    text_details = plausible_text_details
+    text_candidates = [detail["top_pct"] for detail in text_details]
+
     y_offset = 0.0
     y_reason = ""
     top_text_candidates = [value for value in top_text_candidates if value <= 17.0]
@@ -1352,7 +1364,7 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
                 "reason": reason,
                 "suggested_start": intro_trim.get("suggested_start", 0),
                 "suggested_start_reason": intro_trim.get("reason", ""),
-                "details": {"text": text_details, "watermark": watermark_details, "bars": bar_details},
+                "details": {"text": text_details, "ignored_text": ignored_text_details, "watermark": watermark_details, "bars": bar_details},
             }
         reason = f"未检测到可靠底部字幕，不裁切；低分疑似文字已忽略{y_reason}"
         return {
@@ -1362,7 +1374,7 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
             "no_crop": True,
             "suggested_start": intro_trim.get("suggested_start", 0),
             "suggested_start_reason": intro_trim.get("reason", ""),
-            "details": {"text": text_details, "watermark": watermark_details, "bars": bar_details},
+            "details": {"text": text_details, "ignored_text": ignored_text_details, "watermark": watermark_details, "bars": bar_details},
         }
 
     text_candidates.sort()
@@ -1398,7 +1410,7 @@ def detect_subtitle_crop_rect(item: LibraryItem) -> dict[str, object]:
         "reason": reason,
         "suggested_start": intro_trim.get("suggested_start", 0),
         "suggested_start_reason": intro_trim.get("reason", ""),
-        "details": {"text": text_details, "watermark": watermark_details, "bars": bar_details},
+        "details": {"text": text_details, "ignored_text": ignored_text_details, "watermark": watermark_details, "bars": bar_details},
     }
 
 
