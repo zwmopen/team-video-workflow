@@ -3574,11 +3574,11 @@ INDEX_HTML = r"""<!doctype html>
     .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
     .crop-backdrop { position:fixed; inset:0; z-index:68; display:none; align-items:center; justify-content:center; padding:18px; background:rgba(40,52,66,.28); backdrop-filter:blur(6px); }
     .crop-backdrop.open { display:flex; }
-    .crop-card { width:min(980px, 96vw); max-height:96vh; overflow:auto; display:grid; grid-template-rows:auto minmax(220px, 1fr) auto; gap:12px; border-radius:24px; padding:16px; background:var(--panel); border:1px solid rgba(255,255,255,.78); box-shadow:16px 22px 48px rgba(68,82,98,.32), -10px -10px 24px rgba(255,255,255,.75); }
+    .crop-card { width:min(980px, 96vw); max-height:96vh; overflow:auto; display:grid; grid-template-rows:auto minmax(220px, auto) auto auto; gap:12px; border-radius:24px; padding:16px; background:var(--panel); border:1px solid rgba(255,255,255,.78); box-shadow:16px 22px 48px rgba(68,82,98,.32), -10px -10px 24px rgba(255,255,255,.75); }
     .crop-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
     .crop-head h3 { margin:0; font-size:17px; }
     .crop-tip { margin:5px 0 0; color:var(--muted); font-size:12px; line-height:1.45; }
-    .crop-stage { position:relative; min-height:220px; height:min(62vh, 620px); border-radius:18px; overflow:hidden; background:#111827; display:flex; align-items:center; justify-content:center; box-shadow:inset 4px 4px 10px rgba(0,0,0,.22), inset -3px -3px 9px rgba(255,255,255,.08); }
+    .crop-stage { position:relative; min-height:220px; height:min(54vh, 560px); border-radius:18px; overflow:hidden; background:#111827; display:flex; align-items:center; justify-content:center; box-shadow:inset 4px 4px 10px rgba(0,0,0,.22), inset -3px -3px 9px rgba(255,255,255,.08); }
     .crop-stage video { width:100%; height:100%; max-width:100%; max-height:100%; object-fit:contain; border-radius:0; box-shadow:none; display:block; }
     .crop-layer { position:absolute; pointer-events:none; border:2px solid rgba(48,126,255,.95); background:rgba(48,126,255,.08); box-shadow:0 0 0 9999px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.45) inset; cursor:move; }
     .crop-layer.ready { pointer-events:auto; }
@@ -3587,6 +3587,11 @@ INDEX_HTML = r"""<!doctype html>
     .crop-handle.ne { right:-8px; top:-8px; cursor:nesw-resize; }
     .crop-handle.sw { left:-8px; bottom:-8px; cursor:nesw-resize; }
     .crop-handle.se { right:-8px; bottom:-8px; cursor:nwse-resize; }
+    .crop-edge { position:absolute; border-radius:999px; background:rgba(255,255,255,.92); border:1px solid rgba(48,126,255,.82); box-shadow:0 3px 9px rgba(0,0,0,.16); opacity:.88; }
+    .crop-edge.n { left:24px; right:24px; top:-6px; height:12px; cursor:ns-resize; }
+    .crop-edge.s { left:24px; right:24px; bottom:-6px; height:12px; cursor:ns-resize; }
+    .crop-edge.w { top:24px; bottom:24px; left:-6px; width:12px; cursor:ew-resize; }
+    .crop-edge.e { top:24px; bottom:24px; right:-6px; width:12px; cursor:ew-resize; }
     .crop-toolbar { display:grid; grid-template-columns:minmax(250px, 1fr) auto; align-items:end; gap:10px; }
     .crop-presets, .crop-actions, .crop-layout-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .crop-layout-row { margin-top:8px; }
@@ -3595,7 +3600,7 @@ INDEX_HTML = r"""<!doctype html>
     .crop-readout { color:var(--muted); font-size:12px; }
     .trim-stage { display:grid; grid-template-columns:minmax(220px, 360px) minmax(260px, 1fr); gap:14px; align-items:center; min-height:280px; }
     .trim-stage video { width:100%; max-height:58vh; border-radius:18px; background:#101827; box-shadow:inset 4px 4px 10px rgba(0,0,0,.22); }
-    .trim-panel { display:flex; flex-direction:column; gap:12px; }
+    .trim-panel { display:flex; flex-direction:column; gap:12px; margin-top:4px; padding-top:4px; position:relative; z-index:2; }
     .trim-timeline { position:relative; height:48px; border-radius:18px; background:linear-gradient(180deg, rgba(255,255,255,.56), rgba(232,240,248,.76)); box-shadow:inset 5px 5px 12px rgba(119,137,156,.18), inset -5px -5px 12px rgba(255,255,255,.8); touch-action:none; }
     .trim-selection { position:absolute; top:10px; bottom:10px; border-radius:14px; background:linear-gradient(135deg, rgba(48,126,255,.34), rgba(30,190,145,.28)); border:1px solid rgba(48,126,255,.54); }
     .trim-handle { position:absolute; top:4px; width:18px; height:40px; margin-left:-9px; border-radius:12px; background:#fff; border:1px solid rgba(48,126,255,.72); box-shadow:0 7px 16px rgba(54,78,107,.22); cursor:ew-resize; }
@@ -3918,6 +3923,10 @@ INDEX_HTML = r"""<!doctype html>
     <div class="crop-stage" id="cropStage">
       <video id="cropVideo" muted playsinline></video>
       <div class="crop-layer" id="cropLayer">
+        <span class="crop-edge n" data-handle="n"></span>
+        <span class="crop-edge e" data-handle="e"></span>
+        <span class="crop-edge s" data-handle="s"></span>
+        <span class="crop-edge w" data-handle="w"></span>
         <span class="crop-handle nw" data-handle="nw"></span>
         <span class="crop-handle ne" data-handle="ne"></span>
         <span class="crop-handle sw" data-handle="sw"></span>
@@ -3938,6 +3947,7 @@ INDEX_HTML = r"""<!doctype html>
         <button id="setTrimEndBtn">当前点设为结束</button>
         <button id="resetTrimBtn">重置全片</button>
       </div>
+      <div class="trim-tip" id="trimReadout">保留 00:00.0，从 00:00.0 到 00:00.0。输出到：手动处理</div>
     </div>
     <div class="crop-toolbar">
       <div>
@@ -3945,6 +3955,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="primary" id="detectCropBtn">自动检测字幕线</button>
           <button data-crop-preset="subtitle">裁切废料</button>
           <button data-crop-preset="vertical">9:16竖屏</button>
+          <button data-crop-preset="portrait34">3:4</button>
           <button data-crop-preset="full">全画面</button>
         </div>
         <div class="crop-layout-row">
@@ -4318,7 +4329,7 @@ async function refreshDashboardState(){
         $("rootPath").textContent = s.library_root;
         updateWorkflowHealth(s);
         await refreshOptions();
-        await load();
+        await load({preserveScroll:true});
       }
       dashboardWasRunning = !!p.running;
     }
@@ -4443,9 +4454,12 @@ async function load(){
 }
 async function load(options = {}){
   const append = !!options.append;
+  const preserveScroll = !!options.preserveScroll;
   if(isLoadingItems) return;
   if(!append) page = 1;
   isLoadingItems = true;
+  const pane = document.querySelector("main");
+  const previousScrollTop = pane ? pane.scrollTop : 0;
   try{
     const data = await getJson("/api/items?" + params().toString());
     const items = data.items || [];
@@ -4454,8 +4468,7 @@ async function load(options = {}){
     if(!append){
       currentVisibleItemIds = [];
       grid.innerHTML = "";
-      const pane = document.querySelector("main");
-      if(pane) pane.scrollTop = 0;
+      if(pane && !preserveScroll) pane.scrollTop = 0;
     }
     const incomingIds = items.map(item => item.id);
     currentVisibleItemIds = Array.from(new Set([...currentVisibleItemIds, ...incomingIds]));
@@ -4472,15 +4485,7 @@ async function load(options = {}){
     const renderedCards = [];
     items.forEach(item => {
       if(grid.querySelector(`[data-item-id="${CSS.escape(item.id)}"]`)) return;
-      const card = document.createElement("div");
-      card.className = "card" + (item.id===selectedId ? " selected" : "");
-      card.draggable = true;
-      card.dataset.itemId = item.id;
-      card.innerHTML = `<img class="thumb" draggable="false" loading="lazy" src="${item.thumb}" onerror="thumbFail(this)"><button class="card-more" title="素材操作">...</button><div class="meta"><div class="name">${esc(item.name)}</div><div class="tags">${renderTags(item)}</div></div>`;
-      card.onclick = () => selectItem(item, card);
-      card.querySelector(".card-more").addEventListener("click", e => showCardMenu(e, item, card));
-      card.addEventListener("dragstart", e => { selectItem(item, card); prepareDrag(e, item); });
-      card.addEventListener("contextmenu", e => showCardMenu(e, item, card));
+      const card = createItemCard(item);
       grid.appendChild(card);
       renderedCards.push({item, card});
     });
@@ -4488,13 +4493,83 @@ async function load(options = {}){
     if(!visibleSelection && renderedCards.length){
       selectItem(renderedCards[0].item, renderedCards[0].card);
     }
-    const pane = document.querySelector("main");
     if(hasMoreItems && pane && pane.scrollHeight <= pane.clientHeight + 240){
       setTimeout(loadNextPage, 80);
+    }
+    if(pane && preserveScroll){
+      requestAnimationFrame(() => { pane.scrollTop = previousScrollTop; });
     }
   }finally{
     isLoadingItems = false;
   }
+}
+function createItemCard(item){
+  const card = document.createElement("div");
+  card.className = "card" + (item.id===selectedId ? " selected" : "");
+  card.draggable = true;
+  card.dataset.itemId = item.id;
+  card.innerHTML = `<img class="thumb" draggable="false" loading="lazy" src="${item.thumb}" onerror="thumbFail(this)"><button class="card-more" title="素材操作">...</button><div class="meta"><div class="name">${esc(item.name)}</div><div class="tags">${renderTags(item)}</div></div>`;
+  card.onclick = () => selectItem(item, card);
+  card.querySelector(".card-more").addEventListener("click", e => showCardMenu(e, item, card));
+  card.addEventListener("dragstart", e => { selectItem(item, card); prepareDrag(e, item); });
+  card.addEventListener("contextmenu", e => showCardMenu(e, item, card));
+  return card;
+}
+function updateLoadedCountText(){
+  $("resultCount").textContent = lastTotal;
+  $("hint").textContent = `找到 ${lastTotal} 条素材，已加载 ${currentVisibleItemIds.length} 条`;
+  $("pageText").textContent = hasMoreItems
+    ? `已加载 ${currentVisibleItemIds.length} / 共 ${lastTotal} 条，继续下滑自动加载`
+    : `已全部加载 ${currentVisibleItemIds.length} 条`;
+}
+function replaceItemInView(oldItem, newItem){
+  if(!newItem) return false;
+  const grid = $("grid");
+  const oldId = oldItem && oldItem.id ? oldItem.id : newItem.id;
+  const oldCard = grid ? grid.querySelector(`[data-item-id="${CSS.escape(oldId)}"]`) : null;
+  const pane = document.querySelector("main");
+  const scrollTop = pane ? pane.scrollTop : 0;
+  if(!oldCard) return false;
+  const newCard = createItemCard(newItem);
+  oldCard.replaceWith(newCard);
+  currentVisibleItemIds = currentVisibleItemIds.map(id => id === oldId ? newItem.id : id);
+  selectItem(newItem, newCard, {scrollPreview:false});
+  if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+  return true;
+}
+function insertGeneratedItemNearSource(sourceItem, newItem){
+  if(!newItem) return false;
+  const grid = $("grid");
+  const pane = document.querySelector("main");
+  const scrollTop = pane ? pane.scrollTop : 0;
+  if(!grid) return false;
+  const existing = grid.querySelector(`[data-item-id="${CSS.escape(newItem.id)}"]`);
+  if(existing){
+    selectItem(newItem, existing, {scrollPreview:false});
+    if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+    return true;
+  }
+  const card = createItemCard(newItem);
+  const sourceId = sourceItem && sourceItem.id ? sourceItem.id : selectedId;
+  const sourceCard = sourceId ? grid.querySelector(`[data-item-id="${CSS.escape(sourceId)}"]`) : null;
+  if(sourceCard){
+    sourceCard.insertAdjacentElement("afterend", card);
+  }else{
+    grid.prepend(card);
+  }
+  const sourceIndex = currentVisibleItemIds.indexOf(sourceId);
+  if(sourceIndex >= 0){
+    currentVisibleItemIds.splice(sourceIndex + 1, 0, newItem.id);
+  }else{
+    currentVisibleItemIds.unshift(newItem.id);
+  }
+  currentVisibleItemIds = Array.from(new Set(currentVisibleItemIds));
+  lastTotal = Number(lastTotal || 0) + 1;
+  hasMoreItems = currentVisibleItemIds.length < lastTotal;
+  updateLoadedCountText();
+  selectItem(newItem, card, {scrollPreview:false});
+  if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+  return true;
 }
 function renderTags(item){
   const tags = [item.process_tag, item.kind, item.location, item.keyword || item.category, ...(item.user_tags || [])].filter(Boolean);
@@ -4997,7 +5072,7 @@ function formatSeconds(value){
   const s = Math.floor(v % 60);
   return `${m}:${String(s).padStart(2,"0")}`;
 }
-function selectItem(item, card){
+function selectItem(item, card, options = {}){
   selectedId = item.id; selectedItem = item; document.querySelectorAll(".card").forEach(c=>c.classList.remove("selected"));
   if(card) card.classList.add("selected");
   const video = $("video");
@@ -5006,7 +5081,9 @@ function selectItem(item, card){
   setFastVideoSource(video, item, {muted:!audioWanted, autoplay:true});
   $("detail").innerHTML = `<b>${esc(item.name)}</b><br>${esc(item.process_tag || "")} / ${esc(item.kind)} / ${esc(item.location)} / ${esc(item.category)} / ${esc(item.keyword)}<br>${item.size_mb} MB<br>${esc(item.path)}`;
   updateTranscriptButton(item);
-  document.querySelector(".preview").scrollIntoView({block:"nearest", behavior:"smooth"});
+  if(options.scrollPreview !== false){
+    document.querySelector(".preview").scrollIntoView({block:"nearest", behavior:"smooth"});
+  }
 }
 function updateTranscriptButton(item){
   const btn = $("copyTranscriptBtn");
@@ -5263,10 +5340,10 @@ function setCropPreset(preset){
   cropState.preset = preset;
   if(preset === "full"){
     cropState.rect = {x:0,y:0,w:100,h:100};
-  }else if(preset === "vertical"){
+  }else if(preset === "vertical" || preset === "portrait34"){
     const vw = video.videoWidth || 9;
     const vh = video.videoHeight || 16;
-    const target = 9 / 16;
+    const target = preset === "portrait34" ? 3 / 4 : 9 / 16;
     const current = vw / vh;
     if(current > target){
       const w = Math.max(5, Math.min(100, target / current * 100));
@@ -5364,6 +5441,7 @@ function fmtPct(value){
 }
 async function applyManualCrop(){
   if(!selectedItem) return;
+  const sourceItem = selectedItem;
   const rect = normalizeCropRect(cropState.rect);
   $("cropApply").disabled = true;
   $("cropApply").textContent = "输出中...";
@@ -5374,13 +5452,13 @@ async function applyManualCrop(){
       await showMessage("输出新素材失败", result.error || "输出新素材失败");
       return;
     }
-    if(result.item){
-      selectedId = result.item.id;
-      selectedItem = result.item;
-    }
     closeCropEditor();
     await refreshOptions();
-    await load();
+    if(result.item){
+      insertGeneratedItemNearSource(sourceItem, result.item);
+    }else{
+      await load({preserveScroll:true});
+    }
     if(result.item){
       $("detail").innerHTML = `<b>${esc(result.item.name)}</b><br>${esc(result.item.kind)} / ${esc(result.item.location)} / ${esc(result.item.category)} / ${esc(result.item.keyword)}<br>${result.item.size_mb} MB<br>已输出新素材<br>${esc(result.item.path)}`;
     }
@@ -5462,8 +5540,9 @@ function setTrimBoundary(which){
   renderTrimTimeline();
 }
 function resetTrimRange(){
-  trimState.start = trimState.duration > 0.3 ? 0.08 : 0;
+  trimState.start = 0;
   trimState.end = trimState.duration || 0;
+  $("cropVideo").currentTime = 0;
   renderTrimTimeline();
 }
 function clampTime(value, min, max){
@@ -5554,6 +5633,7 @@ async function showMessage(title, body){
   await openModal({title, body, input:false, okText:"知道了"});
 }
 async function renameItem(item){
+  const sourceItem = item;
   const dot = item.name.lastIndexOf(".");
   const stem = dot > 0 ? item.name.slice(0, dot) : item.name;
   const suffix = dot > 0 ? item.name.slice(dot) : "";
@@ -5579,7 +5659,10 @@ async function renameItem(item){
   }
   selectedItem = result.item;
   selectedId = result.item.id;
-  await load();
+  await refreshOptions();
+  if(!replaceItemInView(sourceItem, result.item)){
+    await load({preserveScroll:true});
+  }
   $("detail").innerHTML = `<b>${esc(result.item.name)}</b><br>${esc(result.item.kind)} / ${esc(result.item.location)} / ${esc(result.item.category)} / ${esc(result.item.keyword)}<br>${result.item.size_mb} MB<br>${esc(result.item.path)}`;
 }
 async function addTag(item){
@@ -5597,7 +5680,10 @@ async function addTag(item){
     return;
   }
   selectedItem = result.item;
-  await load();
+  await refreshOptions();
+  if(!replaceItemInView(item, result.item)){
+    await load({preserveScroll:true});
+  }
 }
 async function cropSubtitleTop(item){
   const keep = await openModal({
@@ -5629,11 +5715,9 @@ async function cropSubtitleTop(item){
     return;
   }
   if(result.item){
-    selectedId = result.item.id;
-    selectedItem = result.item;
+    insertGeneratedItemNearSource(item, result.item);
   }
   await refreshOptions();
-  await load();
   if(result.item){
     $("detail").innerHTML = `<b>${esc(result.item.name)}</b><br>${esc(result.item.kind)} / ${esc(result.item.location)} / ${esc(result.item.category)} / ${esc(result.item.keyword)}<br>${result.item.size_mb} MB<br>已生成裁切废料版<br>${esc(result.item.path)}`;
   }
@@ -5813,12 +5897,12 @@ function bindBatchCropUi(){
   $("batchCropClose").addEventListener("click", closeBatchCrop);
   $("batchCropBackdrop").addEventListener("click", e => { if(e.target.id === "batchCropBackdrop") closeBatchCrop(); });
   $("batchStopBtn").addEventListener("click", stopBatchCrop);
-  $("batchRefreshBtn").addEventListener("click", async () => { await refreshOptions(); await load(); closeBatchCrop(); });
+  $("batchRefreshBtn").addEventListener("click", async () => { await refreshOptions(); await load({preserveScroll:true}); closeBatchCrop(); });
 
   $("batchTranscribeClose").addEventListener("click", closeBatchTranscribe);
   $("batchTranscribeBackdrop").addEventListener("click", e => { if(e.target.id === "batchTranscribeBackdrop") closeBatchTranscribe(); });
   $("batchTranscribeStopBtn").addEventListener("click", stopBatchTranscribe);
-  $("batchTranscribeRefreshBtn").addEventListener("click", async () => { await refreshOptions(); await load(); closeBatchTranscribe(); });
+  $("batchTranscribeRefreshBtn").addEventListener("click", async () => { await refreshOptions(); await load({preserveScroll:true}); closeBatchTranscribe(); });
 }
 let batchPollTimer = null;
 function openBatchProcess(){
