@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
+import csv
 import hashlib
 import json
 import mimetypes
@@ -78,6 +79,7 @@ class LibraryItem:
 
 ITEMS: list[LibraryItem] = []
 ITEM_BY_ID: dict[str, LibraryItem] = {}
+PACKAGE_MEDIA_BY_ID: dict[str, Path] = {}
 WHISPER_MODEL = None
 USER_TAGS: dict[str, list[str]] = {}
 
@@ -168,7 +170,9 @@ def scan_library() -> None:
             # to avoid double-counting against the canonical 已整理原片音频 library.
             continue
         elif folder.name == SMART_MATCH_PACK_ROOT.name:
-            add_delivery_videos(folder)
+            # 智能剪辑初剪库是“项目包”，不是素材整理里的普通片段。
+            # 由智能剪辑页通过 /api/match-pack 单独读取，避免污染素材筛选。
+            continue
         elif folder.name.startswith(DELIVERY_FOLDER_PREFIXES) or folder.name.endswith(DELIVERY_FOLDER_SUFFIXES):
             add_delivery_videos(folder)
 
@@ -324,6 +328,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/match-audio/"):
             self.match_audio(path.removeprefix("/api/match-audio/"))
             return
+        if path.startswith("/api/match-pack/"):
+            self.match_pack(path.removeprefix("/api/match-pack/"))
+            return
         if path.startswith("/api/match-output-folder/"):
             self.open_match_output_folder(path.removeprefix("/api/match-output-folder/"))
             return
@@ -338,6 +345,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/media/"):
             self.send_media(path.removeprefix("/media/"))
+            return
+        if path.startswith("/package-media/"):
+            self.send_package_media(path.removeprefix("/package-media/"))
             return
         if path.startswith("/preview/"):
             self.send_preview(path.removeprefix("/preview/"))
@@ -430,7 +440,24 @@ class Handler(BaseHTTPRequestHandler):
     def send_thumbnail(self, item_id: str) -> None:
         item = ITEM_BY_ID.get(item_id)
         if not item:
-            self.send_error(404)
+            package_path = PACKAGE_MEDIA_BY_ID.get(item_id)
+            if not package_path:
+                self.send_error(404)
+                return
+            thumb = CACHE_ROOT / f"{item_id}.jpg"
+            try:
+                source_mtime = package_path.stat().st_mtime
+                thumb_stale = thumb.exists() and thumb.stat().st_mtime < source_mtime
+            except OSError:
+                thumb_stale = False
+            if thumb_stale:
+                thumb.unlink(missing_ok=True)
+            if not thumb.exists():
+                make_thumbnail(package_path, thumb)
+            if not thumb.exists():
+                self.send_error(404)
+                return
+            self.send_file(thumb, "image/jpeg")
             return
         if is_audio_path(item.path):
             self.send_audio_thumbnail(item)
@@ -457,6 +484,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         self.send_file(Path(item.path), mimetypes.guess_type(item.path)[0] or "video/mp4", range_enabled=True)
+
+    def send_package_media(self, item_id: str) -> None:
+        path = PACKAGE_MEDIA_BY_ID.get(item_id)
+        if not path or not path.exists():
+            self.send_error(404)
+            return
+        self.send_file(path, mimetypes.guess_type(str(path))[0] or "video/mp4", range_enabled=True)
 
     def send_preview(self, item_id: str) -> None:
         item = ITEM_BY_ID.get(item_id)
@@ -547,6 +581,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self.send_json({"ok": True, **build_audio_match_plan(item)})
+        except Exception as exc:
+            self.send_json({"ok": False, "error": str(exc)})
+
+    def match_pack(self, item_id: str) -> None:
+        item = ITEM_BY_ID.get(item_id)
+        if not item:
+            self.send_json({"ok": False, "error": "音频素材不存在，可能需要刷新素材索引"})
+            return
+        if item.kind != "原片音频素材" and not is_audio_path(item.path):
+            self.send_json({"ok": False, "error": "请选择原片音频素材"})
+            return
+        try:
+            folder = find_match_output_folder(item)
+            if not folder:
+                self.send_json({
+                    "ok": True,
+                    "found": False,
+                    "audio": public_item(item),
+                    "message": "还没有找到这条音频对应的初剪素材包。点击“复制任务给 Codex”生成后再回来刷新。",
+                })
+                return
+            self.send_json({"ok": True, "found": True, **build_match_pack_payload(item, folder)})
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)})
 
@@ -3384,28 +3440,61 @@ def match_folder_token(value: str) -> str:
     return re.sub(r"[\s_\\/\-（）()【】\[\]#＃，。,.!！?？|｜·]+", "", text).lower()
 
 
+def package_media_url(path: Path) -> str:
+    item_id = "pkg_" + stable_id(path)
+    PACKAGE_MEDIA_BY_ID[item_id] = path
+    return f"/package-media/{quote(item_id)}"
+
+
+def read_text_if_exists(path: Path, limit: int | None = None) -> str:
+    if not path.exists():
+        return ""
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            text = path.read_text(encoding=encoding, errors="ignore")
+            return text[:limit] if limit else text
+        except Exception:
+            continue
+    return ""
+
+
+def match_folder_score(folder: Path, audio_item: LibraryItem) -> int:
+    audio_stem = Path(audio_item.path).stem
+    token = match_folder_token(audio_stem)
+    name_token = match_folder_token(folder.name)
+    location = audio_item.location or infer_location_from_name(audio_stem)
+    score = 0
+    if token and (token in name_token or name_token in token):
+        score += 120
+    elif token and len(token) >= 12:
+        windows = {token[:12], token[:16], token[:20]}
+        if any(part and part in name_token for part in windows):
+            score += 70
+    if location and location in folder.name:
+        score += 25
+    if (folder / "summary.json").exists():
+        summary_text = read_text_if_exists(folder / "summary.json", limit=6000)
+        if audio_stem and audio_stem in summary_text:
+            score += 160
+        elif token and token[:12] and token[:12] in match_folder_token(summary_text):
+            score += 80
+    if (folder / "配镜表.csv").exists() or (folder / "rough_cut_preview.mp4").exists():
+        score += 30
+    if (folder / "jianying_pack").exists() or (folder / "02_粗剪成品" / "jianying_pack").exists():
+        score += 15
+    if (folder / "rough_cut.mp4").exists() or (folder / "02_粗剪成品" / "rough_cut.mp4").exists():
+        score += 10
+    return score
+
+
 def find_match_output_folder(audio_item: LibraryItem) -> Path | None:
     if not SMART_MATCH_PACK_ROOT.exists():
         return None
-    audio_stem = Path(audio_item.path).stem
-    token = match_folder_token(audio_stem)
-    location = audio_item.location or infer_location_from_name(audio_stem)
     scored: list[tuple[int, float, Path]] = []
     for folder in SMART_MATCH_PACK_ROOT.iterdir():
         if not folder.is_dir():
             continue
-        name_token = match_folder_token(folder.name)
-        score = 0
-        if token and (token in name_token or name_token in token):
-            score += 100
-        elif token and len(token) >= 12 and token[:12] in name_token:
-            score += 60
-        if location and location in folder.name:
-            score += 20
-        if (folder / "jianying_pack").exists() or (folder / "02_粗剪成品" / "jianying_pack").exists():
-            score += 10
-        if (folder / "rough_cut.mp4").exists() or (folder / "02_粗剪成品" / "rough_cut.mp4").exists():
-            score += 8
+        score = match_folder_score(folder, audio_item)
         if score >= 60:
             try:
                 mtime = folder.stat().st_mtime
@@ -3416,6 +3505,163 @@ def find_match_output_folder(audio_item: LibraryItem) -> Path | None:
         return None
     scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
     return scored[0][2]
+
+
+def parse_match_pack_rows(folder: Path) -> list[dict[str, str]]:
+    csv_path = folder / "配镜表.csv"
+    if not csv_path.exists():
+        return []
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            with csv_path.open("r", encoding=encoding, errors="ignore", newline="") as handle:
+                return [dict(row) for row in csv.DictReader(handle)]
+        except Exception:
+            continue
+    return []
+
+
+def numbered_pack_clips(folder: Path) -> list[Path]:
+    clips = []
+    for path in sorted(folder.glob("*.mp4")):
+        if path.name.lower() == "rough_cut_preview.mp4":
+            continue
+        if re.match(r"^\d{3}_", path.name):
+            clips.append(path)
+    pack_dir = folder / "01_按顺序拖入剪映"
+    if pack_dir.exists():
+        for path in sorted(pack_dir.glob("*.mp4")):
+            if re.match(r"^\d{2,3}_", path.name):
+                clips.append(path)
+    return clips
+
+
+def package_clip_payload(path: Path, location: str, row: dict[str, str] | None = None) -> dict[str, object]:
+    item_id = "pkg_" + stable_id(path)
+    PACKAGE_MEDIA_BY_ID[item_id] = path
+    name = path.name
+    keyword = ""
+    if row:
+        keyword = row.get("visual_need") or row.get("关键词") or row.get("匹配画面") or ""
+    if not keyword:
+        stem = re.sub(r"^\d+_", "", path.stem)
+        keyword = stem.split("__", 1)[0].replace("_", " ")[:40]
+    try:
+        thumb_version = int(path.stat().st_mtime)
+        size_mb = round(path.stat().st_size / 1024 / 1024, 2)
+    except OSError:
+        thumb_version = 0
+        size_mb = 0
+    return {
+        "id": item_id,
+        "kind": "初剪素材包",
+        "location": location,
+        "category": "已选画面",
+        "keyword": keyword,
+        "name": name,
+        "path": str(path),
+        "size_mb": size_mb,
+        "thumb": f"/thumb/{quote(item_id)}.jpg?v={thumb_version}",
+        "media": package_media_url(path),
+        "preview_media": package_media_url(path),
+        "mime": mimetypes.guess_type(str(path))[0] or "video/mp4",
+        "file_uri": path.as_uri(),
+    }
+
+
+def build_match_pack_payload(audio_item: LibraryItem, folder: Path) -> dict[str, object]:
+    rows = parse_match_pack_rows(folder)
+    clips = numbered_pack_clips(folder)
+    clip_by_seq = {}
+    for clip in clips:
+        match = re.match(r"^(\d{2,3})_", clip.name)
+        if match:
+            clip_by_seq.setdefault(int(match.group(1)), []).append(clip)
+
+    location = audio_item.location or infer_location_from_name(folder.name)
+    beats_by_key: dict[str, dict[str, object]] = {}
+    if rows:
+        for idx, row in enumerate(rows, 1):
+            raw_index = row.get("beat") or row.get("beat_index") or row.get("台词序号") or row.get("index") or str(idx)
+            try:
+                beat_index = int(float(raw_index))
+            except Exception:
+                beat_index = idx
+            key = str(beat_index)
+            beat = beats_by_key.setdefault(key, {
+                "index": beat_index,
+                "start": row.get("start") or row.get("开始") or "",
+                "end": row.get("end") or row.get("结束") or "",
+                "text": row.get("line") or row.get("text") or row.get("台词") or "",
+                "visual_need": row.get("visual_need") or row.get("画面需求") or row.get("关键词") or "",
+                "reason": row.get("reason") or row.get("匹配理由") or row.get("说明") or "",
+                "clips": [],
+            })
+            selected_path_text = row.get("selected_clip") or row.get("selected_path") or row.get("素材路径") or row.get("path") or ""
+            selected_path = Path(selected_path_text) if selected_path_text else None
+            try:
+                seq = int(float(row.get("seq") or 0))
+            except Exception:
+                seq = 0
+            if seq <= 0:
+                seq = len([b for b in beats_by_key.values() for _ in b.get("clips", [])]) + 1
+            seq_match = re.search(r"(\d{3})_", Path(selected_path_text).name if selected_path_text else "")
+            if seq_match:
+                seq = int(seq_match.group(1))
+            if selected_path and selected_path.exists():
+                clip_path = selected_path
+            else:
+                clip_path = (clip_by_seq.get(seq) or [None])[0]
+            if clip_path and clip_path.exists():
+                beat["clips"].append(package_clip_payload(clip_path, location, row))
+
+    if not beats_by_key and clips:
+        for index, clip in enumerate(clips, 1):
+            beats_by_key[str(index)] = {
+                "index": index,
+                "start": "",
+                "end": "",
+                "text": f"素材 {index}",
+                "visual_need": "",
+                "reason": "未找到配镜表，按编号素材展示。",
+                "clips": [package_clip_payload(clip, location)],
+            }
+
+    used_paths = {clip["path"] for beat in beats_by_key.values() for clip in beat.get("clips", [])}
+    for clip in clips:
+        if str(clip) in used_paths:
+            continue
+        index = len(beats_by_key) + 1
+        beats_by_key[str(index)] = {
+            "index": index,
+            "start": "",
+            "end": "",
+            "text": "未归属台词素材",
+            "visual_need": "",
+            "reason": "素材包里有编号素材，但配镜表没有对应记录。",
+            "clips": [package_clip_payload(clip, location)],
+        }
+
+    preview = folder / "rough_cut_preview.mp4"
+    if not preview.exists():
+        preview = folder / "rough_cut.mp4"
+    audio_files = [p for p in sorted(folder.iterdir()) if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
+    transcript_text = read_text_if_exists(folder / "文案_带时间戳.txt") or read_text_if_exists(folder / "文案.txt")
+    return {
+        "audio": public_item(audio_item),
+        "folder": str(folder),
+        "title": folder.name,
+        "preview_media": package_media_url(preview) if preview.exists() else "",
+        "audio_media": package_media_url(audio_files[0]) if audio_files else public_item(audio_item).get("media", ""),
+        "transcript_text": transcript_text,
+        "beats": sorted(beats_by_key.values(), key=lambda beat: int(beat.get("index") or 0)),
+        "files": {
+            "csv": str(folder / "配镜表.csv") if (folder / "配镜表.csv").exists() else "",
+            "script": str(folder / "文案.txt") if (folder / "文案.txt").exists() else "",
+            "timed_script": str(folder / "文案_带时间戳.txt") if (folder / "文案_带时间戳.txt").exists() else "",
+            "report": str(folder / "质检报告.md") if (folder / "质检报告.md").exists() else "",
+            "preview": str(preview) if preview.exists() else "",
+        },
+    }
 
 
 def build_audio_match_plan(audio_item: LibraryItem) -> dict[str, object]:
@@ -3930,7 +4176,6 @@ INDEX_HTML = r"""<!doctype html>
             <button class="primary" id="timelinePlayBtn">合并播放</button>
             <button id="timelineCropBtn">裁剪切割</button>
             <button id="matchOpenPackBtn">打开素材包</button>
-            <button data-preset-kind="成品粗剪">查看成品区</button>
           </div>
           <div id="matchStatus" class="path">等待选择素材。</div>
           <div id="editDetail" class="match-copy">选中左侧画面后，这里显示当前素材、对应台词和路径。</div>
@@ -4127,6 +4372,7 @@ let matchAudioItems = [];
 let selectedMatchAudio = null;
 let selectedMatchClip = null;
 let currentMatchPlan = null;
+let currentMatchPack = null;
 let editTimeline = [];
 let selectedTimelineIndex = -1;
 let timelineDragClip = null;
@@ -4832,15 +5078,41 @@ function renderAudioList(){
 function selectMatchAudio(item){
   selectedMatchAudio = item;
   renderAudioList();
-  $("matchCopy").textContent = `文案来源：同名 TXT / 本地缓存优先\n台词段落：等待 Codex 读取并生成初剪素材包`;
-  $("matchStatus").textContent = "等待 Codex Skill 生成初剪素材包";
+  $("matchCopy").textContent = `文案来源：同名 TXT / 本地缓存优先\n台词段落：正在查找本条音频对应的初剪素材包`;
+  $("matchStatus").textContent = "正在读取初剪素材包";
   currentMatchPlan = null;
+  currentMatchPack = null;
   editTimeline = [];
   selectedTimelineIndex = -1;
   selectedMatchClip = null;
   const shelf = $("clipShelf");
-  if(shelf) shelf.innerHTML = '<div class="empty">这里不自动匹配，也不显示本地候选。点击“复制任务给 Codex”，我会在对话里按 Skill 生成编号初剪素材包。</div>';
+  if(shelf) shelf.innerHTML = '<div class="empty">正在查找 Codex 已生成的初剪素材包...</div>';
   renderEditTimeline();
+  loadMatchPackForSelected();
+}
+async function loadMatchPackForSelected(){
+  if(!selectedMatchAudio) return;
+  const audioId = selectedMatchAudio.id;
+  try{
+    const data = await getJson("/api/match-pack/" + encodeURIComponent(audioId));
+    if(!selectedMatchAudio || selectedMatchAudio.id !== audioId) return;
+    if(!data.ok){
+      $("matchStatus").textContent = data.error || "初剪素材包读取失败";
+      $("clipShelf").innerHTML = '<div class="empty">初剪素材包读取失败。可以重新复制任务给 Codex。</div>';
+      return;
+    }
+    if(!data.found){
+      currentMatchPack = null;
+      $("matchCopy").textContent = `文案来源：等待 Codex 生成\n台词段落：还没有找到本条音频对应的初剪素材包`;
+      $("matchStatus").textContent = data.message || "还没有找到初剪素材包";
+      $("clipShelf").innerHTML = '<div class="empty">这里不做本地假智能匹配。点击“复制任务给 Codex”，在对话里生成编号初剪素材包后，再回到这里刷新。</div>';
+      return;
+    }
+    renderMatchPack(data);
+  }catch(err){
+    $("matchStatus").textContent = "初剪素材包读取失败";
+    $("clipShelf").innerHTML = '<div class="empty">初剪素材包读取失败。可以刷新后再试。</div>';
+  }
 }
 async function copySmartMatchPrompt(){
   if(!selectedMatchAudio){
@@ -4890,6 +5162,69 @@ async function startMatchAudio(){
   $("matchStatus").textContent = "本地匹配已关闭";
   $("clipShelf").innerHTML = '<div class="empty">本地不会自动生成候选。请复制任务给 Codex，由 AI 大模型选择素材。</div>';
   await showMessage("本地匹配已关闭", "这个环节需要 Codex/视觉 AI 参与判断。请点击“复制任务给 Codex”，把任务发到对话窗口。");
+}
+function renderMatchPack(pack){
+  currentMatchPack = pack;
+  currentMatchPlan = null;
+  editTimeline = [];
+  selectedTimelineIndex = -1;
+  selectedMatchClip = null;
+  const beats = pack.beats || [];
+  const shelf = $("clipShelf");
+  shelf.innerHTML = "";
+  beats.forEach(beat => {
+    const clips = beat.clips || [];
+    clips.forEach((clip, partIndex) => {
+      editTimeline.push(makeTimelineEntry(clip, beat, partIndex, Math.max(1, clips.length)));
+    });
+    shelf.appendChild(renderPackBeatGroup(beat));
+  });
+  if(!beats.length){
+    shelf.innerHTML = '<div class="empty">已找到素材包，但里面没有可展示的配镜记录。</div>';
+  }
+  const audio = $("matchAudioPlayer");
+  if(audio){
+    audio.src = pack.audio_media || (pack.audio && pack.audio.media) || "";
+    audio.load();
+  }
+  $("matchCopy").textContent = `文案来源：已读取本地初剪素材包\n台词段落：${beats.length} 段 / 画面 ${editTimeline.length} 个`;
+  $("matchStatus").textContent = `已读取：${pack.title || "初剪素材包"}`;
+  const preview = $("editPreviewVideo");
+  if(preview && pack.preview_media){
+    preview.pause();
+    preview.src = pack.preview_media;
+    preview.muted = false;
+    preview.load();
+  }else if(editTimeline[0]){
+    previewEditClip(editTimeline[0].clip, null, editTimeline[0]);
+  }
+  if(editTimeline[0]){
+    selectedTimelineIndex = 0;
+    selectedMatchClip = editTimeline[0].clip;
+  }
+  const detail = $("editDetail");
+  if(detail){
+    detail.textContent = `当前素材包：${pack.folder || ""}\n配镜表：${pack.files && pack.files.csv ? pack.files.csv : "未找到"}\n质检报告：${pack.files && pack.files.report ? pack.files.report : "未找到"}`;
+  }
+}
+function renderPackBeatGroup(beat){
+  const group = document.createElement("div");
+  group.className = "beat-group";
+  const clips = beat.clips || [];
+  group.innerHTML = `
+    <div class="beat-head"><strong>台词 ${beat.index || ""}</strong><span>${timeRange(beat.start, beat.end)} · 已选 ${clips.length} 个画面</span></div>
+    <p class="beat-line">${esc(beat.text || "无台词")}</p>
+    <p class="beat-reason">${esc(beat.visual_need || beat.reason || "")}</p>
+    <div class="beat-clips"></div>
+  `;
+  const box = group.querySelector(".beat-clips");
+  clips.forEach((clip, index) => {
+    box.appendChild(renderClipMini(clip, beat, index, true));
+  });
+  if(!clips.length){
+    box.innerHTML = '<div class="empty">这一句没有已选画面。</div>';
+  }
+  return group;
 }
 function renderMatchPlan(plan){
   const beats = plan.beats || [];
@@ -5058,6 +5393,35 @@ function renderAudioTrack(){
   track.innerHTML = `<div class="audio-track-chip">🎙 ${esc(selectedMatchAudio.name)} · ${esc(selectedMatchAudio.location)} · ${selectedMatchAudio.size_mb} MB</div>`;
 }
 async function playTimelineSequence(){
+  if(currentMatchPack && currentMatchPack.preview_media){
+    const video = $("editPreviewVideo");
+    if(timelineIsPlaying){
+      timelineIsPlaying = false;
+      timelinePlayToken++;
+      $("timelinePlayBtn").textContent = "合并播放";
+      if(video) video.pause();
+      $("matchStatus").textContent = "已停止合并播放";
+      return;
+    }
+    timelineIsPlaying = true;
+    timelinePlayToken++;
+    $("timelinePlayBtn").textContent = "停止播放";
+    if(video){
+      if(video.src !== currentMatchPack.preview_media) video.src = currentMatchPack.preview_media;
+      video.muted = false;
+      video.currentTime = 0;
+      video.load();
+      const p = video.play();
+      if(p && typeof p.catch === "function") p.catch(() => {});
+      video.onended = () => {
+        timelineIsPlaying = false;
+        $("timelinePlayBtn").textContent = "合并播放";
+        $("matchStatus").textContent = "合并播放完成";
+      };
+    }
+    $("matchStatus").textContent = "正在合并播放初剪预览";
+    return;
+  }
   if(!editTimeline.length){
     await showMessage("还没有初筛素材", "先选择一条音频，让系统读取它对应的初筛素材。");
     return;
