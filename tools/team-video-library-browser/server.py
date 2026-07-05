@@ -32,6 +32,7 @@ NATIVE_BROWSER_LAUNCHER = Path(r"D:\AICode\AI\tools\team-video-library-browser\�
 JH_TOOLS_ROOT = Path(r"D:\Program Files\江湖工具箱\MinApp")
 JH_TOOLBOX_MAIN = Path(r"D:\Program Files\江湖工具箱\江湖工具箱.exe")
 AUDIO_LIBRARY_ROOT = LIBRARY_ROOT / "已整理原片音频"
+SMART_MATCH_PACK_ROOT = LIBRARY_ROOT / "智能剪辑初剪库"
 
 VSR_CLEAN_SCRIPT = Path(r"C:\Users\z\.codex\skills\teambuilding-video-scene-library\scripts\vsr_clean.ps1")
 
@@ -166,6 +167,8 @@ def scan_library() -> None:
             # Legacy audio libraries are kept on disk but hidden from the main workflow
             # to avoid double-counting against the canonical 已整理原片音频 library.
             continue
+        elif folder.name == SMART_MATCH_PACK_ROOT.name:
+            add_delivery_videos(folder)
         elif folder.name.startswith(DELIVERY_FOLDER_PREFIXES) or folder.name.endswith(DELIVERY_FOLDER_SUFFIXES):
             add_delivery_videos(folder)
 
@@ -320,6 +323,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/match-audio/"):
             self.match_audio(path.removeprefix("/api/match-audio/"))
+            return
+        if path.startswith("/api/match-output-folder/"):
+            self.open_match_output_folder(path.removeprefix("/api/match-output-folder/"))
             return
         if path == "/api/crop-layouts":
             self.send_json({"ok": True, "layouts": load_crop_layouts()})
@@ -541,6 +547,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self.send_json({"ok": True, **build_audio_match_plan(item)})
+        except Exception as exc:
+            self.send_json({"ok": False, "error": str(exc)})
+
+    def open_match_output_folder(self, item_id: str) -> None:
+        item = ITEM_BY_ID.get(item_id)
+        if not item:
+            self.send_json({"ok": False, "error": "音频素材不存在，可能需要刷新素材索引"})
+            return
+        folder = find_match_output_folder(item)
+        is_specific = folder is not None
+        target = folder or SMART_MATCH_PACK_ROOT
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(["explorer", str(target)], close_fds=True)
+            self.send_json({
+                "ok": True,
+                "path": str(target),
+                "specific": is_specific,
+                "message": "已打开本条音频对应的初剪素材包" if is_specific else "还没有找到本条音频的初剪素材包，已打开智能剪辑初剪库根目录",
+            })
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)})
 
@@ -3352,6 +3378,46 @@ MATCH_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+def match_folder_token(value: str) -> str:
+    text = re.sub(r"^\d+[_\-\s]+", "", value or "")
+    text = re.sub(r"\.[^.]+$", "", text)
+    return re.sub(r"[\s_\\/\-（）()【】\[\]#＃，。,.!！?？|｜·]+", "", text).lower()
+
+
+def find_match_output_folder(audio_item: LibraryItem) -> Path | None:
+    if not SMART_MATCH_PACK_ROOT.exists():
+        return None
+    audio_stem = Path(audio_item.path).stem
+    token = match_folder_token(audio_stem)
+    location = audio_item.location or infer_location_from_name(audio_stem)
+    scored: list[tuple[int, float, Path]] = []
+    for folder in SMART_MATCH_PACK_ROOT.iterdir():
+        if not folder.is_dir():
+            continue
+        name_token = match_folder_token(folder.name)
+        score = 0
+        if token and (token in name_token or name_token in token):
+            score += 100
+        elif token and len(token) >= 12 and token[:12] in name_token:
+            score += 60
+        if location and location in folder.name:
+            score += 20
+        if (folder / "jianying_pack").exists() or (folder / "02_粗剪成品" / "jianying_pack").exists():
+            score += 10
+        if (folder / "rough_cut.mp4").exists() or (folder / "02_粗剪成品" / "rough_cut.mp4").exists():
+            score += 8
+        if score >= 60:
+            try:
+                mtime = folder.stat().st_mtime
+            except OSError:
+                mtime = 0
+            scored.append((score, mtime, folder))
+    if not scored:
+        return None
+    scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+    return scored[0][2]
+
+
 def build_audio_match_plan(audio_item: LibraryItem) -> dict[str, object]:
     transcript = transcript_for_item(audio_item)
     beats = transcript_to_beats(transcript)
@@ -3846,6 +3912,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="preview-actions">
             <button class="primary" id="timelinePlayBtn">合并播放</button>
             <button id="timelineCropBtn">裁剪切割</button>
+            <button id="matchOpenPackBtn">打开素材包</button>
           </div>
           <div id="matchStatus" class="path">等待选择素材。</div>
         </section>
@@ -4700,6 +4767,7 @@ function bindMatchUi(){
   }
   if($("timelinePlayBtn")) $("timelinePlayBtn").addEventListener("click", playTimelineSequence);
   if($("timelineCropBtn")) $("timelineCropBtn").addEventListener("click", cropSelectedTimelineClip);
+  if($("matchOpenPackBtn")) $("matchOpenPackBtn").addEventListener("click", openMatchOutputFolder);
 }
 async function loadMatchAudioItems(){
   const shelf = $("clipShelf");
@@ -4979,6 +5047,38 @@ async function cropSelectedTimelineClip(){
     return;
   }
   openCropEditor(clip, "subtitle");
+}
+async function openMatchOutputFolder(){
+  if(!selectedMatchAudio){
+    await showMessage("还没选音频", "先在左侧选择一条原片音频。");
+    return;
+  }
+  const btn = $("matchOpenPackBtn");
+  const oldText = btn ? btn.textContent : "";
+  if(btn){
+    btn.disabled = true;
+    btn.textContent = "打开中...";
+  }
+  try{
+    const data = await getJson("/api/match-output-folder/" + encodeURIComponent(selectedMatchAudio.id));
+    if(!data.ok){
+      await showMessage("打开失败", data.error || "打开素材包失败");
+      return;
+    }
+    $("matchStatus").textContent = data.message || "已打开素材包";
+    if(!data.specific){
+      $("matchCopy").textContent = `还没有找到本条音频对应的初剪素材包。\n\n已打开：${data.path}\n\n下一步：点击“复制配镜提示词”，把任务发给 Codex。生成后这里会打开对应素材包；你也可以把编号素材直接拖进剪映。`;
+    }else{
+      $("matchCopy").textContent = `已打开本条音频对应的初剪素材包：\n${data.path}\n\n用法：打开剪映后，把素材包里的编号视频按顺序拖进媒体区或时间线。`;
+    }
+  }catch(err){
+    await showMessage("打开失败", String(err));
+  }finally{
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = oldText || "打开素材包";
+    }
+  }
 }
 async function removeSelectedTimelineClip(){
   if(!selectedTimelineEntry()){
