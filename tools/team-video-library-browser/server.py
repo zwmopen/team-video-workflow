@@ -3683,8 +3683,6 @@ INDEX_HTML = r"""<!doctype html>
     body[data-view="collect"] .sidebar-resizer, body[data-view="match"] .sidebar-resizer,
     body[data-view="collect"] .preview-resizer, body[data-view="match"] .preview-resizer,
     body[data-view="collect"] .preview, body[data-view="match"] .preview { display:none; }
-    body[data-view="delivery"] .layout { grid-template-columns:minmax(320px, 1fr) 2px var(--preview-width, 430px); }
-    body[data-view="delivery"] aside, body[data-view="delivery"] .sidebar-resizer { display:none; }
     .workflow-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
     .workflow-step { position:relative; min-height:148px; }
     .step-no { width:32px; height:32px; border-radius:16px; background:linear-gradient(180deg,#428eff,var(--accent)); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:750; box-shadow:var(--soft-shadow); }
@@ -3741,13 +3739,13 @@ INDEX_HTML = r"""<!doctype html>
     .beat-head strong { font-size:12px; color:var(--accent-dark); }
     .beat-head span { font-size:11px; color:var(--muted); white-space:nowrap; }
     .beat-line { margin:0 0 8px; color:var(--ink); font-size:13px; line-height:1.45; word-break:break-word; }
-    .beat-clips { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:8px; }
-    .clip-mini { min-height:0; border:1px solid rgba(255,255,255,.74); border-radius:14px; overflow:hidden; background:var(--panel-light); cursor:pointer; box-shadow:var(--soft-shadow); position:relative; }
+    .beat-clips { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:6px; }
+    .clip-mini { min-height:0; border:1px solid rgba(255,255,255,.74); border-radius:12px; overflow:hidden; background:var(--panel-light); cursor:pointer; box-shadow:var(--soft-shadow); position:relative; }
     .clip-mini.chosen { border-color:rgba(48,126,255,.62); background:#f6faff; }
     .clip-mini.selected { outline:2px solid var(--accent); background:#f6faff; }
-    .clip-mini img { width:100%; aspect-ratio:9/13; object-fit:cover; display:block; background:#dfe8f0; }
-    .clip-mini div { padding:6px 7px; font-size:11px; line-height:1.25; word-break:break-word; }
-    .clip-mini-badge { position:absolute; top:6px; left:6px; min-height:20px; padding:0 7px; border-radius:999px; display:flex; align-items:center; background:rgba(16,24,40,.62); color:#fff; font-size:10px; font-weight:700; backdrop-filter:blur(6px); }
+    .clip-mini img { width:100%; aspect-ratio:9/12; object-fit:cover; display:block; background:#dfe8f0; }
+    .clip-mini div { padding:4px 5px; font-size:10px; line-height:1.2; word-break:break-word; }
+    .clip-mini-badge { position:absolute; top:4px; left:4px; width:18px; height:18px; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; background:rgba(16,24,40,.62); color:#fff; font-size:11px; font-weight:800; backdrop-filter:blur(6px); }
     .clip-mini.chosen .clip-mini-badge { background:linear-gradient(180deg,#428eff,var(--accent)); }
     .replace-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(116px,1fr)); gap:10px; max-height:58vh; overflow:auto; padding:2px; }
     .replace-card { height:auto; display:block; padding:0; border:1px solid rgba(255,255,255,.74); border-radius:16px; background:var(--panel-light); box-shadow:var(--soft-shadow); overflow:hidden; cursor:pointer; text-align:left; }
@@ -3812,10 +3810,9 @@ INDEX_HTML = r"""<!doctype html>
     <div class="subtitle">采集素材、分镜分类、配镜粗剪、自检交付</div>
   </div>
   <nav class="top-tabs">
-    <button class="tab" data-view="collect">采集入库</button>
+    <button class="tab" data-view="collect">工作流演示</button>
     <button class="tab active" data-view="organize">素材整理</button>
     <button class="tab" data-view="match">智能剪辑</button>
-    <button class="tab" data-view="delivery">成品检查</button>
   </nav>
   <div class="workflow-health">
     <div class="health-line" id="workflowHealth"></div>
@@ -3853,10 +3850,11 @@ INDEX_HTML = r"""<!doctype html>
   <main>
       <div id="collectView" class="view-panel">
         <div class="workflow-grid">
-          <div class="panel-card workflow-step"><div class="step-no">1</div><h3>采集入库</h3><p>把新下载的原视频和同名文案先放进待分类整理库。预览、筛选、判断统一去“素材整理”里看。</p><div class="action-row"><button class="primary" data-open="inbox">打开待分类库</button><button data-open="library">打开团建视频库</button></div></div>
-          <div class="panel-card workflow-step"><div class="step-no">2</div><h3>按地点归档</h3><p>千岛湖、安吉、莫干山等地点分别进入对应原视频素材库。原下载目录不再留重复副本。</p><div class="action-row"><button data-open="records">打开采集记录</button></div></div>
-          <div class="panel-card workflow-step"><div class="step-no">3</div><h3>刷新素材索引</h3><p>采集或移动文件后重新扫描本地素材库，不需要重启工具。</p><div class="action-row"><button id="rescanLibraryBtn">重新扫描素材库</button></div></div>
-          <div class="panel-card workflow-step"><div class="step-no">4</div><h3>江湖工具箱联动</h3><p>一键启动采集工具，搜索关键词下载作品，自动进入待分类库。</p><div class="action-row"><button data-open="jianghu_xhs">提取小红书作品</button><button data-open="jianghu_dy">提取抖音作品</button></div><div class="action-row" style="margin-top:8px;"><button data-open="jianghu_ks">提取快手作品</button><button data-open="jianghu_bili">提取B站作品</button></div><div class="action-row" style="margin-top:8px;"><button data-open="jianghu_dy_live">抖音直播回放</button><button data-open="jianghu_transcribe">批量语音转写</button></div><div class="action-row" style="margin-top:8px;"><button data-open="jianghu_segment">批量视频分割</button><button data-open="jianghu_fish">飞书妙记提取</button></div></div>
+          <div class="panel-card workflow-step"><div class="step-no">1</div><h3>采集入口</h3><p>先用地点关键词搜索并下载原视频和同名文案，放进待分类整理库。这里负责打开入口，不在下载目录和素材库里反复复制。</p><div class="action-row"><button class="primary" data-open="inbox">打开待分类库</button><button data-open="library">打开团建视频库</button></div></div>
+          <div class="panel-card workflow-step"><div class="step-no">2</div><h3>按地点归档</h3><p>千岛湖、安吉、莫干山等地点分别进入对应原片库；排除合集、话题污染和重复源，避免后面分镜混进错误地点。</p><div class="action-row"><button data-open="records">打开采集记录</button></div></div>
+          <div class="panel-card workflow-step"><div class="step-no">3</div><h3>刷新素材索引</h3><p>归档、清洗、分镜或删除素材后，重新扫描本地库，让素材整理和智能剪辑马上看到最新结果。</p><div class="action-row"><button id="rescanLibraryBtn">重新扫描素材库</button></div></div>
+          <div class="panel-card workflow-step"><div class="step-no">4</div><h3>江湖工具小联动</h3><p>这是采集阶段的工作流演示：打开采集工具、按关键词下载、转写文案、切分素材，再回到本工具做清洗、分类和配镜。</p><div class="action-row"><button data-open="jianghu_xhs">提取小红书作品</button><button data-open="jianghu_dy">提取抖音作品</button></div><div class="action-row" style="margin-top:8px;"><button data-open="jianghu_ks">提取快手作品</button><button data-open="jianghu_bili">提取B站作品</button></div><div class="action-row" style="margin-top:8px;"><button data-open="jianghu_dy_live">抖音直播回放</button><button data-open="jianghu_transcribe">批量语音转写</button></div><div class="action-row" style="margin-top:8px;"><button data-open="jianghu_segment">批量视频分割</button><button data-open="jianghu_fish">飞书妙记提取</button></div></div>
+          <div class="panel-card workflow-step"><div class="step-no">5</div><h3>进入后续处理</h3><p>采集只是第一步。可用素材库还要继续裁切废料、分镜分类、提取音频文案，再把结果交给 Codex 做语义配镜。</p><div class="action-row"><button data-view-jump="organize">去素材整理</button><button data-view-jump="match">去智能剪辑</button></div></div>
         </div>
       </div>
     <div id="organizeView" class="view-panel active">
@@ -3905,15 +3903,15 @@ INDEX_HTML = r"""<!doctype html>
           <div class="edit-panel-head">
             <div>
               <h3>初筛素材区</h3>
-              <p>这里只预览本条音频筛出来的匹配画面；真正剪辑在剪映里完成。</p>
+              <p>选择音频，复制任务给 Codex。</p>
             </div>
             <div class="action-row" style="margin-top:0;">
               <select id="matchAudioSelect" class="sort-select" title="选择音频素材"></select>
-              <button class="primary" id="matchStartBtn">复制配镜提示词</button>
+              <button class="primary" id="matchStartBtn">复制任务给 Codex</button>
               <button id="matchReloadBtn">刷新素材</button>
             </div>
           </div>
-          <div class="match-copy" id="matchCopy">选择一条音频后，这里会显示本条音频对应的初筛素材封面。</div>
+          <div class="match-copy" id="matchCopy">选择一条音频后，复制任务给 Codex，由 AI 大模型判断台词和画面怎么匹配。</div>
           <div class="clip-shelf" id="clipShelf"><div class="empty">正在读取素材...</div></div>
         </section>
         <section class="edit-panel editor-preview">
@@ -3932,17 +3930,11 @@ INDEX_HTML = r"""<!doctype html>
             <button class="primary" id="timelinePlayBtn">合并播放</button>
             <button id="timelineCropBtn">裁剪切割</button>
             <button id="matchOpenPackBtn">打开素材包</button>
+            <button data-preset-kind="成品粗剪">查看成品区</button>
           </div>
           <div id="matchStatus" class="path">等待选择素材。</div>
           <div id="editDetail" class="match-copy">选中左侧画面后，这里显示当前素材、对应台词和路径。</div>
         </section>
-      </div>
-    </div>
-    <div id="deliveryView" class="view-panel">
-      <div class="workflow-grid">
-        <div class="panel-card workflow-step"><div class="step-no">1</div><h3>剪映素材包</h3><p>输出编号素材，按文案顺序排列。导入剪映后只需要细裁、字幕、BGM 和导出。</p><div class="action-row"><button data-preset-kind="成品粗剪">查看成品区</button><button data-open="library">打开素材库</button></div></div>
-        <div class="panel-card workflow-step"><div class="step-no">2</div><h3>粗剪检查</h3><p>检查是否竖屏、有音频、镜头不重复、没有明显废料、画面对台词。</p></div>
-        <div class="panel-card workflow-step"><div class="step-no">3</div><h3>规则回写</h3><p>成品里发现的问题，回到素材整理和文案配镜规则里修，下一条视频少踩坑。</p><div class="action-row"><button data-open="records">打开记录</button></div></div>
       </div>
     </div>
   </main>
@@ -4046,7 +4038,7 @@ INDEX_HTML = r"""<!doctype html>
 <div class="modal-backdrop" id="replaceBackdrop">
   <div class="modal-card" style="width:min(820px,94vw);">
     <h3 class="modal-title">替换画面</h3>
-    <div class="modal-body" id="replaceHint">从同一句台词的候选镜头里选一个替换当前画面。</div>
+    <div class="modal-body" id="replaceHint">替换画面需要 Codex/视觉 AI 重新判断，不在本地做假候选。</div>
     <div class="replace-grid" id="replaceGrid"></div>
     <div class="modal-actions">
       <button id="replaceCancel">取消</button>
@@ -4271,7 +4263,7 @@ function updateWorkflowHealth(summary){
   }else if(audios > 0 && scenes > 0 && deliveries === 0){
     next = "下一步：进入智能剪辑，选音频复制配镜任务给 Codex";
   }else if(deliveries > 0){
-    next = `下一步：已有 ${deliveries} 条成品/粗剪，进入成品检查`;
+    next = `下一步：已有 ${deliveries} 条成品/粗剪，可在智能剪辑里查看成品区`;
   }
   const nextBox = $("workflowNext");
   if(nextBox) nextBox.textContent = next;
@@ -4743,6 +4735,9 @@ function bindTabs(){
       setTimeout(() => btn.textContent = old, 800);
     });
   });
+  document.querySelectorAll("[data-view-jump]").forEach(btn => {
+    btn.addEventListener("click", () => setActiveView(btn.dataset.viewJump));
+  });
   document.querySelectorAll("[data-preset-kind]").forEach(btn => {
     btn.addEventListener("click", async () => {
       setActiveView("organize");
@@ -4759,7 +4754,7 @@ function bindTabs(){
 function setActiveView(view){
   document.body.dataset.view = view;
   document.querySelectorAll(".tab").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
-  ["collect","organize","match","delivery"].forEach(name => {
+  ["collect","organize","match"].forEach(name => {
     const panel = $(name + "View");
     if(panel) panel.classList.toggle("active", name === view);
   });
@@ -4770,9 +4765,9 @@ function updateSideGuide(view){
   const guide = $("sideGuide");
   const data = {
     collect: [
-      ["采集入库", "新素材先进入待分类整理库，再按地点归档。"],
-      ["不要重复", "移动优先，避免下载目录和素材库各留一份。"],
-      ["下一步", "采集后进入素材整理，做清洗、分镜、分类。"]
+      ["工作流演示", "新素材先进入待分类整理库，再按地点归档。"],
+      ["江湖工具小联动", "采集、转写、分割只是入口，后面要进入素材整理。"],
+      ["下一步", "采集后做清洗、分镜、分类，再交给 Codex 做配镜。"]
     ],
     organize: [
       ["素材浏览", "中间点击素材，右侧播放确认画面。"],
@@ -4780,15 +4775,10 @@ function updateSideGuide(view){
       ["原则", "画面优先，文案辅助；可复用素材沉淀进库。"]
     ],
     match: [
-      ["智能剪辑", "左边选音频和初筛素材，右边预览确认；真正剪辑在剪映完成。"],
-      ["复制任务", "点击复制配镜提示词，把音频和配镜规则交给 Codex 做语义匹配。"],
+      ["智能剪辑", "左边选音频，复制任务给 Codex；本地不自动选素材。"],
+      ["AI 配镜", "由 Codex 读取台词、素材库和规则，消耗判断来选画面。"],
       ["剪映交付", "Codex 生成编号初剪素材包后，拖进剪映细剪。"]
     ],
-    delivery: [
-      ["成品检查", "检查竖屏、音频、重复镜头、废料、水印字幕残留。"],
-      ["剪映交付", "导入编号素材包后，你只做细裁、字幕、BGM。"],
-      ["规则回写", "发现错配和废料，回写到素材整理和配镜规则。"]
-    ]
   }[view] || [];
   guide.innerHTML = data.map(row => `<div class="mini-item"><strong>${esc(row[0])}</strong><span>${esc(row[1])}</span></div>`).join("");
 }
@@ -4842,14 +4832,14 @@ function renderAudioList(){
 function selectMatchAudio(item){
   selectedMatchAudio = item;
   renderAudioList();
-  $("matchCopy").textContent = `已选择音频：${item.name}\n地点：${item.location}\n左侧显示本条音频对应的初筛画面素材；真正精配和剪辑交给 Codex + 剪映。`;
+  $("matchCopy").textContent = `文案来源：同名 TXT / 本地缓存优先\n台词段落：等待 Codex 读取并生成初剪素材包`;
   $("matchStatus").textContent = "等待 Codex Skill 生成初剪素材包";
   currentMatchPlan = null;
   editTimeline = [];
   selectedTimelineIndex = -1;
   selectedMatchClip = null;
   const shelf = $("clipShelf");
-  if(shelf) shelf.innerHTML = '<div class="empty">这里不自动匹配。点击“复制配镜提示词”交给 Codex Skill，生成初剪素材包后再预览。</div>';
+  if(shelf) shelf.innerHTML = '<div class="empty">这里不自动匹配，也不显示本地候选。点击“复制任务给 Codex”，我会在对话里按 Skill 生成编号初剪素材包。</div>';
   renderEditTimeline();
 }
 async function copySmartMatchPrompt(){
@@ -4888,30 +4878,18 @@ async function copySmartMatchPrompt(){
   ].join("\\n");
   await navigator.clipboard.writeText(prompt).catch(()=>{});
   $("matchStatus").textContent = "已复制 Codex 配镜提示词";
-  $("matchCopy").textContent = `已复制配镜任务提示词。\n\n音频：${selectedMatchAudio.name}\n地点：${location}\n\n下一步：直接把提示词发到对话窗口，我会按 Skill 生成编号初剪素材包并自检。`;
+  $("matchCopy").textContent = `文案来源：已复制任务，Codex 会优先读取同名 TXT / 本地缓存\n台词段落：由 Codex 读取后写入配镜表`;
   $("matchStartBtn").textContent = "已复制";
-  setTimeout(() => $("matchStartBtn").textContent = "复制配镜提示词", 1100);
+  setTimeout(() => $("matchStartBtn").textContent = "复制任务给 Codex", 1100);
 }
 async function startMatchAudio(){
   if(!selectedMatchAudio){
     await showMessage("还没选音频", "先在左侧选择一条原片音频。");
     return;
   }
-  $("matchStatus").textContent = "匹配中，首次识别可能需要几分钟...";
-  $("clipShelf").innerHTML = '<div class="empty">正在生成候选素材...</div>';
-  try{
-    const data = await getJson("/api/match-audio/" + encodeURIComponent(selectedMatchAudio.id));
-    if(!data.ok){
-      $("matchStatus").textContent = "匹配失败";
-      await showMessage("匹配失败", data.error || "匹配失败");
-      return;
-    }
-    currentMatchPlan = data;
-    renderMatchPlan(data);
-  }catch(err){
-    $("matchStatus").textContent = "匹配失败";
-    await showMessage("匹配失败", String(err));
-  }
+  $("matchStatus").textContent = "本地匹配已关闭";
+  $("clipShelf").innerHTML = '<div class="empty">本地不会自动生成候选。请复制任务给 Codex，由 AI 大模型选择素材。</div>';
+  await showMessage("本地匹配已关闭", "这个环节需要 Codex/视觉 AI 参与判断。请点击“复制任务给 Codex”，把任务发到对话窗口。");
 }
 function renderMatchPlan(plan){
   const beats = plan.beats || [];
@@ -4924,7 +4902,7 @@ function renderMatchPlan(plan){
     audio.load();
   }
   const plainText = beats.map(beat => String(beat.text || "").trim()).filter(Boolean).join("\n");
-  $("matchCopy").textContent = `音频：${plan.audio.name}\n文案来源：${plan.transcript_source || "audio_asr"}\n台词段落：${beats.length} 段；左侧按“台词 → 候选画面”展示。`;
+  $("matchCopy").textContent = `文案来源：${plan.transcript_source || "audio_asr"}\n台词段落：${beats.length} 段`;
   const shelf = $("clipShelf");
   shelf.innerHTML = "";
   beats.forEach(beat => {
@@ -4966,7 +4944,7 @@ function renderClipMini(clip, beat=null, candidateIndex=0, chosen=false){
   node.className = "clip-mini" + (chosen ? " chosen" : "");
   node.dataset.clipId = clip.id;
   node.draggable = true;
-  const badge = chosen ? "✓ 已选" : "候选";
+  const badge = chosen ? "✓" : "";
   node.innerHTML = `<span class="clip-mini-badge">${badge}</span><img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${candidateIndex + 1}. ${esc(clip.keyword || clip.name)}</div>`;
   node.addEventListener("dragstart", e => {
     prepareDrag(e, clip);
@@ -5183,9 +5161,9 @@ async function openMatchOutputFolder(){
     }
     $("matchStatus").textContent = data.message || "已打开素材包";
     if(!data.specific){
-      $("matchCopy").textContent = `还没有找到本条音频对应的初剪素材包。\n\n已打开：${data.path}\n\n下一步：点击“复制配镜提示词”，把任务发给 Codex。生成后这里会打开对应素材包；你也可以把编号素材直接拖进剪映。`;
+      $("matchCopy").textContent = `文案来源：等待 Codex 生成\n台词段落：还没有找到本条音频对应的初剪素材包`;
     }else{
-      $("matchCopy").textContent = `已打开本条音频对应的初剪素材包：\n${data.path}\n\n用法：打开剪映后，把素材包里的编号视频按顺序拖进媒体区或时间线。`;
+      $("matchCopy").textContent = `文案来源：已找到本条音频对应素材包\n台词段落：打开剪映后，把编号视频按顺序拖进媒体区或时间线`;
     }
   }catch(err){
     await showMessage("打开失败", String(err));
@@ -5787,27 +5765,9 @@ function closeReplaceModal(){
   if(backdrop) backdrop.classList.remove("open");
 }
 function openReplaceModal(){
-  if(!replaceContext || !replaceContext.beat){
-    showMessage("没有可替换的台词组", "这段素材不是从台词候选里打开的，暂时不能在本地候选里替换。");
-    return;
-  }
-  const beat = replaceContext.beat;
-  const candidates = (beat.candidates || []).filter(clip => clip && clip.id !== replaceContext.clip.id);
   const grid = $("replaceGrid");
-  $("replaceHint").textContent = `当前台词：${beat.text || "无台词"}。这里显示同一句台词下的候选镜头，点一个就替换当前已选画面。`;
-  grid.innerHTML = "";
-  if(!candidates.length){
-    grid.innerHTML = '<div class="empty">这一句暂时没有其他候选。需要更聪明的语义替换时，请复制配镜提示词交给 Codex 重新找素材。</div>';
-  }else{
-    candidates.slice(0, 18).forEach((clip, index) => {
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "replace-card";
-      card.innerHTML = `<img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${index + 1}. ${esc(clip.keyword || clip.name)}<br><small>${esc(clip.category || "")}</small></div>`;
-      card.addEventListener("click", () => replaceTimelineClip(clip));
-      grid.appendChild(card);
-    });
-  }
+  $("replaceHint").textContent = "替换素材也不走本地假候选。请复制配镜任务给 Codex，我会按当前台词、已选素材和素材库重新找可替换画面。";
+  grid.innerHTML = '<div class="empty">本地不自动推荐替换素材。需要替换时，把当前台词和素材包发给 Codex 重新配镜。</div>';
   $("replaceBackdrop").classList.add("open");
 }
 function replaceTimelineClip(newClip){
