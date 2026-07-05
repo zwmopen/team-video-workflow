@@ -3735,7 +3735,13 @@ INDEX_HTML = r"""<!doctype html>
     .edit-panel-head p { margin:0; color:var(--muted); font-size:12px; line-height:1.4; }
     .audio-bin { grid-area:audio; display:flex; flex-direction:column; gap:10px; min-height:0; }
     .clip-bin { grid-area:shelf; display:flex; flex-direction:column; overflow:hidden; }
-    .clip-shelf { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:9px; overflow:auto; min-height:0; padding:2px 2px 8px; align-content:start; }
+    .clip-shelf { display:grid; gap:12px; overflow:auto; min-height:0; padding:2px 2px 8px; align-content:start; }
+    .beat-group { border-radius:18px; padding:10px; background:rgba(238,244,248,.72); border:1px solid rgba(255,255,255,.74); box-shadow:var(--soft-shadow); }
+    .beat-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px; }
+    .beat-head strong { font-size:12px; color:var(--accent-dark); }
+    .beat-head span { font-size:11px; color:var(--muted); white-space:nowrap; }
+    .beat-line { margin:0 0 8px; color:var(--ink); font-size:13px; line-height:1.45; word-break:break-word; }
+    .beat-clips { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:8px; }
     .clip-mini { min-height:0; border:1px solid rgba(255,255,255,.74); border-radius:14px; overflow:hidden; background:var(--panel-light); cursor:pointer; box-shadow:var(--soft-shadow); }
     .clip-mini.selected { outline:2px solid var(--accent); background:#f6faff; }
     .clip-mini img { width:100%; aspect-ratio:9/13; object-fit:cover; display:block; background:#dfe8f0; }
@@ -3746,8 +3752,11 @@ INDEX_HTML = r"""<!doctype html>
     .audio-item .audio-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:12px; }
     .audio-item small { display:block; opacity:.78; margin-top:3px; }
     .editor-preview { grid-area:preview; display:flex; flex-direction:column; gap:12px; min-height:0; overflow:auto; }
-    .canvas-frame { width:100%; aspect-ratio:3/4; margin:0 auto; border-radius:20px; background:#0f172a; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:inset 5px 7px 18px rgba(0,0,0,.38), var(--soft-shadow); }
+    .canvas-frame { width:100%; aspect-ratio:3/4; margin:0 auto; border-radius:20px; background:#0f172a; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:inset 5px 7px 18px rgba(0,0,0,.38), var(--soft-shadow); position:relative; }
     .canvas-frame video, .canvas-frame audio { width:100%; max-height:100%; border-radius:0; box-shadow:none; }
+    .edit-subtitle { position:absolute; left:14px; right:14px; bottom:16px; padding:8px 10px; border-radius:14px; background:rgba(10,18,30,.62); color:#fff; font-size:15px; line-height:1.45; text-align:center; text-shadow:0 1px 3px rgba(0,0,0,.45); pointer-events:none; opacity:0; transition:opacity .16s ease; }
+    .edit-subtitle.show { opacity:1; }
+    .match-audio-player { width:100%; height:38px; border-radius:18px; background:var(--panel-light); box-shadow:var(--soft-shadow); }
     .match-info { display:flex; flex-direction:column; gap:10px; min-width:0; overflow:auto; }
     .match-copy { color:var(--muted); font-size:13px; line-height:1.55; white-space:pre-wrap; }
     .timeline-panel { display:none; }
@@ -3908,7 +3917,9 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div class="canvas-frame" id="editFrame">
             <video id="editPreviewVideo" controls playsinline muted preload="metadata"></video>
+            <div class="edit-subtitle" id="editSubtitle"></div>
           </div>
+          <audio id="matchAudioPlayer" class="match-audio-player" controls preload="metadata"></audio>
           <div class="preview-actions">
             <button class="primary" id="timelinePlayBtn">合并播放</button>
             <button id="timelineCropBtn">裁剪切割</button>
@@ -4107,6 +4118,7 @@ let editTimeline = [];
 let selectedTimelineIndex = -1;
 let timelineDragClip = null;
 let timelinePlayToken = 0;
+let timelineIsPlaying = false;
 const $ = id => document.getElementById(id);
 async function getJson(url){ const r = await fetch(url); return await r.json(); }
 async function postJson(url, payload){
@@ -4874,37 +4886,62 @@ function renderMatchPlan(plan){
   selectedMatchClip = null;
   editTimeline = [];
   selectedTimelineIndex = -1;
-  $("matchCopy").textContent = `音频：${plan.audio.name}\n文案来源：${plan.transcript_source || "audio_asr"}\n画幅：小红书 3:4\n规则：优先同地点、直接关键词、分镜文件夹与文件名。`;
+  const audio = $("matchAudioPlayer");
+  if(audio && plan.audio && plan.audio.media){
+    audio.src = plan.audio.media;
+    audio.load();
+  }
+  const plainText = beats.map(beat => String(beat.text || "").trim()).filter(Boolean).join("\n");
+  $("matchCopy").textContent = `音频：${plan.audio.name}\n文案来源：${plan.transcript_source || "audio_asr"}\n\n完整台词：\n${plainText || "暂无可读台词"}`;
   const shelf = $("clipShelf");
   shelf.innerHTML = "";
-  const seen = new Set();
   beats.forEach(beat => {
-    const first = (beat.candidates || [])[0];
-    if(first) editTimeline.push(makeTimelineEntry(first, beat));
-    (beat.candidates || []).forEach(clip => {
-      if(seen.has(clip.id)) return;
-      seen.add(clip.id);
-      shelf.appendChild(renderClipMini(clip));
+    const candidates = beat.candidates || [];
+    const duration = Math.max(0.8, Number(beat.end || 0) - Number(beat.start || 0));
+    const needed = duration >= 5.5 ? 3 : (duration >= 3.2 ? 2 : 1);
+    const selected = candidates.slice(0, Math.max(1, Math.min(needed, candidates.length)));
+    selected.forEach((clip, partIndex) => {
+      editTimeline.push(makeTimelineEntry(clip, beat, partIndex, selected.length));
     });
+    shelf.appendChild(renderBeatGroup(beat, candidates, selected.length));
   });
-  if(!seen.size) shelf.innerHTML = '<div class="empty">没有匹配到候选分镜。</div>';
-  $("matchStatus").textContent = `已生成 ${seen.size} 条初筛素材 / ${beats.length} 段台词`;
-  const firstClip = beats.map(b => (b.candidates || [])[0]).find(Boolean);
-  if(firstClip) previewEditClip(firstClip);
+  if(!editTimeline.length) shelf.innerHTML = '<div class="empty">没有匹配到候选分镜。</div>';
+  $("matchStatus").textContent = `已生成 ${editTimeline.length} 个画面 / ${beats.length} 段台词`;
+  if(editTimeline[0]){
+    selectedTimelineIndex = 0;
+    previewEditClip(editTimeline[0].clip, null, editTimeline[0]);
+  }
 }
-function renderClipMini(clip){
+function renderBeatGroup(beat, candidates, selectedCount){
+  const group = document.createElement("div");
+  group.className = "beat-group";
+  group.innerHTML = `
+    <div class="beat-head"><strong>台词 ${beat.index || ""}</strong><span>${timeRange(beat.start, beat.end)} · 选 ${selectedCount || 0}/${(candidates || []).length}</span></div>
+    <p class="beat-line">${esc(beat.text || "无台词")}</p>
+    <div class="beat-clips"></div>
+  `;
+  const box = group.querySelector(".beat-clips");
+  (candidates || []).slice(0, 6).forEach((clip, index) => {
+    box.appendChild(renderClipMini(clip, beat, index));
+  });
+  if(!(candidates || []).length){
+    box.innerHTML = '<div class="empty">这一句还没有匹配画面。</div>';
+  }
+  return group;
+}
+function renderClipMini(clip, beat=null, candidateIndex=0){
   const node = document.createElement("div");
   node.className = "clip-mini";
   node.dataset.clipId = clip.id;
   node.draggable = true;
-  node.innerHTML = `<img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${esc(clip.keyword || clip.name)}</div>`;
+  node.innerHTML = `<img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${candidateIndex + 1}. ${esc(clip.keyword || clip.name)}</div>`;
   node.addEventListener("dragstart", e => {
     prepareDrag(e, clip);
   });
-  node.addEventListener("click", () => previewEditClip(clip, node));
+  node.addEventListener("click", () => previewEditClip(clip, node, beat ? makeTimelineEntry(clip, beat, candidateIndex, 1) : null));
   return node;
 }
-function previewEditClip(clip, node=null){
+function previewEditClip(clip, node=null, entry=null){
   const video = $("editPreviewVideo");
   if(!video) return;
   selectedMatchClip = clip;
@@ -4913,7 +4950,8 @@ function previewEditClip(clip, node=null){
   if(card) card.classList.add("selected");
   setFastVideoSource(video, clip, {muted:true, autoplay:true});
   $("matchStatus").textContent = `正在预览：${clip.keyword || clip.name}`;
-  $("matchCopy").textContent = `当前素材：${clip.name}\n分类：${clip.location || ""} / ${clip.category || ""} / ${clip.keyword || ""}\n路径：${clip.path || ""}`;
+  setEditSubtitle(entry ? entry.text : "");
+  $("matchCopy").textContent = `当前素材：${clip.name}\n分类：${clip.location || ""} / ${clip.category || ""} / ${clip.keyword || ""}\n${entry && entry.text ? `对应台词：${entry.text}\n` : ""}路径：${clip.path || ""}`;
 }
 function setFastVideoSource(video, item, options={}){
   const primary = item.media || item.preview_media;
@@ -4945,16 +4983,21 @@ function setFastVideoSource(video, item, options={}){
     }
   }
 }
-function makeTimelineEntry(clip, beat=null){
+function makeTimelineEntry(clip, beat=null, partIndex=0, partCount=1){
   const start = beat ? Number(beat.start || 0) : 0;
   const end = beat ? Number(beat.end || 0) : 0;
-  const duration = Math.max(0.8, end > start ? end - start : 2.5);
+  const wholeDuration = Math.max(0.8, end > start ? end - start : 2.5);
+  const duration = Math.max(0.8, wholeDuration / Math.max(1, partCount));
   return {
     uid: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     clip,
     beatIndex: beat ? beat.index : null,
     text: beat ? String(beat.text || "") : "",
     visualNeed: beat ? String(beat.visual_need || clip.keyword || "") : String(clip.keyword || ""),
+    start: start + duration * partIndex,
+    end: start + duration * (partIndex + 1),
+    partIndex,
+    partCount,
     duration,
   };
 }
@@ -5003,18 +5046,53 @@ async function playTimelineSequence(){
     await showMessage("还没有初筛素材", "先选择一条音频，让系统读取它对应的初筛素材。");
     return;
   }
+  if(timelineIsPlaying){
+    timelinePlayToken++;
+    timelineIsPlaying = false;
+    $("timelinePlayBtn").textContent = "合并播放";
+    const audio = $("matchAudioPlayer");
+    if(audio) audio.pause();
+    $("matchStatus").textContent = "已停止合并播放";
+    return;
+  }
   const token = ++timelinePlayToken;
+  timelineIsPlaying = true;
+  $("timelinePlayBtn").textContent = "停止播放";
   $("matchStatus").textContent = "合并播放中";
-  for(let index = 0; index < editTimeline.length; index++){
-    if(token !== timelinePlayToken) return;
-    const entry = editTimeline[index];
-    previewEditClip(entry.clip);
-    const waitMs = Math.max(600, Number(entry.duration || 2.5) * 1000);
-    await new Promise(resolve => setTimeout(resolve, waitMs));
+  const audio = $("matchAudioPlayer");
+  if(audio && selectedMatchAudio && selectedMatchAudio.media){
+    if(!audio.src) audio.src = selectedMatchAudio.media;
+    audio.currentTime = Math.max(0, Number(editTimeline[0].start || 0));
+    const audioPlay = audio.play();
+    if(audioPlay && typeof audioPlay.catch === "function") audioPlay.catch(() => {});
+  }
+  try{
+    for(let index = 0; index < editTimeline.length; index++){
+      if(token !== timelinePlayToken) return;
+      selectedTimelineIndex = index;
+      const entry = editTimeline[index];
+      previewEditClip(entry.clip, null, entry);
+      $("matchStatus").textContent = `合并播放 ${index + 1}/${editTimeline.length} · ${timeRange(entry.start, entry.end)}`;
+      const waitMs = Math.max(600, Number(entry.duration || 2.5) * 1000);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+  }finally{
+    if(token === timelinePlayToken){
+      timelineIsPlaying = false;
+      $("timelinePlayBtn").textContent = "合并播放";
+    }
   }
   if(token === timelinePlayToken){
     $("matchStatus").textContent = "合并播放完成";
+    setEditSubtitle("");
   }
+}
+function setEditSubtitle(text){
+  const box = $("editSubtitle");
+  if(!box) return;
+  const value = String(text || "").trim();
+  box.textContent = value;
+  box.classList.toggle("show", !!value);
 }
 function selectTimelineClip(index){
   if(index < 0 || index >= editTimeline.length) return;
