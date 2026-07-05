@@ -3662,28 +3662,29 @@ INDEX_HTML = r"""<!doctype html>
     body[data-view="match"] header { min-height:64px; grid-template-columns:300px 1fr; }
     body[data-view="match"] .workflow-health { display:none; }
     body[data-view="match"] main { padding:10px 12px; overflow:hidden; }
-    .edit-workbench { height:calc(100vh - 92px); min-height:0; display:grid; grid-template-columns:280px minmax(420px,1fr) 330px; grid-template-rows:138px minmax(300px,1fr) 224px; grid-template-areas:"audio shelf shelf" "audio preview preview" "timeline timeline timeline"; gap:10px; overflow:hidden; }
+    .edit-workbench { height:calc(100vh - 92px); min-height:0; display:grid; grid-template-columns:minmax(420px,1fr) minmax(330px,430px); grid-template-rows:minmax(0,1fr); grid-template-areas:"shelf preview"; gap:12px; overflow:hidden; }
     .edit-panel { background:var(--panel); border:1px solid rgba(255,255,255,.74); border-radius:22px; padding:12px; box-shadow:var(--shadow); overflow:auto; min-width:0; min-height:0; }
     .edit-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:8px; }
     .edit-panel-head h3 { margin:0 0 4px; font-size:16px; }
     .edit-panel-head p { margin:0; color:var(--muted); font-size:12px; line-height:1.4; }
     .audio-bin { grid-area:audio; display:flex; flex-direction:column; gap:10px; min-height:0; }
-    .clip-bin { grid-area:shelf; overflow:hidden; }
-    .clip-shelf { display:flex; gap:8px; overflow:auto; height:78px; align-items:stretch; padding-bottom:2px; }
-    .clip-mini { flex:0 0 86px; border:1px solid rgba(255,255,255,.74); border-radius:13px; overflow:hidden; background:var(--panel-light); cursor:grab; box-shadow:var(--soft-shadow); }
-    .clip-mini img { width:100%; height:50px; object-fit:cover; display:block; background:#dfe8f0; }
-    .clip-mini div { padding:4px 5px; font-size:10px; line-height:1.2; word-break:break-word; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .clip-bin { grid-area:shelf; display:flex; flex-direction:column; overflow:hidden; }
+    .clip-shelf { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:9px; overflow:auto; min-height:0; padding:2px 2px 8px; align-content:start; }
+    .clip-mini { min-height:0; border:1px solid rgba(255,255,255,.74); border-radius:14px; overflow:hidden; background:var(--panel-light); cursor:pointer; box-shadow:var(--soft-shadow); }
+    .clip-mini.selected { outline:2px solid var(--accent); background:#f6faff; }
+    .clip-mini img { width:100%; aspect-ratio:9/13; object-fit:cover; display:block; background:#dfe8f0; }
+    .clip-mini div { padding:6px 7px; font-size:11px; line-height:1.25; word-break:break-word; }
     .audio-list { display:grid; gap:8px; overflow:auto; min-height:0; }
     .audio-item { text-align:left; height:auto; min-height:42px; border-radius:15px; padding:8px 10px; line-height:1.35; overflow:hidden; }
     .audio-item.active { background:linear-gradient(180deg,#428eff,var(--accent)); color:#fff; }
     .audio-item .audio-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:12px; }
     .audio-item small { display:block; opacity:.78; margin-top:3px; }
-    .editor-preview { grid-area:preview; display:grid; grid-template-columns:minmax(260px,430px) minmax(300px,1fr); gap:12px; align-items:stretch; min-height:0; overflow:hidden; }
-    .canvas-frame { width:100%; max-width:430px; aspect-ratio:3/4; margin:auto; border-radius:20px; background:#0f172a; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:inset 5px 7px 18px rgba(0,0,0,.38), var(--soft-shadow); }
+    .editor-preview { grid-area:preview; display:flex; flex-direction:column; gap:12px; min-height:0; overflow:auto; }
+    .canvas-frame { width:100%; aspect-ratio:3/4; margin:0 auto; border-radius:20px; background:#0f172a; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:inset 5px 7px 18px rgba(0,0,0,.38), var(--soft-shadow); }
     .canvas-frame video, .canvas-frame audio { width:100%; max-height:100%; border-radius:0; box-shadow:none; }
     .match-info { display:flex; flex-direction:column; gap:10px; min-width:0; overflow:auto; }
     .match-copy { color:var(--muted); font-size:13px; line-height:1.55; white-space:pre-wrap; }
-    .timeline-panel { grid-area:timeline; overflow:hidden; }
+    .timeline-panel { display:none; }
     .timeline-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
     .timeline-head strong { font-size:15px; }
     .timeline-actions { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
@@ -3817,64 +3818,36 @@ INDEX_HTML = r"""<!doctype html>
     </div>
     <div id="matchView" class="view-panel">
       <div class="edit-workbench">
-        <section class="edit-panel audio-bin">
-          <div class="edit-panel-head">
-            <div>
-              <h3>音频轨</h3>
-              <p>选一条原片音频，复制给 Codex 按台词配镜。</p>
-            </div>
-          </div>
-          <div class="action-row" style="margin-top:0;">
-            <button class="primary" id="matchStartBtn">复制提示词并开始匹配素材</button>
-            <button id="matchReloadBtn">刷新音频</button>
-          </div>
-          <div class="audio-list" id="audioList"><div class="empty">正在读取音频素材...</div></div>
-        </section>
         <section class="edit-panel clip-bin">
           <div class="edit-panel-head">
             <div>
-              <h3>片段素材架</h3>
-              <p>Codex 产出初剪素材包后，可在这里预览和拖拽调整。</p>
+              <h3>初筛素材区</h3>
+              <p>这里只预览本条音频筛出来的匹配画面；真正剪辑在剪映里完成。</p>
+            </div>
+            <div class="action-row" style="margin-top:0;">
+              <select id="matchAudioSelect" class="sort-select" title="选择音频素材"></select>
+              <button class="primary" id="matchStartBtn">复制配镜提示词</button>
+              <button id="matchReloadBtn">刷新素材</button>
             </div>
           </div>
-          <div class="clip-shelf" id="clipShelf"><div class="empty">选择音频后显示候选素材</div></div>
+          <div class="match-copy" id="matchCopy">选择一条音频后，这里会显示本条音频对应的初筛素材封面。</div>
+          <div class="clip-shelf" id="clipShelf"><div class="empty">正在读取素材...</div></div>
         </section>
         <section class="edit-panel editor-preview">
+          <div class="edit-panel-head">
+            <div>
+              <h3>预览区</h3>
+              <p>单点左侧素材看单段；合并播放按左侧顺序连续预览。</p>
+            </div>
+          </div>
           <div class="canvas-frame" id="editFrame">
             <video id="editPreviewVideo" controls playsinline muted preload="metadata"></video>
           </div>
-          <div class="match-info">
-            <div>
-              <h3 style="margin:0 0 6px;">预览 / 合并播放</h3>
-              <p style="margin:0;color:var(--muted);font-size:12px;">单点素材看单段；合并播放按主轨顺序串画面并播放音频。</p>
-            </div>
-            <audio id="editAudio" controls style="width:100%;"></audio>
-            <div class="match-copy" id="matchCopy">还没选择音频。</div>
+          <div class="preview-actions">
+            <button class="primary" id="timelinePlayBtn">合并播放</button>
+            <button id="timelineCropBtn">裁剪切割</button>
           </div>
-        </section>
-        <section class="edit-panel timeline-panel">
-          <div class="timeline-head">
-            <strong>剪辑时间线</strong>
-            <div class="timeline-actions">
-              <button id="timelinePlayBtn">合并播放</button>
-              <button id="timelineSplitBtn">切割片段</button>
-              <button id="timelineCropBtn">裁剪/切割</button>
-              <button id="timelineRemoveBtn">删除片段</button>
-              <button id="timelineCopyBtn">复制轨道路径</button>
-              <button id="timelineClearBtn">清空轨道</button>
-            </div>
-            <span id="matchStatus" style="color:var(--muted);font-size:12px;">等待匹配</span>
-          </div>
-          <div class="track-stack">
-            <div class="track-row">
-              <div class="track-label">主轨道</div>
-              <div class="timeline" id="matchTimeline"><div class="empty">把上方素材拖进来，或点击“开始匹配素材”自动生成粗剪主轨。</div></div>
-            </div>
-            <div class="track-row">
-              <div class="track-label">音频轨</div>
-              <div class="timeline audio-track" id="matchAudioTrack"><div class="empty">左侧选择音频后，这里显示主声音轨。</div></div>
-            </div>
-          </div>
+          <div id="matchStatus" class="path">等待选择素材。</div>
         </section>
       </div>
     </div>
@@ -4060,6 +4033,7 @@ let trimState = {start:0, end:0, duration:0, drag:null};
 let cropLayouts = [];
 let matchAudioItems = [];
 let selectedMatchAudio = null;
+let selectedMatchClip = null;
 let currentMatchPlan = null;
 let editTimeline = [];
 let selectedTimelineIndex = -1;
@@ -4700,8 +4674,8 @@ function updateSideGuide(view){
       ["原则", "画面优先，文案辅助；可复用素材沉淀进库。"]
     ],
     match: [
-      ["智能剪辑", "左边选音频，上方看候选素材，中间预览，底部看时间线。"],
-      ["复制任务", "点击复制提示词，把音频和配镜规则交给 Codex 做语义匹配。"],
+      ["智能剪辑", "左边选音频和初筛素材，右边预览确认；真正剪辑在剪映完成。"],
+      ["复制任务", "点击复制配镜提示词，把音频和配镜规则交给 Codex 做语义匹配。"],
       ["剪映交付", "Codex 生成编号初剪素材包后，拖进剪映细剪。"]
     ],
     delivery: [
@@ -4715,42 +4689,26 @@ function updateSideGuide(view){
 function bindMatchUi(){
   const reloadBtn = $("matchReloadBtn");
   const startBtn = $("matchStartBtn");
+  const audioSelect = $("matchAudioSelect");
   if(reloadBtn) reloadBtn.addEventListener("click", loadMatchAudioItems);
   if(startBtn) startBtn.addEventListener("click", copySmartMatchPrompt);
-  const timeline = $("matchTimeline");
-  if(timeline){
-    timeline.addEventListener("dragover", e => {
-      if(timelineDragClip){
-        e.preventDefault();
-        timeline.classList.add("is-drop");
-      }
-    });
-    timeline.addEventListener("dragleave", () => timeline.classList.remove("is-drop"));
-    timeline.addEventListener("drop", e => {
-      e.preventDefault();
-      timeline.classList.remove("is-drop");
-      if(timelineDragClip){
-        addClipToTimeline(timelineDragClip.clip, timelineDragClip.beat || null);
-        timelineDragClip = null;
-      }
+  if(audioSelect){
+    audioSelect.addEventListener("change", () => {
+      const item = matchAudioItems.find(entry => entry.id === audioSelect.value);
+      if(item) selectMatchAudio(item);
     });
   }
-  $("timelinePlayBtn").addEventListener("click", playTimelineSequence);
-  $("timelineSplitBtn").addEventListener("click", splitSelectedTimelineClip);
-  $("timelineCropBtn").addEventListener("click", cropSelectedTimelineClip);
-  $("timelineRemoveBtn").addEventListener("click", removeSelectedTimelineClip);
-  $("timelineCopyBtn").addEventListener("click", copyTimelinePaths);
-  $("timelineClearBtn").addEventListener("click", clearTimeline);
+  if($("timelinePlayBtn")) $("timelinePlayBtn").addEventListener("click", playTimelineSequence);
+  if($("timelineCropBtn")) $("timelineCropBtn").addEventListener("click", cropSelectedTimelineClip);
 }
 async function loadMatchAudioItems(){
-  const list = $("audioList");
-  if(!list) return;
-  list.innerHTML = '<div class="empty">正在读取音频素材...</div>';
+  const shelf = $("clipShelf");
+  if(shelf) shelf.innerHTML = '<div class="empty">正在读取音频素材...</div>';
   try{
     const data = await getJson("/api/items?kind=" + encodeURIComponent("原片音频素材") + "&page_size=80");
     matchAudioItems = data.items || [];
     if(!matchAudioItems.length){
-      list.innerHTML = '<div class="empty">还没有原片音频素材。先在“素材整理”点“批量处理 → 提取音频/文案”。</div>';
+      if(shelf) shelf.innerHTML = '<div class="empty">还没有原片音频素材。先在“素材整理”里提取音频/文案素材。</div>';
       return;
     }
     if(!selectedMatchAudio || !matchAudioItems.some(item => item.id === selectedMatchAudio.id)){
@@ -4759,32 +4717,27 @@ async function loadMatchAudioItems(){
     renderAudioList();
     selectMatchAudio(selectedMatchAudio);
   }catch(err){
-    list.innerHTML = '<div class="empty">音频素材读取失败。</div>';
+    if(shelf) shelf.innerHTML = '<div class="empty">音频素材读取失败。</div>';
   }
 }
 function renderAudioList(){
-  const list = $("audioList");
-  if(!list) return;
-  list.innerHTML = "";
+  const select = $("matchAudioSelect");
+  if(!select) return;
+  select.innerHTML = "";
   matchAudioItems.forEach(item => {
-    const btn = document.createElement("button");
-    btn.className = "audio-item" + (selectedMatchAudio && selectedMatchAudio.id === item.id ? " active" : "");
-    btn.innerHTML = `<span class="audio-title">${esc(item.name)}</span><small>${esc(item.location)} / ${item.size_mb} MB</small>`;
-    btn.addEventListener("click", () => selectMatchAudio(item));
-    list.appendChild(btn);
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = `${item.name} / ${item.location}`;
+    select.appendChild(option);
   });
+  if(selectedMatchAudio) select.value = selectedMatchAudio.id;
 }
 function selectMatchAudio(item){
   selectedMatchAudio = item;
   renderAudioList();
-  const audio = $("editAudio");
-  if(audio){
-    audio.src = item.media;
-    audio.load();
-  }
-  renderAudioTrack();
-  $("matchCopy").textContent = `已选择音频：${item.name}\n地点：${item.location}\n点击“复制提示词并开始匹配素材”，再把提示词发给 Codex。Codex 会读取时间戳文案，按一句话一个或多个画面生成初剪素材包。`;
-  $("matchStatus").textContent = "等待复制提示词";
+  $("matchCopy").textContent = `已选择音频：${item.name}\n地点：${item.location}\n左侧显示本条音频对应的初筛画面素材；真正精配和剪辑交给 Codex + 剪映。`;
+  $("matchStatus").textContent = "正在读取初筛素材...";
+  startMatchAudio();
 }
 async function copySmartMatchPrompt(){
   if(!selectedMatchAudio){
@@ -4824,7 +4777,7 @@ async function copySmartMatchPrompt(){
   $("matchStatus").textContent = "已复制 Codex 配镜提示词";
   $("matchCopy").textContent = `已复制配镜任务提示词。\n\n音频：${selectedMatchAudio.name}\n地点：${location}\n\n下一步：直接把提示词发到对话窗口，我会按 Skill 生成编号初剪素材包并自检。`;
   $("matchStartBtn").textContent = "已复制";
-  setTimeout(() => $("matchStartBtn").textContent = "复制提示词并开始匹配素材", 1100);
+  setTimeout(() => $("matchStartBtn").textContent = "复制配镜提示词", 1100);
 }
 async function startMatchAudio(){
   if(!selectedMatchAudio){
@@ -4832,7 +4785,6 @@ async function startMatchAudio(){
     return;
   }
   $("matchStatus").textContent = "匹配中，首次识别可能需要几分钟...";
-  $("matchTimeline").innerHTML = '<div class="empty">正在读取文案并匹配素材...</div>';
   $("clipShelf").innerHTML = '<div class="empty">正在生成候选素材...</div>';
   try{
     const data = await getJson("/api/match-audio/" + encodeURIComponent(selectedMatchAudio.id));
@@ -4850,48 +4802,49 @@ async function startMatchAudio(){
 }
 function renderMatchPlan(plan){
   const beats = plan.beats || [];
-  $("matchStatus").textContent = `已生成 ${beats.length} 段配镜计划`;
+  selectedMatchClip = null;
+  editTimeline = [];
+  selectedTimelineIndex = -1;
   $("matchCopy").textContent = `音频：${plan.audio.name}\n文案来源：${plan.transcript_source || "audio_asr"}\n画幅：小红书 3:4\n规则：优先同地点、直接关键词、分镜文件夹与文件名。`;
   const shelf = $("clipShelf");
   shelf.innerHTML = "";
   const seen = new Set();
-  beats.forEach(beat => (beat.candidates || []).forEach(clip => {
-    if(seen.has(clip.id)) return;
-    seen.add(clip.id);
-    shelf.appendChild(renderClipMini(clip));
-  }));
-  if(!seen.size) shelf.innerHTML = '<div class="empty">没有匹配到候选分镜。</div>';
-  const timeline = $("matchTimeline");
-  editTimeline = [];
-  selectedTimelineIndex = -1;
   beats.forEach(beat => {
     const first = (beat.candidates || [])[0];
-    if(first){
-      editTimeline.push(makeTimelineEntry(first, beat));
-    }
+    if(first) editTimeline.push(makeTimelineEntry(first, beat));
+    (beat.candidates || []).forEach(clip => {
+      if(seen.has(clip.id)) return;
+      seen.add(clip.id);
+      shelf.appendChild(renderClipMini(clip));
+    });
   });
-  renderEditTimeline();
+  if(!seen.size) shelf.innerHTML = '<div class="empty">没有匹配到候选分镜。</div>';
+  $("matchStatus").textContent = `已生成 ${seen.size} 条初筛素材 / ${beats.length} 段台词`;
   const firstClip = beats.map(b => (b.candidates || [])[0]).find(Boolean);
   if(firstClip) previewEditClip(firstClip);
 }
 function renderClipMini(clip){
   const node = document.createElement("div");
   node.className = "clip-mini";
+  node.dataset.clipId = clip.id;
   node.draggable = true;
   node.innerHTML = `<img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${esc(clip.keyword || clip.name)}</div>`;
   node.addEventListener("dragstart", e => {
-    timelineDragClip = {clip};
     prepareDrag(e, clip);
   });
-  node.addEventListener("dragend", () => { timelineDragClip = null; });
-  node.addEventListener("click", () => previewEditClip(clip));
-  node.addEventListener("dblclick", () => addClipToTimeline(clip));
+  node.addEventListener("click", () => previewEditClip(clip, node));
   return node;
 }
-function previewEditClip(clip){
+function previewEditClip(clip, node=null){
   const video = $("editPreviewVideo");
   if(!video) return;
+  selectedMatchClip = clip;
+  document.querySelectorAll(".clip-mini.selected").forEach(el => el.classList.remove("selected"));
+  const card = node || document.querySelector(`.clip-mini[data-clip-id="${clip.id}"]`);
+  if(card) card.classList.add("selected");
   setFastVideoSource(video, clip, {muted:true, autoplay:true});
+  $("matchStatus").textContent = `正在预览：${clip.keyword || clip.name}`;
+  $("matchCopy").textContent = `当前素材：${clip.name}\n分类：${clip.location || ""} / ${clip.category || ""} / ${clip.keyword || ""}\n路径：${clip.path || ""}`;
 }
 function setFastVideoSource(video, item, options={}){
   const primary = item.media || item.preview_media;
@@ -4978,26 +4931,15 @@ function renderAudioTrack(){
 }
 async function playTimelineSequence(){
   if(!editTimeline.length){
-    await showMessage("主轨为空", "先让 Codex 生成初剪素材包，或者把上方素材拖到主轨后再合并播放。");
+    await showMessage("还没有初筛素材", "先选择一条音频，让系统读取它对应的初筛素材。");
     return;
   }
-  const video = $("editPreviewVideo");
-  const audio = $("editAudio");
-  if(!video) return;
   const token = ++timelinePlayToken;
-  if(audio && selectedMatchAudio){
-    try{
-      audio.currentTime = 0;
-      await audio.play();
-    }catch(_){}
-  }
   $("matchStatus").textContent = "合并播放中";
   for(let index = 0; index < editTimeline.length; index++){
     if(token !== timelinePlayToken) return;
-    selectedTimelineIndex = index;
-    renderEditTimeline();
     const entry = editTimeline[index];
-    setFastVideoSource(video, entry.clip, {muted:true, autoplay:true});
+    previewEditClip(entry.clip);
     const waitMs = Math.max(600, Number(entry.duration || 2.5) * 1000);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
@@ -5031,12 +4973,12 @@ async function splitSelectedTimelineClip(){
   renderEditTimeline();
 }
 async function cropSelectedTimelineClip(){
-  const entry = selectedTimelineEntry();
-  if(!entry){
-    await showMessage("还没选片段", "先在主轨道点一个片段，再打开裁剪/切割。");
+  const clip = selectedMatchClip || (editTimeline[0] ? editTimeline[0].clip : null);
+  if(!clip){
+    await showMessage("还没选素材", "先在左侧点一个素材封面，再打开裁剪/切割。");
     return;
   }
-  openCropEditor(entry.clip, "subtitle");
+  openCropEditor(clip, "subtitle");
 }
 async function removeSelectedTimelineClip(){
   if(!selectedTimelineEntry()){
