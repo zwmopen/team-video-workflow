@@ -3742,10 +3742,18 @@ INDEX_HTML = r"""<!doctype html>
     .beat-head span { font-size:11px; color:var(--muted); white-space:nowrap; }
     .beat-line { margin:0 0 8px; color:var(--ink); font-size:13px; line-height:1.45; word-break:break-word; }
     .beat-clips { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:8px; }
-    .clip-mini { min-height:0; border:1px solid rgba(255,255,255,.74); border-radius:14px; overflow:hidden; background:var(--panel-light); cursor:pointer; box-shadow:var(--soft-shadow); }
+    .clip-mini { min-height:0; border:1px solid rgba(255,255,255,.74); border-radius:14px; overflow:hidden; background:var(--panel-light); cursor:pointer; box-shadow:var(--soft-shadow); position:relative; }
+    .clip-mini.chosen { border-color:rgba(48,126,255,.62); background:#f6faff; }
     .clip-mini.selected { outline:2px solid var(--accent); background:#f6faff; }
     .clip-mini img { width:100%; aspect-ratio:9/13; object-fit:cover; display:block; background:#dfe8f0; }
     .clip-mini div { padding:6px 7px; font-size:11px; line-height:1.25; word-break:break-word; }
+    .clip-mini-badge { position:absolute; top:6px; left:6px; min-height:20px; padding:0 7px; border-radius:999px; display:flex; align-items:center; background:rgba(16,24,40,.62); color:#fff; font-size:10px; font-weight:700; backdrop-filter:blur(6px); }
+    .clip-mini.chosen .clip-mini-badge { background:linear-gradient(180deg,#428eff,var(--accent)); }
+    .replace-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(116px,1fr)); gap:10px; max-height:58vh; overflow:auto; padding:2px; }
+    .replace-card { height:auto; display:block; padding:0; border:1px solid rgba(255,255,255,.74); border-radius:16px; background:var(--panel-light); box-shadow:var(--soft-shadow); overflow:hidden; cursor:pointer; text-align:left; }
+    .replace-card:hover { outline:2px solid rgba(48,126,255,.38); }
+    .replace-card img { width:100%; aspect-ratio:9/13; object-fit:cover; display:block; background:#dfe8f0; }
+    .replace-card div { padding:7px; font-size:11px; line-height:1.3; word-break:break-word; }
     .audio-list { display:grid; gap:8px; overflow:auto; min-height:0; }
     .audio-item { text-align:left; height:auto; min-height:42px; border-radius:15px; padding:8px 10px; line-height:1.35; overflow:hidden; }
     .audio-item.active { background:linear-gradient(180deg,#428eff,var(--accent)); color:#fff; }
@@ -3926,6 +3934,7 @@ INDEX_HTML = r"""<!doctype html>
             <button id="matchOpenPackBtn">打开素材包</button>
           </div>
           <div id="matchStatus" class="path">等待选择素材。</div>
+          <div id="editDetail" class="match-copy">选中左侧画面后，这里显示当前素材、对应台词和路径。</div>
         </section>
       </div>
     </div>
@@ -4028,10 +4037,21 @@ INDEX_HTML = r"""<!doctype html>
 <div class="context-menu" id="cardMenu">
   <button data-action="rename">重命名素材</button>
   <button data-action="tag">添加标签</button>
+  <button data-action="replace" id="replaceMenuAction">替换这个画面</button>
   <button data-action="crop">裁切废料</button>
   <button data-action="reveal">打开文件夹</button>
   <button data-action="copy">复制路径</button>
   <button data-action="delete" class="danger">移到回收站</button>
+</div>
+<div class="modal-backdrop" id="replaceBackdrop">
+  <div class="modal-card" style="width:min(820px,94vw);">
+    <h3 class="modal-title">替换画面</h3>
+    <div class="modal-body" id="replaceHint">从同一句台词的候选镜头里选一个替换当前画面。</div>
+    <div class="replace-grid" id="replaceGrid"></div>
+    <div class="modal-actions">
+      <button id="replaceCancel">取消</button>
+    </div>
+  </div>
 </div>
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal-card">
@@ -4104,6 +4124,7 @@ let page = 1, pageSize = 72, lastTotal = 0, selectedId = "", selectedItem = null
 let isLoadingItems = false, hasMoreItems = true;
 let currentVisibleItemIds = [];
 let contextMenuItem = null;
+let contextMenuMode = "library";
 let audioWanted = localStorage.getItem("teamVideoBrowserAudioWanted") === "1";
 let refreshingOptions = false;
 let modalResolve = null;
@@ -4119,6 +4140,7 @@ let selectedTimelineIndex = -1;
 let timelineDragClip = null;
 let timelinePlayToken = 0;
 let timelineIsPlaying = false;
+let replaceContext = null;
 const $ = id => document.getElementById(id);
 async function getJson(url){ const r = await fetch(url); return await r.json(); }
 async function postJson(url, payload){
@@ -4202,6 +4224,10 @@ async function init(){
   });
   window.addEventListener("blur", hideCardMenu);
   $("cardMenu").addEventListener("click", handleCardMenuAction);
+  $("replaceCancel").addEventListener("click", closeReplaceModal);
+  $("replaceBackdrop").addEventListener("click", e => {
+    if(e.target.id === "replaceBackdrop") closeReplaceModal();
+  });
   $("modalCancel").addEventListener("click", () => closeModal(null));
   $("modalOk").addEventListener("click", () => closeModal($("modalInput").style.display === "none" ? true : $("modalInput").value));
   $("modalInput").addEventListener("keydown", e => {
@@ -4892,7 +4918,7 @@ function renderMatchPlan(plan){
     audio.load();
   }
   const plainText = beats.map(beat => String(beat.text || "").trim()).filter(Boolean).join("\n");
-  $("matchCopy").textContent = `音频：${plan.audio.name}\n文案来源：${plan.transcript_source || "audio_asr"}\n\n完整台词：\n${plainText || "暂无可读台词"}`;
+  $("matchCopy").textContent = `音频：${plan.audio.name}\n文案来源：${plan.transcript_source || "audio_asr"}\n台词段落：${beats.length} 段；左侧按“台词 → 候选画面”展示。`;
   const shelf = $("clipShelf");
   shelf.innerHTML = "";
   beats.forEach(beat => {
@@ -4922,23 +4948,26 @@ function renderBeatGroup(beat, candidates, selectedCount){
   `;
   const box = group.querySelector(".beat-clips");
   (candidates || []).slice(0, 6).forEach((clip, index) => {
-    box.appendChild(renderClipMini(clip, beat, index));
+    box.appendChild(renderClipMini(clip, beat, index, index < selectedCount));
   });
   if(!(candidates || []).length){
     box.innerHTML = '<div class="empty">这一句还没有匹配画面。</div>';
   }
   return group;
 }
-function renderClipMini(clip, beat=null, candidateIndex=0){
+function renderClipMini(clip, beat=null, candidateIndex=0, chosen=false){
   const node = document.createElement("div");
-  node.className = "clip-mini";
+  node.className = "clip-mini" + (chosen ? " chosen" : "");
   node.dataset.clipId = clip.id;
   node.draggable = true;
-  node.innerHTML = `<img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${candidateIndex + 1}. ${esc(clip.keyword || clip.name)}</div>`;
+  const badge = chosen ? "已选" : "候选";
+  node.innerHTML = `<span class="clip-mini-badge">${badge}</span><img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${candidateIndex + 1}. ${esc(clip.keyword || clip.name)}</div>`;
   node.addEventListener("dragstart", e => {
     prepareDrag(e, clip);
   });
-  node.addEventListener("click", () => previewEditClip(clip, node, beat ? makeTimelineEntry(clip, beat, candidateIndex, 1) : null));
+  const entry = beat ? makeTimelineEntry(clip, beat, candidateIndex, 1) : null;
+  node.addEventListener("click", () => previewEditClip(clip, node, entry));
+  node.addEventListener("contextmenu", e => showMatchClipMenu(e, clip, node, beat, entry, candidateIndex));
   return node;
 }
 function previewEditClip(clip, node=null, entry=null){
@@ -4951,7 +4980,10 @@ function previewEditClip(clip, node=null, entry=null){
   setFastVideoSource(video, clip, {muted:true, autoplay:true});
   $("matchStatus").textContent = `正在预览：${clip.keyword || clip.name}`;
   setEditSubtitle(entry ? entry.text : "");
-  $("matchCopy").textContent = `当前素材：${clip.name}\n分类：${clip.location || ""} / ${clip.category || ""} / ${clip.keyword || ""}\n${entry && entry.text ? `对应台词：${entry.text}\n` : ""}路径：${clip.path || ""}`;
+  const detail = $("editDetail");
+  if(detail){
+    detail.textContent = `当前素材：${clip.name}\n分类：${clip.location || ""} / ${clip.category || ""} / ${clip.keyword || ""}\n${entry && entry.text ? `对应台词：${entry.text}\n` : ""}路径：${clip.path || ""}`;
+  }
 }
 function setFastVideoSource(video, item, options={}){
   const primary = item.media || item.preview_media;
@@ -5099,8 +5131,7 @@ function selectTimelineClip(index){
   selectedTimelineIndex = index;
   renderEditTimeline();
   const entry = editTimeline[index];
-  previewEditClip(entry.clip);
-  $("matchCopy").textContent = `已选主轨片段：${entry.clip.name}\n画面关键词：${entry.clip.keyword || entry.visualNeed || "未标注"}\n台词：${entry.text || "手动拖入素材"}\n\n可用操作：切割片段、裁剪/切割、删除片段。`;
+  previewEditClip(entry.clip, null, entry);
 }
 function selectedTimelineEntry(){
   if(selectedTimelineIndex < 0 || selectedTimelineIndex >= editTimeline.length) return null;
@@ -5713,7 +5744,28 @@ function showCardMenu(e, item, card){
   e.stopPropagation();
   selectItem(item, card);
   contextMenuItem = item;
+  contextMenuMode = "library";
+  replaceContext = null;
   const menu = $("cardMenu");
+  const replaceBtn = $("replaceMenuAction");
+  if(replaceBtn) replaceBtn.style.display = "none";
+  menu.classList.add("open");
+  const x = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+}
+function showMatchClipMenu(e, clip, node, beat=null, entry=null, candidateIndex=0){
+  e.preventDefault();
+  e.stopPropagation();
+  selectedMatchClip = clip;
+  contextMenuItem = clip;
+  contextMenuMode = "match";
+  replaceContext = {clip, node, beat, entry, candidateIndex};
+  previewEditClip(clip, node, entry);
+  const menu = $("cardMenu");
+  const replaceBtn = $("replaceMenuAction");
+  if(replaceBtn) replaceBtn.style.display = "";
   menu.classList.add("open");
   const x = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 10);
   const y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10);
@@ -5723,6 +5775,55 @@ function showCardMenu(e, item, card){
 function hideCardMenu(){
   const menu = $("cardMenu");
   if(menu) menu.classList.remove("open");
+}
+function closeReplaceModal(){
+  const backdrop = $("replaceBackdrop");
+  if(backdrop) backdrop.classList.remove("open");
+}
+function openReplaceModal(){
+  if(!replaceContext || !replaceContext.beat){
+    showMessage("没有可替换的台词组", "这段素材不是从台词候选里打开的，暂时不能在本地候选里替换。");
+    return;
+  }
+  const beat = replaceContext.beat;
+  const candidates = (beat.candidates || []).filter(clip => clip && clip.id !== replaceContext.clip.id);
+  const grid = $("replaceGrid");
+  $("replaceHint").textContent = `当前台词：${beat.text || "无台词"}。这里显示同一句台词下的候选镜头，点一个就替换当前已选画面。`;
+  grid.innerHTML = "";
+  if(!candidates.length){
+    grid.innerHTML = '<div class="empty">这一句暂时没有其他候选。需要更聪明的语义替换时，请复制配镜提示词交给 Codex 重新找素材。</div>';
+  }else{
+    candidates.slice(0, 18).forEach((clip, index) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "replace-card";
+      card.innerHTML = `<img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${index + 1}. ${esc(clip.keyword || clip.name)}<br><small>${esc(clip.category || "")}</small></div>`;
+      card.addEventListener("click", () => replaceTimelineClip(clip));
+      grid.appendChild(card);
+    });
+  }
+  $("replaceBackdrop").classList.add("open");
+}
+function replaceTimelineClip(newClip){
+  if(!replaceContext || !replaceContext.beat) return;
+  const beatIndex = replaceContext.beat.index;
+  let targetIndex = editTimeline.findIndex(entry => entry.beatIndex === beatIndex && entry.clip && entry.clip.id === replaceContext.clip.id);
+  if(targetIndex < 0){
+    targetIndex = editTimeline.findIndex(entry => entry.beatIndex === beatIndex);
+  }
+  if(targetIndex < 0){
+    const entry = makeTimelineEntry(newClip, replaceContext.beat, 0, 1);
+    editTimeline.push(entry);
+    targetIndex = editTimeline.length - 1;
+  }else{
+    editTimeline[targetIndex].clip = newClip;
+    editTimeline[targetIndex].visualNeed = replaceContext.beat.visual_need || newClip.keyword || "";
+  }
+  selectedTimelineIndex = targetIndex;
+  closeReplaceModal();
+  $("matchStatus").textContent = `已替换为：${newClip.keyword || newClip.name}`;
+  previewEditClip(newClip, null, editTimeline[targetIndex]);
+  renderEditTimeline();
 }
 async function handleCardMenuAction(e){
   const btn = e.target.closest("button");
@@ -5734,6 +5835,8 @@ async function handleCardMenuAction(e){
     await renameItem(item);
   }else if(btn.dataset.action === "tag"){
     await addTag(item);
+  }else if(btn.dataset.action === "replace"){
+    openReplaceModal();
   }else if(btn.dataset.action === "crop"){
     openCropEditor(item, "subtitle");
   }else if(btn.dataset.action === "reveal"){
