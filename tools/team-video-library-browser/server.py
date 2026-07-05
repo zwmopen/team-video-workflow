@@ -4009,6 +4009,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="crop-actions">
         <button id="cropCancel">取消</button>
         <button class="primary" id="cropApply">输出新素材</button>
+        <button id="cropApplyDelete">输出新素材并删除原素材</button>
       </div>
     </div>
   </div>
@@ -5190,7 +5191,8 @@ function bindCropUi(){
   $("saveCropLayoutBtn").addEventListener("click", saveCurrentCropLayout);
   $("deleteCropLayoutBtn").addEventListener("click", deleteCurrentCropLayout);
   $("cropLayoutSelect").addEventListener("change", applySavedCropLayout);
-  $("cropApply").addEventListener("click", applyManualCrop);
+  $("cropApply").addEventListener("click", () => applyManualCrop(false));
+  $("cropApplyDelete").addEventListener("click", () => applyManualCrop(true));
   $("cropVideo").addEventListener("loadedmetadata", () => {
     initTrimRangeFromCropVideo();
     setCropPreset(cropState.preset || "subtitle");
@@ -5481,13 +5483,17 @@ function normalizeCropRect(rect){
 function fmtPct(value){
   return Math.round(value * 10) / 10;
 }
-async function applyManualCrop(){
+async function applyManualCrop(deleteOriginal=false){
   if(!selectedItem) return;
   const sourceItem = selectedItem;
   const rect = normalizeCropRect(cropState.rect);
-  $("cropApply").disabled = true;
-  $("cropApply").textContent = "输出中...";
-  $("hint").textContent = "正在输出新素材...";
+  const applyBtn = $("cropApply");
+  const applyDeleteBtn = $("cropApplyDelete");
+  const activeBtn = deleteOriginal ? applyDeleteBtn : applyBtn;
+  applyBtn.disabled = true;
+  applyDeleteBtn.disabled = true;
+  activeBtn.textContent = deleteOriginal ? "输出并删除中..." : "输出中...";
+  $("hint").textContent = deleteOriginal ? "正在输出新素材，成功后把原素材移到回收站..." : "正在输出新素材...";
   try{
     const result = await postJson("/api/manual-process", {id:selectedItem.id, ...rect, start:trimState.start, end:trimState.end});
     if(!result.ok){
@@ -5501,12 +5507,27 @@ async function applyManualCrop(){
     }else{
       await load({preserveScroll:true});
     }
+    let deletedOriginal = false;
+    if(deleteOriginal){
+      releaseVideoHandlesForItem(sourceItem);
+      const deleteResult = await postJson("/api/delete", {id:sourceItem.id});
+      if(deleteResult.ok){
+        deletedOriginal = true;
+        removeDeletedItemFromView(sourceItem);
+        await refreshOptions();
+      }else{
+        await showMessage("原素材未删除", deleteResult.error || "新素材已输出，但原素材移到回收站失败");
+      }
+    }
     if(result.item){
-      $("detail").innerHTML = `<b>${esc(result.item.name)}</b><br>${esc(result.item.kind)} / ${esc(result.item.location)} / ${esc(result.item.category)} / ${esc(result.item.keyword)}<br>${result.item.size_mb} MB<br>已输出新素材<br>${esc(result.item.path)}`;
+      const status = deletedOriginal ? "已输出新素材；原素材已移到回收站" : "已输出新素材";
+      $("detail").innerHTML = `<b>${esc(result.item.name)}</b><br>${esc(result.item.kind)} / ${esc(result.item.location)} / ${esc(result.item.category)} / ${esc(result.item.keyword)}<br>${result.item.size_mb} MB<br>${status}<br>${esc(result.item.path)}`;
     }
   }finally{
-    $("cropApply").disabled = false;
-    $("cropApply").textContent = "输出新素材";
+    applyBtn.disabled = false;
+    applyDeleteBtn.disabled = false;
+    applyBtn.textContent = "输出新素材";
+    applyDeleteBtn.textContent = "输出新素材并删除原素材";
   }
 }
 function initTrimRangeFromCropVideo(){

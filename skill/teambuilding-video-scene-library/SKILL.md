@@ -561,7 +561,7 @@ Browser UI material operations:
 1. In `素材整理`, every material card supports right-click and the bottom-right `...` menu.
 2. Menu actions include `重命名素材`, `添加标签`, `裁切废料`, `打开文件夹`, `复制路径`, and `移到回收站`.
 3. The right preview panel has one combined `裁切废料` button. It opens a single panel where the upper area controls picture crop and the lower timeline controls start/end time trim.
-4. The combined panel auto-detects the subtitle line when opened, defaults to skipping the first frame by starting at about 0.05 seconds, and outputs with the button `输出新素材`.
+4. The combined panel auto-detects the subtitle line when opened, defaults to skipping the first frame by starting at about 0.05 seconds, and outputs with `输出新素材`. A second button, `输出新素材并删除原素材`, must first create the new clip successfully, then move the original source clip and sidecars to the Windows Recycle Bin.
 5. Saved crop layouts can be applied, saved, and deleted.
 6. Manual crop and time trim output new copies under a `手动处理` subfolder next to the source file; they never overwrite the original.
 7. `移到回收站` sends the file and same-stem sidecars to the Windows Recycle Bin, so accidental deletion is recoverable from the system recycle bin.
@@ -570,7 +570,7 @@ Browser UI material operations:
 10. `素材整理` 顶部只有一个 `批量处理` 入口；其中 `提取音频/文案素材` scans `已整理原片`, extracts `.m4a` into `D:\Download\素材下载\团建视频\已整理原片音频\<地点>\`, optionally generates same-stem transcript/timecode text, skips existing outputs, and keeps original videos unchanged. `批量转写文案` should generate both `.transcript.txt` with timestamps for editing and `.plain.txt` plain copy for writing.
 11. The browser scans both `已整理原片音频` and existing `<地点>音频素材库` folders as `原片音频素材`.
 12. In `智能剪辑`, do not build a fake local editing timeline. The local browser is a preview/selection surface only: left side shows the audio selector and the initial matched material thumbnails for that audio; right side previews the selected clip and exposes only `合并播放`, `裁剪切割`, and `打开素材包`.
-13. `复制配镜提示词` is the entry for real smart matching. Codex reads the selected audio transcript or ASR cache, splits transcript beats, performs semantic/keyword/scene matching against `分镜素材`, then creates a numbered `智能剪辑初剪库\<日期时间_音频标题>` material pack for Jianying import. The browser may show a rough local candidate preview, but final matching quality belongs to the Skill workflow and must be self-checked.
+13. `复制配镜提示词` is the entry for real smart matching. Codex reads the selected audio transcript or ASR cache, splits transcript beats, performs semantic/keyword/scene matching against `分镜素材`, then creates a numbered `智能剪辑初剪库\<日期时间_音频标题>` material pack for Jianying import. The material pack must keep clips as separate numbered files in one folder; do not force-concatenate them into a single video when the user asks for simple materials, because Jianying should import them as individually editable clips. The browser may show a rough local candidate preview, but final matching quality belongs to the Skill workflow and must be self-checked.
 14. `素材整理` must show a compact workflow dashboard: `总控任务队列`, `素材初加工闭环`, and `任务结果面板`. The dashboard should auto-poll `/api/batch-progress` without manual refresh, animate the queue dot while running, expose current item/progress/success/skipped/failed counts, and keep a direct `批量处理` entry. Count chips should show only number + label; longer notes belong in hover titles or detail panels. Do not duplicate the same count chips in the header.
 
 ## Material Preprocessing Crop Module
