@@ -4269,7 +4269,7 @@ function updateWorkflowHealth(summary){
   }else if(audios === 0 && originals > 0){
     next = "下一步：批量处理 → 提取音频/文案，给文案配镜做主线";
   }else if(audios > 0 && scenes > 0 && deliveries === 0){
-    next = "下一步：进入智能剪辑，选音频开始匹配素材";
+    next = "下一步：进入智能剪辑，选音频复制配镜任务给 Codex";
   }else if(deliveries > 0){
     next = `下一步：已有 ${deliveries} 条成品/粗剪，进入成品检查`;
   }
@@ -4843,8 +4843,14 @@ function selectMatchAudio(item){
   selectedMatchAudio = item;
   renderAudioList();
   $("matchCopy").textContent = `已选择音频：${item.name}\n地点：${item.location}\n左侧显示本条音频对应的初筛画面素材；真正精配和剪辑交给 Codex + 剪映。`;
-  $("matchStatus").textContent = "正在读取初筛素材...";
-  startMatchAudio();
+  $("matchStatus").textContent = "等待 Codex Skill 生成初剪素材包";
+  currentMatchPlan = null;
+  editTimeline = [];
+  selectedTimelineIndex = -1;
+  selectedMatchClip = null;
+  const shelf = $("clipShelf");
+  if(shelf) shelf.innerHTML = '<div class="empty">这里不自动匹配。点击“复制配镜提示词”交给 Codex Skill，生成初剪素材包后再预览。</div>';
+  renderEditTimeline();
 }
 async function copySmartMatchPrompt(){
   if(!selectedMatchAudio){
@@ -4960,7 +4966,7 @@ function renderClipMini(clip, beat=null, candidateIndex=0, chosen=false){
   node.className = "clip-mini" + (chosen ? " chosen" : "");
   node.dataset.clipId = clip.id;
   node.draggable = true;
-  const badge = chosen ? "已选" : "候选";
+  const badge = chosen ? "✓ 已选" : "候选";
   node.innerHTML = `<span class="clip-mini-badge">${badge}</span><img src="${clip.thumb}" loading="lazy" onerror="thumbFail(this)"><div>${candidateIndex + 1}. ${esc(clip.keyword || clip.name)}</div>`;
   node.addEventListener("dragstart", e => {
     prepareDrag(e, clip);
@@ -5044,7 +5050,7 @@ function renderEditTimeline(){
   if(!timeline) return;
   timeline.innerHTML = "";
   if(!editTimeline.length){
-    timeline.innerHTML = '<div class="empty">把上方素材拖进来，或点击“开始匹配素材”自动生成粗剪主轨。</div>';
+    timeline.innerHTML = '<div class="empty">这里不做本地假智能匹配。复制配镜提示词给 Codex 生成初剪素材包后，再回来预览。</div>';
     $("matchStatus").textContent = "主轨为空";
     return;
   }

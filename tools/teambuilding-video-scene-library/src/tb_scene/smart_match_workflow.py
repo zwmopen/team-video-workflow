@@ -7,7 +7,7 @@ import json
 from .audio_library import AudioLibraryOptions, build_audio_library, default_audio_library_output
 from .delivery_checker import check_delivery
 from .rough_cut_from_board import RoughCutFromBoardOptions, build_rough_cut_from_board
-from .shot_match_board import MatchBoardOptions, build_shot_match_board
+from .shot_match_board import MatchBoardOptions, build_shot_match_board, best_audio_sidecar
 from .path_utils import sanitize_name
 
 
@@ -173,8 +173,8 @@ def list_ready_audios(audio_dir: Path) -> list[Path]:
     ready = [
         audio
         for audio in candidates
-        if audio.with_suffix(".txt").exists()
-        and audio.with_suffix(".txt").read_text(encoding="utf-8", errors="replace").strip()
+        if best_audio_sidecar(audio).exists()
+        and best_audio_sidecar(audio).read_text(encoding="utf-8", errors="replace").strip()
     ]
     return ready or candidates
 
@@ -200,7 +200,7 @@ def pick_audio_by_query(audio_dir: Path, query: str) -> Path:
 def pick_first_ready_audio(audio_dir: Path) -> Path:
     candidates = sorted(audio_dir.glob("*.m4a"))
     for audio in candidates:
-        transcript = audio.with_suffix(".txt")
+        transcript = best_audio_sidecar(audio)
         if transcript.exists() and transcript.read_text(encoding="utf-8", errors="replace").strip():
             return audio
     if candidates:
@@ -212,7 +212,7 @@ def summarize_audio_library(audio_dir: Path) -> list[dict[str, object]]:
     audio_dir = audio_dir.expanduser().resolve()
     rows: list[dict[str, object]] = []
     for index, audio in enumerate(sorted(audio_dir.glob("*.m4a")), start=1):
-        transcript = audio.with_suffix(".txt")
+        transcript = best_audio_sidecar(audio)
         text = transcript.read_text(encoding="utf-8", errors="replace").strip() if transcript.exists() else ""
         rows.append(
             {

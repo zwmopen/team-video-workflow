@@ -177,7 +177,7 @@ def resolve_board_script_text(options: MatchBoardOptions) -> str:
     if options.script_text.strip():
         return clean_script_text(options.script_text)
     if options.audio_file:
-        sidecar = options.audio_file.expanduser().with_suffix(".txt")
+        sidecar = best_audio_sidecar(options.audio_file.expanduser())
         if sidecar.exists():
             return clean_script_text(sidecar.read_text(encoding="utf-8", errors="replace"))
     if options.reference_video:
@@ -185,6 +185,22 @@ def resolve_board_script_text(options: MatchBoardOptions) -> str:
         if sidecar.exists():
             return clean_script_text(sidecar.read_text(encoding="utf-8", errors="replace"))
     raise ValueError("Provide --script-file, --script-text, --audio-file with same-stem .txt, or a reference video with same-stem .txt")
+
+
+def best_audio_sidecar(audio: Path) -> Path:
+    """Prefer timestamped transcripts over short metadata/title sidecars."""
+    transcript = audio.with_name(f"{audio.stem}.transcript.txt")
+    plain = audio.with_name(f"{audio.stem}.plain.txt")
+    txt = audio.with_suffix(".txt")
+    candidates = [transcript, txt, plain]
+    existing = [path for path in candidates if path.exists()]
+    if not existing:
+        return txt
+    for path in existing:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if "-->" in text or re.search(r"\[\d{1,2}:\d{2}", text):
+            return path
+    return max(existing, key=lambda path: path.stat().st_size)
 
 
 def clean_script_text(text: str) -> str:
