@@ -36,6 +36,8 @@ AUDIO_LIBRARY_ROOT = LIBRARY_ROOT / "已整理原片音频"
 SMART_MATCH_PACK_ROOT = LIBRARY_ROOT / "智能剪辑初剪库"
 
 VSR_CLEAN_SCRIPT = Path(r"C:\Users\z\.codex\skills\teambuilding-video-scene-library\scripts\vsr_clean.ps1")
+JIAN_YING_DRAFT_SCRIPT = Path(r"D:\AICode\AI\tools\teambuilding-video-scene-library\scripts\create_jianying_draft_from_pack.py")
+JIAN_YING_DRAFT_ROOT = Path.home() / "AppData" / "Local" / "JianyingPro" / "User Data" / "Draft"
 
 OPEN_TARGETS = {
     "library": LIBRARY_ROOT,
@@ -411,6 +413,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/batch-stop":
             self.batch_stop()
             return
+        if path == "/api/create-jianying-draft":
+            self.create_jianying_draft()
+            return
         if path == "/api/rescan":
             scan_library()
             self.send_json({"ok": True, **summary()})
@@ -622,6 +627,58 @@ class Handler(BaseHTTPRequestHandler):
                 "path": str(target),
                 "specific": is_specific,
                 "message": "已打开本条音频对应的初剪素材包" if is_specific else "还没有找到本条音频的初剪素材包，已打开智能剪辑初剪库根目录",
+            })
+        except Exception as exc:
+            self.send_json({"ok": False, "error": str(exc)})
+
+    def create_jianying_draft(self) -> None:
+        try:
+            payload = self.read_json_body()
+            item_id = str(payload.get("audio_id") or payload.get("id") or "")
+            item = ITEM_BY_ID.get(item_id)
+            if not item:
+                self.send_json({"ok": False, "error": "audio item not found; refresh library first"})
+                return
+            if item.kind != "鍘熺墖闊抽绱犳潗" and not is_audio_path(item.path):
+                self.send_json({"ok": False, "error": "please select an original audio item"})
+                return
+            folder = find_match_output_folder(item)
+            if not folder:
+                self.send_json({"ok": False, "error": "no rough-cut material pack found for this audio yet"})
+                return
+            if not JIAN_YING_DRAFT_SCRIPT.exists():
+                self.send_json({"ok": False, "error": f"Jianying draft script missing: {JIAN_YING_DRAFT_SCRIPT}"})
+                return
+            draft_name = "Codex_" + sanitize_filename(folder.name)[:72]
+            cmd = [
+                sys.executable,
+                "-X",
+                "utf8",
+                str(JIAN_YING_DRAFT_SCRIPT),
+                str(folder),
+                "--draft-name",
+                draft_name,
+            ]
+            result = subprocess.run(
+                cmd,
+                cwd=str(JIAN_YING_DRAFT_SCRIPT.parent),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                error = (result.stderr or result.stdout or "create draft failed").strip()
+                self.send_json({"ok": False, "error": error[-1200:]})
+                return
+            output = (result.stdout or "").strip().splitlines()
+            draft_path = Path(output[-1]) if output else (JIAN_YING_DRAFT_ROOT / draft_name)
+            complete = (draft_path / "draft_content.json").exists() and (draft_path / "draft_meta_info.json").exists()
+            self.send_json({
+                "ok": complete,
+                "draft_name": draft_path.name,
+                "draft_path": str(draft_path),
+                "pack_folder": str(folder),
+                "message": "Jianying draft created. Restart Jianying if it is not visible in the draft list." if complete else "draft command finished but files were not found",
             })
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)})
@@ -4176,6 +4233,7 @@ INDEX_HTML = r"""<!doctype html>
             <button class="primary" id="timelinePlayBtn">合并播放</button>
             <button id="timelineCropBtn">裁剪切割</button>
             <button id="matchOpenPackBtn">打开素材包</button>
+            <button id="matchCreateDraftBtn">生成剪映草稿</button>
           </div>
           <div id="matchStatus" class="path">等待选择素材。</div>
           <div id="editDetail" class="match-copy">选中左侧画面后，这里显示当前素材、对应台词和路径。</div>
@@ -5043,6 +5101,7 @@ function bindMatchUi(){
   if($("timelinePlayBtn")) $("timelinePlayBtn").addEventListener("click", playTimelineSequence);
   if($("timelineCropBtn")) $("timelineCropBtn").addEventListener("click", cropSelectedTimelineClip);
   if($("matchOpenPackBtn")) $("matchOpenPackBtn").addEventListener("click", openMatchOutputFolder);
+  if($("matchCreateDraftBtn")) $("matchCreateDraftBtn").addEventListener("click", createJianyingDraftFromCurrentPack);
 }
 async function loadMatchAudioItems(){
   const shelf = $("clipShelf");
@@ -5535,6 +5594,40 @@ async function openMatchOutputFolder(){
     if(btn){
       btn.disabled = false;
       btn.textContent = oldText || "打开素材包";
+    }
+  }
+}
+async function createJianyingDraftFromCurrentPack(){
+  if(!selectedMatchAudio){
+    await showMessage("还没选音频", "先在左侧选择一条原片音频。");
+    return;
+  }
+  const btn = $("matchCreateDraftBtn");
+  const oldText = btn ? btn.textContent : "";
+  if(btn){
+    btn.disabled = true;
+    btn.textContent = "生成中...";
+  }
+  try{
+    const data = await postJson("/api/create-jianying-draft", {audio_id:selectedMatchAudio.id});
+    if(!data.ok){
+      await showMessage("生成失败", data.error || "剪映草稿生成失败");
+      $("matchStatus").textContent = data.error || "剪映草稿生成失败";
+      return;
+    }
+    $("matchStatus").textContent = "已生成剪映草稿：" + (data.draft_name || "");
+    $("editDetail").textContent = [
+      "剪映草稿：" + (data.draft_name || ""),
+      "草稿位置：" + (data.draft_path || ""),
+      "素材包：" + (data.pack_folder || ""),
+      "如果剪映草稿箱没显示，退出剪映后重新打开。"
+    ].join("\\n");
+  }catch(err){
+    await showMessage("生成失败", String(err));
+  }finally{
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = oldText || "生成剪映草稿";
     }
   }
 }
