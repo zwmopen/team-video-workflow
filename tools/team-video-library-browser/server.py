@@ -336,6 +336,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/match-output-folder/"):
             self.open_match_output_folder(path.removeprefix("/api/match-output-folder/"))
             return
+        if path.startswith("/api/open-jianying-draft/"):
+            self.open_jianying_draft(path.removeprefix("/api/open-jianying-draft/"))
+            return
         if path == "/api/crop-layouts":
             self.send_json({"ok": True, "layouts": load_crop_layouts()})
             return
@@ -627,6 +630,31 @@ class Handler(BaseHTTPRequestHandler):
                 "path": str(target),
                 "specific": is_specific,
                 "message": "已打开本条音频对应的初剪素材包" if is_specific else "还没有找到本条音频的初剪素材包，已打开智能剪辑初剪库根目录",
+            })
+        except Exception as exc:
+            self.send_json({"ok": False, "error": str(exc)})
+
+    def open_jianying_draft(self, item_id: str) -> None:
+        item = ITEM_BY_ID.get(item_id)
+        if not item:
+            self.send_json({"ok": False, "error": "音频素材不存在，可能需要刷新素材索引"})
+            return
+        folder = find_match_output_folder(item)
+        if not folder:
+            self.send_json({"ok": False, "error": "还没有找到本条音频对应的初剪素材包"})
+            return
+        draft_name = "Codex_" + sanitize_filename(folder.name)[:72]
+        draft_path = JIAN_YING_DRAFT_ROOT / draft_name
+        target = draft_path if draft_path.exists() else JIAN_YING_DRAFT_ROOT
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(["explorer", str(target)], close_fds=True)
+            self.send_json({
+                "ok": True,
+                "found": draft_path.exists(),
+                "draft_name": draft_name,
+                "draft_path": str(draft_path),
+                "message": "已打开剪映草稿位置" if draft_path.exists() else "草稿还没生成，已打开剪映草稿根目录",
             })
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)})
@@ -4234,6 +4262,7 @@ INDEX_HTML = r"""<!doctype html>
             <button id="timelineCropBtn">裁剪切割</button>
             <button id="matchOpenPackBtn">打开素材包</button>
             <button id="matchCreateDraftBtn">生成剪映草稿</button>
+            <button id="matchOpenDraftBtn">打开剪映草稿</button>
           </div>
           <div id="matchStatus" class="path">等待选择素材。</div>
           <div id="editDetail" class="match-copy">选中左侧画面后，这里显示当前素材、对应台词和路径。</div>
@@ -4622,26 +4651,7 @@ function updateTaskResultPanel(p){
     ["失败", Number(p.failed || 0)],
   ].map(([label, value]) => `<div class="quality-cell"><b>${value}</b><span>${label}</span></div>`).join("");
 }
-function updateBatchQueueFromProgress(p){
-  const dot = $("queueDot");
-  const status = $("queueStatusText");
-  const current = $("queueCurrentText");
-  const percentBox = $("queuePercent");
-  if(!dot || !status || !current) return;
-  const total = Number(p.total || 0);
-  const processed = Number(p.processed || 0);
-  const percent = total > 0 ? Math.min(100, Math.max(0, Math.round(processed / total * 100))) : 0;
-  if(percentBox) percentBox.textContent = `${percent}%`;
-  dot.classList.toggle("busy", !!p.running);
-  if(p.running){
-    status.textContent = `运行中 ${p.processed || 0}/${p.total || 0}`;
-    current.textContent = p.current_item ? `当前：${p.current_item}` : (p.message || "批量任务正在执行...");
-  }else{
-    status.textContent = "空闲，可开始批量处理";
-    current.textContent = p.message || "这里显示当前批量任务、进度和最近结果。";
-  }
-}
-let batchRefreshTimer = null;
+let dashboardRefreshTimer = null;
 function updateBatchQueueFromProgress(p){
   const dot = $("queueDot");
   const status = $("queueStatusText");
@@ -4658,26 +4668,6 @@ function updateBatchQueueFromProgress(p){
   updateTaskResultPanel(p);
   if(p.running){
     status.textContent = `运行中 ${processed}/${total} · ${percent}%`;
-    current.textContent = p.current_item ? `当前：${p.current_item}` : (p.message || "批量任务正在执行...");
-  }else{
-    status.textContent = "空闲，可开始批量处理";
-    current.textContent = p.message || "这里显示当前批量任务、进度和最近结果。";
-  }
-}
-let dashboardRefreshTimer = null;
-function updateBatchQueueFromProgress(p){
-  const dot = $("queueDot");
-  const status = $("queueStatusText");
-  const current = $("queueCurrentText");
-  const percentBox = $("queuePercent");
-  if(!dot || !status || !current) return;
-  const total = Number(p.total || 0);
-  const processed = Number(p.processed || 0);
-  const percent = total > 0 ? Math.min(100, Math.max(0, Math.round(processed / total * 100))) : 0;
-  if(percentBox) percentBox.textContent = `${percent}%`;
-  dot.classList.toggle("busy", !!p.running);
-  if(p.running){
-    status.textContent = `运行中 ${processed}/${total}`;
     current.textContent = p.current_item ? `当前：${p.current_item}` : (p.message || "任务正在执行...");
   }else{
     status.textContent = "空闲，可开始批量处理";
@@ -5102,6 +5092,7 @@ function bindMatchUi(){
   if($("timelineCropBtn")) $("timelineCropBtn").addEventListener("click", cropSelectedTimelineClip);
   if($("matchOpenPackBtn")) $("matchOpenPackBtn").addEventListener("click", openMatchOutputFolder);
   if($("matchCreateDraftBtn")) $("matchCreateDraftBtn").addEventListener("click", createJianyingDraftFromCurrentPack);
+  if($("matchOpenDraftBtn")) $("matchOpenDraftBtn").addEventListener("click", openJianyingDraftForCurrentAudio);
 }
 async function loadMatchAudioItems(){
   const shelf = $("clipShelf");
@@ -5200,10 +5191,12 @@ async function copySmartMatchPrompt(){
     "7. 初剪素材包文件夹命名：日期时间 + 音频标题；放在 D:\\Download\\素材下载\\团建视频\\智能剪辑初剪库 下。",
     "8. 输出素材按剪辑顺序编号：001_、002_、003_，保留原关键词和来源信息。",
     "9. 同时输出：文案.txt、配镜表.csv、配镜说明.md、质检报告.md；如果可行，再输出一个 rough_cut_preview.mp4 作为快速预览。",
-    "10. 完成后自检：画面是否对应台词、是否有重复循环、是否有脏字幕/水印、时长是否覆盖音频、是否适合拖进剪映继续细剪。",
+    "10. 如果素材包已经可用，继续生成剪映草稿；草稿里保留独立片段、原音频轨和台词文本轨，不要只合成一个不可编辑视频。",
+    "11. 完成后自检：画面是否对应台词、是否有重复循环、是否有脏字幕/水印、时长是否覆盖音频、是否适合拖进剪映继续细剪。",
     "",
     "验收标准：",
     "- 我能直接打开初剪素材包，把编号素材按顺序拖进剪映。",
+    "- 如果生成了剪映草稿，我能在剪映草稿箱打开，并且每段视频仍可单独编辑。",
     "- 每句台词旁边都有匹配理由和本地素材路径。",
     "- 不确定的台词要写明为什么弱匹配，并给替代建议。"
   ].join("\\n");
@@ -5628,6 +5621,38 @@ async function createJianyingDraftFromCurrentPack(){
     if(btn){
       btn.disabled = false;
       btn.textContent = oldText || "生成剪映草稿";
+    }
+  }
+}
+async function openJianyingDraftForCurrentAudio(){
+  if(!selectedMatchAudio){
+    await showMessage("还没选音频", "先在左侧选择一条原片音频。");
+    return;
+  }
+  const btn = $("matchOpenDraftBtn");
+  const oldText = btn ? btn.textContent : "";
+  if(btn){
+    btn.disabled = true;
+    btn.textContent = "打开中...";
+  }
+  try{
+    const data = await getJson("/api/open-jianying-draft/" + encodeURIComponent(selectedMatchAudio.id));
+    if(!data.ok){
+      await showMessage("打开失败", data.error || "剪映草稿位置打开失败");
+      return;
+    }
+    $("matchStatus").textContent = data.message || "已打开剪映草稿";
+    $("editDetail").textContent = [
+      "剪映草稿：" + (data.draft_name || ""),
+      "草稿位置：" + (data.draft_path || ""),
+      data.found ? "状态：已生成，可以在剪映草稿箱查看" : "状态：还没生成，请先点击“生成剪映草稿”"
+    ].join("\\n");
+  }catch(err){
+    await showMessage("打开失败", String(err));
+  }finally{
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = oldText || "打开剪映草稿";
     }
   }
 }
