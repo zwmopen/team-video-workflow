@@ -3894,6 +3894,11 @@ INDEX_HTML = r"""<!doctype html>
     main::-webkit-scrollbar-thumb, aside::-webkit-scrollbar-thumb, .preview::-webkit-scrollbar-thumb, .panel-card::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(96,111,128,.18); border:3px solid transparent; background-clip:content-box; }
     main:hover, aside:hover, .preview:hover, .panel-card:hover { scrollbar-color:rgba(96,111,128,.34) transparent; }
     main:hover::-webkit-scrollbar-thumb, aside:hover::-webkit-scrollbar-thumb, .preview:hover::-webkit-scrollbar-thumb, .panel-card:hover::-webkit-scrollbar-thumb { background:rgba(96,111,128,.34); border:2px solid transparent; background-clip:content-box; }
+    main::-webkit-scrollbar { width:14px; height:14px; }
+    main::-webkit-scrollbar-track { border-radius:999px; background:rgba(220,231,239,.52); box-shadow:inset 2px 2px 5px rgba(112,130,150,.10), inset -2px -2px 5px rgba(255,255,255,.54); }
+    main::-webkit-scrollbar-thumb { min-height:58px; border-radius:999px; border:3px solid rgba(220,231,239,.78); background:rgba(72,92,116,.38); background-clip:padding-box; }
+    main::-webkit-scrollbar-thumb:hover { background:rgba(48,126,255,.56); border-color:rgba(220,231,239,.86); }
+    main::-webkit-scrollbar-thumb:active { background:rgba(48,126,255,.76); }
     .preview::-webkit-scrollbar { width:15px; height:15px; }
     .preview::-webkit-scrollbar-track { border-radius:999px; background:rgba(220,231,239,.58); box-shadow:inset 2px 2px 5px rgba(112,130,150,.12), inset -2px -2px 5px rgba(255,255,255,.55); }
     .preview::-webkit-scrollbar-thumb { min-height:52px; border-radius:999px; border:3px solid rgba(220,231,239,.82); background:rgba(72,92,116,.42); background-clip:padding-box; }
@@ -3901,6 +3906,11 @@ INDEX_HTML = r"""<!doctype html>
     .preview::-webkit-scrollbar-thumb:active { background:rgba(48,126,255,.74); }
     aside, .preview { max-height:calc(100vh - 102px); }
     main { padding:12px; overflow:auto; min-width:0; min-height:0; }
+    .quick-scroll { position:fixed; z-index:36; width:14px; border-radius:999px; background:rgba(220,231,239,.55); box-shadow:inset 2px 2px 5px rgba(112,130,150,.13), inset -2px -2px 5px rgba(255,255,255,.58), 0 8px 18px rgba(112,130,150,.12); cursor:pointer; opacity:.58; transition:opacity .16s ease, width .16s ease, background .16s ease; touch-action:none; }
+    .quick-scroll:hover, .quick-scroll.dragging { opacity:.95; width:18px; background:rgba(220,231,239,.74); }
+    .quick-scroll-thumb { position:absolute; left:3px; right:3px; top:0; min-height:54px; border-radius:999px; background:linear-gradient(180deg,rgba(78,146,255,.9),rgba(48,126,255,.68)); box-shadow:0 6px 14px rgba(48,126,255,.22), inset 0 1px 0 rgba(255,255,255,.5); cursor:grab; }
+    .quick-scroll-thumb:active { cursor:grabbing; }
+    .quick-scroll.hidden { display:none; }
     .pane-resizer { cursor:col-resize; border-radius:999px; background:transparent; position:relative; z-index:4; margin:-8px -4px; touch-action:none; }
     .pane-resizer::before { content:""; position:absolute; inset:0 -12px; border-radius:999px; }
     .pane-resizer::after { content:""; position:absolute; left:50%; top:50%; width:1px; height:42px; transform:translate(-50%,-50%); border-radius:999px; opacity:0; background:linear-gradient(180deg,rgba(48,126,255,0),rgba(48,126,255,.52),rgba(48,126,255,0)); box-shadow:0 0 0 4px rgba(48,126,255,.06); transition:opacity .16s ease, height .16s ease, box-shadow .16s ease; pointer-events:none; }
@@ -4567,6 +4577,7 @@ async function init(){
   bindBatchCropUi();
   bindMatchUi();
   bindDeleteKey();
+  initQuickScrollBars();
 }
 function updateWorkflowHealth(summary){
   const byKind = summary.by_kind || {};
@@ -4716,6 +4727,100 @@ function initPaneResize(){
   bindPaneResizer("previewResizer", currentPreviewWidth, setPreviewWidth, (dx, startWidth) => startWidth - dx, "teamVideoPreviewWidth");
   document.body.classList.add("resizer-hint");
   setTimeout(() => document.body.classList.remove("resizer-hint"), 2400);
+}
+function initQuickScrollBars(){
+  makeQuickScrollBar(() => document.querySelector("main"), "main");
+  makeQuickScrollBar(() => document.querySelector(".preview"), "preview");
+  window.addEventListener("resize", () => requestAnimationFrame(updateAllQuickScrollBars));
+  document.addEventListener("visibilitychange", () => requestAnimationFrame(updateAllQuickScrollBars));
+  setInterval(updateAllQuickScrollBars, 900);
+}
+function updateAllQuickScrollBars(){
+  document.querySelectorAll(".quick-scroll").forEach(bar => {
+    if(typeof bar._quickUpdate === "function") bar._quickUpdate();
+  });
+}
+function makeQuickScrollBar(getTarget, name){
+  const bar = document.createElement("div");
+  bar.className = "quick-scroll hidden";
+  bar.dataset.quickScroll = name;
+  const thumb = document.createElement("div");
+  thumb.className = "quick-scroll-thumb";
+  bar.appendChild(thumb);
+  document.body.appendChild(bar);
+  let dragging = false;
+  let dragStartY = 0;
+  let dragStartTop = 0;
+  function visibleTarget(target){
+    if(!target) return false;
+    const style = getComputedStyle(target);
+    const rect = target.getBoundingClientRect();
+    return style.display !== "none" && style.visibility !== "hidden" && rect.height > 80 && rect.width > 80;
+  }
+  function metrics(){
+    const target = getTarget();
+    if(!visibleTarget(target)) return null;
+    const scrollMax = target.scrollHeight - target.clientHeight;
+    if(scrollMax <= 8) return null;
+    const rect = target.getBoundingClientRect();
+    const height = Math.max(80, rect.height - 10);
+    const top = rect.top + 5;
+    const left = rect.right - (name === "preview" ? 18 : 16);
+    const thumbH = Math.max(54, Math.min(height, height * target.clientHeight / target.scrollHeight));
+    const travel = Math.max(1, height - thumbH);
+    const thumbTop = (target.scrollTop / scrollMax) * travel;
+    return {target, scrollMax, top, left, height, thumbH, travel, thumbTop};
+  }
+  function update(){
+    const m = metrics();
+    if(!m){
+      bar.classList.add("hidden");
+      return;
+    }
+    bar.classList.remove("hidden");
+    bar.style.top = `${m.top}px`;
+    bar.style.left = `${m.left}px`;
+    bar.style.height = `${m.height}px`;
+    thumb.style.height = `${m.thumbH}px`;
+    thumb.style.transform = `translateY(${m.thumbTop}px)`;
+  }
+  function jumpToPointer(clientY){
+    const m = metrics();
+    if(!m) return;
+    const y = Math.min(m.travel, Math.max(0, clientY - m.top - m.thumbH / 2));
+    m.target.scrollTop = (y / m.travel) * m.scrollMax;
+    update();
+  }
+  bar.addEventListener("mousedown", e => {
+    const m = metrics();
+    if(!m) return;
+    e.preventDefault();
+    if(e.target === thumb){
+      dragging = true;
+      dragStartY = e.clientY;
+      dragStartTop = m.thumbTop;
+      bar.classList.add("dragging");
+    }else{
+      jumpToPointer(e.clientY);
+    }
+  });
+  window.addEventListener("mousemove", e => {
+    if(!dragging) return;
+    const m = metrics();
+    if(!m) return;
+    e.preventDefault();
+    const y = Math.min(m.travel, Math.max(0, dragStartTop + e.clientY - dragStartY));
+    m.target.scrollTop = (y / m.travel) * m.scrollMax;
+    update();
+  });
+  window.addEventListener("mouseup", () => {
+    dragging = false;
+    bar.classList.remove("dragging");
+  });
+  const target = getTarget();
+  if(target) target.addEventListener("scroll", update, {passive:true});
+  bar._quickUpdate = update;
+  requestAnimationFrame(update);
 }
 function bindPaneResizer(id, currentFn, setFn, nextFn, storageKey){
   const handle = $(id);
@@ -4867,6 +4972,7 @@ async function load(options = {}){
     }
   }finally{
     isLoadingItems = false;
+    requestAnimationFrame(updateAllQuickScrollBars);
   }
 }
 function createItemCard(item){
@@ -4901,6 +5007,7 @@ function replaceItemInView(oldItem, newItem){
   currentVisibleItemIds = currentVisibleItemIds.map(id => id === oldId ? newItem.id : id);
   selectItem(newItem, newCard, {scrollPreview:false});
   if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+  requestAnimationFrame(updateAllQuickScrollBars);
   return true;
 }
 function insertGeneratedItemNearSource(sourceItem, newItem){
@@ -4913,6 +5020,7 @@ function insertGeneratedItemNearSource(sourceItem, newItem){
   if(existing){
     selectItem(newItem, existing, {scrollPreview:false});
     if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+    requestAnimationFrame(updateAllQuickScrollBars);
     return true;
   }
   const card = createItemCard(newItem);
@@ -4935,6 +5043,7 @@ function insertGeneratedItemNearSource(sourceItem, newItem){
   updateLoadedCountText();
   selectItem(newItem, card, {scrollPreview:false});
   if(pane) requestAnimationFrame(() => { pane.scrollTop = scrollTop; });
+  requestAnimationFrame(updateAllQuickScrollBars);
   return true;
 }
 function renderTags(item){
@@ -5054,6 +5163,7 @@ function setActiveView(view){
   });
   updateSideGuide(view);
   if(view === "match") loadMatchAudioItems();
+  requestAnimationFrame(updateAllQuickScrollBars);
 }
 function updateSideGuide(view){
   const guide = $("sideGuide");
