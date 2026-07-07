@@ -243,6 +243,13 @@ def destination_dir_for(scene_library: Path, classification) -> Path:
     return scene_library / classification.primary_category
 
 
+def first_existing_path(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
 def build_output_name(location: str, keyword: str, source: VideoInfo, scene: SceneCut, serial: int) -> str:
     keyword = sanitize_name(keyword or "未细分")
     loc = sanitize_name(location)
@@ -452,8 +459,14 @@ def make_contact_sheet(ffmpeg: Path, outputs: list[Path], sheet_path: Path, limi
 
 def process_location(args: argparse.Namespace, ffmpeg: Path, ffprobe: Path | None, location: str) -> dict[str, Any]:
     library_root = Path(args.library_root)
-    source_dir = library_root / f"{location}-原视频素材"
-    scene_library = library_root / f"{location}智能镜头分类"
+    source_dir = first_existing_path(
+        library_root / "01_原片素材库" / f"{location}-原视频素材",
+        library_root / f"{location}-原视频素材",
+    )
+    scene_library = first_existing_path(
+        library_root / "02_分镜素材库" / f"{location}智能镜头分类",
+        library_root / f"{location}智能镜头分类",
+    )
     system_dir = scene_library / "._系统记录" / "裁剪分割批处理"
     record_path = system_dir / "processed_state.json"
     manifest_path = system_dir / "裁剪分割_manifest.csv"
@@ -623,7 +636,11 @@ def main() -> int:
     summaries = []
     for location in args.locations:
         summaries.append(process_location(args, ffmpeg, ffprobe, location))
-    out = Path(args.library_root) / "._采集记录" / f"裁剪分割批处理汇总_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    record_root = first_existing_path(
+        Path(args.library_root) / "90_待整理与记录" / "._采集记录",
+        Path(args.library_root) / "._采集记录",
+    )
+    out = record_root / f"裁剪分割批处理汇总_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summaries, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"summary_file": str(out), "locations": summaries}, ensure_ascii=False, indent=2))

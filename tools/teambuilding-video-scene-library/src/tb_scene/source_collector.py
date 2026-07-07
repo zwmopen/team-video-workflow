@@ -66,7 +66,7 @@ def collect_location_sources(
 ) -> dict[str, object]:
     source_root = source_root.expanduser().resolve()
     output_root = output_root.expanduser().resolve()
-    destination_dir = output_root / f"{sanitize_name(location)}-原视频素材"
+    destination_dir = output_root / "01_原片素材库" / f"{sanitize_name(location)}-原视频素材"
     destination_dir.mkdir(parents=True, exist_ok=True)
 
     decisions: list[CollectDecision] = []
@@ -118,7 +118,7 @@ def collect_location_sources(
             )
         )
 
-    report_dir = output_root / "._采集记录"
+    report_dir = output_root / "90_待整理与记录" / "._采集记录"
     report_dir.mkdir(parents=True, exist_ok=True)
     safe_location = sanitize_name(location)
     write_collect_csv(report_dir / f"{safe_location}_source_collect.csv", decisions)
@@ -149,8 +149,10 @@ def clean_location_sources(
     move_files: bool = True,
 ) -> dict[str, object]:
     output_root = output_root.expanduser().resolve()
-    source_dir = output_root / f"{sanitize_name(location)}-原视频素材"
-    quarantine_dir = output_root / "._采集记录" / f"{sanitize_name(location)}_非单地点或重复原视频"
+    source_dir = output_root / "01_原片素材库" / f"{sanitize_name(location)}-原视频素材"
+    if not source_dir.exists():
+        source_dir = output_root / f"{sanitize_name(location)}-原视频素材"
+    quarantine_dir = output_root / "90_待整理与记录" / "._采集记录" / f"{sanitize_name(location)}_非单地点或重复原视频"
     decisions: list[CleanDecision] = []
     seen_hashes: dict[str, Path] = {}
 
@@ -187,7 +189,7 @@ def clean_location_sources(
             )
         )
 
-    report_dir = output_root / "._采集记录"
+    report_dir = output_root / "90_待整理与记录" / "._采集记录"
     report_dir.mkdir(parents=True, exist_ok=True)
     safe_location = sanitize_name(location)
     write_clean_csv(report_dir / f"{safe_location}_source_clean.csv", decisions)

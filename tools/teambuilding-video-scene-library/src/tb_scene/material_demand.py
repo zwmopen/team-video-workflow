@@ -24,7 +24,7 @@ from .reference_learner import (
 
 
 DEFAULT_TEAMBUILDING_ROOT = Path(r"D:\Download\素材下载\团建视频")
-DEFAULT_OUTPUT_ROOT = DEFAULT_TEAMBUILDING_ROOT / "00-模板库" / "素材需求雷达"
+DEFAULT_OUTPUT_ROOT = DEFAULT_TEAMBUILDING_ROOT / "90_待整理与记录" / "00-模板库" / "素材需求雷达"
 
 
 @dataclass(slots=True)
@@ -213,11 +213,15 @@ def discover_location_roots(source_root: Path, locations: list[str] | None) -> l
     roots: list[tuple[str, Path]] = []
     if requested:
         for location in requested:
-            root = source_root / f"{location}-原视频素材"
+            root = source_root / "01_原片素材库" / f"{location}-原视频素材"
+            if not root.exists():
+                root = source_root / f"{location}-原视频素材"
             if root.exists():
                 roots.append((location, root))
         return roots
-    for root in sorted(source_root.glob("*-原视频素材")):
+    candidates = list((source_root / "01_原片素材库").glob("*-原视频素材")) if (source_root / "01_原片素材库").exists() else []
+    candidates.extend(source_root.glob("*-原视频素材"))
+    for root in sorted(candidates):
         if root.is_dir():
             roots.append((root.name.replace("-原视频素材", ""), root))
     return roots
@@ -256,7 +260,9 @@ def match_demands(text: str) -> list[dict[str, object]]:
 
 
 def scan_existing_library_counts(source_root: Path, location: str) -> dict[str, int]:
-    library = source_root / f"{location}智能镜头分类"
+    library = source_root / "02_分镜素材库" / f"{location}智能镜头分类"
+    if not library.exists():
+        library = source_root / f"{location}智能镜头分类"
     counts: dict[str, int] = {}
     if not library.exists():
         return counts
@@ -488,4 +494,3 @@ def clean_title(value: str) -> str:
 def compact_text(value: str, limit: int) -> str:
     text = re.sub(r"\s+", " ", value).strip()
     return text if len(text) <= limit else text[: limit - 1] + "…"
-

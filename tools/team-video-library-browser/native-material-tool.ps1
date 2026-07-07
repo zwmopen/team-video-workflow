@@ -3,7 +3,12 @@ Add-Type -AssemblyName System.Drawing
 
 $ErrorActionPreference = "Stop"
 $LibraryRoot = "D:\Download\素材下载\团建视频"
-$CacheRoot = Join-Path $LibraryRoot "00-模板库\素材库浏览器缓存"
+$SourceRoot = Join-Path $LibraryRoot "01_原片素材库"
+$SceneRoot = Join-Path $LibraryRoot "02_分镜素材库"
+$AudioTextRoot = Join-Path $LibraryRoot "03_音频文案库"
+$SmartWorkRoot = Join-Path $LibraryRoot "04_智能剪辑初剪库"
+$OpsRoot = Join-Path $LibraryRoot "90_待整理与记录"
+$CacheRoot = Join-Path $OpsRoot "00-模板库\素材库浏览器缓存"
 $VideoExts = @(".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm")
 $SystemNames = @("00-模板库", "._采集记录", "._系统记录", "._clean_report")
 $script:AllItems = @()
@@ -80,9 +85,19 @@ function Add-Videos {
 function Scan-Library {
     if (-not (Test-Path -LiteralPath $LibraryRoot)) { return @() }
     $items = New-Object System.Collections.Generic.List[object]
-    $inbox = Join-Path $LibraryRoot "00-待分类整理库"
+    $inbox = Join-Path $OpsRoot "00-待分类整理库"
     if (Test-Path -LiteralPath $inbox) {
         Add-Videos -Items $items -Root (Get-Item -LiteralPath $inbox) -Kind "未分类/未整理素材" -Location "待整理"
+    }
+    if (Test-Path -LiteralPath $SourceRoot) {
+        Get-ChildItem -LiteralPath $SourceRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*-原视频素材" } |
+            ForEach-Object { Add-Videos -Items $items -Root $_ -Kind "已整理原片" -Location ($_.Name -replace "-原视频素材$", "") }
+    }
+    if (Test-Path -LiteralPath $SceneRoot) {
+        Get-ChildItem -LiteralPath $SceneRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*智能镜头分类" } |
+            ForEach-Object { Add-Videos -Items $items -Root $_ -Kind "分镜素材" -Location ($_.Name -replace "智能镜头分类$", "") }
     }
     Get-ChildItem -LiteralPath $LibraryRoot -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like "*-原视频素材" -or $_.Name -like "*智能镜头分类" } |

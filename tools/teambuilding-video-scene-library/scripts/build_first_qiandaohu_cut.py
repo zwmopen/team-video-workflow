@@ -11,9 +11,11 @@ from pathlib import Path
 
 
 ROOT = Path(r"D:\Download\素材下载\团建视频")
-AUDIO = ROOT / "已整理原片音频" / "千岛湖" / "赞0评0千岛湖团建两天一夜行程安排来啦！杭州周边露营烧烤、骑行团建，很适合江浙沪团建哦.m4a"
-LIBRARY = ROOT / "千岛湖智能镜头分类"
-OUT_ROOT = ROOT / "智能剪辑初剪库"
+AUDIO = ROOT / "03_音频文案库" / "千岛湖" / "赞0评0千岛湖团建两天一夜行程安排来啦！杭州周边露营烧烤、骑行团建，很适合江浙沪团建哦.m4a"
+if not AUDIO.exists():
+    AUDIO = ROOT / "03_音频文案库" / "015_赞0评0千岛湖团建两天一夜行程安排来啦！杭州周边露营烧烤、骑行团建，很适合江浙沪团建哦.m4a"
+LIBRARY = ROOT / "02_分镜素材库" / "千岛湖智能镜头分类"
+OUT_ROOT = ROOT / "04_智能剪辑初剪库"
 TITLE = "千岛湖团建两天一夜行程安排来啦_Codex语义配镜_v3"
 
 

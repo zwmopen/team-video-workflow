@@ -21,12 +21,12 @@ from .scene_detector import detect_scenes
 
 
 DEFAULT_SOURCE_ROOTS = [
-    Path(r"D:\Download\素材下载\团建视频\安吉-原视频素材"),
-    Path(r"D:\Download\素材下载\团建视频\千岛湖-原视频素材"),
-    Path(r"D:\Download\素材下载\团建视频\莫干山-原视频素材"),
+    Path(r"D:\Download\素材下载\团建视频\01_原片素材库\安吉-原视频素材"),
+    Path(r"D:\Download\素材下载\团建视频\01_原片素材库\千岛湖-原视频素材"),
+    Path(r"D:\Download\素材下载\团建视频\01_原片素材库\莫干山-原视频素材"),
 ]
 
-DEFAULT_OUTPUT_ROOT = Path(r"D:\Download\素材下载\团建视频\00-模板库\参考成片学习库")
+DEFAULT_OUTPUT_ROOT = Path(r"D:\Download\素材下载\团建视频\90_待整理与记录\00-模板库\参考成片学习库")
 DEFAULT_FEISHU_DOC = "https://my.feishu.cn/docx/YanldTyg5oPwgnxahn6cCIGdnbd"
 
 

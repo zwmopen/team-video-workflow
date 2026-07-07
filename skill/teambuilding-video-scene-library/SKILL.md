@@ -21,6 +21,29 @@ The local browser UI for reviewing the material library lives at:
 D:\AICode\AI\tools\team-video-library-browser
 ```
 
+## Current Material Library Routing
+
+Use this canonical local library layout unless the user explicitly points to another folder:
+
+```text
+D:\Download\素材下载\团建视频
+├── 01_原片素材库
+├── 02_分镜素材库
+├── 03_音频文案库
+├── 04_智能剪辑初剪库
+└── 90_待整理与记录
+```
+
+Routing rules:
+
+1. `01_原片素材库` stores organized source videos such as `<地点>-原视频素材`.
+2. `02_分镜素材库` stores clean classified scene clips such as `<地点>智能镜头分类`.
+3. `03_音频文案库` stores audio, timestamp transcripts, plain copy, and ASR outputs directly; do not create wrapper folders named `已整理原片音频` or `<地点>音频素材库`.
+4. `04_智能剪辑初剪库` stores numbered smart-edit material packs and Jianying draft handoff files.
+5. `90_待整理与记录` stores inbox materials, templates, cache, reports, deletion logs, and system records.
+6. New outputs must use the canonical layout. Old flat paths are read-only compatibility fallback.
+7. Before changing workflow paths, read `references/material-library-routing.md` and the user-facing docs at `D:\Download\素材下载\团建视频\素材库路由说明.md`.
+
 ## Quick Start
 
 Run the local MVP:
@@ -567,10 +590,10 @@ Browser UI material operations:
 7. `移到回收站` sends the file and same-stem sidecars to the Windows Recycle Bin, so accidental deletion is recoverable from the system recycle bin.
 8. Tags are local browser metadata stored under `00-模板库\素材库浏览器缓存\tags.json`; tags help searching but do not move the physical file.
 9. Browser filters must flow from parent to child: `素材类型 -> 地点 -> 一级分类 -> 具体场景/素材组`. Child selections must not collapse parent dropdowns into a single option.
-10. `素材整理` 顶部只有一个 `批量处理` 入口；其中 `提取音频/文案素材` scans `已整理原片`, extracts `.m4a` into `D:\Download\素材下载\团建视频\已整理原片音频\<地点>\`, optionally generates same-stem transcript/timecode text, skips existing outputs, and keeps original videos unchanged. `批量转写文案` should generate both `.transcript.txt` with timestamps for editing and `.plain.txt` plain copy for writing.
-11. The browser scans both `已整理原片音频` and existing `<地点>音频素材库` folders as `原片音频素材`.
+10. `素材整理` 顶部只有一个 `批量处理` 入口；其中 `提取音频/文案素材` scans `已整理原片`, extracts `.m4a` into `D:\Download\素材下载\团建视频\03_音频文案库\<地点>\`, optionally generates same-stem transcript/timecode text, skips existing outputs, and keeps original videos unchanged. `批量转写文案` should generate both `.transcript.txt` with timestamps for editing and `.plain.txt` plain copy for writing.
+11. The browser scans `D:\Download\素材下载\团建视频\03_音频文案库` recursively as `原片音频素材`; legacy audio wrapper folders should be dissolved into this directory.
 12. In `智能剪辑`, do not build a fake local editing timeline. The local browser is a preview/selection surface only: left side shows the audio selector and the initial matched material thumbnails for that audio; right side previews the selected clip and exposes only `合并播放`, `裁剪切割`, and `打开素材包`. The initial match view must be organized by transcript beat: one line of copy, then the candidate pictures for that line. Single-clicking a picture previews only that clip; `合并播放` plays the selected audio continuously while switching video clips in transcript order and showing the active subtitle line on the preview.
-13. `复制配镜提示词` is the entry for real smart matching. Codex reads the selected audio transcript or ASR cache, splits transcript beats, performs semantic/keyword/scene matching against `分镜素材`, then creates a numbered `智能剪辑初剪库\<日期时间_音频标题>` material pack for Jianying import. The material pack must keep clips as separate numbered files in one folder; do not force-concatenate them into a single video when the user asks for simple materials, because Jianying should import them as individually editable clips. The browser may show a rough local candidate preview, but final matching quality belongs to the Skill workflow and must be self-checked.
+13. `复制配镜提示词` is the entry for real smart matching. Codex reads the selected audio transcript or ASR cache, splits transcript beats, performs semantic/keyword/scene matching against `分镜素材`, then creates a numbered `04_智能剪辑初剪库\<日期时间_音频标题>` material pack for Jianying import. The material pack must keep clips as separate numbered files in one folder; do not force-concatenate them into a single video when the user asks for simple materials, because Jianying should import them as individually editable clips. The browser may show a rough local candidate preview, but final matching quality belongs to the Skill workflow and must be self-checked.
 14. `素材整理` must show a compact workflow dashboard: `总控任务队列`, `素材初加工闭环`, and `任务结果面板`. The dashboard should auto-poll `/api/batch-progress` without manual refresh, animate the queue dot while running, expose current item/progress/success/skipped/failed counts, and keep a direct `批量处理` entry. Count chips should show only number + label; longer notes belong in hover titles or detail panels. Do not duplicate the same count chips in the header.
 
 ## Material Preprocessing Crop Module
@@ -591,7 +614,7 @@ Workflow:
 10. For `裁切废料`, do not skip the beginning just because one or two frames contain lower-third subtitles. Only suggest an intro time cut when large cover/title waste is detected across several consecutive opening frames.
 11. Some Douyin team-building clips place yellow/white subtitles around the lower third rather than the bottom edge. If a light bottom crop still leaves subtitle text, create a stronger `字幕之上` test copy and visually compare it before accepting the result.
 12. All material preprocessing outputs should default to trimming the first frame or tiny cover-frame lead-in, about `0.08s` for 30fps videos. This removes single-frame covers without cutting meaningful action. Only keep time zero when the user explicitly says the first frame must be preserved.
-13. The current preferred batch route for already-organized original videos is `scripts/crop_waste_and_split_originals.py`: detect crop/time-waste on `<地点>-原视频素材`, split directly from the source video, and write new silent clips into the existing `<地点>智能镜头分类` folders with `裁剪分割` in the filename. Do not create a separate island library when the user wants side-by-side comparison.
+13. The current preferred batch route for already-organized original videos is `scripts/crop_waste_and_split_originals.py`: detect crop/time-waste on `01_原片素材库\<地点>-原视频素材`, split directly from the source video, and write new silent clips into the existing `02_分镜素材库\<地点>智能镜头分类` folders with `裁剪分割` in the filename. Do not create a separate island library when the user wants side-by-side comparison.
 14. Treat obvious pseudo-vertical footage with large black bars as a crop-first case, not an automatic discard. Before splitting, sample frames and measure top/bottom black bars; if the average black bars are roughly 24%+ of the frame or any sampled frame is roughly 32%+, crop the black bars and then intersect that crop with the subtitle/top-watermark crop. Only skip when the remaining useful picture is too small or still visibly dirty.
 15. Batch execution is rule-based and fast. Quality review is a separate Codex/visual-AI layer: inspect contact sheets, tighten rules when subtitles/title cards remain, then rerun incrementally.
 16. For source batches with higher subtitle placement, prefer a stronger subtitle safety line over preserving every bottom pixel. Current verified rule uses an 18% safety margin above detected subtitle text. If subtitles remain after that, stop crop-only retries and send the clips to deep subtitle/watermark removal or manual review.
@@ -838,3 +861,4 @@ Current execution record:
 - Treat generated crop outputs as replaceable derivatives. Original scene clips remain the source of truth.
 - When crop rules change, re-run generated crop derivatives with the new rule version instead of trusting old processed records.
 - Small faint sky watermarks such as a channel name can be tested with deep repair, but if STTN/VSR still leaves readable text or obvious smear, do not batch it. For pure sky watermarks, a feathered sky-patch repair may be acceptable after visual comparison.
+- 智能剪辑交付不能只停在“编号素材包”。当初剪素材包可用时，应继续生成剪映草稿：保留独立视频片段、原音频轨和台词文本轨，让用户在剪映里继续逐段编辑。浏览器工具里的“生成剪映草稿 / 打开剪映草稿”只是确定性导入辅助；真正的台词配镜仍由 Codex/视觉 AI Skill 完成。

@@ -20,20 +20,31 @@ from ctypes import wintypes
 
 
 LIBRARY_ROOT = Path(r"D:\Download\素材下载\团建视频")
-CACHE_ROOT = LIBRARY_ROOT / "00-模板库" / "素材库浏览器缓存"
+SOURCE_ROOT = LIBRARY_ROOT / "01_原片素材库"
+SCENE_ROOT = LIBRARY_ROOT / "02_分镜素材库"
+AUDIO_TEXT_ROOT = LIBRARY_ROOT / "03_音频文案库"
+SMART_WORK_ROOT = LIBRARY_ROOT / "04_智能剪辑初剪库"
+OPS_ROOT = LIBRARY_ROOT / "90_待整理与记录"
+CACHE_ROOT = OPS_ROOT / "00-模板库" / "素材库浏览器缓存"
 TRANSCRIPT_CACHE_ROOT = CACHE_ROOT / "transcripts"
 PREVIEW_CACHE_ROOT = CACHE_ROOT / "previews"
 TAG_STORE_PATH = CACHE_ROOT / "tags.json"
 CROP_LAYOUT_STORE_PATH = CACHE_ROOT / "crop_layouts.json"
-TRASH_ROOT = LIBRARY_ROOT / "._采集记录" / "浏览器删除素材"
-INBOX_ROOT = LIBRARY_ROOT / "00-待分类整理库"
-TEMPLATE_ROOT = LIBRARY_ROOT / "00-模板库"
-RECORD_ROOT = LIBRARY_ROOT / "._采集记录"
+TRASH_ROOT = OPS_ROOT / "._采集记录" / "浏览器删除素材"
+INBOX_ROOT = OPS_ROOT / "00-待分类整理库"
+TEMPLATE_ROOT = OPS_ROOT / "00-模板库"
+RECORD_ROOT = OPS_ROOT / "._采集记录"
 NATIVE_BROWSER_LAUNCHER = Path(r"D:\AICode\AI\tools\team-video-library-browser\启动剪辑素材浏览器.bat")
 JH_TOOLS_ROOT = Path(r"D:\Program Files\江湖工具箱\MinApp")
 JH_TOOLBOX_MAIN = Path(r"D:\Program Files\江湖工具箱\江湖工具箱.exe")
-AUDIO_LIBRARY_ROOT = LIBRARY_ROOT / "已整理原片音频"
-SMART_MATCH_PACK_ROOT = LIBRARY_ROOT / "智能剪辑初剪库"
+AUDIO_LIBRARY_ROOT = AUDIO_TEXT_ROOT
+SMART_MATCH_PACK_ROOT = SMART_WORK_ROOT
+LEGACY_INBOX_ROOT = LIBRARY_ROOT / "00-待分类整理库"
+LEGACY_TEMPLATE_ROOT = LIBRARY_ROOT / "00-模板库"
+LEGACY_RECORD_ROOT = LIBRARY_ROOT / "._采集记录"
+LEGACY_AUDIO_LIBRARY_ROOT = LIBRARY_ROOT / "已整理原片音频"
+LEGACY_QIANDAOHU_AUDIO_ROOT = LIBRARY_ROOT / "千岛湖音频素材库"
+LEGACY_SMART_MATCH_PACK_ROOT = LIBRARY_ROOT / "智能剪辑初剪库"
 
 VSR_CLEAN_SCRIPT = Path(r"C:\Users\z\.codex\skills\teambuilding-video-scene-library\scripts\vsr_clean.ps1")
 JIAN_YING_DRAFT_SCRIPT = Path(r"D:\AICode\AI\tools\teambuilding-video-scene-library\scripts\create_jianying_draft_from_pack.py")
@@ -41,6 +52,10 @@ JIAN_YING_DRAFT_ROOT = Path.home() / "AppData" / "Local" / "JianyingPro" / "User
 
 OPEN_TARGETS = {
     "library": LIBRARY_ROOT,
+    "sources": SOURCE_ROOT,
+    "scenes": SCENE_ROOT,
+    "audio": AUDIO_TEXT_ROOT,
+    "matchpacks": SMART_MATCH_PACK_ROOT,
     "inbox": INBOX_ROOT,
     "templates": TEMPLATE_ROOT,
     "records": RECORD_ROOT,
@@ -154,10 +169,16 @@ def scan_library() -> None:
     ITEM_BY_ID.clear()
     if not LIBRARY_ROOT.exists():
         return
-    if INBOX_ROOT.exists():
-        add_videos(INBOX_ROOT, "未分类/未整理素材", "待整理")
-    if AUDIO_LIBRARY_ROOT.exists():
-        add_audio_files(AUDIO_LIBRARY_ROOT, "原片音频素材", "")
+    for inbox in existing_roots(INBOX_ROOT, LEGACY_INBOX_ROOT):
+        add_videos(inbox, "未分类/未整理素材", "待整理")
+    for audio_root in existing_roots(AUDIO_LIBRARY_ROOT, LEGACY_AUDIO_LIBRARY_ROOT, LEGACY_QIANDAOHU_AUDIO_ROOT):
+        add_audio_files(audio_root, "原片音频素材", "")
+    for folder in iter_location_roots(SOURCE_ROOT, "-原视频素材"):
+        location = folder.name.removesuffix("-原视频素材")
+        add_videos(folder, "已整理原片", location)
+    for folder in iter_location_roots(SCENE_ROOT, "智能镜头分类"):
+        location = folder.name.removesuffix("智能镜头分类")
+        add_videos(folder, "分镜素材", location)
     for folder in sorted(LIBRARY_ROOT.iterdir()):
         if not folder.is_dir() or folder.name in SYSTEM_NAMES:
             continue
@@ -177,6 +198,27 @@ def scan_library() -> None:
             continue
         elif folder.name.startswith(DELIVERY_FOLDER_PREFIXES) or folder.name.endswith(DELIVERY_FOLDER_SUFFIXES):
             add_delivery_videos(folder)
+
+
+def existing_roots(*paths: Path) -> list[Path]:
+    seen: set[Path] = set()
+    roots: list[Path] = []
+    for path in paths:
+        resolved = path.resolve()
+        if path.exists() and resolved not in seen:
+            roots.append(path)
+            seen.add(resolved)
+    return roots
+
+
+def iter_location_roots(container: Path, suffix: str) -> list[Path]:
+    if not container.exists():
+        return []
+    return [
+        folder
+        for folder in sorted(container.iterdir(), key=lambda item: item.name.lower())
+        if folder.is_dir() and folder.name.endswith(suffix)
+    ]
 
 
 def add_videos(root: Path, kind: str, location: str) -> None:
@@ -3098,9 +3140,11 @@ def extract_audio_from_video(item: LibraryItem) -> tuple[str, Path | None]:
 def find_existing_audio_for_item(item: LibraryItem) -> Path | None:
     source_stem = Path(item.path).stem
     candidate_roots = [
+        AUDIO_LIBRARY_ROOT,
         AUDIO_LIBRARY_ROOT / sanitize_filename(item.location or infer_location_from_name(item.name) or "未分地点"),
     ]
     if item.location:
+        candidate_roots.append(AUDIO_TEXT_ROOT / f"{item.location}音频素材库")
         candidate_roots.append(LIBRARY_ROOT / f"{item.location}音频素材库")
     for root in candidate_roots:
         if not root.exists():
@@ -5298,7 +5342,7 @@ async function copySmartMatchPrompt(){
     "4. 没有明确关键词的台词，用同地点环境空镜、人物反应、团队互动、细节特写做补充，不要重复循环同一个 1-2 秒素材。",
     "5. 优先使用已经清洗好的分镜素材；明显带字幕、水印、废料、横屏小画面的素材不要选。",
     "6. 复制素材到一个新的初剪素材包，不移动源素材。",
-    "7. 初剪素材包文件夹命名：日期时间 + 音频标题；放在 D:\\Download\\素材下载\\团建视频\\智能剪辑初剪库 下。",
+    "7. 初剪素材包文件夹命名：日期时间 + 音频标题；放在 D:\\Download\\素材下载\\团建视频\\04_智能剪辑初剪库 下。",
     "8. 输出素材按剪辑顺序编号：001_、002_、003_，保留原关键词和来源信息。",
     "9. 同时输出：文案.txt、配镜表.csv、配镜说明.md、质检报告.md；如果可行，再输出一个 rough_cut_preview.mp4 作为快速预览。",
     "10. 如果素材包已经可用，继续生成剪映草稿；草稿里保留独立片段、原音频轨和台词文本轨，不要只合成一个不可编辑视频。",
@@ -6808,7 +6852,7 @@ function openBatchExtractAudio(){
   $("batchTranscribeTitle").textContent = "从已整理原片提取可复用口播音频；可只提取音频，也可以顺带生成时间戳文案。";
   $("batchTranscribeContent").innerHTML = `
     <div style="padding:20px; text-align:center;">
-      <p style="color:var(--muted);">从“已整理原片”里提取口播音频，输出到“已整理原片音频”素材库。</p>
+      <p style="color:var(--muted);">从“已整理原片”里提取口播音频，输出到“03_音频文案库”。</p>
       <p style="color:#41d5cf; margin-top:10px;">已有同名音频或有效文案会自动跳过；原视频不会被修改。</p>
       <div style="margin-top:20px; display:flex; gap:10px; justify-content:center;">
         <button id="batchExtractAudioOnlyBtn">只提取音频</button>
@@ -6824,7 +6868,7 @@ async function startBatchExtractAudio(transcribe=false){
   const title = transcribe ? "确认提取音频和时间戳文案" : "确认只提取音频";
   const body = transcribe
     ? "系统会扫描所有“已整理原片”，先提取 .m4a 音频，再复用同名文案或进行语音转文字，生成可用于文案配镜的时间戳文案。已有音频/有效文案会跳过。"
-    : "系统会扫描所有“已整理原片”，把有音轨的视频提取成 .m4a，放入“已整理原片音频”素材库。已提取过的会跳过。";
+    : "系统会扫描所有“已整理原片”，把有音轨的视频提取成 .m4a，放入“03_音频文案库”。已提取过的会跳过。";
   const ok = await openModal({
     title,
     body,

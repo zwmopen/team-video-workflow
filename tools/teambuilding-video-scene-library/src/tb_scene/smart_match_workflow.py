@@ -142,13 +142,18 @@ def infer_location_name(library_root: Path) -> str:
 
 def default_location_audio_library(library_root: Path) -> Path:
     location = infer_location_name(library_root)
-    return library_root.parent / f"{location}音频素材库"
+    project_root = library_root.parent.parent if library_root.parent.name == "02_分镜素材库" else library_root.parent
+    location_audio = project_root / "03_音频文案库" / location
+    if location_audio.exists():
+        return location_audio
+    return project_root / "03_音频文案库"
 
 
 def infer_location_source_dir(library_root: Path) -> Path | None:
     location = infer_location_name(library_root)
-    parent = library_root.parent
+    parent = library_root.parent.parent if library_root.parent.name == "02_分镜素材库" else library_root.parent
     candidates = [
+        parent / "01_原片素材库" / f"{location}-原视频素材",
         parent / f"{location}-原视频素材",
         parent / f"{location}原视频素材",
         parent / f"{location}-原片素材",
