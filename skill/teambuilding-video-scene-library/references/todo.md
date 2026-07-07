@@ -114,3 +114,10 @@ For editing output, a missing or weak match is better than an obviously wrong ma
 - The clean scene library should only accept vertical or useful pseudo-vertical outputs. Horizontal originals may remain as source/audio evidence, but horizontal scene clips should not be forced into the reusable scene library.
 - Batch crop/split is allowed for rule-based preprocessing, but the final “clean usable library” still needs visual review. Clean clips are kept; dirty subtitles, watermarks, big title cards, and bad crops are recorded for later repair or discard.
 - Current 2026-07-07 run report: `D:\Download\素材下载\团建视频\90_待整理与记录\原片补处理计划与结果_20260707.md`.
+## 2026-07-07 Full Source Coverage Rule
+
+- Do not report source processing as complete merely because videos were scanned. A true source video is complete only when it has at least one existing `written` scene output in the manifest.
+- After every source backfill, generate a source coverage audit: count all source-library videos, exclude manual/test derivatives, then verify true sources with processing records and real output files.
+- If source clips are blocked by over-conservative `skip_title_overlay` or `skip_overcropped`, run the targeted rescue mode with `--source-list-csv`, `--keep-title-scenes`, and `--fallback-full-frame-on-overcrop`, then audit again.
+- Current verified state: 73 true source videos / 73 have real scene outputs. Report: `D:\Download\????\????\90_??????\???????????_20260707.md`.
+

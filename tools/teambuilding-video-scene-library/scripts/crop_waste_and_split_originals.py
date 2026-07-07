@@ -79,6 +79,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preset", default="veryfast")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--source-list-csv", default=None)
+    parser.add_argument("--keep-title-scenes", action="store_true")
+    parser.add_argument("--fallback-full-frame-on-overcrop", action="store_true")
     return parser.parse_args()
 
 
@@ -99,6 +102,19 @@ def list_source_videos(source_dir: Path) -> list[Path]:
         and path.suffix.lower() in VIDEO_EXTENSIONS
         and not is_generated_or_system_path(path)
     ]
+
+
+def load_source_filter(path: str | None) -> set[str]:
+    if not path:
+        return set()
+    source_filter: set[str] = set()
+    with Path(path).open("r", newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            source = row.get("source")
+            if source:
+                source_filter.add(str(Path(source)))
+    return source_filter
 
 
 def make_video_info(path: Path, video_id: str, ffmpeg: Path, ffprobe: Path | None) -> VideoInfo:
@@ -492,6 +508,9 @@ def process_location(args: argparse.Namespace, ffmpeg: Path, ffprobe: Path | Non
         return summary
 
     videos = list_source_videos(source_dir)
+    source_filter = load_source_filter(args.source_list_csv)
+    if source_filter:
+        videos = [video for video in videos if str(video) in source_filter]
     summary["videos_found"] = len(videos)
     selected_count = 0
     serial = 1 + len(list(scene_library.rglob("*裁剪分割*.mp4")))
@@ -519,6 +538,9 @@ def process_location(args: argparse.Namespace, ffmpeg: Path, ffprobe: Path | Non
         detection = detect_crop(video, location)
         rect = detection.get("rect", {"x": 0.0, "y": 0.0, "w": 100.0, "h": 88.0})
         rect, letterbox_reason = merge_letterbox_and_subtitle_rect(rect, letterbox)
+        if float(rect.get("h", 0.0)) < 32.0 and args.fallback_full_frame_on_overcrop:
+            rect = {"x": 0.0, "y": 0.0, "w": 100.0, "h": 100.0}
+            detection["reason"] = f"{detection.get('reason', '')}; fallback_full_frame_on_overcrop"
         if float(rect.get("h", 0.0)) < 32.0:
             summary["videos_skipped"] += 1
             rows.append({
@@ -582,7 +604,7 @@ def process_location(args: argparse.Namespace, ffmpeg: Path, ffprobe: Path | Non
                 summary["clips_skipped"] += 1
                 rows.append({**row_base, "status": "skip_processed", "output": ""})
                 continue
-            if scene_has_large_title_overlay(ffmpeg, source, scene, system_dir / "title_check_frames"):
+            if not args.keep_title_scenes and scene_has_large_title_overlay(ffmpeg, source, scene, system_dir / "title_check_frames"):
                 summary["clips_skipped"] += 1
                 rows.append({**row_base, "status": "skip_title_overlay", "reason": "分镜抽帧检测到大标题/贴纸覆盖，作为废料跳过", "output": ""})
                 continue
