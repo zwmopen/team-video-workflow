@@ -106,3 +106,11 @@ Build a low-touch workflow where the user only adds new source videos or gives a
 ## Operating Rule
 
 For editing output, a missing or weak match is better than an obviously wrong match. The system should mark a beat as unmatched or low-confidence instead of filling it with unrelated visuals.
+
+## 2026-07-07 Source Backfill Rule
+
+- New collected videos should be moved into `D:\Download\素材下载\团建视频\01_原片素材库\<地点>-原视频素材`; do not keep duplicated copies in the download/collection folder after successful import.
+- Backfill processing should run by location, not by the whole disk: import source videos, run `crop_waste_and_split_originals.py`, refresh the browser index, then generate a material-demand report.
+- The clean scene library should only accept vertical or useful pseudo-vertical outputs. Horizontal originals may remain as source/audio evidence, but horizontal scene clips should not be forced into the reusable scene library.
+- Batch crop/split is allowed for rule-based preprocessing, but the final “clean usable library” still needs visual review. Clean clips are kept; dirty subtitles, watermarks, big title cards, and bad crops are recorded for later repair or discard.
+- Current 2026-07-07 run report: `D:\Download\素材下载\团建视频\90_待整理与记录\原片补处理计划与结果_20260707.md`.
