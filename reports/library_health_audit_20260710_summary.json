@@ -1,0 +1,31 @@
+{
+  "library_root": "D:\\Download\\素材下载\\团建视频",
+  "real_source_videos": 73,
+  "complete_source_videos": 73,
+  "source_coverage_pct": 100.0,
+  "generated_or_manual_source_derivatives": 8,
+  "scene_clip_count": 1977,
+  "scene_by_location": {
+    "千岛湖": 529,
+    "安吉": 300,
+    "莫干山": 1148
+  },
+  "audio_count": 78,
+  "audio_by_location": {
+    "未分组": 27,
+    "千岛湖": 13,
+    "安吉": 10,
+    "莫干山": 28
+  },
+  "audio_missing_txt": 22,
+  "weak_keyword_groups_count": 42,
+  "huge_keyword_groups_count": 6,
+  "next_action_count": 70,
+  "recommendations": [
+    "Keep source coverage as a hard gate: true source videos must have at least one written scene output.",
+    "Use weak keyword groups to drive collection: groups with <=2 clips are not enough for smooth editing.",
+    "Review huge groups: groups with >=120 clips likely need sub-keyword splitting or deduplication.",
+    "Audio assets without TXT should be transcribed before smart editing.",
+    "Treat local matching as candidate generation only; semantic final selection should remain an AI-assisted skill step."
+  ]
+}
