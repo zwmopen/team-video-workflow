@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-id", default="volc.seedasr.auc")
     parser.add_argument("--language", default="zh-CN")
     parser.add_argument("--max-files", type=int)
+    parser.add_argument("--source-list-csv", type=Path, help="Optional CSV containing a path column with audio files to process.")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--rewrite-existing-json", action="store_true")
     parser.add_argument("--port", type=int, default=8789)
@@ -61,7 +62,7 @@ def main() -> int:
 
     cache_root = audio_root.parent / "._volc_asr_upload_cache"
     cache_root.mkdir(parents=True, exist_ok=True)
-    audios = [p for p in sorted(audio_root.rglob("*")) if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
+    audios = load_audio_targets(audio_root, args.source_list_csv)
     if args.max_files:
         audios = audios[: args.max_files]
 
@@ -101,6 +102,25 @@ def rewrite_existing_asr_json(audio_root: Path) -> dict[str, object]:
             failed += 1
             rows.append({"json": str(json_path), "status": "failed", "error": str(exc)})
     return {"audio_root": str(audio_root), "done": done, "failed": failed, "items": rows}
+
+
+def load_audio_targets(audio_root: Path, source_list_csv: Path | None) -> list[Path]:
+    if not source_list_csv:
+        return [p for p in sorted(audio_root.rglob("*")) if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
+    if not source_list_csv.exists():
+        raise FileNotFoundError(f"source list csv not found: {source_list_csv}")
+    import csv
+
+    targets: list[Path] = []
+    with source_list_csv.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            raw_path = row.get("path") or row.get("audio") or row.get("file")
+            if not raw_path:
+                continue
+            audio = Path(raw_path)
+            if audio.exists() and audio.is_file() and audio.suffix.lower() in AUDIO_EXTENSIONS:
+                targets.append(audio.resolve())
+    return sorted(dict.fromkeys(targets), key=lambda item: str(item).lower())
 
 
 def start_http_server(root: Path, port: int) -> tuple[socketserver.TCPServer, threading.Thread]:
@@ -318,9 +338,19 @@ def write_sidecars(result: dict[str, object], transcript_path: Path, plain_path:
                 lines.append(f"{format_time(start)} --> {format_time(end)} {utterance_text}")
     if not lines and text:
         lines.append(f"00:00.000 --> 00:00.000 {text}")
-    transcript_path.write_text("\n".join(lines), encoding="utf-8")
-    plain_path.write_text(text or "\n".join(line.split(" ", 3)[-1] for line in lines), encoding="utf-8")
+    transcript_text = "\n".join(lines)
+    plain_text = text or "\n".join(line.split(" ", 3)[-1] for line in lines)
+    canonical_txt = canonical_text_path(json_path)
+    transcript_path.write_text(transcript_text, encoding="utf-8")
+    canonical_txt.write_text(transcript_text, encoding="utf-8")
+    plain_path.write_text(plain_text, encoding="utf-8")
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def canonical_text_path(json_path: Path) -> Path:
+    if json_path.name.endswith(".asr.json"):
+        return json_path.with_name(json_path.name[: -len(".asr.json")] + ".txt")
+    return json_path.with_suffix(".txt")
 
 
 def fix_mojibake(text: str) -> str:

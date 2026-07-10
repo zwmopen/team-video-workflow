@@ -117,16 +117,30 @@ def audio_inventory(audio_root: Path) -> list[dict[str, object]]:
             continue
         rel = audio.relative_to(audio_root)
         location = rel.parts[0] if len(rel.parts) > 1 else "未分组"
+        transcript_path = find_audio_transcript(audio)
         rows.append(
             {
                 "location": location,
                 "name": audio.name,
                 "path": str(audio),
                 "size_mb": round(audio.stat().st_size / 1024 / 1024, 2),
-                "has_txt": audio.with_suffix(".txt").exists(),
+                "has_txt": transcript_path is not None,
+                "transcript_path": str(transcript_path) if transcript_path else "",
             }
         )
     return rows
+
+
+def find_audio_transcript(audio: Path) -> Path | None:
+    candidates = [
+        audio.with_suffix(".transcript.txt"),
+        audio.with_suffix(".txt"),
+        audio.with_suffix(".plain.txt"),
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.stat().st_size > 0:
+            return candidate
+    return None
 
 
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:

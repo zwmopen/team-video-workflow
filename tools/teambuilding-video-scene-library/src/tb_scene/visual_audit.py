@@ -9,6 +9,8 @@ from PIL import Image, ImageDraw, ImageFont
 from .ffmpeg_utils import find_ffmpeg, run_command
 from .script_matcher import load_clip_records
 
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm"}
+
 
 def build_visual_audit_contact_sheets(
     library_root: Path,
@@ -29,6 +31,8 @@ def build_visual_audit_contact_sheets(
     sheets_dir.mkdir(parents=True, exist_ok=True)
 
     records = [record for record in load_clip_records(library_root) if clip_path(record).exists()]
+    if not records:
+        records = load_clip_records_from_filesystem(library_root)
     if max_clips:
         records = records[:max_clips]
 
@@ -93,6 +97,24 @@ def build_visual_audit_contact_sheets(
 
 def clip_path(record: dict[str, object]) -> Path:
     return Path(str(record.get("output_path", "")))
+
+
+def load_clip_records_from_filesystem(library_root: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for path in sorted(library_root.rglob("*"), key=lambda item: str(item).lower()):
+        if not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS:
+            continue
+        if any(part.startswith("._") for part in path.parts):
+            continue
+        records.append(
+            {
+                "output_path": str(path),
+                "source_video_id": "",
+                "source_video_name": "",
+                "scene_id": path.stem,
+            }
+        )
+    return records
 
 
 def extract_middle_frame(video_path: Path, frame_path: Path, ffmpeg: Path) -> None:
