@@ -136,6 +136,7 @@ class VisualCorrection:
     category: str
     keyword: str
     reason: str
+    clip_path: str = ""
 
 
 def apply_visual_corrections(
@@ -144,72 +145,132 @@ def apply_visual_corrections(
     report_name: str = "visual_corrections.csv",
 ) -> dict[str, object]:
     library_root = library_root.expanduser().resolve()
-    db_path = library_root / "._系统记录" / "project.sqlite"
-    if not db_path.exists():
-        raise FileNotFoundError(f"Missing project database: {db_path}")
-
     moved_rows: list[dict[str, str]] = []
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
+    db_path = library_root / "._系统记录" / "project.sqlite"
+    con = sqlite3.connect(db_path) if db_path.exists() else None
+    if con is not None:
+        con.row_factory = sqlite3.Row
     try:
         for correction in corrections:
-            row = con.execute(
-                "select record_json, output_path from scenes where source_video_id=? and scene_id=?",
-                (correction.source_video_id, correction.scene_id),
-            ).fetchone()
-            if not row:
-                moved_rows.append(report_row(correction, "", "", "missing_record"))
-                continue
-            record = json.loads(row["record_json"]) if row["record_json"] else {}
-            current_path = resolve_current_clip(library_root, record, str(row["output_path"] or ""))
+            row = find_database_row(con, correction) if con is not None else None
+            record = json.loads(row["record_json"]) if row and row["record_json"] else {}
+            current_path = resolve_correction_clip(library_root, correction, record, str(row["output_path"] or "") if row else "")
             if current_path is None:
-                moved_rows.append(report_row(correction, str(row["output_path"] or ""), "", "missing_file"))
+                moved_rows.append(report_row(correction, correction.clip_path, "", "missing_file"))
                 continue
 
             destination_dir = library_root / correction.category / correction.keyword
             destination_dir.mkdir(parents=True, exist_ok=True)
+            destination = destination_dir / corrected_clip_name(current_path, correction.keyword)
             if current_path.parent.resolve() == destination_dir.resolve():
-                destination = current_path
-            else:
-                destination = ensure_unique_path(destination_dir / current_path.name)
+                if current_path.name == destination.name:
+                    moved_rows.append(report_row(correction, str(current_path), str(current_path), "already_correct"))
+                    continue
+                destination = ensure_unique_path(destination)
                 shutil.move(str(current_path), str(destination))
+                status = "renamed_filesystem"
+            else:
+                destination = ensure_unique_path(destination)
+                shutil.move(str(current_path), str(destination))
+                status = "moved_filesystem"
 
-            update_record(record, correction, destination)
-            con.execute(
-                """
-                update scenes
-                set output_path=?,
-                    primary_category=?,
-                    confidence_top1=1.0,
-                    record_json=?,
-                    updated_at=datetime('now')
-                where source_video_id=? and scene_id=?
-                """,
-                (
-                    str(destination),
-                    correction.category,
-                    json.dumps(record, ensure_ascii=False),
-                    correction.source_video_id,
-                    correction.scene_id,
-                ),
-            )
-            moved_rows.append(report_row(correction, str(current_path), str(destination), "moved"))
-        con.commit()
+            if row is not None and con is not None:
+                update_record(record, correction, destination)
+                con.execute(
+                    """
+                    update scenes
+                    set output_path=?,
+                        primary_category=?,
+                        confidence_top1=1.0,
+                        record_json=?,
+                        updated_at=datetime('now')
+                    where source_video_id=? and scene_id=?
+                    """,
+                    (
+                        str(destination),
+                        correction.category,
+                        json.dumps(record, ensure_ascii=False),
+                        str(row["source_video_id"]),
+                        str(row["scene_id"]),
+                    ),
+                )
+                status = "renamed" if current_path.parent.resolve() == destination_dir.resolve() else "moved"
+            moved_rows.append(report_row(correction, str(current_path), str(destination), status))
+        if con is not None:
+            con.commit()
     finally:
-        con.close()
+        if con is not None:
+            con.close()
 
-    export_project_files(library_root, moved_rows)
+    if db_path.exists():
+        export_project_files(library_root, moved_rows)
     write_report(library_root, report_name, moved_rows)
-    rename_summary = rename_library_clips(library_root, move_files=True)
+    rename_summary = rename_library_clips(library_root, move_files=True) if db_path.exists() else {"skipped": "missing_project_database"}
     return {
         "library_root": str(library_root),
         "corrections": len(corrections),
-        "moved": sum(1 for row in moved_rows if row["status"] == "moved"),
+        "moved": sum(1 for row in moved_rows if row["status"] in {"moved", "moved_filesystem", "renamed", "renamed_filesystem"}),
+        "moved_filesystem": sum(1 for row in moved_rows if row["status"] == "moved_filesystem"),
+        "renamed": sum(1 for row in moved_rows if row["status"] in {"renamed", "renamed_filesystem"}),
         "missing_record": sum(1 for row in moved_rows if row["status"] == "missing_record"),
         "missing_file": sum(1 for row in moved_rows if row["status"] == "missing_file"),
         "report_csv": str(library_root / "._系统记录" / report_name),
         "rename_summary": rename_summary,
     }
+
+
+def find_database_row(con: sqlite3.Connection, correction: VisualCorrection) -> sqlite3.Row | None:
+    if correction.source_video_id and correction.scene_id:
+        row = con.execute(
+            "select source_video_id, scene_id, record_json, output_path from scenes where source_video_id=? and scene_id=?",
+            (correction.source_video_id, correction.scene_id),
+        ).fetchone()
+        if row:
+            return row
+    if correction.clip_path:
+        target = str(Path(correction.clip_path).resolve())
+        row = con.execute(
+            "select source_video_id, scene_id, record_json, output_path from scenes where output_path=?",
+            (target,),
+        ).fetchone()
+        if row:
+            return row
+        return con.execute(
+            "select source_video_id, scene_id, record_json, output_path from scenes where output_path like ? limit 1",
+            (f"%{Path(target).name}",),
+        ).fetchone()
+    return None
+
+
+def resolve_correction_clip(
+    library_root: Path,
+    correction: VisualCorrection,
+    record: dict[str, object],
+    output_path: str,
+) -> Path | None:
+    if correction.clip_path:
+        path = Path(correction.clip_path).expanduser()
+        if path.exists() and path.is_file():
+            try:
+                path.resolve().relative_to(library_root)
+            except ValueError:
+                return None
+            return path.resolve()
+        moved_candidate = library_root / correction.category / correction.keyword / path.name
+        if moved_candidate.exists() and moved_candidate.is_file():
+            return moved_candidate.resolve()
+    return resolve_current_clip(library_root, record, output_path)
+
+
+def corrected_clip_name(path: Path, keyword: str) -> str:
+    """Keep source and scene suffixes while making the visible keyword match its folder."""
+    stem, separator, source_suffix = path.stem.partition("__")
+    parts = stem.split("_")
+    if len(parts) < 3 or not parts[0].isdigit():
+        return path.name
+    safe_keyword = re.sub(r'[<>:"/\\|?*]', "_", keyword).strip() or parts[2]
+    rebuilt = "_".join([parts[0], parts[1], safe_keyword, *parts[3:]])
+    return f"{rebuilt}{separator}{source_suffix}{path.suffix}"
 
 
 def resolve_current_clip(library_root: Path, record: dict[str, object], output_path: str) -> Path | None:
@@ -282,16 +343,23 @@ def report_row(correction: VisualCorrection, old_path: str, new_path: str, statu
 def corrections_from_csv(path: Path) -> list[VisualCorrection]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = csv.DictReader(handle)
-        return [
-            VisualCorrection(
-                source_video_id=str(row["source_video_id"]),
-                scene_id=str(row["scene_id"]),
-                category=normalize_category(str(row["category"])),
-                keyword=normalize_keyword(str(row["keyword"])),
-                reason=str(row.get("reason") or "visual correction"),
+        corrections: list[VisualCorrection] = []
+        for row in rows:
+            category = str(row.get("category") or row.get("suggested_category") or "").strip()
+            keyword = str(row.get("keyword") or row.get("suggested_keyword") or "").strip()
+            if not category or not keyword:
+                continue
+            corrections.append(
+                VisualCorrection(
+                    source_video_id=str(row.get("source_video_id") or "").strip(),
+                    scene_id=str(row.get("scene_id") or "").strip(),
+                    category=normalize_category(category),
+                    keyword=normalize_keyword(keyword),
+                    reason=str(row.get("reason") or "visual correction"),
+                    clip_path=str(row.get("clip_path") or "").strip(),
+                )
             )
-            for row in rows
-        ]
+        return corrections
 
 
 def normalize_category(value: str) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import csv
 import math
+import re
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -10,6 +11,7 @@ from .ffmpeg_utils import find_ffmpeg, run_command
 from .script_matcher import load_clip_records
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm"}
+SCENE_ID_PATTERN = re.compile(r"(?:^|_)(?P<source>[A-Za-z]*V\d+)_(?P<scene>S\d+)(?:_|$)", re.IGNORECASE)
 
 
 def build_visual_audit_contact_sheets(
@@ -106,15 +108,24 @@ def load_clip_records_from_filesystem(library_root: Path) -> list[dict[str, obje
             continue
         if any(part.startswith("._") for part in path.parts):
             continue
+        source_video_id, scene_id = infer_source_scene_ids(path)
         records.append(
             {
                 "output_path": str(path),
-                "source_video_id": "",
+                "source_video_id": source_video_id,
                 "source_video_name": "",
-                "scene_id": path.stem,
+                "scene_id": scene_id,
             }
         )
     return records
+
+
+def infer_source_scene_ids(path: Path) -> tuple[str, str]:
+    matches = list(SCENE_ID_PATTERN.finditer(path.stem))
+    if not matches:
+        return "", ""
+    match = matches[-1]
+    return match.group("source").upper(), match.group("scene").upper()
 
 
 def extract_middle_frame(video_path: Path, frame_path: Path, ffmpeg: Path) -> None:
@@ -154,13 +165,23 @@ def extract_middle_frame(video_path: Path, frame_path: Path, ffmpeg: Path) -> No
 
 
 def infer_current_label(library_root: Path, path: Path) -> tuple[str, str]:
+    full_parts = list(path.resolve().parts)
+    for index, part in enumerate(full_parts):
+        if part.endswith("智能镜头分类"):
+            category = full_parts[index + 1] if len(full_parts) > index + 2 else ""
+            keyword = full_parts[index + 2] if len(full_parts) > index + 3 and not full_parts[index + 2].startswith("._") else ""
+            return category, keyword
     try:
         rel = path.resolve().relative_to(library_root.resolve())
     except ValueError:
         return "", ""
-    parts = rel.parts
+    parts = list(rel.parts)
+    for index, part in enumerate(parts):
+        if part.endswith("智能镜头分类"):
+            parts = parts[index + 1 :]
+            break
     category = parts[0] if len(parts) >= 2 else ""
-    keyword = parts[1] if len(parts) >= 3 else ""
+    keyword = parts[1] if len(parts) >= 3 and not parts[1].startswith("._") else ""
     return category, keyword
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ GENERATED_MARKERS = {
     "废料",
     "归档",
 }
+SCENE_KEY_PATTERN = re.compile(r"(?:^|_)([A-Za-z]*V\d+_S\d+)(?:_|\.)", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,6 +112,20 @@ def scene_inventory(scene_root: Path) -> list[dict[str, object]]:
     return rows
 
 
+def scene_key_from_path(path: str | Path) -> str:
+    match = SCENE_KEY_PATTERN.search(Path(path).name)
+    return match.group(1).upper() if match else ""
+
+
+def scene_keys_by_location(scenes: list[dict[str, object]]) -> dict[str, set[str]]:
+    keys: dict[str, set[str]] = defaultdict(set)
+    for scene in scenes:
+        key = scene_key_from_path(str(scene["path"]))
+        if key:
+            keys[str(scene["location"])].add(key)
+    return keys
+
+
 def audio_inventory(audio_root: Path) -> list[dict[str, object]]:
     rows = []
     for audio in list_files(audio_root, AUDIO_EXTENSIONS):
@@ -163,6 +179,7 @@ def main() -> int:
 
     sources = source_inventory(source_root)
     scenes = scene_inventory(scene_root)
+    scene_keys = scene_keys_by_location(scenes)
     audios = audio_inventory(audio_root)
     manifests = read_manifests(scene_root)
 
@@ -170,17 +187,25 @@ def main() -> int:
     source_audit: list[dict[str, object]] = []
     for source in sources:
         rows = manifests.get(str(Path(str(source["path"]))), [])
-        written = [
-            row.get("output", "")
-            for row in rows
-            if row.get("status") == "written" and row.get("output") and Path(row["output"]).exists()
-        ]
+        written = []
+        relocated = []
+        for row in rows:
+            if row.get("status") != "written" or not row.get("output"):
+                continue
+            output = str(row["output"])
+            if Path(output).exists():
+                written.append(output)
+                continue
+            if scene_key_from_path(output) in scene_keys.get(str(source["location"]), set()):
+                written.append(output)
+                relocated.append(output)
         status_counts = Counter(row.get("status", "") for row in rows)
         source_audit.append(
             {
                 **source,
                 "record_count": len(rows),
                 "written_existing_count": len(written),
+                "written_relocated_count": len(relocated),
                 "complete": bool(written) if not source["is_generated_or_manual"] else "",
                 "status_counts": json.dumps(dict(status_counts), ensure_ascii=False),
             }
