@@ -1,0 +1,36 @@
+name: Repository quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python syntax
+        run: python -m compileall -q tools skill
+
+      - name: Check whitespace errors
+        run: git diff --check
+
+      - name: Reject files larger than 50 MB
+        shell: bash
+        run: |
+          large_files=$(find . -type f -not -path './.git/*' -size +50M -print)
+          if [ -n "$large_files" ]; then
+            echo "Files larger than 50 MB are not allowed:"
+            echo "$large_files"
+            exit 1
+          fi
