@@ -20,7 +20,7 @@ jobs:
       - name: Check Python syntax
         run: python -m compileall -q tools skill tests
 
-      - name: Run filename, traceability, and filesystem safety contracts
+      - name: Run filename, traceability, filesystem, transaction, and browser security contracts
         run: python -m unittest discover -s tests -v
 
       - name: Verify source collection safety markers
@@ -91,6 +91,36 @@ jobs:
           for marker in cli_required:
               if marker not in cli:
                   raise SystemExit(f'Missing CLI transaction marker: {marker}')
+          PY
+
+      - name: Verify local browser API security contracts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('tools/team-video-library-browser/server.py').read_text(encoding='utf-8-sig')
+          required = [
+              'ThreadingHTTPServer(("127.0.0.1", port)',
+              'is_trusted_local_request',
+              'MAX_JSON_BODY_BYTES = 1024 * 1024',
+              'Cross-Origin-Resource-Policy',
+              'resolve_allowed_file',
+              'confirm:"RENAME"',
+              'confirm:"RECYCLE"',
+              'write_json_atomically',
+          ]
+          for marker in required:
+              if marker not in source:
+                  raise SystemExit(f'Missing browser security marker: {marker}')
+
+          forbidden = [
+              'errors="ignore") if length else "{}"',
+              'postJson("/api/delete", {id:item.id})',
+              'postJson("/api/rename", {id:item.id, name: requested})',
+          ]
+          for marker in forbidden:
+              if marker in source:
+                  raise SystemExit(f'Forbidden browser API pattern remains: {marker}')
           PY
 
       - name: Check whitespace errors
