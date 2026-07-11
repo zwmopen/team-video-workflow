@@ -1,0 +1,120 @@
++        if plan.action in {"move", "rename"}:
++            assert plan.current_path is not None and plan.destination is not None
++            if not plan.current_path.exists() or not plan.current_path.is_file():
++                raise FileNotFoundError(f"Correction source is missing: {plan.current_path}")
++            if plan.destination.exists():
++                raise FileExistsError(f"Correction target already exists: {plan.destination}")
++
++    con = sqlite3.connect(db_path) if db_path.exists() else None
++    completed: list[VisualCorrectionPlan] = []
++    created_dirs: list[Path] = []
++    moved_count = 0
++    try:
++        if con is not None:
++            con.execute("BEGIN IMMEDIATE")
++        for plan in plans:
++            if plan.action in {"move", "rename"}:
++                assert plan.current_path is not None and plan.destination is not None
++                created_dirs.extend(create_destination_directories(library_root, plan.destination.parent))
++                plan.current_path.rename(plan.destination)
++                completed.append(plan)
++                moved_count += 1
++                if fail_after_moves and moved_count >= fail_after_moves:
++                    raise RuntimeError(f"simulated failure after {moved_count} correction move(s)")
++            if plan.has_database_record and plan.current_path is not None and plan.destination is not None:
++                if con is None:
++                    raise RuntimeError("Database record was planned but the database is unavailable.")
++                update_visual_record(con, plan)
+         if con is not None:
+             con.commit()
++    except Exception as original_error:
++        if con is not None:
++            con.rollback()
++        rollback_errors: list[str] = []
++        for plan in reversed(completed):
++            try:
++                assert plan.current_path is not None and plan.destination is not None
++                if plan.destination.exists() and not plan.current_path.exists():
++                    plan.destination.rename(plan.current_path)
++            except Exception as rollback_error:  # pragma: no cover - defensive path
++                rollback_errors.append(
++                    f"{plan.destination} -> {plan.current_path}: {rollback_error}"
++                )
++        cleanup_created_directories(created_dirs)
++        if rollback_errors:
++            raise RuntimeError(
++                "Visual correction failed and filesystem rollback was incomplete:\n"
++                + "\n".join(rollback_errors)
++            ) from original_error
++        raise
+     finally:
+         if con is not None:
+             con.close()
+ 
+-    if db_path.exists():
+-        export_project_files(library_root, moved_rows)
+-    write_report(library_root, report_name, moved_rows)
+-    rename_summary = rename_library_clips(library_root, move_files=True) if db_path.exists() else {"skipped": "missing_project_database"}
+-    return {
+-        "library_root": str(library_root),
+-        "corrections": len(corrections),
+-        "moved": sum(1 for row in moved_rows if row["status"] in {"moved", "moved_filesystem", "renamed", "renamed_filesystem"}),
+-        "moved_filesystem": sum(1 for row in moved_rows if row["status"] == "moved_filesystem"),
+-        "renamed": sum(1 for row in moved_rows if row["status"] in {"renamed", "renamed_filesystem"}),
+-        "missing_record": sum(1 for row in moved_rows if row["status"] == "missing_record"),
+-        "missing_file": sum(1 for row in moved_rows if row["status"] == "missing_file"),
+-        "report_csv": str(library_root / "._系统记录" / report_name),
+-        "rename_summary": rename_summary,
+-    }
++    return applied_rows(plans)
++
++
++def update_visual_record(con: sqlite3.Connection, plan: VisualCorrectionPlan) -> None:
++    assert plan.destination is not None
++    record = dict(plan.record)
++    update_record(record, plan.correction, plan.destination)
++    cursor = con.execute(
++        """
++        update scenes
++        set output_path=?,
++            primary_category=?,
++            confidence_top1=1.0,
++            record_json=?,
++            updated_at=datetime('now')
++        where source_video_path=? and scene_id=?
++        """,
++        (
++            str(plan.destination),
++            plan.correction.category,
++            json.dumps(record, ensure_ascii=False),
++            plan.source_video_path,
++            plan.scene_id,
++        ),
++    )
++    if cursor.rowcount != 1:
++        raise RuntimeError(
++            f"Expected one scene row for {plan.source_video_path} / {plan.scene_id}, got {cursor.rowcount}"
++        )
++
++
++def preview_rows(plans: list[VisualCorrectionPlan]) -> list[dict[str, str]]:
++    rows: list[dict[str, str]] = []
++    for plan in plans:
++        status = {
++            "move": "would_move",
++            "rename": "would_rename",
++        }.get(plan.action, plan.action)
++        rows.append(
++            report_row(
++                plan.correction,
++                str(plan.current_path or plan.correction.clip_path),
++                str(plan.destination or ""),
++                status,
++            )
++        )
++    return rows
++
++
++def applied_rows(plans: list[VisualCorrectionPlan]) -> list[dict[str, str]]:
++    rows: list[dict[str, str]] = []
++    for plan in plans:
