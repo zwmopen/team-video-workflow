@@ -1,0 +1,26 @@
+name: Export scene transaction source
+
+on:
+  pull_request:
+    paths:
+      - "AUDIT_SCENE_TRANSACTION_EXPORT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scene-transaction-source
+          path: |
+            tools/teambuilding-video-scene-library/src/tb_scene/cli.py
+            tools/teambuilding-video-scene-library/src/tb_scene/visual_corrector.py
+            tools/teambuilding-video-scene-library/src/tb_scene/clip_renamer.py
+            README.md
+            SECURITY.md
+          retention-days: 1
+          if-no-files-found: error
