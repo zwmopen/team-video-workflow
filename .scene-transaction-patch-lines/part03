@@ -1,0 +1,95 @@
++        if plan.action == "move":
++            status = "moved" if plan.has_database_record else "moved_filesystem"
++        elif plan.action == "rename":
++            status = "renamed" if plan.has_database_record else "renamed_filesystem"
++        else:
++            status = plan.action
++        rows.append(
++            report_row(
++                plan.correction,
++                str(plan.current_path or plan.correction.clip_path),
++                str(plan.destination or ""),
++                status,
++            )
++        )
++    return rows
++
++
++def validate_path_component(value: str, label: str) -> None:
++    if not value or value in {".", ".."} or Path(value).name != value or "/" in value or "\\" in value:
++        raise ValueError(f"Invalid correction {label}: {value!r}")
++
++
++def ensure_inside_library(library_root: Path, candidate: Path) -> None:
++    try:
++        candidate.relative_to(library_root)
++    except ValueError as error:
++        raise ValueError(f"Correction target escapes library root: {candidate}") from error
++
++
++def ensure_unique_planned_path(candidate: Path, current_path: Path, reserved: set[str]) -> Path:
++    if not candidate.exists() and str(candidate).casefold() not in reserved:
++        return candidate
++    counter = 2
++    while True:
++        next_path = candidate.with_name(f"{candidate.stem}_{counter}{candidate.suffix}")
++        if (
++            (not next_path.exists() or next_path.resolve() == current_path.resolve())
++            and str(next_path).casefold() not in reserved
++        ):
++            return next_path
++        counter += 1
++
++
++def create_destination_directories(library_root: Path, destination_dir: Path) -> list[Path]:
++    ensure_inside_library(library_root, destination_dir)
++    missing: list[Path] = []
++    current = destination_dir
++    while current != library_root and not current.exists():
++        missing.append(current)
++        current = current.parent
++    destination_dir.mkdir(parents=True, exist_ok=True)
++    return missing
++
++
++def cleanup_created_directories(paths: list[Path]) -> None:
++    for path in sorted(set(paths), key=lambda item: len(item.parts), reverse=True):
++        try:
++            path.rmdir()
++        except OSError:
++            pass
+ 
+ 
+ def find_database_row(con: sqlite3.Connection, correction: VisualCorrection) -> sqlite3.Row | None:
+     if correction.source_video_id and correction.scene_id:
+         row = con.execute(
+-            "select source_video_id, scene_id, record_json, output_path from scenes where source_video_id=? and scene_id=?",
++            """
++            select source_video_id, source_video_path, scene_id, record_json, output_path
++            from scenes where source_video_id=? and scene_id=?
++            """,
+             (correction.source_video_id, correction.scene_id),
+         ).fetchone()
+         if row:
+@@ -230,13 +474,19 @@ def find_database_row(con: sqlite3.Connection, correction: VisualCorrection) ->
+     if correction.clip_path:
+         target = str(Path(correction.clip_path).resolve())
+         row = con.execute(
+-            "select source_video_id, scene_id, record_json, output_path from scenes where output_path=?",
++            """
++            select source_video_id, source_video_path, scene_id, record_json, output_path
++            from scenes where output_path=?
++            """,
+             (target,),
+         ).fetchone()
+         if row:
+             return row
+         return con.execute(
+-            "select source_video_id, scene_id, record_json, output_path from scenes where output_path like ? limit 1",
++            """
++            select source_video_id, source_video_path, scene_id, record_json, output_path
++            from scenes where output_path like ? limit 1
++            """,
+             (f"%{Path(target).name}",),
+         ).fetchone()
+     return None
