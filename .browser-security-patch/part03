@@ -1,6 +1,0 @@
-   releaseVideoHandlesForItem(item);
--  const result = await postJson("/api/delete", {id:item.id});
-+  const result = await postJson("/api/delete", {id:item.id, confirm:"RECYCLE"});
-   if(!result.ok){
-     await showMessage("删除失败", result.error || "删除失败");
-     return;
