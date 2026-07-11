@@ -11,29 +11,62 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Check Python syntax
         run: python -m compileall -q tools skill tests
 
-      - name: Run filename and traceability contracts
+      - name: Run filename, traceability, and filesystem safety contracts
         run: python -m unittest discover -s tests -v
+
+      - name: Verify source collection safety markers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          collector = Path('tools/teambuilding-video-scene-library/src/tb_scene/source_collector.py').read_text(encoding='utf-8-sig')
+          cli = Path('tools/teambuilding-video-scene-library/src/tb_scene/cli.py').read_text(encoding='utf-8-sig')
+
+          required = [
+              'move_files: bool = False',
+              'move_bundle_transactionally',
+              'would_quarantine_source_duplicate',
+              'Source and output roots must not be nested',
+          ]
+          for marker in required:
+              if marker not in collector:
+                  raise SystemExit(f'Missing source collector safety marker: {marker}')
+
+          for marker in ['delete_source_duplicate', '.unlink(']:
+              if marker in collector:
+                  raise SystemExit(f'Forbidden destructive source collector pattern remains: {marker}')
+
+          for command in ['refine', 'collect', 'clean', 'rename']:
+              marker = f'{command}.add_argument("--move", type=parse_bool, default=False'
+              if marker not in cli:
+                  raise SystemExit(f'{command} command is not Preview-first')
+          PY
 
       - name: Check whitespace errors
         run: git diff --check
 
-      - name: Reject files larger than 50 MB
-        shell: bash
+      - name: Reject tracked files larger than 50 MB
         run: |
-          large_files=$(find . -type f -not -path './.git/*' -size +50M -print)
-          if [ -n "$large_files" ]; then
-            echo "Files larger than 50 MB are not allowed:"
-            echo "$large_files"
-            exit 1
-          fi
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
+
+          limit = 50 * 1024 * 1024
+          files = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          large = []
+          for item in filter(None, files):
+              path = Path(item)
+              if path.is_file() and path.stat().st_size > limit:
+                  large.append(f'{item} ({path.stat().st_size} bytes)')
+          if large:
+              raise SystemExit('Files larger than 50 MB are not allowed:\n' + '\n'.join(large))
+          PY
