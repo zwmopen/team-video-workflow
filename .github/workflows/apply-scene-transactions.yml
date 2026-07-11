@@ -18,10 +18,10 @@ jobs:
           ref: fix/scene-filesystem-db-transactions
           fetch-depth: 0
 
-      - name: Apply exact patch
+      - name: Apply exact line-safe patch
         run: |
           set -euo pipefail
-          cat .scene-transaction-patch/part* > /tmp/scene-transactions.patch
+          cat .scene-transaction-patch-lines/part* > /tmp/scene-transactions.patch
           git apply --check /tmp/scene-transactions.patch
           git apply /tmp/scene-transactions.patch
 
@@ -53,7 +53,7 @@ jobs:
       - name: Commit verified changes
         run: |
           set -euo pipefail
-          rm -rf .scene-transaction-patch .scene-transaction-payload
+          rm -rf .scene-transaction-patch .scene-transaction-patch-lines .scene-transaction-payload
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
