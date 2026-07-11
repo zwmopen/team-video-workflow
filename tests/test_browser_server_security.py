@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import http.client
+import importlib.util
+import json
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SERVER_PATH = ROOT / "tools" / "team-video-library-browser" / "server.py"
+spec = importlib.util.spec_from_file_location("team_video_browser_server", SERVER_PATH)
+server_module = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+sys.modules[spec.name] = server_module
+spec.loader.exec_module(server_module)
+
+
+class HeaderHelpersTests(unittest.TestCase):
+    def test_local_host_and_origin_validation(self) -> None:
+        self.assertEqual(server_module.parse_host_header("127.0.0.1:8765"), ("127.0.0.1", 8765))
+        self.assertEqual(server_module.parse_host_header("[::1]:8765"), ("::1", 8765))
+        self.assertTrue(server_module.is_local_host_header("localhost:8765", 8765))
+        self.assertFalse(server_module.is_local_host_header("evil.example:8765", 8765))
+
+        trusted = {
+            "Host": "127.0.0.1:8765",
+            "Origin": "http://127.0.0.1:8765",
+            "Sec-Fetch-Site": "same-origin",
+        }
+        self.assertTrue(server_module.is_trusted_local_request(trusted, 8765))
+        self.assertFalse(
+            server_module.is_trusted_local_request(
+                {"Host": "127.0.0.1:8765", "Origin": "https://evil.example"},
+                8765,
+            )
+        )
+        self.assertFalse(
+            server_module.is_trusted_local_request(
+                {"Host": "127.0.0.1:8765", "Sec-Fetch-Site": "cross-site"},
+                8765,
+            )
+        )
+
+    def test_allowed_file_resolves_only_inside_explicit_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "root"
+            outside = Path(temp) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            inside_file = root / "inside.mp4"
+            outside_file = outside / "outside.mp4"
+            inside_file.write_bytes(b"inside")
+            outside_file.write_bytes(b"outside")
+
+            self.assertEqual(
+                server_module.resolve_allowed_file(inside_file, (root,)),
+                inside_file.resolve(),
+            )
+            self.assertIsNone(server_module.resolve_allowed_file(outside_file, (root,)))
+
+    def test_atomic_json_write_never_leaves_temp_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "state" / "tags.json"
+            server_module.write_json_atomically(target, {"a": ["b"]})
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"a": ["b"]})
+            self.assertEqual(list(target.parent.glob(".*.tmp")), [])
+
+
+class HandlerSecurityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.httpd = server_module.ThreadingHTTPServer(("127.0.0.1", 0), server_module.Handler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.httpd.server_port
+
+    def tearDown(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=5)
+
+    def request(self, method: str, path: str, *, body: bytes | None = None, headers: dict[str, str] | None = None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        request_headers = {"Host": f"127.0.0.1:{self.port}", **(headers or {})}
+        connection.request(method, path, body=body, headers=request_headers)
+        response = connection.getresponse()
+        payload = response.read()
+        result = (response.status, dict(response.getheaders()), payload)
+        connection.close()
+        return result
+
+    def test_root_has_security_headers(self) -> None:
+        status, headers, _ = self.request("GET", "/", headers={"Sec-Fetch-Site": "none"})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "same-origin")
+
+    def test_cross_site_and_rebound_host_requests_are_rejected(self) -> None:
+        status, _, _ = self.request("GET", "/", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(status, 403)
+
+        status, _, _ = self.request("GET", "/", headers={"Host": f"evil.example:{self.port}"})
+        self.assertEqual(status, 403)
+
+    def test_post_requires_json_and_limits_content_length(self) -> None:
+        status, _, _ = self.request(
+            "POST",
+            "/api/rescan",
+            body=b"{}",
+            headers={"Content-Type": "text/plain"},
+        )
+        self.assertEqual(status, 415)
+
+        status, _, _ = self.request(
+            "POST",
+            "/api/rescan",
+            body=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(server_module.MAX_JSON_BODY_BYTES + 1),
+            },
+        )
+        self.assertEqual(status, 413)
+
+        status, _, payload = self.request(
+            "POST",
+            "/api/rescan",
+            body=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": f"http://127.0.0.1:{self.port}",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(payload)["ok"])
+
+
+class MutationBoundaryTests(unittest.TestCase):
+    def test_rename_rejects_outside_file_and_preserves_sidecars(self) -> None:
+        original_root = server_module.LIBRARY_ROOT
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp) / "library"
+                outside = Path(temp) / "outside"
+                root.mkdir()
+                outside.mkdir()
+                source = root / "clip.mp4"
+                sidecar = root / "clip.txt"
+                source.write_bytes(b"video")
+                sidecar.write_text("caption", encoding="utf-8")
+                server_module.LIBRARY_ROOT = root
+
+                item = server_module.LibraryItem("id", "kind", "loc", "cat", "key", source.name, str(source), 0.0)
+                target = server_module.rename_library_item(item, "renamed.mp4")
+                self.assertTrue(target.exists())
+                self.assertTrue((root / "renamed.txt").exists())
+                self.assertFalse(source.exists())
+
+                outside_file = outside / "outside.mp4"
+                outside_file.write_bytes(b"outside")
+                outside_item = server_module.LibraryItem(
+                    "outside", "kind", "loc", "cat", "key", outside_file.name, str(outside_file), 0.0
+                )
+                with self.assertRaises(PermissionError):
+                    server_module.rename_library_item(outside_item, "blocked.mp4")
+                self.assertTrue(outside_file.exists())
+        finally:
+            server_module.LIBRARY_ROOT = original_root
+
+
+if __name__ == "__main__":
+    unittest.main()

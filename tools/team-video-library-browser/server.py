@@ -16,6 +16,7 @@ import html
 import tempfile
 import ctypes
 import time
+import threading
 from ctypes import wintypes
 
 
@@ -117,6 +118,98 @@ DEFAULT_HEAD_TRIM_SECONDS = 0.08
 BOTTOM_TEXT_MIN_SCORE = 0.03
 TOP_TEXT_MIN_SCORE = 0.025
 CROP_ALGORITHM_VERSION = "crop-v4-plausible-subtitle"
+MAX_JSON_BODY_BYTES = 1024 * 1024
+LOCAL_HOST_NAMES = {"127.0.0.1", "localhost", "::1"}
+ALLOWED_MEDIA_ROOTS = (LIBRARY_ROOT, CACHE_ROOT)
+MUTATION_LOCK = threading.RLock()
+
+
+class RequestRejected(ValueError):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def parse_host_header(host_header: str) -> tuple[str, int | None]:
+    value = str(host_header or "").strip().lower()
+    if not value:
+        return "", None
+    if value.startswith("["):
+        closing = value.find("]")
+        if closing < 0:
+            return value, None
+        host = value[1:closing]
+        remainder = value[closing + 1 :]
+        if remainder.startswith(":") and remainder[1:].isdigit():
+            return host, int(remainder[1:])
+        return host, None
+    if value.count(":") == 1:
+        host, raw_port = value.rsplit(":", 1)
+        if raw_port.isdigit():
+            return host, int(raw_port)
+    return value, None
+
+
+def is_local_host_header(host_header: str, server_port: int) -> bool:
+    host, port = parse_host_header(host_header)
+    return host in LOCAL_HOST_NAMES and (port is None or port == server_port)
+
+
+def is_trusted_local_request(headers: object, server_port: int) -> bool:
+    get = getattr(headers, "get", None)
+    if not callable(get):
+        return False
+    if not is_local_host_header(str(get("Host", "")), server_port):
+        return False
+
+    fetch_site = str(get("Sec-Fetch-Site", "") or "").strip().lower()
+    if fetch_site == "cross-site":
+        return False
+
+    for header_name in ("Origin", "Referer"):
+        raw = str(get(header_name, "") or "").strip()
+        if not raw:
+            continue
+        parsed = urlparse(raw)
+        if parsed.scheme != "http" or parsed.hostname not in LOCAL_HOST_NAMES:
+            return False
+        if parsed.port not in (None, server_port):
+            return False
+    return True
+
+
+def resolve_allowed_file(path: Path, roots: tuple[Path, ...] = ALLOWED_MEDIA_ROOTS) -> Path | None:
+    try:
+        candidate = path.expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not candidate.is_file():
+        return None
+    for root in roots:
+        root_resolved = root.expanduser().resolve(strict=False)
+        try:
+            candidate.relative_to(root_resolved)
+            return candidate
+        except ValueError:
+            continue
+    return None
+
+
+def require_library_file(path: Path) -> Path:
+    resolved = resolve_allowed_file(path, (LIBRARY_ROOT,))
+    if resolved is None:
+        raise PermissionError(f"素材路径不在允许根目录内：{path}")
+    return resolved
+
+
+def write_json_atomically(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(temp), str(path))
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def transcript_supported(item: LibraryItem) -> bool:
@@ -138,6 +231,8 @@ def cleanup_old_cache() -> None:
     detection_root = CACHE_ROOT / "crop_detection"
     if detection_root.exists():
         for item_dir in detection_root.iterdir():
+            if item_dir.is_symlink():
+                continue
             if item_dir.is_dir():
                 try:
                     mtime = item_dir.stat().st_mtime
@@ -354,6 +449,8 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self.authorize_local_request():
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path == "/":
@@ -411,6 +508,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self.authorize_local_request(require_json=True):
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path == "/api/rename":
@@ -470,10 +569,41 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         return
 
-    def send_json(self, payload: object) -> None:
+    def server_port(self) -> int:
+        return int(getattr(self.server, "server_port", 8765))
+
+    def authorize_local_request(self, require_json: bool = False) -> bool:
+        if not is_trusted_local_request(self.headers, self.server_port()):
+            self.send_json({"ok": False, "error": "仅允许本机同源页面访问"}, status=403)
+            return False
+        if require_json:
+            content_type = str(self.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                self.send_json({"ok": False, "error": "POST 请求必须使用 application/json"}, status=415)
+                return False
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self.send_json({"ok": False, "error": "Content-Length 无效"}, status=400)
+                return False
+            if length < 0 or length > MAX_JSON_BODY_BYTES:
+                self.close_connection = True
+                self.send_json({"ok": False, "error": "请求体超过 1 MB 限制"}, status=413)
+                return False
+        return True
+
+    def send_security_headers(self, cache_control: str = "no-store") -> None:
+        self.send_header("Cache-Control", cache_control)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+
+    def send_json(self, payload: object, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_security_headers()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -482,7 +612,7 @@ class Handler(BaseHTTPRequestHandler):
         body = html.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
+        self.send_security_headers()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -571,6 +701,7 @@ class Handler(BaseHTTPRequestHandler):
 </svg>""".encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+        self.send_security_headers(cache_control="private, max-age=300")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -755,7 +886,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def read_json_body(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0") or "0")
-        raw = self.rfile.read(length).decode("utf-8", errors="ignore") if length else "{}"
+        if length < 0 or length > MAX_JSON_BODY_BYTES:
+            raise RequestRejected(413, "请求体超过 1 MB 限制")
+        raw = self.rfile.read(length).decode("utf-8", errors="strict") if length else "{}"
         payload = json.loads(raw or "{}")
         if not isinstance(payload, dict):
             raise ValueError("请求格式不对")
@@ -766,14 +899,18 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json_body()
             item_id = str(payload.get("id") or "")
             new_name = str(payload.get("name") or "").strip()
+            if str(payload.get("confirm") or "") != "RENAME":
+                self.send_json({"ok": False, "error": "改名需要服务端确认令牌"}, status=400)
+                return
             item = ITEM_BY_ID.get(item_id)
             if not item:
                 self.send_json({"ok": False, "error": "素材不存在，可能页面需要刷新"})
                 return
-            new_path = rename_library_item(item, new_name)
-            item.name = new_path.name
-            item.path = str(new_path)
-            item.size_mb = round(new_path.stat().st_size / 1024 / 1024, 2)
+            with MUTATION_LOCK:
+                new_path = rename_library_item(item, new_name)
+                item.name = new_path.name
+                item.path = str(new_path)
+                item.size_mb = round(new_path.stat().st_size / 1024 / 1024, 2)
             self.send_json({"ok": True, "item": public_item(item)})
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)})
@@ -803,13 +940,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self.read_json_body()
             item_id = str(payload.get("id") or "")
+            if str(payload.get("confirm") or "") != "RECYCLE":
+                self.send_json({"ok": False, "error": "移到回收站需要服务端确认令牌"}, status=400)
+                return
             item = ITEM_BY_ID.get(item_id)
             if not item:
                 self.send_json({"ok": False, "error": "素材不存在，可能页面需要刷新"})
                 return
-            moved_to = move_item_to_trash(item)
-            ITEMS[:] = [entry for entry in ITEMS if entry.id != item.id]
-            ITEM_BY_ID.pop(item.id, None)
+            with MUTATION_LOCK:
+                moved_to = move_item_to_trash(item)
+                ITEMS[:] = [entry for entry in ITEMS if entry.id != item.id]
+                ITEM_BY_ID.pop(item.id, None)
             self.send_json({"ok": True, "moved_to": str(moved_to)})
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)})
@@ -1068,9 +1209,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, **BATCH_PROGRESS})
 
     def send_file(self, path: Path, content_type: str, range_enabled: bool = False) -> None:
-        if not path.exists():
+        resolved = resolve_allowed_file(path)
+        if resolved is None:
             self.send_error(404)
             return
+        path = resolved
         size = path.stat().st_size
         start = 0
         end = size - 1
@@ -1097,6 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
         length = end - start + 1
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_security_headers(cache_control="private, max-age=300")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
         if status == 206:
@@ -1296,14 +1440,14 @@ def load_user_tags() -> None:
 
 
 def save_user_tags() -> None:
-    TAG_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TAG_STORE_PATH.write_text(json.dumps(USER_TAGS, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomically(TAG_STORE_PATH, USER_TAGS)
 
 
 def rename_library_item(item: LibraryItem, requested_name: str) -> Path:
-    source = Path(item.path)
-    if not source.exists():
-        raise FileNotFoundError("原文件不存在")
+    requested_source = Path(item.path)
+    if requested_source.is_symlink():
+        raise PermissionError("不允许改名符号链接素材")
+    source = require_library_file(requested_source)
     clean_name = sanitize_filename(requested_name)
     if not clean_name:
         raise ValueError("文件名不能为空")
@@ -1324,7 +1468,7 @@ def rename_library_item(item: LibraryItem, requested_name: str) -> Path:
     source.rename(target)
     try:
         for sidecar in sidecars:
-            if not sidecar.exists():
+            if not sidecar.exists() or resolve_allowed_file(sidecar, (LIBRARY_ROOT,)) is None:
                 continue
             sidecar_target = target.with_suffix(sidecar.suffix)
             if sidecar_target.exists():
@@ -1406,17 +1550,18 @@ def save_crop_layouts(layouts: list[dict[str, object]]) -> None:
         rect = entry.get("rect")
         if name and isinstance(rect, dict):
             cleaned.append({"name": name, "rect": normalize_rect_percent(rect)})
-    CROP_LAYOUT_STORE_PATH.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomically(CROP_LAYOUT_STORE_PATH, cleaned)
 
 
 def move_item_to_trash(item: LibraryItem) -> Path:
-    source = Path(item.path)
-    if not source.exists():
-        raise FileNotFoundError("原文件不存在")
+    requested_source = Path(item.path)
+    if requested_source.is_symlink():
+        raise PermissionError("不允许删除符号链接素材")
+    source = require_library_file(requested_source)
     sidecars = [source.with_suffix(".txt"), source.with_suffix(".json")]
     send_path_to_recycle_bin(source)
     for sidecar in sidecars:
-        if not sidecar.exists():
+        if not sidecar.exists() or resolve_allowed_file(sidecar, (LIBRARY_ROOT,)) is None:
             continue
         send_path_to_recycle_bin(sidecar)
     if item.path in USER_TAGS:
@@ -6239,7 +6384,7 @@ async function applyManualCrop(deleteOriginal=false){
     let deletedOriginal = false;
     if(deleteOriginal){
       releaseVideoHandlesForItem(sourceItem);
-      const deleteResult = await postJson("/api/delete", {id:sourceItem.id});
+      const deleteResult = await postJson("/api/delete", {id:sourceItem.id, confirm:"RECYCLE"});
       if(deleteResult.ok){
         deletedOriginal = true;
         removeDeletedItemFromView(sourceItem);
@@ -6498,7 +6643,7 @@ async function renameItem(item){
   video.removeAttribute("src");
   video.load();
   const requested = clean.toLowerCase().endsWith(suffix.toLowerCase()) ? clean : clean + suffix;
-  const result = await postJson("/api/rename", {id:item.id, name: requested});
+  const result = await postJson("/api/rename", {id:item.id, name: requested, confirm:"RENAME"});
   if(!result.ok){
     await showMessage("重命名失败", result.error || "重命名失败");
     return;
@@ -6577,7 +6722,7 @@ async function deleteItem(item){
   });
   if(!ok) return;
   releaseVideoHandlesForItem(item);
-  const result = await postJson("/api/delete", {id:item.id});
+  const result = await postJson("/api/delete", {id:item.id, confirm:"RECYCLE"});
   if(!result.ok){
     await showMessage("删除失败", result.error || "删除失败");
     return;
@@ -6596,7 +6741,7 @@ async function deleteItem(item){
 }
 async function deleteItemDirect(item){
   releaseVideoHandlesForItem(item);
-  const result = await postJson("/api/delete", {id:item.id});
+  const result = await postJson("/api/delete", {id:item.id, confirm:"RECYCLE"});
   if(!result.ok){
     await showMessage("删除失败", result.error || "删除失败");
     return;
