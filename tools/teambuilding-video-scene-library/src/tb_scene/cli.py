@@ -240,12 +240,16 @@ def build_parser() -> argparse.ArgumentParser:
     rename = subparsers.add_parser("rename-clips", help="Rename library clips with serial, location, and keyword")
     rename.add_argument("library_root")
     rename.add_argument("--move", type=parse_bool, default=False, help="Apply renames. Default is preview only.")
+    rename.add_argument("--confirm-token", default="", help="Required value: RENAME when --move true.")
     rename.set_defaults(func=rename_clips_command)
 
-    visual_fix = subparsers.add_parser("apply-visual-corrections", help="Apply visual review corrections and lock records")
+    visual_fix = subparsers.add_parser("apply-visual-corrections", help="Preview or apply visual review corrections transactionally")
     visual_fix.add_argument("library_root")
     visual_fix.add_argument("--corrections-csv", required=True)
     visual_fix.add_argument("--report-name", default="visual_corrections.csv")
+    visual_fix.add_argument("--apply", type=parse_bool, default=False, help="Apply corrections. Default is preview only.")
+    visual_fix.add_argument("--confirm-token", default="", help="Required value: APPLY when --apply true.")
+    visual_fix.add_argument("--rename-after", type=parse_bool, default=False, help="Run transactional clip renaming after corrections.")
     visual_fix.set_defaults(func=apply_visual_corrections_command)
 
     visual_audit = subparsers.add_parser("visual-audit", help="Generate contact sheets and a correction CSV template")
@@ -570,6 +574,7 @@ def rename_clips_command(args: argparse.Namespace) -> int:
     summary = rename_library_clips(
         library_root=Path(args.library_root),
         move_files=args.move,
+        confirm_token=args.confirm_token,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
@@ -581,6 +586,9 @@ def apply_visual_corrections_command(args: argparse.Namespace) -> int:
         library_root=Path(args.library_root),
         corrections=corrections,
         report_name=args.report_name,
+        apply=args.apply,
+        confirm_token=args.confirm_token,
+        rename_after=args.rename_after,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

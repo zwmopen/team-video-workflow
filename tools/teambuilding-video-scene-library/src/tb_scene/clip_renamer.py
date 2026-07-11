@@ -24,12 +24,19 @@ class RenameItem:
     status: str
 
 
-def rename_library_clips(library_root: Path, move_files: bool = True) -> dict[str, object]:
+def rename_library_clips(
+    library_root: Path,
+    move_files: bool = False,
+    confirm_token: str = "",
+    _test_fail_after_renames: int = 0,
+) -> dict[str, object]:
     library_root = library_root.expanduser().resolve()
     system_dir = library_root / "._系统记录"
     db_path = system_dir / "project.sqlite"
     if not db_path.exists():
         raise FileNotFoundError(f"Missing project database: {db_path}")
+    if move_files and confirm_token != "RENAME":
+        raise ValueError("Applying clip renames requires confirm_token='RENAME'.")
 
     rows = load_written_scene_records(db_path)
     existing_by_name = index_clips_by_name(library_root)
@@ -67,12 +74,12 @@ def rename_library_clips(library_root: Path, move_files: bool = True) -> dict[st
 
     actual_renamed = 0
     if move_files:
-        for item in items:
-            if item.status == "renamed":
-                item.current_path.rename(item.target_path)
-                actual_renamed += 1
-            update_scene_record(db_path, item)
-        mark_missing_records(db_path, missing_records)
+        actual_renamed = apply_rename_transaction(
+            db_path,
+            items,
+            missing_records,
+            fail_after_renames=_test_fail_after_renames,
+        )
         export_project_files(library_root, items, actual_renamed, missing_records)
 
     write_rename_report(library_root, items, missing_records, move_files, actual_renamed)
@@ -83,8 +90,57 @@ def rename_library_clips(library_root: Path, move_files: bool = True) -> dict[st
         "renamed": actual_renamed,
         "would_rename": sum(1 for item in items if item.status == "renamed"),
         "move_files": move_files,
+        "mode": "apply" if move_files else "preview",
         "report_csv": str(system_dir / ("clip_rename.csv" if move_files else "clip_rename_preview.csv")),
     }
+
+
+def apply_rename_transaction(
+    db_path: Path,
+    items: list[RenameItem],
+    missing_records: list[dict[str, object]],
+    fail_after_renames: int = 0,
+) -> int:
+    for item in items:
+        if item.status != "renamed":
+            continue
+        if not item.current_path.exists() or not item.current_path.is_file():
+            raise FileNotFoundError(f"Rename source is missing: {item.current_path}")
+        if item.target_path.exists():
+            raise FileExistsError(f"Rename target already exists: {item.target_path}")
+
+    con = sqlite3.connect(db_path)
+    completed: list[RenameItem] = []
+    actual_renamed = 0
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        for item in items:
+            if item.status == "renamed":
+                item.current_path.rename(item.target_path)
+                completed.append(item)
+                actual_renamed += 1
+                if fail_after_renames and actual_renamed >= fail_after_renames:
+                    raise RuntimeError(f"simulated failure after {actual_renamed} rename(s)")
+            update_scene_record(con, item)
+        mark_missing_records(con, missing_records)
+        con.commit()
+        return actual_renamed
+    except Exception as original_error:
+        con.rollback()
+        rollback_errors: list[str] = []
+        for item in reversed(completed):
+            try:
+                if item.target_path.exists() and not item.current_path.exists():
+                    item.target_path.rename(item.current_path)
+            except Exception as rollback_error:
+                rollback_errors.append(f"{item.target_path} -> {item.current_path}: {rollback_error}")
+        if rollback_errors:
+            raise RuntimeError(
+                "Clip rename failed and filesystem rollback was incomplete:\n" + "\n".join(rollback_errors)
+            ) from original_error
+        raise
+    finally:
+        con.close()
 
 
 def load_written_scene_records(db_path: Path) -> list[dict[str, object]]:
@@ -128,13 +184,11 @@ def resolve_current_clip_path(
     scene_id = str(record.get("scene_id") or "")
     if source_id and scene_id:
         pattern = f"*__{source_id}_{scene_id}.mp4"
-        candidates = list(library_root.rglob(pattern))
-        candidates = [path for path in candidates if "._系统记录" not in path.parts]
+        candidates = [path for path in library_root.rglob(pattern) if "._系统记录" not in path.parts]
         if len(candidates) == 1:
             return candidates[0]
         readable_pattern = f"*_{source_id}_{scene_id}.mp4"
-        candidates = list(library_root.rglob(readable_pattern))
-        candidates = [path for path in candidates if "._系统记录" not in path.parts]
+        candidates = [path for path in library_root.rglob(readable_pattern) if "._系统记录" not in path.parts]
         if len(candidates) == 1:
             return candidates[0]
     return None
@@ -188,7 +242,7 @@ def record_sort_key(record: dict[str, object]) -> tuple[int, str, str, str, str]
     )
 
 
-def update_scene_record(db_path: Path, item: RenameItem) -> None:
+def update_scene_record(con: sqlite3.Connection, item: RenameItem) -> None:
     record = dict(item.record)
     previous_path = str(record.get("output_path") or item.current_path)
     record["output_path"] = str(item.target_path)
@@ -196,54 +250,47 @@ def update_scene_record(db_path: Path, item: RenameItem) -> None:
     record["rename_serial"] = f"{item.serial:03d}"
     record["rename_keyword"] = item.keyword
     record["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    con = sqlite3.connect(db_path)
-    try:
-        con.execute(
+    cursor = con.execute(
+        """
+        update scenes set output_path=?, record_json=?, updated_at=datetime('now')
+        where source_video_path=? and scene_id=?
+        """,
+        (
+            str(item.target_path),
+            json.dumps(record, ensure_ascii=False),
+            str(record.get("source_video_path") or ""),
+            str(record.get("scene_id") or ""),
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            f"Expected one scene row for {record.get('source_video_path')} / {record.get('scene_id')}, got {cursor.rowcount}"
+        )
+
+
+def mark_missing_records(con: sqlite3.Connection, missing_records: list[dict[str, object]]) -> None:
+    for record in missing_records:
+        updated_record = dict(record)
+        updated_record["processing_status"] = "missing_output_file"
+        updated_record["skip_reason"] = "output file missing during rename self-check"
+        updated_record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        cursor = con.execute(
             """
             update scenes
-            set output_path=?, record_json=?, updated_at=datetime('now')
+            set processing_status='missing_output_file', skip_reason='output file missing during rename self-check',
+                record_json=?, updated_at=datetime('now')
             where source_video_path=? and scene_id=?
             """,
             (
-                str(item.target_path),
-                json.dumps(record, ensure_ascii=False),
+                json.dumps(updated_record, ensure_ascii=False),
                 str(record.get("source_video_path") or ""),
                 str(record.get("scene_id") or ""),
             ),
         )
-        con.commit()
-    finally:
-        con.close()
-
-
-def mark_missing_records(db_path: Path, missing_records: list[dict[str, object]]) -> None:
-    if not missing_records:
-        return
-    con = sqlite3.connect(db_path)
-    try:
-        for record in missing_records:
-            updated_record = dict(record)
-            updated_record["processing_status"] = "missing_output_file"
-            updated_record["skip_reason"] = "output file missing during rename self-check"
-            updated_record["updated_at"] = datetime.now().isoformat(timespec="seconds")
-            con.execute(
-                """
-                update scenes
-                set processing_status='missing_output_file',
-                    skip_reason='output file missing during rename self-check',
-                    record_json=?,
-                    updated_at=datetime('now')
-                where source_video_path=? and scene_id=?
-                """,
-                (
-                    json.dumps(updated_record, ensure_ascii=False),
-                    str(record.get("source_video_path") or ""),
-                    str(record.get("scene_id") or ""),
-                ),
+        if cursor.rowcount != 1:
+            raise RuntimeError(
+                f"Expected one missing scene row for {record.get('source_video_path')} / {record.get('scene_id')}, got {cursor.rowcount}"
             )
-        con.commit()
-    finally:
-        con.close()
 
 
 def export_project_files(
@@ -280,16 +327,7 @@ def write_rename_report(
     with (system_dir / csv_name).open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=[
-                "old_path",
-                "new_path",
-                "status",
-                "serial",
-                "category",
-                "keyword",
-                "source_video_id",
-                "scene_id",
-            ],
+            fieldnames=["old_path", "new_path", "status", "serial", "category", "keyword", "source_video_id", "scene_id"],
         )
         writer.writeheader()
         for item in items:
