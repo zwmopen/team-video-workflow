@@ -1,0 +1,24 @@
+name: Export video workflow source for audit
+
+on:
+  pull_request:
+    paths:
+      - "AUDIT_VIDEO_EXPORT_TRIGGER.md"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: team-video-source-audit
+          path: |
+            .
+            !.git
+          retention-days: 1
+          if-no-files-found: error
