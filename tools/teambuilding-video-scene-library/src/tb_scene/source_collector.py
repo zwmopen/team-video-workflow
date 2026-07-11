@@ -8,12 +8,12 @@ import re
 import shutil
 from dataclasses import dataclass
 
-from .path_utils import ensure_unique_path, sanitize_name
+from .path_utils import sanitize_name
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm"}
 SIDECAR_EXTENSIONS = {".txt", ".json", ".srt", ".vtt", ".jpg", ".jpeg", ".png", ".webp"}
-MIXED_HINTS = re.compile(r"(合集|盘点|整理好了|照抄|推荐地|目的地|神仙团建地|八大|8大|TOP\\s*\\d+|\\d+个目的地)", re.I)
+MIXED_HINTS = re.compile(r"(合集|盘点|整理好了|照抄|推荐地|目的地|神仙团建地|八大|8大|TOP\s*\d+|\d+个目的地)", re.I)
 KNOWN_LOCATIONS = [
     "千岛湖",
     "安吉",
@@ -58,16 +58,32 @@ class CleanDecision:
     sidecars: str = ""
 
 
+@dataclass(slots=True)
+class BundleMove:
+    source: Path
+    destination: Path
+
+
 def collect_location_sources(
     source_root: Path,
     output_root: Path,
     location: str,
-    move_files: bool = True,
+    move_files: bool = False,
 ) -> dict[str, object]:
     source_root = source_root.expanduser().resolve()
     output_root = output_root.expanduser().resolve()
+    validate_source_and_output_roots(source_root, output_root)
+
     destination_dir = output_root / "01_原片素材库" / f"{sanitize_name(location)}-原视频素材"
-    destination_dir.mkdir(parents=True, exist_ok=True)
+    duplicate_quarantine = (
+        output_root
+        / "90_待整理与记录"
+        / "._采集记录"
+        / f"{sanitize_name(location)}_非单地点或重复原视频"
+        / "重复源视频"
+    )
+    if move_files:
+        destination_dir.mkdir(parents=True, exist_ok=True)
 
     decisions: list[CollectDecision] = []
     existing_hashes = hash_existing_videos(destination_dir)
@@ -76,13 +92,26 @@ def collect_location_sources(
         decision, reason = decide_location_match(title_text, location)
         destination = ""
         sidecars: list[str] = []
+
         if decision == "selected":
             digest = sha256_file(video_path)
             if digest in existing_hashes:
-                decision = "deleted_source_duplicate" if move_files else "skipped"
                 reason = f"already exists in destination as {existing_hashes[digest].name}"
+                destination_path, sidecar_destinations = plan_bundle_destination(
+                    video_path,
+                    duplicate_quarantine,
+                )
+                destination = str(destination_path)
+                sidecars = [str(path) for path in sidecar_destinations]
                 if move_files:
-                    destination, sidecars = delete_source_duplicate(video_path)
+                    move_bundle_transactionally(
+                        video_path,
+                        destination_path,
+                        sidecar_destinations,
+                    )
+                    decision = "quarantined_source_duplicate"
+                else:
+                    decision = "would_quarantine_source_duplicate"
                 decisions.append(
                     CollectDecision(
                         video_path=video_path,
@@ -94,19 +123,24 @@ def collect_location_sources(
                     )
                 )
                 continue
-            destination_path = ensure_unique_path(destination_dir / video_path.name)
+
+            destination_path, sidecar_destinations = plan_bundle_destination(
+                video_path,
+                destination_dir,
+            )
             destination = str(destination_path)
-            for sidecar in find_sidecars(video_path):
-                sidecars.append(str(destination_dir / sidecar.name))
+            sidecars = [str(path) for path in sidecar_destinations]
             if move_files:
-                shutil.move(str(video_path), str(destination_path))
+                move_bundle_transactionally(
+                    video_path,
+                    destination_path,
+                    sidecar_destinations,
+                )
                 existing_hashes[digest] = destination_path
-                moved_sidecars: list[str] = []
-                for sidecar in find_sidecars_for_destination(destination_path, source_root, video_path):
-                    sidecar_dest = ensure_unique_path(destination_dir / sidecar.name)
-                    shutil.move(str(sidecar), str(sidecar_dest))
-                    moved_sidecars.append(str(sidecar_dest))
-                sidecars = moved_sidecars
+                decision = "selected"
+            else:
+                decision = "would_select"
+
         decisions.append(
             CollectDecision(
                 video_path=video_path,
@@ -119,40 +153,61 @@ def collect_location_sources(
         )
 
     report_dir = output_root / "90_待整理与记录" / "._采集记录"
-    report_dir.mkdir(parents=True, exist_ok=True)
+    if move_files:
+        report_dir.mkdir(parents=True, exist_ok=True)
     safe_location = sanitize_name(location)
-    write_collect_csv(report_dir / f"{safe_location}_source_collect.csv", decisions)
+    report_csv = report_dir / f"{safe_location}_source_collect.csv"
+    summary_path = report_dir / f"{safe_location}_source_collect_summary.json"
+    if move_files:
+        write_collect_csv(report_csv, decisions)
+
     summary = {
         "source_root": str(source_root),
         "output_root": str(output_root),
         "location": location,
         "destination_dir": str(destination_dir),
         "move_files": move_files,
+        "mode": "apply" if move_files else "preview",
         "total_videos_scanned": len(decisions),
         "selected": sum(1 for item in decisions if item.decision == "selected"),
-        "deleted_source_duplicates": sum(1 for item in decisions if item.decision == "deleted_source_duplicate"),
-        "removed_source_duplicates": sum(1 for item in decisions if item.decision == "deleted_source_duplicate"),
-        "rejected_hashtag_only": sum(1 for item in decisions if item.reason == "keyword only appears after hashtag"),
-        "rejected_mixed": sum(1 for item in decisions if item.reason.startswith("mixed source")),
-        "report_csv": str(report_dir / f"{safe_location}_source_collect.csv"),
+        "would_select": sum(1 for item in decisions if item.decision == "would_select"),
+        "quarantined_source_duplicates": sum(
+            1 for item in decisions if item.decision == "quarantined_source_duplicate"
+        ),
+        "would_quarantine_source_duplicates": sum(
+            1 for item in decisions if item.decision == "would_quarantine_source_duplicate"
+        ),
+        "rejected_hashtag_only": sum(
+            1 for item in decisions if item.reason == "keyword only appears after hashtag"
+        ),
+        "rejected_mixed": sum(
+            1 for item in decisions if item.reason.startswith("mixed source")
+        ),
+        "report_csv": str(report_csv) if move_files else "",
     }
-    (report_dir / f"{safe_location}_source_collect_summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if move_files:
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     return summary
 
 
 def clean_location_sources(
     output_root: Path,
     location: str,
-    move_files: bool = True,
+    move_files: bool = False,
 ) -> dict[str, object]:
     output_root = output_root.expanduser().resolve()
     source_dir = output_root / "01_原片素材库" / f"{sanitize_name(location)}-原视频素材"
     if not source_dir.exists():
         source_dir = output_root / f"{sanitize_name(location)}-原视频素材"
-    quarantine_dir = output_root / "90_待整理与记录" / "._采集记录" / f"{sanitize_name(location)}_非单地点或重复原视频"
+    quarantine_dir = (
+        output_root
+        / "90_待整理与记录"
+        / "._采集记录"
+        / f"{sanitize_name(location)}_非单地点或重复原视频"
+    )
     decisions: list[CleanDecision] = []
     seen_hashes: dict[str, Path] = {}
 
@@ -167,14 +222,22 @@ def clean_location_sources(
         sidecars: list[str] = []
 
         if decision != "selected":
-            action = "quarantined"
-            destination, sidecars = move_to_quarantine(video_path, quarantine_dir / "非单地点或话题误选", move_files)
+            action = "quarantined" if move_files else "would_quarantine"
+            destination, sidecars = move_to_quarantine(
+                video_path,
+                quarantine_dir / "非单地点或话题误选",
+                move_files,
+            )
         else:
             digest = sha256_file(video_path)
             if digest in seen_hashes:
-                action = "quarantined"
+                action = "quarantined" if move_files else "would_quarantine"
                 reason = f"exact duplicate of {seen_hashes[digest].name}"
-                destination, sidecars = move_to_quarantine(video_path, quarantine_dir / "重复源视频", move_files)
+                destination, sidecars = move_to_quarantine(
+                    video_path,
+                    quarantine_dir / "重复源视频",
+                    move_files,
+                )
             else:
                 seen_hashes[digest] = video_path
 
@@ -190,25 +253,51 @@ def clean_location_sources(
         )
 
     report_dir = output_root / "90_待整理与记录" / "._采集记录"
-    report_dir.mkdir(parents=True, exist_ok=True)
     safe_location = sanitize_name(location)
-    write_clean_csv(report_dir / f"{safe_location}_source_clean.csv", decisions)
+    report_csv = report_dir / f"{safe_location}_source_clean.csv"
+    summary_path = report_dir / f"{safe_location}_source_clean_summary.json"
+    if move_files:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        write_clean_csv(report_csv, decisions)
+
     summary = {
         "output_root": str(output_root),
         "location": location,
         "source_dir": str(source_dir),
         "quarantine_dir": str(quarantine_dir),
         "move_files": move_files,
+        "mode": "apply" if move_files else "preview",
         "total_videos_scanned": len(decisions),
         "kept": sum(1 for item in decisions if item.action == "kept"),
         "quarantined": sum(1 for item in decisions if item.action == "quarantined"),
-        "report_csv": str(report_dir / f"{safe_location}_source_clean.csv"),
+        "would_quarantine": sum(
+            1 for item in decisions if item.action == "would_quarantine"
+        ),
+        "report_csv": str(report_csv) if move_files else "",
     }
-    (report_dir / f"{safe_location}_source_clean_summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if move_files:
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     return summary
+
+
+def validate_source_and_output_roots(source_root: Path, output_root: Path) -> None:
+    if not source_root.exists() or not source_root.is_dir():
+        raise FileNotFoundError(f"Source folder does not exist: {source_root}")
+    if source_root == output_root:
+        raise ValueError("Source and output roots must be different folders.")
+    if is_path_inside(source_root, output_root) or is_path_inside(output_root, source_root):
+        raise ValueError("Source and output roots must not be nested.")
+
+
+def is_path_inside(parent: Path, child: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def iter_videos(source_root: Path):
@@ -236,16 +325,19 @@ def decide_location_match(title_text: str, location: str) -> tuple[str, str]:
 
 def is_mixed_source(title_text: str, location: str) -> bool:
     other_locations = [item for item in KNOWN_LOCATIONS if item != location and item in title_text]
-    numbered_list = bool(re.search(r"(?:^|[。\\s])\\d+[\\.、｜|]", title_text))
+    numbered_list = bool(re.search(r"(?:^|[。\s])\d+[\.、｜|]", title_text))
     return bool(other_locations and (MIXED_HINTS.search(title_text) or numbered_list))
 
 
 def find_sidecars(video_path: Path) -> list[Path]:
-    return [candidate for candidate in video_path.parent.glob(video_path.stem + ".*") if candidate.suffix.lower() in SIDECAR_EXTENSIONS]
-
-
-def find_sidecars_for_destination(_: Path, __: Path, original_video_path: Path) -> list[Path]:
-    return find_sidecars(original_video_path)
+    return sorted(
+        [
+            candidate
+            for candidate in video_path.parent.glob(video_path.stem + ".*")
+            if candidate.suffix.lower() in SIDECAR_EXTENSIONS
+        ],
+        key=lambda path: path.suffix.lower(),
+    )
 
 
 def normalize_existing_title(title_text: str) -> str:
@@ -271,33 +363,85 @@ def hash_existing_videos(destination_dir: Path) -> dict[str, Path]:
     return hashes
 
 
-def move_to_quarantine(video_path: Path, quarantine_dir: Path, move_files: bool) -> tuple[str, list[str]]:
-    destination = quarantine_dir / video_path.name
-    sidecar_paths = find_sidecars(video_path)
+def plan_bundle_destination(video_path: Path, destination_dir: Path) -> tuple[Path, list[Path]]:
+    sidecars = find_sidecars(video_path)
+    stem = video_path.stem
+    suffix = video_path.suffix
+    for index in range(1, 10000):
+        candidate_stem = stem if index == 1 else f"{stem}_{index:02d}"
+        video_destination = destination_dir / f"{candidate_stem}{suffix}"
+        sidecar_destinations = [
+            destination_dir / f"{candidate_stem}{sidecar.suffix}"
+            for sidecar in sidecars
+        ]
+        all_destinations = [video_destination, *sidecar_destinations]
+        if len({path.name.casefold() for path in all_destinations}) != len(all_destinations):
+            raise RuntimeError(f"Sidecar destination collision for {video_path.name}")
+        if not any(path.exists() for path in all_destinations):
+            return video_destination, sidecar_destinations
+    raise RuntimeError(f"Cannot allocate a unique bundle name under {destination_dir}")
+
+
+def move_bundle_transactionally(
+    video_path: Path,
+    destination_path: Path,
+    sidecar_destinations: list[Path],
+) -> tuple[str, list[str]]:
+    sidecars = find_sidecars(video_path)
+    if len(sidecars) != len(sidecar_destinations):
+        raise RuntimeError("Sidecar plan changed before apply; run preview again.")
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    moves = [
+        BundleMove(source=video_path, destination=destination_path),
+        *[
+            BundleMove(source=source, destination=destination)
+            for source, destination in zip(sidecars, sidecar_destinations, strict=True)
+        ],
+    ]
+    for move in moves:
+        if not move.source.exists() or not move.source.is_file():
+            raise FileNotFoundError(f"Bundle source is missing: {move.source}")
+        if move.destination.exists():
+            raise FileExistsError(f"Bundle destination already exists: {move.destination}")
+
+    completed: list[BundleMove] = []
+    try:
+        for move in moves:
+            shutil.move(str(move.source), str(move.destination))
+            completed.append(move)
+    except Exception:
+        rollback_errors: list[str] = []
+        for move in reversed(completed):
+            try:
+                if move.destination.exists() and not move.source.exists():
+                    move.source.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(move.destination), str(move.source))
+            except Exception as rollback_error:  # pragma: no cover - defensive logging path
+                rollback_errors.append(f"{move.destination} -> {move.source}: {rollback_error}")
+        if rollback_errors:
+            raise RuntimeError(
+                "Bundle move failed and rollback was incomplete:\n"
+                + "\n".join(rollback_errors)
+            )
+        raise
+
+    return str(destination_path), [str(path) for path in sidecar_destinations]
+
+
+def move_to_quarantine(
+    video_path: Path,
+    quarantine_dir: Path,
+    move_files: bool,
+) -> tuple[str, list[str]]:
+    destination, sidecar_destinations = plan_bundle_destination(video_path, quarantine_dir)
     if move_files:
-        quarantine_dir.mkdir(parents=True, exist_ok=True)
-        destination = ensure_unique_path(destination)
-        shutil.move(str(video_path), str(destination))
-        moved_sidecars: list[str] = []
-        for sidecar in sidecar_paths:
-            sidecar_dest = ensure_unique_path(quarantine_dir / sidecar.name)
-            shutil.move(str(sidecar), str(sidecar_dest))
-            moved_sidecars.append(str(sidecar_dest))
-        return str(destination), moved_sidecars
-    return str(destination), [str(quarantine_dir / sidecar.name) for sidecar in sidecar_paths]
-
-
-def delete_source_duplicate(video_path: Path) -> tuple[str, list[str]]:
-    sidecar_paths = find_sidecars(video_path)
-    deleted_sidecars: list[str] = []
-    for sidecar in sidecar_paths:
-        if sidecar.exists():
-            deleted_sidecars.append(str(sidecar))
-            sidecar.unlink()
-    deleted_video = str(video_path)
-    if video_path.exists():
-        video_path.unlink()
-    return f"DELETED:{deleted_video}", deleted_sidecars
+        return move_bundle_transactionally(
+            video_path,
+            destination,
+            sidecar_destinations,
+        )
+    return str(destination), [str(path) for path in sidecar_destinations]
 
 
 def write_collect_csv(path: Path, decisions: list[CollectDecision]) -> None:

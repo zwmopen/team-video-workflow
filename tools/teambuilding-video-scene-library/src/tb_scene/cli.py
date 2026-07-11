@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     refine.add_argument("library_root")
     refine.add_argument("--ocr", type=parse_bool, default=True)
     refine.add_argument("--transcript", type=parse_bool, default=True)
-    refine.add_argument("--move", type=parse_bool, default=True)
+    refine.add_argument("--move", type=parse_bool, default=False, help="Apply file moves. Default is preview only.")
     refine.set_defaults(func=refine_keywords_command)
 
     transcript = subparsers.add_parser("transcribe-sources", help="Transcribe original source audio for timecode keyword refinement")
@@ -228,18 +228,18 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("source_root")
     collect.add_argument("--output-root", required=True)
     collect.add_argument("--location", required=True)
-    collect.add_argument("--move", type=parse_bool, default=True)
+    collect.add_argument("--move", type=parse_bool, default=False, help="Move selected files. Default is preview only.")
     collect.set_defaults(func=collect_location_sources_command)
 
     clean = subparsers.add_parser("clean-location-sources", help="Clean an existing location raw-video folder")
     clean.add_argument("--output-root", required=True)
     clean.add_argument("--location", required=True)
-    clean.add_argument("--move", type=parse_bool, default=True)
+    clean.add_argument("--move", type=parse_bool, default=False, help="Move rejected files to quarantine. Default is preview only.")
     clean.set_defaults(func=clean_location_sources_command)
 
     rename = subparsers.add_parser("rename-clips", help="Rename library clips with serial, location, and keyword")
     rename.add_argument("library_root")
-    rename.add_argument("--move", type=parse_bool, default=True)
+    rename.add_argument("--move", type=parse_bool, default=False, help="Apply renames. Default is preview only.")
     rename.set_defaults(func=rename_clips_command)
 
     visual_fix = subparsers.add_parser("apply-visual-corrections", help="Apply visual review corrections and lock records")
