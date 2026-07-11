@@ -1,0 +1,120 @@
+diff --git a/tools/teambuilding-video-scene-library/src/tb_scene/cli.py b/tools/teambuilding-video-scene-library/src/tb_scene/cli.py
+index fd3b76e..6d7e492 100644
+--- a/tools/teambuilding-video-scene-library/src/tb_scene/cli.py
++++ b/tools/teambuilding-video-scene-library/src/tb_scene/cli.py
+@@ -240,12 +240,16 @@ def build_parser() -> argparse.ArgumentParser:
+     rename = subparsers.add_parser("rename-clips", help="Rename library clips with serial, location, and keyword")
+     rename.add_argument("library_root")
+     rename.add_argument("--move", type=parse_bool, default=False, help="Apply renames. Default is preview only.")
++    rename.add_argument("--confirm-token", default="", help="Required value: RENAME when --move true.")
+     rename.set_defaults(func=rename_clips_command)
+ 
+-    visual_fix = subparsers.add_parser("apply-visual-corrections", help="Apply visual review corrections and lock records")
++    visual_fix = subparsers.add_parser("apply-visual-corrections", help="Preview or apply visual review corrections transactionally")
+     visual_fix.add_argument("library_root")
+     visual_fix.add_argument("--corrections-csv", required=True)
+     visual_fix.add_argument("--report-name", default="visual_corrections.csv")
++    visual_fix.add_argument("--apply", type=parse_bool, default=False, help="Apply corrections. Default is preview only.")
++    visual_fix.add_argument("--confirm-token", default="", help="Required value: APPLY when --apply true.")
++    visual_fix.add_argument("--rename-after", type=parse_bool, default=False, help="Run transactional clip renaming after corrections.")
+     visual_fix.set_defaults(func=apply_visual_corrections_command)
+ 
+     visual_audit = subparsers.add_parser("visual-audit", help="Generate contact sheets and a correction CSV template")
+@@ -570,6 +574,7 @@ def rename_clips_command(args: argparse.Namespace) -> int:
+     summary = rename_library_clips(
+         library_root=Path(args.library_root),
+         move_files=args.move,
++        confirm_token=args.confirm_token,
+     )
+     print(json.dumps(summary, ensure_ascii=False, indent=2))
+     return 0
+@@ -581,6 +586,9 @@ def apply_visual_corrections_command(args: argparse.Namespace) -> int:
+         library_root=Path(args.library_root),
+         corrections=corrections,
+         report_name=args.report_name,
++        apply=args.apply,
++        confirm_token=args.confirm_token,
++        rename_after=args.rename_after,
+     )
+     print(json.dumps(summary, ensure_ascii=False, indent=2))
+     return 0
+diff --git a/tools/teambuilding-video-scene-library/src/tb_scene/visual_corrector.py b/tools/teambuilding-video-scene-library/src/tb_scene/visual_corrector.py
+index 7bd13bd..f70d3e0 100644
+--- a/tools/teambuilding-video-scene-library/src/tb_scene/visual_corrector.py
++++ b/tools/teambuilding-video-scene-library/src/tb_scene/visual_corrector.py
+@@ -139,90 +139,334 @@ class VisualCorrection:
+     clip_path: str = ""
+ 
+ 
++@dataclass(slots=True)
++class VisualCorrectionPlan:
++    correction: VisualCorrection
++    record: dict[str, object]
++    source_video_path: str
++    scene_id: str
++    current_path: Path | None
++    destination: Path | None
++    action: str
++    has_database_record: bool
++
++
+ def apply_visual_corrections(
+     library_root: Path,
+     corrections: list[VisualCorrection],
+     report_name: str = "visual_corrections.csv",
++    apply: bool = False,
++    confirm_token: str = "",
++    rename_after: bool = False,
++    _test_fail_after_moves: int = 0,
+ ) -> dict[str, object]:
+     library_root = library_root.expanduser().resolve()
+-    moved_rows: list[dict[str, str]] = []
++    if not library_root.exists() or not library_root.is_dir():
++        raise NotADirectoryError(str(library_root))
++    if apply and confirm_token != "APPLY":
++        raise ValueError("Applying visual corrections requires confirm_token='APPLY'.")
++
+     db_path = library_root / "._系统记录" / "project.sqlite"
++    plans = build_correction_plans(library_root, corrections, db_path)
++    moved_rows = preview_rows(plans)
++    post_commit_warnings: list[str] = []
++
++    if apply:
++        moved_rows = apply_correction_transaction(
++            library_root,
++            db_path,
++            plans,
++            fail_after_moves=_test_fail_after_moves,
++        )
++        if db_path.exists():
++            try:
++                export_project_files(library_root, moved_rows)
++            except Exception as error:  # derivative export must not disguise a committed transaction
++                post_commit_warnings.append(f"project export failed: {error}")
++        try:
++            write_report(library_root, report_name, moved_rows)
++        except Exception as error:  # derivative report must not disguise a committed transaction
++            post_commit_warnings.append(f"correction report failed: {error}")
++
++    rename_summary: dict[str, object] = {"skipped": "rename_after_not_requested"}
++    if rename_after:
++        if not db_path.exists():
++            rename_summary = {"skipped": "missing_project_database"}
++        else:
++            try:
++                rename_summary = rename_library_clips(
++                    library_root,
++                    move_files=apply,
++                    confirm_token="RENAME" if apply else "",
++                )
++            except Exception as error:
++                rename_summary = {"error": str(error), "rolled_back": True}
++                post_commit_warnings.append(f"post-correction clip rename failed: {error}")
++
++    report_path = library_root / "._系统记录" / report_name
++    statuses = [row["status"] for row in moved_rows]
++    return {
++        "library_root": str(library_root),
++        "mode": "apply" if apply else "preview",
++        "corrections": len(corrections),
++        "moved": sum(1 for status in statuses if status in {"moved", "moved_filesystem"}),
