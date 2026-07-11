@@ -51,6 +51,48 @@ jobs:
                   raise SystemExit(f'{command} command is not Preview-first')
           PY
 
+      - name: Verify scene filesystem and SQLite transaction contracts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          clip = Path('tools/teambuilding-video-scene-library/src/tb_scene/clip_renamer.py').read_text(encoding='utf-8-sig')
+          visual = Path('tools/teambuilding-video-scene-library/src/tb_scene/visual_corrector.py').read_text(encoding='utf-8-sig')
+          cli = Path('tools/teambuilding-video-scene-library/src/tb_scene/cli.py').read_text(encoding='utf-8-sig')
+
+          clip_required = [
+              'move_files: bool = False',
+              "confirm_token != \"RENAME\"",
+              'BEGIN IMMEDIATE',
+              'con.rollback()',
+              'filesystem rollback was incomplete',
+          ]
+          visual_required = [
+              'apply: bool = False',
+              "confirm_token != \"APPLY\"",
+              'BEGIN IMMEDIATE',
+              'cleanup_created_directories',
+              'con.rollback()',
+              'filesystem rollback was incomplete',
+          ]
+          cli_required = [
+              'rename.add_argument("--confirm-token"',
+              'visual_fix.add_argument("--apply", type=parse_bool, default=False',
+              'visual_fix.add_argument("--confirm-token"',
+              'visual_fix.add_argument("--rename-after"',
+          ]
+
+          for marker in clip_required:
+              if marker not in clip:
+                  raise SystemExit(f'Missing clip transaction marker: {marker}')
+          for marker in visual_required:
+              if marker not in visual:
+                  raise SystemExit(f'Missing visual transaction marker: {marker}')
+          for marker in cli_required:
+              if marker not in cli:
+                  raise SystemExit(f'Missing CLI transaction marker: {marker}')
+          PY
+
       - name: Check whitespace errors
         run: git diff --check
 
