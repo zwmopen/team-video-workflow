@@ -139,90 +139,334 @@ class VisualCorrection:
     clip_path: str = ""
 
 
+@dataclass(slots=True)
+class VisualCorrectionPlan:
+    correction: VisualCorrection
+    record: dict[str, object]
+    source_video_path: str
+    scene_id: str
+    current_path: Path | None
+    destination: Path | None
+    action: str
+    has_database_record: bool
+
+
 def apply_visual_corrections(
     library_root: Path,
     corrections: list[VisualCorrection],
     report_name: str = "visual_corrections.csv",
+    apply: bool = False,
+    confirm_token: str = "",
+    rename_after: bool = False,
+    _test_fail_after_moves: int = 0,
 ) -> dict[str, object]:
     library_root = library_root.expanduser().resolve()
-    moved_rows: list[dict[str, str]] = []
+    if not library_root.exists() or not library_root.is_dir():
+        raise NotADirectoryError(str(library_root))
+    if apply and confirm_token != "APPLY":
+        raise ValueError("Applying visual corrections requires confirm_token='APPLY'.")
+
     db_path = library_root / "._系统记录" / "project.sqlite"
+    plans = build_correction_plans(library_root, corrections, db_path)
+    moved_rows = preview_rows(plans)
+    post_commit_warnings: list[str] = []
+
+    if apply:
+        moved_rows = apply_correction_transaction(
+            library_root,
+            db_path,
+            plans,
+            fail_after_moves=_test_fail_after_moves,
+        )
+        if db_path.exists():
+            try:
+                export_project_files(library_root, moved_rows)
+            except Exception as error:  # derivative export must not disguise a committed transaction
+                post_commit_warnings.append(f"project export failed: {error}")
+        try:
+            write_report(library_root, report_name, moved_rows)
+        except Exception as error:  # derivative report must not disguise a committed transaction
+            post_commit_warnings.append(f"correction report failed: {error}")
+
+    rename_summary: dict[str, object] = {"skipped": "rename_after_not_requested"}
+    if rename_after:
+        if not db_path.exists():
+            rename_summary = {"skipped": "missing_project_database"}
+        else:
+            try:
+                rename_summary = rename_library_clips(
+                    library_root,
+                    move_files=apply,
+                    confirm_token="RENAME" if apply else "",
+                )
+            except Exception as error:
+                rename_summary = {"error": str(error), "rolled_back": True}
+                post_commit_warnings.append(f"post-correction clip rename failed: {error}")
+
+    report_path = library_root / "._系统记录" / report_name
+    statuses = [row["status"] for row in moved_rows]
+    return {
+        "library_root": str(library_root),
+        "mode": "apply" if apply else "preview",
+        "corrections": len(corrections),
+        "moved": sum(1 for status in statuses if status in {"moved", "moved_filesystem"}),
+        "renamed": sum(1 for status in statuses if status in {"renamed", "renamed_filesystem"}),
+        "would_move": sum(1 for status in statuses if status == "would_move"),
+        "would_rename": sum(1 for status in statuses if status == "would_rename"),
+        "already_correct": sum(1 for status in statuses if status == "already_correct"),
+        "missing_file": sum(1 for status in statuses if status == "missing_file"),
+        "report_csv": str(report_path) if apply else "",
+        "rename_summary": rename_summary,
+        "warnings": post_commit_warnings,
+    }
+
+
+def build_correction_plans(
+    library_root: Path,
+    corrections: list[VisualCorrection],
+    db_path: Path,
+) -> list[VisualCorrectionPlan]:
     con = sqlite3.connect(db_path) if db_path.exists() else None
     if con is not None:
         con.row_factory = sqlite3.Row
+    reserved_targets: set[str] = set()
+    plans: list[VisualCorrectionPlan] = []
     try:
         for correction in corrections:
+            validate_path_component(correction.category, "category")
+            validate_path_component(correction.keyword, "keyword")
             row = find_database_row(con, correction) if con is not None else None
             record = json.loads(row["record_json"]) if row and row["record_json"] else {}
-            current_path = resolve_correction_clip(library_root, correction, record, str(row["output_path"] or "") if row else "")
+            current_path = resolve_correction_clip(
+                library_root,
+                correction,
+                record,
+                str(row["output_path"] or "") if row else "",
+            )
             if current_path is None:
-                moved_rows.append(report_row(correction, correction.clip_path, "", "missing_file"))
+                plans.append(
+                    VisualCorrectionPlan(
+                        correction=correction,
+                        record=record,
+                        source_video_path=str(row["source_video_path"] or "") if row else "",
+                        scene_id=str(row["scene_id"] or correction.scene_id) if row else correction.scene_id,
+                        current_path=None,
+                        destination=None,
+                        action="missing_file",
+                        has_database_record=row is not None,
+                    )
+                )
                 continue
 
-            destination_dir = library_root / correction.category / correction.keyword
-            destination_dir.mkdir(parents=True, exist_ok=True)
-            destination = destination_dir / corrected_clip_name(current_path, correction.keyword)
-            if current_path.parent.resolve() == destination_dir.resolve():
-                if current_path.name == destination.name:
-                    moved_rows.append(report_row(correction, str(current_path), str(current_path), "already_correct"))
-                    continue
-                destination = ensure_unique_path(destination)
-                shutil.move(str(current_path), str(destination))
-                status = "renamed_filesystem"
+            destination_dir = (library_root / correction.category / correction.keyword).resolve()
+            ensure_inside_library(library_root, destination_dir)
+            candidate = destination_dir / corrected_clip_name(current_path, correction.keyword)
+            if current_path.resolve() == candidate.resolve():
+                destination = current_path
+                action = "already_correct"
             else:
-                destination = ensure_unique_path(destination)
-                shutil.move(str(current_path), str(destination))
-                status = "moved_filesystem"
-
-            if row is not None and con is not None:
-                update_record(record, correction, destination)
-                con.execute(
-                    """
-                    update scenes
-                    set output_path=?,
-                        primary_category=?,
-                        confidence_top1=1.0,
-                        record_json=?,
-                        updated_at=datetime('now')
-                    where source_video_id=? and scene_id=?
-                    """,
-                    (
-                        str(destination),
-                        correction.category,
-                        json.dumps(record, ensure_ascii=False),
-                        str(row["source_video_id"]),
-                        str(row["scene_id"]),
-                    ),
+                destination = ensure_unique_planned_path(candidate, current_path, reserved_targets)
+                action = "rename" if current_path.parent.resolve() == destination_dir else "move"
+            reserved_targets.add(str(destination).casefold())
+            plans.append(
+                VisualCorrectionPlan(
+                    correction=correction,
+                    record=record,
+                    source_video_path=str(row["source_video_path"] or "") if row else "",
+                    scene_id=str(row["scene_id"] or correction.scene_id) if row else correction.scene_id,
+                    current_path=current_path,
+                    destination=destination,
+                    action=action,
+                    has_database_record=row is not None,
                 )
-                status = "renamed" if current_path.parent.resolve() == destination_dir.resolve() else "moved"
-            moved_rows.append(report_row(correction, str(current_path), str(destination), status))
+            )
+    finally:
+        if con is not None:
+            con.close()
+    return plans
+
+
+def apply_correction_transaction(
+    library_root: Path,
+    db_path: Path,
+    plans: list[VisualCorrectionPlan],
+    fail_after_moves: int = 0,
+) -> list[dict[str, str]]:
+    for plan in plans:
+        if plan.action in {"move", "rename"}:
+            assert plan.current_path is not None and plan.destination is not None
+            if not plan.current_path.exists() or not plan.current_path.is_file():
+                raise FileNotFoundError(f"Correction source is missing: {plan.current_path}")
+            if plan.destination.exists():
+                raise FileExistsError(f"Correction target already exists: {plan.destination}")
+
+    con = sqlite3.connect(db_path) if db_path.exists() else None
+    completed: list[VisualCorrectionPlan] = []
+    created_dirs: list[Path] = []
+    moved_count = 0
+    try:
+        if con is not None:
+            con.execute("BEGIN IMMEDIATE")
+        for plan in plans:
+            if plan.action in {"move", "rename"}:
+                assert plan.current_path is not None and plan.destination is not None
+                created_dirs.extend(create_destination_directories(library_root, plan.destination.parent))
+                plan.current_path.rename(plan.destination)
+                completed.append(plan)
+                moved_count += 1
+                if fail_after_moves and moved_count >= fail_after_moves:
+                    raise RuntimeError(f"simulated failure after {moved_count} correction move(s)")
+            if plan.has_database_record and plan.current_path is not None and plan.destination is not None:
+                if con is None:
+                    raise RuntimeError("Database record was planned but the database is unavailable.")
+                update_visual_record(con, plan)
         if con is not None:
             con.commit()
+    except Exception as original_error:
+        if con is not None:
+            con.rollback()
+        rollback_errors: list[str] = []
+        for plan in reversed(completed):
+            try:
+                assert plan.current_path is not None and plan.destination is not None
+                if plan.destination.exists() and not plan.current_path.exists():
+                    plan.destination.rename(plan.current_path)
+            except Exception as rollback_error:  # pragma: no cover - defensive path
+                rollback_errors.append(
+                    f"{plan.destination} -> {plan.current_path}: {rollback_error}"
+                )
+        cleanup_created_directories(created_dirs)
+        if rollback_errors:
+            raise RuntimeError(
+                "Visual correction failed and filesystem rollback was incomplete:\n"
+                + "\n".join(rollback_errors)
+            ) from original_error
+        raise
     finally:
         if con is not None:
             con.close()
 
-    if db_path.exists():
-        export_project_files(library_root, moved_rows)
-    write_report(library_root, report_name, moved_rows)
-    rename_summary = rename_library_clips(library_root, move_files=True) if db_path.exists() else {"skipped": "missing_project_database"}
-    return {
-        "library_root": str(library_root),
-        "corrections": len(corrections),
-        "moved": sum(1 for row in moved_rows if row["status"] in {"moved", "moved_filesystem", "renamed", "renamed_filesystem"}),
-        "moved_filesystem": sum(1 for row in moved_rows if row["status"] == "moved_filesystem"),
-        "renamed": sum(1 for row in moved_rows if row["status"] in {"renamed", "renamed_filesystem"}),
-        "missing_record": sum(1 for row in moved_rows if row["status"] == "missing_record"),
-        "missing_file": sum(1 for row in moved_rows if row["status"] == "missing_file"),
-        "report_csv": str(library_root / "._系统记录" / report_name),
-        "rename_summary": rename_summary,
-    }
+    return applied_rows(plans)
+
+
+def update_visual_record(con: sqlite3.Connection, plan: VisualCorrectionPlan) -> None:
+    assert plan.destination is not None
+    record = dict(plan.record)
+    update_record(record, plan.correction, plan.destination)
+    cursor = con.execute(
+        """
+        update scenes
+        set output_path=?,
+            primary_category=?,
+            confidence_top1=1.0,
+            record_json=?,
+            updated_at=datetime('now')
+        where source_video_path=? and scene_id=?
+        """,
+        (
+            str(plan.destination),
+            plan.correction.category,
+            json.dumps(record, ensure_ascii=False),
+            plan.source_video_path,
+            plan.scene_id,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            f"Expected one scene row for {plan.source_video_path} / {plan.scene_id}, got {cursor.rowcount}"
+        )
+
+
+def preview_rows(plans: list[VisualCorrectionPlan]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for plan in plans:
+        status = {
+            "move": "would_move",
+            "rename": "would_rename",
+        }.get(plan.action, plan.action)
+        rows.append(
+            report_row(
+                plan.correction,
+                str(plan.current_path or plan.correction.clip_path),
+                str(plan.destination or ""),
+                status,
+            )
+        )
+    return rows
+
+
+def applied_rows(plans: list[VisualCorrectionPlan]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for plan in plans:
+        if plan.action == "move":
+            status = "moved" if plan.has_database_record else "moved_filesystem"
+        elif plan.action == "rename":
+            status = "renamed" if plan.has_database_record else "renamed_filesystem"
+        else:
+            status = plan.action
+        rows.append(
+            report_row(
+                plan.correction,
+                str(plan.current_path or plan.correction.clip_path),
+                str(plan.destination or ""),
+                status,
+            )
+        )
+    return rows
+
+
+def validate_path_component(value: str, label: str) -> None:
+    if not value or value in {".", ".."} or Path(value).name != value or "/" in value or "\\" in value:
+        raise ValueError(f"Invalid correction {label}: {value!r}")
+
+
+def ensure_inside_library(library_root: Path, candidate: Path) -> None:
+    try:
+        candidate.relative_to(library_root)
+    except ValueError as error:
+        raise ValueError(f"Correction target escapes library root: {candidate}") from error
+
+
+def ensure_unique_planned_path(candidate: Path, current_path: Path, reserved: set[str]) -> Path:
+    if not candidate.exists() and str(candidate).casefold() not in reserved:
+        return candidate
+    counter = 2
+    while True:
+        next_path = candidate.with_name(f"{candidate.stem}_{counter}{candidate.suffix}")
+        if (
+            (not next_path.exists() or next_path.resolve() == current_path.resolve())
+            and str(next_path).casefold() not in reserved
+        ):
+            return next_path
+        counter += 1
+
+
+def create_destination_directories(library_root: Path, destination_dir: Path) -> list[Path]:
+    ensure_inside_library(library_root, destination_dir)
+    missing: list[Path] = []
+    current = destination_dir
+    while current != library_root and not current.exists():
+        missing.append(current)
+        current = current.parent
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    return missing
+
+
+def cleanup_created_directories(paths: list[Path]) -> None:
+    for path in sorted(set(paths), key=lambda item: len(item.parts), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
 
 
 def find_database_row(con: sqlite3.Connection, correction: VisualCorrection) -> sqlite3.Row | None:
     if correction.source_video_id and correction.scene_id:
         row = con.execute(
-            "select source_video_id, scene_id, record_json, output_path from scenes where source_video_id=? and scene_id=?",
+            """
+            select source_video_id, source_video_path, scene_id, record_json, output_path
+            from scenes where source_video_id=? and scene_id=?
+            """,
             (correction.source_video_id, correction.scene_id),
         ).fetchone()
         if row:
@@ -230,13 +474,19 @@ def find_database_row(con: sqlite3.Connection, correction: VisualCorrection) -> 
     if correction.clip_path:
         target = str(Path(correction.clip_path).resolve())
         row = con.execute(
-            "select source_video_id, scene_id, record_json, output_path from scenes where output_path=?",
+            """
+            select source_video_id, source_video_path, scene_id, record_json, output_path
+            from scenes where output_path=?
+            """,
             (target,),
         ).fetchone()
         if row:
             return row
         return con.execute(
-            "select source_video_id, scene_id, record_json, output_path from scenes where output_path like ? limit 1",
+            """
+            select source_video_id, source_video_path, scene_id, record_json, output_path
+            from scenes where output_path like ? limit 1
+            """,
             (f"%{Path(target).name}",),
         ).fetchone()
     return None
