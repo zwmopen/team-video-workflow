@@ -22,6 +22,7 @@ GENERATED_MARKERS = {
     "归档",
 }
 SCENE_KEY_PATTERN = re.compile(r"(?:^|_)([A-Za-z]*V\d+_S\d+)(?:_|\.)", re.IGNORECASE)
+SEQUENCE_PATTERN = re.compile(r"^(\d+)_")
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,13 +118,34 @@ def scene_key_from_path(path: str | Path) -> str:
     return match.group(1).upper() if match else ""
 
 
-def scene_keys_by_location(scenes: list[dict[str, object]]) -> dict[str, set[str]]:
-    keys: dict[str, set[str]] = defaultdict(set)
+def scene_identity_from_path(path: str | Path) -> str:
+    name = Path(path).name
+    sequence = SEQUENCE_PATTERN.match(name)
+    scene_key = scene_key_from_path(name)
+    return f"{sequence.group(1)}|{scene_key}" if sequence and scene_key else ""
+
+
+def scene_keys_by_location(scenes: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    keys: dict[str, dict[str, object]] = defaultdict(lambda: {"identities": set(), "tail_counts": Counter()})
     for scene in scenes:
-        key = scene_key_from_path(str(scene["path"]))
-        if key:
-            keys[str(scene["location"])].add(key)
+        location = str(scene["location"])
+        path = str(scene["path"])
+        identity = scene_identity_from_path(path)
+        tail = scene_key_from_path(path)
+        if identity:
+            keys[location]["identities"].add(identity)
+        if tail:
+            keys[location]["tail_counts"][tail] += 1
     return keys
+
+
+def relocated_scene_exists(output_path: str, location: str, scene_keys: dict[str, dict[str, object]]) -> bool:
+    location_keys = scene_keys.get(location, {})
+    identity = scene_identity_from_path(output_path)
+    if identity and identity in location_keys.get("identities", set()):
+        return True
+    tail = scene_key_from_path(output_path)
+    return bool(tail and location_keys.get("tail_counts", Counter()).get(tail, 0) == 1)
 
 
 def audio_inventory(audio_root: Path) -> list[dict[str, object]]:
@@ -196,7 +218,7 @@ def main() -> int:
             if Path(output).exists():
                 written.append(output)
                 continue
-            if scene_key_from_path(output) in scene_keys.get(str(source["location"]), set()):
+            if relocated_scene_exists(output, str(source["location"]), scene_keys):
                 written.append(output)
                 relocated.append(output)
         status_counts = Counter(row.get("status", "") for row in rows)

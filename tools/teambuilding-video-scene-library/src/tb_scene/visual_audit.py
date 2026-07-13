@@ -35,6 +35,13 @@ def build_visual_audit_contact_sheets(
     records = [record for record in load_clip_records(library_root) if clip_path(record).exists()]
     if not records:
         records = load_clip_records_from_filesystem(library_root)
+    else:
+        for record in records:
+            source_video_id, scene_id = infer_source_scene_ids(clip_path(record))
+            if not record.get("source_video_id"):
+                record["source_video_id"] = source_video_id
+            if not record.get("scene_id"):
+                record["scene_id"] = scene_id
     if max_clips:
         records = records[:max_clips]
 

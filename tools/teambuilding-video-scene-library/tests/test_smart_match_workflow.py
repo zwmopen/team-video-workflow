@@ -28,7 +28,7 @@ def test_infers_location_assets_from_scene_library(tmp_path: Path) -> None:
     source.mkdir()
 
     assert infer_location_name(library) == "千岛湖"
-    assert default_location_audio_library(library) == tmp_path / "千岛湖音频素材库"
+    assert default_location_audio_library(library) == tmp_path / "03_音频文案库"
     assert infer_location_source_dir(library) == source
 
 
