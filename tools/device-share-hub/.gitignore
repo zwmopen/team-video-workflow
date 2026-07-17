@@ -1,6 +1,7 @@
-.device-share-data/
-desktop/.device-share-data/
 android/.gradle/
 android/local.properties
 android/**/build/
+windows-native/build/
+windows-native/out/
 *.apk
+*.exe

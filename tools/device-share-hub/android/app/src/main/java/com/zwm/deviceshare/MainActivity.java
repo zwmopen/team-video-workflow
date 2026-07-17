@@ -1,7 +1,6 @@
 package com.zwm.deviceshare;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -28,19 +27,19 @@ public final class MainActivity extends Activity {
     static volatile boolean isVisible = false;
     private static final String PREFS = "device_share";
 
-    private EditText serverUrlInput;
-    private EditText tokenInput;
     private EditText deviceNameInput;
     private TextView statusText;
 
-    private final BroadcastReceiver taskReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (OnlineService.ACTION_TASK_READY.equals(intent.getAction())) {
+            String action = intent.getAction();
+            if (OnlineService.ACTION_TASK_READY.equals(action)) {
                 statusText.setText("素材已接收，正在打开系统分享…");
                 startActivity(new Intent(MainActivity.this, ShareActivity.class));
-            } else if (OnlineService.ACTION_STATUS.equals(intent.getAction())) {
-                statusText.setText(intent.getStringExtra("message"));
+            } else if (OnlineService.ACTION_STATUS.equals(action)) {
+                String message = intent.getStringExtra("message");
+                if (message != null) statusText.setText(message);
             }
         }
     };
@@ -52,9 +51,9 @@ public final class MainActivity extends Activity {
         setContentView(buildUi());
         loadSettings();
         requestNotificationPermission();
+        startReceiver();
     }
 
-    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override
     protected void onStart() {
         super.onStart();
@@ -63,23 +62,25 @@ public final class MainActivity extends Activity {
         filter.addAction(OnlineService.ACTION_TASK_READY);
         filter.addAction(OnlineService.ACTION_STATUS);
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(taskReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            // RECEIVER_NOT_EXPORTED was introduced in API 33. On API 26-32 the
-            // legacy overload is the only compatible option; broadcasts are
-            // package-targeted by OnlineService.
-            registerReceiver(taskReceiver, filter);
+            registerLegacyReceiver(filter);
         }
         if (PendingTaskStore.exists(this)) {
             statusText.setText("有一批素材等待分享");
         }
     }
 
+    @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
+    private void registerLegacyReceiver(IntentFilter filter) {
+        registerReceiver(receiver, filter);
+    }
+
     @Override
     protected void onStop() {
         isVisible = false;
         try {
-            unregisterReceiver(taskReceiver);
+            unregisterReceiver(receiver);
         } catch (IllegalArgumentException ignored) {
         }
         super.onStop();
@@ -95,33 +96,21 @@ public final class MainActivity extends Activity {
         TextView title = text("素材投送接收端", 25, true);
         root.addView(title);
 
-        TextView intro = text("与电脑连接同一 Wi‑Fi。电脑拖入图片或视频后，本机接收并调起安卓系统分享面板。文件只保存在 App 私有缓存中，不进入相册。", 14, false);
+        TextView intro = text("手机与电脑在同一 Wi‑Fi 时会自动出现在电脑面板。无需填写地址、无需配对令牌。电脑把图片或视频拖到本机卡片后，本机会接收并调起安卓系统分享。", 14, false);
         intro.setTextColor(Color.DKGRAY);
         LinearLayout.LayoutParams introParams = new LinearLayout.LayoutParams(-1, -2);
         introParams.setMargins(0, dp(8), 0, dp(22));
         root.addView(intro, introParams);
 
-        root.addView(label("电脑地址"));
-        serverUrlInput = input("例如：http://192.168.1.20:45832");
-        root.addView(serverUrlInput);
-
-        root.addView(label("配对令牌"));
-        tokenInput = input("从电脑面板复制");
-        root.addView(tokenInput);
-
         root.addView(label("设备名称"));
         deviceNameInput = input("例如：红米团建号01");
         root.addView(deviceNameInput);
 
-        Button start = button("保存并保持在线", true);
-        start.setOnClickListener(v -> startOnline());
+        Button save = button("保存设备名称", true);
+        save.setOnClickListener(v -> saveDeviceName());
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(50));
         buttonParams.setMargins(0, dp(18), 0, dp(10));
-        root.addView(start, buttonParams);
-
-        Button stop = button("停止在线服务", false);
-        stop.setOnClickListener(v -> stopOnline());
-        root.addView(stop, new LinearLayout.LayoutParams(-1, dp(48)));
+        root.addView(save, buttonParams);
 
         Button sharePending = button("打开待分享素材", false);
         sharePending.setOnClickListener(v -> {
@@ -131,17 +120,27 @@ public final class MainActivity extends Activity {
                 toast("当前没有待分享素材");
             }
         });
-        LinearLayout.LayoutParams pendingParams = new LinearLayout.LayoutParams(-1, dp(48));
-        pendingParams.setMargins(0, dp(10), 0, 0);
-        root.addView(sharePending, pendingParams);
+        root.addView(sharePending, new LinearLayout.LayoutParams(-1, dp(48)));
 
-        statusText = text("尚未连接", 14, false);
+        Button stop = button("停止局域网接收", false);
+        stop.setOnClickListener(v -> stopReceiver());
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(-1, dp(48));
+        stopParams.setMargins(0, dp(10), 0, 0);
+        root.addView(stop, stopParams);
+
+        statusText = text("正在开启局域网接收…", 14, false);
         statusText.setGravity(Gravity.CENTER);
         statusText.setBackgroundColor(Color.rgb(244, 246, 248));
         statusText.setPadding(dp(12), dp(14), dp(12), dp(14));
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
         statusParams.setMargins(0, dp(18), 0, 0);
         root.addView(statusText, statusParams);
+
+        TextView note = text("建议在小米/红米系统中允许通知、自启动、后台运行，并把电池策略设为“不限制”。素材只保存在 App 私有缓存，不写入相册。", 13, false);
+        note.setTextColor(Color.GRAY);
+        LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(-1, -2);
+        noteParams.setMargins(0, dp(18), 0, 0);
+        root.addView(note, noteParams);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
@@ -188,47 +187,31 @@ public final class MainActivity extends Activity {
 
     private void loadSettings() {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        serverUrlInput.setText(prefs.getString("serverUrl", ""));
-        tokenInput.setText(prefs.getString("token", ""));
         String defaultName = Build.MANUFACTURER + " " + Build.MODEL;
         deviceNameInput.setText(prefs.getString("deviceName", defaultName));
-        if (prefs.getBoolean("serviceEnabled", false)) {
-            statusText.setText("在线服务已配置；如被系统关闭，请再次点击“保持在线”");
-        }
     }
 
-    private void startOnline() {
-        String serverUrl = normalizeServerUrl(serverUrlInput.getText().toString());
-        String token = tokenInput.getText().toString().trim();
-        String deviceName = deviceNameInput.getText().toString().trim();
-        if (serverUrl.isEmpty() || token.isEmpty() || deviceName.isEmpty()) {
-            toast("请填写电脑地址、配对令牌和设备名称");
+    private void saveDeviceName() {
+        String name = deviceNameInput.getText().toString().trim();
+        if (name.isEmpty()) {
+            toast("设备名称不能为空");
             return;
         }
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putString("serverUrl", serverUrl)
-                .putString("token", token)
-                .putString("deviceName", deviceName)
-                .putBoolean("serviceEnabled", true)
-                .apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("deviceName", name).apply();
+        startReceiver();
+        statusText.setText("名称已保存，电脑会自动刷新设备卡片");
+    }
+
+    private void startReceiver() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("serviceEnabled", true).apply();
         Intent intent = new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START);
         startForegroundService(intent);
-        statusText.setText("正在连接电脑…");
     }
 
-    private void stopOnline() {
+    private void stopReceiver() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("serviceEnabled", false).apply();
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_STOP));
-        statusText.setText("在线服务已停止");
-    }
-
-    private String normalizeServerUrl(String value) {
-        String text = value.trim();
-        while (text.endsWith("/")) text = text.substring(0, text.length() - 1);
-        if (!text.isEmpty() && !text.startsWith("http://") && !text.startsWith("https://")) {
-            text = "http://" + text;
-        }
-        return text;
+        statusText.setText("局域网接收已停止；重新打开 App 会再次开启");
     }
 
     private void ensureDeviceId() {
