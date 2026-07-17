@@ -1,0 +1,67 @@
+name: Device Share Hub
+
+on:
+  push:
+    paths:
+      - 'tools/device-share-hub/**'
+      - '.github/workflows/device-share-hub.yml'
+  pull_request:
+    paths:
+      - 'tools/device-share-hub/**'
+      - '.github/workflows/device-share-hub.yml'
+
+jobs:
+  desktop-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/device-share-hub/desktop
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: node --test test/*.test.mjs
+
+  android-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/device-share-hub/android
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Install Gradle 9.4.1
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-9.4.1-bin.zip -o /tmp/gradle-9.4.1-bin.zip
+          unzip -q /tmp/gradle-9.4.1-bin.zip -d /tmp/gradle
+      - name: Build and lint Android debug APK
+        id: android_compile
+        shell: bash
+        run: |
+          set +e
+          /tmp/gradle/gradle-9.4.1/bin/gradle :app:assembleDebug :app:lintDebug --stacktrace > /tmp/device-share-android-build.log 2>&1
+          build_status=$?
+          echo "status=$build_status" >> "$GITHUB_OUTPUT"
+          tail -n 160 /tmp/device-share-android-build.log
+          exit 0
+      - name: Upload Android build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: device-share-hub-android-build-log
+          path: /tmp/device-share-android-build.log
+      - name: Upload debug APK
+        if: steps.android_compile.outputs.status == '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: device-share-hub-debug-apk
+          path: tools/device-share-hub/android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Fail when Android build failed
+        if: steps.android_compile.outputs.status != '0'
+        run: exit 1
