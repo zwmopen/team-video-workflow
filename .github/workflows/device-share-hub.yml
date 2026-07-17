@@ -40,8 +40,28 @@ jobs:
         run: |
           curl -fsSL https://services.gradle.org/distributions/gradle-9.4.1-bin.zip -o /tmp/gradle-9.4.1-bin.zip
           unzip -q /tmp/gradle-9.4.1-bin.zip -d /tmp/gradle
-      - run: /tmp/gradle/gradle-9.4.1/bin/gradle :app:assembleDebug --stacktrace
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Build Android debug APK
+        id: android_compile
+        shell: bash
+        run: |
+          set +e
+          /tmp/gradle/gradle-9.4.1/bin/gradle :app:assembleDebug --stacktrace > /tmp/device-share-android-build.log 2>&1
+          build_status=$?
+          echo "status=$build_status" >> "$GITHUB_OUTPUT"
+          tail -n 120 /tmp/device-share-android-build.log
+          exit 0
+      - name: Upload Android build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: device-share-hub-android-build-log
+          path: /tmp/device-share-android-build.log
+      - name: Upload debug APK
+        if: steps.android_compile.outputs.status == '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: device-share-hub-debug-apk
           path: tools/device-share-hub/android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Fail when Android build failed
+        if: steps.android_compile.outputs.status != '0'
+        run: exit 1
