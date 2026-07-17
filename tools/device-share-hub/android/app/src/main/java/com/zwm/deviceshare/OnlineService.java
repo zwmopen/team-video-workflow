@@ -493,8 +493,17 @@ public final class OnlineService extends Service {
     }
 
     private static String safeName(String value) {
-        String clean = value.replaceAll("[\\/:*?\"<>|\p{Cntrl}]", "_").replaceAll("^\.+", "").trim();
-        return clean.isEmpty() ? "file" : clean.substring(0, Math.min(clean.length(), 160));
+        StringBuilder builder = new StringBuilder();
+        String forbidden = "\\/:*?\"<>|";
+        for (int index = 0; index < value.length() && builder.length() < 160; index++) {
+            char character = value.charAt(index);
+            builder.append(character < 32 || forbidden.indexOf(character) >= 0 ? '_' : character);
+        }
+        String clean = builder.toString().trim();
+        int first = 0;
+        while (first < clean.length() && clean.charAt(first) == '.') first++;
+        clean = clean.substring(first).trim();
+        return clean.isEmpty() ? "file" : clean;
     }
 
     private static String hex(byte[] bytes) {
