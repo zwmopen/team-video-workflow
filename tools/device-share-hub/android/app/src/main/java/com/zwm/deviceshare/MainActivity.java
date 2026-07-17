@@ -1,6 +1,7 @@
 package com.zwm.deviceshare;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -53,6 +54,7 @@ public final class MainActivity extends Activity {
         requestNotificationPermission();
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override
     protected void onStart() {
         super.onStart();
@@ -63,6 +65,9 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(taskReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
+            // RECEIVER_NOT_EXPORTED was introduced in API 33. On API 26-32 the
+            // legacy overload is the only compatible option; broadcasts are
+            // package-targeted by OnlineService.
             registerReceiver(taskReceiver, filter);
         }
         if (PendingTaskStore.exists(this)) {
