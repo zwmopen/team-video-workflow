@@ -1,25 +1,82 @@
-# 局域网投送协议 V1
+# Device Share Protocol V2
 
-电脑端监听 TCP `45832`，手机端通过 HTTP 心跳和短轮询保持在线。所有 `/api/*` 请求都必须携带：
+## 目标
 
-```http
-Authorization: Bearer <pair-token>
+- 同一局域网自动发现，无人工配置。
+- Windows 直接向安卓手机传输，不经过电脑端 HTTP 中转服务。
+- 设备 ID 在局域网与未来云端模式中保持一致。
+
+## 端口
+
+- UDP `45834`：设备发现。
+- TCP `45833`：安卓接收端 HTTP 服务。
+
+## 发现
+
+Windows 每两秒向 UDP 广播地址发送：
+
+```text
+ZWMDS2_DISCOVER
 ```
 
-## 核心流程
+安卓接收端回复：
 
-1. 手机 `POST /api/device/heartbeat` 注册或刷新设备状态。
-2. 电脑创建任务：`POST /api/tasks`。
-3. 电脑逐个上传二进制文件：`PUT /api/tasks/{taskId}/files/{index}`。
-4. 电脑提交任务：`POST /api/tasks/{taskId}/commit`。
-5. 手机轮询：`GET /api/device/tasks/next?deviceId=...`。
-6. 手机按返回的 `downloadPath` 下载并校验 SHA-256。
-7. 手机回传 `downloading`、`ready`、`shared` 或 `failed` 状态。
-8. 安卓端通过只读 `ContentProvider` 将私有缓存 URI 交给系统 Sharesheet。
+```text
+ZWMDS2_HERE|2|deviceId|httpPort|base64url(name)|base64url(model)|base64url(state)|taskId
+```
+
+设备超过 9 秒没有刷新即视为离线。
+
+## 投送流程
+
+### 1. 创建任务
+
+```http
+POST /v2/tasks
+Content-Type: application/json
+
+{
+  "taskId": "task-...",
+  "text": "可选文案",
+  "fileCount": 8
+}
+```
+
+### 2. 上传文件
+
+```http
+PUT /v2/tasks/{taskId}/files/{index}
+Content-Length: ...
+X-File-Name: percent-encoded-utf8
+X-File-Mime: image/jpeg
+X-File-Sha256: ...
+
+<raw bytes>
+```
+
+### 3. 提交任务
+
+```http
+POST /v2/tasks/{taskId}/commit
+```
+
+接收端校验文件完整后写入私有缓存并触发分享入口。
+
+### 4. 取消失败任务
+
+```http
+POST /v2/tasks/{taskId}/cancel
+```
+
+## 状态
+
+发现包中的 `state`：
+
+- `online`：空闲。
+- `receiving`：正在接收文件。
+- `ready`：素材已接收，等待手机打开分享。
+- `sharing`：安卓系统分享已打开。
 
 ## 安全边界
 
-- 配对令牌首次启动时随机生成，保存在电脑本地数据目录。
-- 原始文件不经过飞书、浏览器下载目录或系统相册。
-- 手机文件位于 App 私有缓存，其他应用只获得本次分享 URI 的临时读取权限。
-- 服务默认只用于可信局域网，不应把 `45832` 端口映射到公网。
+V2 局域网模式按产品要求不做配对和鉴权，只应在可信任的专用 Wi‑Fi 中使用。未来远程模式必须使用工作区身份、设备密钥与加密传输，不能把无鉴权的局域网端口直接暴露到公网。

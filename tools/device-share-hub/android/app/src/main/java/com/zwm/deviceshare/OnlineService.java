@@ -20,13 +20,25 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URLEncoder;
+import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -35,14 +47,29 @@ public final class OnlineService extends Service {
     public static final String ACTION_STOP = "com.zwm.deviceshare.STOP";
     public static final String ACTION_TASK_READY = "com.zwm.deviceshare.TASK_READY";
     public static final String ACTION_STATUS = "com.zwm.deviceshare.STATUS";
+    public static final String ACTION_SHARE_OPENED = "com.zwm.deviceshare.SHARE_OPENED";
+    public static final String ACTION_SHARE_FINISHED = "com.zwm.deviceshare.SHARE_FINISHED";
 
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
     private static final String CHANNEL_ID = "device_share_online";
-    private static final int NOTIFICATION_ID = 3401;
+    private static final int FOREGROUND_NOTIFICATION_ID = 3401;
+    private static final int TASK_NOTIFICATION_ID = 3402;
+    private static final int HTTP_PORT = 45833;
+    private static final int DISCOVERY_PORT = 45834;
+    private static final int MAX_FILES = 100;
+    private static final long MAX_JSON_BYTES = 2L * 1024L * 1024L;
+    private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
     private volatile boolean running;
+    private volatile String state = "online";
+    private volatile String currentTaskId = "";
+    private volatile ServerSocket serverSocket;
+    private volatile DatagramSocket discoverySocket;
+    private final Object taskLock = new Object();
+    private IncomingTask activeTask;
 
     @Override
     public void onCreate() {
@@ -54,23 +81,45 @@ public final class OnlineService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getAction();
         if (ACTION_STOP.equals(action)) {
-            running = false;
-            stopForeground(STOP_FOREGROUND_REMOVE);
-            stopSelf();
+            stopReceiver();
             return START_NOT_STICKY;
         }
-        startForeground(NOTIFICATION_ID, buildNotification("设备在线，等待电脑投送", false));
+        if (ACTION_SHARE_OPENED.equals(action)) {
+            state = "sharing";
+            cancelTaskNotification();
+            return START_STICKY;
+        }
+        if (ACTION_SHARE_FINISHED.equals(action)) {
+            state = "online";
+            currentTaskId = "";
+            return START_STICKY;
+        }
+
+        startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
+        if (PendingTaskStore.exists(this)) {
+            state = "ready";
+            try {
+                currentTaskId = PendingTaskStore.read(this).optString("id", "");
+            } catch (Exception ignored) {
+                currentTaskId = "";
+            }
+            getSystemService(NotificationManager.class).notify(TASK_NOTIFICATION_ID, buildTaskNotification());
+        }
         if (!running) {
             running = true;
-            executor.execute(this::pollLoop);
+            serviceExecutor.execute(this::httpLoop);
+            serviceExecutor.execute(this::discoveryLoop);
         }
+        notifyStatus(PendingTaskStore.exists(this) ? "有一批素材等待分享" : "局域网接收已开启，等待电脑自动发现");
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
         running = false;
-        executor.shutdownNow();
+        closeSockets();
+        serviceExecutor.shutdownNow();
+        requestExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -79,193 +128,324 @@ public final class OnlineService extends Service {
         return null;
     }
 
-    private void pollLoop() {
-        while (running) {
-            SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-            if (!prefs.getBoolean("serviceEnabled", false)) break;
-            String serverUrl = prefs.getString("serverUrl", "");
-            String token = prefs.getString("token", "");
-            String deviceId = prefs.getString("deviceId", "");
-            String deviceName = prefs.getString("deviceName", Build.MODEL);
-            if (serverUrl.isEmpty() || token.isEmpty() || deviceId.isEmpty()) {
-                notifyStatus("配置不完整，请回到 App 重新填写");
-                sleep(3000);
-                continue;
-            }
-            try {
-                heartbeat(serverUrl, token, deviceId, deviceName);
-                if (PendingTaskStore.exists(this)) {
-                    notifyStatus("有一批素材等待分享");
-                    sleep(2200);
-                    continue;
-                }
-                JSONObject next = getJson(serverUrl + "/api/device/tasks/next?deviceId=" + enc(deviceId), token);
-                JSONObject task = next.optJSONObject("task");
-                if (task != null) {
-                    receiveTask(serverUrl, token, deviceId, task);
-                } else {
-                    notifyStatus("已连接电脑，等待素材");
-                }
-            } catch (Exception error) {
-                Log.w(TAG, "poll failed", error);
-                notifyStatus("连接失败：" + compact(error.getMessage()));
-            }
-            sleep(2200);
-        }
+    private void stopReceiver() {
+        running = false;
+        closeSockets();
+        stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
-    private void heartbeat(String serverUrl, String token, String deviceId, String deviceName) throws Exception {
-        JSONObject body = new JSONObject()
-                .put("deviceId", deviceId)
-                .put("name", deviceName)
-                .put("model", Build.MANUFACTURER + " " + Build.MODEL)
-                .put("androidVersion", Build.VERSION.RELEASE)
-                .put("appVersion", "0.1.0");
-        postJson(serverUrl + "/api/device/heartbeat", token, body);
+    private void closeSockets() {
+        ServerSocket http = serverSocket;
+        if (http != null) {
+            try { http.close(); } catch (Exception ignored) { }
+        }
+        DatagramSocket udp = discoverySocket;
+        if (udp != null) udp.close();
     }
 
-    private void receiveTask(String serverUrl, String token, String deviceId, JSONObject task) {
-        String taskId = task.optString("id");
-        try {
-            postStatus(serverUrl, token, deviceId, taskId, "downloading", null);
-            notifyStatus("正在接收素材…");
+    private void httpLoop() {
+        try (ServerSocket server = new ServerSocket()) {
+            serverSocket = server;
+            server.setReuseAddress(true);
+            server.bind(new InetSocketAddress("0.0.0.0", HTTP_PORT));
+            while (running) {
+                try {
+                    Socket socket = server.accept();
+                    socket.setSoTimeout(60_000);
+                    requestExecutor.execute(() -> handleHttp(socket));
+                } catch (Exception error) {
+                    if (running) Log.w(TAG, "accept failed", error);
+                }
+            }
+        } catch (Exception error) {
+            Log.e(TAG, "http server failed", error);
+            notifyStatus("接收端口启动失败：" + compact(error.getMessage()));
+        } finally {
+            serverSocket = null;
+        }
+    }
+
+    private void handleHttp(Socket socket) {
+        try (Socket client = socket;
+             BufferedInputStream input = new BufferedInputStream(client.getInputStream());
+             BufferedOutputStream output = new BufferedOutputStream(client.getOutputStream())) {
+            try {
+                HttpRequest request = HttpRequest.read(input);
+                if ("GET".equals(request.method) && "/v2/info".equals(request.path)) {
+                    writeJson(output, 200, deviceInfo());
+                    return;
+                }
+                if ("POST".equals(request.method) && "/v2/tasks".equals(request.path)) {
+                    createTask(request, input, output);
+                    return;
+                }
+                String[] parts = request.path.split("/");
+                if (parts.length == 6 && "PUT".equals(request.method) && "v2".equals(parts[1]) && "tasks".equals(parts[2]) && "files".equals(parts[4])) {
+                    uploadFile(parts[3], parts[5], request, input, output);
+                    return;
+                }
+                if (parts.length == 5 && "POST".equals(request.method) && "v2".equals(parts[1]) && "tasks".equals(parts[2]) && "commit".equals(parts[4])) {
+                    commitTask(parts[3], output);
+                    return;
+                }
+                if (parts.length == 5 && "POST".equals(request.method) && "v2".equals(parts[1]) && "tasks".equals(parts[2]) && "cancel".equals(parts[4])) {
+                    cancelTask(parts[3], output);
+                    return;
+                }
+                writeText(output, 404, "Not Found");
+            } catch (HttpError error) {
+                writeText(output, error.code, error.getMessage());
+            } catch (Exception error) {
+                Log.w(TAG, "request failed", error);
+                writeText(output, 500, compact(error.getMessage()));
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "connection failed", error);
+        }
+    }
+
+    private void createTask(HttpRequest request, InputStream input, OutputStream output) throws Exception {
+        if (request.contentLength < 0 || request.contentLength > MAX_JSON_BYTES) throw new HttpError(413, "任务信息过大");
+        JSONObject body = new JSONObject(new String(readExact(input, request.contentLength), StandardCharsets.UTF_8));
+        String taskId = body.optString("taskId", "").trim();
+        int fileCount = body.optInt("fileCount", 0);
+        if (!taskId.matches("[A-Za-z0-9._-]{6,100}")) throw new HttpError(400, "taskId 无效");
+        if (fileCount < 1 || fileCount > MAX_FILES) throw new HttpError(400, "文件数量无效");
+        synchronized (taskLock) {
+            if (PendingTaskStore.exists(this) || activeTask != null) throw new HttpError(409, "手机上还有一批素材未处理");
             File taskDir = new File(new File(getCacheDir(), "share"), taskId);
             deleteRecursively(taskDir);
-            if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new IllegalStateException("无法创建缓存目录");
+            if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
+            activeTask = new IncomingTask(taskId, body.optString("text", ""), fileCount, taskDir);
+            currentTaskId = taskId;
+            state = "receiving";
+        }
+        notifyStatus("正在接收 " + fileCount + " 个文件…");
+        writeText(output, 201, "OK");
+    }
 
-            JSONArray files = task.getJSONArray("files");
-            JSONArray localFiles = new JSONArray();
-            for (int i = 0; i < files.length(); i++) {
-                JSONObject remote = files.getJSONObject(i);
-                String originalName = safeName(remote.optString("name", "file-" + (i + 1)));
-                String storedName = String.format(Locale.US, "%03d-%s", i, originalName);
-                File output = new File(taskDir, storedName);
-                String downloadPath = remote.getString("downloadPath");
-                String separator = downloadPath.contains("?") ? "&" : "?";
-                download(serverUrl + downloadPath + separator + "deviceId=" + enc(deviceId), token, output, remote.optString("sha256"));
-                localFiles.put(new JSONObject()
-                        .put("name", originalName)
-                        .put("storedName", storedName)
-                        .put("mime", remote.optString("mime", "application/octet-stream"))
-                        .put("size", output.length()));
+    private void uploadFile(String taskId, String indexText, HttpRequest request, InputStream input, OutputStream output) throws Exception {
+        int index;
+        try { index = Integer.parseInt(indexText); } catch (NumberFormatException error) { throw new HttpError(400, "文件序号无效"); }
+        if (request.contentLength < 0 || request.contentLength > MAX_FILE_BYTES) throw new HttpError(413, "文件过大");
+        IncomingTask task;
+        synchronized (taskLock) {
+            task = activeTask;
+            if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
+            if (index < 0 || index >= task.fileCount) throw new HttpError(400, "文件序号越界");
+            if (task.files.containsKey(index)) throw new HttpError(409, "文件已经上传");
+        }
+
+        String encodedName = request.headers.getOrDefault("x-file-name", "file-" + (index + 1));
+        String originalName = safeName(URLDecoder.decode(encodedName, StandardCharsets.UTF_8.name()));
+        String mime = request.headers.getOrDefault("x-file-mime", "application/octet-stream");
+        String expectedSha = request.headers.getOrDefault("x-file-sha256", "").trim();
+        String storedName = String.format(Locale.US, "%03d-%s", index, originalName);
+        File temp = new File(task.dir, storedName + ".receiving");
+        File target = new File(task.dir, storedName);
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        long remaining = request.contentLength;
+        try (FileOutputStream fileOutput = new FileOutputStream(temp, false)) {
+            byte[] buffer = new byte[128 * 1024];
+            while (remaining > 0) {
+                int count = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                if (count < 0) throw new HttpError(400, "文件上传中断");
+                if (count == 0) continue;
+                fileOutput.write(buffer, 0, count);
+                digest.update(buffer, 0, count);
+                remaining -= count;
             }
+            fileOutput.flush();
+            fileOutput.getFD().sync();
+        }
+        String actualSha = hex(digest.digest());
+        if (!expectedSha.isEmpty() && !expectedSha.equalsIgnoreCase(actualSha)) {
+            temp.delete();
+            throw new HttpError(400, "SHA-256 校验失败");
+        }
+        if (target.exists() && !target.delete()) throw new HttpError(500, "无法替换缓存文件");
+        if (!temp.renameTo(target)) throw new HttpError(500, "无法保存缓存文件");
+        synchronized (taskLock) {
+            if (activeTask == null || !activeTask.id.equals(taskId)) throw new HttpError(409, "任务状态已变化");
+            task.files.put(index, new ReceivedFile(originalName, storedName, mime, target.length(), actualSha));
+        }
+        notifyStatus("已接收 " + task.files.size() + "/" + task.fileCount + " 个文件");
+        writeText(output, 200, "OK");
+    }
 
+    private void commitTask(String taskId, OutputStream output) throws Exception {
+        IncomingTask task;
+        synchronized (taskLock) {
+            task = activeTask;
+            if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
+            if (task.files.size() != task.fileCount) throw new HttpError(409, "文件尚未全部上传");
+            JSONArray files = new JSONArray();
+            for (int i = 0; i < task.fileCount; i++) {
+                ReceivedFile file = task.files.get(i);
+                if (file == null) throw new HttpError(409, "缺少文件 " + i);
+                files.put(new JSONObject()
+                        .put("name", file.name)
+                        .put("storedName", file.storedName)
+                        .put("mime", file.mime)
+                        .put("size", file.size)
+                        .put("sha256", file.sha256));
+            }
             JSONObject pending = new JSONObject()
-                    .put("id", taskId)
-                    .put("serverUrl", serverUrl)
-                    .put("token", token)
-                    .put("deviceId", deviceId)
-                    .put("text", task.optString("text", ""))
-                    .put("files", localFiles);
+                    .put("id", task.id)
+                    .put("text", task.text)
+                    .put("files", files);
             PendingTaskStore.write(this, pending);
-            postStatus(serverUrl, token, deviceId, taskId, "ready", null);
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            manager.notify(NOTIFICATION_ID, buildNotification("素材已接收，点击打开分享", true));
+            activeTask = null;
+            state = "ready";
+        }
+        writeText(output, 200, "OK");
+        onTaskReady(taskId);
+    }
+
+    private void cancelTask(String taskId, OutputStream output) throws Exception {
+        synchronized (taskLock) {
+            if (activeTask != null && activeTask.id.equals(taskId)) {
+                deleteRecursively(activeTask.dir);
+                activeTask = null;
+                currentTaskId = "";
+                state = "online";
+            }
+        }
+        writeText(output, 200, "OK");
+    }
+
+    private void onTaskReady(String taskId) {
+        notifyStatus("素材已接收，等待打开分享");
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        manager.notify(TASK_NOTIFICATION_ID, buildTaskNotification());
+        if (MainActivity.isVisible) {
             sendBroadcast(new Intent(ACTION_TASK_READY).setPackage(getPackageName()));
+        }
+    }
+
+    private JSONObject deviceInfo() throws Exception {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        return new JSONObject()
+                .put("protocol", 2)
+                .put("deviceId", prefs.getString("deviceId", ""))
+                .put("name", prefs.getString("deviceName", Build.MANUFACTURER + " " + Build.MODEL))
+                .put("model", Build.MANUFACTURER + " " + Build.MODEL)
+                .put("androidVersion", Build.VERSION.RELEASE)
+                .put("appVersion", "0.2.0")
+                .put("port", HTTP_PORT)
+                .put("state", state)
+                .put("taskId", currentTaskId);
+    }
+
+    private void discoveryLoop() {
+        try (DatagramSocket socket = new DatagramSocket(null)) {
+            discoverySocket = socket;
+            socket.setReuseAddress(true);
+            socket.setBroadcast(true);
+            socket.bind(new InetSocketAddress("0.0.0.0", DISCOVERY_PORT));
+            socket.setSoTimeout(900);
+            long nextBeacon = 0;
+            byte[] buffer = new byte[2048];
+            while (running) {
+                long now = System.currentTimeMillis();
+                if (now >= nextBeacon) {
+                    sendBeacon(socket, null);
+                    nextBeacon = now + 2500;
+                }
+                try {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    socket.receive(packet);
+                    String text = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
+                    if ("ZWMDS2_DISCOVER".equals(text)) {
+                        sendBeacon(socket, new InetSocketAddress(packet.getAddress(), packet.getPort()));
+                    }
+                } catch (SocketTimeoutException ignored) {
+                }
+            }
         } catch (Exception error) {
-            Log.e(TAG, "receive task failed", error);
+            if (running) {
+                Log.e(TAG, "discovery failed", error);
+                notifyStatus("局域网发现启动失败：" + compact(error.getMessage()));
+            }
+        } finally {
+            discoverySocket = null;
+        }
+    }
+
+    private void sendBeacon(DatagramSocket socket, InetSocketAddress directTarget) throws Exception {
+        JSONObject info = deviceInfo();
+        String beacon = "ZWMDS2_HERE|2|" + info.getString("deviceId") + "|" + HTTP_PORT + "|"
+                + b64(info.getString("name")) + "|" + b64(info.getString("model")) + "|"
+                + b64(info.getString("state")) + "|" + info.optString("taskId", "");
+        byte[] bytes = beacon.getBytes(StandardCharsets.UTF_8);
+        if (directTarget != null) {
+            socket.send(new DatagramPacket(bytes, bytes.length, directTarget));
+            return;
+        }
+        for (InetAddress address : broadcastAddresses()) {
             try {
-                postStatus(serverUrl, token, deviceId, taskId, "failed", compact(error.getMessage()));
+                socket.send(new DatagramPacket(bytes, bytes.length, address, DISCOVERY_PORT));
             } catch (Exception ignored) {
             }
-            notifyStatus("接收失败：" + compact(error.getMessage()));
         }
     }
 
-    private void download(String url, String token, File output, String expectedSha256) throws Exception {
-        HttpURLConnection connection = open(url, token, "GET");
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) throw new IllegalStateException("下载失败 HTTP " + code);
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (BufferedInputStream input = new BufferedInputStream(connection.getInputStream());
-             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(output))) {
-            byte[] buffer = new byte[128 * 1024];
-            int count;
-            while ((count = input.read(buffer)) >= 0) {
-                if (count == 0) continue;
-                out.write(buffer, 0, count);
-                digest.update(buffer, 0, count);
+    private Iterable<InetAddress> broadcastAddresses() {
+        java.util.LinkedHashSet<InetAddress> result = new java.util.LinkedHashSet<>();
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface network : Collections.list(interfaces)) {
+                if (!network.isUp() || network.isLoopback()) continue;
+                for (InterfaceAddress address : network.getInterfaceAddresses()) {
+                    if (address.getBroadcast() != null) result.add(address.getBroadcast());
+                }
             }
-        } finally {
-            connection.disconnect();
+        } catch (Exception ignored) {
         }
-        String actual = hex(digest.digest());
-        if (!expectedSha256.isEmpty() && !expectedSha256.equalsIgnoreCase(actual)) {
-            if (!output.delete()) Log.w(TAG, "failed to delete bad download");
-            throw new IllegalStateException("文件校验失败：" + output.getName());
-        }
+        try { result.add(InetAddress.getByName("255.255.255.255")); } catch (Exception ignored) { }
+        return result;
     }
 
-    private JSONObject getJson(String url, String token) throws Exception {
-        HttpURLConnection connection = open(url, token, "GET");
-        try {
-            int code = connection.getResponseCode();
-            String body = readAll(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
-            if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code + " " + body);
-            return new JSONObject(body);
-        } finally {
-            connection.disconnect();
-        }
-    }
-
-    static JSONObject postJson(String url, String token, JSONObject body) throws Exception {
-        HttpURLConnection connection = open(url, token, "POST");
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-        connection.setFixedLengthStreamingMode(bytes.length);
-        try (BufferedOutputStream output = new BufferedOutputStream(connection.getOutputStream())) {
-            output.write(bytes);
-        }
-        try {
-            int code = connection.getResponseCode();
-            String response = readAll(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
-            if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code + " " + response);
-            return response.isEmpty() ? new JSONObject() : new JSONObject(response);
-        } finally {
-            connection.disconnect();
-        }
-    }
-
-    static void postStatus(String serverUrl, String token, String deviceId, String taskId, String status, String error) throws Exception {
-        JSONObject body = new JSONObject().put("deviceId", deviceId).put("status", status);
-        if (error != null) body.put("error", error);
-        postJson(serverUrl + "/api/device/tasks/" + enc(taskId) + "/status", token, body);
-    }
-
-    private static HttpURLConnection open(String url, String token, String method) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        connection.setRequestMethod(method);
-        connection.setConnectTimeout(7000);
-        connection.setReadTimeout(60_000);
-        connection.setUseCaches(false);
-        connection.setRequestProperty("Authorization", "Bearer " + token);
-        connection.setRequestProperty("Accept", "application/json, */*");
-        return connection;
-    }
-
-    private Notification buildNotification(String text, boolean taskReady) {
-        Intent openIntent = new Intent(this, taskReady ? ShareActivity.class : MainActivity.class);
+    private Notification buildForegroundNotification(String text) {
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this,
-                taskReady ? 2 : 1,
-                openIntent,
+                1,
+                new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-                .setContentTitle(taskReady ? "素材等待分享" : "素材投送设备在线")
+                .setContentTitle("素材投送接收端在线")
                 .setContentText(text)
                 .setContentIntent(contentIntent)
-                .setOngoing(!taskReady)
-                .setAutoCancel(taskReady)
+                .setOngoing(true)
                 .build();
     }
 
+    private Notification buildTaskNotification() {
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                this,
+                2,
+                new Intent(this, ShareActivity.class),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        return new Notification.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("素材已接收")
+                .setContentText("点击打开安卓系统分享")
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true)
+                .build();
+    }
+
+    private void cancelTaskNotification() {
+        getSystemService(NotificationManager.class).cancel(TASK_NOTIFICATION_ID);
+    }
+
     private void createChannel() {
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "素材投送在线服务", NotificationManager.IMPORTANCE_DEFAULT);
-        channel.setDescription("接收电脑通过局域网投送的图片和视频");
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "素材投送接收服务", NotificationManager.IMPORTANCE_DEFAULT);
+        channel.setDescription("在局域网接收电脑投送的图片和视频");
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
@@ -273,24 +453,48 @@ public final class OnlineService extends Service {
         sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()).putExtra("message", message));
     }
 
-    private static String readAll(InputStream stream) throws Exception {
-        if (stream == null) return "";
-        try (InputStream input = stream; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            int count;
-            while ((count = input.read(buffer)) >= 0) {
-                if (count > 0) out.write(buffer, 0, count);
-            }
-            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    private static byte[] readExact(InputStream input, long length) throws Exception {
+        if (length > Integer.MAX_VALUE) throw new HttpError(413, "请求体过大");
+        ByteArrayOutputStream output = new ByteArrayOutputStream((int) length);
+        byte[] buffer = new byte[8192];
+        long remaining = length;
+        while (remaining > 0) {
+            int count = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+            if (count < 0) throw new HttpError(400, "请求体不完整");
+            if (count == 0) continue;
+            output.write(buffer, 0, count);
+            remaining -= count;
         }
+        return output.toByteArray();
     }
 
-    private static String enc(String value) {
-        try {
-            return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
-        } catch (UnsupportedEncodingException impossible) {
-            throw new IllegalStateException("设备不支持 UTF-8", impossible);
-        }
+    private static void writeJson(OutputStream output, int code, JSONObject value) throws Exception {
+        writeResponse(output, code, value.toString().getBytes(StandardCharsets.UTF_8), "application/json; charset=utf-8");
+    }
+
+    private static void writeText(OutputStream output, int code, String value) throws Exception {
+        writeResponse(output, code, value.getBytes(StandardCharsets.UTF_8), "text/plain; charset=utf-8");
+    }
+
+    private static void writeResponse(OutputStream output, int code, byte[] body, String contentType) throws Exception {
+        String reason = code >= 200 && code < 300 ? "OK" : "Error";
+        String header = "HTTP/1.1 " + code + " " + reason + "\r\n"
+                + "Content-Type: " + contentType + "\r\n"
+                + "Content-Length: " + body.length + "\r\n"
+                + "Connection: close\r\n"
+                + "Cache-Control: no-store\r\n\r\n";
+        output.write(header.getBytes(StandardCharsets.US_ASCII));
+        output.write(body);
+        output.flush();
+    }
+
+    private static String b64(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String safeName(String value) {
+        String clean = value.replaceAll("[\\/:*?\"<>|\p{Cntrl}]", "_").replaceAll("^\.+", "").trim();
+        return clean.isEmpty() ? "file" : clean.substring(0, Math.min(clean.length(), 160));
     }
 
     private static String hex(byte[] bytes) {
@@ -299,23 +503,10 @@ public final class OnlineService extends Service {
         return builder.toString();
     }
 
-    private static String safeName(String value) {
-        String clean = value.replaceAll("[\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("^\\.+", "").trim();
-        return clean.isEmpty() ? "file" : clean.substring(0, Math.min(clean.length(), 160));
-    }
-
     private static String compact(String value) {
         if (value == null || value.trim().isEmpty()) return "未知错误";
         String oneLine = value.replace('\n', ' ').replace('\r', ' ');
         return oneLine.substring(0, Math.min(oneLine.length(), 180));
-    }
-
-    private static void sleep(long millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     private static void deleteRecursively(File file) {
@@ -323,5 +514,94 @@ public final class OnlineService extends Service {
         File[] children = file.listFiles();
         if (children != null) for (File child : children) deleteRecursively(child);
         if (!file.delete()) Log.w(TAG, "failed to delete " + file);
+    }
+
+    private static final class IncomingTask {
+        final String id;
+        final String text;
+        final int fileCount;
+        final File dir;
+        final Map<Integer, ReceivedFile> files = new HashMap<>();
+
+        IncomingTask(String id, String text, int fileCount, File dir) {
+            this.id = id;
+            this.text = text;
+            this.fileCount = fileCount;
+            this.dir = dir;
+        }
+    }
+
+    private static final class ReceivedFile {
+        final String name;
+        final String storedName;
+        final String mime;
+        final long size;
+        final String sha256;
+
+        ReceivedFile(String name, String storedName, String mime, long size, String sha256) {
+            this.name = name;
+            this.storedName = storedName;
+            this.mime = mime;
+            this.size = size;
+            this.sha256 = sha256;
+        }
+    }
+
+    private static final class HttpRequest {
+        final String method;
+        final String path;
+        final Map<String, String> headers;
+        final long contentLength;
+
+        HttpRequest(String method, String path, Map<String, String> headers, long contentLength) {
+            this.method = method;
+            this.path = path;
+            this.headers = headers;
+            this.contentLength = contentLength;
+        }
+
+        static HttpRequest read(InputStream input) throws Exception {
+            String requestLine = readLine(input, 8192);
+            String[] first = requestLine.split(" ");
+            if (first.length < 2) throw new HttpError(400, "请求行无效");
+            Map<String, String> headers = new HashMap<>();
+            while (true) {
+                String line = readLine(input, 16_384);
+                if (line.isEmpty()) break;
+                int colon = line.indexOf(':');
+                if (colon <= 0) throw new HttpError(400, "请求头无效");
+                headers.put(line.substring(0, colon).trim().toLowerCase(Locale.US), line.substring(colon + 1).trim());
+            }
+            long length = 0;
+            String value = headers.get("content-length");
+            if (value != null && !value.isEmpty()) {
+                try { length = Long.parseLong(value); } catch (NumberFormatException error) { throw new HttpError(400, "Content-Length 无效"); }
+            }
+            return new HttpRequest(first[0].toUpperCase(Locale.US), first[1], headers, length);
+        }
+
+        private static String readLine(InputStream input, int max) throws Exception {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            int previous = -1;
+            while (output.size() <= max) {
+                int current = input.read();
+                if (current < 0) throw new HttpError(400, "连接提前结束");
+                if (previous == '\r' && current == '\n') {
+                    byte[] bytes = output.toByteArray();
+                    return new String(bytes, 0, Math.max(0, bytes.length - 1), StandardCharsets.US_ASCII);
+                }
+                output.write(current);
+                previous = current;
+            }
+            throw new HttpError(431, "请求头过长");
+        }
+    }
+
+    private static final class HttpError extends Exception {
+        final int code;
+        HttpError(int code, String message) {
+            super(message);
+            this.code = code;
+        }
     }
 }

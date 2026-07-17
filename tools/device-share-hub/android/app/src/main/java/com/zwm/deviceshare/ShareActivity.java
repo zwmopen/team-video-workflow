@@ -12,12 +12,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public final class ShareActivity extends Activity {
     private static final int REQUEST_SHARE = 501;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private JSONObject pending;
     private boolean launched;
 
@@ -38,7 +35,6 @@ public final class ShareActivity extends Activity {
         launched = true;
         String taskId = pending.getString("id");
         String text = pending.optString("text", "");
-        boolean hasText = !text.trim().isEmpty();
         JSONArray files = pending.getJSONArray("files");
         ArrayList<Uri> uris = new ArrayList<>();
         ArrayList<String> mimes = new ArrayList<>();
@@ -56,7 +52,7 @@ public final class ShareActivity extends Activity {
         }
         if (uris.isEmpty()) throw new IllegalStateException("任务中没有文件");
 
-        if (hasText) {
+        if (!text.trim().isEmpty()) {
             ClipboardManager clipboard = getSystemService(ClipboardManager.class);
             clipboard.setPrimaryClip(ClipData.newPlainText("投送文案", text));
             Toast.makeText(this, "文案已复制到剪贴板", Toast.LENGTH_SHORT).show();
@@ -65,7 +61,7 @@ public final class ShareActivity extends Activity {
         Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
         send.setType(commonMime(mimes));
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        if (hasText) send.putExtra(Intent.EXTRA_TEXT, text);
+        if (!text.trim().isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
         if (uris.size() == 1) {
             send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
         } else {
@@ -75,7 +71,7 @@ public final class ShareActivity extends Activity {
         for (int i = 1; i < uris.size(); i++) clipData.addItem(new ClipData.Item(uris.get(i)));
         send.setClipData(clipData);
 
-        reportShared();
+        startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_SHARE_OPENED));
         startActivityForResult(Intent.createChooser(send, "分享到抖音、小红书或其他应用"), REQUEST_SHARE);
     }
 
@@ -95,35 +91,13 @@ public final class ShareActivity extends Activity {
         return "*/*";
     }
 
-    private void reportShared() {
-        JSONObject snapshot = pending;
-        executor.execute(() -> {
-            try {
-                OnlineService.postStatus(
-                        snapshot.getString("serverUrl"),
-                        snapshot.getString("token"),
-                        snapshot.getString("deviceId"),
-                        snapshot.getString("id"),
-                        "shared",
-                        null
-                );
-            } catch (Exception ignored) {
-            }
-        });
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_SHARE) {
             PendingTaskStore.clear(this);
+            startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_SHARE_FINISHED));
             finish();
         }
-    }
-
-    @Override
-    protected void onDestroy() {
-        executor.shutdownNow();
-        super.onDestroy();
     }
 }

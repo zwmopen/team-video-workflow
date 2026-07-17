@@ -11,17 +11,23 @@ on:
       - '.github/workflows/device-share-hub.yml'
 
 jobs:
-  desktop-test:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: tools/device-share-hub/desktop
+  windows-portable:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - name: Build native Windows panel
+        shell: pwsh
+        run: |
+          cmake -S tools/device-share-hub/windows-native -B tools/device-share-hub/windows-native/build -G "Visual Studio 17 2022" -A x64
+          cmake --build tools/device-share-hub/windows-native/build --config Release
+          New-Item -ItemType Directory -Force -Path tools/device-share-hub/windows-native/out | Out-Null
+          Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/素材投送中控.exe"
+          Copy-Item "tools/device-share-hub/README.md" "tools/device-share-hub/windows-native/out/使用说明.md"
+      - name: Upload Windows portable panel
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          node-version: 22
-      - run: node --test test/*.test.mjs
+          name: device-share-hub-windows-portable
+          path: tools/device-share-hub/windows-native/out/
 
   android-build:
     runs-on: ubuntu-latest
@@ -48,7 +54,7 @@ jobs:
           /tmp/gradle/gradle-9.4.1/bin/gradle :app:assembleDebug :app:lintDebug --stacktrace > /tmp/device-share-android-build.log 2>&1
           build_status=$?
           echo "status=$build_status" >> "$GITHUB_OUTPUT"
-          tail -n 160 /tmp/device-share-android-build.log
+          tail -n 180 /tmp/device-share-android-build.log
           exit 0
       - name: Upload Android build log
         if: always()
