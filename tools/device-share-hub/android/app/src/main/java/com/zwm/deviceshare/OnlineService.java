@@ -19,6 +19,8 @@ import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -92,6 +94,11 @@ public final class OnlineService extends Service {
             }
             try {
                 heartbeat(serverUrl, token, deviceId, deviceName);
+                if (PendingTaskStore.exists(this)) {
+                    notifyStatus("有一批素材等待分享");
+                    sleep(2200);
+                    continue;
+                }
                 JSONObject next = getJson(serverUrl + "/api/device/tasks/next?deviceId=" + enc(deviceId), token);
                 JSONObject task = next.optJSONObject("task");
                 if (task != null) {
@@ -266,20 +273,24 @@ public final class OnlineService extends Service {
         sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()).putExtra("message", message));
     }
 
-    private static String readAll(java.io.InputStream stream) throws Exception {
+    private static String readAll(InputStream stream) throws Exception {
         if (stream == null) return "";
-        try (stream; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        try (InputStream input = stream; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int count;
-            while ((count = stream.read(buffer)) >= 0) {
+            while ((count = input.read(buffer)) >= 0) {
                 if (count > 0) out.write(buffer, 0, count);
             }
-            return out.toString(StandardCharsets.UTF_8);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 
     private static String enc(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+        } catch (UnsupportedEncodingException impossible) {
+            throw new IllegalStateException("设备不支持 UTF-8", impossible);
+        }
     }
 
     private static String hex(byte[] bytes) {
@@ -289,12 +300,12 @@ public final class OnlineService extends Service {
     }
 
     private static String safeName(String value) {
-        String clean = value.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("^\\.+", "").trim();
+        String clean = value.replaceAll("[\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("^\\.+", "").trim();
         return clean.isEmpty() ? "file" : clean.substring(0, Math.min(clean.length(), 160));
     }
 
     private static String compact(String value) {
-        if (value == null || value.isBlank()) return "未知错误";
+        if (value == null || value.trim().isEmpty()) return "未知错误";
         String oneLine = value.replace('\n', ' ').replace('\r', ' ');
         return oneLine.substring(0, Math.min(oneLine.length(), 180));
     }

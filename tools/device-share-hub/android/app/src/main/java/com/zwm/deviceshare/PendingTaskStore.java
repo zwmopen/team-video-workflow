@@ -48,4 +48,15 @@ final class PendingTaskStore {
             return new JSONObject(output.toString(StandardCharsets.UTF_8.name()));
         }
     }
+
+    static void clear(Context context) {
+        File target = file(context);
+        if (target.exists() && !target.delete()) {
+            target.deleteOnExit();
+        }
+        File temp = new File(context.getFilesDir(), FILE_NAME + ".tmp");
+        if (temp.exists() && !temp.delete()) {
+            temp.deleteOnExit();
+        }
+    }
 }

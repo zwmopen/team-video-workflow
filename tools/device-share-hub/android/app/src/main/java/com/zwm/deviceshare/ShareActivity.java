@@ -38,6 +38,7 @@ public final class ShareActivity extends Activity {
         launched = true;
         String taskId = pending.getString("id");
         String text = pending.optString("text", "");
+        boolean hasText = !text.trim().isEmpty();
         JSONArray files = pending.getJSONArray("files");
         ArrayList<Uri> uris = new ArrayList<>();
         ArrayList<String> mimes = new ArrayList<>();
@@ -55,7 +56,7 @@ public final class ShareActivity extends Activity {
         }
         if (uris.isEmpty()) throw new IllegalStateException("任务中没有文件");
 
-        if (!text.isBlank()) {
+        if (hasText) {
             ClipboardManager clipboard = getSystemService(ClipboardManager.class);
             clipboard.setPrimaryClip(ClipData.newPlainText("投送文案", text));
             Toast.makeText(this, "文案已复制到剪贴板", Toast.LENGTH_SHORT).show();
@@ -64,7 +65,7 @@ public final class ShareActivity extends Activity {
         Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
         send.setType(commonMime(mimes));
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        if (!text.isBlank()) send.putExtra(Intent.EXTRA_TEXT, text);
+        if (hasText) send.putExtra(Intent.EXTRA_TEXT, text);
         if (uris.size() == 1) {
             send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
         } else {
@@ -114,7 +115,10 @@ public final class ShareActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_SHARE) finish();
+        if (requestCode == REQUEST_SHARE) {
+            PendingTaskStore.clear(this);
+            finish();
+        }
     }
 
     @Override
