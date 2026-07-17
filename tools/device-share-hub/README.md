@@ -20,6 +20,8 @@
 - 手机后台时显示“素材已接收”通知，点一下打开分享。
 - 文件保存在 App 私有缓存，不进入相册和下载目录，不需要发布后手动删除。
 - 可选文案同步到手机剪贴板。
+- 同一台手机按批次串行接收，上一批未打开分享时不会被下一批覆盖。
+- 在线服务使用 Android `connectedDevice` 类型，适合与电脑通过局域网保持持续连接。
 
 ## 电脑端启动
 
@@ -104,4 +106,4 @@ cd desktop
 node --test test/*.test.mjs
 ```
 
-协议说明见 `docs/PROTOCOL.md`。
+Android CI 同时执行 `assembleDebug` 与 `lintDebug`。协议说明见 `docs/PROTOCOL.md`。
