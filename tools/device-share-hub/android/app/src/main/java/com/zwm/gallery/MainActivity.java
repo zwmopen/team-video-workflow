@@ -333,11 +333,20 @@ public final class MainActivity extends Activity {
             try {
                 DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
                         getContentResolver(), Uri.parse(stored), library(), new File(getCacheDir(), "tree-import"));
-                DiagnosticLog.write(this, "tree_import", "detected=" + result.detected + " imported=" + result.imported + " skipped=" + result.skipped);
+                DiagnosticLog.write(this, "tree_import",
+                        "detected=" + result.detected
+                                + " imported=" + result.imported
+                                + " skipped=" + result.skipped
+                                + " scannedFolders=" + result.scannedFolders
+                                + " aggregateFolders=" + result.aggregateFolders);
                 runOnUiThread(() -> {
-                    statusText.setText(result.imported > 0
+                    String message = result.imported > 0
                             ? "新增 " + result.imported + " 个作品"
-                            : "已是最新，共识别 " + result.detected + " 个作品");
+                            : result.detected > 0
+                            ? "已是最新，共识别 " + result.detected + " 个作品"
+                            : "没识别到作品：请选择包含“图片 + TXT”的作品文件夹";
+                    if (result.aggregateFolders > 0) message += "，已优先使用子文件夹";
+                    statusText.setText(message);
                     refreshWorks();
                 });
             } catch (Exception error) {

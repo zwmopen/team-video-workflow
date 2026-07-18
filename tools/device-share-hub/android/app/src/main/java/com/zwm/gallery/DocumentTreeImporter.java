@@ -26,8 +26,9 @@ final class DocumentTreeImporter {
     static ImportResult importTree(ContentResolver resolver, Uri tree, WorkLibrary library, File cacheRoot)
             throws Exception {
         String rootId = DocumentsContract.getTreeDocumentId(tree);
+        ScanStats stats = new ScanStats();
         ArrayList<Folder> works = new ArrayList<>();
-        scan(resolver, tree, rootId, 0, works);
+        scan(resolver, tree, rootId, 0, works, stats);
         int imported = 0;
         int skipped = 0;
         for (Folder work : works) {
@@ -58,12 +59,13 @@ final class DocumentTreeImporter {
                 deleteTree(temporary);
             }
         }
-        return new ImportResult(imported, skipped, works.size());
+        return new ImportResult(imported, skipped, works.size(), stats.scannedFolders, stats.aggregateFolders);
     }
 
-    private static void scan(ContentResolver resolver, Uri tree, String documentId, int depth,
-                             List<Folder> works) throws Exception {
-        if (depth > MAX_DEPTH) return;
+    private static int scan(ContentResolver resolver, Uri tree, String documentId, int depth,
+                            List<Folder> works, ScanStats stats) throws Exception {
+        if (depth > MAX_DEPTH) return 0;
+        stats.scannedFolders++;
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId);
         ArrayList<Item> files = new ArrayList<>();
         ArrayList<Item> folders = new ArrayList<>();
@@ -101,13 +103,20 @@ final class DocumentTreeImporter {
             }
         }
         String captionName = WorkRules.chooseCaption(textNames);
+        int childWorks = 0;
+        for (Item folder : folders) childWorks += scan(resolver, tree, folder.documentId, depth + 1, works, stats);
         if (!images.isEmpty() && !captionName.isEmpty()) {
             Item caption = null;
             for (Item text : texts) if (captionName.equals(text.name)) caption = text;
-            if (caption != null) works.add(new Folder(documentId, leafName(documentId), images, caption, marker, texts.size()));
-            return;
+            if (caption != null) {
+                if (childWorks == 0) {
+                    works.add(new Folder(documentId, leafName(documentId), images, caption, marker, texts.size()));
+                    return 1;
+                }
+                stats.aggregateFolders++;
+            }
         }
-        for (Item folder : folders) scan(resolver, tree, folder.documentId, depth + 1, works);
+        return childWorks;
     }
 
     private static String readText(ContentResolver resolver, Uri uri) throws IOException {
@@ -155,11 +164,20 @@ final class DocumentTreeImporter {
         final int imported;
         final int skipped;
         final int detected;
-        ImportResult(int imported, int skipped, int detected) {
+        final int scannedFolders;
+        final int aggregateFolders;
+        ImportResult(int imported, int skipped, int detected, int scannedFolders, int aggregateFolders) {
             this.imported = imported;
             this.skipped = skipped;
             this.detected = detected;
+            this.scannedFolders = scannedFolders;
+            this.aggregateFolders = aggregateFolders;
         }
+    }
+
+    private static final class ScanStats {
+        int scannedFolders;
+        int aggregateFolders;
     }
 
     private static final class Item {
