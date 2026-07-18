@@ -1,4 +1,4 @@
-package com.zwm.deviceshare;
+package com.zwm.gallery;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -11,7 +11,6 @@ import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
@@ -43,12 +42,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class OnlineService extends Service {
-    public static final String ACTION_START = "com.zwm.deviceshare.START";
-    public static final String ACTION_STOP = "com.zwm.deviceshare.STOP";
-    public static final String ACTION_TASK_READY = "com.zwm.deviceshare.TASK_READY";
-    public static final String ACTION_STATUS = "com.zwm.deviceshare.STATUS";
-    public static final String ACTION_SHARE_OPENED = "com.zwm.deviceshare.SHARE_OPENED";
-    public static final String ACTION_SHARE_FINISHED = "com.zwm.deviceshare.SHARE_FINISHED";
+    public static final String ACTION_START = "com.zwm.gallery.START";
+    public static final String ACTION_STOP = "com.zwm.gallery.STOP";
+    public static final String ACTION_TASK_READY = "com.zwm.gallery.TASK_READY";
+    public static final String ACTION_STATUS = "com.zwm.gallery.STATUS";
+    public static final String ACTION_SHARE_OPENED = "com.zwm.gallery.SHARE_OPENED";
+    public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
 
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
@@ -86,13 +85,12 @@ public final class OnlineService extends Service {
             return START_NOT_STICKY;
         }
         if (ACTION_SHARE_OPENED.equals(action)) {
-            state = "sharing";
-            DiagnosticLog.write(this, "share_opened", currentTaskId);
+            DiagnosticLog.write(this, "share_opened", intent == null ? "" : intent.getStringExtra("workId"));
             cancelTaskNotification();
             return START_STICKY;
         }
         if (ACTION_SHARE_FINISHED.equals(action)) {
-            DiagnosticLog.write(this, "share_finished", currentTaskId);
+            DiagnosticLog.write(this, "share_finished", intent == null ? "" : intent.getStringExtra("workId"));
             state = "online";
             currentTaskId = "";
             notifyStatus("局域网接收已开启");
@@ -101,21 +99,17 @@ public final class OnlineService extends Service {
 
         startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
         DiagnosticLog.write(this, "service_start", "receiver foreground service started");
-        if (PendingTaskStore.exists(this)) {
-            state = "ready";
-            try {
-                currentTaskId = PendingTaskStore.read(this).optString("id", "");
-            } catch (Exception ignored) {
-                currentTaskId = "";
-            }
-            getSystemService(NotificationManager.class).notify(TASK_NOTIFICATION_ID, buildTaskNotification());
+        try {
+            new WorkLibrary(new File(getFilesDir(), "work-library")).maintain(java.time.LocalDate.now());
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "library_maintenance_failed", compact(error.getMessage()));
         }
         if (!running) {
             running = true;
             serviceExecutor.execute(this::httpLoop);
             serviceExecutor.execute(this::discoveryLoop);
         }
-        notifyStatus(PendingTaskStore.exists(this) ? "有一批素材等待分享" : "局域网接收已开启，等待电脑自动发现");
+        notifyStatus("局域网接收已开启，等待电脑自动发现");
         return START_STICKY;
     }
 
@@ -223,7 +217,7 @@ public final class OnlineService extends Service {
         if (!taskId.matches("[A-Za-z0-9._-]{6,100}")) throw new HttpError(400, "taskId 无效");
         if (fileCount < 1 || fileCount > MAX_FILES) throw new HttpError(400, "文件数量无效");
         synchronized (taskLock) {
-            if (PendingTaskStore.exists(this) || activeTask != null) throw new HttpError(409, "手机上还有一批素材未处理");
+            if (activeTask != null) throw new HttpError(409, "正在接收另一批素材，请稍后重试");
             File taskDir = new File(new File(getCacheDir(), "share"), taskId);
             deleteRecursively(taskDir);
             if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
@@ -291,7 +285,7 @@ public final class OnlineService extends Service {
         if (!temp.renameTo(target)) throw new HttpError(500, "无法保存缓存文件");
         synchronized (taskLock) {
             if (activeTask == null || !activeTask.id.equals(taskId)) throw new HttpError(409, "任务状态已变化");
-            task.files.put(index, new ReceivedFile(originalName, storedName, mime, target.length(), actualSha));
+            task.files.put(index, new ReceivedFile(originalName, storedName, mime, target.length(), actualSha, target));
         }
         long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
         DiagnosticLog.write(this, "file_received", originalName + " bytes=" + target.length() + " ms=" + elapsedMs);
@@ -305,28 +299,37 @@ public final class OnlineService extends Service {
             task = activeTask;
             if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
             if (task.files.size() != task.fileCount) throw new HttpError(409, "文件尚未全部上传");
-            JSONArray files = new JSONArray();
-            for (int i = 0; i < task.fileCount; i++) {
-                ReceivedFile file = task.files.get(i);
-                if (file == null) throw new HttpError(409, "缺少文件 " + i);
-                files.put(new JSONObject()
-                        .put("name", file.name)
-                        .put("storedName", file.storedName)
-                        .put("mime", file.mime)
-                        .put("size", file.size)
-                        .put("sha256", file.sha256));
-            }
-            JSONObject pending = new JSONObject()
-                    .put("id", task.id)
-                    .put("text", task.text)
-                    .put("files", files);
-            PendingTaskStore.write(this, pending);
-            activeTask = null;
-            state = "ready";
         }
-        DiagnosticLog.write(this, "task_committed", taskId + " files=" + task.fileCount);
+
+        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+        int imported;
+        ReceivedFile only = task.fileCount == 1 ? task.files.get(0) : null;
+        if (only != null && (only.name.toLowerCase(Locale.ROOT).endsWith(".zip")
+                || "application/zip".equalsIgnoreCase(only.mime)
+                || "application/x-zip-compressed".equalsIgnoreCase(only.mime))) {
+            imported = WorkArchiveImporter.importZip(only.file, library, task.id);
+        } else {
+            java.util.ArrayList<File> images = new java.util.ArrayList<>();
+            for (int index = 0; index < task.fileCount; index++) {
+                ReceivedFile file = task.files.get(index);
+                if (file == null) throw new HttpError(409, "缺少文件 " + index);
+                if (WorkRules.isSupportedImage(file.name)) images.add(file.file);
+            }
+            if (images.isEmpty()) throw new HttpError(400, "这批素材中没有支持的图片");
+            library.importWork(task.id, "电脑传入的作品", task.text, images, "");
+            imported = 1;
+        }
+
+        synchronized (taskLock) {
+            if (activeTask != task) throw new HttpError(409, "任务状态已变化");
+            activeTask = null;
+            currentTaskId = "";
+            state = "online";
+        }
+        deleteRecursively(task.dir);
+        DiagnosticLog.write(this, "task_committed", taskId + " works=" + imported);
         writeText(output, 200, "OK");
-        onTaskReady(taskId);
+        onTaskReady(taskId, imported);
     }
 
     private void cancelTask(String taskId, OutputStream output) throws Exception {
@@ -342,8 +345,8 @@ public final class OnlineService extends Service {
         writeText(output, 200, "OK");
     }
 
-    private void onTaskReady(String taskId) {
-        notifyStatus("素材已接收，等待打开分享");
+    private void onTaskReady(String taskId, int imported) {
+        notifyStatus("已收到 " + imported + " 个作品");
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.notify(TASK_NOTIFICATION_ID, buildTaskNotification());
         if (MainActivity.isVisible) {
@@ -359,7 +362,7 @@ public final class OnlineService extends Service {
                 .put("name", prefs.getString("deviceName", Build.MANUFACTURER + " " + Build.MODEL))
                 .put("model", Build.MANUFACTURER + " " + Build.MODEL)
                 .put("androidVersion", Build.VERSION.RELEASE)
-                .put("appVersion", "0.2.0")
+                .put("appVersion", "0.3.0")
                 .put("port", HTTP_PORT)
                 .put("state", state)
                 .put("taskId", currentTaskId);
@@ -575,13 +578,15 @@ public final class OnlineService extends Service {
         final String mime;
         final long size;
         final String sha256;
+        final File file;
 
-        ReceivedFile(String name, String storedName, String mime, long size, String sha256) {
+        ReceivedFile(String name, String storedName, String mime, long size, String sha256, File file) {
             this.name = name;
             this.storedName = storedName;
             this.mime = mime;
             this.size = size;
             this.sha256 = sha256;
+            this.file = file;
         }
     }
 

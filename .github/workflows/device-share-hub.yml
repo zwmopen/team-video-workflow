@@ -72,7 +72,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          /tmp/gradle/gradle-9.4.1/bin/gradle :app:assembleDebug :app:lintDebug --stacktrace > /tmp/device-share-android-build.log 2>&1
+          /tmp/gradle/gradle-9.4.1/bin/gradle :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --stacktrace > /tmp/device-share-android-build.log 2>&1
           build_status=$?
           echo "status=$build_status" >> "$GITHUB_OUTPUT"
           tail -n 180 /tmp/device-share-android-build.log

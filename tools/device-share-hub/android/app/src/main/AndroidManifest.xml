@@ -11,7 +11,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="素材投送"
+        android:label="相册"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">

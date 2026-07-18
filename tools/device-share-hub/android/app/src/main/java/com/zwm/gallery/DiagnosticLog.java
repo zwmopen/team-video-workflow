@@ -1,4 +1,4 @@
-package com.zwm.deviceshare;
+package com.zwm.gallery;
 
 import android.content.Context;
 import android.os.Build;

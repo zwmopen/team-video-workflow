@@ -38,6 +38,7 @@
 namespace {
 constexpr UINT WM_DEVICES_CHANGED = WM_APP + 1;
 constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
+constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 
@@ -58,12 +59,16 @@ HWND gCaptionEdit = nullptr;
 HWND gCaptionLabel = nullptr;
 HWND gStatus = nullptr;
 HWND gLogButton = nullptr;
+HWND gProgress = nullptr;
+HWND gCancelButton = nullptr;
 HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
 std::map<std::wstring, Device> gDevices;
 std::vector<Device> gDisplayedDevices;
 std::atomic<bool> gRunning{true};
+std::atomic<bool> gUploadInProgress{false};
+std::atomic<bool> gCancelRequested{false};
 std::thread gDiscoveryThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
@@ -129,6 +134,11 @@ COLORREF StateColor(const std::wstring& state) {
 
 void PostStatus(const std::wstring& text) {
     if (gWindow) PostMessageW(gWindow, WM_STATUS_CHANGED, 0, reinterpret_cast<LPARAM>(new std::wstring(text)));
+}
+
+void PostProgress(int percent, bool visible) {
+    if (gWindow) PostMessageW(gWindow, WM_PROGRESS_CHANGED,
+                              static_cast<WPARAM>(std::clamp(percent, 0, 100)), visible ? 1 : 0);
 }
 
 std::wstring NowStamp() {
@@ -454,6 +464,9 @@ private:
 
 void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption) {
     std::wstring taskId = NewTaskId();
+    gUploadInProgress = true;
+    gCancelRequested = false;
+    PostProgress(0, true);
     try {
         uintmax_t totalBytes = 0;
         for (const auto& file : files) totalBytes += std::filesystem::file_size(file);
@@ -468,6 +481,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         auto lastNotice = std::chrono::steady_clock::now() - std::chrono::seconds(1);
         auto uploadStart = std::chrono::steady_clock::now();
         for (size_t index = 0; index < files.size(); ++index) {
+            if (gCancelRequested) throw std::runtime_error("传送已取消");
             std::wstring fileName = files[index].filename().wstring();
             WriteDiagnosticLog(L"file_start", fileName + L" size=" + std::to_wstring(std::filesystem::file_size(files[index])));
             PostStatus(L"正在传给 “" + device.name + L"”：第 " + std::to_wstring(index + 1) + L"/" + std::to_wstring(files.size()) + L" 个");
@@ -480,17 +494,20 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 lastNotice = now;
                 uintmax_t done = completedBytes + sent;
                 int percent = totalBytes == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / totalBytes));
+                PostProgress(percent, true);
                 double seconds = std::max(0.1, std::chrono::duration<double>(now - uploadStart).count());
                 uintmax_t speed = static_cast<uintmax_t>(done / seconds);
                 PostStatus(L"正在传给 “" + device.name + L"”：" + std::to_wstring(percent) + L"%（"
                            + FormatBytes(done) + L"/" + FormatBytes(totalBytes) + L"，" + FormatBytes(speed) + L"/s）");
+                if (gCancelRequested) throw std::runtime_error("传送已取消");
             });
             completedBytes += fileSize;
             WriteDiagnosticLog(L"file_done", fileName + L" sha256=" + sha);
         }
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
         WriteDiagnosticLog(L"upload_commit", taskId);
-        PostStatus(L"已传送到 “" + device.name + L"”，手机正在打开分享");
+        PostProgress(100, true);
+        PostStatus(L"已传送到 “" + device.name + L"”，手机相册已加入作品");
     } catch (const std::exception& error) {
         WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
         try {
@@ -500,8 +517,11 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         } catch (...) {
             WriteDiagnosticLog(L"upload_cancel_failed", taskId);
         }
+        PostProgress(0, false);
         PostStatus(L"传送失败：" + Utf8ToWide(error.what()));
     }
+    gUploadInProgress = false;
+    gCancelRequested = false;
 }
 
 void RefreshDeviceList() {
@@ -528,7 +548,7 @@ void RefreshDeviceList() {
     InvalidateRect(gDeviceList, nullptr, TRUE);
     std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开接收端并连接同一 Wi‑Fi。"
                                                      : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台手机；把图片或视频直接拖到对应卡片。";
-    SetWindowTextW(gStatus, summary.c_str());
+    if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
 }
 
 void DiscoveryLoop() {
@@ -656,6 +676,11 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
 }
 
 void HandleDrop(HDROP drop) {
+    if (gUploadInProgress) {
+        DragFinish(drop);
+        MessageBoxW(gWindow, L"上一批作品还在传送，请等进度完成。", L"相册投送", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
     POINT point{};
     DragQueryPoint(drop, &point);
     POINT listPoint = point;
@@ -702,9 +727,12 @@ void Layout(HWND window) {
     MoveWindow(gCaptionLabel, margin, captionTop - 28, width - margin * 2, 24, TRUE);
     MoveWindow(gCaptionEdit, margin, captionTop, width - margin * 2, 80, TRUE);
     int buttonWidth = 136;
-    int statusWidth = std::max(160, width - margin * 2 - buttonWidth - 14);
+    int cancelWidth = 86;
+    int statusWidth = std::max(160, width - margin * 2 - buttonWidth - cancelWidth - 28);
+    MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
-    MoveWindow(gLogButton, margin + statusWidth + 14, height - 72, buttonWidth, 38, TRUE);
+    MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
+    MoveWindow(gLogButton, margin + statusWidth + cancelWidth + 20, height - 72, buttonWidth, 38, TRUE);
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -738,6 +766,16 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                     WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
                                     22, 516, 640, 46, window, nullptr, nullptr, nullptr);
             SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gProgress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
+                                        WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
+                                        22, 502, 640, 18, window, reinterpret_cast<HMENU>(104), nullptr, nullptr);
+            SendMessageW(gProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+            SendMessageW(gProgress, PBM_SETPOS, 0, 0);
+            ShowWindow(gProgress, SW_HIDE);
+            gCancelButton = CreateWindowW(L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                          440, 520, 86, 38, window, reinterpret_cast<HMENU>(105), nullptr, nullptr);
+            SendMessageW(gCancelButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            EnableWindow(gCancelButton, FALSE);
             gLogButton = CreateWindowW(L"BUTTON", L"打开诊断日志", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                        540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
             SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
@@ -747,6 +785,14 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         case WM_COMMAND:
+            if (LOWORD(wParam) == 105) {
+                if (gUploadInProgress) {
+                    gCancelRequested = true;
+                    EnableWindow(gCancelButton, FALSE);
+                    PostStatus(L"正在取消传送…");
+                }
+                return 0;
+            }
             if (LOWORD(wParam) == 103) {
                 if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
                 WriteDiagnosticLog(L"log_opened", gLogPath.wstring());
@@ -784,6 +830,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             }
             return 0;
         }
+        case WM_PROGRESS_CHANGED:
+            SendMessageW(gProgress, PBM_SETPOS, wParam, 0);
+            ShowWindow(gProgress, lParam ? SW_SHOW : SW_HIDE);
+            EnableWindow(gCancelButton, lParam && wParam < 100 && gUploadInProgress);
+            return 0;
         case WM_TIMER:
             RefreshDeviceList();
             return 0;
@@ -807,7 +858,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 0;
     }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS};
     InitCommonControlsEx(&controls);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
