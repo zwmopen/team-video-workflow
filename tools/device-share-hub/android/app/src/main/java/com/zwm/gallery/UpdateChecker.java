@@ -17,7 +17,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class UpdateChecker {
-    private static final String API = "https://api.github.com/repos/zwmopen/team-video-workflow/releases/latest";
     private static final long ONE_DAY_MS = 24L * 60L * 60L * 1000L;
 
     private UpdateChecker() {
@@ -34,7 +33,7 @@ final class UpdateChecker {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
             try {
-                HttpURLConnection connection = (HttpURLConnection) new URL(API).openConnection();
+                HttpURLConnection connection = (HttpURLConnection) new URL(UpdateEndpoint.RELEASE_API).openConnection();
                 connection.setConnectTimeout(6000);
                 connection.setReadTimeout(6000);
                 connection.setRequestProperty("Accept", "application/vnd.github+json");
@@ -54,7 +53,7 @@ final class UpdateChecker {
                 }
                 JSONObject release = new JSONObject(body.toString());
                 String tag = release.optString("tag_name", "").replaceFirst("^[vV]", "");
-                String url = release.optString("html_url", "https://github.com/zwmopen/team-video-workflow/releases");
+                String url = release.optString("html_url", "https://github.com/zwmopen/gallery-updates/releases");
                 String current = currentVersion(activity);
                 markChecked(activity);
                 activity.runOnUiThread(() -> {

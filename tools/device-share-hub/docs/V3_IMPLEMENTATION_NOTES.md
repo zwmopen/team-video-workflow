@@ -115,3 +115,13 @@ Windows 面板保持纯 Win32 C++：
 ## iOS 延期开发
 
 iOS 客户端暂缓开发，当前仓库没有 iOS 工程或经过 iPhone 验收的实现。后续开发边界、TestFlight 安装方案和恢复开发条件见 [IOS_DEFERRED_PLAN.md](IOS_DEFERRED_PLAN.md)。
+
+## Android 公开更新通道
+
+主仓库 `zwmopen/team-video-workflow` 保持私有，避免公开内部素材库报告、工作流资料和 Android 测试签名。Android 客户端从 0.3.9 起改读公开仓库 `zwmopen/gallery-updates` 的静态 `latest.json`，不内置 GitHub 凭据，也不依赖有频率限制的 GitHub Releases API。
+
+- 公开仓库只包含版本清单和 APK，不包含源代码、用户素材或诊断日志；
+- 0.3.2 作为历史版本发布，但其更新地址已写死为私有主仓库，无法自动发现新版本；
+- 0.3.2 还使用旧临时签名，第一次升级到固定签名版本可能需要卸载旧包；
+- 用户手动安装一次修正更新通道后的 0.3.9，此后才能正常检测后续公开版本；
+- Release APK 使用不可变唯一文件名，禁止同名覆盖，避免 CDN 返回旧安装包。

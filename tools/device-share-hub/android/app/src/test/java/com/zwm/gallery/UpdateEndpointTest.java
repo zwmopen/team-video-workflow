@@ -1,0 +1,14 @@
+package com.zwm.gallery;
+
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+
+public final class UpdateEndpointTest {
+    @Test
+    public void usesPublicUpdateRepository() {
+        assertEquals(
+                "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest.json",
+                UpdateEndpoint.RELEASE_API);
+    }
+}
