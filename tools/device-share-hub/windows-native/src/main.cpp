@@ -308,6 +308,10 @@ std::filesystem::path CreateFolderZip(const std::filesystem::path& folder, const
 std::wstring LastNetworkError(const std::wstring& fallback) {
     DWORD code = GetLastError();
     if (code == 0) return fallback;
+    if (code == ERROR_WINHTTP_TIMEOUT || code == ERROR_WINHTTP_CANNOT_CONNECT) {
+        return L"连接手机超时。请打开手机“相册”，确认仍连接同一 Wi‑Fi 后重试（"
+                + std::to_wstring(code) + L"）";
+    }
     wchar_t* message = nullptr;
     DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                                   nullptr, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
@@ -450,7 +454,9 @@ public:
         session_ = WinHttpOpen(L"ZwmDeviceShare/0.2", WINHTTP_ACCESS_TYPE_NO_PROXY,
                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session_) throw std::runtime_error(WideToUtf8(LastNetworkError(L"无法初始化网络连接")));
-        WinHttpSetTimeouts(session_, 7000, 7000, 60000, 60000);
+        WinHttpSetTimeouts(session_, 5000, 5000, 15000, 60000);
+        DWORD connectRetries = 0;
+        WinHttpSetOption(session_, WINHTTP_OPTION_CONNECT_RETRIES, &connectRetries, sizeof(connectRetries));
         connection_ = WinHttpConnect(session_, host.c_str(), port, 0);
         if (!connection_) {
             WinHttpCloseHandle(session_);
