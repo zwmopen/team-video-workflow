@@ -30,7 +30,7 @@ final class DocumentTreeImporter {
         String rootId = DocumentsContract.getTreeDocumentId(tree);
         ScanStats stats = new ScanStats();
         ArrayList<Folder> works = new ArrayList<>();
-        scan(resolver, tree, rootId, 0, works, stats);
+        scan(resolver, tree, rootId, leafName(rootId), 0, works, stats);
         int imported = 0;
         int skipped = 0;
         for (Folder work : works) {
@@ -82,7 +82,7 @@ final class DocumentTreeImporter {
                 stats.archiveErrors, stats.notes.toString());
     }
 
-    private static int scan(ContentResolver resolver, Uri tree, String documentId, int depth,
+    private static int scan(ContentResolver resolver, Uri tree, String documentId, String displayName, int depth,
                             List<Folder> works, ScanStats stats) throws Exception {
         if (depth > MAX_DEPTH) return 0;
         stats.scannedFolders++;
@@ -102,7 +102,7 @@ final class DocumentTreeImporter {
                 String mime = cursor.getString(2);
                 Uri uri = DocumentsContract.buildDocumentUriUsingTree(tree, id);
                 Item item = new Item(id, name == null ? "未命名" : name, mime == null ? "" : mime, uri);
-                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) folders.add(item);
+                if (isDirectoryLike(item)) folders.add(item);
                 else files.add(item);
             }
         }
@@ -124,15 +124,25 @@ final class DocumentTreeImporter {
             }
         }
         String captionName = WorkRules.chooseCaption(textNames);
-        stats.addNote(depth, leafName(documentId), folders.size(), files.size(), images.size(), texts.size(), captionName);
+        stats.addNote(depth, displayName, folders.size(), files.size(), images.size(), texts.size(), captionName);
         int childWorks = 0;
-        for (Item folder : folders) childWorks += scan(resolver, tree, folder.documentId, depth + 1, works, stats);
+        for (Item folder : folders) {
+            try {
+                childWorks += scan(resolver, tree, folder.documentId, folder.name, depth + 1, works, stats);
+            } catch (Exception error) {
+                if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(folder.mime)) {
+                    stats.addFolderNote(folder.name, error.getMessage());
+                } else {
+                    throw error;
+                }
+            }
+        }
         if (!images.isEmpty() && !captionName.isEmpty()) {
             Item caption = null;
             for (Item text : texts) if (captionName.equals(text.name)) caption = text;
             if (caption != null) {
                 if (childWorks == 0) {
-                    works.add(new Folder(documentId, leafName(documentId), images, caption, marker, texts.size()));
+                    works.add(new Folder(documentId, displayName, images, caption, marker, texts.size()));
                     return 1;
                 }
                 stats.aggregateFolders++;
@@ -159,6 +169,15 @@ final class DocumentTreeImporter {
                     && bytes[1] == (byte) 0xBB && bytes[2] == (byte) 0xBF ? 3 : 0;
             return new String(bytes, offset, bytes.length - offset, StandardCharsets.UTF_8);
         }
+    }
+
+    private static boolean isDirectoryLike(Item item) {
+        if (DocumentsContract.Document.MIME_TYPE_DIR.equals(item.mime)) return true;
+        if (!item.mime.isEmpty() && !"application/octet-stream".equals(item.mime)) return false;
+        String name = item.name == null ? "" : item.name.trim();
+        if (name.isEmpty()) return false;
+        if (name.startsWith(".")) return true;
+        return !name.contains(".");
     }
 
     private static void copy(ContentResolver resolver, Uri uri, File target) throws IOException {
@@ -250,6 +269,14 @@ final class DocumentTreeImporter {
             if (noteCount >= MAX_SCAN_NOTES) return;
             if (notes.length() > 0) notes.append(" | ");
             notes.append("zip:").append(compact(name))
+                    .append(" error=").append(compact(message));
+            noteCount++;
+        }
+
+        void addFolderNote(String name, String message) {
+            if (noteCount >= MAX_SCAN_NOTES) return;
+            if (notes.length() > 0) notes.append(" | ");
+            notes.append("dir?:").append(compact(name))
                     .append(" error=").append(compact(message));
             noteCount++;
         }
