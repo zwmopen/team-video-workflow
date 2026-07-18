@@ -19,6 +19,7 @@ import java.util.Locale;
 final class DocumentTreeImporter {
     private static final int MAX_DEPTH = 8;
     private static final long MAX_TEXT_BYTES = 2L * 1024L * 1024L;
+    private static final int MAX_SCAN_NOTES = 24;
 
     private DocumentTreeImporter() {
     }
@@ -59,7 +60,8 @@ final class DocumentTreeImporter {
                 deleteTree(temporary);
             }
         }
-        return new ImportResult(imported, skipped, works.size(), stats.scannedFolders, stats.aggregateFolders);
+        return new ImportResult(imported, skipped, works.size(), stats.scannedFolders,
+                stats.aggregateFolders, stats.notes.toString());
     }
 
     private static int scan(ContentResolver resolver, Uri tree, String documentId, int depth,
@@ -103,6 +105,7 @@ final class DocumentTreeImporter {
             }
         }
         String captionName = WorkRules.chooseCaption(textNames);
+        stats.addNote(depth, leafName(documentId), folders.size(), files.size(), images.size(), texts.size(), captionName);
         int childWorks = 0;
         for (Item folder : folders) childWorks += scan(resolver, tree, folder.documentId, depth + 1, works, stats);
         if (!images.isEmpty() && !captionName.isEmpty()) {
@@ -166,18 +169,42 @@ final class DocumentTreeImporter {
         final int detected;
         final int scannedFolders;
         final int aggregateFolders;
-        ImportResult(int imported, int skipped, int detected, int scannedFolders, int aggregateFolders) {
+        final String scanNotes;
+        ImportResult(int imported, int skipped, int detected, int scannedFolders,
+                     int aggregateFolders, String scanNotes) {
             this.imported = imported;
             this.skipped = skipped;
             this.detected = detected;
             this.scannedFolders = scannedFolders;
             this.aggregateFolders = aggregateFolders;
+            this.scanNotes = scanNotes;
         }
     }
 
     private static final class ScanStats {
         int scannedFolders;
         int aggregateFolders;
+        int noteCount;
+        final StringBuilder notes = new StringBuilder();
+
+        void addNote(int depth, String name, int folderCount, int fileCount,
+                     int imageCount, int textCount, String captionName) {
+            if (noteCount >= MAX_SCAN_NOTES) return;
+            if (notes.length() > 0) notes.append(" | ");
+            notes.append("d").append(depth)
+                    .append(":").append(compact(name))
+                    .append(" dirs=").append(folderCount)
+                    .append(" files=").append(fileCount)
+                    .append(" img=").append(imageCount)
+                    .append(" txt=").append(textCount);
+            if (!captionName.isEmpty()) notes.append(" cap=").append(compact(captionName));
+            noteCount++;
+        }
+
+        private String compact(String value) {
+            String normalized = value == null ? "" : value.replace('|', '/').replace('\n', ' ').replace('\r', ' ');
+            return normalized.length() <= 24 ? normalized : normalized.substring(0, 24) + "…";
+        }
     }
 
     private static final class Item {

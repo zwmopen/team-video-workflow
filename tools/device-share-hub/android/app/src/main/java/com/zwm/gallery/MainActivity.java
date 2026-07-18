@@ -338,7 +338,8 @@ public final class MainActivity extends Activity {
                                 + " imported=" + result.imported
                                 + " skipped=" + result.skipped
                                 + " scannedFolders=" + result.scannedFolders
-                                + " aggregateFolders=" + result.aggregateFolders);
+                                + " aggregateFolders=" + result.aggregateFolders
+                                + " notes=" + result.scanNotes);
                 runOnUiThread(() -> {
                     String message = result.imported > 0
                             ? "新增 " + result.imported + " 个作品"
