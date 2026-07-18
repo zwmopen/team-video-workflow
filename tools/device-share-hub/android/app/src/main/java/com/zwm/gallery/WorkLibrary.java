@@ -130,6 +130,10 @@ public final class WorkLibrary {
         moveDirectory(entry.directory, destination);
     }
 
+    public synchronized void clearTrash() throws IOException {
+        for (WorkEntry entry : list(trashRoot)) deleteTree(entry.directory);
+    }
+
     private List<WorkEntry> list(File parent) throws IOException {
         File[] directories = parent.listFiles(File::isDirectory);
         if (directories == null) return Collections.emptyList();

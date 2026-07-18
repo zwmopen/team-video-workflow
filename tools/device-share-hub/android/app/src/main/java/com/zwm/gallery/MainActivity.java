@@ -2,6 +2,7 @@ package com.zwm.gallery;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -35,6 +36,7 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private static final String PREFS = "device_share";
     private static final String PREF_TREE_URI = "libraryTreeUri";
+    private static final String PREF_TREE_NAME = "libraryTreeName";
     private static final int REQUEST_TREE = 61;
     public static volatile boolean isVisible;
 
@@ -42,7 +44,9 @@ public final class MainActivity extends Activity {
     private LinearLayout worksContainer;
     private TextView sourceText;
     private TextView statusText;
-    private Button trashButton;
+    private Button leftModeButton;
+    private Button rightModeButton;
+    private TextView headingText;
     private boolean showingTrash;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
@@ -63,7 +67,8 @@ public final class MainActivity extends Activity {
         updateSourceLabel();
         requestNotificationPermission();
         startReceiver();
-        refreshWorks();
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
+        else importSelectedTree();
         DiagnosticLog.write(this, "app_open", "album main opened");
     }
 
@@ -111,29 +116,31 @@ public final class MainActivity extends Activity {
         LinearLayout sourceCard = card();
         sourceText = text("正在读取…", 15, true);
         sourceCard.addView(sourceText, new LinearLayout.LayoutParams(0, -2, 1));
-        Button choose = smallButton("选择 Lark 文件夹", true);
+        Button choose = smallButton("设置路径", true);
         choose.setOnClickListener(v -> chooseFolder());
         sourceCard.addView(choose);
         root.addView(sourceCard, margins(0, 0, 0, dp(12)));
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
-        Button refresh = smallButton("刷新", false);
-        refresh.setOnClickListener(v -> importSelectedTree());
-        controls.addView(refresh, new LinearLayout.LayoutParams(0, dp(44), 1));
-        trashButton = smallButton("回收站", false);
-        trashButton.setOnClickListener(v -> {
-            showingTrash = !showingTrash;
-            trashButton.setText(showingTrash ? "返回作品" : "回收站");
-            refreshWorks();
+        leftModeButton = smallButton("刷新作品", false);
+        leftModeButton.setOnClickListener(v -> {
+            if (showingTrash) showWorks();
+            else importSelectedTree();
+        });
+        controls.addView(leftModeButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        rightModeButton = smallButton("回收站", false);
+        rightModeButton.setOnClickListener(v -> {
+            if (showingTrash) confirmClearTrash();
+            else showTrash();
         });
         LinearLayout.LayoutParams trashParams = new LinearLayout.LayoutParams(0, dp(44), 1);
         trashParams.setMargins(dp(10), 0, 0, 0);
-        controls.addView(trashButton, trashParams);
+        controls.addView(rightModeButton, trashParams);
         root.addView(controls, margins(0, 0, 0, dp(18)));
 
-        TextView heading = text("作品", 20, true);
-        root.addView(heading, margins(0, 0, 0, dp(10)));
+        headingText = text("作品（点一下分享）", 20, true);
+        root.addView(headingText, margins(0, 0, 0, dp(10)));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(worksContainer);
@@ -173,8 +180,47 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void showWorks() {
+        showingTrash = false;
+        leftModeButton.setText("刷新作品");
+        rightModeButton.setText("回收站");
+        headingText.setText("作品（点一下分享）");
+        refreshWorks();
+    }
+
+    private void showTrash() {
+        showingTrash = true;
+        leftModeButton.setText("返回作品");
+        rightModeButton.setText("清空回收站");
+        headingText.setText("回收站");
+        refreshWorks();
+    }
+
+    private void confirmClearTrash() {
+        new AlertDialog.Builder(this)
+                .setTitle("清空回收站？")
+                .setMessage("清空后不能恢复。只会删除回收站里的作品。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认清空", (dialog, which) -> clearTrash())
+                .show();
+    }
+
+    private void clearTrash() {
+        worker.execute(() -> {
+            try {
+                library().clearTrash();
+                DiagnosticLog.write(this, "trash_cleared", "user confirmed");
+                runOnUiThread(() -> { toast("回收站已清空"); refreshWorks(); });
+            } catch (Exception error) {
+                runOnUiThread(() -> toast("清空失败：" + error.getMessage()));
+            }
+        });
+    }
+
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
         worksContainer.removeAllViews();
+        rightModeButton.setEnabled(!showingTrash || !entries.isEmpty());
+        rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
         if (entries.isEmpty()) {
             TextView empty = text(showingTrash ? "回收站是空的" : "还没有作品\n从电脑拖入 ZIP，或选择手机里的 Lark 文件夹", 14, false);
             empty.setGravity(Gravity.CENTER);
@@ -184,22 +230,48 @@ public final class MainActivity extends Activity {
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             return;
         }
-        for (WorkLibrary.WorkEntry work : entries) worksContainer.addView(workCard(work), margins(0, 0, 0, dp(12)));
+        for (int index = 0; index < entries.size(); index += 2) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            addGridCard(row, entries.get(index), false);
+            if (index + 1 < entries.size()) addGridCard(row, entries.get(index + 1), true);
+            else {
+                View spacer = new View(this);
+                LinearLayout.LayoutParams spacerParams = new LinearLayout.LayoutParams(0, 1, 1);
+                spacerParams.setMargins(dp(6), 0, 0, 0);
+                row.addView(spacer, spacerParams);
+            }
+            worksContainer.addView(row, margins(0, 0, 0, dp(12)));
+        }
+    }
+
+    private void addGridCard(LinearLayout row, WorkLibrary.WorkEntry work, boolean right) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(190), 1);
+        params.setMargins(right ? dp(6) : 0, 0, right ? 0 : dp(6), 0);
+        row.addView(workCard(work), params);
     }
 
     private View workCard(WorkLibrary.WorkEntry work) {
         LinearLayout card = card();
         card.setOrientation(LinearLayout.VERTICAL);
-        TextView name = text(work.name, 18, true);
+        if (!showingTrash && work.sharedDate != null) {
+            card.setBackground(round(Color.rgb(225, 225, 222), 20));
+            card.setElevation(0);
+        }
+        TextView name = text(work.name, 16, true);
+        name.setMaxLines(2);
         card.addView(name);
         String detail = work.images.size() + " 张图片";
-        if (!work.warning.isEmpty()) detail += " · " + work.warning;
-        if (work.sharedDate != null) detail += " · 已打开分享";
-        if (work.trashedDate != null) detail += " · 回收站保留 7 天";
-        TextView meta = text(detail, 13, false);
-        meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(67, 125, 84));
-        card.addView(meta, margins(0, dp(5), 0, dp(12)));
-        Button action = smallButton(showingTrash ? "恢复" : "复制文案并分享", !showingTrash);
+        if (work.sharedDate != null) detail += "\n✓ 已打开分享";
+        else if (work.trashedDate != null) detail += "\n回收站保留 7 天";
+        else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
+        TextView meta = text(detail, 12, false);
+        meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(78, 78, 75));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        metaParams.setMargins(0, dp(4), 0, dp(8));
+        card.addView(meta, metaParams);
+        Button action = smallButton(showingTrash ? "恢复" : (work.sharedDate == null ? "复制并分享" : "再次分享"),
+                !showingTrash && work.sharedDate == null);
         action.setOnClickListener(v -> {
             if (showingTrash) restore(work.id);
             else startActivity(new Intent(this, ShareActivity.class).putExtra(ShareActivity.EXTRA_WORK_ID, work.id));
@@ -225,9 +297,13 @@ public final class MainActivity extends Activity {
                 getContentResolver().takePersistableUriPermission(tree,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             } else {
-                getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             }
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_TREE_URI, tree.toString()).apply();
+            String treeName = treeName(tree);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(PREF_TREE_URI, tree.toString())
+                    .putString(PREF_TREE_NAME, treeName)
+                    .apply();
             updateSourceLabel();
             importSelectedTree();
         } catch (Exception error) {
@@ -239,7 +315,7 @@ public final class MainActivity extends Activity {
         String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
         if (stored.isEmpty()) {
             refreshWorks();
-            toast("请先选择 Lark 文件夹");
+            toast("请先设置作品文件夹");
             return;
         }
         statusText.setText("正在读取 Lark 文件夹…");
@@ -275,8 +351,22 @@ public final class MainActivity extends Activity {
     private WorkLibrary library() throws Exception { return new WorkLibrary(new File(getFilesDir(), "work-library")); }
 
     private void updateSourceLabel() {
-        String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
-        sourceText.setText(stored.isEmpty() ? "电脑接收库" : "电脑接收库 + Lark");
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String stored = prefs.getString(PREF_TREE_URI, "");
+        String name = prefs.getString(PREF_TREE_NAME, "");
+        if (!stored.isEmpty() && name.isEmpty()) name = treeName(Uri.parse(stored));
+        sourceText.setText(stored.isEmpty() ? "作品文件夹：未设置" : "作品文件夹：" + name);
+    }
+
+    private String treeName(Uri tree) {
+        try {
+            String id = android.provider.DocumentsContract.getTreeDocumentId(tree);
+            int slash = id.lastIndexOf('/');
+            String name = slash >= 0 ? id.substring(slash + 1) : id.substring(id.lastIndexOf(':') + 1);
+            return name.isEmpty() ? "已设置" : name;
+        } catch (Exception ignored) {
+            return "已设置";
+        }
     }
 
     private void startReceiver() {

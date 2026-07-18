@@ -31,7 +31,9 @@ final class DocumentTreeImporter {
         int imported = 0;
         int skipped = 0;
         for (Folder work : works) {
-            String id = "lark-" + Integer.toHexString(work.documentId.hashCode());
+            String id = work.marker == null ? "lark-" + Integer.toHexString(work.documentId.hashCode())
+                    : readText(resolver, work.marker.uri).trim();
+            if (!id.matches("[A-Za-z0-9._-]{1,120}")) id = "lark-" + Integer.toHexString(work.documentId.hashCode());
             if (library.contains(id)) {
                 skipped++;
                 continue;
@@ -86,7 +88,12 @@ final class DocumentTreeImporter {
         ArrayList<Item> images = new ArrayList<>();
         ArrayList<String> textNames = new ArrayList<>();
         ArrayList<Item> texts = new ArrayList<>();
+        Item marker = null;
         for (Item file : files) {
+            if (".zwm-work-id".equals(file.name)) {
+                marker = file;
+                continue;
+            }
             if (file.mime.startsWith("image/") || WorkRules.isSupportedImage(file.name)) images.add(file);
             if (file.name.toLowerCase(Locale.ROOT).endsWith(".txt")) {
                 texts.add(file);
@@ -97,7 +104,7 @@ final class DocumentTreeImporter {
         if (!images.isEmpty() && !captionName.isEmpty()) {
             Item caption = null;
             for (Item text : texts) if (captionName.equals(text.name)) caption = text;
-            if (caption != null) works.add(new Folder(documentId, leafName(documentId), images, caption, texts.size()));
+            if (caption != null) works.add(new Folder(documentId, leafName(documentId), images, caption, marker, texts.size()));
             return;
         }
         for (Item folder : folders) scan(resolver, tree, folder.documentId, depth + 1, works);
@@ -173,12 +180,14 @@ final class DocumentTreeImporter {
         final String name;
         final ArrayList<Item> images;
         final Item caption;
+        final Item marker;
         final int textCount;
-        Folder(String documentId, String name, ArrayList<Item> images, Item caption, int textCount) {
+        Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker, int textCount) {
             this.documentId = documentId;
             this.name = name;
             this.images = images;
             this.caption = caption;
+            this.marker = marker;
             this.textCount = textCount;
         }
     }

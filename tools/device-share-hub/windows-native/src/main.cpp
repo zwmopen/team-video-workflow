@@ -190,6 +190,112 @@ std::wstring FormatBytes(uintmax_t bytes) {
     return buffer;
 }
 
+void WriteLe16(std::ostream& output, uint16_t value) {
+    const char bytes[] = {static_cast<char>(value & 0xff), static_cast<char>((value >> 8) & 0xff)};
+    output.write(bytes, sizeof(bytes));
+}
+
+void WriteLe32(std::ostream& output, uint32_t value) {
+    const char bytes[] = {
+        static_cast<char>(value & 0xff), static_cast<char>((value >> 8) & 0xff),
+        static_cast<char>((value >> 16) & 0xff), static_cast<char>((value >> 24) & 0xff)};
+    output.write(bytes, sizeof(bytes));
+}
+
+uint32_t Crc32File(const std::filesystem::path& file) {
+    std::ifstream input(file, std::ios::binary);
+    if (!input) throw std::runtime_error("无法读取文件夹中的文件");
+    uint32_t crc = 0xffffffffu;
+    std::vector<char> buffer(1024 * 1024);
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        std::streamsize count = input.gcount();
+        for (std::streamsize index = 0; index < count; ++index) {
+            crc ^= static_cast<unsigned char>(buffer[static_cast<size_t>(index)]);
+            for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+        }
+    }
+    return crc ^ 0xffffffffu;
+}
+
+struct ZipRecord {
+    std::string name;
+    uint32_t crc = 0;
+    uint32_t size = 0;
+    uint32_t offset = 0;
+};
+
+std::filesystem::path CreateFolderZip(const std::filesystem::path& folder, const std::wstring& taskId) {
+    PostStatus(L"正在整理文件夹 “" + folder.filename().wstring() + L"”…");
+    std::vector<std::filesystem::path> files;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(
+             folder, std::filesystem::directory_options::skip_permission_denied)) {
+        if (item.is_regular_file()) files.push_back(item.path());
+    }
+    if (files.empty()) throw std::runtime_error("拖入的文件夹是空的");
+    std::sort(files.begin(), files.end());
+
+    std::filesystem::path archive = std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip");
+    std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("无法创建文件夹传送包");
+    std::vector<ZipRecord> records;
+    for (const auto& file : files) {
+        uintmax_t size64 = std::filesystem::file_size(file);
+        if (size64 > 0xffffffffull) throw std::runtime_error("文件夹中有超过 4GB 的单个文件");
+        std::filesystem::path relative = std::filesystem::relative(file, folder);
+        std::wstring logicalWide = folder.filename().wstring() + L"/" + relative.generic_wstring();
+        std::string logicalName = WideToUtf8(logicalWide);
+        std::replace(logicalName.begin(), logicalName.end(), '\\', '/');
+        if (logicalName.size() > 65535) throw std::runtime_error("文件夹中的路径过长");
+        std::streampos offset = output.tellp();
+        std::streamoff offsetValue = static_cast<std::streamoff>(offset);
+        if (offsetValue < 0 || static_cast<uint64_t>(offsetValue) > 0xffffffffull) throw std::runtime_error("文件夹传送包超过 4GB");
+        ZipRecord record{logicalName, Crc32File(file), static_cast<uint32_t>(size64), static_cast<uint32_t>(offsetValue)};
+        WriteLe32(output, 0x04034b50u);
+        WriteLe16(output, 20); WriteLe16(output, 0x0800); WriteLe16(output, 0);
+        WriteLe16(output, 0); WriteLe16(output, 0);
+        WriteLe32(output, record.crc); WriteLe32(output, record.size); WriteLe32(output, record.size);
+        WriteLe16(output, static_cast<uint16_t>(record.name.size())); WriteLe16(output, 0);
+        output.write(record.name.data(), static_cast<std::streamsize>(record.name.size()));
+        std::ifstream input(file, std::ios::binary);
+        std::vector<char> buffer(1024 * 1024);
+        while (input) {
+            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            output.write(buffer.data(), input.gcount());
+        }
+        if (!output) throw std::runtime_error("创建文件夹传送包失败");
+        records.push_back(record);
+    }
+    std::streampos centralOffsetPos = output.tellp();
+    std::streamoff centralOffsetValue = static_cast<std::streamoff>(centralOffsetPos);
+    if (centralOffsetValue < 0 || static_cast<uint64_t>(centralOffsetValue) > 0xffffffffull) throw std::runtime_error("文件夹传送包超过 4GB");
+    uint32_t centralOffset = static_cast<uint32_t>(centralOffsetValue);
+    for (const ZipRecord& record : records) {
+        WriteLe32(output, 0x02014b50u);
+        WriteLe16(output, 20); WriteLe16(output, 20); WriteLe16(output, 0x0800); WriteLe16(output, 0);
+        WriteLe16(output, 0); WriteLe16(output, 0);
+        WriteLe32(output, record.crc); WriteLe32(output, record.size); WriteLe32(output, record.size);
+        WriteLe16(output, static_cast<uint16_t>(record.name.size())); WriteLe16(output, 0); WriteLe16(output, 0);
+        WriteLe16(output, 0); WriteLe16(output, 0); WriteLe32(output, 0); WriteLe32(output, record.offset);
+        output.write(record.name.data(), static_cast<std::streamsize>(record.name.size()));
+    }
+    std::streampos endPos = output.tellp();
+    std::streamoff endValue = static_cast<std::streamoff>(endPos);
+    if (records.size() > 65535 || endValue < 0 || static_cast<uint64_t>(endValue) > 0xffffffffull) {
+        throw std::runtime_error("文件夹中的文件过多或总大小超过 4GB");
+    }
+    uint32_t centralSize = static_cast<uint32_t>(endValue) - centralOffset;
+    WriteLe32(output, 0x06054b50u);
+    WriteLe16(output, 0); WriteLe16(output, 0);
+    WriteLe16(output, static_cast<uint16_t>(records.size()));
+    WriteLe16(output, static_cast<uint16_t>(records.size()));
+    WriteLe32(output, centralSize); WriteLe32(output, centralOffset); WriteLe16(output, 0);
+    output.close();
+    if (!output) throw std::runtime_error("保存文件夹传送包失败");
+    WriteDiagnosticLog(L"folder_packed", folder.wstring() + L" files=" + std::to_wstring(records.size()));
+    return archive;
+}
+
 std::wstring LastNetworkError(const std::wstring& fallback) {
     DWORD code = GetLastError();
     if (code == 0) return fallback;
@@ -467,7 +573,14 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     gUploadInProgress = true;
     gCancelRequested = false;
     PostProgress(0, true);
+    std::vector<std::filesystem::path> temporaryArchives;
     try {
+        for (auto& input : files) {
+            if (std::filesystem::is_directory(input)) {
+                input = CreateFolderZip(input, taskId);
+                temporaryArchives.push_back(input);
+            }
+        }
         uintmax_t totalBytes = 0;
         for (const auto& file : files) totalBytes += std::filesystem::file_size(file);
         WriteDiagnosticLog(L"upload_start", device.name + L" ip=" + device.ip + L" files=" + std::to_wstring(files.size()) + L" bytes=" + std::to_wstring(totalBytes));
@@ -522,6 +635,12 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     }
     gUploadInProgress = false;
     gCancelRequested = false;
+    for (const auto& archive : temporaryArchives) {
+        std::error_code ignored;
+        std::filesystem::remove(archive, ignored);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"), ignored);
 }
 
 void RefreshDeviceList() {
@@ -700,11 +819,21 @@ void HandleDrop(HDROP drop) {
         DragQueryFileW(drop, i, path.data(), length + 1);
         path.resize(length);
         std::filesystem::path file(path);
-        if (std::filesystem::is_regular_file(file)) files.push_back(file);
+        if (std::filesystem::is_regular_file(file) || std::filesystem::is_directory(file)) files.push_back(file);
     }
     DragFinish(drop);
     if (files.empty()) {
-        MessageBoxW(gWindow, L"没有找到可传送的文件。", L"素材投送", MB_OK | MB_ICONWARNING);
+        MessageBoxW(gWindow, L"没有找到可传送的文件或文件夹。", L"素材投送", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    int packageCount = 0;
+    for (const auto& file : files) {
+        std::wstring extension = file.extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+        if (std::filesystem::is_directory(file) || extension == L".zip") ++packageCount;
+    }
+    if (packageCount > 0 && files.size() != 1) {
+        MessageBoxW(gWindow, L"ZIP 或文件夹请一次拖一个，这样手机才能正确拆成作品。", L"相册投送", MB_OK | MB_ICONINFORMATION);
         return;
     }
     if (files.size() > 100) {

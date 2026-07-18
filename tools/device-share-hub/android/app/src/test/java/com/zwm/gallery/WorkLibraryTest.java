@@ -67,6 +67,22 @@ public final class WorkLibraryTest {
         assertTrue(library.listTrash().isEmpty());
     }
 
+    @Test
+    public void clearsTrashWithoutTouchingActiveWorks() throws Exception {
+        File source = temporary.newFolder("clear-source");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("clear-library"));
+        library.importWork("keep", "保留", "文案", Arrays.asList(write(source, "keep.jpg", "one")), "");
+        library.importWork("remove", "清理", "文案", Arrays.asList(write(source, "remove.jpg", "two")), "");
+        LocalDate shared = LocalDate.of(2026, 7, 18);
+        library.markShared("remove", shared);
+        library.maintain(shared.plusDays(1));
+
+        library.clearTrash();
+
+        assertEquals(1, library.listActive().size());
+        assertTrue(library.listTrash().isEmpty());
+    }
+
     private static File write(File directory, String name, String value) throws Exception {
         File file = new File(directory, name);
         Files.write(file.toPath(), value.getBytes(StandardCharsets.UTF_8));

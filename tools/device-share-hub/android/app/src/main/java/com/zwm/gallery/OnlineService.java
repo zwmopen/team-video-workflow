@@ -308,6 +308,15 @@ public final class OnlineService extends Service {
                 || "application/zip".equalsIgnoreCase(only.mime)
                 || "application/x-zip-compressed".equalsIgnoreCase(only.mime))) {
             imported = WorkArchiveImporter.importZip(only.file, library, task.id);
+            String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
+            if (!treeValue.isEmpty()) {
+                try {
+                    int exported = DocumentTreeExporter.exportZip(getContentResolver(), android.net.Uri.parse(treeValue), only.file, task.id);
+                    DiagnosticLog.write(this, "tree_export", "works=" + exported);
+                } catch (Exception exportError) {
+                    DiagnosticLog.write(this, "tree_export_failed", compact(exportError.getMessage()));
+                }
+            }
         } else {
             java.util.ArrayList<File> images = new java.util.ArrayList<>();
             for (int index = 0; index < task.fileCount; index++) {
