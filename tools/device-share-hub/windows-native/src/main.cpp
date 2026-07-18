@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <stdexcept>
@@ -39,8 +40,12 @@ namespace {
 constexpr UINT WM_DEVICES_CHANGED = WM_APP + 1;
 constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
 constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
+constexpr int IDC_RENAME_DEVICE = 201;
+constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
+constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
+constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
 
 struct Device {
     std::wstring id;
@@ -63,6 +68,7 @@ HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
 std::map<std::wstring, Device> gDevices;
+std::map<std::wstring, std::wstring> gDeviceRemarks;
 std::vector<Device> gDisplayedDevices;
 std::atomic<bool> gRunning{true};
 std::atomic<bool> gUploadInProgress{false};
@@ -70,6 +76,7 @@ std::atomic<bool> gCancelRequested{false};
 std::thread gDiscoveryThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
+std::filesystem::path gRemarkPath;
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -155,6 +162,13 @@ std::filesystem::path DiagnosticLogPath() {
     return base / L"ZwmDeviceShareHub" / L"diagnostics.log";
 }
 
+std::filesystem::path DeviceRemarkPath() {
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
+    return base / L"ZwmDeviceShareHub" / L"device-remarks.tsv";
+}
+
 void WriteDiagnosticLog(const std::wstring& event, const std::wstring& detail) {
     try {
         if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
@@ -172,6 +186,153 @@ void WriteDiagnosticLog(const std::wstring& event, const std::wstring& detail) {
         output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     } catch (...) {
     }
+}
+
+void LoadDeviceRemarks() {
+    try {
+        if (gRemarkPath.empty()) gRemarkPath = DeviceRemarkPath();
+        gDeviceRemarks.clear();
+        std::ifstream input(gRemarkPath, std::ios::binary);
+        std::string line;
+        while (std::getline(input, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t tab = line.find('\t');
+            if (tab == std::string::npos) continue;
+            std::wstring id = Utf8ToWide(line.substr(0, tab));
+            std::wstring remark = Utf8ToWide(line.substr(tab + 1));
+            if (!id.empty() && !remark.empty()) gDeviceRemarks[id] = remark;
+        }
+    } catch (...) {
+        WriteDiagnosticLog(L"remarks_load_failed", L"ignored");
+    }
+}
+
+void SaveDeviceRemarks() {
+    try {
+        if (gRemarkPath.empty()) gRemarkPath = DeviceRemarkPath();
+        std::filesystem::create_directories(gRemarkPath.parent_path());
+        std::ofstream output(gRemarkPath, std::ios::binary | std::ios::trunc);
+        for (const auto& item : gDeviceRemarks) {
+            output << WideToUtf8(item.first) << '\t' << WideToUtf8(item.second) << '\n';
+        }
+        WriteDiagnosticLog(L"remarks_saved", L"count=" + std::to_wstring(gDeviceRemarks.size()));
+    } catch (...) {
+        WriteDiagnosticLog(L"remarks_save_failed", L"ignored");
+    }
+}
+
+std::wstring DisplayNameFor(const Device& device) {
+    auto found = gDeviceRemarks.find(device.id);
+    if (found != gDeviceRemarks.end() && !found->second.empty()) return found->second;
+    return device.name;
+}
+
+struct PromptState {
+    std::wstring title;
+    std::wstring label;
+    std::wstring value;
+    std::wstring result;
+    bool accepted = false;
+    HWND edit = nullptr;
+};
+
+LRESULT CALLBACK PromptProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    auto* state = reinterpret_cast<PromptState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    switch (message) {
+        case WM_CREATE: {
+            auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+            state = reinterpret_cast<PromptState*>(create->lpCreateParams);
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+            HFONT font = gFont ? gFont : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HWND label = CreateWindowW(L"STATIC", state->label.c_str(), WS_CHILD | WS_VISIBLE,
+                                       18, 18, 316, 24, window, nullptr, nullptr, nullptr);
+            SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", state->value.c_str(),
+                                          WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                          18, 48, 316, 28, window, reinterpret_cast<HMENU>(301), nullptr, nullptr);
+            SendMessageW(state->edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            HWND ok = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                                    152, 92, 84, 32, window, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
+            HWND cancel = CreateWindowW(L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                        250, 92, 84, 32, window, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+            SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            SendMessageW(state->edit, EM_SETSEL, 0, -1);
+            SetFocus(state->edit);
+            return 0;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDOK && state) {
+                int length = GetWindowTextLengthW(state->edit);
+                std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+                GetWindowTextW(state->edit, text.data(), length + 1);
+                text.resize(static_cast<size_t>(length));
+                state->result = text;
+                state->accepted = true;
+                DestroyWindow(window);
+                return 0;
+            }
+            if (LOWORD(wParam) == IDCANCEL) {
+                DestroyWindow(window);
+                return 0;
+            }
+            break;
+        case WM_CLOSE:
+            DestroyWindow(window);
+            return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+std::wstring Trim(const std::wstring& value) {
+    size_t first = 0;
+    while (first < value.size() && iswspace(value[first])) ++first;
+    size_t last = value.size();
+    while (last > first && iswspace(value[last - 1])) --last;
+    return value.substr(first, last - first);
+}
+
+std::optional<std::wstring> PromptForText(HWND parent, const std::wstring& title,
+                                          const std::wstring& label, const std::wstring& value) {
+    HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetModuleHandleW(nullptr));
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW cls{};
+        cls.cbSize = sizeof(cls);
+        cls.lpfnWndProc = PromptProc;
+        cls.hInstance = instance;
+        cls.hCursor = LoadCursorW(nullptr, IDC_IBEAM);
+        cls.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        cls.lpszClassName = PROMPT_CLASS;
+        RegisterClassExW(&cls);
+        registered = true;
+    }
+
+    PromptState state{title, label, value};
+    RECT parentRect{};
+    GetWindowRect(parent, &parentRect);
+    int width = 370;
+    int height = 172;
+    int x = parentRect.left + ((parentRect.right - parentRect.left) - width) / 2;
+    int y = parentRect.top + ((parentRect.bottom - parentRect.top) - height) / 2;
+    EnableWindow(parent, FALSE);
+    HWND prompt = CreateWindowExW(WS_EX_DLGMODALFRAME, PROMPT_CLASS, title.c_str(),
+                                  WS_CAPTION | WS_POPUP | WS_SYSMENU,
+                                  x, y, width, height, parent, nullptr, instance, &state);
+    ShowWindow(prompt, SW_SHOW);
+    UpdateWindow(prompt);
+
+    MSG message{};
+    while (IsWindow(prompt) && GetMessageW(&message, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(prompt, &message)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    if (!state.accepted) return std::nullopt;
+    return Trim(state.result);
 }
 
 std::wstring FormatBytes(uintmax_t bytes) {
@@ -601,7 +762,8 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         }
         uintmax_t totalBytes = 0;
         for (const auto& file : files) totalBytes += std::filesystem::file_size(file);
-        WriteDiagnosticLog(L"upload_start", device.name + L" ip=" + device.ip + L" files=" + std::to_wstring(files.size()) + L" bytes=" + std::to_wstring(totalBytes));
+        std::wstring displayName = DisplayNameFor(device);
+        WriteDiagnosticLog(L"upload_start", device.name + L" display=" + displayName + L" ip=" + device.ip + L" files=" + std::to_wstring(files.size()) + L" bytes=" + std::to_wstring(totalBytes));
         PostStatus(L"正在连接 “" + device.name + L"”…");
         HttpClient client(device.ip, device.port);
         std::ostringstream json;
@@ -674,12 +836,17 @@ void RefreshDeviceList() {
             }
         }
     }
-    std::sort(fresh.begin(), fresh.end(), [](const Device& left, const Device& right) { return left.name < right.name; });
+    std::sort(fresh.begin(), fresh.end(), [](const Device& left, const Device& right) {
+        return DisplayNameFor(left) < DisplayNameFor(right);
+    });
     int previous = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
     SendMessageW(gDeviceList, WM_SETREDRAW, FALSE, 0);
     SendMessageW(gDeviceList, LB_RESETCONTENT, 0, 0);
     gDisplayedDevices = fresh;
-    for (const Device& device : gDisplayedDevices) SendMessageW(gDeviceList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(device.name.c_str()));
+    for (const Device& device : gDisplayedDevices) {
+        std::wstring name = DisplayNameFor(device);
+        SendMessageW(gDeviceList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
+    }
     if (!gDisplayedDevices.empty()) SendMessageW(gDeviceList, LB_SETCURSEL, std::clamp(previous, 0, static_cast<int>(gDisplayedDevices.size()) - 1), 0);
     SendMessageW(gDeviceList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(gDeviceList, nullptr, TRUE);
@@ -798,10 +965,14 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
     RECT nameRect{rect.left + 42, rect.top + 10, rect.right - 125, rect.top + 36};
-    DrawTextW(dc, device.name.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    std::wstring displayName = DisplayNameFor(device);
+    DrawTextW(dc, displayName.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     SetTextColor(dc, RGB(105, 112, 120));
     std::wstring sub = device.model + L"  ·  " + device.ip;
+    bool hasRemark = displayName != device.name;
+    sub = hasRemark ? (device.name + L" · " + device.model + L" · " + device.ip)
+                    : (device.model + L" · " + device.ip);
     RECT subRect{rect.left + 42, rect.top + 38, rect.right - 18, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -810,6 +981,69 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     RECT stateRect{rect.right - 120, rect.top + 12, rect.right - 16, rect.top + 36};
     DrawTextW(dc, label.c_str(), -1, &stateRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
+}
+
+int DeviceIndexFromClientPoint(POINT point) {
+    POINT listPoint = point;
+    MapWindowPoints(gWindow, gDeviceList, &listPoint, 1);
+    RECT listRect{};
+    GetClientRect(gDeviceList, &listRect);
+    if (!PtInRect(&listRect, listPoint)) return -1;
+    LRESULT hit = SendMessageW(gDeviceList, LB_ITEMFROMPOINT, 0, MAKELPARAM(listPoint.x, listPoint.y));
+    if (HIWORD(hit)) return -1;
+    int index = LOWORD(hit);
+    if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) return -1;
+    return index;
+}
+
+void RenameDeviceRemark(int index) {
+    if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) return;
+    Device device = gDisplayedDevices[static_cast<size_t>(index)];
+    std::wstring current = DisplayNameFor(device);
+    auto answer = PromptForText(gWindow, L"重命名手机", L"电脑端显示名称", current);
+    if (!answer.has_value()) return;
+    if (answer->empty() || *answer == device.name) gDeviceRemarks.erase(device.id);
+    else gDeviceRemarks[device.id] = *answer;
+    SaveDeviceRemarks();
+    WriteDiagnosticLog(L"device_renamed", device.name + L" => " + DisplayNameFor(device));
+    RefreshDeviceList();
+}
+
+void ClearDeviceRemark(int index) {
+    if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) return;
+    Device device = gDisplayedDevices[static_cast<size_t>(index)];
+    if (gDeviceRemarks.erase(device.id) == 0) return;
+    SaveDeviceRemarks();
+    WriteDiagnosticLog(L"device_remark_cleared", device.name);
+    RefreshDeviceList();
+}
+
+void ShowDeviceContextMenu(LPARAM lParam) {
+    POINT screenPoint{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+    POINT clientPoint = screenPoint;
+    if (screenPoint.x == -1 && screenPoint.y == -1) {
+        int selected = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
+        if (selected < 0 || selected >= static_cast<int>(gDisplayedDevices.size())) return;
+        RECT itemRect{};
+        SendMessageW(gDeviceList, LB_GETITEMRECT, selected, reinterpret_cast<LPARAM>(&itemRect));
+        clientPoint = POINT{itemRect.left + 18, itemRect.top + 18};
+        MapWindowPoints(gDeviceList, gWindow, &clientPoint, 1);
+        screenPoint = clientPoint;
+        ClientToScreen(gWindow, &screenPoint);
+    } else {
+        ScreenToClient(gWindow, &clientPoint);
+    }
+    int index = DeviceIndexFromClientPoint(clientPoint);
+    if (index < 0) return;
+    SendMessageW(gDeviceList, LB_SETCURSEL, index, 0);
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, IDC_RENAME_DEVICE, L"重命名这台手机");
+    bool hasRemark = gDeviceRemarks.find(gDisplayedDevices[static_cast<size_t>(index)].id) != gDeviceRemarks.end();
+    AppendMenuW(menu, MF_STRING | (hasRemark ? 0 : MF_GRAYED), IDC_CLEAR_DEVICE_REMARK, L"清除电脑备注");
+    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPoint.x, screenPoint.y, 0, gWindow, nullptr);
+    DestroyMenu(menu);
+    if (command == IDC_RENAME_DEVICE) RenameDeviceRemark(index);
+    if (command == IDC_CLEAR_DEVICE_REMARK) ClearDeviceRemark(index);
 }
 
 void HandleDrop(HDROP drop) {
@@ -954,6 +1188,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         case WM_DROPFILES:
             HandleDrop(reinterpret_cast<HDROP>(wParam));
             return 0;
+        case WM_CONTEXTMENU:
+            if (reinterpret_cast<HWND>(wParam) == gDeviceList || reinterpret_cast<HWND>(wParam) == window) {
+                ShowDeviceContextMenu(lParam);
+                return 0;
+            }
+            break;
         case WM_DEVICES_CHANGED:
             RefreshDeviceList();
             return 0;
@@ -996,13 +1236,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS};
     InitCommonControlsEx(&controls);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    LoadDeviceRemarks();
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_MAIN_ICON));
+    windowClass.hIconSm = LoadIconW(instance, MAKEINTRESOURCEW(IDI_MAIN_ICON));
     windowClass.hbrBackground = CreateSolidBrush(RGB(245, 247, 249));
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
