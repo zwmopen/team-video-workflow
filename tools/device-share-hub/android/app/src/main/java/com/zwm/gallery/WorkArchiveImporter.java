@@ -55,7 +55,9 @@ public final class WorkArchiveImporter {
                 String warning = plan.captionFileCount > 1
                         ? "检测到多个 TXT，已使用“" + baseName(plan.captionEntry) + "”"
                         : "";
-                library.importWork(batchId + "-" + (planIndex + 1), plan.name, text, images, warning);
+                String workId = batchId + "-" + (planIndex + 1);
+                if (library.contains(workId)) continue;
+                library.importWork(workId, plan.name, text, images, warning);
                 imported++;
             }
         } finally {

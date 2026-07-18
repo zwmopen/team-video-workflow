@@ -19,6 +19,7 @@ import java.util.Locale;
 final class DocumentTreeImporter {
     private static final int MAX_DEPTH = 8;
     private static final long MAX_TEXT_BYTES = 2L * 1024L * 1024L;
+    private static final long MAX_ARCHIVE_BYTES = 4L * 1024L * 1024L * 1024L;
     private static final int MAX_SCAN_NOTES = 24;
 
     private DocumentTreeImporter() {
@@ -60,8 +61,25 @@ final class DocumentTreeImporter {
                 deleteTree(temporary);
             }
         }
+        if (!cacheRoot.exists() && !cacheRoot.mkdirs()) throw new IOException("无法创建读取缓存");
+        for (Item archive : stats.archives) {
+            String archiveBatchId = "larkzip-" + Integer.toHexString(archive.documentId.hashCode());
+            File temporaryArchive = new File(cacheRoot, archiveBatchId + ".zip");
+            try {
+                copyBounded(resolver, archive.uri, temporaryArchive, MAX_ARCHIVE_BYTES);
+                int archiveImported = WorkArchiveImporter.importZip(temporaryArchive, library, archiveBatchId);
+                imported += archiveImported;
+                stats.archiveImportedWorks += archiveImported;
+            } catch (Exception error) {
+                stats.archiveErrors++;
+                stats.addArchiveNote(archive.name, error.getMessage());
+            } finally {
+                if (temporaryArchive.exists()) temporaryArchive.delete();
+            }
+        }
         return new ImportResult(imported, skipped, works.size(), stats.scannedFolders,
-                stats.aggregateFolders, stats.notes.toString());
+                stats.aggregateFolders, stats.archives.size(), stats.archiveImportedWorks,
+                stats.archiveErrors, stats.notes.toString());
     }
 
     private static int scan(ContentResolver resolver, Uri tree, String documentId, int depth,
@@ -99,6 +117,7 @@ final class DocumentTreeImporter {
                 continue;
             }
             if (file.mime.startsWith("image/") || WorkRules.isSupportedImage(file.name)) images.add(file);
+            if (WorkRules.isSupportedArchive(file.name)) stats.archives.add(file);
             if (file.name.toLowerCase(Locale.ROOT).endsWith(".txt")) {
                 texts.add(file);
                 textNames.add(file.name);
@@ -152,6 +171,22 @@ final class DocumentTreeImporter {
         }
     }
 
+    private static void copyBounded(ContentResolver resolver, Uri uri, File target, long limit) throws IOException {
+        try (InputStream input = resolver.openInputStream(uri);
+             FileOutputStream output = new FileOutputStream(target)) {
+            if (input == null) throw new IOException("无法读取压缩包");
+            byte[] buffer = new byte[128 * 1024];
+            int count;
+            long total = 0;
+            while ((count = input.read(buffer)) >= 0) {
+                if (count == 0) continue;
+                total += count;
+                if (total > limit) throw new IOException("压缩包超过大小限制");
+                output.write(buffer, 0, count);
+            }
+        }
+    }
+
     private static String leafName(String documentId) {
         int slash = documentId.lastIndexOf('/');
         return slash < 0 ? documentId.substring(documentId.lastIndexOf(':') + 1) : documentId.substring(slash + 1);
@@ -169,14 +204,21 @@ final class DocumentTreeImporter {
         final int detected;
         final int scannedFolders;
         final int aggregateFolders;
+        final int archiveCount;
+        final int archiveImportedWorks;
+        final int archiveErrors;
         final String scanNotes;
         ImportResult(int imported, int skipped, int detected, int scannedFolders,
-                     int aggregateFolders, String scanNotes) {
+                     int aggregateFolders, int archiveCount, int archiveImportedWorks,
+                     int archiveErrors, String scanNotes) {
             this.imported = imported;
             this.skipped = skipped;
             this.detected = detected;
             this.scannedFolders = scannedFolders;
             this.aggregateFolders = aggregateFolders;
+            this.archiveCount = archiveCount;
+            this.archiveImportedWorks = archiveImportedWorks;
+            this.archiveErrors = archiveErrors;
             this.scanNotes = scanNotes;
         }
     }
@@ -184,7 +226,10 @@ final class DocumentTreeImporter {
     private static final class ScanStats {
         int scannedFolders;
         int aggregateFolders;
+        int archiveImportedWorks;
+        int archiveErrors;
         int noteCount;
+        final ArrayList<Item> archives = new ArrayList<>();
         final StringBuilder notes = new StringBuilder();
 
         void addNote(int depth, String name, int folderCount, int fileCount,
@@ -198,6 +243,14 @@ final class DocumentTreeImporter {
                     .append(" img=").append(imageCount)
                     .append(" txt=").append(textCount);
             if (!captionName.isEmpty()) notes.append(" cap=").append(compact(captionName));
+            noteCount++;
+        }
+
+        void addArchiveNote(String name, String message) {
+            if (noteCount >= MAX_SCAN_NOTES) return;
+            if (notes.length() > 0) notes.append(" | ");
+            notes.append("zip:").append(compact(name))
+                    .append(" error=").append(compact(message));
             noteCount++;
         }
 

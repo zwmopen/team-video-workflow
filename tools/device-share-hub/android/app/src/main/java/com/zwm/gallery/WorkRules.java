@@ -21,6 +21,10 @@ final class WorkRules {
         return false;
     }
 
+    static boolean isSupportedArchive(String name) {
+        return name.toLowerCase(Locale.ROOT).endsWith(".zip");
+    }
+
     static String chooseCaption(List<String> names) {
         for (String name : names) {
             if ("文案.txt".equalsIgnoreCase(name)) return name;
