@@ -55,8 +55,6 @@ struct Device {
 
 HWND gWindow = nullptr;
 HWND gDeviceList = nullptr;
-HWND gCaptionEdit = nullptr;
-HWND gCaptionLabel = nullptr;
 HWND gStatus = nullptr;
 HWND gLogButton = nullptr;
 HWND gProgress = nullptr;
@@ -228,11 +226,22 @@ struct ZipRecord {
 std::filesystem::path CreateFolderZip(const std::filesystem::path& folder, const std::wstring& taskId) {
     PostStatus(L"正在整理文件夹 “" + folder.filename().wstring() + L"”…");
     std::vector<std::filesystem::path> files;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(
+    int imageCount = 0;
+    int textCount = 0;
+    for (const auto& item : std::filesystem::directory_iterator(
              folder, std::filesystem::directory_options::skip_permission_denied)) {
-        if (item.is_regular_file()) files.push_back(item.path());
+        if (item.is_directory()) throw std::runtime_error(
+                "复杂聚合文件夹暂不直接接收；请拖一个 ZIP，或只拖单个作品文件夹");
+        if (!item.is_regular_file()) continue;
+        files.push_back(item.path());
+        std::wstring extension = item.path().extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+        if (extension == L".jpg" || extension == L".jpeg" || extension == L".png"
+                || extension == L".webp" || extension == L".heic" || extension == L".heif") ++imageCount;
+        if (extension == L".txt") ++textCount;
     }
     if (files.empty()) throw std::runtime_error("拖入的文件夹是空的");
+    if (imageCount == 0 || textCount == 0) throw std::runtime_error("单个作品文件夹必须同时包含图片和 TXT 文案");
     std::sort(files.begin(), files.end());
 
     std::filesystem::path archive = std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip");
@@ -312,14 +321,6 @@ std::wstring LastNetworkError(const std::wstring& fallback) {
     result += L"）";
     if (message) LocalFree(message);
     return result;
-}
-
-std::wstring GetWindowTextString(HWND hwnd) {
-    int length = GetWindowTextLengthW(hwnd);
-    std::wstring value(static_cast<size_t>(length) + 1, L'\0');
-    if (length > 0) GetWindowTextW(hwnd, value.data(), length + 1);
-    value.resize(static_cast<size_t>(length));
-    return value;
 }
 
 std::string JsonEscape(const std::wstring& text) {
@@ -463,7 +464,7 @@ public:
     }
 
     void PostJson(const std::wstring& path, const std::string& json) {
-        std::wstring headers = L"Content-Type: application/json; charset=utf-8\r\n";
+        std::wstring headers = L"Content-Type: application/json; charset=utf-8\r\nExpect:\r\n";
         SendMemory(L"POST", path, headers, reinterpret_cast<const BYTE*>(json.data()), static_cast<DWORD>(json.size()));
     }
 
@@ -487,8 +488,9 @@ public:
         BOOL ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1L),
                                      WINHTTP_NO_REQUEST_DATA, 0, static_cast<DWORD>(size64), 0);
         if (!ok) {
+            std::wstring error = LastNetworkError(L"手机拒绝建立上传连接");
             WinHttpCloseHandle(request);
-            throw std::runtime_error(WideToUtf8(LastNetworkError(L"手机拒绝建立上传连接")));
+            throw std::runtime_error(WideToUtf8(error));
         }
         std::ifstream input(file, std::ios::binary);
         if (!input) {
@@ -503,8 +505,9 @@ public:
             if (count == 0) continue;
             DWORD written = 0;
             if (!WinHttpWriteData(request, buffer.data(), count, &written) || written != count) {
+                std::wstring error = LastNetworkError(L"上传文件中断");
                 WinHttpCloseHandle(request);
-                throw std::runtime_error(WideToUtf8(LastNetworkError(L"上传文件中断")));
+                throw std::runtime_error(WideToUtf8(error));
             }
             sent += written;
             if (onProgress) onProgress(sent, size64);
@@ -522,11 +525,20 @@ private:
         HINTERNET request = WinHttpOpenRequest(connection_, method, path.c_str(), nullptr,
                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
         if (!request) throw std::runtime_error(WideToUtf8(LastNetworkError(L"无法创建请求")));
-        LPVOID optional = size > 0 ? const_cast<BYTE*>(data) : WINHTTP_NO_REQUEST_DATA;
-        BOOL ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1L), optional, size, size, 0);
+        BOOL ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1L),
+                                     WINHTTP_NO_REQUEST_DATA, 0, size, 0);
         if (!ok) {
+            std::wstring error = LastNetworkError(L"网络发送失败");
             WinHttpCloseHandle(request);
-            throw std::runtime_error(WideToUtf8(LastNetworkError(L"网络发送失败")));
+            throw std::runtime_error(WideToUtf8(error));
+        }
+        if (size > 0) {
+            DWORD written = 0;
+            if (!WinHttpWriteData(request, data, size, &written) || written != size) {
+                std::wstring error = LastNetworkError(L"请求内容发送失败");
+                WinHttpCloseHandle(request);
+                throw std::runtime_error(WideToUtf8(error));
+            }
         }
         CheckResponse(request);
         WinHttpCloseHandle(request);
@@ -666,7 +678,7 @@ void RefreshDeviceList() {
     SendMessageW(gDeviceList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(gDeviceList, nullptr, TRUE);
     std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开接收端并连接同一 Wi‑Fi。"
-                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台手机；把图片或视频直接拖到对应卡片。";
+                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台手机；拖入 ZIP、单个作品文件夹或图片即可。";
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
 }
 
@@ -841,8 +853,7 @@ void HandleDrop(HDROP drop) {
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
-    std::wstring caption = GetWindowTextString(gCaptionEdit);
-    std::thread(UploadToDevice, device, std::move(files), std::move(caption)).detach();
+    std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
 }
 
 void Layout(HWND window) {
@@ -851,10 +862,7 @@ void Layout(HWND window) {
     int width = client.right - client.left;
     int height = client.bottom - client.top;
     const int margin = 22;
-    int captionTop = std::max(330, height - 178);
-    MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, captionTop - 130), TRUE);
-    MoveWindow(gCaptionLabel, margin, captionTop - 28, width - margin * 2, 24, TRUE);
-    MoveWindow(gCaptionEdit, margin, captionTop, width - margin * 2, 80, TRUE);
+    MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 224), TRUE);
     int buttonWidth = 136;
     int cancelWidth = 86;
     int statusWidth = std::max(160, width - margin * 2 - buttonWidth - cancelWidth - 28);
@@ -876,21 +884,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             HWND title = CreateWindowW(L"STATIC", L"素材投送中控", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"同一 Wi‑Fi 下自动识别手机。把图片或视频拖到对应设备卡片即可。",
+            HWND tip = CreateWindowW(L"STATIC", L"拖入 ZIP、单个作品文件夹或图片；单文件最大 4GB。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 640, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
                 22, 94, 640, 280, window, reinterpret_cast<HMENU>(101), nullptr, nullptr);
             SendMessageW(gDeviceList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gCaptionLabel = CreateWindowW(L"STATIC", L"文案（可选，传到手机后自动复制）",
-                                           WS_CHILD | WS_VISIBLE, 22, 390, 500, 24, window, nullptr, nullptr, nullptr);
-            SendMessageW(gCaptionLabel, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gCaptionEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", nullptr,
-                WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
-                22, 418, 640, 80, window, reinterpret_cast<HMENU>(102), nullptr, nullptr);
-            SendMessageW(gCaptionEdit, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            SendMessageW(gCaptionEdit, EM_SETLIMITTEXT, 50000, 0);
             gStatus = CreateWindowW(L"STATIC", L"正在搜索同一局域网内的手机…",
                                     WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
                                     22, 516, 640, 46, window, nullptr, nullptr, nullptr);
@@ -1002,7 +1002,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     RegisterClassExW(&windowClass);
 
     HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控",
-                                   WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 640,
+                                   WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
     ShowWindow(window, showCommand);

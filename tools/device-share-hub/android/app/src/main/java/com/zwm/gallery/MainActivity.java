@@ -51,7 +51,14 @@ public final class MainActivity extends Activity {
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (OnlineService.ACTION_TASK_READY.equals(intent.getAction())) refreshWorks();
+            if (OnlineService.ACTION_TASK_READY.equals(intent.getAction())) {
+                refreshWorks();
+                String workId = intent.getStringExtra(OnlineService.EXTRA_AUTO_SHARE_WORK_ID);
+                if (workId != null && !workId.isEmpty()) {
+                    startActivity(new Intent(MainActivity.this, ShareActivity.class)
+                            .putExtra(ShareActivity.EXTRA_WORK_ID, workId));
+                }
+            }
             if (OnlineService.ACTION_STATUS.equals(intent.getAction())) {
                 String message = intent.getStringExtra("message");
                 if (message != null) statusText.setText(message);
@@ -69,6 +76,7 @@ public final class MainActivity extends Activity {
         startReceiver();
         if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
         else importSelectedTree();
+        UpdateChecker.checkDaily(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
     }
 
@@ -81,6 +89,7 @@ public final class MainActivity extends Activity {
         filter.addAction(OnlineService.ACTION_STATUS);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
+        updateSourceLabel();
         refreshWorks();
     }
 
@@ -107,8 +116,15 @@ public final class MainActivity extends Activity {
         root.setPadding(pad, dp(20), pad, dp(36));
         root.setBackgroundColor(Color.rgb(246, 244, 240));
 
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("相册", 30, true);
-        root.addView(title);
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        Button settings = smallButton("设置", false);
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        titleRow.addView(settings, new LinearLayout.LayoutParams(dp(86), dp(42)));
+        root.addView(titleRow);
         TextView intro = text("电脑拖入一个压缩包，作品会自动排好。点一下作品：复制文案并打开分享。", 14, false);
         intro.setTextColor(Color.rgb(91, 91, 88));
         root.addView(intro, margins(0, dp(6), 0, dp(18)));
@@ -262,7 +278,7 @@ public final class MainActivity extends Activity {
         name.setMaxLines(2);
         card.addView(name);
         String detail = work.images.size() + " 张图片";
-        if (work.sharedDate != null) detail += "\n✓ 已打开分享";
+        if (work.shareCount > 0) detail += "\n✓ 已打开分享 " + work.shareCount + " 次";
         else if (work.trashedDate != null) detail += "\n回收站保留 7 天";
         else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
         TextView meta = text(detail, 12, false);

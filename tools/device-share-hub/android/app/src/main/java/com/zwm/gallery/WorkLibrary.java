@@ -103,6 +103,8 @@ public final class WorkLibrary {
         WorkEntry entry = requireEntry(activeRoot, id);
         Properties meta = loadMeta(entry.directory);
         meta.setProperty("sharedDate", sharedDate.toString());
+        int count = parseCount(meta.getProperty("shareCount", "0"));
+        meta.setProperty("shareCount", Integer.toString(count + 1));
         saveMeta(entry.directory, meta);
     }
 
@@ -168,6 +170,7 @@ public final class WorkLibrary {
                 images,
                 parseDate(meta.getProperty("sharedDate")),
                 parseDate(meta.getProperty("trashedDate")),
+                parseCount(meta.getProperty("shareCount", "0")),
                 directory.getCanonicalFile());
     }
 
@@ -271,11 +274,12 @@ public final class WorkLibrary {
         public final List<String> images;
         public final LocalDate sharedDate;
         public final LocalDate trashedDate;
+        public final int shareCount;
         public final File directory;
 
         private WorkEntry(String id, String name, String text, String warning,
                           List<String> images, LocalDate sharedDate, LocalDate trashedDate,
-                          File directory) {
+                          int shareCount, File directory) {
             this.id = id;
             this.name = name;
             this.text = text;
@@ -283,6 +287,7 @@ public final class WorkLibrary {
             this.images = Collections.unmodifiableList(new ArrayList<>(images));
             this.sharedDate = sharedDate;
             this.trashedDate = trashedDate;
+            this.shareCount = shareCount;
             this.directory = directory;
         }
     }

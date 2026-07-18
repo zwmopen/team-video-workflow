@@ -45,6 +45,7 @@ public final class OnlineService extends Service {
     public static final String ACTION_START = "com.zwm.gallery.START";
     public static final String ACTION_STOP = "com.zwm.gallery.STOP";
     public static final String ACTION_TASK_READY = "com.zwm.gallery.TASK_READY";
+    public static final String EXTRA_AUTO_SHARE_WORK_ID = "autoShareWorkId";
     public static final String ACTION_STATUS = "com.zwm.gallery.STATUS";
     public static final String ACTION_SHARE_OPENED = "com.zwm.gallery.SHARE_OPENED";
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
@@ -303,6 +304,7 @@ public final class OnlineService extends Service {
 
         WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
         int imported;
+        String autoShareWorkId = "";
         ReceivedFile only = task.fileCount == 1 ? task.files.get(0) : null;
         if (only != null && (only.name.toLowerCase(Locale.ROOT).endsWith(".zip")
                 || "application/zip".equalsIgnoreCase(only.mime)
@@ -327,6 +329,7 @@ public final class OnlineService extends Service {
             if (images.isEmpty()) throw new HttpError(400, "这批素材中没有支持的图片");
             library.importWork(task.id, "电脑传入的作品", task.text, images, "");
             imported = 1;
+            autoShareWorkId = task.id;
         }
 
         synchronized (taskLock) {
@@ -338,7 +341,7 @@ public final class OnlineService extends Service {
         deleteRecursively(task.dir);
         DiagnosticLog.write(this, "task_committed", taskId + " works=" + imported);
         writeText(output, 200, "OK");
-        onTaskReady(taskId, imported);
+        onTaskReady(taskId, imported, autoShareWorkId);
     }
 
     private void cancelTask(String taskId, OutputStream output) throws Exception {
@@ -354,12 +357,14 @@ public final class OnlineService extends Service {
         writeText(output, 200, "OK");
     }
 
-    private void onTaskReady(String taskId, int imported) {
+    private void onTaskReady(String taskId, int imported, String autoShareWorkId) {
         notifyStatus("已收到 " + imported + " 个作品");
         NotificationManager manager = getSystemService(NotificationManager.class);
-        manager.notify(TASK_NOTIFICATION_ID, buildTaskNotification());
+        manager.notify(TASK_NOTIFICATION_ID, buildTaskNotification(autoShareWorkId));
         if (MainActivity.isVisible) {
-            sendBroadcast(new Intent(ACTION_TASK_READY).setPackage(getPackageName()));
+            sendBroadcast(new Intent(ACTION_TASK_READY)
+                    .setPackage(getPackageName())
+                    .putExtra(EXTRA_AUTO_SHARE_WORK_ID, autoShareWorkId));
         }
     }
 
@@ -464,17 +469,22 @@ public final class OnlineService extends Service {
                 .build();
     }
 
-    private Notification buildTaskNotification() {
+    private Notification buildTaskNotification(String autoShareWorkId) {
+        Intent target = autoShareWorkId == null || autoShareWorkId.isEmpty()
+                ? new Intent(this, MainActivity.class)
+                : new Intent(this, ShareActivity.class).putExtra(ShareActivity.EXTRA_WORK_ID, autoShareWorkId);
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this,
                 2,
-                new Intent(this, ShareActivity.class),
+                target,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("素材已接收")
-                .setContentText("点击打开安卓系统分享")
+                .setContentText(autoShareWorkId == null || autoShareWorkId.isEmpty()
+                        ? "点击查看作品"
+                        : "点击打开安卓系统分享")
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .build();

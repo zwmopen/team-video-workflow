@@ -83,6 +83,18 @@ public final class WorkLibraryTest {
         assertTrue(library.listTrash().isEmpty());
     }
 
+    @Test
+    public void countsEachOpenedShareTarget() throws Exception {
+        File source = temporary.newFolder("count-source");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("count-library"));
+        library.importWork("count", "计数", "文案", Arrays.asList(write(source, "1.jpg", "one")), "");
+
+        library.markShared("count", LocalDate.of(2026, 7, 18));
+        library.markShared("count", LocalDate.of(2026, 7, 18));
+
+        assertEquals(2, library.getActive("count").shareCount);
+    }
+
     private static File write(File directory, String name, String value) throws Exception {
         File file = new File(directory, name);
         Files.write(file.toPath(), value.getBytes(StandardCharsets.UTF_8));
