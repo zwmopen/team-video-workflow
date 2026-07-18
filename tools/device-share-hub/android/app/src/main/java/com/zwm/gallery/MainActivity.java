@@ -4,8 +4,6 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -167,10 +165,6 @@ public final class MainActivity extends Activity {
         statusText.setBackground(round(Color.rgb(231, 239, 233), 16));
         statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
         root.addView(statusText, margins(0, dp(18), 0, dp(8)));
-
-        Button diagnostics = smallButton("复制诊断信息", false);
-        diagnostics.setOnClickListener(v -> copyDiagnostics());
-        root.addView(diagnostics, new LinearLayout.LayoutParams(-1, dp(44)));
 
         TextView note = text("“已打开分享”只表示平台页面已打开；系统不会告诉相册是否真正发布成功。当天保留，次日进入回收站，7 天后清理。", 12, false);
         note.setTextColor(Color.GRAY);
@@ -404,12 +398,6 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 41);
         }
-    }
-
-    private void copyDiagnostics() {
-        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-        clipboard.setPrimaryClip(ClipData.newPlainText("相册诊断信息", DiagnosticLog.snapshot(this)));
-        toast("诊断信息已复制");
     }
 
     private LinearLayout card() {

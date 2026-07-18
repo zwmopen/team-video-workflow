@@ -2,6 +2,8 @@ package com.zwm.gallery;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -70,7 +72,10 @@ public final class SettingsActivity extends Activity {
         root.addView(update, margins(0, dp(10), 0, dp(10)));
         Button about = button("软件说明", false);
         about.setOnClickListener(v -> showAbout());
-        root.addView(about);
+        root.addView(about, margins(0, 0, 0, dp(10)));
+        Button diagnostics = button("复制诊断信息", false);
+        diagnostics.setOnClickListener(v -> copyDiagnostics());
+        root.addView(diagnostics);
 
         Button back = button("完成", true);
         back.setOnClickListener(v -> finish());
@@ -122,6 +127,12 @@ public final class SettingsActivity extends Activity {
                 .setTitle("关于相册")
                 .setMessage("相册用于同一 Wi‑Fi 下接收电脑作品，自动识别图片和 TXT，并用标准 Android 分享打开目标平台。\n\n不使用 Root、ADB、无障碍、自动点击或自动发布；不伪造图片地点和拍摄参数。")
                 .setPositiveButton("知道了", null).show();
+    }
+
+    private void copyDiagnostics() {
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        clipboard.setPrimaryClip(ClipData.newPlainText("相册诊断信息", DiagnosticLog.snapshot(this)));
+        toast("诊断信息已复制");
     }
 
     private String currentPathName() {

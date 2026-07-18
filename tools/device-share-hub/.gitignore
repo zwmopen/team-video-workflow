@@ -4,5 +4,6 @@ android/**/build/
 windows-native/build/
 windows-native/out/
 .local-test/
+artifacts/
 *.apk
 *.exe
