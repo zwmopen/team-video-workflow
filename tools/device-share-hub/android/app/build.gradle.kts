@@ -10,11 +10,24 @@ android {
         applicationId = "com.zwm.gallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 7
+        versionName = "0.3.4"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("signing/gallery-debug.jks")
+            storePassword = "gallerydev"
+            keyAlias = "gallery-debug"
+            keyPassword = "gallerydev"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
