@@ -23,8 +23,10 @@ public final class ShareActivity extends Activity {
         super.onCreate(savedInstanceState);
         try {
             pending = PendingTaskStore.read(this);
+            DiagnosticLog.write(this, "share_activity_open", pending.optString("id", ""));
             launchShare();
         } catch (Exception error) {
+            DiagnosticLog.write(this, "share_activity_failed", error.getMessage());
             Toast.makeText(this, "没有可分享的素材：" + error.getMessage(), Toast.LENGTH_LONG).show();
             finish();
         }
@@ -58,6 +60,7 @@ public final class ShareActivity extends Activity {
             Toast.makeText(this, "文案已复制到剪贴板", Toast.LENGTH_SHORT).show();
         }
 
+        DiagnosticLog.write(this, "share_sheet_launch", taskId + " files=" + uris.size() + " mime=" + commonMime(mimes));
         Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
         send.setType(commonMime(mimes));
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -95,6 +98,7 @@ public final class ShareActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_SHARE) {
+            DiagnosticLog.write(this, "share_result", "request=" + requestCode + " result=" + resultCode);
             PendingTaskStore.clear(this);
             startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_SHARE_FINISHED));
             finish();

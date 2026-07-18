@@ -81,21 +81,26 @@ public final class OnlineService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getAction();
         if (ACTION_STOP.equals(action)) {
+            DiagnosticLog.write(this, "service_stop", "receiver stopped");
             stopReceiver();
             return START_NOT_STICKY;
         }
         if (ACTION_SHARE_OPENED.equals(action)) {
             state = "sharing";
+            DiagnosticLog.write(this, "share_opened", currentTaskId);
             cancelTaskNotification();
             return START_STICKY;
         }
         if (ACTION_SHARE_FINISHED.equals(action)) {
+            DiagnosticLog.write(this, "share_finished", currentTaskId);
             state = "online";
             currentTaskId = "";
+            notifyStatus("局域网接收已开启");
             return START_STICKY;
         }
 
         startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
+        DiagnosticLog.write(this, "service_start", "receiver foreground service started");
         if (PendingTaskStore.exists(this)) {
             state = "ready";
             try {
@@ -149,6 +154,7 @@ public final class OnlineService extends Service {
             serverSocket = server;
             server.setReuseAddress(true);
             server.bind(new InetSocketAddress("0.0.0.0", HTTP_PORT));
+            DiagnosticLog.write(this, "http_ready", "port=" + HTTP_PORT);
             while (running) {
                 try {
                     Socket socket = server.accept();
@@ -160,6 +166,7 @@ public final class OnlineService extends Service {
             }
         } catch (Exception error) {
             Log.e(TAG, "http server failed", error);
+            DiagnosticLog.write(this, "http_failed", compact(error.getMessage()));
             notifyStatus("接收端口启动失败：" + compact(error.getMessage()));
         } finally {
             serverSocket = null;
@@ -172,6 +179,7 @@ public final class OnlineService extends Service {
              BufferedOutputStream output = new BufferedOutputStream(client.getOutputStream())) {
             try {
                 HttpRequest request = HttpRequest.read(input);
+                DiagnosticLog.write(this, "http_request", request.method + " " + request.path + " bytes=" + request.contentLength);
                 if ("GET".equals(request.method) && "/v2/info".equals(request.path)) {
                     writeJson(output, 200, deviceInfo());
                     return;
@@ -195,9 +203,11 @@ public final class OnlineService extends Service {
                 }
                 writeText(output, 404, "Not Found");
             } catch (HttpError error) {
+                DiagnosticLog.write(this, "http_error", error.code + " " + compact(error.getMessage()));
                 writeText(output, error.code, error.getMessage());
             } catch (Exception error) {
                 Log.w(TAG, "request failed", error);
+                DiagnosticLog.write(this, "request_failed", compact(error.getMessage()));
                 writeText(output, 500, compact(error.getMessage()));
             }
         } catch (Exception error) {
@@ -221,6 +231,7 @@ public final class OnlineService extends Service {
             currentTaskId = taskId;
             state = "receiving";
         }
+        DiagnosticLog.write(this, "task_created", taskId + " files=" + fileCount);
         notifyStatus("正在接收 " + fileCount + " 个文件…");
         writeText(output, 201, "OK");
     }
@@ -246,6 +257,10 @@ public final class OnlineService extends Service {
         File target = new File(task.dir, storedName);
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long remaining = request.contentLength;
+        long received = 0;
+        long lastNotice = 0;
+        long startMs = System.currentTimeMillis();
+        DiagnosticLog.write(this, "file_receiving", taskId + " #" + (index + 1) + "/" + task.fileCount + " " + originalName + " bytes=" + request.contentLength);
         try (FileOutputStream fileOutput = new FileOutputStream(temp, false)) {
             byte[] buffer = new byte[128 * 1024];
             while (remaining > 0) {
@@ -255,6 +270,13 @@ public final class OnlineService extends Service {
                 fileOutput.write(buffer, 0, count);
                 digest.update(buffer, 0, count);
                 remaining -= count;
+                received += count;
+                long now = System.currentTimeMillis();
+                if (now - lastNotice >= 700 || remaining == 0) {
+                    lastNotice = now;
+                    int percent = request.contentLength <= 0 ? 0 : (int) Math.min(100, (received * 100) / request.contentLength);
+                    notifyStatus("正在接收第 " + (index + 1) + "/" + task.fileCount + " 个文件：" + percent + "%");
+                }
             }
             fileOutput.flush();
             fileOutput.getFD().sync();
@@ -262,6 +284,7 @@ public final class OnlineService extends Service {
         String actualSha = hex(digest.digest());
         if (!expectedSha.isEmpty() && !expectedSha.equalsIgnoreCase(actualSha)) {
             temp.delete();
+            DiagnosticLog.write(this, "sha256_failed", originalName + " expected=" + expectedSha + " actual=" + actualSha);
             throw new HttpError(400, "SHA-256 校验失败");
         }
         if (target.exists() && !target.delete()) throw new HttpError(500, "无法替换缓存文件");
@@ -270,6 +293,8 @@ public final class OnlineService extends Service {
             if (activeTask == null || !activeTask.id.equals(taskId)) throw new HttpError(409, "任务状态已变化");
             task.files.put(index, new ReceivedFile(originalName, storedName, mime, target.length(), actualSha));
         }
+        long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
+        DiagnosticLog.write(this, "file_received", originalName + " bytes=" + target.length() + " ms=" + elapsedMs);
         notifyStatus("已接收 " + task.files.size() + "/" + task.fileCount + " 个文件");
         writeText(output, 200, "OK");
     }
@@ -299,6 +324,7 @@ public final class OnlineService extends Service {
             activeTask = null;
             state = "ready";
         }
+        DiagnosticLog.write(this, "task_committed", taskId + " files=" + task.fileCount);
         writeText(output, 200, "OK");
         onTaskReady(taskId);
     }
@@ -310,6 +336,7 @@ public final class OnlineService extends Service {
                 activeTask = null;
                 currentTaskId = "";
                 state = "online";
+                DiagnosticLog.write(this, "task_cancelled", taskId);
             }
         }
         writeText(output, 200, "OK");
@@ -345,6 +372,7 @@ public final class OnlineService extends Service {
             socket.setBroadcast(true);
             socket.bind(new InetSocketAddress("0.0.0.0", DISCOVERY_PORT));
             socket.setSoTimeout(900);
+            DiagnosticLog.write(this, "discovery_ready", "udp=" + DISCOVERY_PORT);
             long nextBeacon = 0;
             byte[] buffer = new byte[2048];
             while (running) {
@@ -366,6 +394,7 @@ public final class OnlineService extends Service {
         } catch (Exception error) {
             if (running) {
                 Log.e(TAG, "discovery failed", error);
+                DiagnosticLog.write(this, "discovery_failed", compact(error.getMessage()));
                 notifyStatus("局域网发现启动失败：" + compact(error.getMessage()));
             }
         } finally {

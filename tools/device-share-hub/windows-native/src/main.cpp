@@ -17,6 +17,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <mutex>
@@ -56,6 +57,7 @@ HWND gDeviceList = nullptr;
 HWND gCaptionEdit = nullptr;
 HWND gCaptionLabel = nullptr;
 HWND gStatus = nullptr;
+HWND gLogButton = nullptr;
 HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
@@ -64,6 +66,7 @@ std::vector<Device> gDisplayedDevices;
 std::atomic<bool> gRunning{true};
 std::thread gDiscoveryThread;
 HANDLE gSingleInstance = nullptr;
+std::filesystem::path gLogPath;
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -126,6 +129,73 @@ COLORREF StateColor(const std::wstring& state) {
 
 void PostStatus(const std::wstring& text) {
     if (gWindow) PostMessageW(gWindow, WM_STATUS_CHANGED, 0, reinterpret_cast<LPARAM>(new std::wstring(text)));
+}
+
+std::wstring NowStamp() {
+    SYSTEMTIME local{};
+    GetLocalTime(&local);
+    wchar_t buffer[64]{};
+    swprintf_s(buffer, L"%04u-%02u-%02u %02u:%02u:%02u.%03u",
+               local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute, local.wSecond, local.wMilliseconds);
+    return buffer;
+}
+
+std::filesystem::path DiagnosticLogPath() {
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
+    return base / L"ZwmDeviceShareHub" / L"diagnostics.log";
+}
+
+void WriteDiagnosticLog(const std::wstring& event, const std::wstring& detail) {
+    try {
+        if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
+        std::filesystem::create_directories(gLogPath.parent_path());
+        if (std::filesystem::exists(gLogPath) && std::filesystem::file_size(gLogPath) > 512ull * 1024ull) {
+            std::filesystem::path oldPath = gLogPath;
+            oldPath += L".old";
+            std::error_code ignored;
+            std::filesystem::remove(oldPath, ignored);
+            std::filesystem::rename(gLogPath, oldPath, ignored);
+        }
+        std::ofstream output(gLogPath, std::ios::binary | std::ios::app);
+        std::wstring line = NowStamp() + L" | " + event + L" | " + detail + L"\n";
+        std::string bytes = WideToUtf8(line);
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    } catch (...) {
+    }
+}
+
+std::wstring FormatBytes(uintmax_t bytes) {
+    const wchar_t* units[] = {L"B", L"KB", L"MB", L"GB"};
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 3) {
+        value /= 1024.0;
+        ++unit;
+    }
+    wchar_t buffer[64]{};
+    if (unit == 0) swprintf_s(buffer, L"%llu %s", static_cast<unsigned long long>(bytes), units[unit]);
+    else swprintf_s(buffer, L"%.1f %s", value, units[unit]);
+    return buffer;
+}
+
+std::wstring LastNetworkError(const std::wstring& fallback) {
+    DWORD code = GetLastError();
+    if (code == 0) return fallback;
+    wchar_t* message = nullptr;
+    DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                  nullptr, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                  reinterpret_cast<LPWSTR>(&message), 0, nullptr);
+    std::wstring result = fallback + L"（" + std::to_wstring(code);
+    if (length > 0 && message) {
+        std::wstring text(message, length);
+        while (!text.empty() && (text.back() == L'\r' || text.back() == L'\n' || text.back() == L' ')) text.pop_back();
+        result += L"：" + text;
+    }
+    result += L"）";
+    if (message) LocalFree(message);
+    return result;
 }
 
 std::wstring GetWindowTextString(HWND hwnd) {
@@ -262,12 +332,12 @@ public:
     HttpClient(const std::wstring& host, INTERNET_PORT port) {
         session_ = WinHttpOpen(L"ZwmDeviceShare/0.2", WINHTTP_ACCESS_TYPE_NO_PROXY,
                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!session_) throw std::runtime_error("无法初始化网络连接");
+        if (!session_) throw std::runtime_error(WideToUtf8(LastNetworkError(L"无法初始化网络连接")));
         WinHttpSetTimeouts(session_, 7000, 7000, 60000, 60000);
         connection_ = WinHttpConnect(session_, host.c_str(), port, 0);
         if (!connection_) {
             WinHttpCloseHandle(session_);
-            throw std::runtime_error("无法连接手机");
+            throw std::runtime_error(WideToUtf8(LastNetworkError(L"无法连接手机")));
         }
     }
 
@@ -285,7 +355,8 @@ public:
         SendMemory(L"POST", path, L"Content-Type: text/plain\r\n", nullptr, 0);
     }
 
-    void PutFile(const std::wstring& path, const std::filesystem::path& file, const std::wstring& mime, const std::wstring& sha256) {
+    void PutFile(const std::wstring& path, const std::filesystem::path& file, const std::wstring& mime, const std::wstring& sha256,
+                 const std::function<void(uintmax_t, uintmax_t)>& onProgress) {
         uintmax_t size64 = std::filesystem::file_size(file);
         if (size64 > 0xFFFFFFFFull) throw std::runtime_error("单个文件暂不支持超过 4GB");
         std::wstring encodedName = Utf8ToWide(PercentEncodeUtf8(file.filename().wstring()));
@@ -296,12 +367,12 @@ public:
             L"X-File-Sha256: " + sha256 + L"\r\n";
         HINTERNET request = WinHttpOpenRequest(connection_, L"PUT", path.c_str(), nullptr,
                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-        if (!request) throw std::runtime_error("无法创建上传请求");
+        if (!request) throw std::runtime_error(WideToUtf8(LastNetworkError(L"无法创建上传请求")));
         BOOL ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1L),
                                      WINHTTP_NO_REQUEST_DATA, 0, static_cast<DWORD>(size64), 0);
         if (!ok) {
             WinHttpCloseHandle(request);
-            throw std::runtime_error("手机拒绝建立上传连接");
+            throw std::runtime_error(WideToUtf8(LastNetworkError(L"手机拒绝建立上传连接")));
         }
         std::ifstream input(file, std::ios::binary);
         if (!input) {
@@ -309,6 +380,7 @@ public:
             throw std::runtime_error("无法打开本地文件");
         }
         std::vector<char> buffer(1024 * 1024);
+        uintmax_t sent = 0;
         while (input) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
             DWORD count = static_cast<DWORD>(input.gcount());
@@ -316,8 +388,10 @@ public:
             DWORD written = 0;
             if (!WinHttpWriteData(request, buffer.data(), count, &written) || written != count) {
                 WinHttpCloseHandle(request);
-                throw std::runtime_error("上传文件中断");
+                throw std::runtime_error(WideToUtf8(LastNetworkError(L"上传文件中断")));
             }
+            sent += written;
+            if (onProgress) onProgress(sent, size64);
         }
         CheckResponse(request);
         WinHttpCloseHandle(request);
@@ -331,19 +405,19 @@ private:
                     const BYTE* data, DWORD size) {
         HINTERNET request = WinHttpOpenRequest(connection_, method, path.c_str(), nullptr,
                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-        if (!request) throw std::runtime_error("无法创建请求");
+        if (!request) throw std::runtime_error(WideToUtf8(LastNetworkError(L"无法创建请求")));
         LPVOID optional = size > 0 ? const_cast<BYTE*>(data) : WINHTTP_NO_REQUEST_DATA;
         BOOL ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1L), optional, size, size, 0);
         if (!ok) {
             WinHttpCloseHandle(request);
-            throw std::runtime_error("网络发送失败");
+            throw std::runtime_error(WideToUtf8(LastNetworkError(L"网络发送失败")));
         }
         CheckResponse(request);
         WinHttpCloseHandle(request);
     }
 
     static void CheckResponse(HINTERNET request) {
-        if (!WinHttpReceiveResponse(request, nullptr)) throw std::runtime_error("没有收到手机响应");
+        if (!WinHttpReceiveResponse(request, nullptr)) throw std::runtime_error(WideToUtf8(LastNetworkError(L"没有收到手机响应")));
         DWORD status = 0;
         DWORD size = sizeof(status);
         if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -352,33 +426,79 @@ private:
         }
         if (status < 200 || status >= 300) {
             if (status == 409) throw std::runtime_error("手机上还有一批素材未处理");
-            throw std::runtime_error("手机返回错误状态");
+            std::wstring body = ReadResponseText(request);
+            std::wstring message = L"手机返回错误 " + std::to_wstring(status);
+            if (!body.empty()) message += L"：" + body;
+            throw std::runtime_error(WideToUtf8(message));
         }
+    }
+
+    static std::wstring ReadResponseText(HINTERNET request) {
+        std::string body;
+        DWORD available = 0;
+        while (WinHttpQueryDataAvailable(request, &available) && available > 0 && body.size() < 4096) {
+            DWORD toRead = std::min<DWORD>(available, 4096 - static_cast<DWORD>(body.size()));
+            std::string chunk(toRead, '\0');
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), toRead, &read) || read == 0) break;
+            chunk.resize(read);
+            body += chunk;
+        }
+        std::wstring text = Utf8ToWide(body);
+        text.erase(std::remove(text.begin(), text.end(), L'\r'), text.end());
+        std::replace(text.begin(), text.end(), L'\n', L' ');
+        if (text.size() > 180) text.resize(180);
+        return text;
     }
 };
 
 void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption) {
     std::wstring taskId = NewTaskId();
     try {
+        uintmax_t totalBytes = 0;
+        for (const auto& file : files) totalBytes += std::filesystem::file_size(file);
+        WriteDiagnosticLog(L"upload_start", device.name + L" ip=" + device.ip + L" files=" + std::to_wstring(files.size()) + L" bytes=" + std::to_wstring(totalBytes));
         PostStatus(L"正在连接 “" + device.name + L"”…");
         HttpClient client(device.ip, device.port);
         std::ostringstream json;
         json << "{\"taskId\":\"" << WideToUtf8(taskId) << "\",\"text\":\""
              << JsonEscape(caption) << "\",\"fileCount\":" << files.size() << "}";
         client.PostJson(L"/v2/tasks", json.str());
+        uintmax_t completedBytes = 0;
+        auto lastNotice = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        auto uploadStart = std::chrono::steady_clock::now();
         for (size_t index = 0; index < files.size(); ++index) {
-            PostStatus(L"正在传给 “" + device.name + L"”：" + std::to_wstring(index + 1) + L"/" + std::to_wstring(files.size()));
+            std::wstring fileName = files[index].filename().wstring();
+            WriteDiagnosticLog(L"file_start", fileName + L" size=" + std::to_wstring(std::filesystem::file_size(files[index])));
+            PostStatus(L"正在传给 “" + device.name + L"”：第 " + std::to_wstring(index + 1) + L"/" + std::to_wstring(files.size()) + L" 个");
             std::wstring sha = Sha256File(files[index]);
             std::wstring route = L"/v2/tasks/" + taskId + L"/files/" + std::to_wstring(index);
-            client.PutFile(route, files[index], MimeForPath(files[index]), sha);
+            uintmax_t fileSize = std::filesystem::file_size(files[index]);
+            client.PutFile(route, files[index], MimeForPath(files[index]), sha, [&](uintmax_t sent, uintmax_t) {
+                auto now = std::chrono::steady_clock::now();
+                if (now - lastNotice < std::chrono::milliseconds(450) && sent < fileSize) return;
+                lastNotice = now;
+                uintmax_t done = completedBytes + sent;
+                int percent = totalBytes == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / totalBytes));
+                double seconds = std::max(0.1, std::chrono::duration<double>(now - uploadStart).count());
+                uintmax_t speed = static_cast<uintmax_t>(done / seconds);
+                PostStatus(L"正在传给 “" + device.name + L"”：" + std::to_wstring(percent) + L"%（"
+                           + FormatBytes(done) + L"/" + FormatBytes(totalBytes) + L"，" + FormatBytes(speed) + L"/s）");
+            });
+            completedBytes += fileSize;
+            WriteDiagnosticLog(L"file_done", fileName + L" sha256=" + sha);
         }
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
+        WriteDiagnosticLog(L"upload_commit", taskId);
         PostStatus(L"已传送到 “" + device.name + L"”，手机正在打开分享");
     } catch (const std::exception& error) {
+        WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
         try {
             HttpClient cleanup(device.ip, device.port);
             cleanup.PostEmpty(L"/v2/tasks/" + taskId + L"/cancel");
+            WriteDiagnosticLog(L"upload_cancel_sent", taskId);
         } catch (...) {
+            WriteDiagnosticLog(L"upload_cancel_failed", taskId);
         }
         PostStatus(L"传送失败：" + Utf8ToWide(error.what()));
     }
@@ -415,12 +535,14 @@ void DiscoveryLoop() {
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
         PostStatus(L"局域网发现初始化失败");
+        WriteDiagnosticLog(L"discovery_failed", L"WSAStartup failed");
         return;
     }
     SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (socketHandle == INVALID_SOCKET) {
         WSACleanup();
         PostStatus(L"局域网发现端口创建失败");
+        WriteDiagnosticLog(L"discovery_failed", L"socket create failed");
         return;
     }
     BOOL yes = TRUE;
@@ -434,8 +556,10 @@ void DiscoveryLoop() {
         closesocket(socketHandle);
         WSACleanup();
         PostStatus(L"发现端口被占用，请关闭重复打开的中控");
+        WriteDiagnosticLog(L"discovery_failed", L"udp port occupied");
         return;
     }
+    WriteDiagnosticLog(L"discovery_ready", L"udp=45834");
     sockaddr_in target{};
     target.sin_family = AF_INET;
     target.sin_addr.s_addr = INADDR_BROADCAST;
@@ -475,7 +599,9 @@ void DiscoveryLoop() {
                     device.lastSeen = std::chrono::steady_clock::now();
                     if (!device.id.empty()) {
                         std::lock_guard<std::mutex> lock(gDeviceMutex);
+                        bool isNew = gDevices.find(device.id) == gDevices.end();
                         gDevices[device.id] = device;
+                        if (isNew) WriteDiagnosticLog(L"device_found", device.name + L" ip=" + device.ip + L" state=" + device.state);
                         PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
                     }
                 }
@@ -575,7 +701,10 @@ void Layout(HWND window) {
     MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, captionTop - 130), TRUE);
     MoveWindow(gCaptionLabel, margin, captionTop - 28, width - margin * 2, 24, TRUE);
     MoveWindow(gCaptionEdit, margin, captionTop, width - margin * 2, 80, TRUE);
-    MoveWindow(gStatus, margin, height - 76, width - margin * 2, 46, TRUE);
+    int buttonWidth = 136;
+    int statusWidth = std::max(160, width - margin * 2 - buttonWidth - 14);
+    MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
+    MoveWindow(gLogButton, margin + statusWidth + 14, height - 72, buttonWidth, 38, TRUE);
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -609,10 +738,22 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                     WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
                                     22, 516, 640, 46, window, nullptr, nullptr, nullptr);
             SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gLogButton = CreateWindowW(L"BUTTON", L"打开诊断日志", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                       540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
+            SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
             SetTimer(window, 1, 2500, nullptr);
             return 0;
         }
+        case WM_COMMAND:
+            if (LOWORD(wParam) == 103) {
+                if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
+                WriteDiagnosticLog(L"log_opened", gLogPath.wstring());
+                ShellExecuteW(window, L"open", gLogPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                return 0;
+            }
+            break;
         case WM_SIZE:
             Layout(window);
             return 0;

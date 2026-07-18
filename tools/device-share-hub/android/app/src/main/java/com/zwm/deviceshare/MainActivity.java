@@ -6,6 +6,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -48,6 +50,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ensureDeviceId();
+        DiagnosticLog.write(this, "app_open", "MainActivity opened");
         setContentView(buildUi());
         loadSettings();
         requestNotificationPermission();
@@ -68,6 +71,8 @@ public final class MainActivity extends Activity {
         }
         if (PendingTaskStore.exists(this)) {
             statusText.setText("有一批素材等待分享");
+        } else {
+            statusText.setText("局域网接收已开启");
         }
     }
 
@@ -121,6 +126,12 @@ public final class MainActivity extends Activity {
             }
         });
         root.addView(sharePending, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        Button diagnostics = button("复制诊断信息", false);
+        diagnostics.setOnClickListener(v -> copyDiagnostics());
+        LinearLayout.LayoutParams diagnosticsParams = new LinearLayout.LayoutParams(-1, dp(48));
+        diagnosticsParams.setMargins(0, dp(10), 0, 0);
+        root.addView(diagnostics, diagnosticsParams);
 
         Button stop = button("停止局域网接收", false);
         stop.setOnClickListener(v -> stopReceiver());
@@ -198,20 +209,29 @@ public final class MainActivity extends Activity {
             return;
         }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("deviceName", name).apply();
+        DiagnosticLog.write(this, "device_name_saved", name);
         startReceiver();
         statusText.setText("名称已保存，电脑会自动刷新设备卡片");
     }
 
     private void startReceiver() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("serviceEnabled", true).apply();
+        DiagnosticLog.write(this, "receiver_start_requested", "foreground service");
         Intent intent = new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START);
         startForegroundService(intent);
     }
 
     private void stopReceiver() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("serviceEnabled", false).apply();
+        DiagnosticLog.write(this, "receiver_stop_requested", "user tapped stop");
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_STOP));
         statusText.setText("局域网接收已停止；重新打开 App 会再次开启");
+    }
+
+    private void copyDiagnostics() {
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        clipboard.setPrimaryClip(ClipData.newPlainText("素材投送诊断信息", DiagnosticLog.snapshot(this)));
+        toast("诊断信息已复制");
     }
 
     private void ensureDeviceId() {
