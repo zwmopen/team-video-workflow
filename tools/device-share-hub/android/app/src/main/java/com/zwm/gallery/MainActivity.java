@@ -9,12 +9,15 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
@@ -36,6 +39,7 @@ public final class MainActivity extends Activity {
     private static final String PREF_TREE_URI = "libraryTreeUri";
     private static final String PREF_TREE_NAME = "libraryTreeName";
     private static final int REQUEST_TREE = 61;
+    private static final int REQUEST_LEGACY_STORAGE = 62;
     public static volatile boolean isVisible;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -72,6 +76,7 @@ public final class MainActivity extends Activity {
         updateSourceLabel();
         requestNotificationPermission();
         startReceiver();
+        requestLegacyStoragePermission();
         if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
         else importSelectedTree();
         UpdateChecker.checkDaily(this);
@@ -333,18 +338,24 @@ public final class MainActivity extends Activity {
             try {
                 DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
                         getContentResolver(), Uri.parse(stored), library(), new File(getCacheDir(), "tree-import"));
+                LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
                 DiagnosticLog.write(this, "tree_import",
                         "detected=" + result.detected
                                 + " imported=" + result.imported
                                 + " skipped=" + result.skipped
                                 + " scannedFolders=" + result.scannedFolders
                                 + " aggregateFolders=" + result.aggregateFolders
+                                + " hiddenDetected=" + hidden.detected
+                                + " hiddenImported=" + hidden.imported
+                                + " hiddenSkipped=" + hidden.skipped
                                 + " notes=" + result.scanNotes);
                 runOnUiThread(() -> {
-                    String message = result.imported > 0
-                            ? "新增 " + result.imported + " 个作品"
-                            : result.detected > 0
-                            ? "已是最新，共识别 " + result.detected + " 个作品"
+                    int imported = result.imported + hidden.imported;
+                    int detected = result.detected + hidden.detected;
+                    String message = imported > 0
+                            ? "新增 " + imported + " 个作品"
+                            : detected > 0
+                            ? "已是最新，共识别 " + detected + " 个作品"
                             : "没识别到作品：请选择包含“图片 + TXT”的作品文件夹";
                     if (result.aggregateFolders > 0) message += "，已优先使用子文件夹";
                     statusText.setText(message);
@@ -374,13 +385,27 @@ public final class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         String stored = prefs.getString(PREF_TREE_URI, "");
         String name = prefs.getString(PREF_TREE_NAME, "");
-        if (!stored.isEmpty() && name.isEmpty()) name = treeName(Uri.parse(stored));
+        if (!stored.isEmpty()) {
+            String resolvedName = treeName(Uri.parse(stored));
+            if (!resolvedName.isEmpty()) {
+                name = resolvedName;
+                prefs.edit().putString(PREF_TREE_NAME, name).apply();
+            }
+        }
         sourceText.setText(stored.isEmpty() ? "作品文件夹：未设置" : "作品文件夹：" + name);
     }
 
     private String treeName(Uri tree) {
         try {
-            String id = android.provider.DocumentsContract.getTreeDocumentId(tree);
+            String id = DocumentsContract.getTreeDocumentId(tree);
+            Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+            try (Cursor cursor = getContentResolver().query(document,
+                    new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    String displayName = cursor.getString(0);
+                    if (displayName != null && !displayName.trim().isEmpty()) return displayName.trim();
+                }
+            }
             int slash = id.lastIndexOf('/');
             String name = slash >= 0 ? id.substring(slash + 1) : id.substring(id.lastIndexOf(':') + 1);
             return name.isEmpty() ? "已设置" : name;
@@ -408,6 +433,42 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 41);
         }
+    }
+
+    private void requestLegacyStoragePermission() {
+        if (Build.VERSION.SDK_INT == 29
+                && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_LEGACY_STORAGE);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_LEGACY_STORAGE) return;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            DiagnosticLog.write(this, "legacy_storage_granted", "Android 10 Huawei hidden-folder fallback enabled");
+            importSelectedTree();
+        } else {
+            DiagnosticLog.write(this, "legacy_storage_denied", "hidden dot folders remain unavailable");
+            toast("未允许读取存储，点开头的作品文件夹可能无法显示");
+        }
+    }
+
+    private LegacyHiddenFolderImporter.Result importLegacyHiddenFolders(Uri tree) throws Exception {
+        if (Build.VERSION.SDK_INT != 29
+                || checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            return new LegacyHiddenFolderImporter.Result();
+        }
+        String selectedName = treeName(tree);
+        File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                .getCanonicalFile();
+        File selected = new File(downloads, selectedName).getCanonicalFile();
+        if (!selected.toPath().startsWith(downloads.toPath()) || !selected.isDirectory()) {
+            DiagnosticLog.write(this, "legacy_storage_unmapped", "selected=" + selectedName);
+            return new LegacyHiddenFolderImporter.Result();
+        }
+        return LegacyHiddenFolderImporter.importFrom(selected, library());
     }
 
     private LinearLayout card() {
