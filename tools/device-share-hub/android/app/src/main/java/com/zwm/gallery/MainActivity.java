@@ -339,9 +339,6 @@ public final class MainActivity extends Activity {
                                 + " skipped=" + result.skipped
                                 + " scannedFolders=" + result.scannedFolders
                                 + " aggregateFolders=" + result.aggregateFolders
-                                + " archives=" + result.archiveCount
-                                + " archiveImportedWorks=" + result.archiveImportedWorks
-                                + " archiveErrors=" + result.archiveErrors
                                 + " notes=" + result.scanNotes);
                 runOnUiThread(() -> {
                     String message = result.imported > 0
@@ -350,7 +347,6 @@ public final class MainActivity extends Activity {
                             ? "已是最新，共识别 " + result.detected + " 个作品"
                             : "没识别到作品：请选择包含“图片 + TXT”的作品文件夹";
                     if (result.aggregateFolders > 0) message += "，已优先使用子文件夹";
-                    if (result.archiveCount > 0) message += "，已检查 " + result.archiveCount + " 个压缩包";
                     statusText.setText(message);
                     refreshWorks();
                 });
