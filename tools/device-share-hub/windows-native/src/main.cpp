@@ -387,22 +387,13 @@ struct ZipRecord {
 std::filesystem::path CreateFolderZip(const std::filesystem::path& folder, const std::wstring& taskId) {
     PostStatus(L"正在整理文件夹 “" + folder.filename().wstring() + L"”…");
     std::vector<std::filesystem::path> files;
-    int imageCount = 0;
-    int textCount = 0;
-    for (const auto& item : std::filesystem::directory_iterator(
+    for (const auto& item : std::filesystem::recursive_directory_iterator(
              folder, std::filesystem::directory_options::skip_permission_denied)) {
-        if (item.is_directory()) throw std::runtime_error(
-                "复杂聚合文件夹暂不直接接收；请拖一个 ZIP，或只拖单个作品文件夹");
         if (!item.is_regular_file()) continue;
         files.push_back(item.path());
-        std::wstring extension = item.path().extension().wstring();
-        std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
-        if (extension == L".jpg" || extension == L".jpeg" || extension == L".png"
-                || extension == L".webp" || extension == L".heic" || extension == L".heif") ++imageCount;
-        if (extension == L".txt") ++textCount;
+        if (files.size() > 10000) throw std::runtime_error("文件夹中的文件超过 10000 个，请分批传送");
     }
     if (files.empty()) throw std::runtime_error("拖入的文件夹是空的");
-    if (imageCount == 0 || textCount == 0) throw std::runtime_error("单个作品文件夹必须同时包含图片和 TXT 文案");
     std::sort(files.begin(), files.end());
 
     std::filesystem::path archive = std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip");
@@ -754,9 +745,10 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     PostProgress(0, true);
     std::vector<std::filesystem::path> temporaryArchives;
     try {
-        for (auto& input : files) {
+        for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
+            auto& input = files[inputIndex];
             if (std::filesystem::is_directory(input)) {
-                input = CreateFolderZip(input, taskId);
+                input = CreateFolderZip(input, taskId + L"-" + std::to_wstring(inputIndex));
                 temporaryArchives.push_back(input);
             }
         }
@@ -800,7 +792,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
         WriteDiagnosticLog(L"upload_commit", taskId);
         PostProgress(100, true);
-        PostStatus(L"已传送到 “" + device.name + L"”，手机相册已加入作品");
+        PostStatus(L"已传送到 “" + device.name + L"” 的接收文件夹");
     } catch (const std::exception& error) {
         WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
         try {
@@ -851,7 +843,7 @@ void RefreshDeviceList() {
     SendMessageW(gDeviceList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(gDeviceList, nullptr, TRUE);
     std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开接收端并连接同一 Wi‑Fi。"
-                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台手机；拖入 ZIP、单个作品文件夹或图片即可。";
+                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台手机；可拖入任意文件、ZIP 或整个文件夹。";
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
 }
 
@@ -1078,18 +1070,8 @@ void HandleDrop(HDROP drop) {
         MessageBoxW(gWindow, L"没有找到可传送的文件或文件夹。", L"素材投送", MB_OK | MB_ICONWARNING);
         return;
     }
-    int packageCount = 0;
-    for (const auto& file : files) {
-        std::wstring extension = file.extension().wstring();
-        std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
-        if (std::filesystem::is_directory(file) || extension == L".zip") ++packageCount;
-    }
-    if (packageCount > 0 && files.size() != 1) {
-        MessageBoxW(gWindow, L"ZIP 或文件夹请一次拖一个，这样手机才能正确拆成作品。", L"相册投送", MB_OK | MB_ICONINFORMATION);
-        return;
-    }
     if (files.size() > 100) {
-        MessageBoxW(gWindow, L"单次最多传送 100 个文件。", L"素材投送", MB_OK | MB_ICONWARNING);
+        MessageBoxW(gWindow, L"单次最多拖入 100 个顶层项目；文件夹内部可包含更多文件。", L"素材投送", MB_OK | MB_ICONWARNING);
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
@@ -1124,7 +1106,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             HWND title = CreateWindowW(L"STATIC", L"素材投送中控", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"拖入 ZIP、单个作品文件夹或图片；单文件最大 4GB。",
+            HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 640, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,

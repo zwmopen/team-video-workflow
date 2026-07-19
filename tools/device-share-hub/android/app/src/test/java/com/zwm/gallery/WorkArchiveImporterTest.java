@@ -49,6 +49,17 @@ public final class WorkArchiveImporterTest {
         assertEquals("Windows ZIP 文案", library.listActive().get(0).text);
     }
 
+    @Test
+    public void acceptsGeneralArchiveWithoutInventingAWork() throws Exception {
+        Map<String, String> content = new LinkedHashMap<>();
+        content.put("资料/说明.pdf", "pdf");
+        content.put("资料/原始数据.bin", "binary");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("general-library"));
+
+        assertEquals(0, WorkArchiveImporter.importZip(zip(content), library, "general-batch"));
+        assertEquals(0, library.listActive().size());
+    }
+
     private File zip(Map<String, String> content) throws Exception {
         File file = temporary.newFile("works.zip");
         try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(file))) {

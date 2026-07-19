@@ -303,22 +303,44 @@ public final class OnlineService extends Service {
         }
 
         WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
-        int imported;
+        int imported = 0;
+        int deliveredFiles = 0;
         String autoShareWorkId = "";
         ReceivedFile only = task.fileCount == 1 ? task.files.get(0) : null;
-        if (only != null && (only.name.toLowerCase(Locale.ROOT).endsWith(".zip")
-                || "application/zip".equalsIgnoreCase(only.mime)
-                || "application/x-zip-compressed".equalsIgnoreCase(only.mime))) {
-            imported = WorkArchiveImporter.importZip(only.file, library, task.id);
-            String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
-            if (!treeValue.isEmpty()) {
-                try {
-                    int exported = DocumentTreeExporter.exportZip(getContentResolver(), android.net.Uri.parse(treeValue), only.file, task.id);
-                    DiagnosticLog.write(this, "tree_export", "works=" + exported);
-                } catch (Exception exportError) {
-                    DiagnosticLog.write(this, "tree_export_failed", compact(exportError.getMessage()));
+        String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
+        if (!treeValue.isEmpty()) {
+            android.net.Uri tree = android.net.Uri.parse(treeValue);
+            java.util.ArrayList<File> directImages = new java.util.ArrayList<>();
+            int exportedDirectories = 0;
+            for (int index = 0; index < task.fileCount; index++) {
+                ReceivedFile file = task.files.get(index);
+                if (file == null) throw new HttpError(409, "缺少文件 " + index);
+                if (isZip(file)) {
+                    DocumentTreeExporter.ExportResult exported = DocumentTreeExporter.exportZip(
+                            getContentResolver(), tree, file.file, task.id + "-" + index);
+                    deliveredFiles += exported.files;
+                    exportedDirectories += exported.directories;
+                } else {
+                    DocumentTreeExporter.exportFile(getContentResolver(), tree,
+                            file.file, file.name, file.mime);
+                    deliveredFiles++;
+                    if (WorkRules.isSupportedImage(file.name)) directImages.add(file.file);
                 }
             }
+            DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
+                    getContentResolver(), tree, library, new File(getCacheDir(), "tree-import-service"));
+            imported = result.imported;
+            if (!directImages.isEmpty()) {
+                library.importWork(task.id, "电脑传入的作品", task.text, directImages, "");
+                imported++;
+                autoShareWorkId = task.id;
+            }
+            DiagnosticLog.write(this, "tree_export", "files=" + deliveredFiles
+                    + " directories=" + exportedDirectories + " works=" + imported);
+        } else if (only != null && isZip(only)) {
+                imported = WorkArchiveImporter.importZip(only.file, library, task.id);
+                if (imported == 0) throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用压缩包");
+                deliveredFiles = 1;
         } else {
             java.util.ArrayList<File> images = new java.util.ArrayList<>();
             for (int index = 0; index < task.fileCount; index++) {
@@ -326,10 +348,14 @@ public final class OnlineService extends Service {
                 if (file == null) throw new HttpError(409, "缺少文件 " + index);
                 if (WorkRules.isSupportedImage(file.name)) images.add(file.file);
             }
-            if (images.isEmpty()) throw new HttpError(400, "这批素材中没有支持的图片");
-            library.importWork(task.id, "电脑传入的作品", task.text, images, "");
-            imported = 1;
-            autoShareWorkId = task.id;
+            if (!images.isEmpty()) {
+                library.importWork(task.id, "电脑传入的作品", task.text, images, "");
+                imported = 1;
+                deliveredFiles = task.fileCount;
+                autoShareWorkId = task.id;
+            } else {
+                throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用文件");
+            }
         }
 
         synchronized (taskLock) {
@@ -339,9 +365,9 @@ public final class OnlineService extends Service {
             state = "online";
         }
         deleteRecursively(task.dir);
-        DiagnosticLog.write(this, "task_committed", taskId + " works=" + imported);
+        DiagnosticLog.write(this, "task_committed", taskId + " files=" + deliveredFiles + " works=" + imported);
         writeText(output, 200, "OK");
-        onTaskReady(taskId, imported, autoShareWorkId);
+        onTaskReady(taskId, deliveredFiles, imported, autoShareWorkId);
     }
 
     private void cancelTask(String taskId, OutputStream output) throws Exception {
@@ -357,8 +383,11 @@ public final class OnlineService extends Service {
         writeText(output, 200, "OK");
     }
 
-    private void onTaskReady(String taskId, int imported, String autoShareWorkId) {
-        notifyStatus("已收到 " + imported + " 个作品");
+    private void onTaskReady(String taskId, int deliveredFiles, int imported, String autoShareWorkId) {
+        String summary = imported > 0
+                ? "已收到 " + deliveredFiles + " 个文件，识别 " + imported + " 个新作品"
+                : "已收到 " + deliveredFiles + " 个文件";
+        notifyStatus(summary);
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.notify(TASK_NOTIFICATION_ID, buildTaskNotification(autoShareWorkId));
         if (MainActivity.isVisible) {
@@ -380,6 +409,12 @@ public final class OnlineService extends Service {
                 .put("port", HTTP_PORT)
                 .put("state", state)
                 .put("taskId", currentTaskId);
+    }
+
+    private static boolean isZip(ReceivedFile file) {
+        return file.name.toLowerCase(Locale.ROOT).endsWith(".zip")
+                || "application/zip".equalsIgnoreCase(file.mime)
+                || "application/x-zip-compressed".equalsIgnoreCase(file.mime);
     }
 
     private String installedVersion() {

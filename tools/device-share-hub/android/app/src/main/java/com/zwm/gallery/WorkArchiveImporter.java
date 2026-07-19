@@ -30,7 +30,7 @@ public final class WorkArchiveImporter {
         try (InputStream input = new FileInputStream(archive)) {
             plans = ZipWorkScanner.scan(input);
         }
-        if (plans.isEmpty()) throw new IOException("压缩包中没有找到同时包含图片和 TXT 的作品文件夹");
+        if (plans.isEmpty()) return 0;
         if (plans.size() > MAX_WORKS) throw new IOException("作品数量超过 " + MAX_WORKS + " 个");
 
         File temporaryRoot = Files.createTempDirectory("album-import-").toFile();

@@ -44,3 +44,6 @@ targets:
       - path: AlbumTests
     dependencies:
       - target: Album
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
