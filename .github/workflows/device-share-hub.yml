@@ -112,15 +112,24 @@ jobs:
           xcodebuild \
             -project Album.xcodeproj \
             -scheme Album \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 16 Pro' \
+            test > "$RUNNER_TEMP/device-share-ios-build.log" 2>&1
+          test_status=$?
+          xcodebuild \
+            -project Album.xcodeproj \
+            -scheme Album \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build > "$RUNNER_TEMP/device-share-ios-build.log" 2>&1
+            build >> "$RUNNER_TEMP/device-share-ios-build.log" 2>&1
           build_status=$?
-          echo "status=$build_status" >> "$GITHUB_OUTPUT"
+          if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then status=1; else status=0; fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
           tail -n 180 "$RUNNER_TEMP/device-share-ios-build.log"
           exit 0
       - name: Package AltStore IPA
@@ -132,12 +141,12 @@ jobs:
           rm -rf package
           mkdir -p package/Payload
           ditto "$app_path" "package/Payload/Album.app"
-          (cd package && /usr/bin/zip -qry ../album-iOS-v0.1.4-altstore.ipa Payload)
+          (cd package && /usr/bin/zip -qry ../album-iOS-v0.2.0-altstore.ipa Payload)
           python3 - <<'PY'
           import plistlib
           import zipfile
 
-          ipa = "album-iOS-v0.1.4-altstore.ipa"
+          ipa = "album-iOS-v0.2.0-altstore.ipa"
           with zipfile.ZipFile(ipa) as archive:
               names = archive.namelist()
               assert "Payload/Album.app/Album" in names, "iOS executable missing"
@@ -145,10 +154,10 @@ jobs:
               info = plistlib.loads(archive.read("Payload/Album.app/Info.plist"))
               assert info["CFBundleExecutable"] == "Album"
               assert info["CFBundleDisplayName"] == "相册"
-              assert info["CFBundleShortVersionString"] == "0.1.4"
+              assert info["CFBundleShortVersionString"] == "0.2.0"
           print("IPA structure verified")
           PY
-          shasum -a 256 album-iOS-v0.1.4-altstore.ipa > album-iOS-v0.1.4-altstore.ipa.sha256
+          shasum -a 256 album-iOS-v0.2.0-altstore.ipa > album-iOS-v0.2.0-altstore.ipa.sha256
       - name: Upload iOS build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -159,10 +168,10 @@ jobs:
         if: steps.ios_compile.outputs.status == '0'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: album-ios-altstore-v0.1.4
+          name: album-ios-altstore-v0.2.0
           path: |
-            tools/device-share-hub/ios/album-iOS-v0.1.4-altstore.ipa
-            tools/device-share-hub/ios/album-iOS-v0.1.4-altstore.ipa.sha256
+            tools/device-share-hub/ios/album-iOS-v0.2.0-altstore.ipa
+            tools/device-share-hub/ios/album-iOS-v0.2.0-altstore.ipa.sha256
       - name: Fail when iOS build failed
         if: steps.ios_compile.outputs.status != '0'
         run: exit 1

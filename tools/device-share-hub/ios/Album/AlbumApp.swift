@@ -1,15 +1,23 @@
-import SwiftUI
+import UIKit
 
-@main
-struct AlbumApp: App {
-    @StateObject private var library = WorkLibrary()
+@UIApplicationMain
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    var window: UIWindow?
+    let library = WorkLibrary()
 
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(library)
-                .tint(Color(red: 0.06, green: 0.61, blue: 0.39))
-                .task { await library.start() }
-        }
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.tintColor = UIColor(red: 0.06, green: 0.61, blue: 0.39, alpha: 1)
+        let main = LibraryViewController(library: library)
+        window.rootViewController = UINavigationController(rootViewController: main)
+        window.makeKeyAndVisible()
+        self.window = window
+        library.start()
+        return true
+    }
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        library.refresh(showConfirmation: false)
     }
 }
