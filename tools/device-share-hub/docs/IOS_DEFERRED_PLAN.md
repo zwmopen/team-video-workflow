@@ -3,6 +3,8 @@
 日期：2026-07-18  
 状态：已完成可行性分析，暂缓开发。仓库中尚无 iOS 工程、IPA 或经过 iPhone 验收的功能。
 
+2026-07-19 补充：原生 iOS App 继续延期，但已决定优先验证无需 App 的“作品分享”快捷指令。快捷指令设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`。快捷指令不是原生 iOS 客户端，不能据此把下列 iOS App 功能标记为已实现。
+
 ## 决策
 
 iOS 客户端以后作为现有 `device-share-hub` 的第三个客户端增加，不新建另一套产品，不改变 Windows + Android 已有流程。界面继续使用“相册”名称，并坚持同一 Wi-Fi 自动发现、无手动 IP、无配对码、无命令行操作。

@@ -114,7 +114,7 @@ Windows 面板保持纯 Win32 C++：
 
 ## iOS 延期开发
 
-iOS 客户端暂缓开发，当前仓库没有 iOS 工程或经过 iPhone 验收的实现。后续开发边界、TestFlight 安装方案和恢复开发条件见 [IOS_DEFERRED_PLAN.md](IOS_DEFERRED_PLAN.md)。
+iOS 客户端暂缓开发，当前仓库没有 iOS 工程或经过 iPhone 验收的实现。后续开发边界、TestFlight 安装方案和恢复开发条件见 [IOS_DEFERRED_PLAN.md](IOS_DEFERRED_PLAN.md)。无需原生 App 的 iPhone“作品分享”快捷指令已完成设计确认，设计存档位于仓库根目录 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`，当前状态为“尚未实现、尚未实体机验收”。
 
 ## Android 公开更新通道
 
