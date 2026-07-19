@@ -1,6 +1,8 @@
 package com.zwm.gallery;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
@@ -28,6 +30,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.window.OnBackInvokedDispatcher;
 
 import java.io.File;
 import java.io.IOException;
@@ -81,6 +84,7 @@ public final class MainActivity extends Activity {
         requestNotificationPermission();
         startReceiver();
         requestLegacyStoragePermission();
+        if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
         UpdateChecker.checkDaily(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
     }
@@ -96,7 +100,7 @@ public final class MainActivity extends Activity {
         else registerLegacyReceiver(filter);
         updateSourceLabel();
         if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
-        else importSelectedTree();
+        else importSelectedTree(false);
     }
 
     @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
@@ -113,6 +117,28 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         worker.shutdownNow();
         super.onDestroy();
+    }
+
+    @Override
+    @SuppressLint("GestureBackNavigation")
+    public void onBackPressed() {
+        handleBack();
+    }
+
+    private void handleBack() {
+        if (showingTrash) {
+            showWorks();
+            return;
+        }
+        finish();
+    }
+
+    private static final class Api33Back {
+        @TargetApi(33)
+        static void register(MainActivity activity) {
+            activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, activity::handleBack);
+        }
     }
 
     private View buildUi() {
@@ -141,7 +167,7 @@ public final class MainActivity extends Activity {
         leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
         leftModeButton.setOnClickListener(v -> {
             if (showingTrash) showWorks();
-            else importSelectedTree();
+            else importSelectedTree(true);
         });
         titleRow.addView(leftModeButton, iconParams(false));
         rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
@@ -335,13 +361,13 @@ public final class MainActivity extends Activity {
                     .putString(PREF_TREE_NAME, treeName)
                     .apply();
             updateSourceLabel();
-            importSelectedTree();
+            importSelectedTree(true);
         } catch (Exception error) {
             statusText.setText("无法保存文件夹权限：" + error.getMessage());
         }
     }
 
-    private void importSelectedTree() {
+    private void importSelectedTree(boolean notifyWhenFinished) {
         String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
         if (stored.isEmpty()) {
             refreshWorks();
@@ -377,6 +403,7 @@ public final class MainActivity extends Activity {
                             : "没识别到作品：请选择包含“图片 + TXT”的作品文件夹";
                     if (result.aggregateFolders > 0) message += "，已优先使用子文件夹";
                     statusText.setText(message);
+                    if (notifyWhenFinished) toast("已刷新，共 " + detected + " 个作品");
                     refreshWorks();
                 });
             } catch (Exception error) {
@@ -474,7 +501,7 @@ public final class MainActivity extends Activity {
         if (requestCode != REQUEST_LEGACY_STORAGE) return;
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             DiagnosticLog.write(this, "legacy_storage_granted", "Android 10 Huawei hidden-folder fallback enabled");
-            importSelectedTree();
+            importSelectedTree(false);
         } else {
             DiagnosticLog.write(this, "legacy_storage_denied", "hidden dot folders remain unavailable");
             toast("未允许读取存储，点开头的作品文件夹可能无法显示");
