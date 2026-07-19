@@ -9,7 +9,7 @@
 ## 端口
 
 - UDP `45834`：设备发现。
-- TCP `45833`：安卓接收端 HTTP 服务。
+- TCP `45833`：Android / iPhone 接收端 HTTP 服务。
 
 ## 发现
 
@@ -19,7 +19,7 @@ Windows 每两秒向 UDP 广播地址发送：
 ZWMDS2_DISCOVER
 ```
 
-安卓接收端回复：
+手机接收端回复：
 
 ```text
 ZWMDS2_HERE|2|deviceId|httpPort|base64url(name)|base64url(model)|base64url(state)|taskId

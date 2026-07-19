@@ -1,23 +1,23 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.2.0
+版本：0.3.0
 
 状态：可安装使用，真机记录见下文
 
-0.2.0 将同一个安装包的最低系统降到 iOS 12：iPhone 6 使用应用自己的固定文件夹，iOS 13 及以上继续支持系统文件夹选择。Sideloadly 0.60.0 已在实体 iPhone 6 / iOS 12.5.8 显示 `Done. 100%`，安装记录为 `com.zwm.album` 0.2.0；目录扫描和分享按设备界面操作继续记录。
+0.3.0 继续用同一个安装包覆盖 iOS 12 及以上：iPhone 6 使用应用自己的固定文件夹，iOS 13 及以上继续支持系统文件夹选择；同时加入与 Android 相同的局域网自动发现和电脑接收协议。Sideloadly 0.60.0 已在实体 iPhone 完成 0.3.0 安装，真机服务进程可启动。
 
 这是现有“素材投送中控”的 iPhone 客户端，不是另一个项目。它提供递归作品列表、复制文案、多图系统分享、打开分享次数、次日回收和回收站保留 7 天。
 
 ## 下载构建产物
 
-每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.2.0` artifact，解压得到：
+每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.3.0` artifact，解压得到：
 
-- `album-iOS-v0.2.0-altstore.ipa`
-- `album-iOS-v0.2.0-altstore.ipa.sha256`
+- `album-iOS-v0.3.0-altstore.ipa`
+- `album-iOS-v0.3.0-altstore.ipa.sha256`
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-0.2.0 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
+0.3.0 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
@@ -28,6 +28,7 @@ CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载�
 3. 在 Sideloadly 0.60.0 或更高兼容版本中选择 iPhone、加载 IPA。
 4. 用户本人输入 Apple ID 密码，等待 `Done. 100%`。
 5. 按 iOS 提示信任开发者；iOS 16 及以上还需开启开发者模式，然后打开“相册”。
+6. 首次打开时允许“本地网络”；传送期间让“相册”保持前台，电脑会自动显示手机名称。
 
 免费证书有效期为 7 天；保持电脑和手机处于同一 Wi-Fi，并让 Sideloadly 后台续签服务运行。
 
@@ -86,4 +87,4 @@ Windows 不需要运行这些命令。
 
 ## 验收记录
 
-0.2.0 的递归扫描用例已在有模拟器运行时的 GitHub Actions 执行；所有 CI 运行都会至少编译 App 与测试包，并执行 iPhoneOS 真机 SDK 构建。实体 iPhone 6 已完成签名安装，启动后的目录扫描、分享和回收操作仍按真实结果补记。
+0.3.0 的递归扫描、协议解析、SHA-256 和文件夹 ZIP 安全展开用例已进入 GitHub Actions；本次 Windows、Android、iPhone 三个构建任务全部成功。实体 iPhone 已完成签名安装并确认 0.3.0 进程启动；局域网发现和传送必须在手机解锁、应用前台并允许“本地网络”后记录结果。

@@ -1,16 +1,17 @@
 # 相册投送中控 V3
 
-把电脑上的整批作品送到 Android 或 iPhone。Android 继续通过同一 Wi‑Fi 自动接收；iPhone 第一版读取用户手动传入并解压的固定作品文件夹。两端应用都叫“相册”，不需要填写 IP、配对码，也不需要 Node.js、命令行、ADB、Root、无障碍或设备管理权限。
+把电脑上的整批作品送到 Android 或 iPhone。两端都通过同一 Wi‑Fi 自动出现在电脑面板，并接收普通文件、ZIP 或电脑文件夹。两端应用都叫“相册”，不需要填写 IP、配对码，也不需要 Node.js、命令行、ADB、Root、无障碍或设备管理权限。
 
-## iPhone 0.2.0（自用侧载版）
+## iPhone 0.3.0（自用侧载版）
 
 仓库已经加入兼容 iOS 12 的原生 UIKit iPhone 客户端和快捷指令交付方案：
 
 - 原生版：选择一次固定作品总文件夹，两列显示作品；点击后复制 TXT、记录“已打开分享 N 次”并把全部图片交给 iOS 系统分享面板；次日运行时回收，回收站保留 7 天。
+- 接收版：应用在前台时由 Windows 自动发现，支持手机名称、传输任务、SHA-256 完整性校验、取消和清晰错误提示；电脑生成的文件夹包会保留目录结构展开。
 - 安装版：GitHub Actions 的 macOS runner 生成未预签名 IPA，可由 Windows Sideloadly 或 AltStore 使用用户自己的 Apple ID 安装和续签。
 - 快捷指令版：动作与状态设计已完成；正式 iCloud 安装链接必须在实体 iPhone 上搭建、验收并由苹果验证后导出。
 
-iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.2.0 用同一个包兼容 iPhone 6 和新 iPhone，并统一使用真实“相册回收站”。
+iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.3.0 用同一个包兼容 iPhone 6 和新 iPhone，并统一使用真实“相册回收站”。
 
 ## 最短使用流程
 
@@ -50,6 +51,7 @@ Android 无法知道用户是否在目标平台完成发布，因此状态诚实
 - 纯 Win32 C++，不依赖浏览器、Node.js、Python 或 .NET。
 - EXE、任务栏和桌面快捷方式使用与手机版一致的绿色“相册投送”图标。
 - 自动发现同一 Wi‑Fi 的手机。
+- 右上角“刷新设备”会立即清空旧列表并重新探测；断网或离线设备不会继续假在线。
 - 支持直接拖任意文件、多个文件、ZIP、单个作品文件夹或复杂聚合文件夹；嵌套目录会保留，不要求它必须是作品。
 - 直接拖图片时，手机前台自动打开系统分享；手机在后台时点接收通知即可进入分享。
 - 单文件上限 4GB；这是当前 WinHTTP 与 ZIP32 实现的明确边界。
@@ -95,9 +97,12 @@ Android 无法知道用户是否在目标平台完成发布，因此状态诚实
 
 - Lark 目录存在用户真实“图片 + TXT”作品时的批量导入（测试目录当时为空）；
 - 次日自动进入回收站与 7 天后自动清理的跨日实体机行为；
-- Windows 文件夹自动打包拖放、可视进度条和取消按钮（CI 已编译，尚未完成新版 EXE 实际拖放验收）。
+- Windows 文件夹自动打包拖放、可视进度条和取消按钮。
 - Windows 直接拖图片后手机自动进入分享页。
 - 手机名称修改后 Windows 端显示更新名称。
+- iPhone 0.3.0 在解锁前台并允许“本地网络”后，由 Windows 自动发现及完成整批文件提交。
+
+2026-07-19 补充检查：Windows 新版已在本机启动；实体 Android 15 设备覆盖安装到 0.3.13，同一 Wi‑Fi 自动发现、`/v2/info`、创建任务、文件 SHA-256 上传、取消和恢复在线状态均实际完成，取消后的自检缓存已清理。实体 iPhone 已完成 0.3.0 侧载并由 USB 调试服务确认版本与进程启动；局域网验收需要手机保持解锁前台并首次允许“本地网络”。
 
 单元测试已覆盖作品判定、自然排序、ZIP 路径安全、Windows 反斜杠 ZIP、次日回收、7 天清理和恢复。未经过实体手机的项目不会标成“测试通过”。
 
