@@ -15,16 +15,20 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.rootViewController = UINavigationController(rootViewController: main)
         window.makeKeyAndVisible()
         self.window = window
-        incomingTransfer.start()
+        if !Self.isRunningTests { incomingTransfer.start() }
         return true
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        incomingTransfer.start()
+        if !Self.isRunningTests { incomingTransfer.start() }
         library.refresh(showConfirmation: false)
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        incomingTransfer.stop()
+        if !Self.isRunningTests { incomingTransfer.stop() }
+    }
+
+    private static var isRunningTests: Bool {
+        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 }

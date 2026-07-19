@@ -57,7 +57,8 @@ enum SHA256 {
                 buffer.removeFirst(64)
             }
             return hash.flatMap { value in
-                [UInt8(value >> 24), UInt8(value >> 16), UInt8(value >> 8), UInt8(value)]
+                [UInt8(truncatingIfNeeded: value >> 24), UInt8(truncatingIfNeeded: value >> 16),
+                 UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)]
             }
         }
 
