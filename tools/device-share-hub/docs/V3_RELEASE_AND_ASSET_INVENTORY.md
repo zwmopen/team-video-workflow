@@ -45,8 +45,9 @@ iOS 无法授权整台手机根目录。应选择实际作品目录、iCloud Dri
 | iOS 源码 | `tools/device-share-hub/ios/Album` | UIKit 客户端，同包兼容 iOS 12+ |
 | 兼容与测试矩阵 | `tools/device-share-hub/docs/COMPATIBILITY_AND_TEST_MATRIX.md` | 设备差异、实机记录、踩坑和回归要求 |
 | CI | `.github/workflows/device-share-hub.yml` | 三端编译、测试、密钥扫描和 IPA 结构校验 |
+| 源码构建与恢复 | `tools/device-share-hub/docs/SOURCE_BUILD_AND_RECOVERY.md` | 源码唯一真源、三端构建、发布对应和恢复顺序 |
 
-GitHub Release 应保存版本化安装包、SHA-256 和脱敏发布说明。主仓库保存源码与设计；Android 公开更新仓库只保存公开 APK/版本清单，不保存源码、用户素材或诊断日志。
+GitHub Release 应保存版本化安装包、显式源码 ZIP、SHA-256 和脱敏发布说明。主仓库保存可构建源码与设计；Android 公开更新仓库只保存公开 APK/版本清单，不保存源码、用户素材或诊断日志。发布页只见安装包、不容易找到源码也视为交付缺口。
 
 ## 视觉与交互语言
 
@@ -81,6 +82,7 @@ GitHub Release 应保存版本化安装包、SHA-256 和脱敏发布说明。主
 8. Android/HarmonyOS 与 iOS 的目录权限模型不同，不能照搬路径假设；以系统文件选择器真实授权为准。
 9. 分享次数只代表打开了系统分享面板，不代表平台发布成功。
 10. 未经过实体手机实际操作的能力不得宣称测试通过，直接记录尚未操作的项目。
+11. 安装包不是源码备份；每次发布必须保留可构建源码、构建入口、版本标签和恢复说明，确保换电脑或换 AI 后能继续开发。
 
 ## 已知待办
 

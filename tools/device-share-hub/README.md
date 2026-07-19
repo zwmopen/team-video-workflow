@@ -109,4 +109,4 @@ GitHub Actions 负责：
 - iOS UIKit 单元测试、模拟器测试、侧载 IPA 打包及内部路径/版本结构校验；
 - 仓库质量检查和密钥扫描。
 
-发布说明、设计语言、开发资产和复用避坑见 [docs/V3_RELEASE_AND_ASSET_INVENTORY.md](docs/V3_RELEASE_AND_ASSET_INVENTORY.md)；设计与边界见 [docs/ALBUM_WORKFLOW_DESIGN.md](docs/ALBUM_WORKFLOW_DESIGN.md)。
+完整源码、三端构建和恢复方式见 [docs/SOURCE_BUILD_AND_RECOVERY.md](docs/SOURCE_BUILD_AND_RECOVERY.md)。发布说明、设计语言、开发资产和复用避坑见 [docs/V3_RELEASE_AND_ASSET_INVENTORY.md](docs/V3_RELEASE_AND_ASSET_INVENTORY.md)；设计与边界见 [docs/ALBUM_WORKFLOW_DESIGN.md](docs/ALBUM_WORKFLOW_DESIGN.md)。
