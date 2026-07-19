@@ -211,6 +211,10 @@ public final class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 WorkLibrary library = library();
+                if (library.reconciledDuplicates() > 0) {
+                    DiagnosticLog.write(this, "duplicate_works_merged",
+                            "count=" + library.reconciledDuplicates());
+                }
                 library.maintain(LocalDate.now());
                 syncExternalTrash(library);
                 ExternalTrashManager.Result expired = purgeExpiredTrash(library);
@@ -381,6 +385,7 @@ public final class MainActivity extends Activity {
                         getContentResolver(), Uri.parse(stored), library(), new File(getCacheDir(), "tree-import"));
                 LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
                 ExternalTrashManager.Result trashSync = syncExternalTrash(library());
+                int activeCount = library().listActive().size();
                 DiagnosticLog.write(this, "tree_import",
                         "detected=" + result.detected
                                 + " imported=" + result.imported
@@ -395,15 +400,14 @@ public final class MainActivity extends Activity {
                                 + " notes=" + result.scanNotes);
                 runOnUiThread(() -> {
                     int imported = result.imported + hidden.imported;
-                    int detected = result.detected + hidden.detected;
                     String message = imported > 0
                             ? "新增 " + imported + " 个作品"
-                            : detected > 0
-                            ? "已是最新，共识别 " + detected + " 个作品"
+                            : activeCount > 0
+                            ? "已是最新，共识别 " + activeCount + " 个作品"
                             : "没识别到作品：请选择包含“图片 + TXT”的作品文件夹";
                     if (result.aggregateFolders > 0) message += "，已优先使用子文件夹";
                     statusText.setText(message);
-                    if (notifyWhenFinished) toast("已刷新，共 " + detected + " 个作品");
+                    if (notifyWhenFinished) toast("已刷新，共 " + activeCount + " 个作品");
                     refreshWorks();
                 });
             } catch (Exception error) {

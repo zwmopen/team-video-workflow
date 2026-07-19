@@ -59,12 +59,18 @@ final class LegacyHiddenFolderImporter {
         if (caption == null) return;
 
         result.detected++;
+        String sourceRelativePath = relativePath(root, directory);
+        WorkLibrary.WorkEntry existingSource = library.findBySourceRelativePath(sourceRelativePath);
+        if (existingSource != null) {
+            library.updateSourceReference(existingSource.id, "", "", sourceRelativePath);
+            result.skipped++;
+            return;
+        }
         String id = marker == null ? "huawei-hidden-" + Integer.toHexString(relativePath(root, directory).hashCode())
                 : readText(marker).trim();
         if (!id.matches("[A-Za-z0-9._-]{1,120}")) {
             id = "huawei-hidden-" + Integer.toHexString(relativePath(root, directory).hashCode());
         }
-        String sourceRelativePath = relativePath(root, directory);
         if (library.contains(id)) {
             library.updateSourceReference(id, "", "", sourceRelativePath);
             result.skipped++;

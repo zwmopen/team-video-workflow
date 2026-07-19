@@ -17,17 +17,25 @@ import java.util.Properties;
 /** Persistent, app-private queue of works and its recoverable trash. */
 public final class WorkLibrary {
     private static final String META_FILE = "meta.properties";
+    private static final Object MIGRATION_LOCK = new Object();
 
     private final File root;
     private final File activeRoot;
     private final File trashRoot;
+    private final int reconciledDuplicates;
 
     public WorkLibrary(File root) throws IOException {
         this.root = root.getCanonicalFile();
         this.activeRoot = new File(this.root, "active").getCanonicalFile();
         this.trashRoot = new File(this.root, "trash").getCanonicalFile();
-        ensureDirectory(activeRoot);
-        ensureDirectory(trashRoot);
+        int merged;
+        synchronized (MIGRATION_LOCK) {
+            ensureDirectory(activeRoot);
+            ensureDirectory(trashRoot);
+            merged = collapseLegacyDuplicates(activeRoot)
+                    + collapseLegacyDuplicates(trashRoot);
+        }
+        this.reconciledDuplicates = merged;
     }
 
     public synchronized WorkEntry importWork(
@@ -121,6 +129,22 @@ public final class WorkLibrary {
         return child(activeRoot, id).isDirectory() || child(trashRoot, id).isDirectory();
     }
 
+    public synchronized WorkEntry findBySourceRelativePath(String relativePath) throws IOException {
+        String normalized = normalizeSourcePath(relativePath);
+        if (normalized.isEmpty()) return null;
+        for (WorkEntry entry : list(activeRoot)) {
+            if (matchesSourcePath(entry, normalized)) return entry;
+        }
+        for (WorkEntry entry : list(trashRoot)) {
+            if (matchesSourcePath(entry, normalized)) return entry;
+        }
+        return null;
+    }
+
+    public int reconciledDuplicates() {
+        return reconciledDuplicates;
+    }
+
     public synchronized void updateSourceReference(
             String id, String sourceDocumentId, String sourceParentDocumentId,
             String sourceRelativePath) throws IOException {
@@ -129,9 +153,15 @@ public final class WorkLibrary {
         if (!directory.isDirectory()) directory = child(trashRoot, id);
         if (!directory.isDirectory()) return;
         Properties meta = loadMeta(directory);
-        meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
-        meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
-        meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
+        if (sourceDocumentId != null && !sourceDocumentId.isEmpty()) {
+            meta.setProperty("sourceDocumentId", sourceDocumentId);
+        }
+        if (sourceParentDocumentId != null && !sourceParentDocumentId.isEmpty()) {
+            meta.setProperty("sourceParentDocumentId", sourceParentDocumentId);
+        }
+        if (sourceRelativePath != null && !sourceRelativePath.isEmpty()) {
+            meta.setProperty("sourceRelativePath", sourceRelativePath);
+        }
         saveMeta(directory, meta);
     }
 
@@ -207,6 +237,79 @@ public final class WorkLibrary {
         }
         entries.sort((left, right) -> WorkRules.compareNatural(left.name, right.name));
         return entries;
+    }
+
+    private int collapseLegacyDuplicates(File parent) throws IOException {
+        List<WorkEntry> entries = list(parent);
+        int removed = 0;
+        for (WorkEntry legacy : entries) {
+            String relative = normalizeSourcePath(legacy.sourceRelativePath);
+            if (relative.isEmpty() || !legacy.directory.isDirectory()) continue;
+            WorkEntry document = null;
+            for (WorkEntry candidate : entries) {
+                if (candidate.id.equals(legacy.id) || candidate.sourceDocumentId.isEmpty()
+                        || !candidate.directory.isDirectory()) continue;
+                if (documentPathEndsWith(candidate.sourceDocumentId, relative)) {
+                    document = candidate;
+                    break;
+                }
+            }
+            if (document == null) continue;
+            mergeDuplicateMetadata(document, legacy);
+            deleteTree(legacy.directory);
+            removed++;
+        }
+        return removed;
+    }
+
+    private void mergeDuplicateMetadata(WorkEntry retained, WorkEntry duplicate) throws IOException {
+        Properties meta = loadMeta(retained.directory);
+        int combinedCount = Math.min(10000, retained.shareCount + duplicate.shareCount);
+        meta.setProperty("shareCount", Integer.toString(combinedCount));
+        LocalDate shared = later(retained.sharedDate, duplicate.sharedDate);
+        if (shared != null) meta.setProperty("sharedDate", shared.toString());
+        LocalDate trashed = later(retained.trashedDate, duplicate.trashedDate);
+        if (trashed != null) meta.setProperty("trashedDate", trashed.toString());
+        if (meta.getProperty("sourceRelativePath", "").isEmpty()) {
+            meta.setProperty("sourceRelativePath", duplicate.sourceRelativePath);
+        }
+        copyIfEmpty(meta, "sourceDocumentId", duplicate.sourceDocumentId);
+        copyIfEmpty(meta, "sourceParentDocumentId", duplicate.sourceParentDocumentId);
+        copyIfEmpty(meta, "trashDocumentId", duplicate.trashDocumentId);
+        copyIfEmpty(meta, "externalTrashName", duplicate.externalTrashName);
+        saveMeta(retained.directory, meta);
+    }
+
+    private static void copyIfEmpty(Properties target, String key, String value) {
+        if (target.getProperty(key, "").isEmpty() && value != null && !value.isEmpty()) {
+            target.setProperty(key, value);
+        }
+    }
+
+    private static LocalDate later(LocalDate left, LocalDate right) {
+        if (left == null) return right;
+        if (right == null) return left;
+        return left.isAfter(right) ? left : right;
+    }
+
+    private static boolean matchesSourcePath(WorkEntry entry, String normalizedRelative) {
+        return normalizedRelative.equals(normalizeSourcePath(entry.sourceRelativePath))
+                || documentPathEndsWith(entry.sourceDocumentId, normalizedRelative);
+    }
+
+    private static boolean documentPathEndsWith(String documentId, String normalizedRelative) {
+        String normalizedDocument = normalizeSourcePath(documentId);
+        return normalizedDocument.equals(normalizedRelative)
+                || normalizedDocument.endsWith("/" + normalizedRelative)
+                || normalizedDocument.endsWith(":" + normalizedRelative);
+    }
+
+    private static String normalizeSourcePath(String value) {
+        if (value == null) return "";
+        String normalized = value.trim().replace('\\', '/');
+        while (normalized.startsWith("/")) normalized = normalized.substring(1);
+        while (normalized.contains("//")) normalized = normalized.replace("//", "/");
+        return normalized;
     }
 
     private WorkEntry requireEntry(File parent, String id) throws IOException {
