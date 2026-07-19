@@ -127,13 +127,13 @@ jobs:
         if: steps.ios_compile.outputs.status == '0'
         shell: bash
         run: |
-          app_path="build/Build/Products/Release-iphoneos/相册.app"
+          app_path="build/Build/Products/Release-iphoneos/Album.app"
           test -d "$app_path"
           rm -rf package
           mkdir -p package/Payload
-          ditto "$app_path" "package/Payload/相册.app"
-          (cd package && /usr/bin/zip -qry ../album-iOS-v0.1.0-altstore.ipa Payload)
-          shasum -a 256 album-iOS-v0.1.0-altstore.ipa > album-iOS-v0.1.0-altstore.ipa.sha256
+          ditto "$app_path" "package/Payload/Album.app"
+          (cd package && /usr/bin/zip -qry ../album-iOS-v0.1.1-altstore.ipa Payload)
+          shasum -a 256 album-iOS-v0.1.1-altstore.ipa > album-iOS-v0.1.1-altstore.ipa.sha256
       - name: Upload iOS build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -144,10 +144,10 @@ jobs:
         if: steps.ios_compile.outputs.status == '0'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: album-ios-altstore-v0.1.0
+          name: album-ios-altstore-v0.1.1
           path: |
-            tools/device-share-hub/ios/album-iOS-v0.1.0-altstore.ipa
-            tools/device-share-hub/ios/album-iOS-v0.1.0-altstore.ipa.sha256
+            tools/device-share-hub/ios/album-iOS-v0.1.1-altstore.ipa
+            tools/device-share-hub/ios/album-iOS-v0.1.1-altstore.ipa.sha256
       - name: Fail when iOS build failed
         if: steps.ios_compile.outputs.status != '0'
         run: exit 1

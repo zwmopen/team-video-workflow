@@ -1,6 +1,7 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.1.0  
+版本：0.1.1
+
 状态：已实现未验收
 
 云端构建：GitHub Actions `29670962443` 已完成 Xcode 16.4 / iPhoneOS 18.5 编译和 IPA 打包。此结果仅是构建验收，不是实体 iPhone 功能验收。
@@ -9,10 +10,10 @@
 
 ## 下载构建产物
 
-每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.1.0` artifact，解压得到：
+每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.1.1` artifact，解压得到：
 
-- `album-iOS-v0.1.0-altstore.ipa`
-- `album-iOS-v0.1.0-altstore.ipa.sha256`
+- `album-iOS-v0.1.1-altstore.ipa`
+- `album-iOS-v0.1.1-altstore.ipa.sha256`
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。AltStore 安装时会用你自己的 Apple ID 重新签名。
 
