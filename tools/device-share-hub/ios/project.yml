@@ -21,15 +21,16 @@ targets:
         # via CFBundleDisplayName, avoiding IPA ZIP filename encoding failures.
         PRODUCT_NAME: Album
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 6
-        MARKETING_VERSION: 0.2.0
+        CURRENT_PROJECT_VERSION: 7
+        MARKETING_VERSION: 0.3.0
     info:
       path: Album/Info.plist
       properties:
         CFBundleDisplayName: 相册
         CFBundleName: Album
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "7"
+        NSLocalNetworkUsageDescription: 用于让同一 Wi-Fi 的素材投送中控自动发现这台 iPhone，并把文件直接传入所选作品文件夹。
         LSApplicationCategoryType: public.app-category.productivity
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true

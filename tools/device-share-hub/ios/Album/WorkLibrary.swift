@@ -8,6 +8,7 @@ final class WorkLibrary {
     private(set) var scanSummary: String?
     private(set) var message: String?
     private(set) var errorMessage: String?
+    private(set) var networkStatus = UserDefaults.standard.string(forKey: "album.lastNetworkStatus.v1") ?? "局域网接收未启动"
     private(set) var isBusy = false
     var onChange: (() -> Void)?
 
@@ -17,6 +18,7 @@ final class WorkLibrary {
     private let legacyTrashName = "_相册回收站"
     private var rootURL: URL?
     private var hasSecurityScope = false
+    private var usesManagedFolder = false
     private var state = LibraryState()
     private lazy var scanner = WorkScanner(excludedDirectoryNames: [trashName, legacyTrashName])
 
@@ -26,9 +28,11 @@ final class WorkLibrary {
     }
 
     var rootDescription: String {
-        if supportsExternalFolderSelection { return folderName ?? "未选择" }
-        return "我的 iPhone/相册"
+        if usesManagedFolder || !supportsExternalFolderSelection { return "我的 iPhone/相册" }
+        return folderName ?? "未选择"
     }
+
+    var receivingRootURL: URL? { return rootURL }
 
     deinit {
         if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
@@ -42,7 +46,10 @@ final class WorkLibrary {
             } catch { report(error) }
             return
         }
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return }
+        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else {
+            useManagedFolder(showConfirmation: false)
+            return
+        }
         do {
             var stale = false
             let url = try URL(resolvingBookmarkData: data, options: [.withoutUI],
@@ -57,17 +64,21 @@ final class WorkLibrary {
         }
     }
 
-    func useManagedFolder() {
+    func useManagedFolder() { useManagedFolder(showConfirmation: true) }
+
+    private func useManagedFolder(showConfirmation: Bool) {
         do {
             try activate(Self.documentsURL(), securityScoped: false)
+            usesManagedFolder = true
             UserDefaults.standard.removeObject(forKey: bookmarkKey)
-            refresh(showConfirmation: true)
+            refresh(showConfirmation: showConfirmation)
         } catch { report(error) }
     }
 
     func selectFolder(_ url: URL) {
         do {
             try activate(url, securityScoped: true)
+            usesManagedFolder = false
             try saveBookmark(url)
             refresh(showConfirmation: true)
         } catch { report(error) }
@@ -77,6 +88,7 @@ final class WorkLibrary {
         if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
         hasSecurityScope = false
         rootURL = nil
+        usesManagedFolder = false
         folderName = nil
         scanSummary = nil
         works = []
@@ -185,7 +197,8 @@ final class WorkLibrary {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
         let lines = [
             "相册 iOS 诊断信息", "版本：\(version) (\(build))",
-            "系统：iOS \(UIDevice.current.systemVersion)", "设备：\(UIDevice.current.model)",
+            "系统：iOS \(UIDevice.current.systemVersion)", "设备：\(DeviceIdentity.model)",
+            "手机名称：\(DeviceIdentity.name)", "局域网接收：\(networkStatus)",
             "目录：\(rootDescription)", "扫描结果：\(scanSummary ?? "未扫描")",
             "作品数量：\(works.count)", "回收站数量：\(trash.count)",
             "最近错误：\(errorMessage ?? "无")",
@@ -199,6 +212,18 @@ final class WorkLibrary {
 
     func consumeMessage() { message = nil }
     func consumeError() { errorMessage = nil }
+
+    func setNetworkStatus(_ text: String, isError: Bool) {
+        networkStatus = text
+        if isError { errorMessage = text }
+        notify()
+    }
+
+    func finishIncomingTransfer(itemCount: Int) {
+        networkStatus = "局域网接收已开启，等待电脑自动发现"
+        message = "已接收 \(itemCount) 个文件，作品列表已刷新"
+        refresh(showConfirmation: false)
+    }
 
     private func activate(_ url: URL, securityScoped: Bool) throws {
         guard !isHiddenDirectory(url) else { throw LibraryError.hiddenFolder }

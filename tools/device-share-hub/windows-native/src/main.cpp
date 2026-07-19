@@ -8,6 +8,7 @@
 #include <bcrypt.h>
 #include <wincrypt.h>
 #include <objbase.h>
+#include <iphlpapi.h>
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +23,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <stdexcept>
@@ -35,6 +37,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace {
 constexpr UINT WM_DEVICES_CHANGED = WM_APP + 1;
@@ -42,6 +45,7 @@ constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
 constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
+constexpr int IDC_REFRESH_DEVICES = 106;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
@@ -62,6 +66,7 @@ HWND gWindow = nullptr;
 HWND gDeviceList = nullptr;
 HWND gStatus = nullptr;
 HWND gLogButton = nullptr;
+HWND gRefreshButton = nullptr;
 HWND gProgress = nullptr;
 HWND gCancelButton = nullptr;
 HFONT gFont = nullptr;
@@ -73,6 +78,7 @@ std::vector<Device> gDisplayedDevices;
 std::atomic<bool> gRunning{true};
 std::atomic<bool> gUploadInProgress{false};
 std::atomic<bool> gCancelRequested{false};
+std::atomic<bool> gRefreshRequested{false};
 std::thread gDiscoveryThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
@@ -842,9 +848,49 @@ void RefreshDeviceList() {
     if (!gDisplayedDevices.empty()) SendMessageW(gDeviceList, LB_SETCURSEL, std::clamp(previous, 0, static_cast<int>(gDisplayedDevices.size()) - 1), 0);
     SendMessageW(gDeviceList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(gDeviceList, nullptr, TRUE);
-    std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开接收端并连接同一 Wi‑Fi。"
-                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台手机；可拖入任意文件、ZIP 或整个文件夹。";
+    std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开“相册”并连接同一 Wi‑Fi。"
+                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台设备；可拖入任意文件、ZIP 或整个文件夹。";
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
+}
+
+std::vector<sockaddr_in> DiscoveryTargets() {
+    std::set<ULONG> addresses{INADDR_BROADCAST};
+    ULONG size = 16 * 1024;
+    std::vector<unsigned char> buffer(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+    ULONG status = GetAdaptersAddresses(AF_INET,
+        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+        nullptr, adapters, &size);
+    if (status == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(size);
+        adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+        status = GetAdaptersAddresses(AF_INET,
+            GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+            nullptr, adapters, &size);
+    }
+    if (status == NO_ERROR) {
+        for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+            if (adapter->OperStatus != IfOperStatusUp) continue;
+            for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+                if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
+                auto* ipv4 = reinterpret_cast<sockaddr_in*>(unicast->Address.lpSockaddr);
+                ULONG host = ntohl(ipv4->sin_addr.s_addr);
+                ULONG prefix = unicast->OnLinkPrefixLength;
+                if (prefix > 32 || (host >> 24) == 127) continue;
+                ULONG mask = prefix == 0 ? 0 : (0xffffffffu << (32 - prefix));
+                addresses.insert(htonl(host | ~mask));
+            }
+        }
+    }
+    std::vector<sockaddr_in> targets;
+    for (ULONG address : addresses) {
+        sockaddr_in target{};
+        target.sin_family = AF_INET;
+        target.sin_addr.s_addr = address;
+        target.sin_port = htons(DISCOVERY_PORT);
+        targets.push_back(target);
+    }
+    return targets;
 }
 
 void DiscoveryLoop() {
@@ -876,16 +922,16 @@ void DiscoveryLoop() {
         return;
     }
     WriteDiagnosticLog(L"discovery_ready", L"udp=45834");
-    sockaddr_in target{};
-    target.sin_family = AF_INET;
-    target.sin_addr.s_addr = INADDR_BROADCAST;
-    target.sin_port = htons(DISCOVERY_PORT);
     auto nextProbe = std::chrono::steady_clock::now();
     while (gRunning) {
         auto now = std::chrono::steady_clock::now();
+        if (gRefreshRequested.exchange(false)) nextProbe = now;
         if (now >= nextProbe) {
             const char probe[] = "ZWMDS2_DISCOVER";
-            sendto(socketHandle, probe, static_cast<int>(sizeof(probe) - 1), 0, reinterpret_cast<sockaddr*>(&target), sizeof(target));
+            for (sockaddr_in& target : DiscoveryTargets()) {
+                sendto(socketHandle, probe, static_cast<int>(sizeof(probe) - 1), 0,
+                       reinterpret_cast<sockaddr*>(&target), sizeof(target));
+            }
             nextProbe = now + std::chrono::seconds(2);
         }
         fd_set readSet;
@@ -1084,6 +1130,7 @@ void Layout(HWND window) {
     int width = client.right - client.left;
     int height = client.bottom - client.top;
     const int margin = 22;
+    MoveWindow(gRefreshButton, width - margin - 118, 18, 118, 36, TRUE);
     MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 224), TRUE);
     int buttonWidth = 136;
     int cancelWidth = 86;
@@ -1109,6 +1156,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 640, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gRefreshButton = CreateWindowW(L"BUTTON", L"刷新设备", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                           560, 18, 118, 36, window,
+                                           reinterpret_cast<HMENU>(IDC_REFRESH_DEVICES), nullptr, nullptr);
+            SendMessageW(gRefreshButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
                 22, 94, 640, 280, window, reinterpret_cast<HMENU>(101), nullptr, nullptr);
@@ -1136,6 +1187,17 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         case WM_COMMAND:
+            if (LOWORD(wParam) == IDC_REFRESH_DEVICES) {
+                {
+                    std::lock_guard<std::mutex> lock(gDeviceMutex);
+                    gDevices.clear();
+                }
+                RefreshDeviceList();
+                SetWindowTextW(gStatus, L"正在刷新设备…");
+                gRefreshRequested = true;
+                WriteDiagnosticLog(L"discovery_manual_refresh", L"device list cleared and probe requested");
+                return 0;
+            }
             if (LOWORD(wParam) == 105) {
                 if (gUploadInProgress) {
                     gCancelRequested = true;

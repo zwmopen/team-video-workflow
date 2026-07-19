@@ -4,7 +4,7 @@ project(DeviceShareHub LANGUAGES CXX)
 add_executable(DeviceShareHub WIN32 src/main.cpp)
 target_compile_features(DeviceShareHub PRIVATE cxx_std_17)
 target_compile_definitions(DeviceShareHub PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
-target_link_libraries(DeviceShareHub PRIVATE ws2_32 winhttp bcrypt crypt32 ole32 comctl32 shell32)
+target_link_libraries(DeviceShareHub PRIVATE ws2_32 winhttp bcrypt crypt32 ole32 comctl32 shell32 iphlpapi)
 
 if(MSVC)
   set_property(TARGET DeviceShareHub PROPERTY
