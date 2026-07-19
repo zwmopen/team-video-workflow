@@ -114,9 +114,9 @@ Windows 面板保持纯 Win32 C++：
 
 ## iOS 开发已恢复（2026-07-19）
 
-仓库已新增 `tools/device-share-hub/ios` 原生 SwiftUI 工程，版本 0.1.0。第一版实现固定目录授权、两列作品、TXT 复制、多图系统分享、打开分享计数、次日回收、7 天保留和恢复；GitHub Actions 使用 macOS runner 生成供 AltStore 重新签名的 IPA。快捷指令的动作搭建清单也已存档，正式 iCloud 安装链接仍需实体 iPhone 完成苹果验证和导出。
+仓库已新增 `tools/device-share-hub/ios` 原生 SwiftUI 工程，版本 0.1.1。第一版实现固定目录授权、两列作品、TXT 复制、多图系统分享、打开分享计数、次日回收、7 天保留和恢复；GitHub Actions 使用 macOS runner 生成供侧载工具重新签名的 IPA。0.1.1 已通过 Sideloadly 0.60.0 安装到实体 iPhone；快捷指令的动作搭建清单也已存档，正式 iCloud 安装链接仍需实体 iPhone 完成苹果验证和导出。
 
-当前所有 iOS 项目均为“已实现未验收”：Windows 本地不能运行 Xcode；CI 编译成功不等同于 AltStore 安装、Lark 文件提供器访问、多图分享和跨日清理通过实体 iPhone 验收。设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-altstore-client-design.md` 与 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`。
+当前 iOS “签名安装”已完成实体机验收；应用启动、Lark 文件提供器访问、多图分享和跨日清理仍为“已实现未验收”。Windows 侧载经验见 `tools/device-share-hub/docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`；设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-altstore-client-design.md` 与 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`。
 
 ## Android 公开更新通道
 

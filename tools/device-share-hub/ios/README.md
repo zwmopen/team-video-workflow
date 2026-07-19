@@ -4,7 +4,7 @@
 
 状态：已实现未验收
 
-云端构建：GitHub Actions `29670962443` 已完成 Xcode 16.4 / iPhoneOS 18.5 编译和 IPA 打包。此结果仅是构建验收，不是实体 iPhone 功能验收。
+云端构建：GitHub Actions `29674136854` 已完成 Xcode 16.4 / iPhoneOS 18.5 编译和 IPA 打包。0.1.1 已通过 Sideloadly 0.60.0 安装到实体 iPhone；此结果只代表安装验收，不代表业务功能验收。
 
 这是现有“素材投送中控”的 iPhone 客户端，不是另一个项目。第一版读取用户在系统文件选择器中授权的固定作品总文件夹，提供作品列表、复制文案、多图系统分享、打开分享次数、次日回收和回收站保留 7 天。
 
@@ -15,9 +15,23 @@
 - `album-iOS-v0.1.1-altstore.ipa`
 - `album-iOS-v0.1.1-altstore.ipa.sha256`
 
-CI 产物没有预置任何人的 Apple 证书、账号或设备信息。AltStore 安装时会用你自己的 Apple ID 重新签名。
+CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-## Windows + AltStore 安装
+SHA-256：`79F88653CED913CC6CA07BA17C19BB9FE59327BCACEBAE0E4D7893C0C43E88F5`
+
+完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
+
+## Windows + Sideloadly 安装（推荐）
+
+1. 安装 Apple 官网版本的 iTunes 和 iCloud。
+2. 数据线连接、解锁 iPhone 并选择“信任此电脑”；先确认 iTunes 能显示 iPhone。
+3. 在 Sideloadly 0.60.0 或更高兼容版本中选择 iPhone、加载 IPA。
+4. 用户本人输入 Apple ID 密码，等待 `Done. 100%`。
+5. 按 iOS 提示信任开发者并开启开发者模式，然后打开“相册”。
+
+免费证书有效期为 7 天；保持电脑和手机处于同一 Wi-Fi，并让 Sideloadly 后台续签服务运行。
+
+## Windows + AltStore 安装（备选）
 
 1. 按 AltStore 官方说明安装 Apple 官网版本的 iTunes、iCloud 和 AltServer。
 2. 第一次用数据线连接 iPhone，在 iTunes 中开启 Wi-Fi 同步。
@@ -64,4 +78,4 @@ Windows 不需要运行这些命令。
 
 ## 验收声明
 
-Windows 环境无法运行 Xcode 或 iPhone 模拟器。GitHub Actions 编译成功也只代表 IPA 已生成，不代表 AltStore 安装、Lark 目录权限、多图分享、跨日回收或 7 天清理通过实体 iPhone 验收。完成真机逐项操作前，全部保持“已实现未验收”。
+Windows 环境无法运行 Xcode 或 iPhone 模拟器。0.1.1 已在实体 iPhone 完成签名安装，但尚未逐项执行启动、Lark 目录权限、多图分享、跨日回收或 7 天清理。完成真机逐项操作前，这些功能全部保持“已实现未验收”。
