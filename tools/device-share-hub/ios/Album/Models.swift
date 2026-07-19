@@ -1,26 +1,30 @@
 import Foundation
 
 struct WorkItem: Identifiable, Hashable {
+    let key: String
     let name: String
+    let relativePath: String
     let folderURL: URL
     let textURL: URL
     let imageURLs: [URL]
     let shareCount: Int
 
-    var id: String { name }
+    var id: String { key }
 }
 
 struct TrashItem: Identifiable, Hashable {
+    let key: String
     let name: String
+    let originalRelativePath: String
     let folderURL: URL
     let shareCount: Int
     let trashedDate: Date?
 
-    var id: String { name }
+    var id: String { key }
 }
 
 struct LibraryState: Codable {
-    var schemaVersion = 1
+    var schemaVersion = 2
     var works: [String: WorkState] = [:]
 }
 
@@ -28,11 +32,14 @@ struct WorkState: Codable {
     var shareCount = 0
     var lastShareDate: String?
     var trashedDate: String?
+    var originalRelativePath: String?
+    var trashFolderName: String?
 }
 
 enum LibraryError: LocalizedError {
     case noFolder
     case folderUnavailable
+    case hiddenFolder
     case noText(String)
     case emptyText
     case noImages(String)
@@ -44,6 +51,7 @@ enum LibraryError: LocalizedError {
         switch self {
         case .noFolder: return "请先选择作品总文件夹。"
         case .folderUnavailable: return "作品文件夹不可用，请重新选择。"
+        case .hiddenFolder: return "不能选择 .Trash 等隐藏系统目录。请选择里面直接放着“作品一、作品二…”的总文件夹。"
         case .noText(let name): return "“\(name)”没有可读取的 TXT 文案。"
         case .emptyText: return "文案是空的，请先检查 TXT。"
         case .noImages(let name): return "“\(name)”没有可读取的图片。"
@@ -53,4 +61,3 @@ enum LibraryError: LocalizedError {
         }
     }
 }
-

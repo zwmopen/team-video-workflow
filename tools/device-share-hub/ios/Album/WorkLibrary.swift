@@ -2,11 +2,41 @@ import Foundation
 import UIKit
 import Combine
 
+private struct ScanStatistics {
+    var visitedDirectories = 0
+    var hiddenDirectories = 0
+    var unreadableDirectories = 0
+    var missingImages = 0
+    var missingTexts = 0
+    var reachedDepthLimit = false
+    var reachedDirectoryLimit = false
+}
+
+private struct ScanResult {
+    let works: [WorkItem]
+    let statistics: ScanStatistics
+
+    var summary: String {
+        var parts = ["递归检查 \(max(0, statistics.visitedDirectories - 1)) 个文件夹，识别 \(works.count) 个作品"]
+        if statistics.hiddenDirectories > 0 { parts.append("忽略 \(statistics.hiddenDirectories) 个隐藏目录") }
+        if statistics.missingImages > 0 { parts.append("\(statistics.missingImages) 个候选缺图片") }
+        if statistics.missingTexts > 0 { parts.append("\(statistics.missingTexts) 个候选缺 TXT") }
+        if statistics.unreadableDirectories > 0 { parts.append("\(statistics.unreadableDirectories) 个目录无读取权限") }
+        if statistics.reachedDepthLimit { parts.append("已到 8 层深度上限") }
+        if statistics.reachedDirectoryLimit { parts.append("已到 1000 个目录上限") }
+        if works.isEmpty, statistics.visitedDirectories == 1, statistics.hiddenDirectories > 0 {
+            parts.append("这里只看到 .Trash 等系统目录，请把作品移入此文件夹或重新选择实际作品目录")
+        }
+        return parts.joined(separator: "；") + "。"
+    }
+}
+
 @MainActor
 final class WorkLibrary: ObservableObject {
     @Published private(set) var works: [WorkItem] = []
     @Published private(set) var trash: [TrashItem] = []
     @Published private(set) var folderName: String?
+    @Published private(set) var scanSummary: String?
     @Published var message: String?
     @Published var errorMessage: String?
     @Published var isBusy = false
@@ -15,6 +45,8 @@ final class WorkLibrary: ObservableObject {
     private let stateName = "_相册状态.json"
     private let trashName = "_相册回收站"
     private let imageExtensions = Set(["jpg", "jpeg", "png", "webp", "heic", "heif"])
+    private let maximumScanDepth = 8
+    private let maximumScannedDirectories = 1_000
     private var rootURL: URL?
     private var hasSecurityScope = false
     private var state = LibraryState()
@@ -48,7 +80,7 @@ final class WorkLibrary: ObservableObject {
             try saveBookmark(url)
             await refresh()
         } catch {
-            errorMessage = "无法保存文件夹权限，请重新选择。"
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "无法保存文件夹权限，请重新选择。"
         }
     }
 
@@ -57,6 +89,7 @@ final class WorkLibrary: ObservableObject {
         hasSecurityScope = false
         rootURL = nil
         folderName = nil
+        scanSummary = nil
         works = []
         trash = []
         state = LibraryState()
@@ -71,9 +104,11 @@ final class WorkLibrary: ObservableObject {
             state = try loadState(from: rootURL)
             try performMaintenance(root: rootURL)
             try saveState(to: rootURL)
-            works = try scanWorks(root: rootURL)
+            let result = try scanWorks(root: rootURL)
+            works = result.works
             trash = try scanTrash(root: rootURL)
             folderName = rootURL.lastPathComponent
+            scanSummary = result.summary
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "扫描失败：\(error.localizedDescription)"
         }
@@ -91,11 +126,12 @@ final class WorkLibrary: ObservableObject {
         }
         guard !work.imageURLs.isEmpty else { throw LibraryError.noImages(work.name) }
 
-        var record = state.works[work.name] ?? WorkState()
+        var record = state.works[work.key] ?? WorkState()
         record.shareCount += 1
         record.lastShareDate = Self.dayFormatter.string(from: Date())
         record.trashedDate = nil
-        state.works[work.name] = record
+        record.originalRelativePath = work.relativePath
+        state.works[work.key] = record
         do {
             guard let rootURL else { throw LibraryError.noFolder }
             try saveState(to: rootURL)
@@ -105,28 +141,34 @@ final class WorkLibrary: ObservableObject {
 
         UIPasteboard.general.string = text
         message = "文案已复制 · 第 \(record.shareCount) 次打开分享"
-        works = (try? scanWorks(root: rootURL!)) ?? works
+        works = (try? scanWorks(root: rootURL!).works) ?? works
         return work.imageURLs.map { $0 as NSURL }
     }
 
     func restore(_ item: TrashItem) async {
         guard let rootURL else { return }
-        let destination = rootURL.appendingPathComponent(item.name, isDirectory: true)
+        let destination = url(forRelativePath: item.originalRelativePath, under: rootURL)
         guard !FileManager.default.fileExists(atPath: destination.path) else {
             errorMessage = LibraryError.restoreConflict(item.name).localizedDescription
             return
         }
         do {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             try FileManager.default.moveItem(at: item.folderURL, to: destination)
-            var record = state.works[item.name] ?? WorkState()
+            var record = state.works[item.key] ?? WorkState()
             let previous = record
             record.lastShareDate = nil
             record.trashedDate = nil
-            state.works[item.name] = record
+            record.trashFolderName = nil
+            record.originalRelativePath = item.originalRelativePath
+            state.works[item.key] = record
             do {
                 try saveState(to: rootURL)
             } catch {
-                state.works[item.name] = previous
+                state.works[item.key] = previous
                 try? FileManager.default.moveItem(at: destination, to: item.folderURL)
                 throw error
             }
@@ -146,6 +188,7 @@ final class WorkLibrary: ObservableObject {
             "系统：iOS \(UIDevice.current.systemVersion)",
             "设备：\(UIDevice.current.model)",
             "目录授权：\(rootURL == nil ? "无" : "有")",
+            "扫描结果：\(scanSummary ?? "未扫描")",
             "作品数量：\(works.count)",
             "回收站数量：\(trash.count)",
             "最近错误：\(errorMessage ?? "无")",
@@ -157,12 +200,12 @@ final class WorkLibrary: ObservableObject {
     }
 
     private func activate(_ url: URL) throws {
-        if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
-        let scoped = url.startAccessingSecurityScopedResource()
+        guard !isHiddenDirectory(url) else { throw LibraryError.hiddenFolder }
         guard FileManager.default.fileExists(atPath: url.path) else {
-            if scoped { url.stopAccessingSecurityScopedResource() }
             throw LibraryError.folderUnavailable
         }
+        let scoped = url.startAccessingSecurityScopedResource()
+        if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
         rootURL = url
         hasSecurityScope = scoped
         folderName = url.lastPathComponent
@@ -175,37 +218,101 @@ final class WorkLibrary: ObservableObject {
         UserDefaults.standard.set(data, forKey: bookmarkKey)
     }
 
-    private func scanWorks(root: URL) throws -> [WorkItem] {
-        let folders = try childDirectories(of: root).filter {
-            $0.lastPathComponent != trashName && !$0.lastPathComponent.hasPrefix("_相册状态")
-        }
-        return try folders.compactMap { folder in
-            let files = try FileManager.default.contentsOfDirectory(
-                at: folder,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsPackageDescendants]
-            ).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+    private func scanWorks(root: URL) throws -> ScanResult {
+        var statistics = ScanStatistics()
+        var found: [WorkItem] = []
+
+        func visit(_ folder: URL, relativeComponents: [String], depth: Int) throws {
+            guard statistics.visitedDirectories < maximumScannedDirectories else {
+                statistics.reachedDirectoryLimit = true
+                return
+            }
+            statistics.visitedDirectories += 1
+
+            let entries: [URL]
+            do {
+                entries = try FileManager.default.contentsOfDirectory(
+                    at: folder,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isHiddenKey],
+                    options: [.skipsPackageDescendants]
+                )
+            } catch {
+                statistics.unreadableDirectories += 1
+                return
+            }
+
+            let files = entries.filter {
+                (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            }
             let images = NaturalSort.urls(files.filter { imageExtensions.contains($0.pathExtension.lowercased()) })
             let texts = NaturalSort.urls(files.filter { $0.pathExtension.lowercased() == "txt" })
-            guard !images.isEmpty, !texts.isEmpty else { return nil }
-            let preferred = texts.first { $0.lastPathComponent == "文案.txt" } ?? texts[0]
-            return WorkItem(
-                name: folder.lastPathComponent,
-                folderURL: folder,
-                textURL: preferred,
-                imageURLs: images,
-                shareCount: state.works[folder.lastPathComponent]?.shareCount ?? 0
-            )
-        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+
+            if !relativeComponents.isEmpty {
+                if !texts.isEmpty, images.isEmpty { statistics.missingImages += 1 }
+                if !images.isEmpty, texts.isEmpty { statistics.missingTexts += 1 }
+            }
+
+            if !relativeComponents.isEmpty, !images.isEmpty, !texts.isEmpty {
+                let relativePath = relativeComponents.joined(separator: "/")
+                let preferred = texts.first { $0.lastPathComponent == "文案.txt" } ?? texts[0]
+                found.append(WorkItem(
+                    key: relativePath,
+                    name: folder.lastPathComponent,
+                    relativePath: relativePath,
+                    folderURL: folder,
+                    textURL: preferred,
+                    imageURLs: images,
+                    shareCount: state.works[relativePath]?.shareCount ?? 0
+                ))
+                return
+            }
+
+            guard depth < maximumScanDepth else {
+                statistics.reachedDepthLimit = true
+                return
+            }
+
+            let directories = entries.filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            }
+            for child in NaturalSort.urls(directories) {
+                if isHiddenDirectory(child) {
+                    statistics.hiddenDirectories += 1
+                    continue
+                }
+                if child.lastPathComponent == trashName || child.lastPathComponent.hasPrefix("_相册状态") {
+                    continue
+                }
+                try visit(
+                    child,
+                    relativeComponents: relativeComponents + [child.lastPathComponent],
+                    depth: depth + 1
+                )
+            }
+        }
+
+        try visit(root, relativeComponents: [], depth: 0)
+        found.sort {
+            $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
+        }
+        return ScanResult(works: found, statistics: statistics)
     }
 
     private func scanTrash(root: URL) throws -> [TrashItem] {
         let trashURL = root.appendingPathComponent(trashName, isDirectory: true)
         guard FileManager.default.fileExists(atPath: trashURL.path) else { return [] }
         return try childDirectories(of: trashURL).map { folder in
-            let record = state.works[folder.lastPathComponent] ?? WorkState()
+            let match = state.works.first { entry in
+                entry.value.trashFolderName == folder.lastPathComponent ||
+                    (entry.value.trashFolderName == nil && entry.key == folder.lastPathComponent)
+            }
+            let key = match?.key ?? folder.lastPathComponent
+            let record = match?.value ?? WorkState()
+            let originalRelativePath = record.originalRelativePath ?? key
             return TrashItem(
-                name: folder.lastPathComponent,
+                key: key,
+                name: URL(fileURLWithPath: originalRelativePath).lastPathComponent,
+                originalRelativePath: originalRelativePath,
                 folderURL: folder,
                 shareCount: record.shareCount,
                 trashedDate: record.trashedDate.flatMap { Self.dayFormatter.date(from: $0) }
@@ -213,12 +320,18 @@ final class WorkLibrary: ObservableObject {
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    private func childDirectories(of url: URL) throws -> [URL] {
-        try FileManager.default.contentsOfDirectory(
+    private func childDirectories(of url: URL, includeHidden: Bool = false) throws -> [URL] {
+        let directories = try FileManager.default.contentsOfDirectory(
             at: url,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
             options: [.skipsPackageDescendants]
         ).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        return includeHidden ? directories : directories.filter { !isHiddenDirectory($0) }
+    }
+
+    private func isHiddenDirectory(_ url: URL) -> Bool {
+        if url.lastPathComponent.hasPrefix(".") { return true }
+        return (try? url.resourceValues(forKeys: [.isHiddenKey]).isHidden) == true
     }
 
     private func performMaintenance(root: URL) throws {
@@ -226,39 +339,53 @@ final class WorkLibrary: ObservableObject {
         let todayText = Self.dayFormatter.string(from: today)
         let trashURL = root.appendingPathComponent(trashName, isDirectory: true)
 
-        for (name, record) in Array(state.works) where record.trashedDate == nil {
+        for (key, record) in Array(state.works) where record.trashedDate == nil {
             guard let lastText = record.lastShareDate,
                   let lastDate = Self.dayFormatter.date(from: lastText),
                   lastDate < today else { continue }
-            let source = root.appendingPathComponent(name, isDirectory: true)
+            let originalRelativePath = record.originalRelativePath ?? key
+            let source = url(forRelativePath: originalRelativePath, under: root)
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
             try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
-            let destination = trashURL.appendingPathComponent(name, isDirectory: true)
+            let trashFolderName = record.trashFolderName ??
+                "\(source.lastPathComponent)-\(UUID().uuidString.prefix(8))"
+            let destination = trashURL.appendingPathComponent(trashFolderName, isDirectory: true)
             guard !FileManager.default.fileExists(atPath: destination.path) else { continue }
             try FileManager.default.moveItem(at: source, to: destination)
             var changed = record
             changed.trashedDate = todayText
-            state.works[name] = changed
+            changed.originalRelativePath = originalRelativePath
+            changed.trashFolderName = trashFolderName
+            state.works[key] = changed
             do {
                 try saveState(to: root)
             } catch {
-                state.works[name] = record
+                state.works[key] = record
                 try? FileManager.default.moveItem(at: destination, to: source)
                 throw error
             }
         }
 
-        for (name, record) in Array(state.works) {
+        for (key, record) in Array(state.works) {
             guard let trashedText = record.trashedDate,
                   let trashedDate = Self.dayFormatter.date(from: trashedText),
                   let expiry = Calendar.current.date(byAdding: .day, value: 7, to: trashedDate),
                   expiry <= today else { continue }
-            let folder = trashURL.appendingPathComponent(name, isDirectory: true)
+            let folder = trashURL.appendingPathComponent(
+                record.trashFolderName ?? URL(fileURLWithPath: key).lastPathComponent,
+                isDirectory: true
+            )
             if FileManager.default.fileExists(atPath: folder.path) {
                 try FileManager.default.removeItem(at: folder)
             }
-            state.works.removeValue(forKey: name)
+            state.works.removeValue(forKey: key)
             try saveState(to: root)
+        }
+    }
+
+    private func url(forRelativePath path: String, under root: URL) -> URL {
+        path.split(separator: "/").reduce(root) { partial, component in
+            partial.appendingPathComponent(String(component), isDirectory: true)
         }
     }
 

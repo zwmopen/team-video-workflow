@@ -25,11 +25,13 @@ struct ContentView: View {
                             .font(.system(size: 48))
                             .foregroundStyle(.secondary)
                         Text("没有找到作品").font(.title2.bold())
-                        Text("请把同时含有图片和 TXT 的作品文件夹放进“\(library.folderName ?? "作品总文件夹")”。")
+                        Text(library.scanSummary ?? "请把同时含有图片和 TXT 的作品文件夹放进“\(library.folderName ?? "作品总文件夹")”。")
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
-                        Button("重新扫描") { Task { await library.refresh() } }
+                        Button("重新选择作品总文件夹") { showFolderPicker = true }
                             .buttonStyle(.borderedProminent)
+                        Button("重新扫描") { Task { await library.refresh() } }
+                            .buttonStyle(.bordered)
                     }
                     .padding(32)
                 } else {

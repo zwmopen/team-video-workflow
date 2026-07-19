@@ -2,7 +2,7 @@
 
 把电脑上的整批作品送到 Android 或 iPhone。Android 继续通过同一 Wi‑Fi 自动接收；iPhone 第一版读取用户手动传入并解压的固定作品文件夹。两端应用都叫“相册”，不需要填写 IP、配对码，也不需要 Node.js、命令行、ADB、Root、无障碍或设备管理权限。
 
-## iPhone 0.1.1（自用侧载版）
+## iPhone 0.1.2（自用侧载版）
 
 仓库已经加入原生 SwiftUI iPhone 客户端和快捷指令交付方案：
 
@@ -10,7 +10,7 @@
 - 安装版：GitHub Actions 的 macOS runner 生成未预签名 IPA，可由 Windows Sideloadly 或 AltStore 使用用户自己的 Apple ID 安装和续签。
 - 快捷指令版：动作与状态设计已完成；正式 iCloud 安装链接必须在实体 iPhone 上搭建、验收并由苹果验证后导出。
 
-iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.1.1 已完成实体 iPhone 签名安装，但所有业务功能仍为“已实现未验收”。
+iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.1.1 已完成实体 iPhone 签名安装；0.1.2 的隐藏目录修复完成后仍需重新安装验收，所有业务功能继续标记“已实现未验收”。
 
 ## 最短使用流程
 
@@ -108,4 +108,4 @@ GitHub Actions 负责：
 - iOS SwiftUI 编译、侧载 IPA 打包及内部路径/版本结构校验；
 - 仓库质量检查和密钥扫描。
 
-设计与边界见 [docs/ALBUM_WORKFLOW_DESIGN.md](docs/ALBUM_WORKFLOW_DESIGN.md)。
+发布说明、设计语言、开发资产和复用避坑见 [docs/V3_RELEASE_AND_ASSET_INVENTORY.md](docs/V3_RELEASE_AND_ASSET_INVENTORY.md)；设计与边界见 [docs/ALBUM_WORKFLOW_DESIGN.md](docs/ALBUM_WORKFLOW_DESIGN.md)。

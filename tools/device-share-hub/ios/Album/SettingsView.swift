@@ -10,6 +10,11 @@ struct SettingsView: View {
             List {
                 Section("作品文件夹") {
                     LabeledContent("当前文件夹", value: library.folderName ?? "未选择")
+                    if let summary = library.scanSummary {
+                        Text(summary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     Button("重新选择文件夹") {
                         dismiss()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showFolderPicker = true }
@@ -36,7 +41,7 @@ struct SettingsView: View {
                     } label: {
                         Label("复制诊断信息", systemImage: "stethoscope")
                     }
-                    Text("AltStore 自用版 · 实体 iPhone 验收前均为“已实现未验收”")
+                    Text("自用侧载版 · 未逐项在实体 iPhone 操作的功能均为“已实现未验收”")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -51,6 +56,6 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.2"
     }
 }
