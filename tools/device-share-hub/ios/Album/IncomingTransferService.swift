@@ -78,7 +78,7 @@ final class IncomingTransferService {
         case .ready:
             if name == "文件接收" { tcpReady = true } else { udpReady = true }
             if tcpReady && udpReady {
-                updateStatus("局域网接收已开启，等待电脑自动发现")
+                updateStatus("接收已开启，请保持相册在前台")
             }
         case .failed(let error):
             if name == "文件接收" { tcpReady = false } else { udpReady = false }

@@ -221,7 +221,7 @@ final class WorkLibrary {
     }
 
     func finishIncomingTransfer(itemCount: Int) {
-        networkStatus = "局域网接收已开启，等待电脑自动发现"
+        networkStatus = "接收已开启，请保持相册在前台"
         message = "已接收 \(itemCount) 个文件，作品列表已刷新"
         refresh(showConfirmation: false)
     }

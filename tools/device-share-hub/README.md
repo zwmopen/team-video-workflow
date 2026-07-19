@@ -2,16 +2,16 @@
 
 V3.4 把电脑、Android 和 iPhone 统一成同一 Wi‑Fi 下可互相发现、互相传送的设备。三端均可接收普通文件和文件夹；电脑继续支持直接拖放。两端应用都叫“相册”，不需要填写 IP、配对码，也不需要 Node.js、命令行、ADB、Root、无障碍或设备管理权限。
 
-## iPhone 0.4.0（自用侧载版）
+## iPhone 0.4.1（自用侧载版）
 
 仓库已经加入兼容 iOS 12 的原生 UIKit iPhone 客户端和快捷指令交付方案：
 
 - 原生版：选择一次固定作品总文件夹，两列显示作品；点击后复制 TXT、记录“已打开分享 N 次”并把全部图片交给 iOS 系统分享面板；次日运行时回收，回收站保留 7 天。
-- 传送版：应用在前台时自动发现同一 Wi‑Fi 的电脑和安卓手机；右下角点一次“传送”，选择设备，再选文件或文件夹。传输使用 SHA-256 完整性校验、进度和清晰错误提示；文件夹保留目录结构展开。
+- 传送版：应用在前台时自动发现同一 Wi‑Fi 的电脑和安卓手机；顶部按“小飞机、刷新、回收站、设置”排列。传输使用 SHA-256 完整性校验、进度和清晰错误提示；文件夹保留目录结构展开。
 - 安装版：GitHub Actions 的 macOS runner 生成未预签名 IPA，可由 Windows Sideloadly 或 AltStore 使用用户自己的 Apple ID 安装和续签。
 - 快捷指令版：动作与状态设计已完成；正式 iCloud 安装链接必须在实体 iPhone 上搭建、验收并由苹果验证后导出。
 
-iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.4.0 用同一个包兼容 iPhone 6 和新 iPhone；iPhone 6 可选文件，较新系统同时可选完整文件夹。
+iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.4.1 用同一个包兼容 iPhone 6 和新 iPhone；iPhone 6 可选文件，较新系统同时可选完整文件夹。
 
 ## 最短使用流程
 
@@ -21,7 +21,7 @@ iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载�
 4. 点作品的“复制文案并分享”。
 5. App 复制 TXT 文案、带上全部图片并打开 Android 系统分享面板。
 
-手机互传：在任一手机主界面点右下角绿色传送按钮，点接收设备，再点“选择文件”或“选择文件夹”。电脑接收内容默认保存在 `下载/相册收件箱`。
+手机互传：在任一手机主界面点顶部纸飞机，点接收设备，再点“选择文件”或“选择文件夹”。电脑接收内容默认保存在 `下载/相册收件箱`。iPhone 作为接收端时需要让“相册”保持在前台；应用会阻止自动锁屏，离开应用后立即恢复系统锁屏规则并停止接收。
 
 Android 无法知道用户是否在目标平台完成发布，因此状态诚实显示为“已打开分享”，不宣称“发布成功”。
 
@@ -67,7 +67,7 @@ Android 无法知道用户是否在目标平台完成发布，因此状态诚实
 ## 设置与图片信息
 
 - 设置页只保留手机名称、作品文件夹、当前版本、检查更新和软件说明。手机名称会显示在电脑端。
-- App 每天静默检查一次 GitHub Release；也可在设置中手动检查。只提示，不静默安装。当前 Android 与 iPhone 版本均为 0.4.0。
+- App 每天静默检查一次 GitHub Release；也可在设置中手动检查。只提示，不静默安装。当前 Android 与 iPhone 版本均为 0.4.1。
 - 传输和分享保持图片原始字节，因此已有 EXIF 拍摄时间、相机参数和位置会原样保留。
 - 不注入虚假的相机、地址或拍摄参数，也不提供伪造元数据开关。
 
