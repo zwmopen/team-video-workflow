@@ -43,6 +43,7 @@ iOS 无法授权整台手机根目录。应选择实际作品目录、iCloud Dri
 | Windows 源码 | `tools/device-share-hub/windows-native` | 原生面板 |
 | Android 源码 | `tools/device-share-hub/android` | Android/HarmonyOS 客户端 |
 | iOS 源码 | `tools/device-share-hub/ios/Album` | UIKit 客户端，同包兼容 iOS 12+ |
+| 兼容与测试矩阵 | `tools/device-share-hub/docs/COMPATIBILITY_AND_TEST_MATRIX.md` | 设备差异、实机记录、踩坑和回归要求 |
 | CI | `.github/workflows/device-share-hub.yml` | 三端编译、测试、密钥扫描和 IPA 结构校验 |
 
 GitHub Release 应保存版本化安装包、SHA-256 和脱敏发布说明。主仓库保存源码与设计；Android 公开更新仓库只保存公开 APK/版本清单，不保存源码、用户素材或诊断日志。
