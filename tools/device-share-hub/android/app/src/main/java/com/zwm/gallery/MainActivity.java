@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -204,7 +205,16 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
-        return scroll;
+        FrameLayout stage = new FrameLayout(this);
+        stage.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
+        transfer.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(38, 145, 94)));
+        transfer.setElevation(dp(8));
+        transfer.setOnClickListener(v -> startActivity(new Intent(this, TransferActivity.class)));
+        FrameLayout.LayoutParams transferParams = new FrameLayout.LayoutParams(dp(58), dp(58), Gravity.END | Gravity.BOTTOM);
+        transferParams.setMargins(0, 0, dp(18), dp(22));
+        stage.addView(transfer, transferParams);
+        return stage;
     }
 
     private void refreshWorks() {

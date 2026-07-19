@@ -38,6 +38,9 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -47,6 +50,7 @@ public final class OnlineService extends Service {
     public static final String ACTION_TASK_READY = "com.zwm.gallery.TASK_READY";
     public static final String EXTRA_AUTO_SHARE_WORK_ID = "autoShareWorkId";
     public static final String ACTION_STATUS = "com.zwm.gallery.STATUS";
+    public static final String ACTION_PEERS_CHANGED = "com.zwm.gallery.PEERS_CHANGED";
     public static final String ACTION_SHARE_OPENED = "com.zwm.gallery.SHARE_OPENED";
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
 
@@ -60,6 +64,7 @@ public final class OnlineService extends Service {
     private static final int MAX_FILES = 100;
     private static final long MAX_JSON_BYTES = 2L * 1024L * 1024L;
     private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
+    private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
@@ -70,6 +75,14 @@ public final class OnlineService extends Service {
     private volatile DatagramSocket discoverySocket;
     private final Object taskLock = new Object();
     private IncomingTask activeTask;
+
+    public static List<PeerDevice> peers() {
+        long cutoff = System.currentTimeMillis() - 9000;
+        PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
+        ArrayList<PeerDevice> result = new ArrayList<>(PEERS.values());
+        result.sort((left, right) -> left.name.compareToIgnoreCase(right.name));
+        return result;
+    }
 
     @Override
     public void onCreate() {
@@ -447,6 +460,8 @@ public final class OnlineService extends Service {
                     String text = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
                     if ("ZWMDS2_DISCOVER".equals(text)) {
                         sendBeacon(socket, new InetSocketAddress(packet.getAddress(), packet.getPort()));
+                    } else if (text.startsWith("ZWMDS2_HERE|2|")) {
+                        rememberPeer(text, packet.getAddress());
                     }
                 } catch (SocketTimeoutException ignored) {
                 }
@@ -460,6 +475,33 @@ public final class OnlineService extends Service {
         } finally {
             discoverySocket = null;
         }
+    }
+
+    private void rememberPeer(String packet, InetAddress address) {
+        try {
+            String[] parts = packet.split("\\|", -1);
+            if (parts.length < 8) return;
+            String ownId = getSharedPreferences(PREFS, MODE_PRIVATE).getString("deviceId", "");
+            String id = parts[2];
+            if (id.isEmpty() || id.equals(ownId)) return;
+            int port;
+            try { port = Integer.parseInt(parts[3]); } catch (Exception ignored) { port = HTTP_PORT; }
+            PeerDevice peer = new PeerDevice(id, decodeB64(parts[4]), decodeB64(parts[5]),
+                    address.getHostAddress(), port, decodeB64(parts[6]), System.currentTimeMillis());
+            boolean changed = !peer.equalsForDisplay(PEERS.put(id, peer));
+            if (changed) {
+                sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));
+                DiagnosticLog.write(this, "peer_found", peer.name + " " + peer.ip);
+            }
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "peer_packet_invalid", compact(error.getMessage()));
+        }
+    }
+
+    private static String decodeB64(String value) {
+        if (value == null || value.isEmpty()) return "";
+        try { return new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8); }
+        catch (Exception ignored) { return ""; }
     }
 
     private void sendBeacon(DatagramSocket socket, InetSocketAddress directTarget) throws Exception {

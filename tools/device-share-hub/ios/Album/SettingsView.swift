@@ -63,7 +63,7 @@ final class SettingsViewController: UITableViewController {
             cell.detailTextLabel?.text = "相册"
         case (4, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.0"
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0"
         default:
             cell.textLabel?.text = "复制诊断信息"
             cell.textLabel?.textColor = view.tintColor

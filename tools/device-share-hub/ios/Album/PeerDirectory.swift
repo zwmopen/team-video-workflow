@@ -1,0 +1,53 @@
+import Foundation
+
+struct TransferPeer: Equatable {
+    let id: String
+    let name: String
+    let model: String
+    let host: String
+    let port: UInt16
+    let state: String
+    let lastSeen: Date
+}
+
+extension Notification.Name {
+    static let transferPeersChanged = Notification.Name("album.transferPeersChanged")
+}
+
+final class PeerDirectory {
+    static let shared = PeerDirectory()
+    private let lock = NSLock()
+    private var values: [String: TransferPeer] = [:]
+
+    func remember(packet: String, host: String) -> Bool {
+        let parts = packet.components(separatedBy: "|")
+        guard parts.count >= 8, parts[0] == "ZWMDS2_HERE", parts[1] == "2",
+              !parts[2].isEmpty, parts[2] != DeviceIdentity.id else { return false }
+        let peer = TransferPeer(id: parts[2], name: decode(parts[4]), model: decode(parts[5]),
+                                host: host, port: UInt16(parts[3]) ?? 45833,
+                                state: decode(parts[6]), lastSeen: Date())
+        lock.lock()
+        let previous = values[peer.id]
+        values[peer.id] = peer
+        lock.unlock()
+        let changed = previous == nil || previous?.host != peer.host || previous?.name != peer.name || previous?.state != peer.state
+        if changed { DispatchQueue.main.async { NotificationCenter.default.post(name: .transferPeersChanged, object: nil) } }
+        return previous == nil || Date().timeIntervalSince(previous!.lastSeen) > 7
+    }
+
+    func peers() -> [TransferPeer] {
+        let cutoff = Date().addingTimeInterval(-9)
+        lock.lock()
+        values = values.filter { $0.value.lastSeen >= cutoff }
+        let result = values.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        lock.unlock()
+        return result
+    }
+
+    private func decode(_ value: String) -> String {
+        var base = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while base.count % 4 != 0 { base.append("=") }
+        guard let data = Data(base64Encoded: base), let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
+    }
+}

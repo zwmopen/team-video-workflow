@@ -9,6 +9,9 @@
 #include <wincrypt.h>
 #include <objbase.h>
 #include <iphlpapi.h>
+#include <shobjidl.h>
+
+#include "receiver.h"
 
 #include <algorithm>
 #include <atomic>
@@ -46,6 +49,9 @@ constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
 constexpr int IDC_REFRESH_DEVICES = 106;
+constexpr int IDC_SEND_PICKER = 107;
+constexpr int IDC_PICK_FILES = 203;
+constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
@@ -69,6 +75,7 @@ HWND gLogButton = nullptr;
 HWND gRefreshButton = nullptr;
 HWND gProgress = nullptr;
 HWND gCancelButton = nullptr;
+HWND gSendButton = nullptr;
 HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
@@ -80,6 +87,7 @@ std::atomic<bool> gUploadInProgress{false};
 std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
 std::thread gDiscoveryThread;
+std::thread gReceiverThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
@@ -127,6 +135,32 @@ std::string Base64UrlDecode(const std::string& input) {
                               reinterpret_cast<BYTE*>(output.data()), &size, nullptr, nullptr)) return {};
     output.resize(size);
     return output;
+}
+
+std::string Base64UrlEncode(const std::string& input) {
+    if (input.empty()) return {};
+    DWORD size = 0;
+    if (!CryptBinaryToStringA(reinterpret_cast<const BYTE*>(input.data()), static_cast<DWORD>(input.size()),
+                              CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &size)) return {};
+    std::string output(size, '\0');
+    if (!CryptBinaryToStringA(reinterpret_cast<const BYTE*>(input.data()), static_cast<DWORD>(input.size()),
+                              CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, output.data(), &size)) return {};
+    while (!output.empty() && (output.back() == '\0' || output.back() == '=')) output.pop_back();
+    std::replace(output.begin(), output.end(), '+', '-');
+    std::replace(output.begin(), output.end(), '/', '_');
+    return output;
+}
+
+std::wstring ComputerName() {
+    wchar_t value[MAX_COMPUTERNAME_LENGTH + 1]{}; DWORD size = ARRAYSIZE(value);
+    return GetComputerNameW(value, &size) && size > 0 ? std::wstring(value, size) : L"我的电脑";
+}
+
+std::string WindowsBeacon() {
+    std::wstring name = ComputerName();
+    std::string id = "windows-" + std::to_string(std::hash<std::wstring>{}(name));
+    return "ZWMDS2_HERE|2|" + id + "|45833|" + Base64UrlEncode(WideToUtf8(name)) + "|"
+        + Base64UrlEncode("Windows PC") + "|" + Base64UrlEncode("online") + "|";
 }
 
 std::wstring StateLabel(const std::wstring& state) {
@@ -928,8 +962,11 @@ void DiscoveryLoop() {
         if (gRefreshRequested.exchange(false)) nextProbe = now;
         if (now >= nextProbe) {
             const char probe[] = "ZWMDS2_DISCOVER";
+            std::string beacon = WindowsBeacon();
             for (sockaddr_in& target : DiscoveryTargets()) {
                 sendto(socketHandle, probe, static_cast<int>(sizeof(probe) - 1), 0,
+                       reinterpret_cast<sockaddr*>(&target), sizeof(target));
+                sendto(socketHandle, beacon.data(), static_cast<int>(beacon.size()), 0,
                        reinterpret_cast<sockaddr*>(&target), sizeof(target));
             }
             nextProbe = now + std::chrono::seconds(2);
@@ -1124,6 +1161,35 @@ void HandleDrop(HDROP drop) {
     std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
 }
 
+std::vector<std::filesystem::path> PickPaths(bool folder) {
+    std::vector<std::filesystem::path> result;
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return result;
+    DWORD options = 0; dialog->GetOptions(&options);
+    options |= FOS_FORCEFILESYSTEM | (folder ? FOS_PICKFOLDERS : FOS_ALLOWMULTISELECT);
+    dialog->SetOptions(options);
+    dialog->SetTitle(folder ? L"选择要传送的文件夹" : L"选择要传送的文件");
+    if (SUCCEEDED(dialog->Show(gWindow))) {
+        if (folder) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dialog->GetResult(&item))) { PWSTR path = nullptr; if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) { result.emplace_back(path); CoTaskMemFree(path); } item->Release(); }
+        } else {
+            IShellItemArray* items = nullptr;
+            if (SUCCEEDED(dialog->GetResults(&items))) { DWORD count = 0; items->GetCount(&count); for (DWORD i = 0; i < count; ++i) { IShellItem* item = nullptr; if (SUCCEEDED(items->GetItemAt(i, &item))) { PWSTR path = nullptr; if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) { result.emplace_back(path); CoTaskMemFree(path); } item->Release(); } } items->Release(); }
+        }
+    }
+    dialog->Release(); return result;
+}
+
+void ChooseAndSend(bool folder) {
+    if (gUploadInProgress) { MessageBoxW(gWindow, L"上一批文件还在传送。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
+    int index = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
+    if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) { MessageBoxW(gWindow, L"请先选择一台在线设备。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
+    auto files = PickPaths(folder); if (files.empty()) return;
+    Device device = gDisplayedDevices[static_cast<size_t>(index)];
+    std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
+}
+
 void Layout(HWND window) {
     RECT client{};
     GetClientRect(window, &client);
@@ -1133,12 +1199,14 @@ void Layout(HWND window) {
     MoveWindow(gRefreshButton, width - margin - 118, 18, 118, 36, TRUE);
     MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 224), TRUE);
     int buttonWidth = 136;
+    int sendWidth = 88;
     int cancelWidth = 86;
-    int statusWidth = std::max(160, width - margin * 2 - buttonWidth - cancelWidth - 28);
+    int statusWidth = std::max(150, width - margin * 2 - buttonWidth - cancelWidth - sendWidth - 38);
     MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
     MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
     MoveWindow(gLogButton, margin + statusWidth + cancelWidth + 20, height - 72, buttonWidth, 38, TRUE);
+    MoveWindow(gSendButton, width - margin - sendWidth, height - 72, sendWidth, 38, TRUE);
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -1181,8 +1249,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gLogButton = CreateWindowW(L"BUTTON", L"打开诊断日志", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                        540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
             SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gSendButton = CreateWindowW(L"BUTTON", L"⇄ 传送", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                        0, 0, 88, 38, window, reinterpret_cast<HMENU>(IDC_SEND_PICKER), nullptr, nullptr);
+            SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
+            gReceiverThread = std::thread([] { RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog); });
             SetTimer(window, 1, 2500, nullptr);
             return 0;
         }
@@ -1196,6 +1268,18 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 SetWindowTextW(gStatus, L"正在刷新设备…");
                 gRefreshRequested = true;
                 WriteDiagnosticLog(L"discovery_manual_refresh", L"device list cleared and probe requested");
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_SEND_PICKER) {
+                HMENU menu = CreatePopupMenu();
+                AppendMenuW(menu, MF_STRING, IDC_PICK_FILES, L"选择文件…");
+                AppendMenuW(menu, MF_STRING, IDC_PICK_FOLDER, L"选择文件夹…");
+                RECT rect{}; GetWindowRect(gSendButton, &rect);
+                int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
+                                             rect.right, rect.top, 0, window, nullptr);
+                DestroyMenu(menu);
+                if (command == IDC_PICK_FILES) ChooseAndSend(false);
+                if (command == IDC_PICK_FOLDER) ChooseAndSend(true);
                 return 0;
             }
             if (LOWORD(wParam) == 105) {
@@ -1261,6 +1345,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gRunning = false;
             KillTimer(window, 1);
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
+            if (gReceiverThread.joinable()) gReceiverThread.join();
             if (gFont) DeleteObject(gFont);
             if (gTitleFont) DeleteObject(gTitleFont);
             PostQuitMessage(0);

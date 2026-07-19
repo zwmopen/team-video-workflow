@@ -87,11 +87,28 @@ final class IncomingTransferService {
         connection.start(queue: queue)
         connection.receiveMessage { [weak self, weak connection] data, _, _, error in
             guard let self = self, let connection = connection else { return }
-            defer { connection.cancel() }
-            guard error == nil, let data = data,
-                  String(data: data, encoding: .utf8) == "ZWMDS2_DISCOVER" else { return }
-            connection.send(content: self.beaconData(), completion: .contentProcessed { _ in })
+            guard error == nil, let data = data, let text = String(data: data, encoding: .utf8) else {
+                connection.cancel()
+                return
+            }
+            if text == "ZWMDS2_DISCOVER" {
+                connection.send(content: self.beaconData(), completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            if text.hasPrefix("ZWMDS2_HERE|2|"), let host = self.remoteHost(connection.endpoint) {
+                let shouldReply = PeerDirectory.shared.remember(packet: text, host: host)
+                if shouldReply {
+                    connection.send(content: self.beaconData(), completion: .contentProcessed { _ in connection.cancel() })
+                    return
+                }
+            }
+            connection.cancel()
         }
+    }
+
+    private func remoteHost(_ endpoint: NWEndpoint) -> String? {
+        guard case let .hostPort(host, _) = endpoint else { return nil }
+        return "\(host)".trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
     }
 
     private func beaconData() -> Data {

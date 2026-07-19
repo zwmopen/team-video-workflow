@@ -8,6 +8,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private let emptyDetail = UILabel()
     private var collectionView: UICollectionView!
     private var toastView: UILabel?
+    private let transferButton = UIButton(type: .system)
 
     init(library: WorkLibrary) {
         self.library = library
@@ -21,9 +22,35 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         view.backgroundColor = AppColors.background
         configureNavigation()
         configureCollection()
+        configureTransferButton()
         configureEmptyView()
         library.onChange = { [weak self] in self?.render() }
         render()
+    }
+
+    private func configureTransferButton() {
+        transferButton.setTitle("⇄", for: .normal)
+        transferButton.titleLabel?.font = .systemFont(ofSize: 27, weight: .semibold)
+        transferButton.setTitleColor(.white, for: .normal)
+        transferButton.backgroundColor = view.tintColor
+        transferButton.layer.cornerRadius = 29
+        transferButton.layer.shadowColor = UIColor.black.cgColor
+        transferButton.layer.shadowOpacity = 0.18
+        transferButton.layer.shadowRadius = 9
+        transferButton.layer.shadowOffset = CGSize(width: 0, height: 5)
+        transferButton.translatesAutoresizingMaskIntoConstraints = false
+        transferButton.addTarget(self, action: #selector(openTransfer), for: .touchUpInside)
+        view.addSubview(transferButton)
+        NSLayoutConstraint.activate([
+            transferButton.widthAnchor.constraint(equalToConstant: 58),
+            transferButton.heightAnchor.constraint(equalToConstant: 58),
+            transferButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
+            transferButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18)
+        ])
+    }
+
+    @objc private func openTransfer() {
+        navigationController?.pushViewController(TransferViewController(), animated: true)
     }
 
     override func viewWillAppear(_ animated: Bool) {
