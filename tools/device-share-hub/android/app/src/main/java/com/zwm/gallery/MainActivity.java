@@ -25,7 +25,6 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -51,13 +50,13 @@ public final class MainActivity extends Activity {
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private LinearLayout worksContainer;
-    private TextView sourceText;
     private TextView statusText;
     private ImageButton leftModeButton;
     private ImageButton rightModeButton;
     private TextView headingText;
     private TextView scannedCountText;
     private boolean showingTrash;
+    private boolean initialFolderPromptShown;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -81,13 +80,13 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         ensureDeviceId();
         setContentView(buildUi());
-        updateSourceLabel();
         requestNotificationPermission();
         startReceiver();
         requestLegacyStoragePermission();
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
         UpdateChecker.checkDaily(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
+        getWindow().getDecorView().post(this::showInitialFolderPromptIfNeeded);
     }
 
     @Override
@@ -99,7 +98,6 @@ public final class MainActivity extends Activity {
         filter.addAction(OnlineService.ACTION_STATUS);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
-        updateSourceLabel();
         if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
         else importSelectedTree(false);
     }
@@ -165,6 +163,9 @@ public final class MainActivity extends Activity {
 
         View titleSpacer = new View(this);
         titleRow.addView(titleSpacer, new LinearLayout.LayoutParams(0, 1, 1));
+        ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
+        transfer.setOnClickListener(v -> startActivity(new Intent(this, TransferActivity.class)));
+        titleRow.addView(transfer, iconParams(false));
         leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
         leftModeButton.setOnClickListener(v -> {
             if (showingTrash) showWorks();
@@ -182,11 +183,6 @@ public final class MainActivity extends Activity {
         titleRow.addView(settings, iconParams(true));
         root.addView(titleRow, margins(0, 0, 0, dp(12)));
 
-        LinearLayout sourceCard = card();
-        sourceText = text("正在读取…", 13, false);
-        sourceText.setTextColor(Color.rgb(91, 91, 88));
-        sourceCard.addView(sourceText, new LinearLayout.LayoutParams(-1, -2));
-        root.addView(sourceCard, margins(0, 0, 0, dp(12)));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(worksContainer);
@@ -205,16 +201,7 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
-        FrameLayout stage = new FrameLayout(this);
-        stage.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
-        ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
-        transfer.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(38, 145, 94)));
-        transfer.setElevation(dp(8));
-        transfer.setOnClickListener(v -> startActivity(new Intent(this, TransferActivity.class)));
-        FrameLayout.LayoutParams transferParams = new FrameLayout.LayoutParams(dp(58), dp(58), Gravity.END | Gravity.BOTTOM);
-        transferParams.setMargins(0, 0, dp(18), dp(22));
-        stage.addView(transfer, transferParams);
-        return stage;
+        return scroll;
     }
 
     private void refreshWorks() {
@@ -374,7 +361,6 @@ public final class MainActivity extends Activity {
                     .putString(PREF_TREE_URI, tree.toString())
                     .putString(PREF_TREE_NAME, treeName)
                     .apply();
-            updateSourceLabel();
             importSelectedTree(true);
         } catch (Exception error) {
             statusText.setText("无法保存文件夹权限：" + error.getMessage());
@@ -446,18 +432,17 @@ public final class MainActivity extends Activity {
 
     private WorkLibrary library() throws Exception { return new WorkLibrary(new File(getFilesDir(), "work-library")); }
 
-    private void updateSourceLabel() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        String stored = prefs.getString(PREF_TREE_URI, "");
-        String name = prefs.getString(PREF_TREE_NAME, "");
-        if (!stored.isEmpty()) {
-            String resolvedName = treeName(Uri.parse(stored));
-            if (!resolvedName.isEmpty()) {
-                name = resolvedName;
-                prefs.edit().putString(PREF_TREE_NAME, name).apply();
-            }
-        }
-        sourceText.setText(stored.isEmpty() ? "作品文件夹：未设置" : "作品文件夹：" + name);
+    private void showInitialFolderPromptIfNeeded() {
+        if (initialFolderPromptShown || isFinishing()) return;
+        String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
+        if (!stored.isEmpty()) return;
+        initialFolderPromptShown = true;
+        new AlertDialog.Builder(this)
+                .setTitle("先选择作品文件夹")
+                .setMessage("只需设置一次。相册会递归识别里面包含图片和 TXT 的作品文件夹。")
+                .setNegativeButton("稍后", null)
+                .setPositiveButton("选择文件夹", (dialog, which) -> chooseFolder())
+                .show();
     }
 
     private String treeName(Uri tree) {

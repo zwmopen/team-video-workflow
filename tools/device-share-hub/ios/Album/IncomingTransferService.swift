@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import UIKit
+import Darwin
 
 private let transferHTTPPort: UInt16 = 45833
 private let transferDiscoveryPort: UInt16 = 45834
@@ -10,6 +11,7 @@ final class IncomingTransferService {
     private let queue = DispatchQueue(label: "com.zwm.album.incoming-transfer")
     private var tcpListener: NWListener?
     private var udpListener: NWListener?
+    private var beaconTimer: DispatchSourceTimer?
     private var tasks: [String: IncomingTask] = [:]
     private var isRunning = false
     private var tcpReady = false
@@ -27,8 +29,10 @@ final class IncomingTransferService {
             self.isRunning = false
             self.tcpListener?.cancel()
             self.udpListener?.cancel()
+            self.beaconTimer?.cancel()
             self.tcpListener = nil
             self.udpListener = nil
+            self.beaconTimer = nil
             self.tcpReady = false
             self.udpReady = false
             self.tasks.values.forEach { $0.cleanup() }
@@ -61,6 +65,7 @@ final class IncomingTransferService {
             tcpListener = tcp
             udpListener = udp
             isRunning = true
+            startBeaconTimer()
             updateStatus("正在开启局域网接收…")
         } catch {
             isRunning = false
@@ -103,6 +108,41 @@ final class IncomingTransferService {
                 }
             }
             connection.cancel()
+        }
+    }
+
+    private func startBeaconTimer() {
+        beaconTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(2000), leeway: .milliseconds(180))
+        timer.setEventHandler { [weak self] in self?.broadcastBeacon() }
+        timer.resume()
+        beaconTimer = timer
+    }
+
+    private func broadcastBeacon() {
+        guard isRunning else { return }
+        let socketHandle = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard socketHandle >= 0 else { return }
+        defer { Darwin.close(socketHandle) }
+        var enabled: Int32 = 1
+        guard Darwin.setsockopt(socketHandle, SOL_SOCKET, SO_BROADCAST, &enabled,
+                                socklen_t(MemoryLayout<Int32>.size)) == 0 else { return }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = transferDiscoveryPort.bigEndian
+        "255.255.255.255".withCString { value in
+            _ = Darwin.inet_pton(AF_INET, value, &address.sin_addr)
+        }
+        let data = beaconData()
+        data.withUnsafeBytes { bytes in
+            withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                    _ = Darwin.sendto(socketHandle, bytes.baseAddress, data.count, 0, socketAddress,
+                                      socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
         }
     }
 
@@ -150,9 +190,13 @@ final class IncomingTransferService {
             }
             return HTTPResponse(status: 404, message: "请求路径不存在")
         } catch let error as TransferServiceError {
+            TransferNotifications.shared.show("接收失败", body: error.localizedDescription,
+                                              id: "incoming-failed-\(UUID().uuidString)")
             return HTTPResponse(status: error.status, message: error.localizedDescription)
         } catch {
             updateStatus("接收失败：\(error.localizedDescription)", isError: true)
+            TransferNotifications.shared.show("接收失败", body: error.localizedDescription,
+                                              id: "incoming-failed-\(UUID().uuidString)")
             return HTTPResponse(status: 500, message: error.localizedDescription)
         }
     }
@@ -187,6 +231,8 @@ final class IncomingTransferService {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         tasks[taskID] = IncomingTask(id: taskID, expectedCount: fileCount, directory: directory)
         updateStatus("正在接收 \(fileCount) 个项目…")
+        TransferNotifications.shared.show("正在向你发送", body: "准备接收 \(fileCount) 个项目",
+                                          id: "incoming-start-\(taskID)")
         return HTTPResponse(status: 201, object: ["ok": true, "taskId": taskID])
     }
 
@@ -211,6 +257,7 @@ final class IncomingTransferService {
         task.files[index] = IncomingFile(name: name,
                                          mime: request.headers["x-file-mime"] ?? "application/octet-stream",
                                          url: destination)
+        updateStatus("正在接收 \(task.files.count)/\(task.expectedCount)：\(name)")
         return HTTPResponse(status: 200, object: ["ok": true, "index": index])
     }
 
@@ -236,6 +283,8 @@ final class IncomingTransferService {
         tasks.removeValue(forKey: taskID)
         task.cleanup()
         DispatchQueue.main.async { [weak library] in library?.finishIncomingTransfer(itemCount: receivedCount) }
+        TransferNotifications.shared.show("接收完成", body: "已收到 \(receivedCount) 个项目",
+                                          id: "incoming-complete-\(taskID)")
         return HTTPResponse(status: 200, object: ["ok": true, "received": receivedCount])
     }
 

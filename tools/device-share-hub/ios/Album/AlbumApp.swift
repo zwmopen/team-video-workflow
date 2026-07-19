@@ -9,6 +9,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         library.start()
+        TransferNotifications.shared.configure()
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.tintColor = UIColor(red: 0.06, green: 0.61, blue: 0.39, alpha: 1)
         let main = LibraryViewController(library: library)

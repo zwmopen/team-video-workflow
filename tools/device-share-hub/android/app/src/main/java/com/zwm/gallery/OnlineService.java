@@ -77,7 +77,7 @@ public final class OnlineService extends Service {
     private IncomingTask activeTask;
 
     public static List<PeerDevice> peers() {
-        long cutoff = System.currentTimeMillis() - 9000;
+        long cutoff = System.currentTimeMillis() - 15000;
         PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
         ArrayList<PeerDevice> result = new ArrayList<>(PEERS.values());
         result.sort((left, right) -> left.name.compareToIgnoreCase(right.name));
@@ -212,10 +212,12 @@ public final class OnlineService extends Service {
                 writeText(output, 404, "Not Found");
             } catch (HttpError error) {
                 DiagnosticLog.write(this, "http_error", error.code + " " + compact(error.getMessage()));
+                notifyStatus("接收失败：" + compact(error.getMessage()));
                 writeText(output, error.code, error.getMessage());
             } catch (Exception error) {
                 Log.w(TAG, "request failed", error);
                 DiagnosticLog.write(this, "request_failed", compact(error.getMessage()));
+                notifyStatus("接收失败：" + compact(error.getMessage()));
                 writeText(output, 500, compact(error.getMessage()));
             }
         } catch (Exception error) {
@@ -587,6 +589,8 @@ public final class OnlineService extends Service {
 
     private void notifyStatus(String message) {
         sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()).putExtra("message", message));
+        if (running) getSystemService(NotificationManager.class)
+                .notify(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification(message));
     }
 
     private static byte[] readExact(InputStream input, long length) throws Exception {

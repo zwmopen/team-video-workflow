@@ -126,6 +126,7 @@ public final class TransferActivity extends Activity {
             peersContainer.addView(empty);
             return;
         }
+        if (selected == null) status.setText("已发现 " + peers.size() + " 台设备，请选择");
         for (PeerDevice peer : peers) {
             Button item = new Button(this);
             item.setAllCaps(false);

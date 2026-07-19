@@ -36,7 +36,7 @@ final class PeerDirectory {
     }
 
     func peers() -> [TransferPeer] {
-        let cutoff = Date().addingTimeInterval(-9)
+        let cutoff = Date().addingTimeInterval(-15)
         lock.lock()
         values = values.filter { $0.value.lastSeen >= cutoff }
         let result = values.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

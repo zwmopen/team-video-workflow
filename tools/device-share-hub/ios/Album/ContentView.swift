@@ -8,7 +8,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private let emptyDetail = UILabel()
     private var collectionView: UICollectionView!
     private var toastView: UILabel?
-    private let transferButton = UIButton(type: .system)
+    private var initialFolderPromptShown = false
 
     init(library: WorkLibrary) {
         self.library = library
@@ -22,31 +22,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         view.backgroundColor = AppColors.background
         configureNavigation()
         configureCollection()
-        configureTransferButton()
         configureEmptyView()
         library.onChange = { [weak self] in self?.render() }
         render()
-    }
-
-    private func configureTransferButton() {
-        transferButton.setTitle("⇄", for: .normal)
-        transferButton.titleLabel?.font = .systemFont(ofSize: 27, weight: .semibold)
-        transferButton.setTitleColor(.white, for: .normal)
-        transferButton.backgroundColor = view.tintColor
-        transferButton.layer.cornerRadius = 29
-        transferButton.layer.shadowColor = UIColor.black.cgColor
-        transferButton.layer.shadowOpacity = 0.18
-        transferButton.layer.shadowRadius = 9
-        transferButton.layer.shadowOffset = CGSize(width: 0, height: 5)
-        transferButton.translatesAutoresizingMaskIntoConstraints = false
-        transferButton.addTarget(self, action: #selector(openTransfer), for: .touchUpInside)
-        view.addSubview(transferButton)
-        NSLayoutConstraint.activate([
-            transferButton.widthAnchor.constraint(equalToConstant: 58),
-            transferButton.heightAnchor.constraint(equalToConstant: 58),
-            transferButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
-            transferButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18)
-        ])
     }
 
     @objc private func openTransfer() {
@@ -56,6 +34,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         render()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        showInitialFolderPromptIfNeeded()
     }
 
     private func configureNavigation() {
@@ -75,9 +58,27 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         stack.alignment = .center
         navigationItem.titleView = stack
         navigationItem.rightBarButtonItems = [
-            UIBarButtonItem(title: "⚙︎", style: .plain, target: self, action: #selector(openSettings)),
-            UIBarButtonItem(title: "♻︎", style: .plain, target: self, action: #selector(openTrash))
+            toolbarItem(.settings, label: "设置", action: #selector(openSettings)),
+            toolbarItem(.trash, label: "回收站", action: #selector(openTrash)),
+            toolbarItem(.refresh, label: "刷新作品", action: #selector(refreshTapped)),
+            toolbarItem(.plane, label: "传送文件", action: #selector(openTransfer))
         ]
+    }
+
+    private func toolbarItem(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIBarButtonItem {
+        let button = UIButton(type: .system)
+        button.frame = CGRect(x: 0, y: 0, width: 34, height: 34)
+        button.backgroundColor = view.tintColor.withAlphaComponent(0.11)
+        button.layer.cornerRadius = 11
+        button.setImage(AlbumToolbarIcon.image(symbol, color: view.tintColor), for: .normal)
+        button.imageView?.contentMode = .scaleAspectFit
+        button.accessibilityLabel = label
+        button.addTarget(self, action: action, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 34),
+            button.heightAnchor.constraint(equalToConstant: 34)
+        ])
+        return UIBarButtonItem(customView: button)
     }
 
     private func configureCollection() {
@@ -182,6 +183,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
+    @objc private func refreshTapped() { library.refresh() }
     @objc private func emptyAction() {
         library.supportsExternalFolderSelection ? presentFolderPicker() : library.refresh()
     }
@@ -197,6 +199,20 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let picker = FolderPickerController()
         picker.onPick = { [weak self] url in self?.library.selectFolder(url) }
         present(picker, animated: true)
+    }
+
+    private func showInitialFolderPromptIfNeeded() {
+        guard !initialFolderPromptShown, library.supportsExternalFolderSelection,
+              library.folderName == nil, presentedViewController == nil else { return }
+        initialFolderPromptShown = true
+        let alert = UIAlertController(title: "先选择作品文件夹",
+                                      message: "只需设置一次。相册会递归识别里面包含图片和 TXT 的作品文件夹。",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "稍后", style: .cancel))
+        alert.addAction(UIAlertAction(title: "选择文件夹", style: .default) { [weak self] _ in
+            self?.presentFolderPicker()
+        })
+        present(alert, animated: true)
     }
 
     private func showError(_ text: String) {
@@ -231,6 +247,53 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         UIView.animate(withDuration: 0.25, delay: 2, options: [], animations: { label.alpha = 0 }) {
             _ in label.removeFromSuperview()
         }
+    }
+}
+
+private enum AlbumToolbarSymbol { case plane, refresh, trash, settings }
+
+private enum AlbumToolbarIcon {
+    static func image(_ symbol: AlbumToolbarSymbol, color: UIColor) -> UIImage {
+        let size = CGSize(width: 23, height: 23)
+        UIGraphicsBeginImageContextWithOptions(size, false, 0)
+        defer { UIGraphicsEndImageContext() }
+        color.setStroke()
+        color.setFill()
+        let path = UIBezierPath()
+        path.lineWidth = 1.8
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        switch symbol {
+        case .plane:
+            path.move(to: CGPoint(x: 2.5, y: 3.5)); path.addLine(to: CGPoint(x: 21, y: 11.5))
+            path.addLine(to: CGPoint(x: 2.5, y: 19.5)); path.addLine(to: CGPoint(x: 6.1, y: 11.5))
+            path.close(); path.move(to: CGPoint(x: 6.1, y: 11.5)); path.addLine(to: CGPoint(x: 16.8, y: 11.5))
+            path.stroke()
+        case .refresh:
+            path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 7.6,
+                        startAngle: -.pi * 0.15, endAngle: .pi * 1.55, clockwise: true)
+            path.stroke()
+            let arrow = UIBezierPath()
+            arrow.move(to: CGPoint(x: 17.3, y: 3.2)); arrow.addLine(to: CGPoint(x: 19.7, y: 7.5))
+            arrow.addLine(to: CGPoint(x: 14.8, y: 7.0)); arrow.stroke()
+        case .trash:
+            path.move(to: CGPoint(x: 5.8, y: 7)); path.addLine(to: CGPoint(x: 17.2, y: 7))
+            path.move(to: CGPoint(x: 8.5, y: 4.2)); path.addLine(to: CGPoint(x: 14.5, y: 4.2))
+            path.move(to: CGPoint(x: 7.2, y: 7)); path.addLine(to: CGPoint(x: 8, y: 19))
+            path.addLine(to: CGPoint(x: 15, y: 19)); path.addLine(to: CGPoint(x: 15.8, y: 7))
+            path.move(to: CGPoint(x: 10, y: 10)); path.addLine(to: CGPoint(x: 10.3, y: 16))
+            path.move(to: CGPoint(x: 13, y: 10)); path.addLine(to: CGPoint(x: 12.7, y: 16)); path.stroke()
+        case .settings:
+            path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 3.2,
+                        startAngle: 0, endAngle: .pi * 2, clockwise: true)
+            for index in 0..<8 {
+                let angle = CGFloat(index) * .pi / 4
+                path.move(to: CGPoint(x: 11.5 + cos(angle) * 5.2, y: 11.5 + sin(angle) * 5.2))
+                path.addLine(to: CGPoint(x: 11.5 + cos(angle) * 8.2, y: 11.5 + sin(angle) * 8.2))
+            }
+            path.stroke()
+        }
+        return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
 }
 

@@ -79,6 +79,7 @@ HWND gSendButton = nullptr;
 HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
+std::mutex gLogMutex;
 std::map<std::wstring, Device> gDevices;
 std::map<std::wstring, std::wstring> gDeviceRemarks;
 std::vector<Device> gDisplayedDevices;
@@ -156,10 +157,14 @@ std::wstring ComputerName() {
     return GetComputerNameW(value, &size) && size > 0 ? std::wstring(value, size) : L"我的电脑";
 }
 
+std::string WindowsDeviceId() {
+    std::wstring name = ComputerName();
+    return "windows-" + std::to_string(std::hash<std::wstring>{}(name));
+}
+
 std::string WindowsBeacon() {
     std::wstring name = ComputerName();
-    std::string id = "windows-" + std::to_string(std::hash<std::wstring>{}(name));
-    return "ZWMDS2_HERE|2|" + id + "|45833|" + Base64UrlEncode(WideToUtf8(name)) + "|"
+    return "ZWMDS2_HERE|2|" + WindowsDeviceId() + "|45833|" + Base64UrlEncode(WideToUtf8(name)) + "|"
         + Base64UrlEncode("Windows PC") + "|" + Base64UrlEncode("online") + "|";
 }
 
@@ -210,6 +215,7 @@ std::filesystem::path DeviceRemarkPath() {
 }
 
 void WriteDiagnosticLog(const std::wstring& event, const std::wstring& detail) {
+    std::lock_guard<std::mutex> lock(gLogMutex);
     try {
         if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
         std::filesystem::create_directories(gLogPath.parent_path());
@@ -996,7 +1002,7 @@ void DiscoveryLoop() {
                     device.taskId = Utf8ToWide(parts[7]);
                     device.ip = Utf8ToWide(ip);
                     device.lastSeen = std::chrono::steady_clock::now();
-                    if (!device.id.empty()) {
+                    if (!device.id.empty() && WideToUtf8(device.id) != WindowsDeviceId()) {
                         std::lock_guard<std::mutex> lock(gDeviceMutex);
                         bool isNew = gDevices.find(device.id) == gDevices.end();
                         gDevices[device.id] = device;
@@ -1249,7 +1255,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gLogButton = CreateWindowW(L"BUTTON", L"打开诊断日志", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                        540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
             SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gSendButton = CreateWindowW(L"BUTTON", L"⇄ 传送", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            gSendButton = CreateWindowW(L"BUTTON", L"✈ 传送", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                         0, 0, 88, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SEND_PICKER)), nullptr, nullptr);
             SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");

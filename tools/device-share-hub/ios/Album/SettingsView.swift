@@ -18,7 +18,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 5 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, library.supportsExternalFolderSelection ? 3 : 2, 3, 1, 3][section]
+        return [3, library.supportsExternalFolderSelection ? 3 : 2, 3, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -63,7 +63,15 @@ final class SettingsViewController: UITableViewController {
             cell.detailTextLabel?.text = "相册"
         case (4, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0"
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.1"
+        case (4, 2):
+            cell.textLabel?.text = "检查版本更新"
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (4, 3):
+            cell.textLabel?.text = "软件说明"
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
         default:
             cell.textLabel?.text = "复制诊断信息"
             cell.textLabel?.textColor = view.tintColor
@@ -93,11 +101,22 @@ final class SettingsViewController: UITableViewController {
             library.useManagedFolder()
             tableView.reloadData()
         } else if indexPath.section == 4 && indexPath.row == 2 {
+            AlbumUpdateChecker.check(from: self)
+        } else if indexPath.section == 4 && indexPath.row == 3 {
+            showAbout()
+        } else if indexPath.section == 4 && indexPath.row == 4 {
             library.copyDiagnostics()
             let alert = UIAlertController(title: nil, message: "诊断信息已复制", preferredStyle: .alert)
             present(alert, animated: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { alert.dismiss(animated: true) }
         }
+    }
+
+    private func showAbout() {
+        let message = "相册用于管理作品、复制 TXT 文案并调用 iOS 系统分享，也能在同一 Wi‑Fi 下与 Windows、安卓和苹果设备互传文件。\n\n素材与记录只保存在你选择的文件夹；不自动发布、不模拟点击、不修改图片拍摄信息。分享过的作品次日进入回收站，并保留 7 天。"
+        let alert = UIAlertController(title: "关于相册", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: true)
     }
 
     private func promptForDeviceName() {
