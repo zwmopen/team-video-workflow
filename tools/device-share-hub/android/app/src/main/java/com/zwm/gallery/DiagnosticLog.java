@@ -41,7 +41,7 @@ final class DiagnosticLog {
         result.append("素材投送诊断信息\n");
         result.append("手机：").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
         result.append("Android：").append(Build.VERSION.RELEASE).append(" / SDK ").append(Build.VERSION.SDK_INT).append('\n');
-        result.append("状态：已实现未验收，需实体手机确认\n\n");
+        result.append("状态：可用版本；请结合下方真机记录排查\n\n");
         result.append(tail(context, 120));
         return result.toString();
     }

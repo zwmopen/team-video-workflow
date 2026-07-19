@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.1.3
+版本：0.1.4
 
-状态：已实现未验收
+状态：可安装使用，真机记录见下文
 
 云端构建：GitHub Actions `29674136854` 已完成 Xcode 16.4 / iPhoneOS 18.5 编译和 IPA 打包。0.1.1 已通过 Sideloadly 0.60.0 安装到实体 iPhone；此结果只代表安装验收，不代表业务功能验收。
 
@@ -10,14 +10,14 @@
 
 ## 下载构建产物
 
-每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.1.3` artifact，解压得到：
+每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.1.4` artifact，解压得到：
 
-- `album-iOS-v0.1.3-altstore.ipa`
-- `album-iOS-v0.1.3-altstore.ipa.sha256`
+- `album-iOS-v0.1.4-altstore.ipa`
+- `album-iOS-v0.1.4-altstore.ipa.sha256`
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-0.1.3 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
+0.1.4 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
@@ -80,4 +80,4 @@ Windows 不需要运行这些命令。
 
 ## 验收声明
 
-Windows 环境无法运行 Xcode 或 iPhone 模拟器。0.1.1 已在实体 iPhone 完成签名安装，但尚未逐项执行启动、Lark 目录权限、多图分享、跨日回收或 7 天清理。完成真机逐项操作前，这些功能全部保持“已实现未验收”。
+Windows 环境无法运行 Xcode 或 iPhone 模拟器。当前版本已在实体 iPhone 完成签名安装；目录权限、多图分享、跨日回收和 7 天清理按实际操作分别记录，不把构建成功写成业务测试成功。

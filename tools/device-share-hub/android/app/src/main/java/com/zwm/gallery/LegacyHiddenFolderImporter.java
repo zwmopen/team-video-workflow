@@ -64,14 +64,16 @@ final class LegacyHiddenFolderImporter {
         if (!id.matches("[A-Za-z0-9._-]{1,120}")) {
             id = "huawei-hidden-" + Integer.toHexString(relativePath(root, directory).hashCode());
         }
+        String sourceRelativePath = relativePath(root, directory);
         if (library.contains(id)) {
+            library.updateSourceReference(id, "", "", sourceRelativePath);
             result.skipped++;
             return;
         }
         String name = directory.getName().replaceFirst("^\\.+", "");
         String warning = texts.size() > 1 ? "检测到多个 TXT，已使用“" + captionName + "”" : "";
         library.importWork(id, name.isEmpty() ? directory.getName() : name,
-                readText(caption), images, warning);
+                readText(caption), images, warning, "", "", sourceRelativePath);
         result.imported++;
     }
 

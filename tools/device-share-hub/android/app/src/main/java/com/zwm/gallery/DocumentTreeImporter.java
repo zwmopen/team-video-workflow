@@ -29,7 +29,7 @@ final class DocumentTreeImporter {
         String rootId = DocumentsContract.getTreeDocumentId(tree);
         ScanStats stats = new ScanStats();
         ArrayList<Folder> works = new ArrayList<>();
-        scan(resolver, tree, rootId, leafName(rootId), 0, works, stats);
+        scan(resolver, tree, rootId, rootId, leafName(rootId), 0, works, stats);
         int imported = 0;
         int skipped = 0;
         for (Folder work : works) {
@@ -37,6 +37,7 @@ final class DocumentTreeImporter {
                     : readText(resolver, work.marker.uri).trim();
             if (!id.matches("[A-Za-z0-9._-]{1,120}")) id = "lark-" + Integer.toHexString(work.documentId.hashCode());
             if (library.contains(id)) {
+                library.updateSourceReference(id, work.documentId, work.parentDocumentId, "");
                 skipped++;
                 continue;
             }
@@ -54,7 +55,8 @@ final class DocumentTreeImporter {
                 String text = readText(resolver, work.caption.uri);
                 String warning = work.textCount > 1
                         ? "检测到多个 TXT，已使用“" + work.caption.name + "”" : "";
-                library.importWork(id, work.name, text, images, warning);
+                library.importWork(id, work.name, text, images, warning,
+                        work.documentId, work.parentDocumentId, "");
                 imported++;
             } finally {
                 deleteTree(temporary);
@@ -64,9 +66,10 @@ final class DocumentTreeImporter {
                 stats.aggregateFolders, stats.notes.toString());
     }
 
-    private static int scan(ContentResolver resolver, Uri tree, String documentId, String displayName, int depth,
-                            List<Folder> works, ScanStats stats) throws Exception {
+    private static int scan(ContentResolver resolver, Uri tree, String documentId, String parentDocumentId,
+                            String displayName, int depth, List<Folder> works, ScanStats stats) throws Exception {
         if (depth > MAX_DEPTH) return 0;
+        if ("相册回收站".equals(displayName) || "_相册回收站".equals(displayName)) return 0;
         stats.scannedFolders++;
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId);
         ArrayList<Item> files = new ArrayList<>();
@@ -109,7 +112,8 @@ final class DocumentTreeImporter {
         int childWorks = 0;
         for (Item folder : folders) {
             try {
-                childWorks += scan(resolver, tree, folder.documentId, folder.name, depth + 1, works, stats);
+                childWorks += scan(resolver, tree, folder.documentId, documentId,
+                        folder.name, depth + 1, works, stats);
             } catch (Exception error) {
                 if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(folder.mime)) {
                     stats.addFolderNote(folder.name, error.getMessage());
@@ -123,7 +127,8 @@ final class DocumentTreeImporter {
             for (Item text : texts) if (captionName.equals(text.name)) caption = text;
             if (caption != null) {
                 if (childWorks == 0) {
-                    works.add(new Folder(documentId, displayName, images, caption, marker, texts.size()));
+                    works.add(new Folder(documentId, displayName, images, caption, marker,
+                            texts.size(), parentDocumentId));
                     return 1;
                 }
                 stats.aggregateFolders++;
@@ -254,13 +259,16 @@ final class DocumentTreeImporter {
         final Item caption;
         final Item marker;
         final int textCount;
-        Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker, int textCount) {
+        final String parentDocumentId;
+        Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker,
+               int textCount, String parentDocumentId) {
             this.documentId = documentId;
             this.name = name;
             this.images = images;
             this.caption = caption;
             this.marker = marker;
             this.textCount = textCount;
+            this.parentDocumentId = parentDocumentId;
         }
     }
 }

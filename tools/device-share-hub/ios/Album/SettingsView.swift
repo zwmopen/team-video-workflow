@@ -41,7 +41,7 @@ struct SettingsView: View {
                     } label: {
                         Label("复制诊断信息", systemImage: "stethoscope")
                     }
-                    Text("自用侧载版 · 未逐项在实体 iPhone 操作的功能均为“已实现未验收”")
+                    Text("自用侧载版 · 诊断信息不包含作品素材")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -56,6 +56,6 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.4"
     }
 }

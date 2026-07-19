@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
+import android.content.res.ColorStateList;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -22,12 +23,14 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -46,8 +49,8 @@ public final class MainActivity extends Activity {
     private LinearLayout worksContainer;
     private TextView sourceText;
     private TextView statusText;
-    private Button leftModeButton;
-    private Button rightModeButton;
+    private ImageButton leftModeButton;
+    private ImageButton rightModeButton;
     private TextView headingText;
     private TextView scannedCountText;
     private boolean showingTrash;
@@ -78,8 +81,6 @@ public final class MainActivity extends Activity {
         requestNotificationPermission();
         startReceiver();
         requestLegacyStoragePermission();
-        if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
-        else importSelectedTree();
         UpdateChecker.checkDaily(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
     }
@@ -94,7 +95,8 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
         updateSourceLabel();
-        refreshWorks();
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
+        else importSelectedTree();
     }
 
     @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
@@ -123,54 +125,41 @@ public final class MainActivity extends Activity {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("相册", 30, true);
-        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        Button settings = smallButton("设置", false);
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
-        titleRow.addView(settings, new LinearLayout.LayoutParams(dp(86), dp(42)));
-        root.addView(titleRow);
-        TextView intro = text("电脑拖入一个压缩包，作品会自动排好。点一下作品：复制文案并打开分享。", 14, false);
-        intro.setTextColor(Color.rgb(91, 91, 88));
-        root.addView(intro, margins(0, dp(6), 0, dp(18)));
-
-        LinearLayout sourceCard = card();
-        sourceText = text("正在读取…", 15, true);
-        sourceCard.addView(sourceText, new LinearLayout.LayoutParams(0, -2, 1));
-        Button choose = smallButton("设置路径", true);
-        choose.setOnClickListener(v -> chooseFolder());
-        sourceCard.addView(choose);
-        root.addView(sourceCard, margins(0, 0, 0, dp(12)));
-
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        leftModeButton = smallButton("刷新作品", false);
-        leftModeButton.setOnClickListener(v -> {
-            if (showingTrash) showWorks();
-            else importSelectedTree();
-        });
-        controls.addView(leftModeButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        rightModeButton = smallButton("回收站", false);
-        rightModeButton.setOnClickListener(v -> {
-            if (showingTrash) confirmClearTrash();
-            else showTrash();
-        });
-        LinearLayout.LayoutParams trashParams = new LinearLayout.LayoutParams(0, dp(44), 1);
-        trashParams.setMargins(dp(10), 0, 0, 0);
-        controls.addView(rightModeButton, trashParams);
-        root.addView(controls, margins(0, 0, 0, dp(18)));
-
-        LinearLayout headingRow = new LinearLayout(this);
-        headingRow.setOrientation(LinearLayout.HORIZONTAL);
-        headingRow.setGravity(Gravity.CENTER_VERTICAL);
-        headingText = text("作品（点一下分享）", 20, true);
-        headingRow.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
+        headingText = text("作品", 28, true);
+        titleRow.addView(headingText);
         scannedCountText = text("0", 12, true);
         scannedCountText.setTextColor(Color.rgb(53, 105, 82));
         scannedCountText.setGravity(Gravity.CENTER);
         scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
-        scannedCountText.setPadding(dp(10), dp(6), dp(10), dp(6));
-        headingRow.addView(scannedCountText);
-        root.addView(headingRow, margins(0, 0, 0, dp(10)));
+        scannedCountText.setPadding(dp(10), dp(5), dp(10), dp(5));
+        LinearLayout.LayoutParams countParams = new LinearLayout.LayoutParams(-2, -2);
+        countParams.setMargins(dp(8), 0, 0, 0);
+        titleRow.addView(scannedCountText, countParams);
+
+        View titleSpacer = new View(this);
+        titleRow.addView(titleSpacer, new LinearLayout.LayoutParams(0, 1, 1));
+        leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
+        leftModeButton.setOnClickListener(v -> {
+            if (showingTrash) showWorks();
+            else importSelectedTree();
+        });
+        titleRow.addView(leftModeButton, iconParams(false));
+        rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
+        rightModeButton.setOnClickListener(v -> {
+            if (showingTrash) confirmClearTrash();
+            else showTrash();
+        });
+        titleRow.addView(rightModeButton, iconParams(true));
+        ImageButton settings = iconButton(R.drawable.ic_album_settings, "设置");
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        titleRow.addView(settings, iconParams(true));
+        root.addView(titleRow, margins(0, 0, 0, dp(12)));
+
+        LinearLayout sourceCard = card();
+        sourceText = text("正在读取…", 13, false);
+        sourceText.setTextColor(Color.rgb(91, 91, 88));
+        sourceCard.addView(sourceText, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(sourceCard, margins(0, 0, 0, dp(12)));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(worksContainer);
@@ -197,6 +186,11 @@ public final class MainActivity extends Activity {
             try {
                 WorkLibrary library = library();
                 library.maintain(LocalDate.now());
+                syncExternalTrash(library);
+                ExternalTrashManager.Result expired = purgeExpiredTrash(library);
+                if (!expired.succeeded()) {
+                    DiagnosticLog.write(this, "external_trash_purge_failed", expired.firstFailure());
+                }
                 List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : library.listActive();
                 runOnUiThread(() -> renderWorks(entries));
             } catch (Exception error) {
@@ -208,16 +202,20 @@ public final class MainActivity extends Activity {
 
     private void showWorks() {
         showingTrash = false;
-        leftModeButton.setText("刷新作品");
-        rightModeButton.setText("回收站");
-        headingText.setText("作品（点一下分享）");
+        leftModeButton.setImageResource(R.drawable.ic_album_refresh);
+        leftModeButton.setContentDescription("刷新作品");
+        rightModeButton.setImageResource(R.drawable.ic_album_trash);
+        rightModeButton.setContentDescription("回收站");
+        headingText.setText("作品");
         refreshWorks();
     }
 
     private void showTrash() {
         showingTrash = true;
-        leftModeButton.setText("返回作品");
-        rightModeButton.setText("清空回收站");
+        leftModeButton.setImageResource(R.drawable.ic_album_back);
+        leftModeButton.setContentDescription("返回作品");
+        rightModeButton.setImageResource(R.drawable.ic_album_trash);
+        rightModeButton.setContentDescription("清空回收站");
         headingText.setText("回收站");
         refreshWorks();
     }
@@ -225,7 +223,7 @@ public final class MainActivity extends Activity {
     private void confirmClearTrash() {
         new AlertDialog.Builder(this)
                 .setTitle("清空回收站？")
-                .setMessage("清空后不能恢复。只会删除回收站里的作品。")
+                .setMessage("将同时删除“相册回收站”里的原文件夹和 App 缓存，清空后不能恢复。")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("确认清空", (dialog, which) -> clearTrash())
                 .show();
@@ -234,7 +232,12 @@ public final class MainActivity extends Activity {
     private void clearTrash() {
         worker.execute(() -> {
             try {
-                library().clearTrash();
+                WorkLibrary library = library();
+                ExternalTrashManager.Result result = clearExternalTrash(library);
+                if (!result.succeeded()) {
+                    throw new IOException("原文件夹未删，已保留回收站数据：" + result.firstFailure());
+                }
+                library.clearTrash();
                 DiagnosticLog.write(this, "trash_cleared", "user confirmed");
                 runOnUiThread(() -> { toast("回收站已清空"); refreshWorks(); });
             } catch (Exception error) {
@@ -351,6 +354,7 @@ public final class MainActivity extends Activity {
                 DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
                         getContentResolver(), Uri.parse(stored), library(), new File(getCacheDir(), "tree-import"));
                 LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
+                ExternalTrashManager.Result trashSync = syncExternalTrash(library());
                 DiagnosticLog.write(this, "tree_import",
                         "detected=" + result.detected
                                 + " imported=" + result.imported
@@ -360,6 +364,8 @@ public final class MainActivity extends Activity {
                                 + " hiddenDetected=" + hidden.detected
                                 + " hiddenImported=" + hidden.imported
                                 + " hiddenSkipped=" + hidden.skipped
+                                + " trashMoved=" + trashSync.moved
+                                + " trashMoveFailures=" + trashSync.failures.size()
                                 + " notes=" + result.scanNotes);
                 runOnUiThread(() -> {
                     int imported = result.imported + hidden.imported;
@@ -383,7 +389,13 @@ public final class MainActivity extends Activity {
     private void restore(String id) {
         worker.execute(() -> {
             try {
-                library().restore(id);
+                WorkLibrary library = library();
+                WorkLibrary.WorkEntry entry = library.getTrash(id);
+                if (entry == null) throw new IOException("回收站作品不存在");
+                Uri tree = selectedTree();
+                ExternalTrashManager.restoreSource(
+                        getContentResolver(), tree, legacyRoot(tree), library, entry);
+                library.restore(id);
                 runOnUiThread(() -> { toast("已恢复"); refreshWorks(); });
             } catch (Exception error) {
                 runOnUiThread(() -> toast("恢复失败：" + error.getMessage()));
@@ -448,9 +460,11 @@ public final class MainActivity extends Activity {
     }
 
     private void requestLegacyStoragePermission() {
-        if (Build.VERSION.SDK_INT == 29
-                && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_LEGACY_STORAGE);
+        if (Build.VERSION.SDK_INT == 29 && (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED || checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED)) {
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_LEGACY_STORAGE);
         }
     }
 
@@ -468,9 +482,44 @@ public final class MainActivity extends Activity {
     }
 
     private LegacyHiddenFolderImporter.Result importLegacyHiddenFolders(Uri tree) throws Exception {
-        if (Build.VERSION.SDK_INT != 29
+        File selected = legacyRoot(tree);
+        return selected == null ? new LegacyHiddenFolderImporter.Result()
+                : LegacyHiddenFolderImporter.importFrom(selected, library());
+    }
+
+    private ExternalTrashManager.Result syncExternalTrash(WorkLibrary library) throws IOException {
+        Uri tree = selectedTree();
+        if (tree == null) return new ExternalTrashManager.Result();
+        ExternalTrashManager.Result result = ExternalTrashManager.moveTrashedSources(
+                getContentResolver(), tree, legacyRoot(tree), library);
+        if (!result.succeeded()) {
+            DiagnosticLog.write(this, "external_trash_move_failed", result.firstFailure());
+        }
+        return result;
+    }
+
+    private ExternalTrashManager.Result clearExternalTrash(WorkLibrary library) throws IOException {
+        Uri tree = selectedTree();
+        return ExternalTrashManager.clearTrackedTrash(
+                getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library);
+    }
+
+    private ExternalTrashManager.Result purgeExpiredTrash(WorkLibrary library) throws IOException {
+        Uri tree = selectedTree();
+        return ExternalTrashManager.purgeExpired(
+                getContentResolver(), tree, tree == null ? null : legacyRoot(tree),
+                library, LocalDate.now());
+    }
+
+    private Uri selectedTree() {
+        String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
+        return stored.isEmpty() ? null : Uri.parse(stored);
+    }
+
+    private File legacyRoot(Uri tree) throws IOException {
+        if (tree == null || Build.VERSION.SDK_INT != 29
                 || checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            return new LegacyHiddenFolderImporter.Result();
+            return null;
         }
         String selectedName = treeName(tree);
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -478,9 +527,9 @@ public final class MainActivity extends Activity {
         File selected = new File(downloads, selectedName).getCanonicalFile();
         if (!selected.toPath().startsWith(downloads.toPath()) || !selected.isDirectory()) {
             DiagnosticLog.write(this, "legacy_storage_unmapped", "selected=" + selectedName);
-            return new LegacyHiddenFolderImporter.Result();
+            return null;
         }
-        return LegacyHiddenFolderImporter.importFrom(selected, library());
+        return selected;
     }
 
     private LinearLayout card() {
@@ -502,6 +551,22 @@ public final class MainActivity extends Activity {
         button.setBackground(round(primary ? Color.rgb(54, 105, 72) : Color.rgb(232, 230, 225), 14));
         button.setPadding(dp(13), 0, dp(13), 0);
         return button;
+    }
+
+    private ImageButton iconButton(int imageResource, String description) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(imageResource);
+        button.setImageTintList(ColorStateList.valueOf(Color.rgb(54, 86, 72)));
+        button.setBackground(round(Color.rgb(231, 239, 233), 15));
+        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+        button.setContentDescription(description);
+        return button;
+    }
+
+    private LinearLayout.LayoutParams iconParams(boolean withLeftMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(42));
+        if (withLeftMargin) params.setMargins(dp(7), 0, 0, 0);
+        return params;
     }
 
     private TextView text(String value, int sp, boolean bold) {

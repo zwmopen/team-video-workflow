@@ -100,7 +100,7 @@ Windows 面板保持纯 Win32 C++：
 - 设置页的名称、路径、版本、更新入口和软件说明在实体机显示正常；
 - 同一作品连续打开两次系统分享后，实体机卡片显示“已打开分享 2 次”。
 
-已实现未验收：
+尚待实际操作确认：
 
 - 用户真实 Lark 作品批量导入（测试时目录为空）；
 - Windows 文件夹拖放自动打包；
@@ -110,13 +110,13 @@ Windows 面板保持纯 Win32 C++：
 
 补充诊断记录：新版 EXE 已实际发现实体机名称 `Redmi Album`。随后直传测试返回 WinHTTP `12002`，同期 USB 调试连接消失且电脑对手机接收端口探测也超时，无法构成传输验收。EXE 已保留系统错误码并把该情形改为“打开手机相册、确认同一 Wi‑Fi 后重试”的可执行提示；待手机重新可达后复测。
 
-自动化测试覆盖作品规则、自然排序、ZIP 安全、Windows 路径 ZIP、作品库导入、分享日期、回收站恢复、手动清空和 7 天清理。任何未经过实体手机执行的能力都必须继续标记“已实现未验收”。
+自动化测试覆盖作品规则、自然排序、ZIP 安全、Windows 路径 ZIP、作品库导入、分享日期、回收站恢复、手动清空和 7 天清理。未经过实体手机执行的能力不得宣称测试通过。
 
 ## iOS 开发已恢复（2026-07-19）
 
 仓库已新增 `tools/device-share-hub/ios` 原生 SwiftUI 工程，版本 0.1.1。第一版实现固定目录授权、两列作品、TXT 复制、多图系统分享、打开分享计数、次日回收、7 天保留和恢复；GitHub Actions 使用 macOS runner 生成供侧载工具重新签名的 IPA。0.1.1 已通过 Sideloadly 0.60.0 安装到实体 iPhone；快捷指令的动作搭建清单也已存档，正式 iCloud 安装链接仍需实体 iPhone 完成苹果验证和导出。
 
-当前 iOS “签名安装”已完成实体机验收；应用启动、Lark 文件提供器访问、多图分享和跨日清理仍为“已实现未验收”。Windows 侧载经验见 `tools/device-share-hub/docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`；设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-altstore-client-design.md` 与 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`。
+当前 iOS 已完成实体机签名安装；应用启动、Lark 文件提供器访问、多图分享和跨日清理按实际操作结果记录。Windows 侧载经验见 `tools/device-share-hub/docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`；设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-altstore-client-design.md` 与 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`。
 
 ## Android 公开更新通道
 

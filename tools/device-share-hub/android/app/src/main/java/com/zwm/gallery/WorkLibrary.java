@@ -36,6 +36,18 @@ public final class WorkLibrary {
             String text,
             List<File> sourceImages,
             String warning) throws IOException {
+        return importWork(id, name, text, sourceImages, warning, "", "", "");
+    }
+
+    public synchronized WorkEntry importWork(
+            String id,
+            String name,
+            String text,
+            List<File> sourceImages,
+            String warning,
+            String sourceDocumentId,
+            String sourceParentDocumentId,
+            String sourceRelativePath) throws IOException {
         validateId(id);
         if (sourceImages == null || sourceImages.isEmpty()) {
             throw new IOException("作品中没有可导入的图片");
@@ -66,6 +78,9 @@ public final class WorkLibrary {
             meta.setProperty("name", valueOrEmpty(name));
             meta.setProperty("text", valueOrEmpty(text));
             meta.setProperty("warning", valueOrEmpty(warning));
+            meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
+            meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
+            meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
             meta.setProperty("image.count", Integer.toString(storedImages.size()));
             for (int index = 0; index < storedImages.size(); index++) {
                 meta.setProperty("image." + index, storedImages.get(index));
@@ -94,9 +109,45 @@ public final class WorkLibrary {
         return readEntry(directory);
     }
 
+    public synchronized WorkEntry getTrash(String id) throws IOException {
+        validateId(id);
+        File directory = child(trashRoot, id);
+        if (!directory.isDirectory()) return null;
+        return readEntry(directory);
+    }
+
     public synchronized boolean contains(String id) throws IOException {
         validateId(id);
         return child(activeRoot, id).isDirectory() || child(trashRoot, id).isDirectory();
+    }
+
+    public synchronized void updateSourceReference(
+            String id, String sourceDocumentId, String sourceParentDocumentId,
+            String sourceRelativePath) throws IOException {
+        validateId(id);
+        File directory = child(activeRoot, id);
+        if (!directory.isDirectory()) directory = child(trashRoot, id);
+        if (!directory.isDirectory()) return;
+        Properties meta = loadMeta(directory);
+        meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
+        meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
+        meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
+        saveMeta(directory, meta);
+    }
+
+    public synchronized void updateExternalTrashLocation(
+            String id, String trashDocumentId, String externalTrashName) throws IOException {
+        validateId(id);
+        File directory = child(trashRoot, id);
+        if (!directory.isDirectory()) return;
+        Properties meta = loadMeta(directory);
+        meta.setProperty("trashDocumentId", valueOrEmpty(trashDocumentId));
+        meta.setProperty("externalTrashName", valueOrEmpty(externalTrashName));
+        saveMeta(directory, meta);
+    }
+
+    public synchronized void clearExternalTrashLocation(String id) throws IOException {
+        updateExternalTrashLocation(id, "", "");
     }
 
     public synchronized void markShared(String id, LocalDate sharedDate) throws IOException {
@@ -108,17 +159,28 @@ public final class WorkLibrary {
         saveMeta(entry.directory, meta);
     }
 
-    public synchronized void maintain(LocalDate today) throws IOException {
+    public synchronized List<WorkEntry> maintain(LocalDate today) throws IOException {
+        ArrayList<WorkEntry> moved = new ArrayList<>();
         for (WorkEntry entry : list(activeRoot)) {
             if (!RetentionPolicy.shouldMoveToTrash(entry.sharedDate, today)) continue;
             Properties meta = loadMeta(entry.directory);
             meta.setProperty("trashedDate", today.toString());
             saveMeta(entry.directory, meta);
             moveDirectory(entry.directory, child(trashRoot, entry.id));
+            moved.add(readEntry(child(trashRoot, entry.id)));
         }
         for (WorkEntry entry : list(trashRoot)) {
-            if (RetentionPolicy.shouldPurge(entry.trashedDate, today)) deleteTree(entry.directory);
+            if (RetentionPolicy.shouldPurge(entry.trashedDate, today)
+                    && entry.sourceDocumentId.isEmpty() && entry.sourceRelativePath.isEmpty()) {
+                deleteTree(entry.directory);
+            }
         }
+        return moved;
+    }
+
+    public synchronized void deleteTrash(String id) throws IOException {
+        WorkEntry entry = requireEntry(trashRoot, id);
+        deleteTree(entry.directory);
     }
 
     public synchronized void restore(String id) throws IOException {
@@ -171,6 +233,11 @@ public final class WorkLibrary {
                 parseDate(meta.getProperty("sharedDate")),
                 parseDate(meta.getProperty("trashedDate")),
                 parseCount(meta.getProperty("shareCount", "0")),
+                meta.getProperty("sourceDocumentId", ""),
+                meta.getProperty("sourceParentDocumentId", ""),
+                meta.getProperty("sourceRelativePath", ""),
+                meta.getProperty("trashDocumentId", ""),
+                meta.getProperty("externalTrashName", ""),
                 directory.getCanonicalFile());
     }
 
@@ -275,11 +342,18 @@ public final class WorkLibrary {
         public final LocalDate sharedDate;
         public final LocalDate trashedDate;
         public final int shareCount;
+        public final String sourceDocumentId;
+        public final String sourceParentDocumentId;
+        public final String sourceRelativePath;
+        public final String trashDocumentId;
+        public final String externalTrashName;
         public final File directory;
 
         private WorkEntry(String id, String name, String text, String warning,
                           List<String> images, LocalDate sharedDate, LocalDate trashedDate,
-                          int shareCount, File directory) {
+                          int shareCount, String sourceDocumentId, String sourceParentDocumentId,
+                          String sourceRelativePath, String trashDocumentId, String externalTrashName,
+                          File directory) {
             this.id = id;
             this.name = name;
             this.text = text;
@@ -288,6 +362,11 @@ public final class WorkLibrary {
             this.sharedDate = sharedDate;
             this.trashedDate = trashedDate;
             this.shareCount = shareCount;
+            this.sourceDocumentId = sourceDocumentId;
+            this.sourceParentDocumentId = sourceParentDocumentId;
+            this.sourceRelativePath = sourceRelativePath;
+            this.trashDocumentId = trashDocumentId;
+            this.externalTrashName = externalTrashName;
             this.directory = directory;
         }
     }

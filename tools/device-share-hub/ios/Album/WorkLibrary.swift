@@ -43,7 +43,8 @@ final class WorkLibrary: ObservableObject {
 
     private let bookmarkKey = "album.rootFolderBookmark.v1"
     private let stateName = "_相册状态.json"
-    private let trashName = "_相册回收站"
+    private let trashName = "相册回收站"
+    private let legacyTrashName = "_相册回收站"
     private let imageExtensions = Set(["jpg", "jpeg", "png", "webp", "heic", "heif"])
     private let maximumScanDepth = 8
     private let maximumScannedDirectories = 1_000
@@ -101,6 +102,7 @@ final class WorkLibrary: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
+            try migrateLegacyTrash(root: rootURL)
             state = try loadState(from: rootURL)
             try performMaintenance(root: rootURL)
             try saveState(to: rootURL)
@@ -280,7 +282,8 @@ final class WorkLibrary: ObservableObject {
                     statistics.hiddenDirectories += 1
                     continue
                 }
-                if child.lastPathComponent == trashName || child.lastPathComponent.hasPrefix("_相册状态") {
+                if child.lastPathComponent == trashName || child.lastPathComponent == legacyTrashName
+                    || child.lastPathComponent.hasPrefix("_相册状态") {
                     continue
                 }
                 try visit(
@@ -332,6 +335,24 @@ final class WorkLibrary: ObservableObject {
     private func isHiddenDirectory(_ url: URL) -> Bool {
         if url.lastPathComponent.hasPrefix(".") { return true }
         return (try? url.resourceValues(forKeys: [.isHiddenKey]).isHidden) == true
+    }
+
+    private func migrateLegacyTrash(root: URL) throws {
+        let legacy = root.appendingPathComponent(legacyTrashName, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+        let current = root.appendingPathComponent(trashName, isDirectory: true)
+        if !FileManager.default.fileExists(atPath: current.path) {
+            try FileManager.default.moveItem(at: legacy, to: current)
+            return
+        }
+        for child in try childDirectories(of: legacy, includeHidden: true) {
+            let destination = current.appendingPathComponent(child.lastPathComponent, isDirectory: true)
+            guard !FileManager.default.fileExists(atPath: destination.path) else { continue }
+            try FileManager.default.moveItem(at: child, to: destination)
+        }
+        if (try FileManager.default.contentsOfDirectory(atPath: legacy.path)).isEmpty {
+            try FileManager.default.removeItem(at: legacy)
+        }
     }
 
     private func performMaintenance(root: URL) throws {
