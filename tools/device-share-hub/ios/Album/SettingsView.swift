@@ -31,6 +31,11 @@ struct SettingsView: View {
                 Section("软件") {
                     LabeledContent("名称", value: "相册")
                     LabeledContent("版本", value: appVersion)
+                    Button {
+                        library.copyDiagnostics()
+                    } label: {
+                        Label("复制诊断信息", systemImage: "stethoscope")
+                    }
                     Text("AltStore 自用版 · 实体 iPhone 验收前均为“已实现未验收”")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -49,4 +54,3 @@ struct SettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
     }
 }
-

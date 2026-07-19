@@ -137,6 +137,25 @@ final class WorkLibrary: ObservableObject {
         }
     }
 
+    func copyDiagnostics() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
+        let lines = [
+            "相册 iOS 诊断信息",
+            "版本：\(version) (\(build))",
+            "系统：iOS \(UIDevice.current.systemVersion)",
+            "设备：\(UIDevice.current.model)",
+            "目录授权：\(rootURL == nil ? "无" : "有")",
+            "作品数量：\(works.count)",
+            "回收站数量：\(trash.count)",
+            "最近错误：\(errorMessage ?? "无")",
+            "生成时间：\(ISO8601DateFormatter().string(from: Date()))",
+            "说明：不包含文案、图片内容或完整文件路径"
+        ]
+        UIPasteboard.general.string = lines.joined(separator: "\n")
+        message = "诊断信息已复制"
+    }
+
     private func activate(_ url: URL) throws {
         if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
         let scoped = url.startAccessingSecurityScopedResource()
