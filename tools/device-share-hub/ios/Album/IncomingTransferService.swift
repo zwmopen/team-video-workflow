@@ -424,6 +424,7 @@ final class HTTPRequestReader {
     private var bodyFile: FileHandle?
     private var parsedHeaders = false
     private var finished = false
+    private var keepAlive: HTTPRequestReader?
 
     init(connection: NWConnection, queue: DispatchQueue,
          handler: @escaping (HTTPRequest) -> HTTPResponse) {
@@ -433,6 +434,7 @@ final class HTTPRequestReader {
     }
 
     func start() {
+        keepAlive = self
         connection.stateUpdateHandler = { [weak self] state in
             if case .failed = state { self?.cleanup() }
         }
@@ -534,8 +536,9 @@ final class HTTPRequestReader {
         bodyFile?.closeFile()
         bodyFile = nil
         if let url = bodyFileURL { try? FileManager.default.removeItem(at: url) }
-        connection.send(content: response.wireData, completion: .contentProcessed { [weak connection] _ in
-            connection?.cancel()
+        connection.send(content: response.wireData, completion: .contentProcessed { [weak self] _ in
+            self?.connection.cancel()
+            self?.keepAlive = nil
         })
     }
 
@@ -544,6 +547,7 @@ final class HTTPRequestReader {
         bodyFile = nil
         if let url = bodyFileURL { try? FileManager.default.removeItem(at: url) }
         connection.cancel()
+        keepAlive = nil
     }
 }
 
