@@ -49,6 +49,7 @@ public final class MainActivity extends Activity {
     private Button leftModeButton;
     private Button rightModeButton;
     private TextView headingText;
+    private TextView scannedCountText;
     private boolean showingTrash;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
@@ -158,8 +159,18 @@ public final class MainActivity extends Activity {
         controls.addView(rightModeButton, trashParams);
         root.addView(controls, margins(0, 0, 0, dp(18)));
 
+        LinearLayout headingRow = new LinearLayout(this);
+        headingRow.setOrientation(LinearLayout.HORIZONTAL);
+        headingRow.setGravity(Gravity.CENTER_VERTICAL);
         headingText = text("作品（点一下分享）", 20, true);
-        root.addView(headingText, margins(0, 0, 0, dp(10)));
+        headingRow.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
+        scannedCountText = text("0", 12, true);
+        scannedCountText.setTextColor(Color.rgb(53, 105, 82));
+        scannedCountText.setGravity(Gravity.CENTER);
+        scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
+        scannedCountText.setPadding(dp(10), dp(6), dp(10), dp(6));
+        headingRow.addView(scannedCountText);
+        root.addView(headingRow, margins(0, 0, 0, dp(10)));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(worksContainer);
@@ -234,6 +245,7 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
         worksContainer.removeAllViews();
+        scannedCountText.setText(String.valueOf(entries.size()));
         rightModeButton.setEnabled(!showingTrash || !entries.isEmpty());
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
         if (entries.isEmpty()) {

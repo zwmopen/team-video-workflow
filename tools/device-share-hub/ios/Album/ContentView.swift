@@ -46,8 +46,21 @@ struct ContentView: View {
                     .refreshable { await library.refresh() }
                 }
             }
-            .navigationTitle("作品")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 8) {
+                        Text("作品")
+                            .font(.headline)
+                        Text("\(library.works.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(.green.opacity(0.12), in: Capsule())
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button { showTrash = true } label: {
                         Image(systemName: library.trash.isEmpty ? "trash" : "trash.fill")

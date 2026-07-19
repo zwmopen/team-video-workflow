@@ -1,6 +1,6 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.1.2
+版本：0.1.3
 
 状态：已实现未验收
 
@@ -10,14 +10,14 @@
 
 ## 下载构建产物
 
-每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.1.2` artifact，解压得到：
+每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.1.3` artifact，解压得到：
 
-- `album-iOS-v0.1.2-altstore.ipa`
-- `album-iOS-v0.1.2-altstore.ipa.sha256`
+- `album-iOS-v0.1.3-altstore.ipa`
+- `album-iOS-v0.1.3-altstore.ipa.sha256`
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-0.1.2 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
+0.1.3 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
