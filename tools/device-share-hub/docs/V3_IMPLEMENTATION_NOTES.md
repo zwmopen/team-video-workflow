@@ -112,9 +112,11 @@ Windows 面板保持纯 Win32 C++：
 
 自动化测试覆盖作品规则、自然排序、ZIP 安全、Windows 路径 ZIP、作品库导入、分享日期、回收站恢复、手动清空和 7 天清理。任何未经过实体手机执行的能力都必须继续标记“已实现未验收”。
 
-## iOS 延期开发
+## iOS 开发已恢复（2026-07-19）
 
-iOS 客户端暂缓开发，当前仓库没有 iOS 工程或经过 iPhone 验收的实现。后续开发边界、TestFlight 安装方案和恢复开发条件见 [IOS_DEFERRED_PLAN.md](IOS_DEFERRED_PLAN.md)。无需原生 App 的 iPhone“作品分享”快捷指令已完成设计确认，设计存档位于仓库根目录 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`，当前状态为“尚未实现、尚未实体机验收”。
+仓库已新增 `tools/device-share-hub/ios` 原生 SwiftUI 工程，版本 0.1.0。第一版实现固定目录授权、两列作品、TXT 复制、多图系统分享、打开分享计数、次日回收、7 天保留和恢复；GitHub Actions 使用 macOS runner 生成供 AltStore 重新签名的 IPA。快捷指令的动作搭建清单也已存档，正式 iCloud 安装链接仍需实体 iPhone 完成苹果验证和导出。
+
+当前所有 iOS 项目均为“已实现未验收”：Windows 本地不能运行 Xcode；CI 编译成功不等同于 AltStore 安装、Lark 文件提供器访问、多图分享和跨日清理通过实体 iPhone 验收。设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-altstore-client-design.md` 与 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md`。
 
 ## Android 公开更新通道
 

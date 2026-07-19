@@ -92,3 +92,62 @@ jobs:
       - name: Fail when Android build failed
         if: steps.android_compile.outputs.status != '0'
         run: exit 1
+
+  ios-altstore-build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: tools/device-share-hub/ios
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build unsigned iPhone app
+        id: ios_compile
+        shell: bash
+        run: |
+          set +e
+          xcodebuild \
+            -project Album.xcodeproj \
+            -scheme Album \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build > "$RUNNER_TEMP/device-share-ios-build.log" 2>&1
+          build_status=$?
+          echo "status=$build_status" >> "$GITHUB_OUTPUT"
+          tail -n 180 "$RUNNER_TEMP/device-share-ios-build.log"
+          exit 0
+      - name: Package AltStore IPA
+        if: steps.ios_compile.outputs.status == '0'
+        shell: bash
+        run: |
+          app_path="build/Build/Products/Release-iphoneos/相册.app"
+          test -d "$app_path"
+          rm -rf package
+          mkdir -p package/Payload
+          ditto "$app_path" "package/Payload/相册.app"
+          (cd package && /usr/bin/zip -qry ../album-iOS-v0.1.0-altstore.ipa Payload)
+          shasum -a 256 album-iOS-v0.1.0-altstore.ipa > album-iOS-v0.1.0-altstore.ipa.sha256
+      - name: Upload iOS build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: device-share-hub-ios-build-log
+          path: ${{ runner.temp }}/device-share-ios-build.log
+      - name: Upload AltStore IPA
+        if: steps.ios_compile.outputs.status == '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: album-ios-altstore-v0.1.0
+          path: |
+            tools/device-share-hub/ios/album-iOS-v0.1.0-altstore.ipa
+            tools/device-share-hub/ios/album-iOS-v0.1.0-altstore.ipa.sha256
+      - name: Fail when iOS build failed
+        if: steps.ios_compile.outputs.status != '0'
+        run: exit 1
