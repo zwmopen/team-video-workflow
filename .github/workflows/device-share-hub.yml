@@ -2,10 +2,12 @@ name: Device Share Hub
 
 on:
   push:
+    branches: [main]
     paths:
       - 'tools/device-share-hub/**'
       - '.github/workflows/device-share-hub.yml'
   pull_request:
+    branches: [main]
     paths:
       - 'tools/device-share-hub/**'
       - '.github/workflows/device-share-hub.yml'
