@@ -19,7 +19,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, library.supportsExternalFolderSelection ? 3 : 2, 3, 2, 1, 5][section]
+        return [3, library.supportsExternalFolderSelection ? 4 : 3, 3, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -50,6 +50,10 @@ final class SettingsViewController: UITableViewController {
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
         case (1, 2):
+            cell.textLabel?.text = "导入文件或 ZIP"
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (1, 3):
             cell.textLabel?.text = "使用“我的 iPhone/相册”"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
@@ -78,7 +82,7 @@ final class SettingsViewController: UITableViewController {
             cell.detailTextLabel?.text = "相册"
         case (5, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.2"
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.3"
         case (5, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
@@ -113,6 +117,13 @@ final class SettingsViewController: UITableViewController {
                 tableView.reloadData()
             }
         } else if indexPath.section == 1 && indexPath.row == 2 {
+            let picker = ImportPickerController()
+            picker.onPick = { [weak self] urls in
+                self?.library.importItems(urls)
+                self?.tableView.reloadData()
+            }
+            present(picker, animated: true)
+        } else if indexPath.section == 1 && indexPath.row == 3 {
             library.useManagedFolder()
             tableView.reloadData()
         } else if indexPath.section == 5 && indexPath.row == 2 {

@@ -7,9 +7,9 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.4，原生 Win32 x64 |
-| Android | 相册 0.4.2，versionCode 19，`com.zwm.gallery` |
-| iPhone | 相册 0.4.2，build 13，源码 bundle id `com.zwm.album` |
-| 0.4.2 安装包对应代码提交 | `f952ad4b95bac86f35564bcdeff8b59ab0cc508a` |
+| Android | 相册 0.4.3，versionCode 20，`com.zwm.gallery` |
+| iPhone | 相册 0.4.3，build 14，源码 bundle id `com.zwm.album` |
+| 0.4.3 候选包对应代码提交 | 构建完成后回填；0.4.2 构建基线为 `f952ad4b95bac86f35564bcdeff8b59ab0cc508a` |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -63,11 +63,12 @@
 
 ## 后续优先观察
 
-1. 从 Android 系统文件选择器向 iPhone 正式发送一个业务目录，核对 iPhone 目标目录落点；
-2. 在真实跨日使用中继续观察次日回收与进入回收站 7 天后的清理；
-3. 用超大复杂文件夹观察 Windows 长时间进度、取消和剩余临时文件清理；
-4. 修改手机名称后观察三端显示刷新；
-5. iPhone 6 继续检查 iOS 12 固定 Documents 路径下的接收、回收和恢复。
+1. 在 iPhone 6 实体打开 0.4.3 的“导入文件或 ZIP”，分别检查多选图片+TXT、标准 Deflate ZIP 和递归作品数量；
+2. 从 Android 系统文件选择器向 iPhone 正式发送一个业务目录，核对 iPhone 目标目录落点；
+3. 在真实跨日使用中继续观察次日回收与进入回收站 7 天后的清理；
+4. 用超大复杂文件夹观察 Windows 长时间进度、取消和剩余临时文件清理；
+5. 修改手机名称后观察三端显示刷新；
+6. iPhone 6 继续检查 iOS 12 固定 Documents 路径下的接收、回收和恢复。
 
 这些是持续观察项，不代表当前版本不可用。发现问题时先补复现与证据，再修改公共兼容路径，禁止只为单台设备另做包。
 

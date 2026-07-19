@@ -84,6 +84,42 @@ final class WorkLibrary {
         } catch { report(error) }
     }
 
+    func importItems(_ urls: [URL]) {
+        guard let root = rootURL else { report(LibraryError.noFolder); return }
+        guard !urls.isEmpty else { return }
+        isBusy = true
+        notify()
+        defer { isBusy = false; notify() }
+        do {
+            var copied = 0
+            var extracted = 0
+            var batchFolder: URL?
+            for source in urls {
+                let accessing = source.startAccessingSecurityScopedResource()
+                defer { if accessing { source.stopAccessingSecurityScopedResource() } }
+                if source.pathExtension.lowercased() == "zip" {
+                    extracted += try StoredZipExtractor.extract(source, to: root)
+                    continue
+                }
+                if batchFolder == nil {
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyyMMdd-HHmmss"
+                    let name = urls.count > 1 ? "导入作品-(formatter.string(from: Date()))" : "导入文件"
+                    batchFolder = StoredZipExtractor.uniqueDestination(for: name, under: root)
+                    try FileManager.default.createDirectory(at: batchFolder!, withIntermediateDirectories: true)
+                }
+                let destination = StoredZipExtractor.uniqueDestination(
+                    for: source.lastPathComponent, under: batchFolder!)
+                try FileManager.default.copyItem(at: source, to: destination)
+                copied += 1
+            }
+            message = extracted > 0
+                ? "导入完成：(copied) 个文件，解压 (extracted) 个文件"
+                : "已导入 (copied) 个文件"
+            refresh(showConfirmation: false)
+        } catch { report(error) }
+    }
+
     func clearFolder() {
         if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
         hasSecurityScope = false

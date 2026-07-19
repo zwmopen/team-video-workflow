@@ -9,7 +9,7 @@ enum StoredZipError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidArchive: return "电脑文件夹传送包损坏，请重新传送。"
+        case .invalidArchive: return "ZIP 文件损坏或格式不完整，请重新导入或传送。"
         case .unsafePath: return "传送包包含不安全路径，已拒绝展开。"
         case .unsupportedCompression: return "这个压缩包需要在“文件”App 中手动解压。"
         case .tooManyFiles: return "文件夹内文件过多，请分批传送。"
@@ -63,9 +63,10 @@ enum StoredZipExtractor {
             let nameLength = Int(header.le16(22))
             let extraLength = Int(header.le16(24))
             guard flags & 0x0008 == 0 else { throw StoredZipError.unsupportedCompression }
-            guard method == 0, compressedSize == uncompressedSize else {
+            guard method == 0 || method == 8 else {
                 throw StoredZipError.unsupportedCompression
             }
+            if method == 0 && compressedSize != uncompressedSize { throw StoredZipError.invalidArchive }
             guard compressedSize <= 4 * 1024 * 1024 * 1024 else { throw StoredZipError.tooLarge }
             let nameData = handle.readData(ofLength: nameLength)
             guard nameData.count == nameLength,
@@ -90,7 +91,13 @@ enum StoredZipExtractor {
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: destination.path, contents: nil)
-            do {
+            if method == 8 {
+                let dataOffset = handle.offsetInFile
+                let status = album_inflate_raw_file(archive.path, dataOffset, compressedSize,
+                                                    destination.path, uncompressedSize)
+                guard status == 0 else { throw StoredZipError.invalidArchive }
+                handle.seek(toFileOffset: dataOffset + compressedSize)
+            } else {
                 let output = try FileHandle(forWritingTo: destination)
                 defer { output.closeFile() }
                 var remaining = compressedSize

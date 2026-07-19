@@ -110,14 +110,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         icon.font = .systemFont(ofSize: 52, weight: .medium)
         icon.textColor = view.tintColor
         let heading = UILabel()
-        heading.text = library.supportsExternalFolderSelection ? "选择作品总文件夹" : "把作品放入相册文件夹"
+        heading.text = library.supportsExternalFolderSelection ? "选择作品总文件夹" : "导入作品素材"
         heading.font = .boldSystemFont(ofSize: 22)
         heading.textAlignment = .center
         emptyDetail.numberOfLines = 0
         emptyDetail.textAlignment = .center
         emptyDetail.textColor = AppColors.secondaryText
         let button = UIButton(type: .system)
-        button.setTitle(library.supportsExternalFolderSelection ? "选择文件夹" : "刷新", for: .normal)
+        button.setTitle(library.supportsExternalFolderSelection ? "选择文件夹" : "导入文件或 ZIP", for: .normal)
         button.titleLabel?.font = .boldSystemFont(ofSize: 17)
         button.backgroundColor = view.tintColor
         button.setTitleColor(.white, for: .normal)
@@ -185,7 +185,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
     @objc private func refreshTapped() { library.refresh() }
     @objc private func emptyAction() {
-        library.supportsExternalFolderSelection ? presentFolderPicker() : library.refresh()
+        library.supportsExternalFolderSelection ? presentFolderPicker() : presentImportPicker()
     }
     @objc private func openTrash() {
         navigationController?.pushViewController(TrashViewController(library: library), animated: true)
@@ -198,6 +198,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         guard #available(iOS 13.0, *) else { return }
         let picker = FolderPickerController()
         picker.onPick = { [weak self] url in self?.library.selectFolder(url) }
+        present(picker, animated: true)
+    }
+
+    private func presentImportPicker() {
+        let picker = ImportPickerController()
+        picker.onPick = { [weak self] urls in self?.library.importItems(urls) }
         present(picker, animated: true)
     }
 
