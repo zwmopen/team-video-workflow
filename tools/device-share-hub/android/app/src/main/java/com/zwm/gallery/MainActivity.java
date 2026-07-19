@@ -1,6 +1,5 @@
 package com.zwm.gallery;
 
-import android.Manifest;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
@@ -11,7 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -80,7 +78,6 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         ensureDeviceId();
         setContentView(buildUi());
-        requestNotificationPermission();
         startReceiver();
         requestLegacyStoragePermission();
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
@@ -476,12 +473,6 @@ public final class MainActivity extends Activity {
             String id = androidId == null || androidId.isEmpty() ? UUID.randomUUID().toString() : androidId;
             prefs.edit().putString("deviceId", "android-" + id)
                     .putString("deviceName", Build.MANUFACTURER + " " + Build.MODEL).apply();
-        }
-    }
-
-    private void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 41);
         }
     }
 

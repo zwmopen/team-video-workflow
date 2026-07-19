@@ -4,7 +4,7 @@ V3.4 把电脑、Android 和 iPhone 统一成同一 Wi‑Fi 下可互相发现�
 
 维护者或其他 AI 请先读 [AGENTS.md](AGENTS.md) 和 [维护交接](docs/MAINTAINER_HANDOFF.md)。历史 Bug 与回归要求见 [Bug 账本](docs/BUG_LEDGER.md)，三端检查步骤见 [测试手册](docs/TEST_PLAYBOOK.md)。
 
-## iPhone 0.4.1（自用侧载版）
+## iPhone 0.4.2（自用侧载版）
 
 仓库已经加入兼容 iOS 12 的原生 UIKit iPhone 客户端和快捷指令交付方案：
 
@@ -13,7 +13,7 @@ V3.4 把电脑、Android 和 iPhone 统一成同一 Wi‑Fi 下可互相发现�
 - 安装版：GitHub Actions 的 macOS runner 生成未预签名 IPA，可由 Windows Sideloadly 或 AltStore 使用用户自己的 Apple ID 安装和续签。
 - 快捷指令版：动作与状态设计已完成；正式 iCloud 安装链接必须在实体 iPhone 上搭建、验收并由苹果验证后导出。
 
-iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.4.1 用同一个包兼容 iPhone 6 和新 iPhone；iPhone 6 可选文件，较新系统同时可选完整文件夹。
+iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.4.2 用同一个包兼容 iPhone 6 和新 iPhone；iPhone 6 可选文件，较新系统同时可选完整文件夹。
 
 ## 最短使用流程
 
@@ -68,8 +68,9 @@ Android 无法知道用户是否在目标平台完成发布，因此状态诚实
 
 ## 设置与图片信息
 
-- 设置页只保留手机名称、作品文件夹、当前版本、检查更新和软件说明。手机名称会显示在电脑端。
-- App 每天静默检查一次 GitHub Release；也可在设置中手动检查。只提示，不静默安装。当前 Android 与 iPhone 版本均为 0.4.1。
+- 设置页保留手机名称、作品文件夹、提醒开关、当前版本、检查更新和软件说明。手机名称会显示在电脑端。
+- “声音通知”和“震动提醒”可以分别开关，默认都关闭。只有主动打开声音通知时才申请系统通知权限；安卓为维持局域网接收而显示的常驻服务提示始终静音且不震动。
+- App 每天静默检查一次 GitHub Release；也可在设置中手动检查。只提示，不静默安装。当前 Android 与 iPhone 版本均为 0.4.2。
 - 传输和分享保持图片原始字节，因此已有 EXIF 拍摄时间、相机参数和位置会原样保留。
 - 不注入虚假的相机、地址或拍摄参数，也不提供伪造元数据开关。
 

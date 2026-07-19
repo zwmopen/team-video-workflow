@@ -1,4 +1,5 @@
 import UIKit
+import AudioToolbox
 
 final class SettingsViewController: UITableViewController {
     private let library: WorkLibrary
@@ -16,13 +17,13 @@ final class SettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { return 5 }
+    override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, library.supportsExternalFolderSelection ? 3 : 2, 3, 1, 5][section]
+        return [3, library.supportsExternalFolderSelection ? 3 : 2, 3, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return ["设备", "作品文件夹", "工作方式", "隐私", "软件"][section]
+        return ["设备", "作品文件夹", "工作方式", "提醒", "隐私", "软件"][section]
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -56,19 +57,33 @@ final class SettingsViewController: UITableViewController {
         case (2, 1): cell.textLabel?.text = "全部图片进入 iOS 系统分享"
         case (2, 2): cell.textLabel?.text = "次日移入回收站，保留 7 天"
         case (3, 0):
+            cell.textLabel?.text = "声音通知"
+            cell.detailTextLabel?.text = "收到文件时显示通知并响铃"
+            let toggle = UISwitch()
+            toggle.isOn = NotificationPreferences.notificationsEnabled
+            toggle.addTarget(self, action: #selector(notificationSwitchChanged(_:)), for: .valueChanged)
+            cell.accessoryView = toggle
+        case (3, 1):
+            cell.textLabel?.text = "震动提醒"
+            cell.detailTextLabel?.text = "开始、完成或失败时震动"
+            let toggle = UISwitch()
+            toggle.isOn = NotificationPreferences.vibrationEnabled
+            toggle.addTarget(self, action: #selector(vibrationSwitchChanged(_:)), for: .valueChanged)
+            cell.accessoryView = toggle
+        case (4, 0):
             cell.textLabel?.text = "素材与记录只保存在所选文件夹，不上传服务器，也不修改图片拍摄信息。"
             cell.textLabel?.textColor = AppColors.secondaryText
-        case (4, 0):
+        case (5, 0):
             cell.textLabel?.text = "名称"
             cell.detailTextLabel?.text = "相册"
-        case (4, 1):
+        case (5, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.1"
-        case (4, 2):
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.2"
+        case (5, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
-        case (4, 3):
+        case (5, 3):
             cell.textLabel?.text = "软件说明"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
@@ -100,16 +115,33 @@ final class SettingsViewController: UITableViewController {
         } else if indexPath.section == 1 && indexPath.row == 2 {
             library.useManagedFolder()
             tableView.reloadData()
-        } else if indexPath.section == 4 && indexPath.row == 2 {
+        } else if indexPath.section == 5 && indexPath.row == 2 {
             AlbumUpdateChecker.check(from: self)
-        } else if indexPath.section == 4 && indexPath.row == 3 {
+        } else if indexPath.section == 5 && indexPath.row == 3 {
             showAbout()
-        } else if indexPath.section == 4 && indexPath.row == 4 {
+        } else if indexPath.section == 5 && indexPath.row == 4 {
             library.copyDiagnostics()
             let alert = UIAlertController(title: nil, message: "诊断信息已复制", preferredStyle: .alert)
             present(alert, animated: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { alert.dismiss(animated: true) }
         }
+    }
+
+    @objc private func notificationSwitchChanged(_ sender: UISwitch) {
+        TransferNotifications.shared.setNotificationsEnabled(sender.isOn) { [weak self, weak sender] granted in
+            guard !granted else { return }
+            sender?.setOn(false, animated: true)
+            let alert = UIAlertController(title: "通知没有打开",
+                                          message: "系统没有允许通知。需要时可到 iPhone 设置中为“相册”打开通知。",
+                                          preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            self?.present(alert, animated: true)
+        }
+    }
+
+    @objc private func vibrationSwitchChanged(_ sender: UISwitch) {
+        NotificationPreferences.vibrationEnabled = sender.isOn
+        if sender.isOn { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
     }
 
     private func showAbout() {

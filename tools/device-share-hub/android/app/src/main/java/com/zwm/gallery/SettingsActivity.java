@@ -1,5 +1,6 @@
 package com.zwm.gallery;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -10,21 +11,28 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.content.pm.PackageManager;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
 public final class SettingsActivity extends Activity {
     private static final String PREFS = "device_share";
     private static final int REQUEST_TREE = 71;
+    private static final int REQUEST_NOTIFICATIONS = 72;
     private EditText deviceName;
     private TextView pathText;
+    private Switch soundSwitch;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -62,6 +70,19 @@ public final class SettingsActivity extends Activity {
         choose.setOnClickListener(v -> chooseFolder());
         root.addView(choose, margins(0, dp(10), 0, dp(20)));
 
+        root.addView(label("提醒"));
+        soundSwitch = settingSwitch("声音通知", "收到文件时显示通知并响铃",
+                getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("soundNotificationsEnabled", false));
+        soundSwitch.setOnCheckedChangeListener((button, enabled) -> changeSoundNotifications(enabled));
+        root.addView(soundSwitch, settingMargins(dp(10)));
+        Switch vibrationSwitch = settingSwitch("震动提醒", "开始、完成或失败时震动",
+                getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("vibrationEnabled", false));
+        vibrationSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("vibrationEnabled", enabled).apply();
+            if (enabled) vibrateOnce();
+        });
+        root.addView(vibrationSwitch, settingMargins(dp(20)));
+
         root.addView(label("软件"));
         TextView version = text("当前版本  " + UpdateChecker.currentVersion(this), 16, true);
         version.setPadding(dp(14), dp(16), dp(14), dp(16));
@@ -93,6 +114,40 @@ public final class SettingsActivity extends Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("deviceName", value).apply();
         DiagnosticLog.write(this, "device_name_saved", value);
         toast("已保存，电脑端会自动刷新");
+    }
+
+    private void changeSoundNotifications(boolean enabled) {
+        if (!enabled) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("soundNotificationsEnabled", false).apply();
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+            return;
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("soundNotificationsEnabled", true).apply();
+        toast("声音通知已打开");
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_NOTIFICATIONS) return;
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("soundNotificationsEnabled", granted).apply();
+        soundSwitch.setChecked(granted);
+        toast(granted ? "声音通知已打开" : "系统没有允许通知");
+    }
+
+    private void vibrateOnce() {
+        Vibrator vibrator = getSystemService(Vibrator.class);
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            vibrator.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE));
+        } else {
+            vibrator.vibrate(120);
+        }
     }
 
     private void chooseFolder() {
@@ -153,10 +208,21 @@ public final class SettingsActivity extends Activity {
     }
 
     private TextView label(String value) { TextView v = text(value, 14, true); v.setPadding(0, 0, 0, dp(7)); return v; }
+    private Switch settingSwitch(String title, String detail, boolean checked) {
+        Switch value = new Switch(this);
+        value.setText(title + "\n" + detail);
+        value.setTextSize(15);
+        value.setTextColor(Color.rgb(35, 35, 33));
+        value.setChecked(checked);
+        value.setPadding(dp(14), dp(9), dp(14), dp(9));
+        value.setBackground(round(Color.WHITE, 14));
+        return value;
+    }
     private TextView text(String value, int sp, boolean bold) { TextView v = new TextView(this); v.setText(value); v.setTextSize(sp); v.setTextColor(Color.rgb(35, 35, 33)); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v; }
     private Button button(String value, boolean primary) { Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(15); b.setTextColor(primary ? Color.WHITE : Color.rgb(45, 45, 42)); b.setBackground(round(primary ? Color.rgb(54, 105, 72) : Color.rgb(232, 230, 225), 14)); b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); return b; }
     private GradientDrawable round(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
     private LinearLayout.LayoutParams margins(int left, int top, int right, int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(48)); p.setMargins(left, top, right, bottom); return p; }
+    private LinearLayout.LayoutParams settingMargins(int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(66)); p.setMargins(0, 0, 0, bottom); return p; }
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import AudioToolbox
 
 final class TransferNotifications: NSObject, UNUserNotificationCenterDelegate {
     static let shared = TransferNotifications()
@@ -7,10 +8,25 @@ final class TransferNotifications: NSObject, UNUserNotificationCenterDelegate {
     func configure() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func setNotificationsEnabled(_ enabled: Bool, completion: @escaping (Bool) -> Void) {
+        guard enabled else {
+            NotificationPreferences.notificationsEnabled = false
+            completion(true)
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            NotificationPreferences.notificationsEnabled = granted
+            DispatchQueue.main.async { completion(granted) }
+        }
     }
 
     func show(_ title: String, body: String, id: String) {
+        if NotificationPreferences.vibrationEnabled {
+            DispatchQueue.main.async { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
+        }
+        guard NotificationPreferences.notificationsEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

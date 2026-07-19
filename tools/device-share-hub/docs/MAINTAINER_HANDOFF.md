@@ -7,12 +7,12 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.4，原生 Win32 x64 |
-| Android | 相册 0.4.1，versionCode 18，`com.zwm.gallery` |
-| iPhone | 相册 0.4.1，build 12，源码 bundle id `com.zwm.album` |
-| 0.4.1 安装包对应代码提交 | `fa5515cd3ee1a3638a5046523008669488fecfed`；后续仅文档提交不改变产物代码 |
+| Android | 相册 0.4.2，versionCode 19，`com.zwm.gallery` |
+| iPhone | 相册 0.4.2，build 13，源码 bundle id `com.zwm.album` |
+| 0.4.2 安装包对应代码提交 | 发布构建成功后回填；0.4.1 基线为 `fa5515cd3ee1a3638a5046523008669488fecfed` |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
-| 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases/tag/v0.4.1> |
+| 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
 | Android 更新索引 | <https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json> |
 
 主源码仓库是唯一真源；`gallery-updates` 是公开安装和更新通道，不是源码仓库。备用构建仓库必须与主源码提交一致，不能形成第二条产品分支。
@@ -23,6 +23,7 @@
 - Android：递归读取已授权目录、两列作品、复制 TXT、多图系统分享、分享次数、次日回收与 7 天保留、三端互传；
 - iPhone：同包兼容 iOS 12+；较新系统可授权外部目录，旧系统使用 App Documents；作品、分享、回收与三端互传逻辑与 Android 对齐；
 - 三端传送：可信同一 Wi-Fi 内自动发现，UDP 45834；HTTP 45833；任务创建、逐文件 SHA-256、提交或取消。
+- Android 与 iPhone 设置中有独立的声音通知、震动提醒开关，默认均关闭；Android 前台接收服务的系统常驻提示使用独立静音通道。
 
 ## 代码地图
 
