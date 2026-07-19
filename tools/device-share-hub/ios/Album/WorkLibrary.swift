@@ -29,7 +29,7 @@ final class WorkLibrary: ObservableObject {
             var stale = false
             let url = try URL(
                 resolvingBookmarkData: data,
-                options: [.withoutUI, .withSecurityScope],
+                options: [.withoutUI],
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
             )
@@ -150,7 +150,9 @@ final class WorkLibrary: ObservableObject {
     }
 
     private func saveBookmark(_ url: URL) throws {
-        let data = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        // iOS document-picker URLs carry an implicit security scope. The explicit
+        // withSecurityScope bookmark option is macOS-only in the iOS SDK.
+        let data = try url.bookmarkData(options: [.minimalBookmark], includingResourceValuesForKeys: nil, relativeTo: nil)
         UserDefaults.standard.set(data, forKey: bookmarkKey)
     }
 
