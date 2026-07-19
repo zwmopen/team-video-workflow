@@ -1,7 +1,9 @@
-# iOS 客户端开发存档
+# iOS 客户端历史开发存档
+
+> 本文是早期方案记录。iPhone 客户端现已开发到 0.4.1 并完成实体安装、扫描、发现和接收检查；当前状态请读 `MAINTAINER_HANDOFF.md`，不要以本文的早期待办判断现状。
 
 日期：2026-07-18  
-状态：2026-07-19 已恢复开发。仓库中已有 SwiftUI 工程和 AltStore 云端构建流程，但尚无经过实体 iPhone 验收的功能。
+状态：历史快照。本文撰写当时仅有早期工程与云端构建流程；现状已经由 0.4.1 UIKit 客户端和 `MAINTAINER_HANDOFF.md` 取代。
 
 2026-07-19 补充：快捷指令和 AltStore 原生客户端改为并行开发。快捷指令需要实体 iPhone 导出 iCloud 链接；原生客户端由 GitHub Actions 的 macOS runner 生成未预签名 IPA，再由 AltStore 使用用户 Apple ID 侧载。设计见仓库根目录 `docs/superpowers/specs/2026-07-19-ios-shortcut-work-share-design.md` 和 `docs/superpowers/specs/2026-07-19-ios-altstore-client-design.md`。
 

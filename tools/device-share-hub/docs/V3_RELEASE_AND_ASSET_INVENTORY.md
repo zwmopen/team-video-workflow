@@ -1,12 +1,14 @@
-# 分享中控 V3 发布与开发资产盘点
+# 分享中控 V3.4 发布与开发资产盘点
+
+当前维护快照以 `MAINTAINER_HANDOFF.md` 为准；本文件保存产品定位、发布资产和长期复用原则。
 
 ## 产品定位
 
 “分享中控 V3”是同一个产品的三端组合，不是三套互不相干的项目：
 
 - Windows 原生面板：发现手机、拖放 ZIP/文件夹/图片、显示传输进度和错误；
-- Android“相册”0.3.13：同一 Wi-Fi 通用文件/文件夹接收、跨通道去重、作品识别、数量徽标、复制文案、系统分享、次数记录和回收站；
-- iPhone“相册”0.3.0：同包兼容 iOS 12 及以上、递归识别作品、数量徽标、复制文案、系统分享、次数记录、真实目录回收站和局域网接收；
+- Android“相册”0.4.1：同一 Wi-Fi 三端互传、跨通道去重、作品识别、数量徽标、复制文案、系统分享、次数记录和真实目录回收站；
+- iPhone“相册”0.4.1：同包兼容 iOS 12 及以上、递归识别作品、数量徽标、复制文案、系统分享、次数记录、真实目录回收站和前台局域网互传；
 - iOS 快捷指令：轻量备选方案，动作设计已存档，正式 iCloud 安装链接仍待实体机搭建与验收。
 
 产品原则：少一步就是价值。默认自动发现，不增加手动 IP、配对码、命令行、Node.js 网页面板、ADB、Root、越狱、无障碍或设备管理权限。
@@ -23,7 +25,7 @@
 ### iPhone
 
 1. 把解压后的作品放入“文件”中一个固定总文件夹；每个作品文件夹直接包含图片和 TXT。
-2. 新 iPhone 首次选择一次总文件夹；iPhone 6 直接使用“我的 iPhone/相册”。0.3.0 会按“总文件夹 → 作品包 → 单个作品”递归寻找图片与 TXT，并忽略 `.Trash` 和“相册回收站”。
+2. 新 iPhone 首次选择一次总文件夹；iPhone 6 直接使用“我的 iPhone/相册”。0.4.1 会按“总文件夹 → 作品包 → 单个作品”递归寻找图片与 TXT，并忽略 `.Trash` 和“相册回收站”。
 3. 点击作品，复制文案并打开 iOS 系统分享面板。
 4. 免费 Apple ID 侧载有效期 7 天；轻量 `sideloadlydaemon` 约每 96 小时自动续签。
 
@@ -44,6 +46,9 @@ iOS 无法授权整台手机根目录。应选择实际作品目录、iCloud Dri
 | Android 源码 | `tools/device-share-hub/android` | Android/HarmonyOS 客户端 |
 | iOS 源码 | `tools/device-share-hub/ios/Album` | UIKit 客户端，同包兼容 iOS 12+ |
 | 兼容与测试矩阵 | `tools/device-share-hub/docs/COMPATIBILITY_AND_TEST_MATRIX.md` | 设备差异、实机记录、踩坑和回归要求 |
+| 当前维护交接 | `tools/device-share-hub/docs/MAINTAINER_HANDOFF.md` | 当前版本、代码地图、实机状态和后续观察 |
+| Bug 回归账本 | `tools/device-share-hub/docs/BUG_LEDGER.md` | 现象、根因、修复、证据和回归要求 |
+| 三端测试手册 | `tools/device-share-hub/docs/TEST_PLAYBOOK.md` | CI、升级、发现、传送、扫描和回收站检查 |
 | CI | `.github/workflows/device-share-hub.yml` | 三端编译、测试、密钥扫描和 IPA 结构校验 |
 | 源码构建与恢复 | `tools/device-share-hub/docs/SOURCE_BUILD_AND_RECOVERY.md` | 源码唯一真源、三端构建、发布对应和恢复顺序 |
 
@@ -84,10 +89,11 @@ GitHub Release 应保存版本化安装包、显式源码 ZIP、SHA-256 和脱�
 10. 未经过实体手机实际操作的能力不得宣称测试通过，直接记录尚未操作的项目。
 11. 安装包不是源码备份；每次发布必须保留可构建源码、构建入口、版本标签和恢复说明，确保换电脑或换 AI 后能继续开发。
 
-## 已知待办
+## 持续观察
 
-- iPhone 0.3.0 需要分别在 iPhone 6 与较新 iPhone 检查固定目录/外部目录、前台局域网接收、分享和真实目录回收站；
+- iPhone 6 继续观察固定 Documents 目录下的长时间接收、分享和真实目录回收站；较新 iPhone 的 0.4.1 前台接收、发现和 Windows 正式提交已经完成；
 - iOS 快捷指令正式 iCloud 链接尚未制作；
-- iOS 跨自然日回收和 7 天清理尚未完成实体机跨日验收；
+- iOS 跨自然日回收和 7 天清理继续在真实跨日使用中观察；
+- Android → iPhone 已完成新版协议上传/取消；下次正式业务目录提交时复核最终落点；
 - Android 发现信息和更新检查均读取安装包的真实版本，不再保留历史硬编码版本字段；
-- Windows/Android/iOS 每次发布继续执行三端 CI 和脱敏检查。
+- Windows/Android/iOS 每次发布继续执行三端 CI、超过发现 TTL 的稳定性检查和脱敏检查。

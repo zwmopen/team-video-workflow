@@ -8,6 +8,7 @@
 - 三端源码：`windows-native/`、`android/`、`ios/`
 - 自动构建：`.github/workflows/device-share-hub.yml`
 - Android 公开更新仓库 `zwmopen/gallery-updates` 只是 APK 更新通道，不是源码仓库。
+- V3.4 安装包发布：`zwmopen/gallery-updates` 的 `v0.4.1` Release；对应源码提交见 `MAINTAINER_HANDOFF.md`。
 
 每个正式版本都必须能从 Git 标签定位到源码，并在 Release 同时提供安装包、显式源码 ZIP、校验值和说明。不能只上传 EXE、APK 或 IPA。
 

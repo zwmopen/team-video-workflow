@@ -3,7 +3,7 @@
 ## 目标
 
 - 同一局域网自动发现，无人工配置。
-- Windows 直接向安卓手机传输，不经过电脑端 HTTP 中转服务。
+- Windows、Android 和 iPhone 直接互传，不经过云端或电脑 HTTP 中转服务。
 - 设备 ID 在局域网与未来云端模式中保持一致。
 
 ## 端口
@@ -13,7 +13,7 @@
 
 ## 发现
 
-Windows 每两秒向 UDP 广播地址发送：
+设备每两至三秒向 UDP 广播地址发送主动探测或在线消息；探测格式为：
 
 ```text
 ZWMDS2_DISCOVER
@@ -25,7 +25,7 @@ ZWMDS2_DISCOVER
 ZWMDS2_HERE|2|deviceId|httpPort|base64url(name)|base64url(model)|base64url(state)|taskId
 ```
 
-设备超过 9 秒没有刷新即视为离线。
+三端同时发送全局广播和当前子网定向广播，兼容部分路由器不转发无线客户端全局广播的情况。设备超过 15 秒没有刷新即视为离线；进入传送页和手动刷新会主动重新探测。
 
 ## 投送流程
 
