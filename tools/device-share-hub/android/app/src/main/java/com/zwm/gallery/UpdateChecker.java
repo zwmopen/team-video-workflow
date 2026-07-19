@@ -73,7 +73,7 @@ final class UpdateChecker {
         try {
             return activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0).versionName;
         } catch (Exception ignored) {
-            return "0.3.0";
+            return "0.0.0";
         }
     }
 

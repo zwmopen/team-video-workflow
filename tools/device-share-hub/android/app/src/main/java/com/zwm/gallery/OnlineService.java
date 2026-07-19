@@ -376,10 +376,18 @@ public final class OnlineService extends Service {
                 .put("name", prefs.getString("deviceName", Build.MANUFACTURER + " " + Build.MODEL))
                 .put("model", Build.MANUFACTURER + " " + Build.MODEL)
                 .put("androidVersion", Build.VERSION.RELEASE)
-                .put("appVersion", "0.3.0")
+                .put("appVersion", installedVersion())
                 .put("port", HTTP_PORT)
                 .put("state", state)
                 .put("taskId", currentTaskId);
+    }
+
+    private String installedVersion() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+            return "unknown";
+        }
     }
 
     private void discoveryLoop() {
