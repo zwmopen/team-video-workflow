@@ -9,7 +9,7 @@
 | Windows | 素材投送中控 V3.4，原生 Win32 x64 |
 | Android | 相册 0.4.2，versionCode 19，`com.zwm.gallery` |
 | iPhone | 相册 0.4.2，build 13，源码 bundle id `com.zwm.album` |
-| 0.4.2 安装包对应代码提交 | 发布构建成功后回填；0.4.1 基线为 `fa5515cd3ee1a3638a5046523008669488fecfed` |
+| 0.4.2 安装包对应代码提交 | `f952ad4b95bac86f35564bcdeff8b59ab0cc508a` |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -48,6 +48,10 @@
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
 
 ## 2026-07-19 实际状态
+
+- 0.4.2 在备用构建仓库 Actions run `29693667340` 完成 Windows、Android 单元测试/编译/Lint、iPhone 测试目标/真机 SDK 编译及 IPA 结构校验；
+- iPhone 6（iOS 12.5.8）已覆盖安装 0.4.2 build 13，系统查询确认最低版本仍为 iOS 12；升级后的偏好文件中两个新键均不存在，代码读取结果为默认关闭，且启动时未再申请通知权限；
+- 当前未连接 Android 真机，因此 0.4.2 的安卓结论只包含云端自动检查，不沿用旧版实机结果替代本次开关操作。
 
 - 最终三端工作流全部成功；Windows EXE、Android APK、iOS IPA 由同一源码提交构建；
 - Android 0.4.1 与 iPhone 0.4.1 build 12 已覆盖安装，升级未清空目录授权和作品状态；

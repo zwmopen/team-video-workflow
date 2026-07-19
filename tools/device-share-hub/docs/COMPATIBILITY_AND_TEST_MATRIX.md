@@ -16,7 +16,7 @@
 | Redmi Note 8 | Android 10 / SAF + 隐藏目录兼容通道 | 同一升级链兼容；11 个实体作品稳定识别为 11；连续冷启动无重复迁移报错；通用 ZIP 原层级展开实机完成 |
 | Huawei Nova / HarmonyOS | SAF + Android 10 文件兼容通道 | 0.3.9 曾完成隐藏作品 3+4=7 的实体目录检查；后续版本保持同一兼容通道与回归用例 |
 | 较新 Redmi | 标准 SAF | Android 0.4.1 已覆盖安装；两列卡片、分享次数、回收站实体移动/恢复/清空和三端发现均完成实机操作 |
-| iPhone 6 | iOS 12 固定“我的 iPhone/相册” | 0.4.1 保持 iOS 12 deployment target；同一 IPA 兼容固定目录，继续观察该实体设备的长时间接收与真实回收 |
+| iPhone 6 | iOS 12 固定“我的 iPhone/相册” | 0.4.2 build 13 已在 iOS 12.5.8 覆盖安装并启动；首页小屏布局正常，声音/震动新键默认读取为关闭；设置页开关实体点击和真实接收提醒继续复核 |
 | 较新 iPhone | iOS 13+ 外部文件夹授权或固定目录 | iPhone 0.4.1 build 12 已覆盖安装；记录到 Windows/Android；前台 32 秒后接收接口、上传与取消正常；Windows 正式提交成功 |
 | Windows 10/11 | Win32 + WinHTTP | V3.4 CI 编译和本机启动完成；同时发现 Android/iPhone 并过滤本机；支持普通文件、ZIP、复杂文件夹、总进度、速度、取消和可行动错误 |
 
