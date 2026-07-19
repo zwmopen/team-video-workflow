@@ -1,17 +1,17 @@
 # 相册投送中控 V3
 
-把电脑上的整批作品送到 Android 或 iPhone。两端都通过同一 Wi‑Fi 自动出现在电脑面板，并接收普通文件、ZIP 或电脑文件夹。两端应用都叫“相册”，不需要填写 IP、配对码，也不需要 Node.js、命令行、ADB、Root、无障碍或设备管理权限。
+V3.4 把电脑、Android 和 iPhone 统一成同一 Wi‑Fi 下可互相发现、互相传送的设备。三端均可接收普通文件和文件夹；电脑继续支持直接拖放。两端应用都叫“相册”，不需要填写 IP、配对码，也不需要 Node.js、命令行、ADB、Root、无障碍或设备管理权限。
 
-## iPhone 0.3.0（自用侧载版）
+## iPhone 0.4.0（自用侧载版）
 
 仓库已经加入兼容 iOS 12 的原生 UIKit iPhone 客户端和快捷指令交付方案：
 
 - 原生版：选择一次固定作品总文件夹，两列显示作品；点击后复制 TXT、记录“已打开分享 N 次”并把全部图片交给 iOS 系统分享面板；次日运行时回收，回收站保留 7 天。
-- 接收版：应用在前台时由 Windows 自动发现，支持手机名称、传输任务、SHA-256 完整性校验、取消和清晰错误提示；电脑生成的文件夹包会保留目录结构展开。
+- 传送版：应用在前台时自动发现同一 Wi‑Fi 的电脑和安卓手机；右下角点一次“传送”，选择设备，再选文件或文件夹。传输使用 SHA-256 完整性校验、进度和清晰错误提示；文件夹保留目录结构展开。
 - 安装版：GitHub Actions 的 macOS runner 生成未预签名 IPA，可由 Windows Sideloadly 或 AltStore 使用用户自己的 Apple ID 安装和续签。
 - 快捷指令版：动作与状态设计已完成；正式 iCloud 安装链接必须在实体 iPhone 上搭建、验收并由苹果验证后导出。
 
-iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.3.0 用同一个包兼容 iPhone 6 和新 iPhone，并统一使用真实“相册回收站”。
+iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载交付和排障沉淀见 [docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)，快捷指令交付清单见 [ios/shortcut/README.md](ios/shortcut/README.md)。0.4.0 用同一个包兼容 iPhone 6 和新 iPhone；iPhone 6 可选文件，较新系统同时可选完整文件夹。
 
 ## 最短使用流程
 
@@ -20,6 +20,8 @@ iPhone 代码、安装说明见 [ios/README.md](ios/README.md)，Windows 侧载�
 3. 文件会原样放进手机设置的接收文件夹；ZIP 和电脑文件夹保留内部目录结构。含“图片 + TXT”的子文件夹会额外显示为作品。
 4. 点作品的“复制文案并分享”。
 5. App 复制 TXT 文案、带上全部图片并打开 Android 系统分享面板。
+
+手机互传：在任一手机主界面点右下角绿色传送按钮，点接收设备，再点“选择文件”或“选择文件夹”。电脑接收内容默认保存在 `下载/相册收件箱`。
 
 Android 无法知道用户是否在目标平台完成发布，因此状态诚实显示为“已打开分享”，不宣称“发布成功”。
 
@@ -59,11 +61,13 @@ Android 无法知道用户是否在目标平台完成发布，因此状态诚实
 - 拖放后显示真实进度条、百分比、已传大小、总大小和速度。
 - 支持取消正在进行的传送。
 - 显示清晰错误，并可打开诊断日志。
+- 电脑同时是接收设备；手机可自动发现电脑并把文件或文件夹传到 `下载/相册收件箱`。
+- 右下角“传送”按钮可先选设备，再选择文件或文件夹；原有拖放操作保持不变。
 
 ## 设置与图片信息
 
 - 设置页只保留手机名称、作品文件夹、当前版本、检查更新和软件说明。手机名称会显示在电脑端。
-- App 每天静默检查一次 GitHub Release；也可在设置中手动检查。只提示，不静默安装。当前 Android 版本为 0.3.13。
+- App 每天静默检查一次 GitHub Release；也可在设置中手动检查。只提示，不静默安装。当前 Android 与 iPhone 版本均为 0.4.0。
 - 传输和分享保持图片原始字节，因此已有 EXIF 拍摄时间、相机参数和位置会原样保留。
 - 不注入虚假的相机、地址或拍摄参数，也不提供伪造元数据开关。
 

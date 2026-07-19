@@ -11,6 +11,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
@@ -35,6 +37,10 @@ public final class TransferActivity extends Activity {
     private ProgressBar progress;
     private PeerDevice selected;
     private boolean receiverRegistered;
+    private final Handler refreshHandler = new Handler(Looper.getMainLooper());
+    private final Runnable refreshPeers = new Runnable() {
+        @Override public void run() { renderPeers(); refreshHandler.postDelayed(this, 2000); }
+    };
 
     private final BroadcastReceiver peerReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { renderPeers(); }
@@ -52,13 +58,18 @@ public final class TransferActivity extends Activity {
         super.onStart();
         IntentFilter filter = new IntentFilter(OnlineService.ACTION_PEERS_CHANGED);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(peerReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        else registerReceiver(peerReceiver, filter);
+        else registerLegacyReceiver(filter);
         receiverRegistered = true;
         renderPeers();
+        refreshHandler.postDelayed(refreshPeers, 2000);
     }
+
+    @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
+    private void registerLegacyReceiver(IntentFilter filter) { registerReceiver(peerReceiver, filter); }
 
     @Override protected void onStop() {
         if (receiverRegistered) { unregisterReceiver(peerReceiver); receiverRegistered = false; }
+        refreshHandler.removeCallbacks(refreshPeers);
         super.onStop();
     }
 

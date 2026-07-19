@@ -30,7 +30,7 @@ enum StoredZipWriter {
         let root = safe(folder.lastPathComponent.isEmpty ? "文件夹" : folder.lastPathComponent)
         guard let enumerator = FileManager.default.enumerator(at: folder,
                                                                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-                                                               options: [.skipsHiddenFiles]) else {
+                                                               options: []) else {
             throw StoredZipWriterError.unreadableFolder
         }
         var urls: [URL] = []

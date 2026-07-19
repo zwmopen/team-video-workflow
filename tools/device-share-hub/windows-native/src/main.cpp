@@ -1226,7 +1226,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gRefreshButton = CreateWindowW(L"BUTTON", L"刷新设备", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                            560, 18, 118, 36, window,
-                                           reinterpret_cast<HMENU>(IDC_REFRESH_DEVICES), nullptr, nullptr);
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_REFRESH_DEVICES)), nullptr, nullptr);
             SendMessageW(gRefreshButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
@@ -1250,7 +1250,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                        540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
             SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gSendButton = CreateWindowW(L"BUTTON", L"⇄ 传送", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                        0, 0, 88, 38, window, reinterpret_cast<HMENU>(IDC_SEND_PICKER), nullptr, nullptr);
+                                        0, 0, 88, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SEND_PICKER)), nullptr, nullptr);
             SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);

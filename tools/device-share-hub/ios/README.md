@@ -1,23 +1,23 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.3.0
+版本：0.4.0
 
 状态：可安装使用，真机记录见下文
 
-0.3.0 继续用同一个安装包覆盖 iOS 12 及以上：iPhone 6 使用应用自己的固定文件夹，iOS 13 及以上继续支持系统文件夹选择；同时加入与 Android 相同的局域网自动发现和电脑接收协议。Sideloadly 0.60.0 已在实体 iPhone 完成 0.3.0 安装，真机服务进程可启动。
+0.4.0 继续用同一个安装包覆盖 iOS 12 及以上：iPhone 6 使用应用自己的固定文件夹并可主动传文件，iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送；同时支持自动发现 Windows、Android 和其他 iPhone。实体安装与业务结果按版本单独记录。
 
 这是现有“素材投送中控”的 iPhone 客户端，不是另一个项目。它提供递归作品列表、复制文案、多图系统分享、打开分享次数、次日回收和回收站保留 7 天。
 
 ## 下载构建产物
 
-每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.3.0` artifact，解压得到：
+每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.4.0` artifact，解压得到：
 
-- `album-iOS-v0.3.0-altstore.ipa`
-- `album-iOS-v0.3.0-altstore.ipa.sha256`
+- `album-iOS-v0.4.0-altstore.ipa`
+- `album-iOS-v0.4.0-altstore.ipa.sha256`
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-0.3.0 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
+0.4.0 的 SHA-256 以同一 artifact 内的 `.sha256` 文件和 GitHub Release 为准。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 

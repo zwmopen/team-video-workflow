@@ -10,7 +10,7 @@ if(MSVC)
   set_property(TARGET DeviceShareHub PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   target_compile_options(DeviceShareHub PRIVATE /W4 /permissive- /utf-8 /EHsc)
-  target_link_options(DeviceShareHub PRIVATE /SUBSYSTEM:WINDOWS)
+  target_link_options(DeviceShareHub PRIVATE /SUBSYSTEM:WINDOWS "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/app.manifest")
 endif()
 
 set_target_properties(DeviceShareHub PROPERTIES OUTPUT_NAME "素材投送中控")
