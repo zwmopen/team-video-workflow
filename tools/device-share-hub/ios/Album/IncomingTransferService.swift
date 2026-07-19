@@ -128,22 +128,48 @@ final class IncomingTransferService {
         var enabled: Int32 = 1
         guard Darwin.setsockopt(socketHandle, SOL_SOCKET, SO_BROADCAST, &enabled,
                                 socklen_t(MemoryLayout<Int32>.size)) == 0 else { return }
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = transferDiscoveryPort.bigEndian
-        "255.255.255.255".withCString { value in
-            _ = Darwin.inet_pton(AF_INET, value, &address.sin_addr)
-        }
         let data = beaconData()
-        data.withUnsafeBytes { bytes in
-            withUnsafePointer(to: &address) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                    _ = Darwin.sendto(socketHandle, bytes.baseAddress, data.count, 0, socketAddress,
-                                      socklen_t(MemoryLayout<sockaddr_in>.size))
+        for target in broadcastAddresses() {
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = transferDiscoveryPort.bigEndian
+            address.sin_addr = target
+            data.withUnsafeBytes { bytes in
+                withUnsafePointer(to: &address) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                        _ = Darwin.sendto(socketHandle, bytes.baseAddress, data.count, 0, socketAddress,
+                                          socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
                 }
             }
         }
+    }
+
+    private func broadcastAddresses() -> [in_addr] {
+        var result: [in_addr] = []
+        var seen = Set<UInt32>()
+        func append(_ value: UInt32) {
+            if seen.insert(value).inserted { result.append(in_addr(s_addr: value)) }
+        }
+        "255.255.255.255".withCString { append(Darwin.inet_addr($0)) }
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard Darwin.getifaddrs(&first) == 0, let start = first else { return result }
+        defer { Darwin.freeifaddrs(start) }
+        var current: UnsafeMutablePointer<ifaddrs>? = start
+        while let item = current {
+            let interface = item.pointee
+            if let rawAddress = interface.ifa_addr, let rawMask = interface.ifa_netmask,
+               rawAddress.pointee.sa_family == sa_family_t(AF_INET),
+               (interface.ifa_flags & UInt32(IFF_UP)) != 0,
+               (interface.ifa_flags & UInt32(IFF_LOOPBACK)) == 0 {
+                let address = rawAddress.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
+                let mask = rawMask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
+                append(address | ~mask)
+            }
+            current = interface.ifa_next
+        }
+        return result
     }
 
     private func remoteHost(_ endpoint: NWEndpoint) -> String? {

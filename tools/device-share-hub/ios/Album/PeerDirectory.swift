@@ -31,6 +31,8 @@ final class PeerDirectory {
         values[peer.id] = peer
         lock.unlock()
         let changed = previous == nil || previous?.host != peer.host || previous?.name != peer.name || previous?.state != peer.state
+        UserDefaults.standard.set("\(peer.name)|\(peer.model)|\(peer.host)|\(Date().timeIntervalSince1970)",
+                                  forKey: "album.lastPeer.\(peer.id)")
         if changed { DispatchQueue.main.async { NotificationCenter.default.post(name: .transferPeersChanged, object: nil) } }
         return previous == nil || Date().timeIntervalSince(previous!.lastSeen) > 7
     }
@@ -42,6 +44,12 @@ final class PeerDirectory {
         let result = values.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         lock.unlock()
         return result
+    }
+
+    func diagnosticSummary() -> String {
+        let current = peers()
+        if current.isEmpty { return "无" }
+        return current.map { "\($0.name.isEmpty ? $0.model : $0.name)(\($0.host))" }.joined(separator: "、")
     }
 
     private func decode(_ value: String) -> String {

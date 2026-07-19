@@ -21,11 +21,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        application.isIdleTimerDisabled = true
         if !Self.isRunningTests { incomingTransfer.start() }
         library.refresh(showConfirmation: false)
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
+        application.isIdleTimerDisabled = false
         if !Self.isRunningTests { incomingTransfer.stop() }
     }
 

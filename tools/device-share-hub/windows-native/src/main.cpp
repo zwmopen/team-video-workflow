@@ -867,7 +867,7 @@ void RefreshDeviceList() {
     {
         std::lock_guard<std::mutex> lock(gDeviceMutex);
         for (auto it = gDevices.begin(); it != gDevices.end();) {
-            if (now - it->second.lastSeen > std::chrono::seconds(9)) it = gDevices.erase(it);
+            if (now - it->second.lastSeen > std::chrono::seconds(15)) it = gDevices.erase(it);
             else {
                 fresh.push_back(it->second);
                 ++it;

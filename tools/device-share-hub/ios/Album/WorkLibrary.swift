@@ -199,6 +199,7 @@ final class WorkLibrary {
             "相册 iOS 诊断信息", "版本：\(version) (\(build))",
             "系统：iOS \(UIDevice.current.systemVersion)", "设备：\(DeviceIdentity.model)",
             "手机名称：\(DeviceIdentity.name)", "局域网接收：\(networkStatus)",
+            "已发现设备：\(PeerDirectory.shared.diagnosticSummary())",
             "目录：\(rootDescription)", "扫描结果：\(scanSummary ?? "未扫描")",
             "作品数量：\(works.count)", "回收站数量：\(trash.count)",
             "最近错误：\(errorMessage ?? "无")",
