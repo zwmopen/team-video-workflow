@@ -43,7 +43,7 @@ final class DocumentTreeExporter {
                 if (path.isEmpty()) continue;
                 String normalized = trimTrailingSlash(path);
                 if (normalized.isEmpty()) continue;
-                if (entry.isDirectory()) {
+                if (isDirectoryEntry(entry)) {
                     ensureDirectory(resolver, tree, directories, normalized);
                     continue;
                 }
@@ -85,6 +85,11 @@ final class DocumentTreeExporter {
             if ("..".equals(segment)) throw new IllegalArgumentException("ZIP 包含越界路径：" + raw);
         }
         return path;
+    }
+
+    static boolean isDirectoryEntry(ZipEntry entry) {
+        String name = entry.getName();
+        return entry.isDirectory() || name.endsWith("/") || name.endsWith("\\");
     }
 
     private static Uri ensureDirectory(ContentResolver resolver, Uri tree, Map<String, Uri> cache, String path)

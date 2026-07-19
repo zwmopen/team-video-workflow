@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
 
+import java.util.zip.ZipEntry;
+
 public final class DocumentTreeExporterTest {
     @Test
     public void normalizesWindowsArchivePathsWithoutFlatteningThem() {
@@ -14,5 +16,10 @@ public final class DocumentTreeExporterTest {
     @Test(expected = IllegalArgumentException.class)
     public void rejectsArchiveTraversalBeforeWritingToPhone() {
         DocumentTreeExporter.validateArchivePath("作品合集/../../逃逸.txt");
+    }
+
+    @Test
+    public void recognizesWindowsBackslashDirectoryEntries() {
+        org.junit.Assert.assertTrue(DocumentTreeExporter.isDirectoryEntry(new ZipEntry("作品合集\\")));
     }
 }
