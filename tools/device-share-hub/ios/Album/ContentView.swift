@@ -286,9 +286,11 @@ private enum AlbumToolbarIcon {
         case .settings:
             path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 3.2,
                         startAngle: 0, endAngle: .pi * 2, clockwise: true)
+            path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 6.2,
+                        startAngle: 0, endAngle: .pi * 2, clockwise: true)
             for index in 0..<8 {
                 let angle = CGFloat(index) * .pi / 4
-                path.move(to: CGPoint(x: 11.5 + cos(angle) * 5.2, y: 11.5 + sin(angle) * 5.2))
+                path.move(to: CGPoint(x: 11.5 + cos(angle) * 6.2, y: 11.5 + sin(angle) * 6.2))
                 path.addLine(to: CGPoint(x: 11.5 + cos(angle) * 8.2, y: 11.5 + sin(angle) * 8.2))
             }
             path.stroke()
