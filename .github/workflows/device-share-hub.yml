@@ -160,12 +160,12 @@ jobs:
           rm -rf package
           mkdir -p package/Payload
           ditto "$app_path" "package/Payload/Album.app"
-          (cd package && /usr/bin/zip -qry ../album-iOS-v0.4.0-altstore.ipa Payload)
+          (cd package && /usr/bin/zip -qry ../album-iOS-v0.4.1-altstore.ipa Payload)
           python3 - <<'PY'
           import plistlib
           import zipfile
 
-          ipa = "album-iOS-v0.4.0-altstore.ipa"
+          ipa = "album-iOS-v0.4.1-altstore.ipa"
           with zipfile.ZipFile(ipa) as archive:
               names = archive.namelist()
               assert "Payload/Album.app/Album" in names, "iOS executable missing"
@@ -173,10 +173,10 @@ jobs:
               info = plistlib.loads(archive.read("Payload/Album.app/Info.plist"))
               assert info["CFBundleExecutable"] == "Album"
               assert info["CFBundleDisplayName"] == "相册"
-              assert info["CFBundleShortVersionString"] == "0.4.0"
+              assert info["CFBundleShortVersionString"] == "0.4.1"
           print("IPA structure verified")
           PY
-          shasum -a 256 album-iOS-v0.4.0-altstore.ipa > album-iOS-v0.4.0-altstore.ipa.sha256
+          shasum -a 256 album-iOS-v0.4.1-altstore.ipa > album-iOS-v0.4.1-altstore.ipa.sha256
       - name: Upload iOS build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -187,10 +187,10 @@ jobs:
         if: steps.ios_compile.outputs.status == '0'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: album-ios-altstore-v0.4.0
+          name: album-ios-altstore-v0.4.1
           path: |
-            tools/device-share-hub/ios/album-iOS-v0.4.0-altstore.ipa
-            tools/device-share-hub/ios/album-iOS-v0.4.0-altstore.ipa.sha256
+            tools/device-share-hub/ios/album-iOS-v0.4.1-altstore.ipa
+            tools/device-share-hub/ios/album-iOS-v0.4.1-altstore.ipa.sha256
       - name: Fail when iOS build failed
         if: steps.ios_compile.outputs.status != '0'
         run: exit 1
