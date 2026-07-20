@@ -132,7 +132,9 @@ public final class TransferActivity extends Activity {
             item.setAllCaps(false);
             item.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
             item.setPadding(dp(16), dp(10), dp(16), dp(10));
-            item.setText(peer.name + "\n" + peer.model);
+            String detail = peer.model;
+            if (peer.workCount >= 0) detail += " · " + peer.workCount + " 个作品";
+            item.setText(peer.name + "\n" + detail);
             item.setTextSize(15);
             boolean chosen = selected != null && selected.id.equals(peer.id);
             item.setTextColor(chosen ? Color.WHITE : Color.rgb(38, 39, 38));

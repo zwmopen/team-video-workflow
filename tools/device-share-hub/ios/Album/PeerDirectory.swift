@@ -7,6 +7,7 @@ struct TransferPeer: Equatable {
     let host: String
     let port: UInt16
     let state: String
+    let workCount: Int
     let lastSeen: Date
 }
 
@@ -25,12 +26,15 @@ final class PeerDirectory {
               !parts[2].isEmpty, parts[2] != DeviceIdentity.id else { return false }
         let peer = TransferPeer(id: parts[2], name: decode(parts[4]), model: decode(parts[5]),
                                 host: host, port: UInt16(parts[3]) ?? 45833,
-                                state: decode(parts[6]), lastSeen: Date())
+                                state: decode(parts[6]),
+                                workCount: parts.count >= 9 ? max(-1, Int(parts[8]) ?? -1) : -1,
+                                lastSeen: Date())
         lock.lock()
         let previous = values[peer.id]
         values[peer.id] = peer
         lock.unlock()
-        let changed = previous == nil || previous?.host != peer.host || previous?.name != peer.name || previous?.state != peer.state
+        let changed = previous == nil || previous?.host != peer.host || previous?.name != peer.name ||
+            previous?.state != peer.state || previous?.workCount != peer.workCount
         UserDefaults.standard.set("\(peer.name)|\(peer.model)|\(peer.host)|\(Date().timeIntervalSince1970)",
                                   forKey: "album.lastPeer.\(peer.id)")
         if changed { DispatchQueue.main.async { NotificationCenter.default.post(name: .transferPeersChanged, object: nil) } }

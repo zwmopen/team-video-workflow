@@ -22,8 +22,10 @@ ZWMDS2_DISCOVER
 手机接收端回复：
 
 ```text
-ZWMDS2_HERE|2|deviceId|httpPort|base64url(name)|base64url(model)|base64url(state)|taskId
+ZWMDS2_HERE|2|deviceId|httpPort|base64url(name)|base64url(model)|base64url(state)|taskId|workCount
 ```
+
+`workCount` 是可选的非负整数，表示手机最近一次本机扫描得到的作品数量。Windows 或旧客户端可发送 `-1` 或省略该字段；接收端必须把它显示为“未知/不显示”，不能当作 0。该字段不包含作品名称、文案、图片或路径。
 
 三端同时发送全局广播和当前子网定向广播，兼容部分路由器不转发无线客户端全局广播的情况。设备超过 15 秒没有刷新即视为离线；进入传送页和手动刷新会主动重新探测。
 
@@ -76,6 +78,8 @@ POST /v2/tasks/{taskId}/cancel
 - `receiving`：正在接收文件。
 - `ready`：兼容旧版客户端的保留状态；V3 正常提交后直接回到 `online`。
 - `sharing`：兼容旧版客户端的保留状态；V3 分享操作不阻塞继续接收。
+
+`GET /v2/info` 在手机端同时返回 `workCount`。扩展字段均为可选，旧客户端忽略尾部发现字段仍可继续发现和传送。
 
 ## 安全边界
 

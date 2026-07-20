@@ -2,7 +2,7 @@
 
 ## 交付结论
 
-当前源码版本：`0.4.5` build 16，同一 IPA 兼容 iOS 12+。2026-07-20 已在 iPhone 6 / iOS 12.5.8 覆盖安装并启动，完成递归作品计数和数字重名回收站排除复核；完整证据以 `MAINTAINER_HANDOFF.md` 为准。
+当前源码版本：`0.4.6` build 17，同一 IPA 兼容 iOS 12+，增加局域网作品数量状态。当前实体安装证据仍为 0.4.5 build 16；0.4.6 构建与安装结果以 `MAINTAINER_HANDOFF.md` 的后续记录为准。
 
 苹果官方“文件”App 不属于本项目安装包。设备删除该系统 App 后只能通过 App Store 恢复；Sideloadly、AltStore 和未预签名 IPA 不能替 App Store 静默安装。相册的局域网接收与 iOS 12 App 内文件夹选择不依赖“文件”App。
 

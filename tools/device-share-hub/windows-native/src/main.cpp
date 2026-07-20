@@ -65,6 +65,7 @@ struct Device {
     INTERNET_PORT port = 45833;
     std::wstring state;
     std::wstring taskId;
+    int workCount = -1;
     std::chrono::steady_clock::time_point lastSeen;
 };
 
@@ -165,7 +166,7 @@ std::string WindowsDeviceId() {
 std::string WindowsBeacon() {
     std::wstring name = ComputerName();
     return "ZWMDS2_HERE|2|" + WindowsDeviceId() + "|45833|" + Base64UrlEncode(WideToUtf8(name)) + "|"
-        + Base64UrlEncode("Windows PC") + "|" + Base64UrlEncode("online") + "|";
+        + Base64UrlEncode("Windows PC") + "|" + Base64UrlEncode("online") + "||-1";
 }
 
 std::wstring StateLabel(const std::wstring& state) {
@@ -1000,6 +1001,10 @@ void DiscoveryLoop() {
                     device.model = Utf8ToWide(Base64UrlDecode(parts[5]));
                     device.state = Utf8ToWide(Base64UrlDecode(parts[6]));
                     device.taskId = Utf8ToWide(parts[7]);
+                    if (parts.size() >= 9) {
+                        try { device.workCount = std::max(-1, std::stoi(parts[8])); }
+                        catch (...) { device.workCount = -1; }
+                    }
                     device.ip = Utf8ToWide(ip);
                     device.lastSeen = std::chrono::steady_clock::now();
                     if (!device.id.empty() && WideToUtf8(device.id) != WindowsDeviceId()) {
@@ -1059,6 +1064,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
 
     SetTextColor(dc, StateColor(device.state));
     std::wstring label = StateLabel(device.state);
+    if (device.workCount >= 0) label += L" · " + std::to_wstring(device.workCount);
     RECT stateRect{rect.right - 120, rect.top + 12, rect.right - 16, rect.top + 36};
     DrawTextW(dc, label.c_str(), -1, &stateRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
@@ -1224,7 +1230,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.5", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -1384,7 +1390,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.5",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

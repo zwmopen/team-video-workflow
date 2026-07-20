@@ -103,7 +103,7 @@ final class TransferViewController: UIViewController, UITableViewDataSource, UIT
         let cell = tableView.dequeueReusableCell(withIdentifier: identifier) ?? UITableViewCell(style: .subtitle, reuseIdentifier: identifier)
         let peer = peers[indexPath.row]
         cell.textLabel?.text = peer.name.isEmpty ? peer.model : peer.name
-        cell.detailTextLabel?.text = peer.model
+        cell.detailTextLabel?.text = peer.workCount >= 0 ? "\(peer.model) · \(peer.workCount) 个作品" : peer.model
         cell.textLabel?.font = .boldSystemFont(ofSize: 16)
         cell.backgroundColor = peer.id == selectedID ? view.tintColor.withAlphaComponent(0.14) : .white
         cell.layer.cornerRadius = 15

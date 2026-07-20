@@ -217,7 +217,9 @@ public final class MainActivity extends Activity {
                 if (!expired.succeeded()) {
                     DiagnosticLog.write(this, "external_trash_purge_failed", expired.firstFailure());
                 }
-                List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : library.listActive();
+                List<WorkLibrary.WorkEntry> activeEntries = library.listActive();
+                List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : activeEntries;
+                OnlineService.publishWorkCount(this, activeEntries.size());
                 runOnUiThread(() -> renderWorks(entries));
             } catch (Exception error) {
                 DiagnosticLog.write(this, "library_refresh_failed", error.getMessage());
@@ -381,6 +383,7 @@ public final class MainActivity extends Activity {
                 LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
                 ExternalTrashManager.Result trashSync = syncExternalTrash(library());
                 int activeCount = library().listActive().size();
+                OnlineService.publishWorkCount(this, activeCount);
                 DiagnosticLog.write(this, "tree_import",
                         "detected=" + result.detected
                                 + " imported=" + result.imported

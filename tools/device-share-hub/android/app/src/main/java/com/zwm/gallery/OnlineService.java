@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.Context;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.VibrationEffect;
@@ -58,6 +59,7 @@ public final class OnlineService extends Service {
 
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
+    private static final String PREF_WORK_COUNT = "advertisedWorkCount";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final int FOREGROUND_NOTIFICATION_ID = 3401;
@@ -85,6 +87,11 @@ public final class OnlineService extends Service {
         ArrayList<PeerDevice> result = new ArrayList<>(PEERS.values());
         result.sort((left, right) -> left.name.compareToIgnoreCase(right.name));
         return result;
+    }
+
+    static void publishWorkCount(Context context, int count) {
+        context.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(PREF_WORK_COUNT, Math.max(0, count)).apply();
     }
 
     @Override
@@ -389,6 +396,7 @@ public final class OnlineService extends Service {
         }
         deleteRecursively(task.dir);
         DiagnosticLog.write(this, "task_committed", taskId + " files=" + deliveredFiles + " works=" + imported);
+        publishWorkCount(this, library.listActive().size());
         writeText(output, 200, "OK");
         onTaskReady(taskId, deliveredFiles, imported, autoShareWorkId);
     }
@@ -430,6 +438,7 @@ public final class OnlineService extends Service {
                 .put("appVersion", installedVersion())
                 .put("port", HTTP_PORT)
                 .put("state", state)
+                .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
     }
 
@@ -495,8 +504,10 @@ public final class OnlineService extends Service {
             if (id.isEmpty() || id.equals(ownId)) return;
             int port;
             try { port = Integer.parseInt(parts[3]); } catch (Exception ignored) { port = HTTP_PORT; }
+            int workCount = parts.length >= 9 ? PeerDevice.parseWorkCount(parts[8]) : -1;
             PeerDevice peer = new PeerDevice(id, decodeB64(parts[4]), decodeB64(parts[5]),
-                    address.getHostAddress(), port, decodeB64(parts[6]), System.currentTimeMillis());
+                    address.getHostAddress(), port, decodeB64(parts[6]), workCount,
+                    System.currentTimeMillis());
             boolean changed = !peer.equalsForDisplay(PEERS.put(id, peer));
             if (changed) {
                 sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));
@@ -517,7 +528,8 @@ public final class OnlineService extends Service {
         JSONObject info = deviceInfo();
         String beacon = "ZWMDS2_HERE|2|" + info.getString("deviceId") + "|" + HTTP_PORT + "|"
                 + b64(info.getString("name")) + "|" + b64(info.getString("model")) + "|"
-                + b64(info.getString("state")) + "|" + info.optString("taskId", "");
+                + b64(info.getString("state")) + "|" + info.optString("taskId", "") + "|"
+                + info.optInt("workCount", -1);
         byte[] bytes = beacon.getBytes(StandardCharsets.UTF_8);
         if (directTarget != null) {
             socket.send(new DatagramPacket(bytes, bytes.length, directTarget));

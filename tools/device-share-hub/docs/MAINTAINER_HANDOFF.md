@@ -1,4 +1,4 @@
-# 分享中控 V3.4 维护交接
+# 分享中控 V3.5 维护交接
 
 更新时间：2026-07-20
 
@@ -6,10 +6,10 @@
 
 | 项目 | 当前值 |
 |---|---|
-| Windows | 素材投送中控 V3.4，原生 Win32 x64 |
-| Android | 相册 0.4.5，versionCode 22，`com.zwm.gallery` |
-| iPhone | 相册 0.4.5，build 16，源码 bundle id `com.zwm.album` |
-| 0.4.5 修复提交 | `23c2c074147d72f13194fbd27d978a750b1b203c` |
+| Windows | 素材投送中控 V3.5，原生 Win32 x64 |
+| Android | 相册 0.4.6，versionCode 23，`com.zwm.gallery` |
+| iPhone | 相册 0.4.6，build 17，源码 bundle id `com.zwm.album` |
+| 0.4.6 主要变化 | 手机公布最近扫描作品数，Windows/手机互传列表与共享技能显示数量 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -26,6 +26,7 @@
 - Android 与 iPhone 设置中有独立的声音通知、震动提醒开关，默认均关闭；Android 前台接收服务的系统常驻提示使用独立静音通道。
 - Android 点击更新后在 App 内下载 APK、显示进度并校验 SHA-256，不再打开网页；系统安装确认仍由 Android 负责。iPhone 更新检查不再跳网页，侧载包仍必须由电脑重新签名覆盖。
 - iOS 12 设置页提供 App 内“选择作品文件夹”，从相册接收目录及其子目录选择扫描根目录；iOS 13+ 继续使用系统外部文件夹选择器。
+- Android 与 iPhone 只把最近一次本机扫描的作品数量作为设备状态公布；不公布作品名称、文案、图片或路径。旧客户端缺少该字段时保持兼容并显示为未知。
 
 ## 代码地图
 
@@ -51,6 +52,7 @@
 
 ## 2026-07-20 实际状态
 
+- 0.4.6 / Windows V3.5 源码增加设备作品数：发现包追加可选 `workCount`，手机 `/v2/info` 同步返回；Windows 卡片、Android/iPhone 互传列表和共享技能均消费同一字段。Python 解析测试与共享技能校验已完成；三端构建和新包实体安装结果在本次 CI 后继续补入。
 - 三端 0.4.4 云端构建 run `29722548994` 全部成功；IPA 内核对版本 0.4.4/build 15、最低 iOS 12.0，随后已覆盖安装到 iPhone 6 / iOS 12.5.8 并正常启动。
 - 实体启动后首页显示 4 个作品，但其中两项来自系统重名目录“相册回收站 (1)/(2)”。根因是扫描器只排除精确回收站名；0.4.5 已同时修正 Android 与 iPhone，并加入数字重名副本回归用例。
 - 0.4.5 三端构建 run `29723234708` 以提交 `23c2c07` 完成：Windows 编译、Android 单元测试/编译/Lint、iOS 测试目标/真机 SDK 编译和 IPA 结构校验全部成功。

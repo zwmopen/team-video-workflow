@@ -181,7 +181,7 @@ final class IncomingTransferService {
         let name = Data(DeviceIdentity.name.utf8).base64URL
         let model = Data(DeviceIdentity.model.utf8).base64URL
         let state = Data("online".utf8).base64URL
-        return Data("ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)|".utf8)
+        return Data("ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)||\(library.advertisedWorkCount)".utf8)
     }
 
     private func acceptHTTP(_ connection: NWConnection) {
@@ -237,6 +237,7 @@ final class IncomingTransferService {
             "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
             "port": Int(transferHTTPPort),
             "state": "online",
+            "workCount": library.advertisedWorkCount,
             "taskId": ""
         ])
     }

@@ -7,6 +7,7 @@ struct ManagedFolderChoice {
 }
 
 final class WorkLibrary {
+    static let advertisedWorkCountKey = "album.advertisedWorkCount.v1"
     private(set) var works: [WorkItem] = []
     private(set) var trash: [TrashItem] = []
     private(set) var folderName: String?
@@ -42,6 +43,7 @@ final class WorkLibrary {
     }
 
     var receivingRootURL: URL? { return rootURL }
+    var advertisedWorkCount: Int { UserDefaults.standard.integer(forKey: Self.advertisedWorkCountKey) }
 
     deinit {
         if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
@@ -466,7 +468,10 @@ final class WorkLibrary {
         notify()
     }
 
-    private func notify() { onChange?() }
+    private func notify() {
+        UserDefaults.standard.set(works.count, forKey: Self.advertisedWorkCountKey)
+        onChange?()
+    }
 
     private static func documentsURL() throws -> URL {
         guard let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
