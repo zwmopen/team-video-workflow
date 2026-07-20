@@ -175,6 +175,7 @@ jobs:
               assert info["CFBundleExecutable"] == "Album"
               assert info["CFBundleDisplayName"] == "相册"
               assert info["CFBundleShortVersionString"] == "0.4.7"
+              assert info["CFBundleVersion"] == "18"
           print("IPA structure verified")
           PY
           shasum -a 256 album-iOS-v0.4.7-altstore.ipa > album-iOS-v0.4.7-altstore.ipa.sha256
