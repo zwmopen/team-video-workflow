@@ -1,15 +1,15 @@
 # 分享中控 V3.4 维护交接
 
-更新时间：2026-07-19
+更新时间：2026-07-20
 
 ## 当前可交付基线
 
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.4，原生 Win32 x64 |
-| Android | 相册 0.4.3，versionCode 20，`com.zwm.gallery` |
-| iPhone | 相册 0.4.3，build 14，源码 bundle id `com.zwm.album` |
-| 0.4.3 候选包对应代码提交 | `a7c10a771391bbd50e6e2e3cfdfc61b1990173f2` |
+| Android | 相册 0.4.4，versionCode 21，`com.zwm.gallery` |
+| iPhone | 相册 0.4.4，build 15，源码 bundle id `com.zwm.album` |
+| 0.4.4 功能代码提交 | `8ac0aa186292ef54aa32397e40fc46db01b05fd9` |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -24,6 +24,8 @@
 - iPhone：同包兼容 iOS 12+；较新系统可授权外部目录，旧系统使用 App Documents；作品、分享、回收与三端互传逻辑与 Android 对齐；
 - 三端传送：可信同一 Wi-Fi 内自动发现，UDP 45834；HTTP 45833；任务创建、逐文件 SHA-256、提交或取消。
 - Android 与 iPhone 设置中有独立的声音通知、震动提醒开关，默认均关闭；Android 前台接收服务的系统常驻提示使用独立静音通道。
+- Android 点击更新后在 App 内下载 APK、显示进度并校验 SHA-256，不再打开网页；系统安装确认仍由 Android 负责。iPhone 更新检查不再跳网页，侧载包仍必须由电脑重新签名覆盖。
+- iOS 12 设置页提供 App 内“选择作品文件夹”，从相册接收目录及其子目录选择扫描根目录；iOS 13+ 继续使用系统外部文件夹选择器。
 
 ## 代码地图
 
@@ -46,6 +48,15 @@
 - 源码、构建和恢复：`docs/SOURCE_BUILD_AND_RECOVERY.md`
 - Windows + iPhone 侧载：`docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
+
+## 2026-07-20 实际状态
+
+- iPhone 6 / iOS 12.5.8 已覆盖安装 0.4.3 build 14，设备应用清单、最低系统版本和启动进程均已核对。
+- 通过 App Documents 实体放入两层测试目录 `TestBundle/WorkOne`，其中含一个 PNG 扩展名文件和一个 TXT；首页数字显示 1、作品卡片显示 1，临时目录随后已从设备删除。
+- 用户从另一台手机向 iPhone 6 发送后观察到内容能够收到，证明当前局域网接收方向可用；0.4.4 的 App 内文件夹选择入口需在本次构建安装后继续核对。
+- iPhone 6 系统应用清单确认苹果官方“文件”App 缺失。它不是局域网接收和扫描的依赖；恢复官方 App 必须走 App Store，Windows 侧载工具不能替 App Store 静默安装。
+- 0.4.4 功能提交为 `8ac0aa186292ef54aa32397e40fc46db01b05fd9`，备用仓库三端构建 run `29722256531` 已启动；最终结论和产物校验在构建完成后补入本节。
+- 公开更新通道仍保持 0.4.1，0.4.4 的安装、核心入口和更新链路完成实体核对前不修改 `latest.json`。
 
 ## 2026-07-19 实际状态
 
