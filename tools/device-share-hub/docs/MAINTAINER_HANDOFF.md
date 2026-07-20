@@ -10,6 +10,7 @@
 | Android | 相册 0.4.6，versionCode 23，`com.zwm.gallery` |
 | iPhone | 相册 0.4.6，build 17，源码 bundle id `com.zwm.album` |
 | 0.4.6 主要变化 | 手机公布最近扫描作品数，Windows/手机互传列表与共享技能显示数量 |
+| 0.4.6 功能提交 | `9541d2bc89a5d53472a4a4cfb32763f85980fb86` |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -52,7 +53,11 @@
 
 ## 2026-07-20 实际状态
 
-- 0.4.6 / Windows V3.5 源码增加设备作品数：发现包追加可选 `workCount`，手机 `/v2/info` 同步返回；Windows 卡片、Android/iPhone 互传列表和共享技能均消费同一字段。Python 解析测试与共享技能校验已完成；三端构建和新包实体安装结果在本次 CI 后继续补入。
+- 0.4.6 / Windows V3.5 增加设备作品数：发现包追加可选 `workCount`，手机 `/v2/info` 同步返回；Windows 卡片、Android/iPhone 互传列表和共享技能均消费同一字段。
+- 备用构建 run `29727724327` 对提交 `9541d2b` 完成三端构建：Windows 正式编译、Android 单元测试/编译/Lint、iPhone 模拟器测试和 iOS 12+ 真机 SDK 编译全部成功。iOS 新增的旧包兼容与作品数解析测试实际执行通过。
+- 产物核对：Windows V3.5 SHA-256 `366BF09A5D6B680EE9084477AB153191D8DEA37FA48B4591E86847DFF6CBD371`；Android 0.4.6/versionCode 23 SHA-256 `B125902F4C5996EF7361A6878565018393CB79B261761B35048A51BDFC5BAB94`；iPhone 0.4.6/build 17/最低 iOS 12.0 SHA-256 `23A765CFB15B03B7E712202B8D2926419A885EF1456AA5189BDE5648400C49F6`。
+- 0.4.6 三端安装包已发布到 `gallery-updates`，Android `latest.json` 已在线更新到 versionCode 23。Windows V3.5 已放到桌面并启动，TCP 45833 接收端口由该进程监听。
+- 当前在线小米仍是旧客户端，因此共享技能如实返回“作品未知”。手机覆盖安装 0.4.6 并完成一次扫描后，再核对实体数字与手机首页一致；不把云端构建代替这一步。
 - 三端 0.4.4 云端构建 run `29722548994` 全部成功；IPA 内核对版本 0.4.4/build 15、最低 iOS 12.0，随后已覆盖安装到 iPhone 6 / iOS 12.5.8 并正常启动。
 - 实体启动后首页显示 4 个作品，但其中两项来自系统重名目录“相册回收站 (1)/(2)”。根因是扫描器只排除精确回收站名；0.4.5 已同时修正 Android 与 iPhone，并加入数字重名副本回归用例。
 - 0.4.5 三端构建 run `29723234708` 以提交 `23c2c07` 完成：Windows 编译、Android 单元测试/编译/Lint、iOS 测试目标/真机 SDK 编译和 IPA 结构校验全部成功。
