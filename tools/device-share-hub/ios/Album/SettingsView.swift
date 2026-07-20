@@ -46,7 +46,7 @@ final class SettingsViewController: UITableViewController {
             cell.textLabel?.text = "当前文件夹"
             cell.detailTextLabel?.text = library.rootDescription
         case (1, 1):
-            cell.textLabel?.text = library.supportsExternalFolderSelection ? "重新选择文件夹" : "重新扫描"
+            cell.textLabel?.text = "选择作品文件夹"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
         case (1, 2):
@@ -82,7 +82,7 @@ final class SettingsViewController: UITableViewController {
             cell.detailTextLabel?.text = "相册"
         case (5, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.3"
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.4"
         case (5, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
@@ -113,8 +113,9 @@ final class SettingsViewController: UITableViewController {
                 }
                 present(picker, animated: true)
             } else {
-                library.refresh()
-                tableView.reloadData()
+                let picker = ManagedFolderPickerViewController(library: library)
+                picker.onPick = { [weak self] in self?.tableView.reloadData() }
+                present(UINavigationController(rootViewController: picker), animated: true)
             }
         } else if indexPath.section == 1 && indexPath.row == 2 {
             let picker = ImportPickerController()

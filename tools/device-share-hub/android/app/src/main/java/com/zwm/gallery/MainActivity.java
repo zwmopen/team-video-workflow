@@ -444,6 +444,12 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        UpdateChecker.resumePendingInstall(this);
+    }
+
     private String treeName(Uri tree) {
         try {
             String id = DocumentsContract.getTreeDocumentId(tree);

@@ -19,23 +19,15 @@ enum AlbumUpdateChecker {
                         show(controller, title: "检查失败", message: "暂时无法连接更新服务，请确认网络后再试。")
                         return
                     }
-                    let candidate = ((object["tag_name"] as? String) ?? "").replacingOccurrences(of: "v", with: "", options: [.anchored, .caseInsensitive])
+                    let raw = (object["version_name"] as? String) ?? (object["tag_name"] as? String) ?? ""
+                    let candidate = raw.replacingOccurrences(of: "v", with: "", options: [.anchored, .caseInsensitive])
                     let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
                     guard isNewer(candidate, than: current) else {
-                        show(controller, title: "已是最新版本", message: "当前版本 (current)")
+                        show(controller, title: "已经是最新版本", message: "当前版本 \(current)")
                         return
                     }
-                    let page = (object["html_url"] as? String).flatMap(URL.init(string:))
-                    let alert = UIAlertController(title: "发现新版本 (candidate)",
-                                                  message: "会打开下载页面，由你确认安装；不会静默更新。",
-                                                  preferredStyle: .alert)
-                    alert.addAction(UIAlertAction(title: "稍后", style: .cancel))
-                    if let page = page {
-                        alert.addAction(UIAlertAction(title: "查看更新", style: .default) { _ in
-                            UIApplication.shared.open(page, options: [:], completionHandler: nil)
-                        })
-                    }
-                    controller.present(alert, animated: true)
+                    show(controller, title: "发现新版本 \(candidate)",
+                         message: "iPhone 不允许侧载 App 自己替换安装包。请连接电脑后由侧载工具覆盖更新；这里不会跳转网页，也不会删除作品文件。")
                 }
             }
         }.resume()

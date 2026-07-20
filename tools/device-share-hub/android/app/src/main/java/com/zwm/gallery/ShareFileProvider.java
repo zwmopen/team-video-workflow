@@ -55,6 +55,11 @@ public final class ShareFileProvider extends ContentProvider {
     private File resolve(Uri uri) {
         if (getContext() == null) throw new IllegalStateException("Provider 未初始化");
         List<String> segments = uri.getPathSegments();
+        if (segments.size() == 2 && "updates".equals(segments.get(0))) {
+            String storedName = segments.get(1);
+            if (!storedName.matches("[A-Za-z0-9._-]+")) throw new SecurityException("非法更新文件名");
+            return checked(new File(getContext().getFilesDir(), "updates"), storedName);
+        }
         if (segments.size() != 3 || !"active".equals(segments.get(0))) {
             throw new IllegalArgumentException("URI 格式无效");
         }
@@ -64,7 +69,11 @@ public final class ShareFileProvider extends ContentProvider {
             throw new SecurityException("非法文件路径");
         }
         File root = new File(getContext().getFilesDir(), "work-library/active");
-        File candidate = new File(new File(root, workId), storedName);
+        return checked(new File(root, workId), storedName);
+    }
+
+    private File checked(File root, String storedName) {
+        File candidate = new File(root, storedName);
         try {
             String rootPath = root.getCanonicalPath() + File.separator;
             String candidatePath = candidate.getCanonicalPath();

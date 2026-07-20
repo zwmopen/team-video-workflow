@@ -116,6 +116,12 @@ public final class SettingsActivity extends Activity {
         toast("已保存，电脑端会自动刷新");
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        UpdateChecker.resumePendingInstall(this);
+    }
+
     private void changeSoundNotifications(boolean enabled) {
         if (!enabled) {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("soundNotificationsEnabled", false).apply();

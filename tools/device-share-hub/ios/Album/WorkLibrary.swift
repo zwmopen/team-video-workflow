@@ -1,6 +1,11 @@
 import Foundation
 import UIKit
 
+struct ManagedFolderChoice {
+    let title: String
+    let url: URL
+}
+
 final class WorkLibrary {
     private(set) var works: [WorkItem] = []
     private(set) var trash: [TrashItem] = []
@@ -13,6 +18,7 @@ final class WorkLibrary {
     var onChange: (() -> Void)?
 
     private let bookmarkKey = "album.rootFolderBookmark.v1"
+    private let managedFolderKey = "album.managedFolderRelativePath.v1"
     private let stateName = "_相册状态.json"
     private let trashName = "相册回收站"
     private let legacyTrashName = "_相册回收站"
@@ -28,7 +34,10 @@ final class WorkLibrary {
     }
 
     var rootDescription: String {
-        if usesManagedFolder || !supportsExternalFolderSelection { return "我的 iPhone/相册" }
+        if usesManagedFolder || !supportsExternalFolderSelection {
+            let relative = UserDefaults.standard.string(forKey: managedFolderKey) ?? ""
+            return relative.isEmpty ? "我的 iPhone/相册" : "我的 iPhone/相册/\(relative)"
+        }
         return folderName ?? "未选择"
     }
 
@@ -41,7 +50,13 @@ final class WorkLibrary {
     func start() {
         if !supportsExternalFolderSelection {
             do {
-                try activate(Self.documentsURL(), securityScoped: false)
+                let documents = try Self.documentsURL()
+                let relative = UserDefaults.standard.string(forKey: managedFolderKey) ?? ""
+                let selected = relative.isEmpty ? documents : documents.appendingPathComponent(relative, isDirectory: true)
+                let root = FileManager.default.fileExists(atPath: selected.path) ? selected : documents
+                if root == documents { UserDefaults.standard.removeObject(forKey: managedFolderKey) }
+                try activate(root, securityScoped: false)
+                usesManagedFolder = true
                 refresh(showConfirmation: false)
             } catch { report(error) }
             return
@@ -71,7 +86,52 @@ final class WorkLibrary {
             try activate(Self.documentsURL(), securityScoped: false)
             usesManagedFolder = true
             UserDefaults.standard.removeObject(forKey: bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: managedFolderKey)
             refresh(showConfirmation: showConfirmation)
+        } catch { report(error) }
+    }
+
+    func managedFolderChoices() -> [ManagedFolderChoice] {
+        guard let documents = try? Self.documentsURL() else { return [] }
+        var result = [ManagedFolderChoice(title: "全部接收内容", url: documents)]
+        var visited = 0
+
+        func visit(_ folder: URL, relative: [String], depth: Int) {
+            guard depth < 6, visited < 200 else { return }
+            let entries = (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
+                options: [.skipsPackageDescendants])) ?? []
+            for child in NaturalSort.urls(entries) {
+                guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+                let name = child.lastPathComponent
+                if name.hasPrefix(".") || name == trashName || name == legacyTrashName { continue }
+                let parts = relative + [name]
+                result.append(ManagedFolderChoice(title: parts.joined(separator: "/"), url: child))
+                visited += 1
+                visit(child, relative: parts, depth: depth + 1)
+            }
+        }
+
+        visit(documents, relative: [], depth: 0)
+        return result
+    }
+
+    func selectManagedFolder(_ url: URL) {
+        do {
+            let documents = try Self.documentsURL().standardizedFileURL
+            let selected = url.standardizedFileURL
+            let documentsPath = documents.path.hasSuffix("/") ? documents.path : documents.path + "/"
+            guard selected.path == documents.path || selected.path.hasPrefix(documentsPath) else {
+                throw LibraryError.folderUnavailable
+            }
+            var relative = String(selected.path.dropFirst(documents.path.count))
+            if relative.hasPrefix("/") { relative.removeFirst() }
+            try activate(selected, securityScoped: false)
+            usesManagedFolder = true
+            UserDefaults.standard.removeObject(forKey: bookmarkKey)
+            if relative.isEmpty { UserDefaults.standard.removeObject(forKey: managedFolderKey) }
+            else { UserDefaults.standard.set(relative, forKey: managedFolderKey) }
+            refresh(showConfirmation: true)
         } catch { report(error) }
     }
 
