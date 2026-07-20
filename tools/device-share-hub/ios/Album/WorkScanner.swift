@@ -97,7 +97,7 @@ final class WorkScanner {
                     statistics.hiddenDirectories += 1
                     continue
                 }
-                if excludedDirectoryNames.contains(child.lastPathComponent)
+                if isExcludedDirectoryName(child.lastPathComponent)
                     || child.lastPathComponent.hasPrefix("_相册状态") { continue }
                 visit(child, relativeComponents: relativeComponents + [child.lastPathComponent], depth: depth + 1)
             }
@@ -111,5 +111,15 @@ final class WorkScanner {
     private func isHidden(_ url: URL) -> Bool {
         if url.lastPathComponent.hasPrefix(".") { return true }
         return (try? url.resourceValues(forKeys: [.isHiddenKey]).isHidden) == true
+    }
+
+    private func isExcludedDirectoryName(_ name: String) -> Bool {
+        if excludedDirectoryNames.contains(name) { return true }
+        return excludedDirectoryNames.contains { base in
+            guard name.hasPrefix(base + " ("), name.hasSuffix(")") else { return false }
+            let start = name.index(name.startIndex, offsetBy: base.count + 2)
+            let number = name[start..<name.index(before: name.endIndex)]
+            return !number.isEmpty && number.allSatisfy(\.isNumber)
+        }
     }
 }

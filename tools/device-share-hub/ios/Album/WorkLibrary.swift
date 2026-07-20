@@ -104,7 +104,7 @@ final class WorkLibrary {
             for child in NaturalSort.urls(entries) {
                 guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
                 let name = child.lastPathComponent
-                if name.hasPrefix(".") || name == trashName || name == legacyTrashName { continue }
+                if name.hasPrefix(".") || isTrashDirectoryName(name) { continue }
                 let parts = relative + [name]
                 result.append(ManagedFolderChoice(title: parts.joined(separator: "/"), url: child))
                 visited += 1
@@ -114,6 +114,17 @@ final class WorkLibrary {
 
         visit(documents, relative: [], depth: 0)
         return result
+    }
+
+    private func isTrashDirectoryName(_ name: String) -> Bool {
+        for base in [trashName, legacyTrashName] {
+            if name == base { return true }
+            guard name.hasPrefix(base + " ("), name.hasSuffix(")") else { continue }
+            let start = name.index(name.startIndex, offsetBy: base.count + 2)
+            let number = name[start..<name.index(before: name.endIndex)]
+            if !number.isEmpty && number.allSatisfy(\.isNumber) { return true }
+        }
+        return false
     }
 
     func selectManagedFolder(_ url: URL) {

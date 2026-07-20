@@ -24,14 +24,14 @@ final class WorkScannerTests: XCTestCase {
     func testSkipsHiddenAndTrashFoldersAtEveryDepth() throws {
         let root = temporaryFolder()
         defer { try? FileManager.default.removeItem(at: root) }
-        for name in [".隐藏作品", "相册回收站/旧作品"] {
+        for name in [".隐藏作品", "相册回收站/旧作品", "相册回收站 (1)/旧作品", "_相册回收站 (2)/旧作品"] {
             let folder = root.appendingPathComponent(name, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try Data("文案".utf8).write(to: folder.appendingPathComponent("文案.txt"))
             try Data([1]).write(to: folder.appendingPathComponent("01.jpg"))
         }
 
-        let result = try WorkScanner(excludedDirectoryNames: ["相册回收站"]).scan(
+        let result = try WorkScanner(excludedDirectoryNames: ["相册回收站", "_相册回收站"]).scan(
             root: root, state: LibraryState()
         )
 

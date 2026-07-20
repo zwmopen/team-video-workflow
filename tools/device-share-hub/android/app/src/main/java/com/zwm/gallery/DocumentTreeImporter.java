@@ -69,7 +69,7 @@ final class DocumentTreeImporter {
     private static int scan(ContentResolver resolver, Uri tree, String documentId, String parentDocumentId,
                             String displayName, int depth, List<Folder> works, ScanStats stats) throws Exception {
         if (depth > MAX_DEPTH) return 0;
-        if ("相册回收站".equals(displayName) || "_相册回收站".equals(displayName)) return 0;
+        if (isTrashFolderName(displayName)) return 0;
         stats.scannedFolders++;
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId);
         ArrayList<Item> files = new ArrayList<>();
@@ -135,6 +135,10 @@ final class DocumentTreeImporter {
             }
         }
         return childWorks;
+    }
+
+    static boolean isTrashFolderName(String name) {
+        return name != null && name.matches("_?相册回收站(?: \\(\\d+\\))?");
     }
 
     private static String readText(ContentResolver resolver, Uri uri) throws IOException {
