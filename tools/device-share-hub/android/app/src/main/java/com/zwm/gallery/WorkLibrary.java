@@ -193,11 +193,7 @@ public final class WorkLibrary {
         ArrayList<WorkEntry> moved = new ArrayList<>();
         for (WorkEntry entry : list(activeRoot)) {
             if (!RetentionPolicy.shouldMoveToTrash(entry.sharedDate, today)) continue;
-            Properties meta = loadMeta(entry.directory);
-            meta.setProperty("trashedDate", today.toString());
-            saveMeta(entry.directory, meta);
-            moveDirectory(entry.directory, child(trashRoot, entry.id));
-            moved.add(readEntry(child(trashRoot, entry.id)));
+            moved.add(moveToTrash(entry.id, today));
         }
         for (WorkEntry entry : list(trashRoot)) {
             if (RetentionPolicy.shouldPurge(entry.trashedDate, today)
@@ -206,6 +202,28 @@ public final class WorkLibrary {
             }
         }
         return moved;
+    }
+
+    public synchronized WorkEntry moveToTrash(String id, LocalDate trashedDate) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        Properties meta = loadMeta(entry.directory);
+        meta.setProperty("trashedDate", trashedDate.toString());
+        saveMeta(entry.directory, meta);
+        File destination = child(trashRoot, entry.id);
+        moveDirectory(entry.directory, destination);
+        return readEntry(destination);
+    }
+
+    public synchronized void rollbackTrashMove(String id) throws IOException {
+        WorkEntry entry = requireEntry(trashRoot, id);
+        File destination = child(activeRoot, id);
+        if (destination.exists()) throw new IOException("作品已在列表中：" + id);
+        Properties meta = loadMeta(entry.directory);
+        meta.remove("trashedDate");
+        meta.remove("trashDocumentId");
+        meta.remove("externalTrashName");
+        saveMeta(entry.directory, meta);
+        moveDirectory(entry.directory, destination);
     }
 
     public synchronized void deleteTrash(String id) throws IOException {

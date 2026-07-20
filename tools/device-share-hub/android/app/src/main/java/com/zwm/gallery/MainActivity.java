@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -55,8 +56,10 @@ public final class MainActivity extends Activity {
     private ImageButton rightModeButton;
     private TextView headingText;
     private TextView scannedCountText;
+    private ImageButton quickTrashButton;
     private boolean showingTrash;
     private boolean initialFolderPromptShown;
+    private String selectedWorkId;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -85,6 +88,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
         UpdateChecker.checkDaily(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
+        worker.execute(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
         getWindow().getDecorView().post(this::showInitialFolderPromptIfNeeded);
     }
 
@@ -124,6 +128,12 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (selectedWorkId != null) {
+            selectedWorkId = null;
+            quickTrashButton.setVisibility(View.GONE);
+            refreshWorks();
+            return;
+        }
         if (showingTrash) {
             showWorks();
             return;
@@ -143,12 +153,14 @@ public final class MainActivity extends Activity {
         int pad = dp(18);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, dp(20), pad, dp(36));
+        root.setPadding(pad, dp(8), pad, dp(36));
         root.setBackgroundColor(Color.rgb(246, 244, 240));
 
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleRow.setPadding(pad, dp(14), pad, dp(12));
+        titleRow.setBackgroundColor(Color.rgb(246, 244, 240));
         headingText = text("作品", 28, true);
         titleRow.addView(headingText);
         scannedCountText = text("0", 12, true);
@@ -180,8 +192,6 @@ public final class MainActivity extends Activity {
         ImageButton settings = iconButton(R.drawable.ic_album_settings, "设置");
         settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
         titleRow.addView(settings, iconParams(true));
-        root.addView(titleRow, margins(0, 0, 0, dp(12)));
-
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(worksContainer);
@@ -200,7 +210,23 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
-        return scroll;
+        LinearLayout frozenLayout = new LinearLayout(this);
+        frozenLayout.setOrientation(LinearLayout.VERTICAL);
+        frozenLayout.setBackgroundColor(Color.rgb(246, 244, 240));
+        frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+        frozenLayout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
+        quickTrashButton = iconButton(R.drawable.ic_album_trash, "把选中的作品移到回收站");
+        quickTrashButton.setImageTintList(ColorStateList.valueOf(Color.WHITE));
+        quickTrashButton.setBackground(round(Color.rgb(188, 66, 60), 26));
+        quickTrashButton.setVisibility(View.GONE);
+        quickTrashButton.setOnClickListener(v -> confirmMoveSelectedToTrash());
+        FrameLayout.LayoutParams quickParams = new FrameLayout.LayoutParams(dp(56), dp(56),
+                Gravity.END | Gravity.BOTTOM);
+        quickParams.setMargins(0, 0, dp(22), dp(24));
+        frame.addView(quickTrashButton, quickParams);
+        return frame;
     }
 
     private void refreshWorks() {
@@ -229,6 +255,8 @@ public final class MainActivity extends Activity {
     }
 
     private void showWorks() {
+        selectedWorkId = null;
+        quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新作品");
@@ -239,6 +267,8 @@ public final class MainActivity extends Activity {
     }
 
     private void showTrash() {
+        selectedWorkId = null;
+        quickTrashButton.setVisibility(View.GONE);
         showingTrash = true;
         leftModeButton.setImageResource(R.drawable.ic_album_back);
         leftModeButton.setContentDescription("返回作品");
@@ -276,6 +306,12 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
         worksContainer.removeAllViews();
+        boolean selectionStillExists = false;
+        for (WorkLibrary.WorkEntry entry : entries) {
+            if (entry.id.equals(selectedWorkId)) { selectionStillExists = true; break; }
+        }
+        if (!selectionStillExists) selectedWorkId = null;
+        quickTrashButton.setVisibility(selectedWorkId == null || showingTrash ? View.GONE : View.VISIBLE);
         scannedCountText.setText(String.valueOf(entries.size()));
         rightModeButton.setEnabled(!showingTrash || !entries.isEmpty());
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
@@ -312,7 +348,10 @@ public final class MainActivity extends Activity {
     private View workCard(WorkLibrary.WorkEntry work) {
         LinearLayout card = card();
         card.setOrientation(LinearLayout.VERTICAL);
-        if (!showingTrash && work.sharedDate != null) {
+        if (work.id.equals(selectedWorkId)) {
+            card.setBackground(round(Color.rgb(250, 224, 220), 20));
+            card.setElevation(dp(5));
+        } else if (!showingTrash && work.sharedDate != null) {
             card.setBackground(round(Color.rgb(225, 225, 222), 20));
             card.setElevation(0);
         }
@@ -334,8 +373,62 @@ public final class MainActivity extends Activity {
             if (showingTrash) restore(work.id);
             else startActivity(new Intent(this, ShareActivity.class).putExtra(ShareActivity.EXTRA_WORK_ID, work.id));
         });
+        View.OnLongClickListener select = v -> {
+            if (showingTrash) return false;
+            selectedWorkId = work.id.equals(selectedWorkId) ? null : work.id;
+            quickTrashButton.setVisibility(selectedWorkId == null ? View.GONE : View.VISIBLE);
+            refreshWorks();
+            if (selectedWorkId != null) toast("已选中，点右下角垃圾桶移入回收站");
+            return true;
+        };
+        card.setOnLongClickListener(select);
+        name.setOnLongClickListener(select);
+        meta.setOnLongClickListener(select);
+        action.setOnLongClickListener(select);
         card.addView(action, new LinearLayout.LayoutParams(-1, dp(46)));
         return card;
+    }
+
+    private void confirmMoveSelectedToTrash() {
+        String id = selectedWorkId;
+        if (id == null) return;
+        new AlertDialog.Builder(this)
+                .setTitle("移到回收站？")
+                .setMessage("作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("移到回收站", (dialog, which) -> moveSelectedToTrash(id))
+                .show();
+    }
+
+    private void moveSelectedToTrash(String id) {
+        quickTrashButton.setEnabled(false);
+        worker.execute(() -> {
+            try {
+                WorkLibrary library = library();
+                WorkLibrary.WorkEntry entry = library.moveToTrash(id, LocalDate.now());
+                Uri tree = selectedTree();
+                ExternalTrashManager.Result moved = ExternalTrashManager.moveTrashedSource(
+                        getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library, entry);
+                if (!moved.succeeded()) {
+                    if (moved.moved == 0 && moved.alreadyMissing == 0) library.rollbackTrashMove(id);
+                    throw new IOException("原文件夹没有移动：" + moved.firstFailure());
+                }
+                DiagnosticLog.write(this, "manual_trash_move", id);
+                runOnUiThread(() -> {
+                    selectedWorkId = null;
+                    quickTrashButton.setEnabled(true);
+                    quickTrashButton.setVisibility(View.GONE);
+                    toast("已移到回收站");
+                    refreshWorks();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    quickTrashButton.setEnabled(true);
+                    toast("移动失败：" + error.getMessage());
+                    refreshWorks();
+                });
+            }
+        });
     }
 
     private void chooseFolder() {

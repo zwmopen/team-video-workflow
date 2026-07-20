@@ -1050,22 +1050,24 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
-    RECT nameRect{rect.left + 42, rect.top + 10, rect.right - 125, rect.top + 36};
+    RECT nameRect{rect.left + 42, rect.top + 10, rect.right - 16, rect.top + 36};
     std::wstring displayName = DisplayNameFor(device);
+    bool hasRemark = displayName != device.name;
+    if (device.workCount >= 0) {
+        displayName += L"（作品数 " + std::to_wstring(device.workCount) + L"）";
+    }
     DrawTextW(dc, displayName.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     SetTextColor(dc, RGB(105, 112, 120));
     std::wstring sub = device.model + L"  ·  " + device.ip;
-    bool hasRemark = displayName != device.name;
     sub = hasRemark ? (device.name + L" · " + device.model + L" · " + device.ip)
                     : (device.model + L" · " + device.ip);
-    RECT subRect{rect.left + 42, rect.top + 38, rect.right - 18, rect.bottom - 8};
+    RECT subRect{rect.left + 42, rect.top + 38, rect.right - 125, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     SetTextColor(dc, StateColor(device.state));
     std::wstring label = StateLabel(device.state);
-    if (device.workCount >= 0) label += L" · " + std::to_wstring(device.workCount);
-    RECT stateRect{rect.right - 120, rect.top + 12, rect.right - 16, rect.top + 36};
+    RECT stateRect{rect.right - 120, rect.top + 38, rect.right - 16, rect.bottom - 8};
     DrawTextW(dc, label.c_str(), -1, &stateRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
 }
@@ -1230,7 +1232,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.5", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.6", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -1390,7 +1392,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.5",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.6",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

@@ -102,6 +102,50 @@ public final class WorkLibraryTest {
     }
 
     @Test
+    public void reopeningForAnAppUpgradePreservesCountsAndTrash() throws Exception {
+        File source = temporary.newFolder("upgrade-source");
+        File root = temporary.newFolder("upgrade-library");
+        WorkLibrary beforeUpgrade = new WorkLibrary(root);
+        beforeUpgrade.importWork("active", "未分享作品", "文案",
+                Arrays.asList(write(source, "active.jpg", "one")), "");
+        beforeUpgrade.importWork("shared", "已分享作品", "文案",
+                Arrays.asList(write(source, "shared.jpg", "two")), "");
+        LocalDate firstDay = LocalDate.of(2026, 7, 20);
+        beforeUpgrade.markShared("shared", firstDay);
+        beforeUpgrade.markShared("shared", firstDay);
+        beforeUpgrade.maintain(firstDay.plusDays(1));
+
+        // Opening the same app-private directory models an in-place APK upgrade.
+        WorkLibrary afterUpgrade = new WorkLibrary(root);
+
+        assertEquals(1, afterUpgrade.listActive().size());
+        assertEquals("active", afterUpgrade.listActive().get(0).id);
+        assertEquals(1, afterUpgrade.listTrash().size());
+        assertEquals("shared", afterUpgrade.listTrash().get(0).id);
+        assertEquals(2, afterUpgrade.listTrash().get(0).shareCount);
+        assertEquals(firstDay.plusDays(1), afterUpgrade.listTrash().get(0).trashedDate);
+    }
+
+    @Test
+    public void manualTrashMovePreservesShareCountAndCanRollbackWithoutLosingIt() throws Exception {
+        File source = temporary.newFolder("manual-trash-source");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("manual-trash-library"));
+        library.importWork("manual", "手动回收", "文案",
+                Arrays.asList(write(source, "manual.jpg", "one")), "");
+        LocalDate today = LocalDate.of(2026, 7, 20);
+        library.markShared("manual", today);
+
+        library.moveToTrash("manual", today);
+        assertTrue(library.listActive().isEmpty());
+        assertEquals(1, library.getTrash("manual").shareCount);
+
+        library.rollbackTrashMove("manual");
+        assertTrue(library.listTrash().isEmpty());
+        assertEquals(1, library.getActive("manual").shareCount);
+        assertEquals(today, library.getActive("manual").sharedDate);
+    }
+
+    @Test
     public void reopeningCollapsesExistingSafAndLegacyCopies() throws Exception {
         File source = temporary.newFolder("duplicate-source");
         File image = write(source, "1.jpg", "one");

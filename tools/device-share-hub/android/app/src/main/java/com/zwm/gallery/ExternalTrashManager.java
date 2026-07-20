@@ -26,29 +26,38 @@ final class ExternalTrashManager {
         Result result = new Result();
         for (WorkLibrary.WorkEntry entry : library.listTrash()) {
             if (!entry.trashDocumentId.isEmpty() || !entry.externalTrashName.isEmpty()) continue;
-            try {
-                if (!entry.sourceDocumentId.isEmpty() && tree != null) {
-                    Uri trash = ensureSafTrash(resolver, tree);
-                    Uri source = DocumentsContract.buildDocumentUriUsingTree(tree, entry.sourceDocumentId);
-                    Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, entry.sourceParentDocumentId);
-                    Uri moved = DocumentsContract.moveDocument(resolver, source, parent, trash);
-                    if (moved == null) throw new IOException("系统没有完成原文件夹移动");
-                    library.updateExternalTrashLocation(
-                            entry.id, DocumentsContract.getDocumentId(moved), "");
-                    result.moved++;
-                } else if (!entry.sourceRelativePath.isEmpty() && legacyRoot != null) {
-                    moveLegacyToTrash(entry, legacyRoot, library);
-                    result.moved++;
-                } else if ((!entry.sourceDocumentId.isEmpty() && tree == null)
-                        || (!entry.sourceRelativePath.isEmpty() && legacyRoot == null)) {
-                    throw new IOException("请重新选择作品文件夹后再清理");
-                }
-            } catch (FileNotFoundException missing) {
-                // The user already removed the source folder; the private trash copy remains recoverable.
-                result.alreadyMissing++;
-            } catch (Exception error) {
-                result.failures.add(entry.name + "：" + safeMessage(error));
+            result.add(moveTrashedSource(resolver, tree, legacyRoot, library, entry));
+        }
+        return result;
+    }
+
+    static Result moveTrashedSource(ContentResolver resolver, Uri tree, File legacyRoot,
+                                    WorkLibrary library, WorkLibrary.WorkEntry entry) {
+        Result result = new Result();
+        try {
+            if (!entry.sourceDocumentId.isEmpty() && tree != null) {
+                Uri trash = ensureSafTrash(resolver, tree);
+                Uri source = DocumentsContract.buildDocumentUriUsingTree(tree, entry.sourceDocumentId);
+                Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, entry.sourceParentDocumentId);
+                Uri moved = DocumentsContract.moveDocument(resolver, source, parent, trash);
+                if (moved == null) throw new IOException("系统没有完成原文件夹移动");
+                // Count the external move before persisting its location. If metadata persistence fails,
+                // callers must not roll the private entry back to the now-empty original location.
+                result.moved++;
+                library.updateExternalTrashLocation(
+                        entry.id, DocumentsContract.getDocumentId(moved), "");
+            } else if (!entry.sourceRelativePath.isEmpty() && legacyRoot != null) {
+                moveLegacyToTrash(entry, legacyRoot, library);
+                result.moved++;
+            } else if ((!entry.sourceDocumentId.isEmpty() && tree == null)
+                    || (!entry.sourceRelativePath.isEmpty() && legacyRoot == null)) {
+                throw new IOException("请重新选择作品文件夹后再清理");
             }
+        } catch (FileNotFoundException missing) {
+            // The user already removed the source folder; the private trash copy remains recoverable.
+            result.alreadyMissing++;
+        } catch (Exception error) {
+            result.failures.add(entry.name + "：" + safeMessage(error));
         }
         return result;
     }
@@ -216,6 +225,13 @@ final class ExternalTrashManager {
 
         String firstFailure() {
             return failures.isEmpty() ? "" : failures.get(0);
+        }
+
+        void add(Result other) {
+            moved += other.moved;
+            deleted += other.deleted;
+            alreadyMissing += other.alreadyMissing;
+            failures.addAll(other.failures);
         }
     }
 }

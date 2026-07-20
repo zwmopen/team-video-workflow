@@ -1,4 +1,4 @@
-# 分享中控 V3.5 维护交接
+# 分享中控 V3.6 维护交接
 
 更新时间：2026-07-20
 
@@ -6,11 +6,11 @@
 
 | 项目 | 当前值 |
 |---|---|
-| Windows | 素材投送中控 V3.5，原生 Win32 x64 |
-| Android | 相册 0.4.6，versionCode 23，`com.zwm.gallery` |
-| iPhone | 相册 0.4.6，build 17，源码 bundle id `com.zwm.album` |
-| 0.4.6 主要变化 | 手机公布最近扫描作品数，Windows/手机互传列表与共享技能显示数量 |
-| 0.4.6 功能提交 | `9541d2bc89a5d53472a4a4cfb32763f85980fb86` |
+| Windows | 素材投送中控 V3.6，原生 Win32 x64 |
+| Android | 相册 0.4.7，versionCode 24，`com.zwm.gallery` |
+| iPhone | 相册 0.4.7，build 18，源码 bundle id `com.zwm.album` |
+| 0.4.7 主要变化 | Android 分身分享、冻结顶部工具栏、长按手动回收；三端设备名后追加作品数 |
+| 0.4.7 功能提交 | 发布提交完成后补入，不沿用旧提交号 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -53,6 +53,11 @@
 
 ## 2026-07-20 实际状态
 
+- 0.4.7 / Windows V3.6 已完成源码升级：Android 10+ 使用系统 MediaStore 临时分享区解决厂商分身跨空间读取私有 URI 不稳定；Android 8/9 保留旧通道。临时副本只记录系统 `media` URI，并在下一自然日清理。
+- Android 顶部工具栏改为冻结布局；长按作品单选后右下角显示垃圾桶，确认后移动真实来源和私有副本到现有回收站，保留分享次数，并对外部移动失败做回滚保护。
+- 设备名称不改写，只在 `workCount` 已知时追加“（作品数 N）”；Windows、Android、iPhone 与共享技能规则一致。
+- 本机已用 Gradle 9.4.1 完成 Android 0.4.7 的单元测试、APK 编译和 Lint；APK 包名 `com.zwm.gallery`、versionCode 24，签名证书 SHA-256 与桌面 0.4.6 完全一致，可原地覆盖保留应用数据。
+- 本机局域网当前只发现旧版 `vivo V2327A`，没有把它误认作用户指定的红米 K60。K60 上的主应用/小红书分身、固定工具栏和长按回收需要在 0.4.7 覆盖后逐项操作并记录；不得用本地构建结论代替实体结果。
 - 0.4.6 / Windows V3.5 增加设备作品数：发现包追加可选 `workCount`，手机 `/v2/info` 同步返回；Windows 卡片、Android/iPhone 互传列表和共享技能均消费同一字段。
 - 备用构建 run `29727724327` 对提交 `9541d2b` 完成三端构建：Windows 正式编译、Android 单元测试/编译/Lint、iPhone 模拟器测试和 iOS 12+ 真机 SDK 编译全部成功。iOS 新增的旧包兼容与作品数解析测试实际执行通过。
 - 产物核对：Windows V3.5 SHA-256 `366BF09A5D6B680EE9084477AB153191D8DEA37FA48B4591E86847DFF6CBD371`；Android 0.4.6/versionCode 23 SHA-256 `B125902F4C5996EF7361A6878565018393CB79B261761B35048A51BDFC5BAB94`；iPhone 0.4.6/build 17/最低 iOS 12.0 SHA-256 `23A765CFB15B03B7E712202B8D2926419A885EF1456AA5189BDE5648400C49F6`。
