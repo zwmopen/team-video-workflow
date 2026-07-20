@@ -150,3 +150,11 @@
 - 根因：XcodeGen 配置同时存在 `CURRENT_PROJECT_VERSION` 和显式 `Info.plist` 属性，后者仍硬编码旧值并覆盖构建设置。
 - 修复：显式属性同步为 18，IPA 结构检查同时断言营销版本和 build，避免只核对用户可见版本。
 - 回归：每次 iOS 升级都解包 IPA 核对两个字段及最低 iOS 版本。
+
+## DSH-021 iPhone 覆盖安装停在 Installing 0%
+
+- 现象：Sideloadly 已完成 Apple ID 会话、设备注册与签名，进入 `Installing...` 后长期保持 0%；目标 iPhone 上的旧相册仍在前台提供 `/v2/info`。
+- 根因：本次实体表现为目标 App 占前台时安装服务没有继续替换，而不是密码、签名、USB 信任或安装包错误。
+- 处理：先核对 Sideloadly 选中的最终 bundle id 与设备现有 App 完全一致；保持设备解锁，把旧 App 退回桌面。无人工触控条件时，可用已配对的 `pymobiledevice3` 挂载开发镜像并只发送一次系统 Home 键。不得卸载 App 或清除容器来绕过停滞。
+- 实体证据：iPhone 12 的旧 App 退出前台后，Sideloadly 立即从 0% 完成到 100%；设备应用清单为 0.4.7 build 18，启动后仍扫描出原有 23 个作品。
+- 回归：每次覆盖前记录旧版本、最终 bundle id 和作品数；安装后再次核对三项。若 bundle id 被 Sideloadly改写，必须确认与该设备既有最终标识一致再继续。

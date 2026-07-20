@@ -32,6 +32,8 @@
 6. iPhone 如阻止启动，在“设置 → 通用 → VPN 与设备管理”信任开发者；iOS 16 及以上按系统提示开启“开发者模式”。
 7. 保持电脑和手机处于同一 Wi-Fi，并让 Sideloadly 后台续签服务运行。免费 Apple ID 的签名有效期为 7 天。
 
+覆盖安装前先把目标 App 退回桌面并保持 iPhone 解锁。若 Sideloadly 已通过签名与设备注册、但长时间停在 `Installing 0%`，先确认最终 bundle id 与设备现有 App 一致，再退出旧 App；不要卸载或清除 App 数据。必要时可用本机已配对的 `pymobiledevice3` 仅发送一次系统 Home 键。
+
 推荐只让 `sideloadlydaemon` 随 Windows 登录启动。它空闲时 CPU 基本为 0，本次实测约占 32 MB 内存，并按约 96 小时刷新；Sideloadly 主界面平时可关闭。电脑无需一直开机，但应在 7 天内至少有一次“电脑开机 + 手机同一 Wi-Fi”的续签机会。
 
 AltStore 仍可作为备选，但本次 Windows 实机交付最终使用 Sideloadly 完成。应用本身不需要管理员、越狱、Root、ADB、无障碍、设备管理、手动 IP 或配对码。

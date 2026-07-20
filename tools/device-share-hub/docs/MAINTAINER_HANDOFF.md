@@ -64,6 +64,8 @@
 - Android 0.4.8 APK SHA-256 为 `4619BED86303AE020268D29E6190BEBCB7E7365598E2D5D2C74735E5F29C98FB`；签名证书 SHA-256 与旧版一致。Windows V3.6 SHA-256 为 `1C8F044F7567ABAC32E5EE1F5E68F0226C6A329A9FF5DD4F0A9C147F2C3A062D`；iPhone 0.4.7/build 18/最低 iOS 12.0 SHA-256 为 `8D916CC42CF323EF262709DE53353577A5ED3B66D63AE782B56CE659B771370E`。
 - `gallery-updates` 已发布 Android 0.4.8、iPhone 0.4.7 和 Windows V3.6；公开 raw 更新索引实读为 versionName 0.4.8、versionCode 25，并与 APK SHA-256 一致。Android 当前版本页已显示 0.4.8；发现更新时由 App 内直接下载、显示进度、校验并调起系统安装器，不跳发布网页。
 - Windows V3.6 已放到桌面并运行，桌面快捷方式已指向 V3.6，TCP 45833 由该进程监听。
+- iPhone 12（iPhone13,2 / iOS 26.5）已用原有 Apple ID 和原最终 bundle id `com.zwm.album.TXA6HP98BX` 从 0.4.1 覆盖到 0.4.7 build 18。安装后 `/v2/info` 返回 23 个作品，证明原作品库继续可读；电脑和共享技能同时发现“Xiaomi 主机（作品数 11）”与“苹果12（作品数 23）”，Windows V3.6 状态显示已发现 2 台设备。
+- 本次 Sideloadly 在旧相册仍占前台时长期停在 `Installing 0%`，但没有签名或密码错误。使用已安装的 `pymobiledevice3` 挂载开发镜像并只发送一次系统 Home 键后，旧相册退出，安装立即完成到 100%。以后覆盖安装前先让目标 App 回到桌面并保持设备解锁；不要因 0% 停滞而卸载 App。
 - 视觉后续项：冻结工具栏继续保留，但顶部与系统状态栏之间增加自然安全间距和触控缓冲；不得再次把工具按钮贴到屏幕顶边。
 - 0.4.6 / Windows V3.5 增加设备作品数：发现包追加可选 `workCount`，手机 `/v2/info` 同步返回；Windows 卡片、Android/iPhone 互传列表和共享技能均消费同一字段。
 - 备用构建 run `29727724327` 对提交 `9541d2b` 完成三端构建：Windows 正式编译、Android 单元测试/编译/Lint、iPhone 模拟器测试和 iOS 12+ 真机 SDK 编译全部成功。iOS 新增的旧包兼容与作品数解析测试实际执行通过。
