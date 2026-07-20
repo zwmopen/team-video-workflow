@@ -10,7 +10,7 @@
 | Android | 相册 0.4.8，versionCode 25，`com.zwm.gallery` |
 | iPhone | 相册 0.4.7，build 18，源码 bundle id `com.zwm.album` |
 | 当前主要变化 | 0.4.7 分身分享与设备作品数；Android 0.4.8 长按复选框批量回收 |
-| 当前功能提交 | 发布提交完成后补入，不沿用旧提交号 |
+| 当前功能提交 | `9b01b530b15fee493e09075f182691e8668d0ce8` |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -53,12 +53,18 @@
 
 ## 2026-07-20 实际状态
 
-- Android 0.4.8 把 0.4.7 的长按单选升级为复选框批量选择：所有卡片显示勾选框、顶部显示选中数量，右下角垃圾桶逐项移动并报告部分失败。
+- Android 0.4.8 把 0.4.7 的长按单选升级为复选框批量选择：所有卡片显示勾选框、顶部显示选中数量，右下角垃圾桶逐项移动并报告部分失败。红米 K60 实体连续选中两项时顶部正确显示“已选 2 个”，随后按返回取消，没有执行删除。
 - 0.4.7 / Windows V3.6 已完成源码升级：Android 10+ 使用系统 MediaStore 临时分享区解决厂商分身跨空间读取私有 URI 不稳定；Android 8/9 保留旧通道。临时副本只记录系统 `media` URI，并在下一自然日清理。
 - Android 顶部工具栏改为冻结布局；长按作品单选后右下角显示垃圾桶，确认后移动真实来源和私有副本到现有回收站，保留分享次数，并对外部移动失败做回滚保护。
 - 设备名称不改写，只在 `workCount` 已知时追加“（作品数 N）”；Windows、Android、iPhone 与共享技能规则一致。
-- 本机已用 Gradle 9.4.1 完成 Android 0.4.7 的单元测试、APK 编译和 Lint；APK 包名 `com.zwm.gallery`、versionCode 24，签名证书 SHA-256 与桌面 0.4.6 完全一致，可原地覆盖保留应用数据。
-- 本机局域网当前只发现旧版 `vivo V2327A`，没有把它误认作用户指定的红米 K60。K60 上的主应用/小红书分身、固定工具栏和长按回收需要在 0.4.7 覆盖后逐项操作并记录；不得用本地构建结论代替实体结果。
+- 备用构建 run `29732591472` 对提交 `9b01b53` 完成三端检查：Android 单元测试、编译与 Lint，Windows 正式编译，iPhone 测试与 iOS 12+ 真机 SDK 编译全部成功。
+- 红米 K60 已沿同一签名从 0.4.1 覆盖到 0.4.7，再覆盖到 0.4.8；升级前后均为首页 11 个作品、回收站 2 项，应用私有作品库文件哈希一致，目录授权、分享次数和回收站状态没有被重置。
+- 红米 K60 的小米分身小红书已由 0.4.7 的 `media_store` 通道实际打开到分身用户 `u999` 的图片编辑页，10 张缩略图完整加载；随后返回，未执行发布或保存草稿。诊断记录含 `share_sheet_launch images=10 strategy=media_store`、`share_opened` 和 `share_finished`。
+- 红米 K60 已实际向下滚动作品列表，顶部工具栏保持固定；0.4.8 长按后全部卡片显示复选框，连续勾选两项显示“已选 2 个”，按返回安全取消，首页仍为 11、回收站仍为 2。
+- Android 0.4.8 APK SHA-256 为 `4619BED86303AE020268D29E6190BEBCB7E7365598E2D5D2C74735E5F29C98FB`；签名证书 SHA-256 与旧版一致。Windows V3.6 SHA-256 为 `1C8F044F7567ABAC32E5EE1F5E68F0226C6A329A9FF5DD4F0A9C147F2C3A062D`；iPhone 0.4.7/build 18/最低 iOS 12.0 SHA-256 为 `8D916CC42CF323EF262709DE53353577A5ED3B66D63AE782B56CE659B771370E`。
+- `gallery-updates` 已发布 Android 0.4.8、iPhone 0.4.7 和 Windows V3.6；公开 raw 更新索引实读为 versionName 0.4.8、versionCode 25，并与 APK SHA-256 一致。Android 当前版本页已显示 0.4.8；发现更新时由 App 内直接下载、显示进度、校验并调起系统安装器，不跳发布网页。
+- Windows V3.6 已放到桌面并运行，桌面快捷方式已指向 V3.6，TCP 45833 由该进程监听。
+- 视觉后续项：冻结工具栏继续保留，但顶部与系统状态栏之间增加自然安全间距和触控缓冲；不得再次把工具按钮贴到屏幕顶边。
 - 0.4.6 / Windows V3.5 增加设备作品数：发现包追加可选 `workCount`，手机 `/v2/info` 同步返回；Windows 卡片、Android/iPhone 互传列表和共享技能均消费同一字段。
 - 备用构建 run `29727724327` 对提交 `9541d2b` 完成三端构建：Windows 正式编译、Android 单元测试/编译/Lint、iPhone 模拟器测试和 iOS 12+ 真机 SDK 编译全部成功。iOS 新增的旧包兼容与作品数解析测试实际执行通过。
 - 产物核对：Windows V3.5 SHA-256 `366BF09A5D6B680EE9084477AB153191D8DEA37FA48B4591E86847DFF6CBD371`；Android 0.4.6/versionCode 23 SHA-256 `B125902F4C5996EF7361A6878565018393CB79B261761B35048A51BDFC5BAB94`；iPhone 0.4.6/build 17/最低 iOS 12.0 SHA-256 `23A765CFB15B03B7E712202B8D2926419A885EF1456AA5189BDE5648400C49F6`。
