@@ -2,23 +2,21 @@
 
 ## 交付结论
 
-当前源码候选版本：`0.4.4` build 15，同一 IPA 兼容 iOS 12+。2026-07-20 已在 iPhone 6 / iOS 12.5.8 覆盖安装并启动 `0.4.3` build 14，完成两层作品目录扫描；0.4.4 构建与实体入口核对以 `MAINTAINER_HANDOFF.md` 的最新状态为准。
+当前源码版本：`0.4.5` build 16，同一 IPA 兼容 iOS 12+。2026-07-20 已在 iPhone 6 / iOS 12.5.8 覆盖安装并启动，完成递归作品计数和数字重名回收站排除复核；完整证据以 `MAINTAINER_HANDOFF.md` 为准。
 
 苹果官方“文件”App 不属于本项目安装包。设备删除该系统 App 后只能通过 App Store 恢复；Sideloadly、AltStore 和未预签名 IPA 不能替 App Store 静默安装。相册的局域网接收与 iOS 12 App 内文件夹选择不依赖“文件”App。
 
-已完成安装验收版本：`0.1.1`
+当前实体安装版本：`0.4.5` build 16（iOS 12+ 同包兼容、递归扫描、数量徽标、真实“相册回收站”、App 内目录选择和局域网接收）
 
-当前版本：`0.3.0`（iOS 12+ 同包兼容、递归扫描、数量徽标、真实“相册回收站”和局域网接收）
-
-构建来源：GitHub Actions `29674136854`，三个任务均成功。
+构建来源：备用构建仓库 GitHub Actions `29723234708`，Windows、Android、iOS 三个任务均成功。
 
 交付文件：
 
-- `album-iOS-v0.1.1-altstore.ipa`
-- `album-iOS-v0.1.1-altstore.ipa.sha256`
-- SHA-256：`79F88653CED913CC6CA07BA17C19BB9FE59327BCACEBAE0E4D7893C0C43E88F5`
+- `album-iOS-v0.4.5-altstore.ipa`
+- `album-iOS-v0.4.5-altstore.ipa.sha256`
+- SHA-256：`C6D47ADE47685F6D13F1A8E59E25BDA8F002D21CBA14C9BFB37BA6E7ED80ACBD`
 
-实体 iPhone 安装结果：Sideloadly 0.60.0 显示 `Done. 100%`；本地续签记录为版本 `0.1.1`、7 天证书、约 96 小时后刷新、最近错误为空。
+实体 iPhone 安装结果：Sideloadly 0.60.0 完成覆盖安装；设备应用清单确认版本 `0.4.5`、build 16、最低系统 iOS 12.0。免费签名仍为 7 天，后台续签会提前刷新。
 
 测试边界：以上证明构建产物可在实体 iPhone 上签名并安装；文件夹授权、作品扫描、多图分享和跨日清理按实际操作结果分别记录。
 
