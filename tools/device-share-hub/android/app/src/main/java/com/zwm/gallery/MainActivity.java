@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -36,7 +37,10 @@ import android.window.OnBackInvokedDispatcher;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -59,7 +63,7 @@ public final class MainActivity extends Activity {
     private ImageButton quickTrashButton;
     private boolean showingTrash;
     private boolean initialFolderPromptShown;
-    private String selectedWorkId;
+    private final LinkedHashSet<String> selectedWorkIds = new LinkedHashSet<>();
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -128,8 +132,8 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
-        if (selectedWorkId != null) {
-            selectedWorkId = null;
+        if (!selectedWorkIds.isEmpty()) {
+            selectedWorkIds.clear();
             quickTrashButton.setVisibility(View.GONE);
             refreshWorks();
             return;
@@ -255,7 +259,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showWorks() {
-        selectedWorkId = null;
+        selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
@@ -267,7 +271,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showTrash() {
-        selectedWorkId = null;
+        selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = true;
         leftModeButton.setImageResource(R.drawable.ic_album_back);
@@ -306,12 +310,14 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
         worksContainer.removeAllViews();
-        boolean selectionStillExists = false;
+        LinkedHashSet<String> visibleIds = new LinkedHashSet<>();
         for (WorkLibrary.WorkEntry entry : entries) {
-            if (entry.id.equals(selectedWorkId)) { selectionStillExists = true; break; }
+            visibleIds.add(entry.id);
         }
-        if (!selectionStillExists) selectedWorkId = null;
-        quickTrashButton.setVisibility(selectedWorkId == null || showingTrash ? View.GONE : View.VISIBLE);
+        selectedWorkIds.retainAll(visibleIds);
+        boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
+        quickTrashButton.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : "作品"));
         scannedCountText.setText(String.valueOf(entries.size()));
         rightModeButton.setEnabled(!showingTrash || !entries.isEmpty());
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
@@ -348,16 +354,30 @@ public final class MainActivity extends Activity {
     private View workCard(WorkLibrary.WorkEntry work) {
         LinearLayout card = card();
         card.setOrientation(LinearLayout.VERTICAL);
-        if (work.id.equals(selectedWorkId)) {
+        boolean selected = selectedWorkIds.contains(work.id);
+        boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
+        if (selected) {
             card.setBackground(round(Color.rgb(250, 224, 220), 20));
             card.setElevation(dp(5));
         } else if (!showingTrash && work.sharedDate != null) {
             card.setBackground(round(Color.rgb(225, 225, 222), 20));
             card.setElevation(0);
         }
+        LinearLayout nameRow = new LinearLayout(this);
+        nameRow.setOrientation(LinearLayout.HORIZONTAL);
+        nameRow.setGravity(Gravity.TOP);
         TextView name = text(work.name, 16, true);
         name.setMaxLines(2);
-        card.addView(name);
+        nameRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setButtonTintList(new ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{Color.rgb(188, 66, 60), Color.rgb(145, 145, 140)}));
+        checkBox.setChecked(selected);
+        checkBox.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        checkBox.setContentDescription(selected ? "取消选择" : "选择作品");
+        nameRow.addView(checkBox, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        card.addView(nameRow);
         String detail = work.images.size() + " 张图片";
         if (work.shareCount > 0) detail += "\n✓ 已打开分享 " + work.shareCount + " 次";
         else if (work.trashedDate != null) detail += "\n回收站保留 7 天";
@@ -367,20 +387,22 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, 0, 1);
         metaParams.setMargins(0, dp(4), 0, dp(8));
         card.addView(meta, metaParams);
-        Button action = smallButton(showingTrash ? "恢复" : (work.sharedDate == null ? "复制并分享" : "再次分享"),
-                !showingTrash && work.sharedDate == null);
+        String actionText = selecting ? (selected ? "已选择" : "选择")
+                : showingTrash ? "恢复" : (work.sharedDate == null ? "复制并分享" : "再次分享");
+        Button action = smallButton(actionText, !showingTrash && work.sharedDate == null && !selecting);
         action.setOnClickListener(v -> {
-            if (showingTrash) restore(work.id);
+            if (!selectedWorkIds.isEmpty() && !showingTrash) toggleWorkSelection(work.id);
+            else if (showingTrash) restore(work.id);
             else startActivity(new Intent(this, ShareActivity.class).putExtra(ShareActivity.EXTRA_WORK_ID, work.id));
         });
         View.OnLongClickListener select = v -> {
             if (showingTrash) return false;
-            selectedWorkId = work.id.equals(selectedWorkId) ? null : work.id;
-            quickTrashButton.setVisibility(selectedWorkId == null ? View.GONE : View.VISIBLE);
-            refreshWorks();
-            if (selectedWorkId != null) toast("已选中，点右下角垃圾桶移入回收站");
+            toggleWorkSelection(work.id);
+            if (!selectedWorkIds.isEmpty()) toast("已进入多选，可继续勾选作品");
             return true;
         };
+        checkBox.setOnClickListener(v -> toggleWorkSelection(work.id));
+        card.setOnClickListener(v -> { if (!selectedWorkIds.isEmpty()) toggleWorkSelection(work.id); });
         card.setOnLongClickListener(select);
         name.setOnLongClickListener(select);
         meta.setOnLongClickListener(select);
@@ -389,45 +411,55 @@ public final class MainActivity extends Activity {
         return card;
     }
 
+    private void toggleWorkSelection(String id) {
+        if (selectedWorkIds.contains(id)) selectedWorkIds.remove(id);
+        else selectedWorkIds.add(id);
+        quickTrashButton.setVisibility(selectedWorkIds.isEmpty() ? View.GONE : View.VISIBLE);
+        refreshWorks();
+    }
+
     private void confirmMoveSelectedToTrash() {
-        String id = selectedWorkId;
-        if (id == null) return;
+        if (selectedWorkIds.isEmpty()) return;
+        LinkedHashSet<String> ids = new LinkedHashSet<>(selectedWorkIds);
         new AlertDialog.Builder(this)
-                .setTitle("移到回收站？")
-                .setMessage("作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
+                .setTitle("将 " + ids.size() + " 个作品移到回收站？")
+                .setMessage("这些作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
                 .setNegativeButton("取消", null)
-                .setPositiveButton("移到回收站", (dialog, which) -> moveSelectedToTrash(id))
+                .setPositiveButton("移到回收站", (dialog, which) -> moveSelectedToTrash(ids))
                 .show();
     }
 
-    private void moveSelectedToTrash(String id) {
+    private void moveSelectedToTrash(Set<String> ids) {
         quickTrashButton.setEnabled(false);
         worker.execute(() -> {
-            try {
-                WorkLibrary library = library();
-                WorkLibrary.WorkEntry entry = library.moveToTrash(id, LocalDate.now());
-                Uri tree = selectedTree();
-                ExternalTrashManager.Result moved = ExternalTrashManager.moveTrashedSource(
-                        getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library, entry);
-                if (!moved.succeeded()) {
-                    if (moved.moved == 0 && moved.alreadyMissing == 0) library.rollbackTrashMove(id);
-                    throw new IOException("原文件夹没有移动：" + moved.firstFailure());
+            ArrayList<String> completed = new ArrayList<>();
+            ArrayList<String> failures = new ArrayList<>();
+            for (String id : ids) {
+                try {
+                    WorkLibrary library = library();
+                    WorkLibrary.WorkEntry entry = library.moveToTrash(id, LocalDate.now());
+                    Uri tree = selectedTree();
+                    ExternalTrashManager.Result moved = ExternalTrashManager.moveTrashedSource(
+                            getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library, entry);
+                    if (!moved.succeeded()) {
+                        if (moved.moved == 0 && moved.alreadyMissing == 0) library.rollbackTrashMove(id);
+                        throw new IOException(moved.firstFailure());
+                    }
+                    completed.add(id);
+                    DiagnosticLog.write(this, "manual_trash_move", id);
+                } catch (Exception error) {
+                    failures.add(error.getMessage() == null ? "移动失败" : error.getMessage());
                 }
-                DiagnosticLog.write(this, "manual_trash_move", id);
-                runOnUiThread(() -> {
-                    selectedWorkId = null;
-                    quickTrashButton.setEnabled(true);
-                    quickTrashButton.setVisibility(View.GONE);
-                    toast("已移到回收站");
-                    refreshWorks();
-                });
-            } catch (Exception error) {
-                runOnUiThread(() -> {
-                    quickTrashButton.setEnabled(true);
-                    toast("移动失败：" + error.getMessage());
-                    refreshWorks();
-                });
             }
+            runOnUiThread(() -> {
+                selectedWorkIds.removeAll(completed);
+                quickTrashButton.setEnabled(true);
+                quickTrashButton.setVisibility(selectedWorkIds.isEmpty() ? View.GONE : View.VISIBLE);
+                String message = failures.isEmpty() ? "已移到回收站 " + completed.size() + " 个"
+                        : "已移动 " + completed.size() + " 个，失败 " + failures.size() + " 个";
+                toast(message);
+                refreshWorks();
+            });
         });
     }
 

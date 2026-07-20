@@ -7,10 +7,10 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.6，原生 Win32 x64 |
-| Android | 相册 0.4.7，versionCode 24，`com.zwm.gallery` |
+| Android | 相册 0.4.8，versionCode 25，`com.zwm.gallery` |
 | iPhone | 相册 0.4.7，build 18，源码 bundle id `com.zwm.album` |
-| 0.4.7 主要变化 | Android 分身分享、冻结顶部工具栏、长按手动回收；三端设备名后追加作品数 |
-| 0.4.7 功能提交 | 发布提交完成后补入，不沿用旧提交号 |
+| 当前主要变化 | 0.4.7 分身分享与设备作品数；Android 0.4.8 长按复选框批量回收 |
+| 当前功能提交 | 发布提交完成后补入，不沿用旧提交号 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -53,6 +53,7 @@
 
 ## 2026-07-20 实际状态
 
+- Android 0.4.8 把 0.4.7 的长按单选升级为复选框批量选择：所有卡片显示勾选框、顶部显示选中数量，右下角垃圾桶逐项移动并报告部分失败。
 - 0.4.7 / Windows V3.6 已完成源码升级：Android 10+ 使用系统 MediaStore 临时分享区解决厂商分身跨空间读取私有 URI 不稳定；Android 8/9 保留旧通道。临时副本只记录系统 `media` URI，并在下一自然日清理。
 - Android 顶部工具栏改为冻结布局；长按作品单选后右下角显示垃圾桶，确认后移动真实来源和私有副本到现有回收站，保留分享次数，并对外部移动失败做回滚保护。
 - 设备名称不改写，只在 `workCount` 已知时追加“（作品数 N）”；Windows、Android、iPhone 与共享技能规则一致。
