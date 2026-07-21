@@ -1086,7 +1086,7 @@ def find_lark_cli() -> Path | None:
     found = shutil.which("lark-cli")
     if found:
         return Path(found)
-    for candidate in [Path(r"D:\AICode\npm-global\lark-cli.ps1"), Path(r"D:\AICode\npm-global\lark-cli.cmd")]:
+    for candidate in [Path(r"D:\AICode\工具开发\toolchains\npm-global\lark-cli.ps1"), Path(r"D:\AICode\工具开发\toolchains\npm-global\lark-cli.cmd")]:
         if candidate.exists():
             return candidate
     return None
