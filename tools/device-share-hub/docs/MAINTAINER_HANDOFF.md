@@ -1,16 +1,16 @@
 # 分享中控 V3.6 维护交接
 
-更新时间：2026-07-21
+更新时间：2026-07-22
 
 ## 当前可交付基线
 
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.6，原生 Win32 x64 |
-| Android | 相册 0.4.8，versionCode 25，`com.zwm.gallery` |
+| Android | 相册 0.4.9，versionCode 26，`com.zwm.gallery` |
 | iPhone | 相册 0.4.7，build 18，源码 bundle id `com.zwm.album` |
-| 当前主要变化 | 0.4.7 分身分享与设备作品数；Android 0.4.8 长按复选框批量回收 |
-| 当前功能提交 | `9b01b530b15fee493e09075f182691e8668d0ce8` |
+| 当前主要变化 | 0.4.7 分身分享与设备作品数；0.4.8 批量回收；0.4.9 旧机型 Wi-Fi 重连后自动恢复发现 |
+| 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
@@ -51,7 +51,11 @@
 - Windows + iPhone 侧载：`docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
 
-## 2026-07-20 实际状态
+## 2026-07-22 实际状态
+
+- Redmi 9A / Android 11 / MIUI 12.5 的互相发现故障已定位为 Wi-Fi 短暂变化时 UDP 发现线程因 `ENETUNREACH` 永久退出；HTTP 接收线程一直正常，因此不能把“端口可访问”误判成“发现正常”。
+- Android 0.4.9 把发现 socket 改为可恢复会话。实体覆盖安装后版本为 0.4.9/code 26，原目录授权、1 个作品、接收开关和设备名称保留；应用进程不重启完成 Wi-Fi 断开/恢复后，电脑重新发现手机，手机同时看到 Windows 和 iPhone，等待超过 15 秒仍在线。
+- 本地发布构建已执行 Android 单元测试、Debug APK 编译和 Lint；发现恢复新增两条单元测试，分别覆盖临时网络错误重试与正常停止不重试。
 
 - 2026-07-21 整理 `D:\AICode` 根目录时确认：旧目录 `素材投送中控` 仅含早期 Python MVP 与说明，不是当前 V3.6 三端真源；已可恢复地隔离到运行数据，正式源码、构建和发布仍只认本仓库。
 

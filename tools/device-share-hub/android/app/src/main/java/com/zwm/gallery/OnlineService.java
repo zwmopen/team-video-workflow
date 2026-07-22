@@ -78,6 +78,7 @@ public final class OnlineService extends Service {
     private volatile String currentTaskId = "";
     private volatile ServerSocket serverSocket;
     private volatile DatagramSocket discoverySocket;
+    private boolean discoveryRecovering;
     private final Object taskLock = new Object();
     private IncomingTask activeTask;
 
@@ -457,13 +458,25 @@ public final class OnlineService extends Service {
     }
 
     private void discoveryLoop() {
+        DiscoveryRecovery.run(
+                () -> running,
+                this::runDiscoverySession,
+                this::handleDiscoveryFailure,
+                Thread::sleep);
+    }
+
+    private void runDiscoverySession() throws Exception {
         try (DatagramSocket socket = new DatagramSocket(null)) {
             discoverySocket = socket;
             socket.setReuseAddress(true);
             socket.setBroadcast(true);
             socket.bind(new InetSocketAddress("0.0.0.0", DISCOVERY_PORT));
             socket.setSoTimeout(900);
-            DiagnosticLog.write(this, "discovery_ready", "udp=" + DISCOVERY_PORT);
+            boolean recovered = discoveryRecovering;
+            discoveryRecovering = false;
+            DiagnosticLog.write(this, recovered ? "discovery_recovered" : "discovery_ready",
+                    "udp=" + DISCOVERY_PORT);
+            if (recovered) notifyStatus("Wi-Fi 已恢复，正在重新发现设备");
             long nextBeacon = 0;
             byte[] buffer = new byte[2048];
             while (running) {
@@ -484,15 +497,16 @@ public final class OnlineService extends Service {
                 } catch (SocketTimeoutException ignored) {
                 }
             }
-        } catch (Exception error) {
-            if (running) {
-                Log.e(TAG, "discovery failed", error);
-                DiagnosticLog.write(this, "discovery_failed", compact(error.getMessage()));
-                notifyStatus("局域网发现启动失败：" + compact(error.getMessage()));
-            }
         } finally {
             discoverySocket = null;
         }
+    }
+
+    private void handleDiscoveryFailure(Exception error) {
+        discoveryRecovering = true;
+        Log.w(TAG, "discovery interrupted; retrying", error);
+        DiagnosticLog.write(this, "discovery_retry", compact(error.getMessage()));
+        notifyStatus("Wi-Fi 连接刚发生变化，正在自动恢复设备发现");
     }
 
     private void rememberPeer(String packet, InetAddress address) {
