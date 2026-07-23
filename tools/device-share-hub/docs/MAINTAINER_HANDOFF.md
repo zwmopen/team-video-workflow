@@ -60,6 +60,8 @@
 - 备用构建 run `29968611397` 对提交 `c5393db` 完成三端检查：Windows 正式编译、Android 单元测试/Debug APK/Lint、iPhone 测试/真机 SDK 编译和 IPA 结构校验全部成功。
 - 正式产物：Android 0.5.0/code 27 SHA-256 `AB04978E91206BA72737766C7E92F52121F6836E772974DE35B720B258A1C12D`；iPhone 0.5.0/build 19/最低 iOS 12.0 SHA-256 `A94D517EFC9FF0242719800BA3AFE08A5732E5D6C4C8798C7147DF81E4487A23`；Windows V3.7 SHA-256 `5FE8ACA9882BBDDD0F85EF54335BF0C1CBFAA027F9540C1A2B7B6CBBE329110B`。
 - `gallery-updates` 已发布三端 0.5.0/V3.7 和同提交源码归档；Android 更新索引指向 0.5.0/code 27 的直接 APK 与对应哈希。
+- 云端 APK 已再次覆盖安装到 VIVO 与 Redmi 9A；VIVO 实体详情重新读到“其他文件”和 TXT，设置页返回“已是最新”，证明发布包、附件预览和在线索引闭环一致。
+- Windows V3.7 已替换桌面运行中的 V3.6；窗口标题为 V3.7、进程可响应，TCP 45833 与 UDP 45834 均正常监听，桌面快捷方式指向新版 EXE。
 
 - Redmi 9A / Android 11 / MIUI 12.5 的互相发现故障已定位为 Wi-Fi 短暂变化时 UDP 发现线程因 `ENETUNREACH` 永久退出；HTTP 接收线程一直正常，因此不能把“端口可访问”误判成“发现正常”。
 - Android 0.4.9 把发现 socket 改为可恢复会话。实体覆盖安装后版本为 0.4.9/code 26，原目录授权、1 个作品、接收开关和设备名称保留；应用进程不重启完成 Wi-Fi 断开/恢复后，电脑重新发现手机，手机同时看到 Windows 和 iPhone，等待超过 15 秒仍在线。
