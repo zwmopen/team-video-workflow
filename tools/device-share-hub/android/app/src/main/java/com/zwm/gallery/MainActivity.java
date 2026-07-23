@@ -86,7 +86,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ensureDeviceId();
-        setContentView(buildUi());
+        setContentView(ScreenInsets.protect(buildUi()));
         startReceiver();
         requestLegacyStoragePermission();
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
@@ -163,21 +163,25 @@ public final class MainActivity extends Activity {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        titleRow.setPadding(pad, dp(14), pad, dp(12));
+        titleRow.setPadding(dp(12), dp(18), dp(12), dp(14));
         titleRow.setBackgroundColor(Color.rgb(246, 244, 240));
-        headingText = text("作品", 28, true);
-        titleRow.addView(headingText);
+        LinearLayout titleCluster = new LinearLayout(this);
+        titleCluster.setOrientation(LinearLayout.HORIZONTAL);
+        titleCluster.setGravity(Gravity.CENTER_VERTICAL);
+        headingText = text("作品", 26, true);
+        headingText.setSingleLine(true);
+        headingText.setAutoSizeTextTypeUniformWithConfiguration(20, 26, 1,
+                android.util.TypedValue.COMPLEX_UNIT_SP);
+        titleCluster.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
         scannedCountText = text("0", 12, true);
         scannedCountText.setTextColor(Color.rgb(53, 105, 82));
         scannedCountText.setGravity(Gravity.CENTER);
         scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
-        scannedCountText.setPadding(dp(10), dp(5), dp(10), dp(5));
+        scannedCountText.setPadding(dp(8), dp(5), dp(8), dp(5));
         LinearLayout.LayoutParams countParams = new LinearLayout.LayoutParams(-2, -2);
         countParams.setMargins(dp(8), 0, 0, 0);
-        titleRow.addView(scannedCountText, countParams);
-
-        View titleSpacer = new View(this);
-        titleRow.addView(titleSpacer, new LinearLayout.LayoutParams(0, 1, 1));
+        titleCluster.addView(scannedCountText, countParams);
+        titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
         ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
         transfer.setOnClickListener(v -> startActivity(new Intent(this, TransferActivity.class)));
         titleRow.addView(transfer, iconParams(false));
@@ -725,8 +729,8 @@ public final class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams iconParams(boolean withLeftMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(42));
-        if (withLeftMargin) params.setMargins(dp(7), 0, 0, 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(48));
+        if (withLeftMargin) params.setMargins(dp(4), 0, 0, 0);
         return params;
     }
 

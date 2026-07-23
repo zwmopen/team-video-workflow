@@ -51,7 +51,7 @@ public final class WorkDetailActivity extends Activity {
             library = new WorkLibrary(new File(getFilesDir(), "work-library"));
             work = library.getActive(getIntent().getStringExtra(EXTRA_WORK_ID));
             if (work == null) throw new IllegalStateException("作品不存在或已在回收站");
-            setContentView(buildUi());
+            setContentView(ScreenInsets.protect(buildUi()));
             render();
         } catch (Exception error) {
             Toast.makeText(this, "无法打开作品：" + error.getMessage(), Toast.LENGTH_LONG).show();

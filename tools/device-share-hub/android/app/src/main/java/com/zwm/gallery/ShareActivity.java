@@ -77,7 +77,7 @@ public final class ShareActivity extends Activity {
             WorkLibrary.WorkEntry work = library.getActive(workId);
             if (work == null) throw new IllegalStateException("作品不存在或已进入回收站");
             DiagnosticLog.write(this, "share_activity_open", workId);
-            setContentView(preparingView());
+            setContentView(ScreenInsets.protect(preparingView()));
             prepareShare(work);
         } catch (Exception error) {
             DiagnosticLog.write(this, "share_activity_failed", error.getMessage());
@@ -195,7 +195,7 @@ public final class ShareActivity extends Activity {
         if (targetOpenMs < QUICK_TARGET_RETURN_MS) {
             waitingForDeferredTarget = true;
             pendingResultCode = resultCode;
-            setContentView(waitingView());
+            setContentView(ScreenInsets.protect(waitingView()));
             DiagnosticLog.write(this, "share_target_returned_early", workId + " ms=" + targetOpenMs);
             mainHandler.postDelayed(this::finishDeferredWait, DEFERRED_TARGET_WAIT_MS);
             return;

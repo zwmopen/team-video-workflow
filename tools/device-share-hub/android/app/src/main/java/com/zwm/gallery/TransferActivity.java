@@ -52,7 +52,7 @@ public final class TransferActivity extends Activity {
         super.onCreate(state);
         pendingLocalPaths = getIntent().getStringArrayListExtra(EXTRA_LOCAL_PATHS);
         setTitle("传送");
-        setContentView(buildUi());
+        setContentView(ScreenInsets.protect(buildUi()));
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
         renderPeers();
     }

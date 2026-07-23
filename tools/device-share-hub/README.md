@@ -1,5 +1,12 @@
 # 相册投送中控 V3.7
 
+## Android 0.5.1 全面屏与正式安装包
+
+- 水滴屏、刘海屏及 Android 15+ 边到边布局会自动留出系统安全区，顶部四个入口不会贴住状态栏；图标使用 48dp 点击区域。
+- 0.5.1 使用正式 Release 构建并关闭外部调试。扫描、复制分享、应用分身兼容、局域网传送、回收站、应用内更新和诊断不依赖调试模式，功能保持不变。
+- 仍沿用 `com.zwm.gallery` 和原签名，可直接覆盖旧版；不要卸载旧版，以免 Android 清除 App 私有状态。
+- 当前 0.5.1 已完成本机自动检查与安装包核对；水滴屏实体点击和厂商安全扫描提示需要在真机连接后复核。
+
 ## 0.5.0 作品内容预览与三图标操作
 
 - 点作品白色卡片进入内容预览：文案在前，图片按 3:4 比例一行两张；TXT、ZIP、JSON、PDF 等其他文件继续显示文件名、类型和大小，点按交给系统预览。点图片看大图，长按图片进入多选。
@@ -177,7 +184,7 @@ V3.4 / 0.4.1 本轮实体检查：
 GitHub Actions 负责：
 
 - Windows x64 原生便携版；
-- Android `testDebugUnitTest`、`assembleDebug`、`lintDebug`；
+- Android `testDebugUnitTest`、`assembleRelease`、`lintRelease`，并核对正式 APK 不包含 `debuggable=true`；
 - iOS UIKit 单元测试、模拟器测试、侧载 IPA 打包及内部路径/版本结构校验；
 - 仓库质量检查和密钥扫描。
 

@@ -37,7 +37,7 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(buildUi());
+        setContentView(ScreenInsets.protect(buildUi()));
     }
 
     private ScrollView buildUi() {

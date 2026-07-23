@@ -10,8 +10,8 @@ android {
         applicationId = "com.zwm.gallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.5.0"
+        versionCode = 28
+        versionName = "0.5.1"
     }
 
     signingConfigs {
@@ -29,6 +29,9 @@ android {
         }
 
         release {
+            // Keep the existing certificate so installed versions can upgrade in place.
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
