@@ -7,7 +7,7 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.7，原生 Win32 x64 |
-| Android | 相册 0.5.1 候选，versionCode 28，`com.zwm.gallery`；公开版仍为 0.5.0 |
+| Android | 相册 0.5.1，versionCode 28，`com.zwm.gallery` |
 | iPhone | 相册 0.5.0，build 19，源码 bundle id `com.zwm.album` |
 | 当前主要变化 | 作品内容预览、图片多选删除/分享/传送、VIVO 分身冷启动等待、Windows 统一视觉 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
@@ -53,11 +53,12 @@
 
 ## 2026-07-23 实际状态
 
-- Android 0.5.1 候选修复 0.5.0 误发 Debug APK：CI 改为测试、构建和上传同签名 Release APK，`debuggable` 关闭；扫描、分享、分身、传送、回收、更新和诊断代码没有依赖 Debug 开关。
+- Android 0.5.1 修复 0.5.0 误发 Debug APK：CI 改为测试、构建和上传同签名 Release APK，`debuggable` 关闭；扫描、分享、分身、传送、回收、更新和诊断代码没有依赖 Debug 开关。
 - Android 所有页面增加 Android 15+ 系统栏与水滴/刘海安全区适配；首页四个顶部入口扩大为 48dp，并调整窄屏标题与间距。
 - 本机 Gradle 9.4.1 已完成 `testDebugUnitTest`、`assembleRelease`、`lintRelease`；0.5.1/code 28 APK v2 签名通过，证书与 0.5.0 相同，本机构建 SHA-256 `83D2934402C3483103D0A47101545EA4424A2482F74F954844B4044511109C56`，清单没有 `debuggable=true`。
-- 备用构建 run `29979168314` 对提交 `9d741b6` 完成 Windows、Android、iPhone 三端检查；云端正式 APK SHA-256 `8E8EB717C0738624677C96CBC3EFBB17D5AEF30AF30401AC21E0EA324CB89E8C`，签名证书与旧版一致且清单没有 `debuggable=true`。桌面候选包使用该云端产物。
-- 当前没有连接 Android 实体设备，因此覆盖升级数据、水滴屏点击手感和厂商安全提示均待真机复核；0.5.1 尚未推送公开更新索引，不能称为已发布版本。源码已推送备用构建仓库；主仓库账号凭据失效，提交尚未同步到主源码远端。
+- 备用构建 run `29979168314` 对提交 `9d741b6` 完成 Windows、Android、iPhone 三端检查；云端正式 APK SHA-256 `8E8EB717C0738624677C96CBC3EFBB17D5AEF30AF30401AC21E0EA324CB89E8C`，签名证书与旧版一致且清单没有 `debuggable=true`。桌面与公开发布使用该云端产物。
+- 主源码与备用构建仓库已同步；公开 Release `v0.5.1` 已提供 APK、源码 ZIP 和 SHA-256。线上 `latest.json` 实读为 0.5.1/code 28，重新下载 APK 的哈希与索引一致。
+- 当前没有连接 Android 实体设备，因此覆盖升级数据、水滴屏点击手感和厂商安全提示仍需下次连接真机复核；公开发布和自动检查不能替代这三项实体操作。
 
 - 2026-07-23：Android 0.5.0 在 Redmi 9A 与 VIVO 上同签名覆盖安装，作品详情、图片长按多选和三图标操作完成实体操作确认；作品原目录里的 TXT、JSON 等非图片附件实际显示类型、名称和大小。升级没有清空目录授权、作品库或回收站。
 - VIVO 分身冷启动实测出现分享目标约 2.9 秒提前返回，等待后诊断记录 `outcome=deferred_target_opened`；只有真正打开目标才计数，测试产生的作品分享字段已恢复。
