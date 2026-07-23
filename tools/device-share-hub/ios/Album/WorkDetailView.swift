@@ -1,10 +1,12 @@
 import UIKit
 import ImageIO
+import QuickLook
 
 final class WorkDetailViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     private let library: WorkLibrary
     private var work: WorkItem
     private var selected = Set<URL>()
+    private var attachments: [URL] = []
     private var collection: UICollectionView!
     private let actions = UIStackView()
 
@@ -49,6 +51,7 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private func render() {
         if let fresh = library.works.first(where: { $0.key == work.key }) { work = fresh }
         selected = Set(selected.filter { work.imageURLs.contains($0) })
+        attachments = loadAttachments()
         title = "\(work.name)  ·  \(work.imageURLs.count)"
         collection.reloadData(); renderActions()
     }
@@ -77,40 +80,64 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return work.imageURLs.count + 1
+        return work.imageURLs.count + attachments.count + 1
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "image", for: indexPath) as! WorkImageCell
         if indexPath.item == 0 { cell.configureText(work.textURL) }
-        else {
+        else if indexPath.item <= work.imageURLs.count {
             let url = work.imageURLs[indexPath.item - 1]
             cell.configureImage(url, selected: selected.contains(url))
+        } else {
+            cell.configureFile(attachments[indexPath.item - work.imageURLs.count - 1])
         }
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if indexPath.item == 0 { copyText(); return }
-        let url = work.imageURLs[indexPath.item - 1]
-        if selected.isEmpty { navigationController?.pushViewController(ImagePreviewController(url: url), animated: true) }
-        else { toggle(url) }
+        if indexPath.item <= work.imageURLs.count {
+            let url = work.imageURLs[indexPath.item - 1]
+            if selected.isEmpty { navigationController?.pushViewController(ImagePreviewController(url: url), animated: true) }
+            else { toggle(url) }
+        } else if selected.isEmpty {
+            let url = attachments[indexPath.item - work.imageURLs.count - 1]
+            navigationController?.pushViewController(FilePreviewController(url: url), animated: true)
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor((collectionView.bounds.width - 40) / 2)
-        return CGSize(width: width, height: indexPath.item == 0 ? 128 : floor(width * 4 / 3))
+        if indexPath.item == 0 { return CGSize(width: width, height: 128) }
+        if indexPath.item <= work.imageURLs.count { return CGSize(width: width, height: floor(width * 4 / 3)) }
+        return CGSize(width: width, height: 128)
     }
 
     @objc private func longPressed(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began, let index = collection.indexPathForItem(at: gesture.location(in: collection)),
-              index.item > 0 else { return }
+              index.item > 0, index.item <= work.imageURLs.count else { return }
         toggle(work.imageURLs[index.item - 1])
     }
     private func toggle(_ url: URL) {
         if selected.contains(url) { selected.remove(url) } else { selected.insert(url) }
         render()
+    }
+
+    private func loadAttachments() -> [URL] {
+        let imageSet = Set(work.imageURLs.map { $0.standardizedFileURL })
+        let text = work.textURL.standardizedFileURL
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isHiddenKey]
+        let children = (try? FileManager.default.contentsOfDirectory(at: work.folderURL,
+                                                                      includingPropertiesForKeys: Array(keys),
+                                                                      options: [])) ?? []
+        return children.filter { url in
+            let values = try? url.resourceValues(forKeys: keys)
+            guard values?.isRegularFile == true, values?.isHidden != true else { return false }
+            let normalized = url.standardizedFileURL
+            return normalized != text && !imageSet.contains(normalized)
+        }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 
     @objc private func copyText() {
@@ -189,7 +216,7 @@ private final class WorkImageCell: UICollectionViewCell {
     func configureText(_ url: URL) {
         image.image = nil; image.isHidden = true; label.isHidden = false; badge.isHidden = true
         contentView.layer.borderWidth = 0
-        label.text = "文案.txt\n\n" + ((try? String(contentsOf: url, encoding: .utf8)) ?? "没有文案")
+        label.text = "\(url.lastPathComponent)\n\n" + ((try? String(contentsOf: url, encoding: .utf8)) ?? "没有文案")
     }
     func configureImage(_ url: URL, selected: Bool) {
         label.isHidden = true; image.isHidden = false
@@ -197,6 +224,14 @@ private final class WorkImageCell: UICollectionViewCell {
         badge.isHidden = !selected
         contentView.layer.borderWidth = selected ? 4 : 0
         contentView.layer.borderColor = UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1).cgColor
+    }
+    func configureFile(_ url: URL) {
+        image.image = nil; image.isHidden = true; label.isHidden = false; badge.isHidden = true
+        contentView.layer.borderWidth = 0
+        let ext = url.pathExtension.isEmpty ? "文件" : url.pathExtension.uppercased()
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let size = bytes > 0 ? ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) : "点按预览"
+        label.text = "\(ext)\n\(url.lastPathComponent)\n\(size)"
     }
 }
 
@@ -209,6 +244,20 @@ private final class ImagePreviewController: UIViewController {
         let longestSide = max(UIScreen.main.bounds.width, UIScreen.main.bounds.height) * UIScreen.main.scale
         let image = UIImageView(image: downsampledImage(at: url, maxPixel: max(1200, longestSide))); image.contentMode = .scaleAspectFit
         image.frame = view.bounds; image.autoresizingMask = [.flexibleWidth, .flexibleHeight]; view.addSubview(image)
+    }
+}
+
+private final class FilePreviewController: QLPreviewController, QLPreviewControllerDataSource {
+    private let url: URL
+    init(url: URL) {
+        self.url = url
+        super.init(nibName: nil, bundle: nil)
+        dataSource = self
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { return 1 }
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        return url as NSURL
     }
 }
 

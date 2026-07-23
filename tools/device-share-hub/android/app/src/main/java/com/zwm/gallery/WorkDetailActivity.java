@@ -6,12 +6,16 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.res.ColorStateList;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
+import android.text.format.Formatter;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -28,6 +32,7 @@ import java.io.File;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 
 /** Folder-like preview for one work. Long press an image to start multi-select. */
 public final class WorkDetailActivity extends Activity {
@@ -122,6 +127,16 @@ public final class WorkDetailActivity extends Activity {
         for (String name : work.images) grid.addView(imageCard(name), gridParams());
         content.addView(grid);
 
+        ArrayList<Attachment> attachments = loadAttachments();
+        if (!attachments.isEmpty()) {
+            TextView heading = text("其他文件  " + attachments.size(), 15, true);
+            heading.setTextColor(Color.rgb(54, 86, 72));
+            content.addView(heading, margins(dp(4), dp(18), dp(4), dp(6)));
+            for (Attachment attachment : attachments) {
+                content.addView(fileCard(attachment), margins(0, dp(4), 0, dp(4)));
+            }
+        }
+
         try {
             int trashCount = library.imageTrashCount(work.id);
             if (trashCount > 0) {
@@ -157,6 +172,81 @@ public final class WorkDetailActivity extends Activity {
         });
         frame.setOnLongClickListener(v -> { toggle(name); return true; });
         return frame;
+    }
+
+    private View fileCard(Attachment attachment) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setBackground(round(Color.WHITE, 16));
+        TextView type = text(fileType(attachment.name), 12, true);
+        type.setGravity(Gravity.CENTER);
+        type.setTextColor(Color.rgb(54, 105, 82));
+        type.setBackground(round(Color.rgb(231, 239, 233), 12));
+        row.addView(type, new LinearLayout.LayoutParams(dp(48), dp(42)));
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        TextView name = text(attachment.name, 14, true);
+        name.setMaxLines(2);
+        info.addView(name);
+        String detail = attachment.size > 0 ? Formatter.formatShortFileSize(this, attachment.size) : "点按打开";
+        TextView size = text(detail, 12, false);
+        size.setTextColor(Color.GRAY);
+        info.addView(size);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, -2, 1);
+        ip.setMargins(dp(12), 0, 0, 0);
+        row.addView(info, ip);
+        row.setOnClickListener(v -> openAttachment(attachment));
+        return row;
+    }
+
+    private ArrayList<Attachment> loadAttachments() {
+        ArrayList<Attachment> result = new ArrayList<>();
+        if (work.sourceDocumentId.isEmpty()) return result;
+        String stored = getSharedPreferences("device_share", MODE_PRIVATE).getString("libraryTreeUri", "");
+        if (stored.isEmpty()) return result;
+        try {
+            Uri tree = Uri.parse(stored);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, work.sourceDocumentId);
+            String[] columns = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    DocumentsContract.Document.COLUMN_SIZE};
+            try (Cursor cursor = getContentResolver().query(children, columns, null, null, null)) {
+                if (cursor == null) return result;
+                while (cursor.moveToNext()) {
+                    String documentId = cursor.getString(0);
+                    String name = cursor.getString(1);
+                    String mime = cursor.getString(2);
+                    long size = cursor.isNull(3) ? -1 : cursor.getLong(3);
+                    if (name == null || name.startsWith(".zwm-")
+                            || DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)
+                            || (mime != null && mime.startsWith("image/"))
+                            || WorkRules.isSupportedImage(name)) continue;
+                    result.add(new Attachment(name, mime == null ? "application/octet-stream" : mime,
+                            size, DocumentsContract.buildDocumentUriUsingTree(tree, documentId)));
+                }
+            }
+            result.sort((left, right) -> WorkRules.compareNatural(left.name, right.name));
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "detail_files_unavailable", error.getClass().getSimpleName());
+        }
+        return result;
+    }
+
+    private void openAttachment(Attachment attachment) {
+        Intent open = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(attachment.uri, attachment.mime)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        open.setClipData(ClipData.newRawUri(attachment.name, attachment.uri));
+        try { startActivity(Intent.createChooser(open, "打开“" + attachment.name + "”")); }
+        catch (Exception error) { Toast.makeText(this, "手机里没有可打开此文件的应用", Toast.LENGTH_LONG).show(); }
+    }
+
+    private String fileType(String name) {
+        int dot = name.lastIndexOf('.');
+        String value = dot >= 0 ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "文件";
+        return value.length() > 5 ? "文件" : value;
     }
 
     private void renderActions() {
@@ -288,4 +378,14 @@ public final class WorkDetailActivity extends Activity {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.setMargins(l, t, r, b); return p;
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private static final class Attachment {
+        final String name;
+        final String mime;
+        final long size;
+        final Uri uri;
+        Attachment(String name, String mime, long size, Uri uri) {
+            this.name = name; this.mime = mime; this.size = size; this.uri = uri;
+        }
+    }
 }
