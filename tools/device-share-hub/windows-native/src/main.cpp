@@ -1028,41 +1028,47 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     HDC dc = item->hDC;
     RECT rect = item->rcItem;
     bool selected = (item->itemState & ODS_SELECTED) != 0;
-    HBRUSH background = CreateSolidBrush(selected ? RGB(235, 242, 255) : RGB(250, 251, 252));
+    HBRUSH background = CreateSolidBrush(selected ? RGB(232, 243, 236) : RGB(255, 255, 255));
     FillRect(dc, &rect, background);
     DeleteObject(background);
-    HPEN border = CreatePen(PS_SOLID, 1, selected ? RGB(90, 135, 220) : RGB(222, 226, 230));
+    HPEN border = CreatePen(PS_SOLID, 1, selected ? RGB(38, 145, 94) : RGB(229, 226, 220));
     HGDIOBJ oldPen = SelectObject(dc, border);
     HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, rect.left + 4, rect.top + 4, rect.right - 4, rect.bottom - 4, 12, 12);
+    RoundRect(dc, rect.left + 4, rect.top + 4, rect.right - 4, rect.bottom - 4, 20, 20);
     SelectObject(dc, oldBrush);
     SelectObject(dc, oldPen);
     DeleteObject(border);
 
-    HBRUSH dot = CreateSolidBrush(StateColor(device.state));
-    HGDIOBJ oldDotBrush = SelectObject(dc, dot);
-    HGDIOBJ oldDotPen = SelectObject(dc, GetStockObject(NULL_PEN));
-    Ellipse(dc, rect.left + 18, rect.top + 20, rect.left + 30, rect.top + 32);
-    SelectObject(dc, oldDotPen);
-    SelectObject(dc, oldDotBrush);
-    DeleteObject(dot);
+    bool isApple = device.model.find(L"iPhone") != std::wstring::npos
+        || device.id.find(L"ios-") == 0;
+    HBRUSH platformBrush = CreateSolidBrush(isApple ? RGB(70, 111, 174) : RGB(74, 142, 93));
+    HGDIOBJ oldPlatformBrush = SelectObject(dc, platformBrush);
+    HGDIOBJ oldPlatformPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    Ellipse(dc, rect.left + 16, rect.top + 17, rect.left + 54, rect.top + 55);
+    SelectObject(dc, oldPlatformPen);
+    SelectObject(dc, oldPlatformBrush);
+    DeleteObject(platformBrush);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(255, 255, 255));
+    SelectObject(dc, gFont);
+    RECT platformRect{rect.left + 16, rect.top + 17, rect.left + 54, rect.top + 55};
+    DrawTextW(dc, isApple ? L"i" : L"A", -1, &platformRect,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
-    RECT nameRect{rect.left + 42, rect.top + 10, rect.right - 16, rect.top + 36};
+    RECT nameRect{rect.left + 68, rect.top + 10, rect.right - 16, rect.top + 36};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
     if (device.workCount >= 0) {
-        displayName += L"（作品数 " + std::to_wstring(device.workCount) + L"）";
+        displayName += L"（" + std::to_wstring(device.workCount) + L"）";
     }
     DrawTextW(dc, displayName.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     SetTextColor(dc, RGB(105, 112, 120));
-    std::wstring sub = device.model + L"  ·  " + device.ip;
-    sub = hasRemark ? (device.name + L" · " + device.model + L" · " + device.ip)
-                    : (device.model + L" · " + device.ip);
-    RECT subRect{rect.left + 42, rect.top + 38, rect.right - 125, rect.bottom - 8};
+    std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
+    RECT subRect{rect.left + 68, rect.top + 38, rect.right - 125, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     SetTextColor(dc, StateColor(device.state));
@@ -1175,6 +1181,29 @@ void HandleDrop(HDROP drop) {
     std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
 }
 
+void DrawActionButton(const DRAWITEMSTRUCT* item) {
+    RECT rect = item->rcItem;
+    bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
+    bool pressed = (item->itemState & ODS_SELECTED) != 0;
+    bool primary = item->CtlID == IDC_SEND_PICKER;
+    COLORREF fill = primary ? RGB(38, 145, 94) : RGB(255, 255, 255);
+    if (pressed) fill = primary ? RGB(31, 122, 78) : RGB(235, 232, 226);
+    if (!enabled) fill = RGB(235, 233, 229);
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 1, primary ? fill : RGB(222, 218, 211));
+    HGDIOBJ oldBrush = SelectObject(item->hDC, brush);
+    HGDIOBJ oldPen = SelectObject(item->hDC, pen);
+    RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 18, 18);
+    SelectObject(item->hDC, oldPen); SelectObject(item->hDC, oldBrush);
+    DeleteObject(pen); DeleteObject(brush);
+    wchar_t label[96]{}; GetWindowTextW(item->hwndItem, label, 95);
+    SetBkMode(item->hDC, TRANSPARENT);
+    SetTextColor(item->hDC, !enabled ? RGB(150, 150, 145)
+                                     : (primary ? RGB(255, 255, 255) : RGB(52, 52, 49)));
+    SelectObject(item->hDC, gFont);
+    DrawTextW(item->hDC, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
 std::vector<std::filesystem::path> PickPaths(bool folder) {
     std::vector<std::filesystem::path> result;
     IFileOpenDialog* dialog = nullptr;
@@ -1211,11 +1240,11 @@ void Layout(HWND window) {
     int height = client.bottom - client.top;
     const int margin = 22;
     MoveWindow(gRefreshButton, width - margin - 118, 18, 118, 36, TRUE);
-    MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 224), TRUE);
-    int buttonWidth = 136;
-    int sendWidth = 88;
-    int cancelWidth = 86;
-    int statusWidth = std::max(150, width - margin * 2 - buttonWidth - cancelWidth - sendWidth - 38);
+    MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 218), TRUE);
+    int buttonWidth = 92;
+    int sendWidth = 100;
+    int cancelWidth = 76;
+    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - sendWidth - 30);
     MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
     MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
@@ -1232,22 +1261,22 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.6", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.7", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 640, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gRefreshButton = CreateWindowW(L"BUTTON", L"刷新设备", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            gRefreshButton = CreateWindowW(L"BUTTON", L"↻  刷新", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                            560, 18, 118, 36, window,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_REFRESH_DEVICES)), nullptr, nullptr);
             SendMessageW(gRefreshButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gDeviceList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
+            gDeviceList = CreateWindowExW(0, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
                 22, 94, 640, 280, window, reinterpret_cast<HMENU>(101), nullptr, nullptr);
             SendMessageW(gDeviceList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gStatus = CreateWindowW(L"STATIC", L"正在搜索同一局域网内的手机…",
-                                    WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+                                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS,
                                     22, 516, 640, 46, window, nullptr, nullptr, nullptr);
             SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gProgress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
@@ -1256,15 +1285,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SendMessageW(gProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
             SendMessageW(gProgress, PBM_SETPOS, 0, 0);
             ShowWindow(gProgress, SW_HIDE);
-            gCancelButton = CreateWindowW(L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            gCancelButton = CreateWindowW(L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                           440, 520, 86, 38, window, reinterpret_cast<HMENU>(105), nullptr, nullptr);
             SendMessageW(gCancelButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             EnableWindow(gCancelButton, FALSE);
-            gLogButton = CreateWindowW(L"BUTTON", L"打开诊断日志", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            gLogButton = CreateWindowW(L"BUTTON", L"诊断", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                        540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
             SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gSendButton = CreateWindowW(L"BUTTON", L"✈ 传送", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                        0, 0, 88, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SEND_PICKER)), nullptr, nullptr);
+            gSendButton = CreateWindowW(L"BUTTON", L"✈  传送", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                        0, 0, 100, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SEND_PICKER)), nullptr, nullptr);
             SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
@@ -1323,6 +1352,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
             if (draw->CtlID == 101) {
                 DrawDeviceItem(draw);
+                return TRUE;
+            }
+            if (draw->CtlType == ODT_BUTTON) {
+                DrawActionButton(draw);
                 return TRUE;
             }
             break;
@@ -1392,7 +1425,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.6",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.7",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

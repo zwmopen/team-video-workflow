@@ -29,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class TransferActivity extends Activity {
+    public static final String EXTRA_LOCAL_PATHS = "localPaths";
     private static final int PICK_FILES = 81;
     private static final int PICK_FOLDER = 82;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -37,6 +38,7 @@ public final class TransferActivity extends Activity {
     private ProgressBar progress;
     private PeerDevice selected;
     private boolean receiverRegistered;
+    private ArrayList<String> pendingLocalPaths;
     private final Handler refreshHandler = new Handler(Looper.getMainLooper());
     private final Runnable refreshPeers = new Runnable() {
         @Override public void run() { renderPeers(); refreshHandler.postDelayed(this, 2000); }
@@ -48,6 +50,7 @@ public final class TransferActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        pendingLocalPaths = getIntent().getStringArrayListExtra(EXTRA_LOCAL_PATHS);
         setTitle("传送");
         setContentView(buildUi());
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
@@ -139,7 +142,12 @@ public final class TransferActivity extends Activity {
             boolean chosen = selected != null && selected.id.equals(peer.id);
             item.setTextColor(chosen ? Color.WHITE : Color.rgb(38, 39, 38));
             item.setBackground(round(chosen ? Color.rgb(38, 145, 94) : Color.WHITE, 16));
-            item.setOnClickListener(v -> { selected = peer; status.setText("已选择“" + peer.name + "”"); renderPeers(); });
+            item.setOnClickListener(v -> {
+                selected = peer;
+                status.setText("已选择“" + peer.name + "”");
+                renderPeers();
+                if (pendingLocalPaths != null && !pendingLocalPaths.isEmpty()) sendPendingLocalFiles();
+            });
             peersContainer.addView(item, margins(0, 0, 0, dp(9)));
         }
     }
@@ -178,6 +186,13 @@ public final class TransferActivity extends Activity {
 
     private void sendFiles(List<Uri> uris) { runTransfer(client -> client.sendFiles(selected, uris, this::updateProgress)); }
     private void sendFolder(Uri tree) { runTransfer(client -> client.sendFolder(selected, tree, this::updateProgress)); }
+
+    private void sendPendingLocalFiles() {
+        ArrayList<java.io.File> files = new ArrayList<>();
+        for (String path : pendingLocalPaths) files.add(new java.io.File(path));
+        pendingLocalPaths = null;
+        runTransfer(client -> client.sendLocalFiles(selected, files, this::updateProgress));
+    }
 
     private void runTransfer(TransferWork work) {
         progress.setProgress(0); progress.setVisibility(View.VISIBLE);

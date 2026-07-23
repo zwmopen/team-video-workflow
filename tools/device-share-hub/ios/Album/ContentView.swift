@@ -162,16 +162,22 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
-        cell.configure(library.works[indexPath.item])
+        let work = library.works[indexPath.item]
+        cell.configure(work)
+        cell.onShare = { [weak self, weak cell] in self?.share(work, source: cell) }
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         let work = library.works[indexPath.item]
+        navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
+    }
+
+    private func share(_ work: WorkItem, source: UIView?) {
         do {
             let controller = UIActivityViewController(activityItems: try library.prepareShare(work),
                                                       applicationActivities: nil)
-            controller.popoverPresentationController?.sourceView = collectionView.cellForItem(at: indexPath)
+            controller.popoverPresentationController?.sourceView = source
             present(controller, animated: true)
         } catch { showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription) }
     }
@@ -179,7 +185,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor((collectionView.bounds.width - 44) / 2)
-        return CGSize(width: width, height: 132)
+        return CGSize(width: width, height: 176)
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
@@ -256,9 +262,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 }
 
-private enum AlbumToolbarSymbol { case plane, refresh, trash, settings }
+enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings }
 
-private enum AlbumToolbarIcon {
+enum AlbumToolbarIcon {
     static func image(_ symbol: AlbumToolbarSymbol, color: UIColor) -> UIImage {
         let size = CGSize(width: 23, height: 23)
         UIGraphicsBeginImageContextWithOptions(size, false, 0)
@@ -275,6 +281,14 @@ private enum AlbumToolbarIcon {
             path.addLine(to: CGPoint(x: 2.5, y: 19.5)); path.addLine(to: CGPoint(x: 6.1, y: 11.5))
             path.close(); path.move(to: CGPoint(x: 6.1, y: 11.5)); path.addLine(to: CGPoint(x: 16.8, y: 11.5))
             path.stroke()
+        case .share:
+            path.move(to: CGPoint(x: 8.2, y: 10.2)); path.addLine(to: CGPoint(x: 15.4, y: 6.6))
+            path.move(to: CGPoint(x: 8.2, y: 12.8)); path.addLine(to: CGPoint(x: 15.4, y: 16.4))
+            path.stroke()
+            for center in [CGPoint(x: 5.2, y: 11.5), CGPoint(x: 18.2, y: 5.2), CGPoint(x: 18.2, y: 17.8)] {
+                let dot = UIBezierPath(ovalIn: CGRect(x: center.x - 2.7, y: center.y - 2.7, width: 5.4, height: 5.4))
+                dot.fill()
+            }
         case .refresh:
             path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 7.6,
                         startAngle: -.pi * 0.15, endAngle: .pi * 1.55, clockwise: true)
@@ -310,6 +324,8 @@ private final class WorkCell: UICollectionViewCell {
     private let count = UILabel()
     private let name = UILabel()
     private let detail = UILabel()
+    private let shareButton = UIButton(type: .system)
+    var onShare: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -324,7 +340,14 @@ private final class WorkCell: UICollectionViewCell {
         detail.textColor = AppColors.secondaryText
         let top = UIStackView(arrangedSubviews: [icon, count])
         top.axis = .horizontal
-        let stack = UIStackView(arrangedSubviews: [top, name, detail])
+        shareButton.setTitle("复制并分享", for: .normal)
+        shareButton.titleLabel?.font = .boldSystemFont(ofSize: 14)
+        shareButton.backgroundColor = tintColor
+        shareButton.setTitleColor(.white, for: .normal)
+        shareButton.layer.cornerRadius = 12
+        shareButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        let stack = UIStackView(arrangedSubviews: [top, name, detail, shareButton])
         stack.axis = .vertical
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -339,6 +362,10 @@ private final class WorkCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    override func prepareForReuse() { super.prepareForReuse(); onShare = nil }
+
+    @objc private func shareTapped() { onShare?() }
+
     func configure(_ work: WorkItem) {
         let shared = work.shareCount > 0
         icon.text = shared ? "✓" : "▣"
@@ -349,5 +376,7 @@ private final class WorkCell: UICollectionViewCell {
         contentView.backgroundColor = shared ? AppColors.sharedBackground : AppColors.secondaryBackground
         contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor
         name.textColor = shared ? AppColors.secondaryText : AppColors.text
+        detail.text = shared ? "已打开分享 \(work.shareCount) 次" : "点白色卡片查看内容"
+        shareButton.setTitle(shared ? "再次分享" : "复制并分享", for: .normal)
     }
 }

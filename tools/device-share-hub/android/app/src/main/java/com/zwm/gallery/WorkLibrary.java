@@ -189,6 +189,47 @@ public final class WorkLibrary {
         saveMeta(entry.directory, meta);
     }
 
+    /** Moves selected managed image copies into this work's recoverable image bin. */
+    public synchronized int moveImagesToTrash(String id, List<String> names, LocalDate date) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        ArrayList<String> retained = new ArrayList<>(entry.images);
+        File imageTrash = new File(new File(entry.directory, ".image-trash"), date.toString());
+        ensureDirectory(imageTrash);
+        int moved = 0;
+        for (String name : new ArrayList<>(names)) {
+            if (!retained.contains(name)) continue;
+            File source = child(entry.directory, name);
+            File destination = new File(imageTrash, uniqueName(imageTrash, name));
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            retained.remove(name);
+            moved++;
+        }
+        if (moved > 0) writeImageList(entry.directory, retained);
+        return moved;
+    }
+
+    public synchronized int imageTrashCount(String id) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        return collectImageTrashFiles(new File(entry.directory, ".image-trash")).size();
+    }
+
+    public synchronized int restoreAllImages(String id) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        File trash = new File(entry.directory, ".image-trash");
+        ArrayList<File> files = collectImageTrashFiles(trash);
+        ArrayList<String> images = new ArrayList<>(entry.images);
+        for (File source : files) {
+            String name = uniqueName(entry.directory, source.getName());
+            Files.move(source.toPath(), new File(entry.directory, name).toPath(),
+                    StandardCopyOption.REPLACE_EXISTING);
+            images.add(name);
+        }
+        images.sort(WorkRules::compareNatural);
+        if (!files.isEmpty()) writeImageList(entry.directory, images);
+        if (trash.exists()) deleteEmptyDirectories(trash);
+        return files.size();
+    }
+
     public synchronized List<WorkEntry> maintain(LocalDate today) throws IOException {
         ArrayList<WorkEntry> moved = new ArrayList<>();
         for (WorkEntry entry : list(activeRoot)) {
@@ -201,7 +242,51 @@ public final class WorkLibrary {
                 deleteTree(entry.directory);
             }
         }
+        purgeImageTrash(activeRoot, today);
+        purgeImageTrash(trashRoot, today);
         return moved;
+    }
+
+    private void writeImageList(File directory, List<String> images) throws IOException {
+        Properties meta = loadMeta(directory);
+        int previous = parseCount(meta.getProperty("image.count", "0"));
+        for (int index = 0; index < previous; index++) meta.remove("image." + index);
+        meta.setProperty("image.count", Integer.toString(images.size()));
+        for (int index = 0; index < images.size(); index++) meta.setProperty("image." + index, images.get(index));
+        saveMeta(directory, meta);
+    }
+
+    private static ArrayList<File> collectImageTrashFiles(File root) {
+        ArrayList<File> result = new ArrayList<>();
+        File[] children = root.listFiles();
+        if (children == null) return result;
+        for (File child : children) {
+            if (child.isDirectory()) result.addAll(collectImageTrashFiles(child));
+            else if (child.isFile()) result.add(child);
+        }
+        return result;
+    }
+
+    private static void deleteEmptyDirectories(File root) {
+        File[] children = root.listFiles();
+        if (children != null) for (File child : children) if (child.isDirectory()) deleteEmptyDirectories(child);
+        children = root.listFiles();
+        if (children != null && children.length == 0) root.delete();
+    }
+
+    private void purgeImageTrash(File parent, LocalDate today) throws IOException {
+        for (WorkEntry entry : list(parent)) {
+            File trash = new File(entry.directory, ".image-trash");
+            File[] days = trash.listFiles(File::isDirectory);
+            if (days == null) continue;
+            for (File day : days) {
+                try {
+                    LocalDate created = LocalDate.parse(day.getName());
+                    if (!today.isBefore(created.plusDays(7))) deleteTree(day);
+                } catch (RuntimeException ignored) { }
+            }
+            deleteEmptyDirectories(trash);
+        }
     }
 
     public synchronized WorkEntry moveToTrash(String id, LocalDate trashedDate) throws IOException {

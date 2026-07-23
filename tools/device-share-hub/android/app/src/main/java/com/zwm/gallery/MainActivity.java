@@ -402,7 +402,15 @@ public final class MainActivity extends Activity {
             return true;
         };
         checkBox.setOnClickListener(v -> toggleWorkSelection(work.id));
-        card.setOnClickListener(v -> { if (!selectedWorkIds.isEmpty()) toggleWorkSelection(work.id); });
+        View.OnClickListener openOrSelect = v -> {
+            if (!selectedWorkIds.isEmpty()) toggleWorkSelection(work.id);
+            else if (!showingTrash) startActivity(new Intent(this, WorkDetailActivity.class)
+                    .putExtra(WorkDetailActivity.EXTRA_WORK_ID, work.id));
+        };
+        card.setOnClickListener(openOrSelect);
+        nameRow.setOnClickListener(openOrSelect);
+        name.setOnClickListener(openOrSelect);
+        meta.setOnClickListener(openOrSelect);
         card.setOnLongClickListener(select);
         name.setOnLongClickListener(select);
         meta.setOnLongClickListener(select);

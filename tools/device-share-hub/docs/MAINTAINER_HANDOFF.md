@@ -1,15 +1,15 @@
-# 分享中控 V3.6 维护交接
+# 分享中控 V3.7 维护交接
 
-更新时间：2026-07-22
+更新时间：2026-07-23
 
 ## 当前可交付基线
 
 | 项目 | 当前值 |
 |---|---|
-| Windows | 素材投送中控 V3.6，原生 Win32 x64 |
-| Android | 相册 0.4.9，versionCode 26，`com.zwm.gallery` |
-| iPhone | 相册 0.4.7，build 18，源码 bundle id `com.zwm.album` |
-| 当前主要变化 | 0.4.7 分身分享与设备作品数；0.4.8 批量回收；0.4.9 旧机型 Wi-Fi 重连后自动恢复发现 |
+| Windows | 素材投送中控 V3.7，原生 Win32 x64 |
+| Android | 相册 0.5.0，versionCode 27，`com.zwm.gallery` |
+| iPhone | 相册 0.5.0，build 19，源码 bundle id `com.zwm.album` |
+| 当前主要变化 | 作品内容预览、图片多选删除/分享/传送、VIVO 分身冷启动等待、Windows 统一视觉 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
@@ -51,7 +51,12 @@
 - Windows + iPhone 侧载：`docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
 
-## 2026-07-22 实际状态
+## 2026-07-23 实际状态
+
+- 2026-07-23：Android 0.5.0 在 Redmi 9A 与 VIVO 上同签名覆盖安装，作品详情、图片长按多选和三图标操作完成实体操作确认；升级没有清空目录授权、作品库或回收站。
+- VIVO 分身冷启动实测出现分享目标约 2.9 秒提前返回，等待后诊断记录 `outcome=deferred_target_opened`；只有真正打开目标才计数，测试产生的作品分享字段已恢复。
+- Android 本地使用 Gradle 9.4.1 完成单元测试、Debug APK、Lint；iPhone 采用 ImageIO 降采样，图片回收站按日期保留 7 天。
+- Windows V3.7 替换了损坏的旧 ICO，直接使用 iOS/手机端同源绿色相册图标；设备卡显示平台标识、圆角按钮和更宽松的底部状态布局。
 
 - Redmi 9A / Android 11 / MIUI 12.5 的互相发现故障已定位为 Wi-Fi 短暂变化时 UDP 发现线程因 `ENETUNREACH` 永久退出；HTTP 接收线程一直正常，因此不能把“端口可访问”误判成“发现正常”。
 - Android 0.4.9 把发现 socket 改为可恢复会话。实体覆盖安装后版本为 0.4.9/code 26，原目录授权、1 个作品、接收开关和设备名称保留；应用进程不重启完成 Wi-Fi 断开/恢复后，电脑重新发现手机，手机同时看到 Windows 和 iPhone，等待超过 15 秒仍在线。

@@ -228,13 +228,19 @@ final class WorkLibrary {
     }
 
     func prepareShare(_ work: WorkItem) throws -> [Any] {
+        return try prepareShare(work, images: work.imageURLs)
+    }
+
+    func prepareShare(_ work: WorkItem, images: [URL]) throws -> [Any] {
         let text: String
         do { text = try String(contentsOf: work.textURL, encoding: .utf8) }
         catch { throw LibraryError.noText(work.name) }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LibraryError.emptyText
         }
-        guard !work.imageURLs.isEmpty else { throw LibraryError.noImages(work.name) }
+        let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
+        let selected = images.map { $0.standardizedFileURL }.filter { allowed.contains($0) }
+        guard !selected.isEmpty else { throw LibraryError.noImages(work.name) }
 
         var record = state.works[work.key] ?? WorkState()
         record.shareCount += 1
@@ -250,7 +256,48 @@ final class WorkLibrary {
         message = "文案已复制 · 第 \(record.shareCount) 次打开分享"
         works = (try? scanner.scan(root: root, state: state).works) ?? works
         notify()
-        return work.imageURLs.map { $0 as NSURL }
+        return selected.map { $0 as NSURL }
+    }
+
+    func moveImagesToTrash(_ work: WorkItem, images: [URL]) throws -> Int {
+        let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
+        let selected = images.map { $0.standardizedFileURL }.filter { allowed.contains($0) }
+        guard !selected.isEmpty else { return 0 }
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+        let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
+            .appendingPathComponent(formatter.string(from: Date()), isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        var moved = 0
+        for source in selected {
+            let destination = StoredZipExtractor.uniqueDestination(for: source.lastPathComponent, under: bin)
+            try FileManager.default.moveItem(at: source, to: destination)
+            moved += 1
+        }
+        refresh(showConfirmation: false)
+        return moved
+    }
+
+    func imageTrashCount(_ work: WorkItem) -> Int {
+        let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
+        var count = 0
+        for case let url as URL in enumerator where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { count += 1 }
+        return count
+    }
+
+    func restoreAllImages(_ work: WorkItem) throws -> Int {
+        let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
+        let files = enumerator.compactMap { $0 as? URL }.filter {
+            (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        }
+        for source in files {
+            let destination = StoredZipExtractor.uniqueDestination(for: source.lastPathComponent, under: work.folderURL)
+            try FileManager.default.moveItem(at: source, to: destination)
+        }
+        try? FileManager.default.removeItem(at: bin)
+        refresh(showConfirmation: false)
+        return files.count
     }
 
     func restore(_ item: TrashItem) {
@@ -436,6 +483,29 @@ final class WorkLibrary {
             if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
             state.works.removeValue(forKey: key)
             try saveState(to: root)
+        }
+        try purgeExpiredImageTrash(root: root, today: today)
+    }
+
+    private func purgeExpiredImageTrash(root: URL, today: Date) throws {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey]
+        guard let enumerator = FileManager.default.enumerator(at: root,
+                                                               includingPropertiesForKeys: Array(keys),
+                                                               options: []) else { return }
+        let bins = enumerator.compactMap { $0 as? URL }.filter { url in
+            guard url.lastPathComponent == ".图片回收站" else { return false }
+            return (try? url.resourceValues(forKeys: keys).isDirectory) == true
+        }
+        for bin in bins {
+            for dayFolder in try childDirectories(of: bin, includeHidden: true) {
+                guard let date = Self.dayFormatter.date(from: dayFolder.lastPathComponent),
+                      let expiry = Calendar.current.date(byAdding: .day, value: 7, to: date),
+                      expiry <= today else { continue }
+                try FileManager.default.removeItem(at: dayFolder)
+            }
+            if (try FileManager.default.contentsOfDirectory(atPath: bin.path)).isEmpty {
+                try FileManager.default.removeItem(at: bin)
+            }
         }
     }
 

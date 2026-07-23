@@ -6,9 +6,22 @@ final class TransferViewController: UIViewController, UITableViewDataSource, UIT
     private let status = UILabel()
     private let progress = UIProgressView(progressViewStyle: .default)
     private var peers: [TransferPeer] = []
-    private var selectedID: String?
+    private var selectedID: String? {
+        didSet {
+            guard selectedID != nil, !pendingURLs.isEmpty else { return }
+            DispatchQueue.main.async { [weak self] in self?.sendPendingSelection() }
+        }
+    }
     private var timer: Timer?
     private let sender = OutgoingTransferClient()
+    private var pendingURLs: [URL]
+
+    init(pendingURLs: [URL] = []) {
+        self.pendingURLs = pendingURLs
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -116,6 +129,15 @@ final class TransferViewController: UIViewController, UITableViewDataSource, UIT
         selectedID = peers[indexPath.row].id
         status.text = "已选择“\(peers[indexPath.row].name)”"
         table.reloadData()
+    }
+
+    private func sendPendingSelection() {
+        guard selectedPeer() != nil, !pendingURLs.isEmpty else { return }
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        let items = urls.map { OutgoingItem(url: $0, name: $0.lastPathComponent,
+                                            mime: mime($0.lastPathComponent), temporary: false) }
+        send(items)
     }
 
     @objc private func pickFiles() {

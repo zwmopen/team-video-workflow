@@ -4,6 +4,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -12,6 +13,7 @@ import android.webkit.MimeTypeMap;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -34,23 +36,31 @@ final class GalleryShareBridge {
     }
 
     static PreparedShare prepare(Context context, WorkLibrary.WorkEntry work) {
+        return prepare(context, work, work.images);
+    }
+
+    static PreparedShare prepare(Context context, WorkLibrary.WorkEntry work, List<String> requestedImages) {
         cleanupPreviousDays(context, LocalDate.now());
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return new PreparedShare(privateUris(context, work), "private_provider", "");
+            return new PreparedShare(privateUris(context, work, requestedImages), "private_provider", "");
         }
 
         ArrayList<Uri> published = new ArrayList<>();
+        long startedAt = System.currentTimeMillis();
         try {
-            for (String image : work.images) {
+            for (String image : requestedImages) {
+                if (!work.images.contains(image)) continue;
                 published.add(publish(context, new File(work.directory, image), image));
             }
             remember(context, published, LocalDate.now());
+            DiagnosticLog.write(context, "share_media_ready", "images=" + published.size()
+                    + " ms=" + (System.currentTimeMillis() - startedAt));
             return new PreparedShare(published, "media_store", "");
         } catch (Exception error) {
             deletePublished(context, published);
             DiagnosticLog.write(context, "share_media_prepare_failed", error.getClass().getSimpleName()
                     + ": " + error.getMessage());
-            return new PreparedShare(privateUris(context, work), "private_provider_fallback",
+            return new PreparedShare(privateUris(context, work, requestedImages), "private_provider_fallback",
                     "系统媒体分享准备失败，已改用普通分享；应用分身可能无法读取图片");
         }
     }
@@ -103,18 +113,24 @@ final class GalleryShareBridge {
         Uri destination = resolver.insert(collection, values);
         if (destination == null) throw new IllegalStateException("系统媒体库没有返回文件地址");
         boolean completed = false;
-        try (FileInputStream input = new FileInputStream(source);
-             OutputStream output = resolver.openOutputStream(destination, "w")) {
-            if (output == null) throw new IllegalStateException("系统媒体库无法写入图片");
-            byte[] buffer = new byte[128 * 1024];
-            int read;
-            while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
-            output.flush();
+        try {
+            // Some OEM clone-space resolvers start reading as soon as IS_PENDING becomes 0.
+            // Close the writer first so they never observe a published but incomplete image.
+            try (FileInputStream input = new FileInputStream(source);
+                 OutputStream output = resolver.openOutputStream(destination, "w")) {
+                if (output == null) throw new IllegalStateException("系统媒体库无法写入图片");
+                byte[] buffer = new byte[128 * 1024];
+                int read;
+                while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
+                output.flush();
+            }
             values.clear();
             values.put(MediaStore.Images.Media.IS_PENDING, 0);
             if (resolver.update(destination, values, null, null) != 1) {
                 throw new IllegalStateException("系统媒体库无法发布图片");
             }
+            awaitReadable(resolver, destination, source.length());
+            resolver.notifyChange(destination, null);
             completed = true;
             return destination;
         } finally {
@@ -122,9 +138,32 @@ final class GalleryShareBridge {
         }
     }
 
-    private static ArrayList<Uri> privateUris(Context context, WorkLibrary.WorkEntry work) {
+    private static void awaitReadable(ContentResolver resolver, Uri uri, long expectedBytes) throws Exception {
+        long deadline = System.nanoTime() + 1_200_000_000L;
+        do {
+            boolean indexed = false;
+            try (Cursor cursor = resolver.query(uri,
+                    new String[]{MediaStore.Images.Media.IS_PENDING, MediaStore.Images.Media.SIZE},
+                    null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    indexed = cursor.getInt(0) == 0 && cursor.getLong(1) == expectedBytes;
+                }
+            }
+            if (indexed) {
+                try (InputStream input = resolver.openInputStream(uri)) {
+                    if (input != null && (expectedBytes == 0 || input.read() >= 0)) return;
+                }
+            }
+            Thread.sleep(40L);
+        } while (System.nanoTime() < deadline);
+        throw new IllegalStateException("系统媒体库尚未完成图片索引");
+    }
+
+    private static ArrayList<Uri> privateUris(Context context, WorkLibrary.WorkEntry work,
+                                               List<String> requestedImages) {
         ArrayList<Uri> result = new ArrayList<>();
-        for (String image : work.images) {
+        for (String image : requestedImages) {
+            if (!work.images.contains(image)) continue;
             result.add(new Uri.Builder()
                     .scheme("content")
                     .authority(context.getPackageName() + ".files")

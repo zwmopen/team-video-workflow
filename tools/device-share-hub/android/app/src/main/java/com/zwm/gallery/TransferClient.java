@@ -46,6 +46,17 @@ final class TransferClient {
         send(peer, sources, progress);
     }
 
+    void sendLocalFiles(PeerDevice peer, List<File> files, Progress progress) throws Exception {
+        if (files.isEmpty()) throw new IOException("没有选择文件");
+        ArrayList<Source> sources = new ArrayList<>();
+        for (File file : files) {
+            if (!file.isFile()) throw new IOException("文件不存在：" + file.getName());
+            sources.add(new Source(Uri.fromFile(file), file.getName(),
+                    mimeForName(file.getName()), file.length(), file));
+        }
+        send(peer, sources, progress);
+    }
+
     void sendFolder(PeerDevice peer, Uri tree, Progress progress) throws Exception {
         progress.update(0, "正在整理文件夹…");
         File archive = createFolderArchive(tree);
@@ -234,6 +245,16 @@ final class TransferClient {
         while (output.size() < max && (count = input.read(buffer, 0, Math.min(buffer.length, max - output.size()))) > 0)
             output.write(buffer, 0, count);
         return output.toByteArray();
+    }
+
+    private static String mimeForName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".txt")) return "text/plain";
+        return "application/octet-stream";
     }
 
     private static final class Doc {
