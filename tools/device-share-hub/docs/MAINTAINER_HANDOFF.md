@@ -7,7 +7,7 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.7，原生 Win32 x64 |
-| Android | 相册 0.5.1，versionCode 28，`com.zwm.gallery` |
+| Android | 相册 0.5.2 候选，versionCode 29，`com.zwm.gallery`；公开版仍为 0.5.1 |
 | iPhone | 相册 0.5.0，build 19，源码 bundle id `com.zwm.album` |
 | 当前主要变化 | 作品内容预览、图片多选删除/分享/传送、VIVO 分身冷启动等待、Windows 统一视觉 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
@@ -52,6 +52,8 @@
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
 
 ## 2026-07-23 实际状态
+
+- Android 0.5.2 候选根据 0.5.1 实体视觉反馈修正顶部布局：作品数字紧跟标题，四个入口为真正圆形、48dp 点击范围和统一间距。当前 USB 未枚举到设备，修改后实体截图与点击手感需重新连接手机复核。
 
 - Android 0.5.1 修复 0.5.0 误发 Debug APK：CI 改为测试、构建和上传同签名 Release APK，`debuggable` 关闭；扫描、分享、分身、传送、回收、更新和诊断代码没有依赖 Debug 开关。
 - Android 所有页面增加 Android 15+ 系统栏与水滴/刘海安全区适配；首页四个顶部入口扩大为 48dp，并调整窄屏标题与间距。

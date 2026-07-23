@@ -172,7 +172,7 @@ public final class MainActivity extends Activity {
         headingText.setSingleLine(true);
         headingText.setAutoSizeTextTypeUniformWithConfiguration(20, 26, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP);
-        titleCluster.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
+        titleCluster.addView(headingText, new LinearLayout.LayoutParams(-2, -2));
         scannedCountText = text("0", 12, true);
         scannedCountText.setTextColor(Color.rgb(53, 105, 82));
         scannedCountText.setGravity(Gravity.CENTER);
@@ -190,7 +190,7 @@ public final class MainActivity extends Activity {
             if (showingTrash) showWorks();
             else importSelectedTree(true);
         });
-        titleRow.addView(leftModeButton, iconParams(false));
+        titleRow.addView(leftModeButton, iconParams(true));
         rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
         rightModeButton.setOnClickListener(v -> {
             if (showingTrash) confirmClearTrash();
@@ -722,7 +722,7 @@ public final class MainActivity extends Activity {
         ImageButton button = new ImageButton(this);
         button.setImageResource(imageResource);
         button.setImageTintList(ColorStateList.valueOf(Color.rgb(54, 86, 72)));
-        button.setBackground(round(Color.rgb(231, 239, 233), 15));
+        button.setBackground(round(Color.rgb(231, 239, 233), 24));
         button.setPadding(dp(10), dp(10), dp(10), dp(10));
         button.setContentDescription(description);
         return button;
