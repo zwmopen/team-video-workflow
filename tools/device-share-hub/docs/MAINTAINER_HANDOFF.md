@@ -7,9 +7,9 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.7，原生 Win32 x64 |
-| Android | 相册 0.5.3，versionCode 30，`com.zwm.gallery` |
+| Android | 相册 0.5.4，versionCode 31，`com.zwm.gallery` |
 | iPhone | 相册 0.5.0，build 19，源码 bundle id `com.zwm.album` |
-| 当前主要变化 | 作品内容预览、图片多选删除/分享/传送、VIVO 分身冷启动等待、Windows 统一视觉 |
+| 当前主要变化 | 华为分享回调兼容、紧凑作品卡片、专业软件说明、作品内容预览与三端互传 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
@@ -52,6 +52,12 @@
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
 
 ## 2026-07-23 实际状态
+
+- Android 0.5.4 修复 HarmonyOS / EMUI 系统选择器可能先返回 Activity 结果、后送达所选目标回调的竞态。Activity 结果先到时保留 1.2 秒回调窗口；晚到回调仍记为“已打开分享”，没有目标回调才按取消结束。VIVO 的快速返回与 20 秒分身冷启动观察保持原路径。
+- 新增 4 项纯 Java 分享结果时序回归，覆盖“结果先到、回调后到”“回调缺失”“正常快速返回”“正常长时间返回”；Android 全量单元测试共 37 项，Release 编译与 Release Lint 均成功。
+- 作品卡片高度由 190dp 收紧到 174dp，水平间距与内边距同步收紧；默认卡片使用 1dp 柔和阴影、暖灰细描边和 16dp 圆角，减少四角厚重感。操作按钮保持 44dp 高，顶部四入口仍保持 48dp 点击区域。
+- 设置中的“软件说明”改为正式产品介绍，覆盖作品工作流、普通文件传送与预览、三端互传、本机状态和设计思路。
+- 局域网实读 Huawei P30 / Android 10 当前仍为 0.5.2，作品数 27、接收在线；电脑没有 USB/ADB 枚举，因此 0.5.4 尚未覆盖到该机，实体分享计数和卡片观感需安装后操作复核。此状态不影响本机自动回归结论。
 
 - Android 0.5.3 针对 0.5.2 Release 包仍出现厂商风险提示继续做单变量隔离：删除 `REQUEST_INSTALL_PACKAGES` 和 App 直接安装器调用，改为 Android 系统下载、系统完成通知和系统安装确认；包名、签名和数据结构不变。
 - 本机已完成 33 项单元测试、Release 编译与 Release Lint；备用 run `30010535186` 的 Windows、Android、iPhone 三端任务全部成功，Android 新门禁实际确认正式 APK 不含安装包请求权限和 Debug 标志。

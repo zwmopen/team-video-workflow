@@ -345,13 +345,13 @@ public final class MainActivity extends Activity {
                 spacerParams.setMargins(dp(6), 0, 0, 0);
                 row.addView(spacer, spacerParams);
             }
-            worksContainer.addView(row, margins(0, 0, 0, dp(12)));
+            worksContainer.addView(row, margins(0, 0, 0, dp(10)));
         }
     }
 
     private void addGridCard(LinearLayout row, WorkLibrary.WorkEntry work, boolean right) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(190), 1);
-        params.setMargins(right ? dp(6) : 0, 0, right ? 0 : dp(6), 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(174), 1);
+        params.setMargins(right ? dp(5) : 0, 0, right ? 0 : dp(5), 0);
         row.addView(workCard(work), params);
     }
 
@@ -361,10 +361,12 @@ public final class MainActivity extends Activity {
         boolean selected = selectedWorkIds.contains(work.id);
         boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
         if (selected) {
-            card.setBackground(round(Color.rgb(250, 224, 220), 20));
-            card.setElevation(dp(5));
+            card.setBackground(roundWithStroke(
+                    Color.rgb(250, 230, 226), 16, Color.rgb(209, 126, 116)));
+            card.setElevation(dp(2));
         } else if (!showingTrash && work.sharedDate != null) {
-            card.setBackground(round(Color.rgb(225, 225, 222), 20));
+            card.setBackground(roundWithStroke(
+                    Color.rgb(231, 231, 228), 16, Color.rgb(211, 211, 207)));
             card.setElevation(0);
         }
         LinearLayout nameRow = new LinearLayout(this);
@@ -389,7 +391,7 @@ public final class MainActivity extends Activity {
         TextView meta = text(detail, 12, false);
         meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(78, 78, 75));
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, 0, 1);
-        metaParams.setMargins(0, dp(4), 0, dp(8));
+        metaParams.setMargins(0, dp(3), 0, dp(6));
         card.addView(meta, metaParams);
         String actionText = selecting ? (selected ? "已选择" : "选择")
                 : showingTrash ? "恢复" : (work.sharedDate == null ? "复制并分享" : "再次分享");
@@ -419,7 +421,7 @@ public final class MainActivity extends Activity {
         name.setOnLongClickListener(select);
         meta.setOnLongClickListener(select);
         action.setOnLongClickListener(select);
-        card.addView(action, new LinearLayout.LayoutParams(-1, dp(46)));
+        card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         return card;
     }
 
@@ -701,9 +703,10 @@ public final class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(16), dp(15), dp(16), dp(15));
-        card.setBackground(round(Color.WHITE, 20));
-        card.setElevation(dp(3));
+        card.setPadding(dp(12), dp(11), dp(12), dp(11));
+        card.setBackground(roundWithStroke(
+                Color.rgb(254, 254, 252), 16, Color.rgb(226, 224, 218)));
+        card.setElevation(dp(1));
         return card;
     }
 
@@ -747,6 +750,12 @@ public final class MainActivity extends Activity {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(color);
         drawable.setCornerRadius(dp(radiusDp));
+        return drawable;
+    }
+
+    private GradientDrawable roundWithStroke(int color, int radiusDp, int strokeColor) {
+        GradientDrawable drawable = round(color, radiusDp);
+        drawable.setStroke(dp(1), strokeColor);
         return drawable;
     }
 

@@ -33,7 +33,7 @@ public final class ShareActivity extends Activity {
     public static final String EXTRA_IMAGE_NAMES = "imageNames";
     private static final int REQUEST_SHARE = 501;
     private static final String ACTION_TARGET_CHOSEN = "com.zwm.gallery.SHARE_TARGET_CHOSEN";
-    private static final long QUICK_TARGET_RETURN_MS = 6_000L;
+    private static final long CHOSEN_CALLBACK_GRACE_MS = 1_200L;
     // Clone-space routers on low-memory VIVO devices can need well over ten seconds
     // to warm the real editor after their lightweight routing activity returns.
     private static final long DEFERRED_TARGET_WAIT_MS = 20_000L;
@@ -41,21 +41,24 @@ public final class ShareActivity extends Activity {
     private WorkLibrary library;
     private String workId;
     private boolean launched;
-    private boolean targetChosen;
-    private long targetChosenAtMs;
     private boolean waitingForDeferredTarget;
     private boolean shareFlowFinished;
     private boolean chosenReceiverRegistered;
     private int pendingResultCode;
+    private final ShareOutcomeDecider outcomeDecider = new ShareOutcomeDecider();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final BroadcastReceiver chosenReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            targetChosen = true;
-            targetChosenAtMs = SystemClock.elapsedRealtime();
             android.content.ComponentName component = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
             DiagnosticLog.write(ShareActivity.this, "share_target_chosen",
                     component == null ? "unknown" : component.getPackageName());
+            ShareOutcomeDecider.Action action =
+                    outcomeDecider.onTargetChosen(SystemClock.elapsedRealtime());
+            if (action == ShareOutcomeDecider.Action.MARK_SHARED) {
+                DiagnosticLog.write(ShareActivity.this, "share_target_chosen_late", workId);
+                finishShareFlow(true, pendingResultCode, "late_chosen_callback");
+            }
         }
     };
 
@@ -186,21 +189,33 @@ public final class ShareActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_SHARE) return;
-        if (!targetChosen) {
-            DiagnosticLog.write(this, "share_chooser_cancelled", workId);
-            finishShareFlow(false, resultCode, "chooser_cancelled");
-            return;
+        pendingResultCode = resultCode;
+        ShareOutcomeDecider.Action action =
+                outcomeDecider.onChooserResult(SystemClock.elapsedRealtime());
+        if (action == ShareOutcomeDecider.Action.WAIT_FOR_CHOSEN_CALLBACK) {
+            setContentView(ScreenInsets.protect(confirmingView()));
+            DiagnosticLog.write(this, "share_waiting_chosen_callback", workId);
+            mainHandler.postDelayed(this::finishChosenCallbackWait, CHOSEN_CALLBACK_GRACE_MS);
+        } else if (action == ShareOutcomeDecider.Action.WAIT_FOR_DEFERRED_TARGET) {
+            beginDeferredTargetWait(resultCode);
+        } else if (action == ShareOutcomeDecider.Action.MARK_SHARED) {
+            finishShareFlow(true, resultCode, "target_returned");
         }
-        long targetOpenMs = SystemClock.elapsedRealtime() - targetChosenAtMs;
-        if (targetOpenMs < QUICK_TARGET_RETURN_MS) {
-            waitingForDeferredTarget = true;
-            pendingResultCode = resultCode;
-            setContentView(ScreenInsets.protect(waitingView()));
-            DiagnosticLog.write(this, "share_target_returned_early", workId + " ms=" + targetOpenMs);
-            mainHandler.postDelayed(this::finishDeferredWait, DEFERRED_TARGET_WAIT_MS);
-            return;
-        }
-        finishShareFlow(true, resultCode, "target_returned");
+    }
+
+    private void finishChosenCallbackWait() {
+        if (shareFlowFinished) return;
+        if (outcomeDecider.onChosenCallbackTimeout() != ShareOutcomeDecider.Action.CANCEL) return;
+        DiagnosticLog.write(this, "share_chooser_cancelled", workId + " callback_timeout");
+        finishShareFlow(false, pendingResultCode, "chooser_cancelled");
+    }
+
+    private void beginDeferredTargetWait(int resultCode) {
+        waitingForDeferredTarget = true;
+        pendingResultCode = resultCode;
+        setContentView(ScreenInsets.protect(waitingView()));
+        DiagnosticLog.write(this, "share_target_returned_early", workId);
+        mainHandler.postDelayed(this::finishDeferredWait, DEFERRED_TARGET_WAIT_MS);
     }
 
     @Override
@@ -250,6 +265,13 @@ public final class ShareActivity extends Activity {
         LinearLayout root = preparingView();
         TextView label = (TextView) root.getChildAt(1);
         label.setText("正在等待分身打开…");
+        return root;
+    }
+
+    private LinearLayout confirmingView() {
+        LinearLayout root = preparingView();
+        TextView label = (TextView) root.getChildAt(1);
+        label.setText("正在确认分享…");
         return root;
     }
 

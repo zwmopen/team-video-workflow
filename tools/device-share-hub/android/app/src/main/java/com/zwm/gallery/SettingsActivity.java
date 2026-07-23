@@ -185,8 +185,17 @@ public final class SettingsActivity extends Activity {
 
     private void showAbout() {
         new AlertDialog.Builder(this)
-                .setTitle("关于相册")
-                .setMessage("相册用于同一 Wi‑Fi 下接收电脑作品，自动识别图片和 TXT，并用标准 Android 分享打开目标平台。\n\n不使用 Root、ADB、无障碍、自动点击或自动发布；不伪造图片地点和拍摄参数。")
+                .setTitle("相册 · 作品与文件中控")
+                .setMessage(
+                        "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n"
+                        + "核心场景\n"
+                        + "从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可以继续传送、预览和分享。\n\n"
+                        + "作品工作流\n"
+                        + "点一次“复制并分享”，文案自动进入剪贴板，作品图片交给系统分享面板。每次打开分享都会留下清楚的次数记录；作品可手动回收，也会按使用日期整理，回收站保留 7 天。\n\n"
+                        + "跨设备传送\n"
+                        + "电脑、Android 和 iPhone 在同一 Wi‑Fi 下自动发现。选择设备和文件即可传送，过程带有进度、完整性校验和结果提示。\n\n"
+                        + "设计思路\n"
+                        + "内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站都保存在本机；覆盖升级会延续现有数据。")
                 .setPositiveButton("知道了", null).show();
     }
 
