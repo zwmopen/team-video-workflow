@@ -119,7 +119,7 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        UpdateChecker.resumePendingInstall(this);
+        UpdateChecker.reportDownloadProblem(this);
     }
 
     private void changeSoundNotifications(boolean enabled) {

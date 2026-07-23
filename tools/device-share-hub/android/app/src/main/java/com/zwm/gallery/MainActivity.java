@@ -587,7 +587,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        UpdateChecker.resumePendingInstall(this);
+        UpdateChecker.reportDownloadProblem(this);
     }
 
     private String treeName(Uri tree) {

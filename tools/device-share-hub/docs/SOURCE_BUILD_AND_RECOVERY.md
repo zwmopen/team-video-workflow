@@ -37,8 +37,11 @@ cmake --build tools/device-share-hub/windows-native/build --config Release
 在 `tools/device-share-hub/android` 使用 JDK 17 和 Gradle 9.4.1：
 
 ```powershell
-gradle :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+gradle :app:testDebugUnitTest :app:assembleRelease :app:lintRelease
 ```
+
+正式 APK 还必须用 Android build-tools 核对：不含
+`android.permission.REQUEST_INSTALL_PACKAGES`，也不含 `application-debuggable`。
 
 ### iPhone
 

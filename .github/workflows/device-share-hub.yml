@@ -77,6 +77,18 @@ jobs:
           set +e
           /tmp/gradle/gradle-9.4.1/bin/gradle :app:testDebugUnitTest :app:assembleRelease :app:lintRelease --stacktrace > /tmp/device-share-android-build.log 2>&1
           build_status=$?
+          if [ "$build_status" -eq 0 ]; then
+            apk="app/build/outputs/apk/release/app-release.apk"
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" >> /tmp/device-share-android-build.log 2>&1
+            if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" | grep -q 'android.permission.REQUEST_INSTALL_PACKAGES'; then
+              echo "Release APK must not request REQUEST_INSTALL_PACKAGES" >> /tmp/device-share-android-build.log
+              build_status=1
+            fi
+            if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep -q 'application-debuggable'; then
+              echo "Release APK must not be debuggable" >> /tmp/device-share-android-build.log
+              build_status=1
+            fi
+          fi
           echo "status=$build_status" >> "$GITHUB_OUTPUT"
           tail -n 180 /tmp/device-share-android-build.log
           exit 0
