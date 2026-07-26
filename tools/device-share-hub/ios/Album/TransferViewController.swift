@@ -117,7 +117,7 @@ final class TransferViewController: UIViewController, UITableViewDataSource, UIT
         let peer = peers[indexPath.row]
         let baseName = peer.name.isEmpty ? peer.model : peer.name
         cell.textLabel?.text = peer.workCount >= 0 ? "\(baseName)（作品数 \(peer.workCount)）" : baseName
-        cell.detailTextLabel?.text = peer.model
+        cell.detailTextLabel?.text = "\(peer.model)  ·  WiFi"
         cell.textLabel?.font = .boldSystemFont(ofSize: 16)
         cell.backgroundColor = peer.id == selectedID ? view.tintColor.withAlphaComponent(0.14) : .white
         cell.layer.cornerRadius = 15

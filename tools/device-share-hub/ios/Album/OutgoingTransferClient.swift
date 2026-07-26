@@ -58,7 +58,7 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
                                       body: Data(), file: nil, headers: ["Content-Type": "text/plain"])
                     throw error
                 }
-                DispatchQueue.main.async { progress(100, "已传送到“\(peer.name)”"); completion(.success(())) }
+                DispatchQueue.main.async { progress(100, "WiFi 传送完成 · “\(peer.name)”"); completion(.success(())) }
             } catch {
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
@@ -100,7 +100,7 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
         let percent = Int(min(100, (completedBytes + totalBytesSent) * 100 / totalBytes))
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.progress?(percent, "正在传给“\(self.peerName)” \(percent)%")
+            self.progress?(percent, "WiFi 传送中 · “\(self.peerName)” \(percent)%")
         }
     }
 

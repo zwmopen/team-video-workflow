@@ -1412,7 +1412,10 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     if (device.usbAllowed && device.usbReady) channelLabels.push_back(L"USB");
     if (device.wifiAllowed && !device.ip.empty()) channelLabels.push_back(L"WiFi");
     if (device.remoteAllowed && device.remoteConnected) channelLabels.push_back(L"远程");
-    channelLabels.push_back(device.state == L"usb" ? L"在线" : StateLabel(device.state));
+    if (device.state == L"receiving") channelLabels.push_back(L"接收中");
+    if (device.state == L"sharing") channelLabels.push_back(L"分享中");
+    if (channelLabels.empty() && device.state == L"usb_pending") channelLabels.push_back(L"USB 待开启");
+    if (channelLabels.empty()) channelLabels.push_back(L"无可用通道");
     std::wstring channelText;
     for (const auto& value : channelLabels) {
         if (!channelText.empty()) channelText += L" · ";

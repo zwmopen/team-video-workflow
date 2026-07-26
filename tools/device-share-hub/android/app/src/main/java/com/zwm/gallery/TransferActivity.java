@@ -137,7 +137,7 @@ public final class TransferActivity extends Activity {
             item.setPadding(dp(16), dp(10), dp(16), dp(10));
             String displayName = peer.name;
             if (peer.workCount >= 0) displayName += "（作品数 " + peer.workCount + "）";
-            item.setText(displayName + "\n" + peer.model);
+            item.setText(displayName + "\n" + peer.model + "  ·  WiFi");
             item.setTextSize(15);
             boolean chosen = selected != null && selected.id.equals(peer.id);
             item.setTextColor(chosen ? Color.WHITE : Color.rgb(38, 39, 38));

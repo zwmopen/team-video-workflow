@@ -102,14 +102,14 @@ final class TransferClient {
                         output.write(buffer, 0, count);
                         sent += count;
                         int percent = total == 0 ? 100 : (int) Math.min(100, (base + sent) * 100 / total);
-                        progress.update(percent, "正在传给“" + peer.name + "” " + percent + "%");
+                        progress.update(percent, "WiFi 传送中 · “" + peer.name + "” " + percent + "%");
                     }
                 }
                 check(connection);
                 completed += source.size;
             }
             request(peer, "POST", "/v2/tasks/" + taskId + "/commit", "text/plain", new byte[0], null);
-            progress.update(100, "已传送到“" + peer.name + "”");
+            progress.update(100, "WiFi 传送完成 · “" + peer.name + "”");
         } catch (Exception error) {
             try { request(peer, "POST", "/v2/tasks/" + taskId + "/cancel", "text/plain", new byte[0], null); }
             catch (Exception ignored) { }
