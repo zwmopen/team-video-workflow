@@ -492,9 +492,24 @@ std::vector<UsbPeer> EnumerateUsbPeers() {
     auto detected = EnumerateConnectedAndroidUsb();
     for (const auto& peer : detected) {
         bool alreadyRepresented = std::any_of(result.begin(), result.end(), [&](const UsbPeer& ready) {
-            return ready.kind == UsbTransportKind::PortableDevice
-                && (_wcsicmp(ready.name.c_str(), peer.name.c_str()) == 0
-                    || (!ready.model.empty() && _wcsicmp(ready.model.c_str(), peer.model.c_str()) == 0));
+            if (ready.kind != UsbTransportKind::PortableDevice) return false;
+            if (_wcsicmp(ready.name.c_str(), peer.name.c_str()) == 0
+                    || (!ready.model.empty() && _wcsicmp(ready.model.c_str(), peer.model.c_str()) == 0)) {
+                return true;
+            }
+            std::wstring portableId = ready.locator;
+            std::wstring rawId = peer.locator;
+            std::transform(portableId.begin(), portableId.end(), portableId.begin(), towupper);
+            std::transform(rawId.begin(), rawId.end(), rawId.begin(), towupper);
+            const auto vendorAt = rawId.find(L"VID_");
+            const auto serialAt = rawId.find_last_of(L"\\#");
+            if (vendorAt == std::wstring::npos || serialAt == std::wstring::npos
+                    || serialAt + 1 >= rawId.size()) return false;
+            const std::wstring vendor = rawId.substr(vendorAt, 8);
+            const std::wstring serial = rawId.substr(serialAt + 1);
+            return serial.size() >= 4
+                && portableId.find(vendor) != std::wstring::npos
+                && portableId.find(serial) != std::wstring::npos;
         });
         if (!alreadyRepresented) result.push_back(peer);
     }
