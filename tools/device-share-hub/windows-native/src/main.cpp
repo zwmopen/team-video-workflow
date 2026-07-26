@@ -1082,6 +1082,17 @@ void RefreshDeviceList() {
                     && _wcsicmp(candidate.model.c_str(), peer.model.c_str()) == 0;
                 return sameName || sameModel;
             });
+            if (sameDevice == fresh.end() && peer.kind == UsbTransportKind::DetectedOnly) {
+                auto onlyAndroid = fresh.end();
+                for (auto candidate = fresh.begin(); candidate != fresh.end(); ++candidate) {
+                    bool apple = candidate->model.find(L"iPhone") != std::wstring::npos
+                        || candidate->id.find(L"ios-") == 0;
+                    if (apple || candidate->ip.empty()) continue;
+                    if (onlyAndroid != fresh.end()) { onlyAndroid = fresh.end(); break; }
+                    onlyAndroid = candidate;
+                }
+                sameDevice = onlyAndroid;
+            }
             if (sameDevice != fresh.end()) {
                 sameDevice->usbReady = peer.ready;
                 sameDevice->usbPeer = peer;
@@ -1292,6 +1303,9 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetTextColor(dc, RGB(105, 112, 120));
     std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
     if (device.usbReady && device.state != L"usb") sub += L"  ·  USB 优先";
+    else if (!device.usbPeer.id.empty() && device.state != L"usb_pending") {
+        sub += L"  ·  USB 已连接，待文件传输";
+    }
     RECT subRect{rect.left + 68, rect.top + 38, rect.right - 125, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 

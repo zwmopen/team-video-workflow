@@ -6,6 +6,8 @@
 #include <PortableDeviceTypes.h>
 #include <propvarutil.h>
 #include <wincrypt.h>
+#include <setupapi.h>
+#include <usbiodef.h>
 
 #include <algorithm>
 #include <fstream>
@@ -409,6 +411,54 @@ std::vector<UsbPeer> EnumeratePortable() {
     return result;
 }
 
+std::vector<UsbPeer> EnumerateConnectedAndroidUsb() {
+    std::vector<UsbPeer> result;
+    HDEVINFO devices = SetupDiGetClassDevsW(
+        &GUID_DEVINTERFACE_USB_DEVICE, nullptr, nullptr,
+        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devices == INVALID_HANDLE_VALUE) return result;
+    for (DWORD index = 0;; ++index) {
+        SP_DEVINFO_DATA info{sizeof(info)};
+        if (!SetupDiEnumDeviceInfo(devices, index, &info)) break;
+        wchar_t hardware[2048]{};
+        if (!SetupDiGetDeviceRegistryPropertyW(
+                devices, &info, SPDRP_HARDWAREID, nullptr,
+                reinterpret_cast<PBYTE>(hardware), sizeof(hardware), nullptr)) continue;
+        std::wstring normalized = hardware;
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), towupper);
+        static const wchar_t* phoneVendors[] = {
+            L"VID_18D1", L"VID_2717", L"VID_2D95", L"VID_12D1",
+            L"VID_0BB4", L"VID_22D9", L"VID_2A70", L"VID_04E8"
+        };
+        bool phone = false;
+        for (const auto* vendor : phoneVendors) {
+            if (normalized.find(vendor) != std::wstring::npos) { phone = true; break; }
+        }
+        if (!phone) continue;
+        wchar_t instance[2048]{};
+        if (!SetupDiGetDeviceInstanceIdW(devices, &info, instance, ARRAYSIZE(instance), nullptr)) continue;
+        wchar_t name[512]{};
+        if (!SetupDiGetDeviceRegistryPropertyW(
+                devices, &info, SPDRP_FRIENDLYNAME, nullptr,
+                reinterpret_cast<PBYTE>(name), sizeof(name), nullptr)) {
+            SetupDiGetDeviceRegistryPropertyW(
+                devices, &info, SPDRP_DEVICEDESC, nullptr,
+                reinterpret_cast<PBYTE>(name), sizeof(name), nullptr);
+        }
+        UsbPeer peer;
+        peer.id = L"usbraw:" + std::wstring(instance);
+        peer.locator = instance;
+        peer.name = name[0] ? name : L"Android USB 手机";
+        peer.model = L"Android";
+        peer.kind = UsbTransportKind::DetectedOnly;
+        peer.ready = false;
+        peer.hint = L"已连接；请把 USB 用途切换为“文件传输”";
+        result.push_back(peer);
+    }
+    SetupDiDestroyDeviceInfoList(devices);
+    return result;
+}
+
 std::vector<UsbPeer> EnumerateApple() {
     std::vector<UsbPeer> result;
     std::string output = RunBridge({L"list"});
@@ -440,6 +490,15 @@ void ConfigureUsbTransport(void* moduleHandle, UsbLogCallback logger) {
 std::vector<UsbPeer> EnumerateUsbPeers() {
     HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     std::vector<UsbPeer> result = EnumeratePortable();
+    auto detected = EnumerateConnectedAndroidUsb();
+    for (const auto& peer : detected) {
+        bool alreadyRepresented = std::any_of(result.begin(), result.end(), [&](const UsbPeer& ready) {
+            return ready.kind == UsbTransportKind::PortableDevice
+                && (_wcsicmp(ready.name.c_str(), peer.name.c_str()) == 0
+                    || (!ready.model.empty() && _wcsicmp(ready.model.c_str(), peer.model.c_str()) == 0));
+        });
+        if (!alreadyRepresented) result.push_back(peer);
+    }
     auto apple = EnumerateApple();
     result.insert(result.end(), apple.begin(), apple.end());
     if (SUCCEEDED(initialized)) CoUninitialize();
