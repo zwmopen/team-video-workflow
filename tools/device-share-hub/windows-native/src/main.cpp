@@ -1438,10 +1438,15 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
     RECT listClient{};
-    int contentRight = rect.right - 16;
+    RECT clipRect{};
+    LONG visibleRight = rect.right;
     if (GetClientRect(item->hwndItem, &listClient) && listClient.right > listClient.left) {
-        contentRight = std::min<LONG>(rect.right, listClient.right) - 16;
+        visibleRight = std::min<LONG>(visibleRight, listClient.right);
     }
+    if (GetClipBox(dc, &clipRect) != ERROR && clipRect.right > clipRect.left) {
+        visibleRight = std::min<LONG>(visibleRight, clipRect.right);
+    }
+    int contentRight = visibleRight - 16;
     RECT nameRect{rect.left + 68, rect.top + 9, contentRight - 220, rect.top + 35};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
@@ -1476,6 +1481,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     std::wstring badgeGeometry =
         L"item=" + std::to_wstring(rect.left) + L"," + std::to_wstring(rect.right)
         + L" client=" + std::to_wstring(listClient.left) + L"," + std::to_wstring(listClient.right)
+        + L" clip=" + std::to_wstring(clipRect.left) + L"," + std::to_wstring(clipRect.right)
         + L" contentRight=" + std::to_wstring(contentRight)
         + L" badgeLeft=" + std::to_wstring(badgeLeft)
         + L" labels=" + std::to_wstring(channelLabels.size());
