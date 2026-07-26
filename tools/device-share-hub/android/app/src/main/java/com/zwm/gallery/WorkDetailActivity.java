@@ -285,6 +285,19 @@ public final class WorkDetailActivity extends Activity {
     }
 
     private void shareSelected() {
+        if (work.shareCount > 0) {
+            new AlertDialog.Builder(this)
+                    .setTitle("这个作品已分享 " + work.shareCount + " 次")
+                    .setMessage("继续操作会再记一次。确认是发到另一个平台或重新尝试吗？")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("继续分享", (dialog, which) -> launchSelectedShare())
+                    .show();
+            return;
+        }
+        launchSelectedShare();
+    }
+
+    private void launchSelectedShare() {
         startActivity(new Intent(this, ShareActivity.class)
                 .putExtra(ShareActivity.EXTRA_WORK_ID, work.id)
                 .putStringArrayListExtra(ShareActivity.EXTRA_IMAGE_NAMES, new ArrayList<>(selected)));

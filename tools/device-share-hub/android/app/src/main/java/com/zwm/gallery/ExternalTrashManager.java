@@ -78,6 +78,22 @@ final class ExternalTrashManager {
         return result;
     }
 
+    static Result purgeExpired(ContentResolver resolver, Uri tree, File legacyRoot,
+                               WorkLibrary library, long nowMs, long deleteAfterMs) throws IOException {
+        Result result = moveTrashedSources(resolver, tree, legacyRoot, library);
+        if (!result.failures.isEmpty()) return result;
+        for (WorkLibrary.WorkEntry entry : library.listTrash()) {
+            if (!RetentionPolicy.shouldPurge(entry.firstSharedAtMs, nowMs, deleteAfterMs)) continue;
+            try {
+                deleteExternalEntry(resolver, tree, legacyRoot, library, entry, result);
+                library.deleteTrash(entry.id);
+            } catch (Exception error) {
+                result.failures.add(entry.name + "：" + safeMessage(error));
+            }
+        }
+        return result;
+    }
+
     static Result clearTrackedTrash(ContentResolver resolver, Uri tree, File legacyRoot, WorkLibrary library)
             throws IOException {
         Result result = moveTrashedSources(resolver, tree, legacyRoot, library);

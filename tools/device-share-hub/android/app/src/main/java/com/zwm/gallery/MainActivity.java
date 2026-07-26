@@ -211,7 +211,7 @@ public final class MainActivity extends Activity {
         statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
         root.addView(statusText, margins(0, dp(18), 0, dp(8)));
 
-        TextView note = text("“已打开分享”只表示平台页面已打开；系统不会告诉相册是否真正发布成功。当天保留，次日进入回收站，7 天后清理。", 12, false);
+        TextView note = text("点击“复制并分享”会立即记一次。默认 1 小时后进入回收站并从文件管理中彻底删除；时间可在设置中修改。", 12, false);
         note.setTextColor(Color.GRAY);
         root.addView(note, margins(0, dp(12), 0, 0));
 
@@ -222,6 +222,11 @@ public final class MainActivity extends Activity {
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(Color.rgb(246, 244, 240));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+        Button modeSwitch = smallButton("小红书笔记  ·  切换到文件", false);
+        modeSwitch.setOnClickListener(v -> startActivity(new Intent(this, FileBrowserActivity.class)));
+        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(-1, dp(40));
+        modeParams.setMargins(dp(30), 0, dp(30), dp(8));
+        frozenLayout.addView(modeSwitch, modeParams);
         frozenLayout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
@@ -245,11 +250,9 @@ public final class MainActivity extends Activity {
                     DiagnosticLog.write(this, "duplicate_works_merged",
                             "count=" + library.reconciledDuplicates());
                 }
-                library.maintain(LocalDate.now());
-                syncExternalTrash(library);
-                ExternalTrashManager.Result expired = purgeExpiredTrash(library);
-                if (!expired.succeeded()) {
-                    DiagnosticLog.write(this, "external_trash_purge_failed", expired.firstFailure());
+                CleanupCoordinator.Result cleanup = CleanupCoordinator.run(this);
+                if (!cleanup.failure.isEmpty()) {
+                    DiagnosticLog.write(this, "external_trash_purge_failed", cleanup.failure);
                 }
                 List<WorkLibrary.WorkEntry> activeEntries = library.listActive();
                 List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : activeEntries;
@@ -385,8 +388,8 @@ public final class MainActivity extends Activity {
         nameRow.addView(checkBox, new LinearLayout.LayoutParams(dp(42), dp(42)));
         card.addView(nameRow);
         String detail = work.images.size() + " 张图片";
-        if (work.shareCount > 0) detail += "\n✓ 已打开分享 " + work.shareCount + " 次";
-        else if (work.trashedDate != null) detail += "\n回收站保留 7 天";
+        if (work.shareCount > 0) detail += "\n✓ 已发起分享 " + work.shareCount + " 次";
+        else if (work.trashedDate != null) detail += "\n等待自动清理";
         else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
         TextView meta = text(detail, 12, false);
         meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(78, 78, 75));
@@ -399,7 +402,7 @@ public final class MainActivity extends Activity {
         action.setOnClickListener(v -> {
             if (!selectedWorkIds.isEmpty() && !showingTrash) toggleWorkSelection(work.id);
             else if (showingTrash) restore(work.id);
-            else startActivity(new Intent(this, ShareActivity.class).putExtra(ShareActivity.EXTRA_WORK_ID, work.id));
+            else openShare(work);
         });
         View.OnLongClickListener select = v -> {
             if (showingTrash) return false;
@@ -423,6 +426,22 @@ public final class MainActivity extends Activity {
         action.setOnLongClickListener(select);
         card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         return card;
+    }
+
+    private void openShare(WorkLibrary.WorkEntry work) {
+        if (work.shareCount <= 0) {
+            startActivity(new Intent(this, ShareActivity.class)
+                    .putExtra(ShareActivity.EXTRA_WORK_ID, work.id));
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("这个作品已分享 " + work.shareCount + " 次")
+                .setMessage("如果是发到另一个平台，可以继续；如果刚刚已经操作过，建议取消，避免重复发布。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("继续分享", (dialog, which) ->
+                        startActivity(new Intent(this, ShareActivity.class)
+                                .putExtra(ShareActivity.EXTRA_WORK_ID, work.id)))
+                .show();
     }
 
     private void toggleWorkSelection(String id) {

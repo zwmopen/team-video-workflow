@@ -17,6 +17,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.content.pm.PackageManager;
 import android.provider.DocumentsContract;
+import android.text.InputType;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
@@ -33,6 +34,8 @@ public final class SettingsActivity extends Activity {
     private EditText deviceName;
     private TextView pathText;
     private Switch soundSwitch;
+    private EditText moveAfterMinutes;
+    private EditText deleteAfterMinutes;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,6 +72,19 @@ public final class SettingsActivity extends Activity {
         Button choose = button("更改作品文件夹", false);
         choose.setOnClickListener(v -> chooseFolder());
         root.addView(choose, margins(0, dp(10), 0, dp(20)));
+
+        root.addView(label("自动整理"));
+        CleanupSettings.Values cleanup = CleanupSettings.read(this);
+        root.addView(settingCaption("自动移入回收站（小时）", "从第一次点击“复制并分享”开始计时，可填 1～10"));
+        moveAfterMinutes = numberField(Integer.toString(Math.max(1, cleanup.moveMinutes / 60)));
+        root.addView(moveAfterMinutes, new LinearLayout.LayoutParams(-1, dp(52)));
+        root.addView(settingCaption("自动彻底删除（小时）", "会同时从手机文件管理中删除，可填 1～10"),
+                margins(0, dp(10), 0, 0));
+        deleteAfterMinutes = numberField(Integer.toString(Math.max(1, cleanup.deleteMinutes / 60)));
+        root.addView(deleteAfterMinutes, new LinearLayout.LayoutParams(-1, dp(52)));
+        Button saveCleanup = button("保存自动整理时间", false);
+        saveCleanup.setOnClickListener(v -> saveCleanupSettings());
+        root.addView(saveCleanup, margins(0, dp(10), 0, dp(20)));
 
         root.addView(label("提醒"));
         soundSwitch = settingSwitch("声音通知", "收到文件时显示通知并响铃",
@@ -114,6 +130,23 @@ public final class SettingsActivity extends Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("deviceName", value).apply();
         DiagnosticLog.write(this, "device_name_saved", value);
         toast("已保存，电脑端会自动刷新");
+    }
+
+    private void saveCleanupSettings() {
+        try {
+            int moveHours = Integer.parseInt(moveAfterMinutes.getText().toString().trim());
+            int deleteHours = Integer.parseInt(deleteAfterMinutes.getText().toString().trim());
+            if (moveHours < 1 || moveHours > 10 || deleteHours < 1 || deleteHours > 10
+                    || !CleanupSettings.save(this, moveHours * 60, deleteHours * 60)) {
+                toast("请输入 1～10，彻底删除时间不能早于回收时间");
+                return;
+            }
+            DiagnosticLog.write(this, "cleanup_settings_saved",
+                    "moveHours=" + moveHours + " deleteHours=" + deleteHours);
+            toast("自动整理时间已保存");
+        } catch (NumberFormatException error) {
+            toast("请输入 1～10 的整数小时");
+        }
     }
 
     @Override
@@ -191,7 +224,7 @@ public final class SettingsActivity extends Activity {
                         + "核心场景\n"
                         + "从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可以继续传送、预览和分享。\n\n"
                         + "作品工作流\n"
-                        + "点一次“复制并分享”，文案自动进入剪贴板，作品图片交给系统分享面板。每次打开分享都会留下清楚的次数记录；作品可手动回收，也会按使用日期整理，回收站保留 7 天。\n\n"
+                        + "点一次“复制并分享”，应用会立即记录一次，文案自动进入剪贴板，作品图片交给系统分享面板。再次分享会先提醒，避免误发同一个作品。默认 1 小时后进入回收站并从文件管理中彻底删除，时间可在设置中调整。\n\n"
                         + "跨设备传送\n"
                         + "电脑、Android 和 iPhone 在同一 Wi‑Fi 下自动发现。选择设备和文件即可传送，过程带有进度、完整性校验和结果提示。\n\n"
                         + "设计思路\n"
@@ -223,6 +256,21 @@ public final class SettingsActivity extends Activity {
     }
 
     private TextView label(String value) { TextView v = text(value, 14, true); v.setPadding(0, 0, 0, dp(7)); return v; }
+    private TextView settingCaption(String title, String detail) {
+        TextView value = text(title + "\n" + detail, 14, false);
+        value.setTextColor(Color.rgb(70, 70, 67));
+        value.setPadding(0, 0, 0, dp(7));
+        return value;
+    }
+    private EditText numberField(String value) {
+        EditText field = new EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(InputType.TYPE_CLASS_NUMBER);
+        field.setText(value);
+        field.setBackground(round(Color.WHITE, 14));
+        field.setPadding(dp(14), 0, dp(14), 0);
+        return field;
+    }
     private Switch settingSwitch(String title, String detail, boolean checked) {
         Switch value = new Switch(this);
         value.setText(title + "\n" + detail);

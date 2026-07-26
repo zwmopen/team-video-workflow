@@ -41,6 +41,18 @@ public final class WorkLibraryTest {
     }
 
     @Test
+    public void importDropsByteIdenticalImagesWithDifferentNames() throws Exception {
+        File source = temporary.newFolder("duplicate-images");
+        File first = write(source, "1.png", "same");
+        File second = write(source, "2.png", "same");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("dedup-images-library"));
+
+        library.importWork("work-images", "作品", "文案", Arrays.asList(first, second), "");
+
+        assertEquals(1, library.getActive("work-images").images.size());
+    }
+
+    @Test
     public void movesOnNextDayAndRestoresFromTrash() throws Exception {
         File source = temporary.newFolder("source");
         WorkLibrary library = new WorkLibrary(temporary.newFolder("library"));
@@ -99,6 +111,26 @@ public final class WorkLibraryTest {
         library.markShared("count", LocalDate.of(2026, 7, 18));
 
         assertEquals(2, library.getActive("count").shareCount);
+    }
+
+    @Test
+    public void recordsEveryTapImmediatelyAndMovesAfterConfiguredDelay() throws Exception {
+        File source = temporary.newFolder("tap-source");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("tap-library"));
+        library.importWork("tap", "点击记账", "文案",
+                Arrays.asList(write(source, "1.jpg", "one")), "");
+        long firstTap = 1_000_000L;
+
+        library.markShareAttempt("tap", firstTap);
+        library.markShareAttempt("tap", firstTap + 5_000L);
+
+        assertEquals(2, library.getActive("tap").shareCount);
+        assertEquals(firstTap, library.getActive("tap").firstSharedAtMs);
+        library.maintain(firstTap + 3_599_999L, 3_600_000L);
+        assertEquals(1, library.listActive().size());
+        library.maintain(firstTap + 3_600_000L, 3_600_000L);
+        assertTrue(library.listActive().isEmpty());
+        assertEquals(1, library.listTrash().size());
     }
 
     @Test
@@ -170,6 +202,45 @@ public final class WorkLibraryTest {
         assertEquals(3, retained.shareCount);
         assertEquals("primary:Download/Lark/作品集/.同一个作品", retained.sourceDocumentId);
         assertEquals("作品集" + File.separator + ".同一个作品", retained.sourceRelativePath);
+    }
+
+    @Test
+    public void trashedSafCopyPreventsLegacyCopyFromReappearingAsActive() throws Exception {
+        File source = temporary.newFolder("cross-area-source");
+        File image = write(source, "1.jpg", "one");
+        File root = temporary.newFolder("cross-area-library");
+        WorkLibrary library = new WorkLibrary(root);
+        library.importWork("lark-one", ".同一个作品", "文案", Arrays.asList(image), "",
+                "primary:Download/Lark/作品集/.同一个作品",
+                "primary:Download/Lark/作品集", "");
+        library.importWork("huawei-hidden-one", "同一个作品", "文案", Arrays.asList(image), "",
+                "", "", "作品集" + File.separator + ".同一个作品");
+        library.markShared("lark-one", LocalDate.of(2026, 7, 26));
+        library.moveToTrash("lark-one", LocalDate.of(2026, 7, 26));
+
+        WorkLibrary reopened = new WorkLibrary(root);
+
+        assertTrue(reopened.listActive().isEmpty());
+        assertEquals(1, reopened.listTrash().size());
+        assertEquals(1, reopened.listTrash().get(0).shareCount);
+    }
+
+    @Test
+    public void identicalContentInTrashPreventsPathlessCopyFromReappearing() throws Exception {
+        File source = temporary.newFolder("fingerprint-source");
+        File image = write(source, "1.jpg", "same-image");
+        File root = temporary.newFolder("fingerprint-library");
+        WorkLibrary library = new WorkLibrary(root);
+        library.importWork("old-copy", "旧副本", "同一文案", Arrays.asList(image), "");
+        library.importWork("new-copy", "新副本", "同一文案", Arrays.asList(image), "");
+        library.markShared("old-copy", LocalDate.of(2026, 7, 26));
+        library.moveToTrash("old-copy", LocalDate.of(2026, 7, 26));
+
+        WorkLibrary reopened = new WorkLibrary(root);
+
+        assertTrue(reopened.listActive().isEmpty());
+        assertEquals(1, reopened.listTrash().size());
+        assertEquals(1, reopened.listTrash().get(0).shareCount);
     }
 
     @Test

@@ -8,10 +8,15 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 /** Persistent, app-private queue of works and its recoverable trash. */
@@ -33,7 +38,9 @@ public final class WorkLibrary {
             ensureDirectory(activeRoot);
             ensureDirectory(trashRoot);
             merged = collapseLegacyDuplicates(activeRoot)
-                    + collapseLegacyDuplicates(trashRoot);
+                    + collapseLegacyDuplicates(trashRoot)
+                    + collapseDuplicatesAcrossActiveAndTrash()
+                    + collapseContentDuplicatesAcrossActiveAndTrash();
         }
         this.reconciledDuplicates = merged;
     }
@@ -73,12 +80,17 @@ public final class WorkLibrary {
             ArrayList<File> sorted = new ArrayList<>(sourceImages);
             sorted.sort((left, right) -> WorkRules.compareNatural(left.getName(), right.getName()));
             ArrayList<String> storedImages = new ArrayList<>();
+            ArrayList<String> contentHashes = new ArrayList<>();
+            HashSet<String> seenContent = new HashSet<>();
             for (File source : sorted) {
                 if (!source.isFile()) throw new IOException("图片不存在：" + source.getName());
+                String contentHash = hashFile(source);
+                if (!seenContent.add(contentHash)) continue;
                 String storedName = uniqueName(staging, safeFileName(source.getName()));
                 Files.copy(source.toPath(), child(staging, storedName).toPath(),
                         StandardCopyOption.REPLACE_EXISTING);
                 storedImages.add(storedName);
+                contentHashes.add(contentHash);
             }
 
             Properties meta = new Properties();
@@ -89,6 +101,7 @@ public final class WorkLibrary {
             meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
             meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
             meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
+            meta.setProperty("contentSignature", signature(valueOrEmpty(text), contentHashes));
             meta.setProperty("image.count", Integer.toString(storedImages.size()));
             for (int index = 0; index < storedImages.size(); index++) {
                 meta.setProperty("image." + index, storedImages.get(index));
@@ -189,6 +202,20 @@ public final class WorkLibrary {
         saveMeta(entry.directory, meta);
     }
 
+    /** Records the user's tap immediately. Chooser callbacks never control this counter. */
+    public synchronized WorkEntry markShareAttempt(String id, long nowMs) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        Properties meta = loadMeta(entry.directory);
+        meta.setProperty("sharedDate", LocalDate.now().toString());
+        if (parseLong(meta.getProperty("firstSharedAtMs", "0")) <= 0) {
+            meta.setProperty("firstSharedAtMs", Long.toString(nowMs));
+        }
+        int count = parseCount(meta.getProperty("shareCount", "0"));
+        meta.setProperty("shareCount", Integer.toString(count + 1));
+        saveMeta(entry.directory, meta);
+        return readEntry(entry.directory);
+    }
+
     /** Moves selected managed image copies into this work's recoverable image bin. */
     public synchronized int moveImagesToTrash(String id, List<String> names, LocalDate date) throws IOException {
         WorkEntry entry = requireEntry(activeRoot, id);
@@ -247,6 +274,15 @@ public final class WorkLibrary {
         return moved;
     }
 
+    public synchronized List<WorkEntry> maintain(long nowMs, long moveAfterMs) throws IOException {
+        ArrayList<WorkEntry> moved = new ArrayList<>();
+        for (WorkEntry entry : list(activeRoot)) {
+            if (!RetentionPolicy.shouldMoveToTrash(entry.firstSharedAtMs, nowMs, moveAfterMs)) continue;
+            moved.add(moveToTrash(entry.id, nowMs));
+        }
+        return moved;
+    }
+
     private void writeImageList(File directory, List<String> images) throws IOException {
         Properties meta = loadMeta(directory);
         int previous = parseCount(meta.getProperty("image.count", "0"));
@@ -299,6 +335,17 @@ public final class WorkLibrary {
         return readEntry(destination);
     }
 
+    public synchronized WorkEntry moveToTrash(String id, long trashedAtMs) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        Properties meta = loadMeta(entry.directory);
+        meta.setProperty("trashedDate", LocalDate.now().toString());
+        meta.setProperty("trashedAtMs", Long.toString(trashedAtMs));
+        saveMeta(entry.directory, meta);
+        File destination = child(trashRoot, entry.id);
+        moveDirectory(entry.directory, destination);
+        return readEntry(destination);
+    }
+
     public synchronized void rollbackTrashMove(String id) throws IOException {
         WorkEntry entry = requireEntry(trashRoot, id);
         File destination = child(activeRoot, id);
@@ -323,6 +370,8 @@ public final class WorkLibrary {
         Properties meta = loadMeta(entry.directory);
         meta.remove("sharedDate");
         meta.remove("trashedDate");
+        meta.remove("firstSharedAtMs");
+        meta.remove("trashedAtMs");
         saveMeta(entry.directory, meta);
         moveDirectory(entry.directory, destination);
     }
@@ -365,6 +414,91 @@ public final class WorkLibrary {
         return removed;
     }
 
+    /**
+     * Android 10 can expose one hidden work through both SAF and the legacy storage fallback.
+     * If one copy was already moved to trash, the other must not reappear as a fresh active work.
+     */
+    private int collapseDuplicatesAcrossActiveAndTrash() throws IOException {
+        List<WorkEntry> active = list(activeRoot);
+        List<WorkEntry> trash = list(trashRoot);
+        int removed = 0;
+        for (WorkEntry current : active) {
+            if (!current.directory.isDirectory()) continue;
+            WorkEntry trashedMatch = null;
+            for (WorkEntry trashed : trash) {
+                if (!trashed.directory.isDirectory()) continue;
+                String currentRelative = normalizeSourcePath(current.sourceRelativePath);
+                String trashRelative = normalizeSourcePath(trashed.sourceRelativePath);
+                boolean same = (!currentRelative.isEmpty()
+                        && documentPathEndsWith(trashed.sourceDocumentId, currentRelative))
+                        || (!trashRelative.isEmpty()
+                        && documentPathEndsWith(current.sourceDocumentId, trashRelative))
+                        || (!current.sourceDocumentId.isEmpty()
+                        && current.sourceDocumentId.equals(trashed.sourceDocumentId));
+                if (same) {
+                    trashedMatch = trashed;
+                    break;
+                }
+            }
+            if (trashedMatch == null) continue;
+            mergeDuplicateMetadata(trashedMatch, current);
+            deleteTree(current.directory);
+            removed++;
+        }
+        return removed;
+    }
+
+    private int collapseContentDuplicatesAcrossActiveAndTrash() throws IOException {
+        List<WorkEntry> trash = list(trashRoot);
+        Map<String, WorkEntry> trashedByContent = new HashMap<>();
+        for (WorkEntry entry : trash) {
+            if (!entry.directory.isDirectory()) continue;
+            trashedByContent.put(ensureContentSignature(entry), entry);
+        }
+        int removed = 0;
+        for (WorkEntry current : list(activeRoot)) {
+            if (!current.directory.isDirectory()) continue;
+            WorkEntry match = trashedByContent.get(ensureContentSignature(current));
+            if (match == null || !match.directory.isDirectory()) continue;
+            mergeDuplicateMetadata(match, current);
+            deleteTree(current.directory);
+            removed++;
+        }
+        return removed;
+    }
+
+    /** Lazily migrates old libraries and removes byte-identical app-private image copies. */
+    private String ensureContentSignature(WorkEntry entry) throws IOException {
+        Properties meta = loadMeta(entry.directory);
+        String existing = meta.getProperty("contentSignature", "");
+        if (!existing.isEmpty()) return existing;
+        ArrayList<String> retainedNames = new ArrayList<>();
+        ArrayList<String> hashes = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        for (String name : entry.images) {
+            File image = child(entry.directory, name);
+            String hash = hashFile(image);
+            if (seen.add(hash)) {
+                retainedNames.add(name);
+                hashes.add(hash);
+            } else if (image.isFile() && !image.delete()) {
+                throw new IOException("无法整理重复图片");
+            }
+        }
+        if (retainedNames.size() != entry.images.size()) {
+            int previous = parseCount(meta.getProperty("image.count", "0"));
+            for (int index = 0; index < previous; index++) meta.remove("image." + index);
+            meta.setProperty("image.count", Integer.toString(retainedNames.size()));
+            for (int index = 0; index < retainedNames.size(); index++) {
+                meta.setProperty("image." + index, retainedNames.get(index));
+            }
+        }
+        String signature = signature(entry.text, hashes);
+        meta.setProperty("contentSignature", signature);
+        saveMeta(entry.directory, meta);
+        return signature;
+    }
+
     private void mergeDuplicateMetadata(WorkEntry retained, WorkEntry duplicate) throws IOException {
         Properties meta = loadMeta(retained.directory);
         int combinedCount = Math.min(10000, retained.shareCount + duplicate.shareCount);
@@ -373,6 +507,10 @@ public final class WorkLibrary {
         if (shared != null) meta.setProperty("sharedDate", shared.toString());
         LocalDate trashed = later(retained.trashedDate, duplicate.trashedDate);
         if (trashed != null) meta.setProperty("trashedDate", trashed.toString());
+        long firstShared = earlierPositive(retained.firstSharedAtMs, duplicate.firstSharedAtMs);
+        if (firstShared > 0) meta.setProperty("firstSharedAtMs", Long.toString(firstShared));
+        long trashedAt = later(retained.trashedAtMs, duplicate.trashedAtMs);
+        if (trashedAt > 0) meta.setProperty("trashedAtMs", Long.toString(trashedAt));
         if (meta.getProperty("sourceRelativePath", "").isEmpty()) {
             meta.setProperty("sourceRelativePath", duplicate.sourceRelativePath);
         }
@@ -393,6 +531,53 @@ public final class WorkLibrary {
         if (left == null) return right;
         if (right == null) return left;
         return left.isAfter(right) ? left : right;
+    }
+
+    private static long later(long left, long right) {
+        return Math.max(left, right);
+    }
+
+    private static long earlierPositive(long left, long right) {
+        if (left <= 0) return right;
+        if (right <= 0) return left;
+        return Math.min(left, right);
+    }
+
+    private static String signature(String text, List<String> imageHashes) throws IOException {
+        try {
+            ArrayList<String> sorted = new ArrayList<>(imageHashes);
+            Collections.sort(sorted);
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(valueOrEmpty(text).trim().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            for (String hash : sorted) {
+                digest.update(hash.getBytes(StandardCharsets.US_ASCII));
+                digest.update((byte) 0);
+            }
+            return hex(digest.digest());
+        } catch (Exception error) {
+            throw new IOException("无法生成作品内容指纹", error);
+        }
+    }
+
+    private static String hashFile(File file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream input = new FileInputStream(file)) {
+                byte[] buffer = new byte[128 * 1024];
+                int read;
+                while ((read = input.read(buffer)) >= 0) digest.update(buffer, 0, read);
+            }
+            return hex(digest.digest());
+        } catch (Exception error) {
+            throw new IOException("无法读取作品图片", error);
+        }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder value = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes) value.append(String.format("%02x", item & 0xff));
+        return value.toString();
     }
 
     private static boolean matchesSourcePath(WorkEntry entry, String normalizedRelative) {
@@ -439,6 +624,8 @@ public final class WorkLibrary {
                 parseDate(meta.getProperty("sharedDate")),
                 parseDate(meta.getProperty("trashedDate")),
                 parseCount(meta.getProperty("shareCount", "0")),
+                parseLong(meta.getProperty("firstSharedAtMs", "0")),
+                parseLong(meta.getProperty("trashedAtMs", "0")),
                 meta.getProperty("sourceDocumentId", ""),
                 meta.getProperty("sourceParentDocumentId", ""),
                 meta.getProperty("sourceRelativePath", ""),
@@ -480,6 +667,15 @@ public final class WorkLibrary {
             return count;
         } catch (NumberFormatException error) {
             throw new IOException("作品图片记录损坏", error);
+        }
+    }
+
+    private static long parseLong(String value) throws IOException {
+        try {
+            long parsed = Long.parseLong(value);
+            return Math.max(0, parsed);
+        } catch (NumberFormatException error) {
+            throw new IOException("作品时间记录损坏", error);
         }
     }
 
@@ -548,6 +744,8 @@ public final class WorkLibrary {
         public final LocalDate sharedDate;
         public final LocalDate trashedDate;
         public final int shareCount;
+        public final long firstSharedAtMs;
+        public final long trashedAtMs;
         public final String sourceDocumentId;
         public final String sourceParentDocumentId;
         public final String sourceRelativePath;
@@ -557,7 +755,8 @@ public final class WorkLibrary {
 
         private WorkEntry(String id, String name, String text, String warning,
                           List<String> images, LocalDate sharedDate, LocalDate trashedDate,
-                          int shareCount, String sourceDocumentId, String sourceParentDocumentId,
+                          int shareCount, long firstSharedAtMs, long trashedAtMs,
+                          String sourceDocumentId, String sourceParentDocumentId,
                           String sourceRelativePath, String trashDocumentId, String externalTrashName,
                           File directory) {
             this.id = id;
@@ -568,6 +767,8 @@ public final class WorkLibrary {
             this.sharedDate = sharedDate;
             this.trashedDate = trashedDate;
             this.shareCount = shareCount;
+            this.firstSharedAtMs = firstSharedAtMs;
+            this.trashedAtMs = trashedAtMs;
             this.sourceDocumentId = sourceDocumentId;
             this.sourceParentDocumentId = sourceParentDocumentId;
             this.sourceRelativePath = sourceRelativePath;

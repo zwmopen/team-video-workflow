@@ -23,7 +23,6 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -57,7 +56,7 @@ public final class ShareActivity extends Activity {
                     outcomeDecider.onTargetChosen(SystemClock.elapsedRealtime());
             if (action == ShareOutcomeDecider.Action.MARK_SHARED) {
                 DiagnosticLog.write(ShareActivity.this, "share_target_chosen_late", workId);
-                finishShareFlow(true, pendingResultCode, "late_chosen_callback");
+                finishShareFlow(pendingResultCode, "late_chosen_callback");
             }
         }
     };
@@ -79,6 +78,12 @@ public final class ShareActivity extends Activity {
             chosenReceiverRegistered = true;
             WorkLibrary.WorkEntry work = library.getActive(workId);
             if (work == null) throw new IllegalStateException("作品不存在或已进入回收站");
+            if (savedInstanceState == null) {
+                work = library.markShareAttempt(workId, System.currentTimeMillis());
+                DiagnosticLog.write(this, "share_tap_recorded",
+                        workId + " count=" + work.shareCount);
+                sendBroadcast(new Intent(OnlineService.ACTION_TASK_READY).setPackage(getPackageName()));
+            }
             DiagnosticLog.write(this, "share_activity_open", workId);
             setContentView(ScreenInsets.protect(preparingView()));
             prepareShare(work);
@@ -199,7 +204,7 @@ public final class ShareActivity extends Activity {
         } else if (action == ShareOutcomeDecider.Action.WAIT_FOR_DEFERRED_TARGET) {
             beginDeferredTargetWait(resultCode);
         } else if (action == ShareOutcomeDecider.Action.MARK_SHARED) {
-            finishShareFlow(true, resultCode, "target_returned");
+            finishShareFlow(resultCode, "target_returned");
         }
     }
 
@@ -207,7 +212,7 @@ public final class ShareActivity extends Activity {
         if (shareFlowFinished) return;
         if (outcomeDecider.onChosenCallbackTimeout() != ShareOutcomeDecider.Action.CANCEL) return;
         DiagnosticLog.write(this, "share_chooser_cancelled", workId + " callback_timeout");
-        finishShareFlow(false, pendingResultCode, "chooser_cancelled");
+        finishShareFlow(pendingResultCode, "chooser_cancelled");
     }
 
     private void beginDeferredTargetWait(int resultCode) {
@@ -226,7 +231,7 @@ public final class ShareActivity extends Activity {
         // A second pause during this window is the reliable signal that the editor actually took over.
         mainHandler.postDelayed(() -> {
             if (waitingForDeferredTarget && !shareFlowFinished && !hasWindowFocus()) {
-                finishShareFlow(true, pendingResultCode, "deferred_target_opened");
+                finishShareFlow(pendingResultCode, "deferred_target_opened");
             }
         }, 250L);
     }
@@ -235,25 +240,17 @@ public final class ShareActivity extends Activity {
         if (!waitingForDeferredTarget || shareFlowFinished) return;
         waitingForDeferredTarget = false;
         DiagnosticLog.write(this, "share_target_open_failed", workId + " clone_cold_start");
-        Toast.makeText(this, "分身首次启动较慢，本次未计入分享次数；请再点一次", Toast.LENGTH_LONG).show();
-        finishShareFlow(false, pendingResultCode, "target_open_failed");
+        Toast.makeText(this, "目标应用启动较慢；本次点击已记录，可稍后重试", Toast.LENGTH_LONG).show();
+        finishShareFlow(pendingResultCode, "target_open_failed");
     }
 
-    private void finishShareFlow(boolean markShared, int resultCode, String outcome) {
+    private void finishShareFlow(int resultCode, String outcome) {
         if (shareFlowFinished) return;
         shareFlowFinished = true;
         waitingForDeferredTarget = false;
         mainHandler.removeCallbacksAndMessages(null);
-        try {
-            if (markShared) {
-                // Android reports that the target was opened, not whether publishing succeeded.
-                library.markShared(workId, LocalDate.now());
-                DiagnosticLog.write(this, "share_target_opened", workId + " result=" + resultCode
-                        + " outcome=" + outcome);
-            }
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "share_mark_failed", error.getMessage());
-        }
+        DiagnosticLog.write(this, "share_flow_finished", workId + " result=" + resultCode
+                + " outcome=" + outcome);
         startService(new Intent(this, OnlineService.class)
                 .setAction(OnlineService.ACTION_SHARE_FINISHED)
                 .putExtra(EXTRA_WORK_ID, workId));

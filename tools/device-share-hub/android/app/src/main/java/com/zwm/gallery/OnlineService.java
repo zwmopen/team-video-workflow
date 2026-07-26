@@ -46,6 +46,8 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public final class OnlineService extends Service {
     public static final String ACTION_START = "com.zwm.gallery.START";
@@ -73,6 +75,7 @@ public final class OnlineService extends Service {
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
+    private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running;
     private volatile String state = "online";
     private volatile String currentTaskId = "";
@@ -99,6 +102,7 @@ public final class OnlineService extends Service {
     public void onCreate() {
         super.onCreate();
         createChannel();
+        cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 2, 5, TimeUnit.MINUTES);
     }
 
     @Override
@@ -124,11 +128,7 @@ public final class OnlineService extends Service {
 
         startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
         DiagnosticLog.write(this, "service_start", "receiver foreground service started");
-        try {
-            new WorkLibrary(new File(getFilesDir(), "work-library")).maintain(java.time.LocalDate.now());
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "library_maintenance_failed", compact(error.getMessage()));
-        }
+        requestExecutor.execute(this::runCleanup);
         if (!running) {
             running = true;
             serviceExecutor.execute(this::httpLoop);
@@ -144,7 +144,27 @@ public final class OnlineService extends Service {
         closeSockets();
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();
+        cleanupExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    private void runCleanup() {
+        try {
+            CleanupCoordinator.Result result = CleanupCoordinator.run(this);
+            if (result.moved > 0 || result.deleted > 0 || result.cacheEntriesDeleted > 0) {
+                DiagnosticLog.write(this, "scheduled_cleanup",
+                        "moved=" + result.moved + " deleted=" + result.deleted
+                                + " cache=" + result.cacheEntriesDeleted);
+                if (MainActivity.isVisible) {
+                    sendBroadcast(new Intent(ACTION_TASK_READY).setPackage(getPackageName()));
+                }
+            }
+            if (!result.failure.isEmpty()) {
+                DiagnosticLog.write(this, "scheduled_cleanup_failed", compact(result.failure));
+            }
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "library_maintenance_failed", compact(error.getMessage()));
+        }
     }
 
     @Override

@@ -31,6 +31,7 @@ final class GalleryShareBridge {
     private static final String KEY_ITEMS = "items";
     private static final String SEPARATOR = "\u001f";
     private static final String RELATIVE_PATH = Environment.DIRECTORY_PICTURES + "/相册分享缓存";
+    private static final long CACHE_TTL_MS = 60L * 60L * 1000L;
 
     private GalleryShareBridge() {
     }
@@ -40,7 +41,7 @@ final class GalleryShareBridge {
     }
 
     static PreparedShare prepare(Context context, WorkLibrary.WorkEntry work, List<String> requestedImages) {
-        cleanupPreviousDays(context, LocalDate.now());
+        cleanupExpired(context, System.currentTimeMillis());
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return new PreparedShare(privateUris(context, work, requestedImages), "private_provider", "");
         }
@@ -52,7 +53,7 @@ final class GalleryShareBridge {
                 if (!work.images.contains(image)) continue;
                 published.add(publish(context, new File(work.directory, image), image));
             }
-            remember(context, published, LocalDate.now());
+            remember(context, published, System.currentTimeMillis());
             DiagnosticLog.write(context, "share_media_ready", "images=" + published.size()
                     + " ms=" + (System.currentTimeMillis() - startedAt));
             return new PreparedShare(published, "media_store", "");
@@ -66,6 +67,10 @@ final class GalleryShareBridge {
     }
 
     static void cleanupPreviousDays(Context context, LocalDate today) {
+        cleanupExpired(context, System.currentTimeMillis());
+    }
+
+    static void cleanupExpired(Context context, long nowMs) {
         SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         Set<String> stored = preferences.getStringSet(KEY_ITEMS, Collections.emptySet());
         if (stored.isEmpty()) return;
@@ -78,8 +83,15 @@ final class GalleryShareBridge {
                 continue;
             }
             try {
-                LocalDate created = LocalDate.parse(item.substring(split + SEPARATOR.length()));
-                if (!today.isAfter(created)) {
+                String createdValue = item.substring(split + SEPARATOR.length());
+                long createdAt;
+                try {
+                    createdAt = Long.parseLong(createdValue);
+                } catch (NumberFormatException legacy) {
+                    LocalDate date = LocalDate.parse(createdValue);
+                    createdAt = date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                }
+                if (nowMs < createdAt + CACHE_TTL_MS) {
                     retained.add(item);
                     continue;
                 }
@@ -91,8 +103,9 @@ final class GalleryShareBridge {
                 context.getContentResolver().delete(uri, null, null);
                 removed++;
             } catch (Exception error) {
-                retained.add(item);
-                DiagnosticLog.write(context, "share_media_cleanup_failed", error.getMessage());
+                // A user or the system may already have removed the MediaStore row. Stop retrying
+                // an inaccessible stale URI forever; the tracked item is cache, never source data.
+                DiagnosticLog.write(context, "share_media_cache_stale", error.getClass().getSimpleName());
             }
         }
         if (!retained.equals(stored)) preferences.edit().putStringSet(KEY_ITEMS, retained).apply();
@@ -175,10 +188,10 @@ final class GalleryShareBridge {
         return result;
     }
 
-    private static void remember(Context context, List<Uri> uris, LocalDate date) {
+    private static void remember(Context context, List<Uri> uris, long createdAtMs) {
         SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         HashSet<String> stored = new HashSet<>(preferences.getStringSet(KEY_ITEMS, Collections.emptySet()));
-        for (Uri uri : uris) stored.add(uri + SEPARATOR + date);
+        for (Uri uri : uris) stored.add(uri + SEPARATOR + createdAtMs);
         if (!preferences.edit().putStringSet(KEY_ITEMS, stored).commit()) {
             DiagnosticLog.write(context, "share_media_cache_record_failed", "count=" + uris.size());
         }
