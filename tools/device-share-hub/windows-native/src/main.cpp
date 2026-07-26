@@ -1362,26 +1362,6 @@ void DrawPlatformIcon(HDC dc, const RECT& bounds, bool isApple) {
     DeleteObject(pen);
 }
 
-int DrawChannelBadge(HDC dc, int right, int top, const std::wstring& label,
-                     COLORREF foreground, COLORREF background) {
-    SIZE textSize{};
-    GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &textSize);
-    int width = textSize.cx + 16;
-    RECT pill{right - width, top, right, top + 22};
-    HBRUSH brush = CreateSolidBrush(background);
-    HPEN pen = CreatePen(PS_SOLID, 1, background);
-    HGDIOBJ oldBrush = SelectObject(dc, brush);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    RoundRect(dc, pill.left, pill.top, pill.right, pill.bottom, 11, 11);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
-    DeleteObject(pen);
-    DeleteObject(brush);
-    SetTextColor(dc, foreground);
-    DrawTextW(dc, label.c_str(), -1, &pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    return pill.left - 6;
-}
-
 void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     if (item->itemID == static_cast<UINT>(-1) || item->itemID >= gDisplayedDevices.size()) return;
     const Device& device = gDisplayedDevices[item->itemID];
@@ -1407,7 +1387,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
-    RECT nameRect{rect.left + 68, rect.top + 9, rect.right - 250, rect.top + 35};
+    RECT nameRect{rect.left + 68, rect.top + 9, rect.right - 220, rect.top + 35};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
     if (device.workCount >= 0) {
@@ -1427,23 +1407,20 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     RECT subRect{rect.left + 68, rect.top + 37, rect.right - 16, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    int badgeRight = rect.right - 16;
     SetTextColor(dc, StateColor(device.state));
-    std::wstring label = device.state == L"usb" ? L"在线" : StateLabel(device.state);
-    badgeRight = DrawChannelBadge(dc, badgeRight, rect.top + 10, label,
-                                  StateColor(device.state), RGB(235, 247, 240));
-    if (device.remoteAllowed && device.remoteConnected) {
-        badgeRight = DrawChannelBadge(dc, badgeRight, rect.top + 10, L"远程",
-                                      RGB(104, 73, 180), RGB(241, 236, 251));
+    std::vector<std::wstring> channelLabels;
+    if (device.usbAllowed && device.usbReady) channelLabels.push_back(L"USB");
+    if (device.wifiAllowed && !device.ip.empty()) channelLabels.push_back(L"WiFi");
+    if (device.remoteAllowed && device.remoteConnected) channelLabels.push_back(L"远程");
+    channelLabels.push_back(device.state == L"usb" ? L"在线" : StateLabel(device.state));
+    std::wstring channelText;
+    for (const auto& value : channelLabels) {
+        if (!channelText.empty()) channelText += L" · ";
+        channelText += value;
     }
-    if (device.wifiAllowed && !device.ip.empty()) {
-        badgeRight = DrawChannelBadge(dc, badgeRight, rect.top + 10, L"WiFi",
-                                      RGB(44, 104, 168), RGB(235, 243, 251));
-    }
-    if (device.usbAllowed && device.usbReady) {
-        DrawChannelBadge(dc, badgeRight, rect.top + 10, L"USB",
-                         RGB(38, 112, 196), RGB(232, 241, 252));
-    }
+    RECT channelRect{rect.right - 214, rect.top + 9, rect.right - 16, rect.top + 35};
+    DrawTextW(dc, channelText.c_str(), -1, &channelRect,
+              DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
 }
 
