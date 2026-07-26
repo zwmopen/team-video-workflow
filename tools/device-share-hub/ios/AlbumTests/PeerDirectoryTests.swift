@@ -7,7 +7,7 @@ final class PeerDirectoryTests: XCTestCase {
         let packet = ["ZWMDS2_HERE", "2", id, "45833", encoded("测试手机"),
                       encoded("iPhone"), encoded("online"), "", "15"].joined(separator: "|")
 
-        XCTAssertTrue(PeerDirectory.shared.remember(packet: packet, host: "127.0.0.1"))
+        XCTAssertTrue(PeerDirectory.shared.remember(packet: packet, host: "127.0.0.1").shouldReply)
         XCTAssertEqual(PeerDirectory.shared.peers().first(where: { $0.id == id })?.workCount, 15)
     }
 
@@ -16,7 +16,7 @@ final class PeerDirectoryTests: XCTestCase {
         let packet = ["ZWMDS2_HERE", "2", id, "45833", encoded("旧手机"),
                       encoded("iPhone"), encoded("online"), ""].joined(separator: "|")
 
-        XCTAssertTrue(PeerDirectory.shared.remember(packet: packet, host: "127.0.0.1"))
+        XCTAssertTrue(PeerDirectory.shared.remember(packet: packet, host: "127.0.0.1").shouldReply)
         XCTAssertEqual(PeerDirectory.shared.peers().first(where: { $0.id == id })?.workCount, -1)
     }
 
