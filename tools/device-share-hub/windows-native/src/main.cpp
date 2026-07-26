@@ -1425,9 +1425,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
-    RECT listClient{};
-    GetClientRect(gDeviceList, &listClient);
-    int contentRight = std::min(rect.right, listClient.right) - 16;
+    int contentRight = rect.right - 16;
     RECT nameRect{rect.left + 68, rect.top + 9, contentRight - 220, rect.top + 35};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
