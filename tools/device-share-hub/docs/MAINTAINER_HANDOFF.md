@@ -61,7 +61,10 @@
 - iPhone 自动移入回收站和彻底删除分别支持 1～10 小时，默认均为 1；前台每分钟维护，重新打开立即维护。版本为 0.5.1/build 20，继续保持 iOS 12 最低版本和原状态文件兼容。
 - VIVO Y36t 实机覆盖前为 0.5.4/code 31、13 个作品、15 个回收站、根目录 `Download/Lark`。0.5.6 迁移后仍为 13 个作品，回收站和真实 `相册回收站` 均为 0，设备名与目录授权保留；同日 1 次分享作品没有被首次启动立即删除。
 - 同一 VIVO 已覆盖正式 Release 0.5.6/code 33；`run-as` 报告包不可调试。单元测试、Release 编译与 Release Lint 成功。实机模式切换保持 `MainActivity` 不变，文件根目录显示 15 项，返回后恢复 13 个作品。
-- iPhone 连接设备为 iPhone13,2 / iOS 26.5.2；覆盖安装前实际版本为 0.4.7/build 18，最终侧载 bundle id 为 `com.zwm.album.TXA6HP98BX`。新 IPA 必须沿用这个最终标识覆盖，禁止卸载绕过，以免丢失 bookmark 与本机状态。安装与实体清理结果在本版云构建完成后补入发布记录。
+- iPhone 连接设备为 iPhone13,2 / iOS 26.5.2；覆盖安装前实际版本为 0.4.7/build 18，最终侧载 bundle id 为 `com.zwm.album.TXA6HP98BX`。0.5.1/build 20 已沿用该最终标识通过 Sideloadly 覆盖安装并启动；安装后仍显示 10 个作品，原“已打开分享 2 次”状态仍在。禁止卸载绕过，以免丢失 bookmark 与本机状态。
+- 备用构建 run [`30184472766`](https://github.com/rpgzwm/team-video-workflow-build/actions/runs/30184472766) 的 Windows、Android、iPhone 三端任务全部成功；iPhone 11 项测试全部通过，并完成真机 SDK 编译和 IPA 结构检查。
+- 正式安装包已发布到 [`gallery-updates v0.5.6`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.5.6)：Android APK SHA-256 `411905D7DCC655184F00183EF0E2C2F3C9DAA39D0B1B5C38652F22D935E91FDA`，iPhone IPA `99BB23E86A4397217C387F45A69449DCCE8FCB9E37DC2FDDF78F3F9D00435BE5`，Windows EXE `8EE011841995167A23BEF80C1E11E32F12C3A8D2555E071A512DD52A7BDFE1FC`。Android 在线更新索引已指向 0.5.6/code 33，并包含同一 APK 哈希。
+- Redmi 本轮尚未被 Windows 的 USB 调试接口枚举到，因此没有把“在线可见”误写成“已覆盖安装”；连接后应使用同包覆盖并先后核对版本、作品数、目录授权和回收站。
 - 本轮未替用户进入任何内容平台或执行真实发布；界面、文件扫描、迁移和覆盖安装证据与外部平台发布结果分开记录。
 
 ### 2026-07-26 Android 0.5.5
