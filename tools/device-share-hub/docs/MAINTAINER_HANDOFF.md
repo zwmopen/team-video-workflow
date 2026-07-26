@@ -1,4 +1,4 @@
-# 分享中控 V3.8 维护交接
+# 分享中控 V3.9 维护交接
 
 ## 2026-07-26 当前增量
 
@@ -13,6 +13,9 @@
 - Android 0.5.7/code34：外部来源消失后二次确认并清除私有副本。K60 真机测试前备份位于 `D:\AICode\运行数据\device-share-hub\backups\k60-before-source-reconcile-20260726.tgz`。
 - 真机证据：K60 外部 `Download/Lark` 为 24 个作品；正式 0.5.7 覆盖后首页 24，两个幽灵活动项和两个幽灵回收项已清除，目录授权保留。
 - 互联网中继尚未部署；不得把同包名当成身份，也不得提前开放无后端的假开关。详细约束见 `docs/REMOTE_CHANNEL.md`。
+- 最终三端构建 run `30189534099` 对提交 `a27b62c` 全部成功；公开发布为 `gallery-updates v0.5.7`。APK/IPA/EXE SHA-256 分别为 `A8571C2D7D997D4397653425B0B9F1ED1C04E05A1D196638A950F6FC6D4AC027`、`C22E9C32569FDDFFBB6C342C959DC328BB5AC8D8C85418BC1700601980215761`、`DC9CC5E53C7DCCE98FF10CDEBF6A762F8800EFF6BF23E1176A1E22C297ED6552`。
+- K60 已用公开同源 APK 覆盖并保持 24 个作品；Windows V3.8 已放桌面。K60 打开 MTP 后，界面从两条系统接口收敛为一张 `Redmi K60` 卡片并显示 USB 可用。当前自动文件选择受前台窗口焦点影响，未完成 App 内真实 USB 文件提交，不能用枚举证据替代落盘证据。
+- Windows V3.9 增加设备级 USB/WiFi/远程传送权限持久化与右键菜单；设备首次登记默认允许，卡片只显示真实在线通道。Android 0.5.8 与 iPhone 0.5.2 会持久记录在局域网发现过的电脑身份。远程中继服务尚未部署，因此“远程”不会显示为已经连通。
 
 更新时间：2026-07-26
 
@@ -20,10 +23,10 @@
 
 | 项目 | 当前值 |
 |---|---|
-| Windows | 素材投送中控 V3.8，原生 Win32 x64 |
-| Android | 相册 0.5.7，versionCode 34，`com.zwm.gallery` |
-| iPhone | 相册 0.5.1，build 20，源码 bundle id `com.zwm.album` |
-| 当前主要变化 | 来源一致性修复、成功传送内容指纹去重、Android/iPhone USB 通道与 USB → Wi‑Fi 自动回退 |
+| Windows | 素材投送中控 V3.9，原生 Win32 x64 |
+| Android | 相册 0.5.8，versionCode 35，`com.zwm.gallery` |
+| iPhone | 相册 0.5.2，build 21，源码 bundle id `com.zwm.album` |
+| 当前主要变化 | 设备通道权限、平台图标、备注层级、来源一致性修复、内容指纹去重与 USB → Wi‑Fi 自动回退 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |

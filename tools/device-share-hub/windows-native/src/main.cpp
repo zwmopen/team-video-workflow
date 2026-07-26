@@ -49,6 +49,9 @@ constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
 constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
+constexpr int IDC_TOGGLE_USB = 205;
+constexpr int IDC_TOGGLE_WIFI = 206;
+constexpr int IDC_TOGGLE_REMOTE = 207;
 constexpr int IDC_REFRESH_DEVICES = 106;
 constexpr int IDC_SEND_PICKER = 107;
 constexpr int IDC_PICK_FILES = 203;
@@ -68,6 +71,10 @@ struct Device {
     std::wstring taskId;
     int workCount = -1;
     bool usbReady = false;
+    bool usbAllowed = true;
+    bool wifiAllowed = true;
+    bool remoteAllowed = true;
+    bool remoteConnected = false;
     UsbPeer usbPeer;
     std::chrono::steady_clock::time_point lastSeen;
 };
@@ -78,6 +85,12 @@ struct TransferFingerprint {
     uint64_t bytes = 0;
     uint64_t files = 0;
     uint64_t images = 0;
+};
+
+struct ChannelPreferences {
+    bool usb = true;
+    bool wifi = true;
+    bool remote = true;
 };
 
 HWND gWindow = nullptr;
@@ -92,6 +105,7 @@ HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
 std::mutex gLogMutex;
+std::mutex gPreferenceMutex;
 std::map<std::wstring, Device> gDevices;
 std::map<std::wstring, std::wstring> gDeviceRemarks;
 std::vector<Device> gDisplayedDevices;
@@ -107,7 +121,9 @@ HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
 std::filesystem::path gTransferHistoryPath;
+std::filesystem::path gChannelPreferencePath;
 std::map<std::wstring, UsbPeer> gUsbPeers;
+std::map<std::wstring, ChannelPreferences> gChannelPreferences;
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -239,6 +255,13 @@ std::filesystem::path TransferHistoryPath() {
     DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
     std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
     return base / L"ZwmDeviceShareHub" / L"transfer-history.tsv";
+}
+
+std::filesystem::path ChannelPreferencePath() {
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
+    return base / L"ZwmDeviceShareHub" / L"device-channels.tsv";
 }
 
 void WriteDiagnosticLog(const std::wstring& event, const std::wstring& detail) {
@@ -673,6 +696,56 @@ std::wstring Sha256File(const std::filesystem::path& path) {
     return out.str();
 }
 
+void SaveChannelPreferencesUnlocked() {
+    try {
+        if (gChannelPreferencePath.empty()) gChannelPreferencePath = ChannelPreferencePath();
+        std::filesystem::create_directories(gChannelPreferencePath.parent_path());
+        std::ofstream output(gChannelPreferencePath, std::ios::binary | std::ios::trunc);
+        for (const auto& item : gChannelPreferences) {
+            output << WideToUtf8(item.first)
+                   << '\t' << (item.second.usb ? "1" : "0")
+                   << '\t' << (item.second.wifi ? "1" : "0")
+                   << '\t' << (item.second.remote ? "1" : "0") << '\n';
+        }
+    } catch (...) {
+        WriteDiagnosticLog(L"channel_preferences_save_failed", L"ignored");
+    }
+}
+
+void LoadChannelPreferences() {
+    std::lock_guard<std::mutex> lock(gPreferenceMutex);
+    try {
+        if (gChannelPreferencePath.empty()) gChannelPreferencePath = ChannelPreferencePath();
+        gChannelPreferences.clear();
+        std::ifstream input(gChannelPreferencePath, std::ios::binary);
+        std::string line;
+        while (std::getline(input, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            auto parts = Split(line, '\t');
+            if (parts.size() < 4) continue;
+            std::wstring id = Utf8ToWide(parts[0]);
+            if (!id.empty()) {
+                gChannelPreferences[id] = ChannelPreferences{
+                    parts[1] != "0", parts[2] != "0", parts[3] != "0"
+                };
+            }
+        }
+    } catch (...) {
+        WriteDiagnosticLog(L"channel_preferences_load_failed", L"ignored");
+    }
+}
+
+ChannelPreferences ChannelsFor(const std::wstring& deviceId) {
+    std::lock_guard<std::mutex> lock(gPreferenceMutex);
+    auto found = gChannelPreferences.find(deviceId);
+    if (found != gChannelPreferences.end()) return found->second;
+    if (!deviceId.empty()) {
+        gChannelPreferences[deviceId] = ChannelPreferences{};
+        SaveChannelPreferencesUnlocked();
+    }
+    return ChannelPreferences{};
+}
+
 bool IsImagePath(const std::filesystem::path& path) {
     std::wstring extension = path.extension().wstring();
     std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
@@ -967,7 +1040,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             return;
         }
 
-        if (device.usbReady) {
+        if (device.usbReady && device.usbAllowed) {
             try {
                 WriteDiagnosticLog(L"usb_upload_start",
                         device.name + L" items=" + std::to_wstring(files.size()));
@@ -987,9 +1060,13 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 return;
             } catch (const std::exception& usbError) {
                 WriteDiagnosticLog(L"usb_upload_failed", Utf8ToWide(usbError.what()));
-                if (device.ip.empty()) throw;
+                if (device.ip.empty() || !device.wifiAllowed) throw;
                 PostStatus(L"USB 暂不可用，正在自动改用 Wi‑Fi…");
             }
+        }
+
+        if (device.ip.empty() || !device.wifiAllowed) {
+            throw std::runtime_error("这台设备当前没有打开可用的传送方式，请右键设备检查 USB、WiFi 或远程传送");
         }
 
         for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
@@ -1092,6 +1169,10 @@ void RefreshDeviceList() {
                 device.model = peer.model;
                 device.state = peer.ready ? L"usb" : L"usb_pending";
                 device.usbReady = peer.ready;
+                ChannelPreferences channels = ChannelsFor(device.id);
+                device.usbAllowed = channels.usb;
+                device.wifiAllowed = channels.wifi;
+                device.remoteAllowed = channels.remote;
                 device.usbPeer = peer;
                 device.lastSeen = now;
                 fresh.push_back(device);
@@ -1229,6 +1310,10 @@ void DiscoveryLoop() {
                         catch (...) { device.workCount = -1; }
                     }
                     device.ip = Utf8ToWide(ip);
+                    ChannelPreferences channels = ChannelsFor(device.id);
+                    device.usbAllowed = channels.usb;
+                    device.wifiAllowed = channels.wifi;
+                    device.remoteAllowed = channels.remote;
                     device.lastSeen = std::chrono::steady_clock::now();
                     if (!device.id.empty() && WideToUtf8(device.id) != WindowsDeviceId()) {
                         std::lock_guard<std::mutex> lock(gDeviceMutex);
@@ -1243,6 +1328,58 @@ void DiscoveryLoop() {
     }
     closesocket(socketHandle);
     WSACleanup();
+}
+
+void DrawPlatformIcon(HDC dc, const RECT& bounds, bool isApple) {
+    COLORREF color = isApple ? RGB(56, 62, 70) : RGB(61, 164, 93);
+    HPEN pen = CreatePen(PS_SOLID, 2, color);
+    HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    if (isApple) {
+        RoundRect(dc, bounds.left + 8, bounds.top + 3, bounds.right - 8, bounds.bottom - 3, 8, 8);
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        MoveToEx(dc, bounds.left + 15, bounds.top + 7, nullptr);
+        LineTo(dc, bounds.right - 15, bounds.top + 7);
+        MoveToEx(dc, bounds.left + 16, bounds.bottom - 7, nullptr);
+        LineTo(dc, bounds.right - 16, bounds.bottom - 7);
+    } else {
+        RoundRect(dc, bounds.left + 6, bounds.top + 13, bounds.right - 6, bounds.bottom - 5, 8, 8);
+        MoveToEx(dc, bounds.left + 11, bounds.top + 11, nullptr);
+        LineTo(dc, bounds.left + 7, bounds.top + 5);
+        MoveToEx(dc, bounds.right - 11, bounds.top + 11, nullptr);
+        LineTo(dc, bounds.right - 7, bounds.top + 5);
+        HBRUSH eye = CreateSolidBrush(RGB(255, 255, 255));
+        SelectObject(dc, eye);
+        Ellipse(dc, bounds.left + 13, bounds.top + 18, bounds.left + 16, bounds.top + 21);
+        Ellipse(dc, bounds.right - 16, bounds.top + 18, bounds.right - 13, bounds.top + 21);
+        SelectObject(dc, brush);
+        DeleteObject(eye);
+    }
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+int DrawChannelBadge(HDC dc, int right, int top, const std::wstring& label,
+                     COLORREF foreground, COLORREF background) {
+    SIZE textSize{};
+    GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &textSize);
+    int width = textSize.cx + 16;
+    RECT pill{right - width, top, right, top + 22};
+    HBRUSH brush = CreateSolidBrush(background);
+    HPEN pen = CreatePen(PS_SOLID, 1, background);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    RoundRect(dc, pill.left, pill.top, pill.right, pill.bottom, 11, 11);
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+    SetTextColor(dc, foreground);
+    DrawTextW(dc, label.c_str(), -1, &pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    return pill.left - 6;
 }
 
 void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
@@ -1264,24 +1401,13 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
 
     bool isApple = device.model.find(L"iPhone") != std::wstring::npos
         || device.id.find(L"ios-") == 0 || device.id.find(L"apple:") == 0;
-    HBRUSH platformBrush = CreateSolidBrush(isApple ? RGB(70, 111, 174) : RGB(74, 142, 93));
-    HGDIOBJ oldPlatformBrush = SelectObject(dc, platformBrush);
-    HGDIOBJ oldPlatformPen = SelectObject(dc, GetStockObject(NULL_PEN));
-    Ellipse(dc, rect.left + 16, rect.top + 17, rect.left + 54, rect.top + 55);
-    SelectObject(dc, oldPlatformPen);
-    SelectObject(dc, oldPlatformBrush);
-    DeleteObject(platformBrush);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(255, 255, 255));
-    SelectObject(dc, gFont);
-    RECT platformRect{rect.left + 16, rect.top + 17, rect.left + 54, rect.top + 55};
-    DrawTextW(dc, isApple ? L"i" : L"A", -1, &platformRect,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    RECT platformRect{rect.left + 14, rect.top + 16, rect.left + 56, rect.top + 58};
+    DrawPlatformIcon(dc, platformRect, isApple);
 
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
-    RECT nameRect{rect.left + 68, rect.top + 10, rect.right - 16, rect.top + 36};
+    RECT nameRect{rect.left + 68, rect.top + 9, rect.right - 250, rect.top + 35};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
     if (device.workCount >= 0) {
@@ -1298,13 +1424,26 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     } else if (!device.usbPeer.id.empty() && !device.usbReady) {
         sub += L"  ·  USB 已连接，待文件传输";
     }
-    RECT subRect{rect.left + 68, rect.top + 38, rect.right - 125, rect.bottom - 8};
+    RECT subRect{rect.left + 68, rect.top + 37, rect.right - 16, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
+    int badgeRight = rect.right - 16;
     SetTextColor(dc, StateColor(device.state));
-    std::wstring label = StateLabel(device.state);
-    RECT stateRect{rect.right - 120, rect.top + 38, rect.right - 16, rect.bottom - 8};
-    DrawTextW(dc, label.c_str(), -1, &stateRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    std::wstring label = device.state == L"usb" ? L"在线" : StateLabel(device.state);
+    badgeRight = DrawChannelBadge(dc, badgeRight, rect.top + 10, label,
+                                  StateColor(device.state), RGB(235, 247, 240));
+    if (device.remoteAllowed && device.remoteConnected) {
+        badgeRight = DrawChannelBadge(dc, badgeRight, rect.top + 10, L"远程",
+                                      RGB(104, 73, 180), RGB(241, 236, 251));
+    }
+    if (device.wifiAllowed && !device.ip.empty()) {
+        badgeRight = DrawChannelBadge(dc, badgeRight, rect.top + 10, L"WiFi",
+                                      RGB(44, 104, 168), RGB(235, 243, 251));
+    }
+    if (device.usbAllowed && device.usbReady) {
+        DrawChannelBadge(dc, badgeRight, rect.top + 10, L"USB",
+                         RGB(38, 112, 196), RGB(232, 241, 252));
+    }
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
 }
 
@@ -1343,6 +1482,45 @@ void ClearDeviceRemark(int index) {
     RefreshDeviceList();
 }
 
+void ToggleTransferChannel(int index, int command) {
+    if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) return;
+    const Device& device = gDisplayedDevices[static_cast<size_t>(index)];
+    ChannelPreferences channels = ChannelsFor(device.id);
+    std::wstring channelName;
+    bool enabled = false;
+    if (command == IDC_TOGGLE_USB) {
+        channels.usb = !channels.usb;
+        enabled = channels.usb;
+        channelName = L"USB";
+    } else if (command == IDC_TOGGLE_WIFI) {
+        channels.wifi = !channels.wifi;
+        enabled = channels.wifi;
+        channelName = L"WiFi";
+    } else {
+        channels.remote = !channels.remote;
+        enabled = channels.remote;
+        channelName = L"远程传送";
+    }
+    {
+        std::lock_guard<std::mutex> lock(gPreferenceMutex);
+        gChannelPreferences[device.id] = channels;
+        SaveChannelPreferencesUnlocked();
+    }
+    {
+        std::lock_guard<std::mutex> lock(gDeviceMutex);
+        auto found = gDevices.find(device.id);
+        if (found != gDevices.end()) {
+            found->second.usbAllowed = channels.usb;
+            found->second.wifiAllowed = channels.wifi;
+            found->second.remoteAllowed = channels.remote;
+        }
+    }
+    WriteDiagnosticLog(L"transfer_channel_preference",
+                       device.name + L" " + channelName + (enabled ? L" enabled" : L" disabled"));
+    PostStatus(channelName + (enabled ? L" 已打开" : L" 已关闭") + L"，设置已记住");
+    RefreshDeviceList();
+}
+
 void ShowDeviceContextMenu(LPARAM lParam) {
     POINT screenPoint{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     POINT clientPoint = screenPoint;
@@ -1365,10 +1543,23 @@ void ShowDeviceContextMenu(LPARAM lParam) {
     AppendMenuW(menu, MF_STRING, IDC_RENAME_DEVICE, L"重命名这台手机");
     bool hasRemark = gDeviceRemarks.find(gDisplayedDevices[static_cast<size_t>(index)].id) != gDeviceRemarks.end();
     AppendMenuW(menu, MF_STRING | (hasRemark ? 0 : MF_GRAYED), IDC_CLEAR_DEVICE_REMARK, L"清除电脑备注");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    const Device& device = gDisplayedDevices[static_cast<size_t>(index)];
+    HMENU channels = CreatePopupMenu();
+    AppendMenuW(channels, MF_STRING | (device.usbAllowed ? MF_CHECKED : 0),
+                IDC_TOGGLE_USB, L"USB");
+    AppendMenuW(channels, MF_STRING | (device.wifiAllowed ? MF_CHECKED : 0),
+                IDC_TOGGLE_WIFI, L"WiFi");
+    AppendMenuW(channels, MF_STRING | (device.remoteAllowed ? MF_CHECKED : 0),
+                IDC_TOGGLE_REMOTE, L"远程传送");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(channels), L"传送方式");
     int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPoint.x, screenPoint.y, 0, gWindow, nullptr);
     DestroyMenu(menu);
     if (command == IDC_RENAME_DEVICE) RenameDeviceRemark(index);
     if (command == IDC_CLEAR_DEVICE_REMARK) ClearDeviceRemark(index);
+    if (command == IDC_TOGGLE_USB || command == IDC_TOGGLE_WIFI || command == IDC_TOGGLE_REMOTE) {
+        ToggleTransferChannel(index, command);
+    }
 }
 
 void HandleDrop(HDROP drop) {
@@ -1512,7 +1703,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.8", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.9", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -1668,6 +1859,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ConfigureUsbTransport(instance, WriteDiagnosticLog);
     LoadDeviceRemarks();
+    LoadChannelPreferences();
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -1680,7 +1872,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.8",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.9",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

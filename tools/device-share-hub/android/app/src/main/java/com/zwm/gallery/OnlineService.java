@@ -39,8 +39,10 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -542,6 +544,15 @@ public final class OnlineService extends Service {
             PeerDevice peer = new PeerDevice(id, decodeB64(parts[4]), decodeB64(parts[5]),
                     address.getHostAddress(), port, decodeB64(parts[6]), workCount,
                     System.currentTimeMillis());
+            if (id.startsWith("windows-") || "Windows PC".equals(peer.model)) {
+                SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+                Set<String> registered = new HashSet<>(preferences.getStringSet("registeredComputers",
+                        Collections.emptySet()));
+                if (registered.add(id)) {
+                    preferences.edit().putStringSet("registeredComputers", registered).apply();
+                    DiagnosticLog.write(this, "computer_registered", peer.name);
+                }
+            }
             boolean changed = !peer.equalsForDisplay(PEERS.put(id, peer));
             if (changed) {
                 sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));

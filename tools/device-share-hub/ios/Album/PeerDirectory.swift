@@ -35,6 +35,12 @@ final class PeerDirectory {
         lock.unlock()
         let changed = previous == nil || previous?.host != peer.host || previous?.name != peer.name ||
             previous?.state != peer.state || previous?.workCount != peer.workCount
+        if peer.id.hasPrefix("windows-") || peer.model == "Windows PC" {
+            var registered = Set(UserDefaults.standard.stringArray(forKey: "album.registeredComputers") ?? [])
+            if registered.insert(peer.id).inserted {
+                UserDefaults.standard.set(Array(registered).sorted(), forKey: "album.registeredComputers")
+            }
+        }
         UserDefaults.standard.set("\(peer.name)|\(peer.model)|\(peer.host)|\(Date().timeIntervalSince1970)",
                                   forKey: "album.lastPeer.\(peer.id)")
         if changed { DispatchQueue.main.async { NotificationCenter.default.post(name: .transferPeersChanged, object: nil) } }
