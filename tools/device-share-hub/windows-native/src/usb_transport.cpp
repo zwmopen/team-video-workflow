@@ -399,14 +399,24 @@ std::vector<UsbPeer> EnumeratePortable() {
         peer.id = L"wpd:" + peer.locator;
         peer.name = ManagerString(manager.get(), peer.locator, false);
         peer.model = ManagerString(manager.get(), peer.locator, true);
+        const bool hasDescription = !peer.name.empty() || !peer.model.empty();
         peer.kind = UsbTransportKind::PortableDevice;
         try {
             auto opened = OpenPortableDevice(peer.locator);
             peer.ready = true;
             peer.hint = L"USB 文件传输";
-        } catch (...) {
+        } catch (const std::exception& error) {
             peer.ready = false;
             peer.hint = L"已连接；请在手机上选择“文件传输”";
+            if (gLogger) {
+                gLogger(L"usb_wpd_open_failed",
+                        (peer.name.empty() ? L"未命名设备" : peer.name)
+                        + L" error=" + Utf8ToWide(error.what()));
+            }
+        }
+        if (!hasDescription && !peer.ready) {
+            CoTaskMemFree(ids[index]);
+            continue;
         }
         if (peer.name.empty()) peer.name = L"USB 手机";
         result.push_back(peer);
