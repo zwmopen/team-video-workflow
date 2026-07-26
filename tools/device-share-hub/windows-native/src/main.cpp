@@ -1446,24 +1446,35 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     RECT subRect{rect.left + 68, rect.top + 37, rect.right - 16, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    SetTextColor(dc, StateColor(device.state));
     std::vector<std::wstring> channelLabels;
     if (device.usbAllowed && device.usbReady) channelLabels.push_back(L"USB");
     if (device.wifiAllowed && !device.ip.empty()) channelLabels.push_back(L"WiFi");
     if (device.remoteAllowed && device.remoteConnected) channelLabels.push_back(L"远程");
-    if (device.state == L"receiving") channelLabels.push_back(L"接收中");
-    if (device.state == L"sharing") channelLabels.push_back(L"分享中");
-    if (channelLabels.empty() && device.state == L"usb_pending") channelLabels.push_back(L"USB 待开启");
-    if (channelLabels.empty()) channelLabels.push_back(L"无可用通道");
-    std::wstring channelText;
+    int totalBadgeWidth = 0;
     for (const auto& value : channelLabels) {
-        if (!channelText.empty()) channelText += L" · ";
-        channelText += value;
+        totalBadgeWidth += value == L"远程" ? 58 : 52;
     }
-    RECT channelRect{std::max<LONG>(rect.left + 220, contentRight - 210), rect.top + 9,
-                     contentRight, rect.top + 35};
-    DrawTextW(dc, channelText.c_str(), -1, &channelRect,
-              DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (channelLabels.size() > 1) {
+        totalBadgeWidth += static_cast<int>(channelLabels.size() - 1) * 8;
+    }
+    int badgeLeft = contentRight - totalBadgeWidth;
+    SetTextColor(dc, RGB(43, 105, 82));
+    for (const auto& value : channelLabels) {
+        int badgeWidth = value == L"远程" ? 58 : 52;
+        RECT badgeRect{badgeLeft, rect.top + 8, badgeLeft + badgeWidth, rect.top + 34};
+        HBRUSH badgeBrush = CreateSolidBrush(RGB(232, 245, 239));
+        HPEN badgePen = CreatePen(PS_SOLID, 1, RGB(187, 222, 204));
+        HGDIOBJ oldBadgeBrush = SelectObject(dc, badgeBrush);
+        HGDIOBJ oldBadgePen = SelectObject(dc, badgePen);
+        RoundRect(dc, badgeRect.left, badgeRect.top, badgeRect.right, badgeRect.bottom, 13, 13);
+        SelectObject(dc, oldBadgeBrush);
+        SelectObject(dc, oldBadgePen);
+        DeleteObject(badgeBrush);
+        DeleteObject(badgePen);
+        DrawTextW(dc, value.c_str(), -1, &badgeRect,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        badgeLeft += badgeWidth + 8;
+    }
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
 }
 
