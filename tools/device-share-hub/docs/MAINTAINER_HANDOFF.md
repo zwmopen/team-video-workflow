@@ -8,6 +8,7 @@
 - Android 开放 MTP 后，以 USB 厂商和设备硬件标识把 WPD 与底层接口合并为同一张真实设备卡；不得退回按在线数量猜测。
 - Windows 还会读取 `DEVPKEY_Device_BusReportedDeviceDesc`（例如 `Redmi K60`）作为同实体匹配与友好名称的可靠补充，不显示 ADB/Composite 驱动描述。
 - WPD 枚举会丢弃无名称、无型号且不可打开的系统残留条目；`usb_wpd_open_failed` 只记录友好名称和错误，不记录设备路径、序列号或配对信息。
+- MIUI 若把同一实体拆成“唯一匿名可写 WPD + 唯一有名底层 USB”，可安全配对并继承真实名称；任何一侧不唯一时保持分开，避免跨手机误关联。
 - 传送历史：`%LOCALAPPDATA%\ZwmDeviceShareHub\transfer-history.tsv`，只在接收端提交/校验成功后写入；文件夹指纹包含相对路径、大小和逐文件 SHA-256。
 - Android 0.5.7/code34：外部来源消失后二次确认并清除私有副本。K60 真机测试前备份位于 `D:\AICode\运行数据\device-share-hub\backups\k60-before-source-reconcile-20260726.tgz`。
 - 真机证据：K60 外部 `Download/Lark` 为 24 个作品；正式 0.5.7 覆盖后首页 24，两个幽灵活动项和两个幽灵回收项已清除，目录授权保留。

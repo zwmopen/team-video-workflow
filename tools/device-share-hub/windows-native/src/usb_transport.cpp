@@ -507,6 +507,22 @@ std::vector<UsbPeer> EnumerateUsbPeers() {
     HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     std::vector<UsbPeer> result = EnumeratePortable();
     auto detected = EnumerateConnectedAndroidUsb();
+    if (detected.size() == 1) {
+        auto anonymous = result.end();
+        for (auto candidate = result.begin(); candidate != result.end(); ++candidate) {
+            if (candidate->kind != UsbTransportKind::PortableDevice || !candidate->ready
+                    || candidate->name != L"USB 手机" || !candidate->model.empty()) continue;
+            if (anonymous != result.end()) {
+                anonymous = result.end();
+                break;
+            }
+            anonymous = candidate;
+        }
+        if (anonymous != result.end()) {
+            anonymous->name = detected.front().name;
+            anonymous->model = detected.front().model;
+        }
+    }
     for (const auto& peer : detected) {
         bool alreadyRepresented = std::any_of(result.begin(), result.end(), [&](const UsbPeer& ready) {
             if (ready.kind != UsbTransportKind::PortableDevice) return false;
