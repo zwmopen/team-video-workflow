@@ -12,8 +12,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Imports valid work folders from a user-granted Lark/document tree. */
 final class DocumentTreeImporter {
@@ -32,7 +34,9 @@ final class DocumentTreeImporter {
         scan(resolver, tree, rootId, rootId, leafName(rootId), 0, works, stats);
         int imported = 0;
         int skipped = 0;
+        HashSet<String> detectedDocumentIds = new HashSet<>();
         for (Folder work : works) {
+            detectedDocumentIds.add(work.documentId);
             String id = work.marker == null ? "lark-" + Integer.toHexString(work.documentId.hashCode())
                     : readText(resolver, work.marker.uri).trim();
             if (!id.matches("[A-Za-z0-9._-]{1,120}")) id = "lark-" + Integer.toHexString(work.documentId.hashCode());
@@ -63,7 +67,7 @@ final class DocumentTreeImporter {
             }
         }
         return new ImportResult(imported, skipped, works.size(), stats.scannedFolders,
-                stats.aggregateFolders, stats.notes.toString());
+                stats.aggregateFolders, stats.notes.toString(), detectedDocumentIds);
     }
 
     private static int scan(ContentResolver resolver, Uri tree, String documentId, String parentDocumentId,
@@ -198,14 +202,16 @@ final class DocumentTreeImporter {
         final int scannedFolders;
         final int aggregateFolders;
         final String scanNotes;
+        final Set<String> detectedDocumentIds;
         ImportResult(int imported, int skipped, int detected, int scannedFolders,
-                     int aggregateFolders, String scanNotes) {
+                     int aggregateFolders, String scanNotes, Set<String> detectedDocumentIds) {
             this.imported = imported;
             this.skipped = skipped;
             this.detected = detected;
             this.scannedFolders = scannedFolders;
             this.aggregateFolders = aggregateFolders;
             this.scanNotes = scanNotes;
+            this.detectedDocumentIds = detectedDocumentIds;
         }
     }
 

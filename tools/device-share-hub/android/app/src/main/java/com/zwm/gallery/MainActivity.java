@@ -799,6 +799,10 @@ public final class MainActivity extends Activity {
                 DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
                         getContentResolver(), Uri.parse(stored), library(), new File(getCacheDir(), "tree-import"));
                 LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
+                WorkLibrary.ReconcileResult reconciled =
+                        ExternalTrashManager.reconcileMissingExternalSources(
+                                getContentResolver(), Uri.parse(stored), library(),
+                                result.detectedDocumentIds);
                 ExternalTrashManager.Result trashSync = syncExternalTrash(library());
                 int activeCount = library().listActive().size();
                 OnlineService.publishWorkCount(this, activeCount);
@@ -811,7 +815,10 @@ public final class MainActivity extends Activity {
                                 + " hiddenDetected=" + hidden.detected
                                 + " hiddenImported=" + hidden.imported
                                 + " hiddenSkipped=" + hidden.skipped
-                                + " trashMoved=" + trashSync.moved
+                              + " sourceRemoved=" + reconciled.activeRemoved
+                              + " trashRemoved=" + reconciled.trashRemoved
+                              + " sourcePending=" + reconciled.pendingConfirmation
+                              + " trashMoved=" + trashSync.moved
                                 + " trashMoveFailures=" + trashSync.failures.size()
                                 + " notes=" + result.scanNotes);
                 runOnUiThread(() -> {

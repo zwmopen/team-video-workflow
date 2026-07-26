@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -278,6 +279,36 @@ public final class WorkLibraryTest {
         assertTrue(reopened.listActive().isEmpty());
         assertEquals(1, reopened.listTrash().size());
         assertEquals(1, reopened.listTrash().get(0).shareCount);
+    }
+
+    @Test
+    public void externalDeletionRemovesOnlyImportedPrivateCopies() throws Exception {
+        File source = temporary.newFolder("source-reconcile");
+        File image = write(source, "1.jpg", "image");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("source-reconcile-library"));
+        library.importWork("external-active", "外部作品", "文案", Arrays.asList(image), "",
+                "primary:Download/Lark/作品集/已删除", "primary:Download/Lark/作品集", "");
+        library.importWork("local-received", "接收作品", "文案", Arrays.asList(image), "");
+        library.importWork("external-trash", "外部回收", "文案", Arrays.asList(image), "",
+                "primary:Download/Lark/作品集/已回收", "primary:Download/Lark/作品集", "");
+        library.moveToTrash("external-trash", LocalDate.of(2026, 7, 26));
+        library.updateExternalTrashLocation(
+                "external-trash", "primary:Download/Lark/相册回收站/已回收", "");
+
+        WorkLibrary.ReconcileResult first = library.reconcileExternalDocumentIds(
+                new HashSet<>(), new HashSet<>(), 1_000L);
+        assertEquals(2, first.pendingConfirmation);
+        assertEquals(2, library.listActive().size());
+        assertEquals(1, library.listTrash().size());
+
+        WorkLibrary.ReconcileResult result = library.reconcileExternalDocumentIds(
+                new HashSet<>(), new HashSet<>(), 3_001L);
+
+        assertEquals(1, result.activeRemoved);
+        assertEquals(1, result.trashRemoved);
+        assertEquals(1, library.listActive().size());
+        assertEquals("local-received", library.listActive().get(0).id);
+        assertTrue(library.listTrash().isEmpty());
     }
 
     @Test

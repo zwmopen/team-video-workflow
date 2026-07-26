@@ -20,10 +20,13 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 /** Persistent, app-private queue of works and its recoverable trash. */
 public final class WorkLibrary {
     private static final String META_FILE = "meta.properties";
+    private static final String SOURCE_MISSING_SINCE = "sourceMissingSinceMs";
+    private static final long SOURCE_MISSING_CONFIRM_MS = 2_000L;
     private static final Object MIGRATION_LOCK = new Object();
     private static final ZoneId BEIJING = ZoneId.of("Asia/Shanghai");
 
@@ -399,6 +402,70 @@ public final class WorkLibrary {
         deleteTree(entry.directory);
     }
 
+    public synchronized void deleteActive(String id) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        deleteTree(entry.directory);
+    }
+
+    /**
+     * Reconciles only works imported from the selected external document tree.
+     * App-private works received over the transfer protocol have no source document ID and
+     * therefore remain untouched.
+     */
+    public synchronized ReconcileResult reconcileExternalDocumentIds(
+            Set<String> detectedActiveDocumentIds,
+            Set<String> existingExternalDocumentIds,
+            long nowMs) throws IOException {
+        ReconcileResult result = new ReconcileResult();
+        for (WorkEntry entry : new ArrayList<>(list(activeRoot))) {
+            if (entry.sourceDocumentId.isEmpty()) {
+                continue;
+            }
+            if (detectedActiveDocumentIds.contains(entry.sourceDocumentId)) {
+                clearMissingMarker(entry.directory);
+                continue;
+            }
+            if (!missingConfirmed(entry.directory, nowMs)) {
+                result.pendingConfirmation++;
+                continue;
+            }
+            deleteTree(entry.directory);
+            result.activeRemoved++;
+        }
+        for (WorkEntry entry : new ArrayList<>(list(trashRoot))) {
+            String locator = entry.trashDocumentId.isEmpty()
+                    ? entry.sourceDocumentId : entry.trashDocumentId;
+            if (locator.isEmpty()) continue;
+            if (existingExternalDocumentIds.contains(locator)) {
+                clearMissingMarker(entry.directory);
+                continue;
+            }
+            if (!missingConfirmed(entry.directory, nowMs)) {
+                result.pendingConfirmation++;
+                continue;
+            }
+            deleteTree(entry.directory);
+            result.trashRemoved++;
+        }
+        return result;
+    }
+
+    private boolean missingConfirmed(File directory, long nowMs) throws IOException {
+        Properties meta = loadMeta(directory);
+        long firstMissing = parseLong(meta.getProperty(SOURCE_MISSING_SINCE, "0"));
+        if (firstMissing <= 0 || nowMs < firstMissing) {
+            meta.setProperty(SOURCE_MISSING_SINCE, Long.toString(nowMs));
+            saveMeta(directory, meta);
+            return false;
+        }
+        return nowMs - firstMissing >= SOURCE_MISSING_CONFIRM_MS;
+    }
+
+    private void clearMissingMarker(File directory) throws IOException {
+        Properties meta = loadMeta(directory);
+        if (meta.remove(SOURCE_MISSING_SINCE) != null) saveMeta(directory, meta);
+    }
+
     public synchronized void restore(String id) throws IOException {
         WorkEntry entry = requireEntry(trashRoot, id);
         File destination = child(activeRoot, id);
@@ -414,6 +481,16 @@ public final class WorkLibrary {
 
     public synchronized void clearTrash() throws IOException {
         for (WorkEntry entry : list(trashRoot)) deleteTree(entry.directory);
+    }
+
+    public static final class ReconcileResult {
+        public int activeRemoved;
+        public int trashRemoved;
+        public int pendingConfirmation;
+
+        public int totalRemoved() {
+            return activeRemoved + trashRemoved;
+        }
     }
 
     private List<WorkEntry> list(File parent) throws IOException {

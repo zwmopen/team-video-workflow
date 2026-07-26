@@ -12,6 +12,7 @@
 #include <shobjidl.h>
 
 #include "receiver.h"
+#include "usb_transport.h"
 
 #include <algorithm>
 #include <atomic>
@@ -66,7 +67,17 @@ struct Device {
     std::wstring state;
     std::wstring taskId;
     int workCount = -1;
+    bool usbReady = false;
+    UsbPeer usbPeer;
     std::chrono::steady_clock::time_point lastSeen;
+};
+
+struct TransferFingerprint {
+    std::filesystem::path source;
+    std::wstring hash;
+    uint64_t bytes = 0;
+    uint64_t files = 0;
+    uint64_t images = 0;
 };
 
 HWND gWindow = nullptr;
@@ -88,11 +99,15 @@ std::atomic<bool> gRunning{true};
 std::atomic<bool> gUploadInProgress{false};
 std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
+std::atomic<bool> gUsbRefreshRequested{false};
 std::thread gDiscoveryThread;
 std::thread gReceiverThread;
+std::thread gUsbDiscoveryThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
+std::filesystem::path gTransferHistoryPath;
+std::map<std::wstring, UsbPeer> gUsbPeers;
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -170,6 +185,8 @@ std::string WindowsBeacon() {
 }
 
 std::wstring StateLabel(const std::wstring& state) {
+    if (state == L"usb") return L"USB 可传";
+    if (state == L"usb_pending") return L"USB 待授权";
     if (state == L"receiving") return L"正在接收";
     if (state == L"ready") return L"等待手机分享";
     if (state == L"sharing") return L"已打开分享";
@@ -177,6 +194,8 @@ std::wstring StateLabel(const std::wstring& state) {
 }
 
 COLORREF StateColor(const std::wstring& state) {
+    if (state == L"usb") return RGB(38, 112, 196);
+    if (state == L"usb_pending") return RGB(184, 120, 37);
     if (state == L"receiving") return RGB(45, 122, 245);
     if (state == L"ready") return RGB(245, 160, 35);
     if (state == L"sharing") return RGB(124, 85, 220);
@@ -647,6 +666,144 @@ std::wstring Sha256File(const std::filesystem::path& path) {
     return out.str();
 }
 
+bool IsImagePath(const std::filesystem::path& path) {
+    std::wstring extension = path.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+    static const std::set<std::wstring> extensions = {
+        L".jpg", L".jpeg", L".png", L".webp", L".gif", L".bmp", L".heic", L".heif"
+    };
+    return extensions.count(extension) > 0;
+}
+
+TransferFingerprint FingerprintItem(const std::filesystem::path& source) {
+    TransferFingerprint result;
+    result.source = source;
+    if (std::filesystem::is_regular_file(source)) {
+        result.hash = Sha256File(source);
+        result.bytes = std::filesystem::file_size(source);
+        result.files = 1;
+        result.images = IsImagePath(source) ? 1 : 0;
+        return result;
+    }
+    if (!std::filesystem::is_directory(source)) throw std::runtime_error("项目不存在");
+
+    std::vector<std::filesystem::path> files;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(
+             source, std::filesystem::directory_options::skip_permission_denied)) {
+        if (item.is_regular_file()) files.push_back(item.path());
+    }
+    std::sort(files.begin(), files.end(), [&](const auto& left, const auto& right) {
+        return std::filesystem::relative(left, source).generic_wstring()
+             < std::filesystem::relative(right, source).generic_wstring();
+    });
+
+    std::filesystem::path manifest = std::filesystem::temp_directory_path()
+        / (L"album-fingerprint-" + NewTaskId() + L".txt");
+    try {
+        std::ofstream output(manifest, std::ios::binary | std::ios::trunc);
+        if (!output) throw std::runtime_error("无法建立内容指纹");
+        for (const auto& file : files) {
+            std::wstring relative = std::filesystem::relative(file, source).generic_wstring();
+            uint64_t size = std::filesystem::file_size(file);
+            std::wstring fileHash = Sha256File(file);
+            std::string line = WideToUtf8(relative) + "\t" + std::to_string(size)
+                + "\t" + WideToUtf8(fileHash) + "\n";
+            output.write(line.data(), static_cast<std::streamsize>(line.size()));
+            result.bytes += size;
+            result.files++;
+            if (IsImagePath(file)) result.images++;
+        }
+        output.close();
+        result.hash = Sha256File(manifest);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(manifest, ignored);
+        throw;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(manifest, ignored);
+    return result;
+}
+
+std::wstring SafeHistoryField(std::wstring value) {
+    std::replace(value.begin(), value.end(), L'\t', L' ');
+    std::replace(value.begin(), value.end(), L'\r', L' ');
+    std::replace(value.begin(), value.end(), L'\n', L' ');
+    return value;
+}
+
+std::map<std::wstring, std::wstring> PreviousTransfersForDevice(
+        const std::wstring& deviceId, const std::wstring& deviceName) {
+    std::map<std::wstring, std::wstring> result;
+    if (gTransferHistoryPath.empty()) gTransferHistoryPath = TransferHistoryPath();
+    std::ifstream input(gTransferHistoryPath, std::ios::binary);
+    std::string line;
+    while (std::getline(input, line)) {
+        auto fields = Split(line, '\t');
+        if (fields.size() < 5) continue;
+        if (Utf8ToWide(fields[1]) != deviceId
+                && _wcsicmp(Utf8ToWide(fields[3]).c_str(), deviceName.c_str()) != 0) continue;
+        result[Utf8ToWide(fields[0])] = Utf8ToWide(fields[2]) + L"|" + Utf8ToWide(fields[3]);
+    }
+    return result;
+}
+
+void RecordSuccessfulTransfers(
+        const Device& device, const std::vector<TransferFingerprint>& fingerprints,
+        const std::wstring& channel) {
+    if (gTransferHistoryPath.empty()) gTransferHistoryPath = TransferHistoryPath();
+    std::filesystem::create_directories(gTransferHistoryPath.parent_path());
+    std::ofstream output(gTransferHistoryPath, std::ios::binary | std::ios::app);
+    std::wstring stamp = NowStamp();
+    for (const auto& item : fingerprints) {
+        std::wstring line = item.hash + L"\t" + SafeHistoryField(device.id) + L"\t"
+            + stamp + L"\t" + SafeHistoryField(device.name) + L"\t"
+            + SafeHistoryField(item.source.filename().wstring()) + L"\t"
+            + channel + L"\t" + std::to_wstring(item.files) + L"\t"
+            + std::to_wstring(item.images) + L"\n";
+        std::string bytes = WideToUtf8(line);
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+}
+
+std::vector<TransferFingerprint> CheckTransferHistory(
+        const Device& device, const std::vector<std::filesystem::path>& inputs) {
+    std::vector<TransferFingerprint> fingerprints;
+    PostStatus(L"正在核对是否传送过…");
+    for (const auto& input : inputs) fingerprints.push_back(FingerprintItem(input));
+    auto previous = PreviousTransfersForDevice(device.id, device.name);
+    std::vector<size_t> duplicates;
+    for (size_t index = 0; index < fingerprints.size(); ++index) {
+        if (previous.count(fingerprints[index].hash)) duplicates.push_back(index);
+    }
+    if (duplicates.empty()) return fingerprints;
+
+    std::wostringstream message;
+    message << L"发现 " << duplicates.size() << L" 个项目以前已经传给“"
+            << device.name << L"”。\n\n";
+    size_t shown = 0;
+    for (size_t index : duplicates) {
+        if (shown++ >= 5) break;
+        std::wstring detail = previous[fingerprints[index].hash];
+        size_t separator = detail.find(L'|');
+        message << L"• " << fingerprints[index].source.filename().wstring();
+        if (separator != std::wstring::npos) message << L"（" << detail.substr(0, separator) << L"）";
+        message << L"\n";
+    }
+    if (duplicates.size() > shown) message << L"• 以及另外 " << (duplicates.size() - shown) << L" 个\n";
+    message << L"\n本次默认不再传送。是否仍然重新传送这些项目？";
+    int choice = MessageBoxW(gWindow, message.str().c_str(), L"检测到重复传送",
+                             MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+    if (choice == IDYES) return fingerprints;
+
+    std::set<size_t> duplicateSet(duplicates.begin(), duplicates.end());
+    std::vector<TransferFingerprint> retained;
+    for (size_t index = 0; index < fingerprints.size(); ++index) {
+        if (!duplicateSet.count(index)) retained.push_back(fingerprints[index]);
+    }
+    return retained;
+}
+
 class HttpClient {
 public:
     HttpClient(const std::wstring& host, INTERNET_PORT port) {
@@ -792,6 +949,42 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     PostProgress(0, true);
     std::vector<std::filesystem::path> temporaryArchives;
     try {
+        std::vector<TransferFingerprint> fingerprints = CheckTransferHistory(device, files);
+        files.clear();
+        for (const auto& item : fingerprints) files.push_back(item.source);
+        if (files.empty()) {
+            PostProgress(0, false);
+            PostStatus(L"已跳过传送过的项目");
+            gUploadInProgress = false;
+            gCancelRequested = false;
+            return;
+        }
+
+        if (device.usbReady) {
+            try {
+                WriteDiagnosticLog(L"usb_upload_start",
+                        device.name + L" items=" + std::to_wstring(files.size()));
+                SendItemsOverUsb(device.usbPeer, files, gCancelRequested,
+                    [&](const std::wstring& status) { PostStatus(status); },
+                    [&](uint64_t sent, uint64_t total) {
+                        int percent = total == 0 ? 100 : static_cast<int>(
+                            std::min<uint64_t>(100, sent * 100 / total));
+                        PostProgress(percent, true);
+                    });
+                RecordSuccessfulTransfers(device, fingerprints, L"USB");
+                WriteDiagnosticLog(L"usb_upload_done", device.name);
+                PostProgress(100, true);
+                PostStatus(L"已通过 USB 传送到“" + device.name + L"”");
+                gUploadInProgress = false;
+                gCancelRequested = false;
+                return;
+            } catch (const std::exception& usbError) {
+                WriteDiagnosticLog(L"usb_upload_failed", Utf8ToWide(usbError.what()));
+                if (device.ip.empty()) throw;
+                PostStatus(L"USB 暂不可用，正在自动改用 Wi‑Fi…");
+            }
+        }
+
         for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
             auto& input = files[inputIndex];
             if (std::filesystem::is_directory(input)) {
@@ -837,6 +1030,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             WriteDiagnosticLog(L"file_done", fileName + L" sha256=" + sha);
         }
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
+        RecordSuccessfulTransfers(device, fingerprints, L"Wi-Fi");
         WriteDiagnosticLog(L"upload_commit", taskId);
         PostProgress(100, true);
         PostStatus(L"已传送到 “" + device.name + L"” 的接收文件夹");
@@ -1040,7 +1234,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     DeleteObject(border);
 
     bool isApple = device.model.find(L"iPhone") != std::wstring::npos
-        || device.id.find(L"ios-") == 0;
+        || device.id.find(L"ios-") == 0 || device.id.find(L"apple:") == 0;
     HBRUSH platformBrush = CreateSolidBrush(isApple ? RGB(70, 111, 174) : RGB(74, 142, 93));
     HGDIOBJ oldPlatformBrush = SelectObject(dc, platformBrush);
     HGDIOBJ oldPlatformPen = SelectObject(dc, GetStockObject(NULL_PEN));
@@ -1068,6 +1262,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
 
     SetTextColor(dc, RGB(105, 112, 120));
     std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
+    if (device.usbReady && device.state != L"usb") sub += L"  ·  USB 优先";
     RECT subRect{rect.left + 68, rect.top + 38, rect.right - 125, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -1181,6 +1376,13 @@ void HandleDrop(HDROP drop) {
     std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
 }
 
+std::filesystem::path TransferHistoryPath() {
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
+    return base / L"ZwmDeviceShareHub" / L"transfer-history.tsv";
+}
+
 void DrawActionButton(const DRAWITEMSTRUCT* item) {
     RECT rect = item->rcItem;
     bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
@@ -1220,8 +1422,51 @@ std::vector<std::filesystem::path> PickPaths(bool folder) {
             IShellItemArray* items = nullptr;
             if (SUCCEEDED(dialog->GetResults(&items))) { DWORD count = 0; items->GetCount(&count); for (DWORD i = 0; i < count; ++i) { IShellItem* item = nullptr; if (SUCCEEDED(items->GetItemAt(i, &item))) { PWSTR path = nullptr; if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) { result.emplace_back(path); CoTaskMemFree(path); } item->Release(); } } items->Release(); }
         }
+        for (const auto& [usbId, peer] : gUsbPeers) {
+            auto sameDevice = std::find_if(fresh.begin(), fresh.end(), [&](const Device& candidate) {
+                bool sameName = !peer.name.empty() && _wcsicmp(candidate.name.c_str(), peer.name.c_str()) == 0;
+                bool sameModel = !peer.model.empty() && !candidate.model.empty()
+                    && _wcsicmp(candidate.model.c_str(), peer.model.c_str()) == 0;
+                return sameName || sameModel;
+            });
+            if (sameDevice != fresh.end()) {
+                sameDevice->usbReady = peer.ready;
+                sameDevice->usbPeer = peer;
+            } else {
+                Device device;
+                device.id = usbId;
+                device.name = peer.name;
+                device.model = peer.model;
+                device.state = peer.ready ? L"usb" : L"usb_pending";
+                device.usbReady = peer.ready;
+                device.usbPeer = peer;
+                device.lastSeen = now;
+                fresh.push_back(device);
+            }
+        }
     }
     dialog->Release(); return result;
+}
+
+void UsbDiscoveryLoop() {
+    while (gRunning) {
+        try {
+            auto peers = EnumerateUsbPeers();
+            {
+                std::lock_guard<std::mutex> lock(gDeviceMutex);
+                gUsbPeers.clear();
+                for (const auto& peer : peers) gUsbPeers[peer.id] = peer;
+            }
+            if (gWindow) PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
+            WriteDiagnosticLog(L"usb_discovery", L"devices=" + std::to_wstring(peers.size()));
+        } catch (const std::exception& error) {
+            WriteDiagnosticLog(L"usb_discovery_failed", Utf8ToWide(error.what()));
+        }
+        for (int tick = 0; tick < 20 && gRunning && !gUsbRefreshRequested; ++tick) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        gUsbRefreshRequested = false;
+    }
 }
 
 void ChooseAndSend(bool folder) {
@@ -1261,7 +1506,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.7", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.8", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -1297,6 +1542,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
+            gUsbDiscoveryThread = std::thread(UsbDiscoveryLoop);
             gReceiverThread = std::thread([] { RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog); });
             SetTimer(window, 1, 2500, nullptr);
             return 0;
@@ -1310,6 +1556,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 RefreshDeviceList();
                 SetWindowTextW(gStatus, L"正在刷新设备…");
                 gRefreshRequested = true;
+                gUsbRefreshRequested = true;
                 WriteDiagnosticLog(L"discovery_manual_refresh", L"device list cleared and probe requested");
                 return 0;
             }
@@ -1392,6 +1639,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gRunning = false;
             KillTimer(window, 1);
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
+            if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
             if (gReceiverThread.joinable()) gReceiverThread.join();
             if (gFont) DeleteObject(gFont);
             if (gTitleFont) DeleteObject(gTitleFont);
@@ -1412,6 +1660,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS};
     InitCommonControlsEx(&controls);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    ConfigureUsbTransport(instance, WriteDiagnosticLog);
     LoadDeviceRemarks();
 
     WNDCLASSEXW windowClass{};
@@ -1425,7 +1674,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.7",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.8",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

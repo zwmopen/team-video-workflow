@@ -12,7 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /** Keeps the selected source tree and the app-private recoverable trash in sync. */
 final class ExternalTrashManager {
@@ -29,6 +31,54 @@ final class ExternalTrashManager {
             result.add(moveTrashedSource(resolver, tree, legacyRoot, library, entry));
         }
         return result;
+    }
+
+    static WorkLibrary.ReconcileResult reconcileMissingExternalSources(
+            ContentResolver resolver,
+            Uri tree,
+            WorkLibrary library,
+            Set<String> detectedActiveDocumentIds) throws IOException {
+        HashSet<String> existing = new HashSet<>(detectedActiveDocumentIds);
+        for (WorkLibrary.WorkEntry entry : library.listActive()) {
+            if (entry.sourceDocumentId.isEmpty()
+                    || existing.contains(entry.sourceDocumentId)) {
+                continue;
+            }
+            // Some vendor document providers briefly return an empty child list while they
+            // rebuild their index after an app update. Never treat that one frame as deletion.
+            if (documentExists(resolver, tree, entry.sourceDocumentId)) {
+                existing.add(entry.sourceDocumentId);
+            }
+        }
+        for (WorkLibrary.WorkEntry entry : library.listTrash()) {
+            String locator = entry.trashDocumentId.isEmpty()
+                    ? entry.sourceDocumentId : entry.trashDocumentId;
+            if (locator.isEmpty() || existing.contains(locator)) continue;
+            if (documentExists(resolver, tree, locator)) existing.add(locator);
+        }
+        return library.reconcileExternalDocumentIds(
+                existing, existing, System.currentTimeMillis());
+    }
+
+    private static boolean documentExists(ContentResolver resolver, Uri tree, String documentId)
+            throws IOException {
+        if (tree == null || documentId == null || documentId.isEmpty()) return false;
+        Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, documentId);
+        try (Cursor cursor = resolver.query(document,
+                new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
+            if (cursor == null) throw new IOException("系统未返回文件状态");
+            return cursor.moveToFirst();
+        } catch (FileNotFoundException missing) {
+            return false;
+        } catch (SecurityException denied) {
+            throw new IOException("作品文件夹权限已失效，请重新选择", denied);
+        } catch (IllegalArgumentException missing) {
+            String message = missing.getMessage() == null ? "" : missing.getMessage();
+            if (message.contains("Missing file") || message.contains("Failed to determine")) {
+                return false;
+            }
+            throw new IOException("无法核对回收站原文件", missing);
+        }
     }
 
     static Result moveTrashedSource(ContentResolver resolver, Uri tree, File legacyRoot,
@@ -54,8 +104,14 @@ final class ExternalTrashManager {
                 throw new IOException("请重新选择作品文件夹后再清理");
             }
         } catch (FileNotFoundException missing) {
-            // The user already removed the source folder; the private trash copy remains recoverable.
-            result.alreadyMissing++;
+            // The selected folder is the source of truth. A manual file-manager deletion must
+            // not leave a private copy that still looks shareable or recoverable.
+            try {
+                library.deleteTrash(entry.id);
+                result.alreadyMissing++;
+            } catch (IOException cleanupFailure) {
+                result.failures.add(entry.name + "：" + safeMessage(cleanupFailure));
+            }
         } catch (Exception error) {
             result.failures.add(entry.name + "：" + safeMessage(error));
         }

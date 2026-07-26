@@ -33,7 +33,7 @@ jobs:
           "status=$status" >> $env:GITHUB_OUTPUT
           if ($status -eq 0) {
             New-Item -ItemType Directory -Force -Path tools/device-share-hub/windows-native/out | Out-Null
-            Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/素材投送中控-Windows-V3.7.exe"
+            Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/素材投送中控-Windows-V3.8.exe"
             Copy-Item "tools/device-share-hub/README.md" "tools/device-share-hub/windows-native/out/使用说明.md"
           }
           exit 0
