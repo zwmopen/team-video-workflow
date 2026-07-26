@@ -696,6 +696,31 @@ std::wstring Sha256File(const std::filesystem::path& path) {
     return out.str();
 }
 
+std::wstring HardwareFamily(const std::wstring& name, const std::wstring& model) {
+    std::wstring value = name + L" " + model;
+    std::transform(value.begin(), value.end(), value.begin(), towlower);
+    value.erase(std::remove_if(value.begin(), value.end(), [](wchar_t character) {
+        return !iswalnum(character);
+    }), value.end());
+    if (value.find(L"23013rk75c") != std::wstring::npos
+        || value.find(L"redmik60") != std::wstring::npos
+        || value.find(L"xiaomik60") != std::wstring::npos
+        || value.find(L"mondrian") != std::wstring::npos) {
+        return L"xiaomi-k60";
+    }
+    if (value.find(L"m2006c3lc") != std::wstring::npos
+        || value.find(L"redmi9a") != std::wstring::npos
+        || value.find(L"rmi9a") != std::wstring::npos
+        || value.find(L"dandelion") != std::wstring::npos) {
+        return L"xiaomi-9a";
+    }
+    if (value.find(L"23124rn87c") != std::wstring::npos
+        || value.find(L"redmi13") != std::wstring::npos) {
+        return L"xiaomi-redmi-13";
+    }
+    return L"";
+}
+
 void SaveChannelPreferencesUnlocked() {
     try {
         if (gChannelPreferencePath.empty()) gChannelPreferencePath = ChannelPreferencePath();
@@ -1163,7 +1188,10 @@ void RefreshDeviceList() {
                 bool sameName = !peer.name.empty() && _wcsicmp(candidate.name.c_str(), peer.name.c_str()) == 0;
                 bool sameModel = !peer.model.empty() && !candidate.model.empty()
                     && _wcsicmp(candidate.model.c_str(), peer.model.c_str()) == 0;
-                return sameName || sameModel;
+                std::wstring candidateFamily = HardwareFamily(candidate.name, candidate.model);
+                std::wstring usbFamily = HardwareFamily(peer.name, peer.model);
+                bool sameHardwareFamily = !candidateFamily.empty() && candidateFamily == usbFamily;
+                return sameName || sameModel || sameHardwareFamily;
             });
             if (sameDevice != fresh.end()) {
                 sameDevice->usbReady = peer.ready;
@@ -1693,7 +1721,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.9", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.9.1", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -1862,7 +1890,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.9",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.9.1",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
