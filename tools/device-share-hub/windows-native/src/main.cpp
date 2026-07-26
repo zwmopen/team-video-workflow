@@ -1222,9 +1222,21 @@ void RefreshDeviceList() {
     SendMessageW(gDeviceList, WM_SETREDRAW, FALSE, 0);
     SendMessageW(gDeviceList, LB_RESETCONTENT, 0, 0);
     gDisplayedDevices = fresh;
+    static std::map<std::wstring, std::wstring> lastRouteDiagnostics;
     for (const Device& device : gDisplayedDevices) {
         std::wstring name = DisplayNameFor(device);
         SendMessageW(gDeviceList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
+        std::wstring routeState =
+            L"usbReady=" + std::to_wstring(device.usbReady ? 1 : 0)
+            + L" usbAllowed=" + std::to_wstring(device.usbAllowed ? 1 : 0)
+            + L" wifiIp=" + (device.ip.empty() ? L"-" : device.ip)
+            + L" wifiAllowed=" + std::to_wstring(device.wifiAllowed ? 1 : 0)
+            + L" remoteConnected=" + std::to_wstring(device.remoteConnected ? 1 : 0)
+            + L" remoteAllowed=" + std::to_wstring(device.remoteAllowed ? 1 : 0);
+        if (lastRouteDiagnostics[device.id] != routeState) {
+            lastRouteDiagnostics[device.id] = routeState;
+            WriteDiagnosticLog(L"device_routes", device.name + L" " + routeState);
+        }
     }
     if (!gDisplayedDevices.empty()) SendMessageW(gDeviceList, LB_SETCURSEL, std::clamp(previous, 0, static_cast<int>(gDisplayedDevices.size()) - 1), 0);
     SendMessageW(gDeviceList, WM_SETREDRAW, TRUE, 0);
@@ -1425,7 +1437,11 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
+    RECT listClient{};
     int contentRight = rect.right - 16;
+    if (GetClientRect(item->hwndItem, &listClient) && listClient.right > listClient.left) {
+        contentRight = std::min<LONG>(rect.right, listClient.right) - 16;
+    }
     RECT nameRect{rect.left + 68, rect.top + 9, contentRight - 220, rect.top + 35};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
