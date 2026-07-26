@@ -1425,7 +1425,10 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(25, 28, 32));
     SelectObject(dc, gFont);
-    RECT nameRect{rect.left + 68, rect.top + 9, rect.right - 220, rect.top + 35};
+    RECT listClient{};
+    GetClientRect(gDeviceList, &listClient);
+    int contentRight = std::min(rect.right, listClient.right) - 16;
+    RECT nameRect{rect.left + 68, rect.top + 9, contentRight - 220, rect.top + 35};
     std::wstring displayName = DisplayNameFor(device);
     bool hasRemark = displayName != device.name;
     if (device.workCount >= 0) {
@@ -1437,8 +1440,6 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
     if (device.state == L"usb_pending" && !device.usbPeer.hint.empty()) {
         sub = device.usbPeer.hint;
-    } else if (device.usbReady && device.state != L"usb") {
-        sub += L"  ·  USB 优先";
     } else if (!device.usbPeer.id.empty() && !device.usbReady) {
         sub += L"  ·  USB 已连接，待文件传输";
     }
@@ -1459,7 +1460,8 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
         if (!channelText.empty()) channelText += L" · ";
         channelText += value;
     }
-    RECT channelRect{rect.right - 214, rect.top + 9, rect.right - 16, rect.top + 35};
+    RECT channelRect{std::max(rect.left + 220, contentRight - 210), rect.top + 9,
+                     contentRight, rect.top + 35};
     DrawTextW(dc, channelText.c_str(), -1, &channelRect,
               DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (item->itemState & ODS_FOCUS) DrawFocusRect(dc, &rect);
