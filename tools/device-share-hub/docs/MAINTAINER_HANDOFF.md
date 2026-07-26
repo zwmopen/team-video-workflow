@@ -65,6 +65,8 @@
 - 自动检查：新增点击时间、精确 1 小时边界、无时间戳旧记录、跨 active/trash 内容指纹及重复图片测试；本地 Gradle 9.4.1 单元测试与 Debug 构建成功。
 - 真机检查：同签名 Debug 覆盖为 0.5.5/code 32，名称和 Lark 授权保留；作品 16→14，回收站保持 19，内部重复图片哈希组 2→0。文件模式实读 Lark 为 20 项。临时私有自检作品点击一次即 `shareCount=1`；把测试时间模拟到 1 小时后，测试作品、分享缓存记录和媒体缓存均被清理，真实数据回到 14/19。
 - 未替用户选择小红书目标或执行真实发布；不同手机的厂商文件管理删除表现按用户后续连接设备逐台复核，同一正式包继续兼容，不做机型分叉。
+- 功能提交为 `d1d55b8`，已同步主仓库与备用构建仓库。主账号 Actions run `30182688637` 在任何步骤开始前因账号运行资源问题结束；备用账号 run [`30182693533`](https://github.com/rpgzwm/team-video-workflow-build/actions/runs/30182693533) 对同一提交完成 Windows、Android、iPhone 三端构建，三个任务全部成功。
+- Android 公开正式版为 [v0.5.5](https://github.com/zwmopen/gallery-updates/releases/tag/v0.5.5)，APK SHA-256 为 `AF8E016B16029047C654BB6805FEBAACC181C407A94D6C4BB8023F79CDDBDD02`。`latest.json` 已同步 0.5.5/code 32；从公开下载地址重新下载后的哈希与索引、实机安装包一致。桌面保存 `相册-Android-0.5.5.apk`。
 
 - Android 0.5.4 修复 HarmonyOS / EMUI 系统选择器可能先返回 Activity 结果、后送达所选目标回调的竞态。Activity 结果先到时保留 1.2 秒回调窗口；晚到回调仍记为“已打开分享”，没有目标回调才按取消结束。VIVO 的快速返回与 20 秒分身冷启动观察保持原路径。
 - 新增 4 项纯 Java 分享结果时序回归，覆盖“结果先到、回调后到”“回调缺失”“正常快速返回”“正常长时间返回”；Android 全量单元测试共 37 项，Release 编译与 Release Lint 均成功。
