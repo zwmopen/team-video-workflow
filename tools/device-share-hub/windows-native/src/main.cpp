@@ -1460,7 +1460,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
         if (!channelText.empty()) channelText += L" · ";
         channelText += value;
     }
-    RECT channelRect{std::max(rect.left + 220, contentRight - 210), rect.top + 9,
+    RECT channelRect{std::max<LONG>(rect.left + 220, contentRight - 210), rect.top + 9,
                      contentRight, rect.top + 35};
     DrawTextW(dc, channelText.c_str(), -1, &channelRect,
               DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
