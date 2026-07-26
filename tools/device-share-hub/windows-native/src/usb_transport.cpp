@@ -7,8 +7,8 @@
 #include <propvarutil.h>
 #include <wincrypt.h>
 #include <setupapi.h>
-#include <devpkey.h>
 #include <initguid.h>
+#include <devpkey.h>
 #include <usbiodef.h>
 
 #include <algorithm>
