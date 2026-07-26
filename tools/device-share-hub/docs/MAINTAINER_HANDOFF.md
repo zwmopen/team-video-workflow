@@ -16,6 +16,8 @@
 - 最终三端构建 run `30189534099` 对提交 `a27b62c` 全部成功；公开发布为 `gallery-updates v0.5.7`。APK/IPA/EXE SHA-256 分别为 `A8571C2D7D997D4397653425B0B9F1ED1C04E05A1D196638A950F6FC6D4AC027`、`C22E9C32569FDDFFBB6C342C959DC328BB5AC8D8C85418BC1700601980215761`、`DC9CC5E53C7DCCE98FF10CDEBF6A762F8800EFF6BF23E1176A1E22C297ED6552`。
 - K60 已用公开同源 APK 覆盖并保持 24 个作品；Windows V3.8 已放桌面。K60 打开 MTP 后，界面从两条系统接口收敛为一张 `Redmi K60` 卡片并显示 USB 可用。当前自动文件选择受前台窗口焦点影响，未完成 App 内真实 USB 文件提交，不能用枚举证据替代落盘证据。
 - Windows V3.9 增加设备级 USB/WiFi/远程传送权限持久化与右键菜单；设备首次登记默认允许，卡片只显示真实在线通道。Android 0.5.8 与 iPhone 0.5.2 会持久记录在局域网发现过的电脑身份。远程中继服务尚未部署，因此“远程”不会显示为已经连通。
+- 最终构建 run `30191579830` 对功能提交 `74858f4` 的 Windows、Android、iPhone 全部成功。公开发布为 `gallery-updates v0.5.8`；APK/IPA/EXE SHA-256 分别为 `F3AD74B9F47FF98ECF28B5E145D641BB0227445A2FF5062300FB2D4A077B8B34`、`C1860FE11B9E766DA7729FBF859756E28D94BFEB992847BBEC9AA21531C6A7D9`、`9068E010BA94A87AFD2AA4C27BF12483951DB7275F8A2FA8AB4C5B1F1990EFE9`。
+- Redmi K60 已覆盖安装最终 Android 0.5.8/code35，安装前后均为 22 个作品；传送页实体发现电脑与另一台手机并显示 WiFi。iPhone 本轮未连接，不能把云端构建和 IPA 结构校验写成实体安装结果。
 
 更新时间：2026-07-26
 
