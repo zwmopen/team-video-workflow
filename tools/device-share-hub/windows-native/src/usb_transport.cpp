@@ -7,6 +7,7 @@
 #include <propvarutil.h>
 #include <wincrypt.h>
 #include <setupapi.h>
+#include <initguid.h>
 #include <usbiodef.h>
 
 #include <algorithm>
@@ -46,6 +47,8 @@ void* gModule = nullptr;
 UsbLogCallback gLogger;
 std::filesystem::path gBridgePath;
 
+std::string WideToUtf8(const std::wstring& value);
+
 std::wstring ErrorText(HRESULT result) {
     wchar_t* raw = nullptr;
     FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
@@ -60,7 +63,7 @@ std::wstring ErrorText(HRESULT result) {
 void Check(HRESULT result, const wchar_t* action) {
     if (FAILED(result)) {
         std::wstring message = std::wstring(action) + L"：" + ErrorText(result);
-        throw std::runtime_error(std::string(message.begin(), message.end()));
+        throw std::runtime_error(WideToUtf8(message));
     }
 }
 
