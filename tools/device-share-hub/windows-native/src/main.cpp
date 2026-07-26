@@ -1472,6 +1472,17 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
         totalBadgeWidth += static_cast<int>(channelLabels.size() - 1) * 8;
     }
     int badgeLeft = contentRight - totalBadgeWidth;
+    static std::map<std::wstring, std::wstring> lastBadgeGeometry;
+    std::wstring badgeGeometry =
+        L"item=" + std::to_wstring(rect.left) + L"," + std::to_wstring(rect.right)
+        + L" client=" + std::to_wstring(listClient.left) + L"," + std::to_wstring(listClient.right)
+        + L" contentRight=" + std::to_wstring(contentRight)
+        + L" badgeLeft=" + std::to_wstring(badgeLeft)
+        + L" labels=" + std::to_wstring(channelLabels.size());
+    if (lastBadgeGeometry[device.id] != badgeGeometry) {
+        lastBadgeGeometry[device.id] = badgeGeometry;
+        WriteDiagnosticLog(L"route_badge_geometry", device.name + L" " + badgeGeometry);
+    }
     SetTextColor(dc, RGB(43, 105, 82));
     for (const auto& value : channelLabels) {
         int badgeWidth = value == L"远程" ? 58 : 52;
