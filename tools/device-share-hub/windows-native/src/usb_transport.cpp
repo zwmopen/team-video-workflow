@@ -7,6 +7,7 @@
 #include <propvarutil.h>
 #include <wincrypt.h>
 #include <setupapi.h>
+#include <devpkey.h>
 #include <initguid.h>
 #include <usbiodef.h>
 
@@ -447,7 +448,13 @@ std::vector<UsbPeer> EnumerateConnectedAndroidUsb() {
         // "Android Composite ADB Interface". That is implementation detail, not a
         // useful device name. Keep the card human-readable until MTP can provide the
         // phone's actual name.
-        peer.name = L"安卓手机";
+        wchar_t reportedName[512]{};
+        DEVPROPTYPE propertyType = 0;
+        SetupDiGetDevicePropertyW(
+            devices, &info, &DEVPKEY_Device_BusReportedDeviceDesc,
+            &propertyType, reinterpret_cast<PBYTE>(reportedName),
+            sizeof(reportedName), nullptr, 0);
+        peer.name = reportedName[0] ? reportedName : L"安卓手机";
         peer.model = L"USB 已连接";
         peer.kind = UsbTransportKind::DetectedOnly;
         peer.ready = false;
