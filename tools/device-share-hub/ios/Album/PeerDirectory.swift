@@ -20,10 +20,10 @@ final class PeerDirectory {
     private let lock = NSLock()
     private var values: [String: TransferPeer] = [:]
 
-    func remember(packet: String, host: String) -> Bool {
+    func remember(packet: String, host: String) -> (shouldReply: Bool, registeredComputer: Bool) {
         let parts = packet.components(separatedBy: "|")
         guard parts.count >= 8, parts[0] == "ZWMDS2_HERE", parts[1] == "2",
-              !parts[2].isEmpty, parts[2] != DeviceIdentity.id else { return false }
+              !parts[2].isEmpty, parts[2] != DeviceIdentity.id else { return (false, false) }
         let peer = TransferPeer(id: parts[2], name: decode(parts[4]), model: decode(parts[5]),
                                 host: host, port: UInt16(parts[3]) ?? 45833,
                                 state: decode(parts[6]),
@@ -35,16 +35,18 @@ final class PeerDirectory {
         lock.unlock()
         let changed = previous == nil || previous?.host != peer.host || previous?.name != peer.name ||
             previous?.state != peer.state || previous?.workCount != peer.workCount
+        var registeredComputer = false
         if peer.id.hasPrefix("windows-") || peer.model == "Windows PC" {
             var registered = Set(UserDefaults.standard.stringArray(forKey: "album.registeredComputers") ?? [])
             if registered.insert(peer.id).inserted {
                 UserDefaults.standard.set(Array(registered).sorted(), forKey: "album.registeredComputers")
+                registeredComputer = true
             }
         }
         UserDefaults.standard.set("\(peer.name)|\(peer.model)|\(peer.host)|\(Date().timeIntervalSince1970)",
                                   forKey: "album.lastPeer.\(peer.id)")
         if changed { DispatchQueue.main.async { NotificationCenter.default.post(name: .transferPeersChanged, object: nil) } }
-        return previous == nil || Date().timeIntervalSince(previous!.lastSeen) > 7
+        return (previous == nil || Date().timeIntervalSince(previous!.lastSeen) > 7, registeredComputer)
     }
 
     func peers() -> [TransferPeer] {

@@ -101,8 +101,11 @@ final class IncomingTransferService {
                 return
             }
             if text.hasPrefix("ZWMDS2_HERE|2|"), let host = self.remoteHost(connection.endpoint) {
-                let shouldReply = PeerDirectory.shared.remember(packet: text, host: host)
-                if shouldReply {
+                let result = PeerDirectory.shared.remember(packet: text, host: host)
+                if result.registeredComputer {
+                    self.updateStatus("电脑已确认传送权限")
+                }
+                if result.shouldReply {
                     connection.send(content: self.beaconData(), completion: .contentProcessed { _ in connection.cancel() })
                     return
                 }

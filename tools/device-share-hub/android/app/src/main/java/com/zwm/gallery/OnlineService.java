@@ -551,6 +551,7 @@ public final class OnlineService extends Service {
                 if (registered.add(id)) {
                     preferences.edit().putStringSet("registeredComputers", registered).apply();
                     DiagnosticLog.write(this, "computer_registered", peer.name);
+                    notifyStatus("电脑已确认传送权限");
                 }
             }
             boolean changed = !peer.equalsForDisplay(PEERS.put(id, peer));

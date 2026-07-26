@@ -735,13 +735,19 @@ void LoadChannelPreferences() {
     }
 }
 
-ChannelPreferences ChannelsFor(const std::wstring& deviceId) {
+ChannelPreferences ChannelsFor(const std::wstring& deviceId, bool* created = nullptr) {
     std::lock_guard<std::mutex> lock(gPreferenceMutex);
     auto found = gChannelPreferences.find(deviceId);
-    if (found != gChannelPreferences.end()) return found->second;
+    if (found != gChannelPreferences.end()) {
+        if (created) *created = false;
+        return found->second;
+    }
     if (!deviceId.empty()) {
         gChannelPreferences[deviceId] = ChannelPreferences{};
         SaveChannelPreferencesUnlocked();
+        if (created) *created = true;
+    } else if (created) {
+        *created = false;
     }
     return ChannelPreferences{};
 }
@@ -1169,10 +1175,12 @@ void RefreshDeviceList() {
                 device.model = peer.model;
                 device.state = peer.ready ? L"usb" : L"usb_pending";
                 device.usbReady = peer.ready;
-                ChannelPreferences channels = ChannelsFor(device.id);
+                bool newlyRegistered = false;
+                ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
                 device.usbAllowed = channels.usb;
                 device.wifiAllowed = channels.wifi;
                 device.remoteAllowed = channels.remote;
+                if (newlyRegistered) PostStatus(device.name + L" 已自动登记，传送权限已开启");
                 device.usbPeer = peer;
                 device.lastSeen = now;
                 fresh.push_back(device);
@@ -1310,10 +1318,12 @@ void DiscoveryLoop() {
                         catch (...) { device.workCount = -1; }
                     }
                     device.ip = Utf8ToWide(ip);
-                    ChannelPreferences channels = ChannelsFor(device.id);
+                    bool newlyRegistered = false;
+                    ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
                     device.usbAllowed = channels.usb;
                     device.wifiAllowed = channels.wifi;
                     device.remoteAllowed = channels.remote;
+                    if (newlyRegistered) PostStatus(device.name + L" 已自动登记，传送权限已开启");
                     device.lastSeen = std::chrono::steady_clock::now();
                     if (!device.id.empty() && WideToUtf8(device.id) != WindowsDeviceId()) {
                         std::lock_guard<std::mutex> lock(gDeviceMutex);
