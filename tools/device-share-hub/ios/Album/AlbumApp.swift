@@ -5,9 +5,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     let library = WorkLibrary()
     private lazy var incomingTransfer = IncomingTransferService(library: library)
+    private var cleanupTimer: Timer?
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        CleanupPreferences.registerDefaults()
         library.start()
         TransferNotifications.shared.configure()
         let window = UIWindow(frame: UIScreen.main.bounds)
@@ -24,11 +26,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         application.isIdleTimerDisabled = true
         if !Self.isRunningTests { incomingTransfer.start() }
         library.refresh(showConfirmation: false)
+        cleanupTimer?.invalidate()
+        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.library.refresh(showConfirmation: false)
+        }
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
         application.isIdleTimerDisabled = false
         if !Self.isRunningTests { incomingTransfer.stop() }
+        cleanupTimer?.invalidate()
+        cleanupTimer = nil
     }
 
     private static var isRunningTests: Bool {

@@ -15,6 +15,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -25,7 +26,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Simple file-transfer browser backed by the already selected SAF folder. */
+/** System-like file browser backed by the already selected SAF folder. */
 public final class FileBrowserActivity extends Activity {
     private static final String PREFS = "device_share";
     private static final String PREF_TREE_URI = "libraryTreeUri";
@@ -60,6 +61,9 @@ public final class FileBrowserActivity extends Activity {
         top.setGravity(Gravity.CENTER_VERTICAL);
         heading = text("文件", 26, true);
         top.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+        ImageButton noteMode = iconButton(R.drawable.ic_album_share, "切换到小红书笔记");
+        noteMode.setOnClickListener(v -> finish());
+        top.addView(noteMode, iconParams());
         ImageButton send = iconButton(R.drawable.ic_album_transfer, "发送文件");
         send.setOnClickListener(v -> startActivity(new Intent(this, TransferActivity.class)));
         top.addView(send, iconParams());
@@ -70,12 +74,6 @@ public final class FileBrowserActivity extends Activity {
         settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
         top.addView(settings, iconParams());
         screen.addView(top);
-
-        Button mode = button("文件浏览  ·  切换到小红书笔记");
-        mode.setOnClickListener(v -> finish());
-        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(-1, dp(40));
-        modeParams.setMargins(dp(12), dp(6), dp(12), dp(10));
-        screen.addView(mode, modeParams);
 
         status = text("正在读取…", 13, false);
         status.setTextColor(Color.rgb(83, 99, 89));
@@ -134,14 +132,15 @@ public final class FileBrowserActivity extends Activity {
         heading.setText(path.size() > 1 ? "文件夹" : "文件");
         status.setText(entries.size() + " 项");
         if (path.size() > 1) {
-            list.addView(row("‹  返回上一级", "当前目录", true, v -> {
+            list.addView(row(R.drawable.ic_file_up, Color.rgb(91, 107, 98),
+                    "返回上一级", "当前目录", true, v -> {
                 path.pop();
                 refresh();
             }), rowParams());
         }
         for (Entry entry : entries) {
             String detail = entry.directory ? "文件夹" : fileDetail(entry);
-            list.addView(row((entry.directory ? "▰  " : fileSymbol(entry.mime)) + entry.name,
+            list.addView(row(fileIcon(entry), fileIconColor(entry), entry.name,
                     detail, entry.directory, v -> open(entry)), rowParams());
         }
         if (entries.isEmpty()) {
@@ -153,18 +152,30 @@ public final class FileBrowserActivity extends Activity {
         }
     }
 
-    private View row(String title, String detail, boolean folder, View.OnClickListener click) {
+    private View row(int iconResource, int iconColor, String title, String detail,
+                     boolean folder, View.OnClickListener click) {
         LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(12), dp(16), dp(12));
         row.setBackground(round(Color.WHITE, 15));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconResource);
+        icon.setColorFilter(iconColor);
+        icon.setContentDescription(folder ? "文件夹" : "文件");
+        LinearLayout.LayoutParams iconLayout = new LinearLayout.LayoutParams(dp(30), dp(30));
+        iconLayout.setMargins(0, 0, dp(13), 0);
+        row.addView(icon, iconLayout);
+        LinearLayout textStack = new LinearLayout(this);
+        textStack.setOrientation(LinearLayout.VERTICAL);
         TextView name = text(title, 16, folder);
         name.setMaxLines(2);
-        row.addView(name);
+        textStack.addView(name);
         TextView meta = text(detail, 12, false);
         meta.setTextColor(Color.GRAY);
         meta.setPadding(0, dp(4), 0, 0);
-        row.addView(meta);
+        textStack.addView(meta);
+        row.addView(textStack, new LinearLayout.LayoutParams(0, -2, 1));
         row.setOnClickListener(click);
         return row;
     }
@@ -217,12 +228,43 @@ public final class FileBrowserActivity extends Activity {
         return String.format(java.util.Locale.CHINA, size >= 10 ? "%.0f %s" : "%.1f %s", size, unit);
     }
 
-    private String fileSymbol(String mime) {
-        if (mime == null) return "□  ";
-        if (mime.startsWith("image/")) return "▧  ";
-        if (mime.startsWith("text/")) return "≡  ";
-        if (mime.contains("zip") || mime.contains("archive")) return "▦  ";
-        return "□  ";
+    private int fileIcon(Entry entry) {
+        if (entry.directory) return R.drawable.ic_file_folder;
+        String mime = entry.mime == null ? "" : entry.mime.toLowerCase(java.util.Locale.ROOT);
+        String extension = extension(entry.name);
+        if (mime.startsWith("image/")) return R.drawable.ic_file_image;
+        if (mime.startsWith("video/")) return R.drawable.ic_file_video;
+        if (mime.startsWith("audio/")) return R.drawable.ic_file_audio;
+        if (mime.contains("pdf") || "pdf".equals(extension)) return R.drawable.ic_file_pdf;
+        if (mime.contains("zip") || mime.contains("archive") || mime.contains("compressed")
+                || "zip".equals(extension) || "rar".equals(extension) || "7z".equals(extension)) {
+            return R.drawable.ic_file_archive;
+        }
+        if (mime.startsWith("text/") || "txt".equals(extension) || "md".equals(extension)
+                || "json".equals(extension) || "xml".equals(extension) || "csv".equals(extension)) {
+            return R.drawable.ic_file_text;
+        }
+        return R.drawable.ic_file_generic;
+    }
+
+    private int fileIconColor(Entry entry) {
+        int icon = fileIcon(entry);
+        if (icon == R.drawable.ic_file_folder || icon == R.drawable.ic_file_up) {
+            return Color.rgb(222, 164, 64);
+        }
+        if (icon == R.drawable.ic_file_image) return Color.rgb(65, 145, 99);
+        if (icon == R.drawable.ic_file_video) return Color.rgb(124, 96, 164);
+        if (icon == R.drawable.ic_file_audio) return Color.rgb(202, 105, 84);
+        if (icon == R.drawable.ic_file_pdf) return Color.rgb(190, 76, 72);
+        if (icon == R.drawable.ic_file_archive) return Color.rgb(166, 119, 52);
+        if (icon == R.drawable.ic_file_text) return Color.rgb(76, 119, 164);
+        return Color.rgb(113, 122, 118);
+    }
+
+    private String extension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 && dot + 1 < name.length()
+                ? name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT) : "";
     }
 
     private LinearLayout.LayoutParams rowParams() {
@@ -232,8 +274,8 @@ public final class FileBrowserActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams iconParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(48));
-        params.setMargins(dp(4), 0, 0, 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(44));
+        params.setMargins(dp(2), 0, 0, 0);
         return params;
     }
 
@@ -241,8 +283,8 @@ public final class FileBrowserActivity extends Activity {
         ImageButton button = new ImageButton(this);
         button.setImageResource(resource);
         button.setColorFilter(Color.rgb(54, 86, 72));
-        button.setBackground(round(Color.rgb(231, 239, 233), 24));
-        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+        button.setBackground(round(Color.rgb(231, 239, 233), 22));
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
         button.setContentDescription(description);
         return button;
     }

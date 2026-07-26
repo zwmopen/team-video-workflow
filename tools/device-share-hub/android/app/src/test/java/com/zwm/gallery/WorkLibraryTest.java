@@ -12,6 +12,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
@@ -156,6 +157,42 @@ public final class WorkLibraryTest {
         assertEquals("shared", afterUpgrade.listTrash().get(0).id);
         assertEquals(2, afterUpgrade.listTrash().get(0).shareCount);
         assertEquals(firstDay.plusDays(1), afterUpgrade.listTrash().get(0).trashedDate);
+    }
+
+    @Test
+    public void migratesYesterdayLegacyRecordsUsingBeijingTime() throws Exception {
+        File source = temporary.newFolder("legacy-cleanup-source");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("legacy-cleanup-library"));
+        library.importWork("active-old", "昨天分享", "文案",
+                Arrays.asList(write(source, "active.jpg", "one")), "");
+        library.importWork("trash-old", "旧回收站", "文案",
+                Arrays.asList(write(source, "trash.jpg", "two")), "");
+        LocalDate yesterday = LocalDate.of(2026, 7, 25);
+        library.markShared("active-old", yesterday);
+        library.markShared("trash-old", yesterday);
+        library.moveToTrash("trash-old", yesterday);
+        long now = LocalDate.of(2026, 7, 26).atTime(9, 30)
+                .atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
+
+        assertEquals(2, library.migrateLegacyCleanupTimestamps(now));
+        assertTrue(library.getActive("active-old").firstSharedAtMs < now - 3_600_000L);
+        assertTrue(library.getTrash("trash-old").firstSharedAtMs < now - 3_600_000L);
+    }
+
+    @Test
+    public void givesSameDayLegacyRecordOneHourUpgradeGrace() throws Exception {
+        File source = temporary.newFolder("same-day-source");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("same-day-library"));
+        library.importWork("same-day", "今天分享", "文案",
+                Arrays.asList(write(source, "today.jpg", "one")), "");
+        LocalDate today = LocalDate.of(2026, 7, 26);
+        library.markShared("same-day", today);
+        long now = today.atTime(9, 30).atZone(ZoneId.of("Asia/Shanghai"))
+                .toInstant().toEpochMilli();
+
+        assertEquals(1, library.migrateLegacyCleanupTimestamps(now));
+        assertEquals(now, library.getActive("same-day").firstSharedAtMs);
+        assertEquals(0, library.migrateLegacyCleanupTimestamps(now + 1_000L));
     }
 
     @Test

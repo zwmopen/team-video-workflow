@@ -28,6 +28,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -37,9 +38,11 @@ import android.window.OnBackInvokedDispatcher;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -58,17 +61,23 @@ public final class MainActivity extends Activity {
     private TextView statusText;
     private ImageButton leftModeButton;
     private ImageButton rightModeButton;
+    private ImageButton modeButton;
     private TextView headingText;
     private TextView scannedCountText;
+    private TextView footerNote;
     private ImageButton quickTrashButton;
     private boolean showingTrash;
+    private boolean fileMode;
+    private Uri fileTree;
+    private final ArrayDeque<String> filePath = new ArrayDeque<>();
     private boolean initialFolderPromptShown;
     private final LinkedHashSet<String> selectedWorkIds = new LinkedHashSet<>();
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (OnlineService.ACTION_TASK_READY.equals(intent.getAction())) {
-                refreshWorks();
+                if (fileMode) refreshFiles();
+                else refreshWorks();
                 String workId = intent.getStringExtra(OnlineService.EXTRA_AUTO_SHARE_WORK_ID);
                 if (workId != null && !workId.isEmpty()) {
                     startActivity(new Intent(MainActivity.this, ShareActivity.class)
@@ -105,8 +114,13 @@ public final class MainActivity extends Activity {
         filter.addAction(OnlineService.ACTION_STATUS);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
-        if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) refreshWorks();
-        else importSelectedTree(false);
+        if (fileMode) {
+            openSelectedTreeForBrowsing(false);
+        } else if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) {
+            refreshWorks();
+        } else {
+            importSelectedTree(false);
+        }
     }
 
     @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
@@ -136,6 +150,15 @@ public final class MainActivity extends Activity {
             selectedWorkIds.clear();
             quickTrashButton.setVisibility(View.GONE);
             refreshWorks();
+            return;
+        }
+        if (fileMode) {
+            if (filePath.size() > 1) {
+                filePath.pop();
+                refreshFiles();
+            } else {
+                showWorksMode();
+            }
             return;
         }
         if (showingTrash) {
@@ -168,37 +191,63 @@ public final class MainActivity extends Activity {
         LinearLayout titleCluster = new LinearLayout(this);
         titleCluster.setOrientation(LinearLayout.HORIZONTAL);
         titleCluster.setGravity(Gravity.CENTER_VERTICAL);
-        headingText = text("作品", 26, true);
+        headingText = text("作品", 23, true);
         headingText.setSingleLine(true);
-        headingText.setAutoSizeTextTypeUniformWithConfiguration(20, 26, 1,
+        headingText.setAutoSizeTextTypeUniformWithConfiguration(18, 23, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP);
         titleCluster.addView(headingText, new LinearLayout.LayoutParams(-2, -2));
         scannedCountText = text("0", 12, true);
+        scannedCountText.setSingleLine(true);
         scannedCountText.setTextColor(Color.rgb(53, 105, 82));
         scannedCountText.setGravity(Gravity.CENTER);
         scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
-        scannedCountText.setPadding(dp(8), dp(5), dp(8), dp(5));
+        scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
         LinearLayout.LayoutParams countParams = new LinearLayout.LayoutParams(-2, -2);
-        countParams.setMargins(dp(8), 0, 0, 0);
+        countParams.setMargins(dp(4), 0, 0, 0);
         titleCluster.addView(scannedCountText, countParams);
         titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
+        modeButton = iconButton(R.drawable.ic_file_folder, "切换到文件浏览");
+        modeButton.setOnClickListener(v -> {
+            if (fileMode) showWorksMode();
+            else showFileMode();
+        });
+        titleRow.addView(modeButton, iconParams(false));
         ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
-        transfer.setOnClickListener(v -> startActivity(new Intent(this, TransferActivity.class)));
-        titleRow.addView(transfer, iconParams(false));
+        transfer.setOnClickListener(v -> {
+            toast("文件传输");
+            startActivity(new Intent(this, TransferActivity.class));
+        });
+        titleRow.addView(transfer, iconParams(true));
         leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
         leftModeButton.setOnClickListener(v -> {
-            if (showingTrash) showWorks();
-            else importSelectedTree(true);
+            if (fileMode) {
+                refreshFiles();
+                toast("正在刷新文件");
+            } else if (showingTrash) showWorks();
+            else {
+                toast("正在刷新作品");
+                importSelectedTree(true);
+            }
         });
         titleRow.addView(leftModeButton, iconParams(true));
         rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
         rightModeButton.setOnClickListener(v -> {
-            if (showingTrash) confirmClearTrash();
-            else showTrash();
+            if (fileMode) {
+                leaveFileMode();
+                toast("回收站");
+                showTrash();
+            } else if (showingTrash) confirmClearTrash();
+            else {
+                toast("回收站");
+                showTrash();
+            }
         });
         titleRow.addView(rightModeButton, iconParams(true));
         ImageButton settings = iconButton(R.drawable.ic_album_settings, "设置");
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        settings.setOnClickListener(v -> {
+            toast("设置");
+            startActivity(new Intent(this, SettingsActivity.class));
+        });
         titleRow.addView(settings, iconParams(true));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
@@ -211,9 +260,9 @@ public final class MainActivity extends Activity {
         statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
         root.addView(statusText, margins(0, dp(18), 0, dp(8)));
 
-        TextView note = text("点击“复制并分享”会立即记一次。默认 1 小时后进入回收站并从文件管理中彻底删除；时间可在设置中修改。", 12, false);
-        note.setTextColor(Color.GRAY);
-        root.addView(note, margins(0, dp(12), 0, 0));
+        footerNote = text("点击“复制并分享”会立即记一次。默认 1 小时后进入回收站并从文件管理中彻底删除；时间可在设置中修改。", 12, false);
+        footerNote.setTextColor(Color.GRAY);
+        root.addView(footerNote, margins(0, dp(12), 0, 0));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -222,11 +271,6 @@ public final class MainActivity extends Activity {
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(Color.rgb(246, 244, 240));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
-        Button modeSwitch = smallButton("小红书笔记  ·  切换到文件", false);
-        modeSwitch.setOnClickListener(v -> startActivity(new Intent(this, FileBrowserActivity.class)));
-        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(-1, dp(40));
-        modeParams.setMargins(dp(30), 0, dp(30), dp(8));
-        frozenLayout.addView(modeSwitch, modeParams);
         frozenLayout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
@@ -316,6 +360,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
+        if (fileMode) return;
         worksContainer.removeAllViews();
         LinkedHashSet<String> visibleIds = new LinkedHashSet<>();
         for (WorkLibrary.WorkEntry entry : entries) {
@@ -449,6 +494,221 @@ public final class MainActivity extends Activity {
         else selectedWorkIds.add(id);
         quickTrashButton.setVisibility(selectedWorkIds.isEmpty() ? View.GONE : View.VISIBLE);
         refreshWorks();
+    }
+
+    private void showWorksMode() {
+        leaveFileMode();
+        toast("作品分发模式");
+        showWorks();
+    }
+
+    private void leaveFileMode() {
+        fileMode = false;
+        fileTree = null;
+        filePath.clear();
+        modeButton.setImageResource(R.drawable.ic_file_folder);
+        modeButton.setContentDescription("切换到文件浏览");
+        footerNote.setVisibility(View.VISIBLE);
+    }
+
+    private void showFileMode() {
+        String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
+        if (stored.isEmpty()) {
+            toast("请先选择作品文件夹");
+            chooseFolder();
+            return;
+        }
+        selectedWorkIds.clear();
+        quickTrashButton.setVisibility(View.GONE);
+        showingTrash = false;
+        fileMode = true;
+        modeButton.setImageResource(R.drawable.ic_album_share);
+        modeButton.setContentDescription("切换到作品分享");
+        leftModeButton.setImageResource(R.drawable.ic_album_refresh);
+        leftModeButton.setContentDescription("刷新文件");
+        rightModeButton.setImageResource(R.drawable.ic_album_trash);
+        rightModeButton.setContentDescription("回收站");
+        footerNote.setVisibility(View.GONE);
+        toast("文件浏览模式");
+        openSelectedTreeForBrowsing(true);
+    }
+
+    private void openSelectedTreeForBrowsing(boolean resetPath) {
+        String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
+        if (stored.isEmpty()) return;
+        fileTree = Uri.parse(stored);
+        if (resetPath || filePath.isEmpty()) {
+            filePath.clear();
+            filePath.push(DocumentsContract.getTreeDocumentId(fileTree));
+        }
+        refreshFiles();
+    }
+
+    private void refreshFiles() {
+        if (!fileMode || fileTree == null || filePath.isEmpty()) return;
+        String current = filePath.peek();
+        statusText.setText("正在读取文件…");
+        worker.execute(() -> {
+            try {
+                List<FileEntry> entries = readFileChildren(current);
+                runOnUiThread(() -> {
+                    renderFiles(entries);
+                    statusText.setText("已刷新，共 " + entries.size() + " 项");
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> statusText.setText("读取文件失败：" + error.getMessage()));
+            }
+        });
+    }
+
+    private List<FileEntry> readFileChildren(String parentId) throws Exception {
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(fileTree, parentId);
+        String[] projection = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE
+        };
+        ArrayList<FileEntry> result = new ArrayList<>();
+        try (Cursor cursor = getContentResolver().query(children, projection, null, null, null)) {
+            if (cursor == null) throw new IllegalStateException("系统没有返回文件列表");
+            while (cursor.moveToNext()) {
+                result.add(new FileEntry(cursor.getString(0), cursor.getString(1), cursor.getString(2),
+                        cursor.isNull(3) ? 0 : cursor.getLong(3)));
+            }
+        }
+        result.sort((left, right) -> {
+            if (left.directory != right.directory) return left.directory ? -1 : 1;
+            return WorkRules.compareNatural(left.name, right.name);
+        });
+        return result;
+    }
+
+    private void renderFiles(List<FileEntry> entries) {
+        if (!fileMode) return;
+        worksContainer.removeAllViews();
+        headingText.setText(filePath.size() > 1 ? "文件夹" : "文件");
+        scannedCountText.setText(String.valueOf(entries.size()));
+        statusText.setText(entries.size() + " 项");
+        rightModeButton.setEnabled(true);
+        rightModeButton.setAlpha(1f);
+        if (filePath.size() > 1) {
+            worksContainer.addView(fileRow(R.drawable.ic_file_up, Color.rgb(91, 107, 98),
+                    "返回上一级", "当前目录", true, v -> {
+                        filePath.pop();
+                        refreshFiles();
+                    }), fileRowParams());
+        }
+        for (FileEntry entry : entries) {
+            String detail = entry.directory ? "文件夹" : fileDetail(entry);
+            worksContainer.addView(fileRow(fileIcon(entry), fileIconColor(entry), entry.name,
+                    detail, entry.directory, v -> openFileEntry(entry)), fileRowParams());
+        }
+        if (entries.isEmpty()) {
+            TextView empty = text("这个文件夹是空的", 14, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setTextColor(Color.GRAY);
+            empty.setPadding(0, dp(42), 0, dp(18));
+            worksContainer.addView(empty);
+        }
+    }
+
+    private View fileRow(int iconResource, int iconColor, String title, String detail,
+                         boolean folder, View.OnClickListener click) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(14), dp(11));
+        row.setBackground(round(Color.WHITE, 15));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconResource);
+        icon.setColorFilter(iconColor);
+        icon.setContentDescription(folder ? "文件夹" : "文件");
+        LinearLayout.LayoutParams iconLayout = new LinearLayout.LayoutParams(dp(28), dp(28));
+        iconLayout.setMargins(0, 0, dp(12), 0);
+        row.addView(icon, iconLayout);
+        LinearLayout textStack = new LinearLayout(this);
+        textStack.setOrientation(LinearLayout.VERTICAL);
+        TextView name = text(title, 15, folder);
+        name.setMaxLines(2);
+        textStack.addView(name);
+        TextView meta = text(detail, 12, false);
+        meta.setTextColor(Color.GRAY);
+        meta.setPadding(0, dp(3), 0, 0);
+        textStack.addView(meta);
+        row.addView(textStack, new LinearLayout.LayoutParams(0, -2, 1));
+        row.setOnClickListener(click);
+        return row;
+    }
+
+    private void openFileEntry(FileEntry entry) {
+        if (entry.directory) {
+            filePath.push(entry.id);
+            refreshFiles();
+            return;
+        }
+        try {
+            Uri uri = DocumentsContract.buildDocumentUriUsingTree(fileTree, entry.id);
+            Intent view = new Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, entry.mime == null ? "*/*" : entry.mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(view, "打开文件"));
+        } catch (Exception error) {
+            toast("没有能打开这个文件的应用");
+        }
+    }
+
+    private String fileDetail(FileEntry entry) {
+        if (entry.size <= 0) return entry.mime == null ? "文件" : entry.mime;
+        double size = entry.size;
+        String unit = "B";
+        if (size >= 1024) { size /= 1024; unit = "KB"; }
+        if (size >= 1024) { size /= 1024; unit = "MB"; }
+        if (size >= 1024) { size /= 1024; unit = "GB"; }
+        return String.format(Locale.CHINA, size >= 10 ? "%.0f %s" : "%.1f %s", size, unit);
+    }
+
+    private int fileIcon(FileEntry entry) {
+        if (entry.directory) return R.drawable.ic_file_folder;
+        String mime = entry.mime == null ? "" : entry.mime.toLowerCase(Locale.ROOT);
+        String extension = extension(entry.name);
+        if (mime.startsWith("image/")) return R.drawable.ic_file_image;
+        if (mime.startsWith("video/")) return R.drawable.ic_file_video;
+        if (mime.startsWith("audio/")) return R.drawable.ic_file_audio;
+        if (mime.contains("pdf") || "pdf".equals(extension)) return R.drawable.ic_file_pdf;
+        if (mime.contains("zip") || mime.contains("archive") || mime.contains("compressed")
+                || "zip".equals(extension) || "rar".equals(extension) || "7z".equals(extension)) {
+            return R.drawable.ic_file_archive;
+        }
+        if (mime.startsWith("text/") || "txt".equals(extension) || "md".equals(extension)
+                || "json".equals(extension) || "xml".equals(extension) || "csv".equals(extension)) {
+            return R.drawable.ic_file_text;
+        }
+        return R.drawable.ic_file_generic;
+    }
+
+    private int fileIconColor(FileEntry entry) {
+        int icon = fileIcon(entry);
+        if (icon == R.drawable.ic_file_folder || icon == R.drawable.ic_file_up) return Color.rgb(222, 164, 64);
+        if (icon == R.drawable.ic_file_image) return Color.rgb(65, 145, 99);
+        if (icon == R.drawable.ic_file_video) return Color.rgb(124, 96, 164);
+        if (icon == R.drawable.ic_file_audio) return Color.rgb(202, 105, 84);
+        if (icon == R.drawable.ic_file_pdf) return Color.rgb(190, 76, 72);
+        if (icon == R.drawable.ic_file_archive) return Color.rgb(166, 119, 52);
+        if (icon == R.drawable.ic_file_text) return Color.rgb(76, 119, 164);
+        return Color.rgb(113, 122, 118);
+    }
+
+    private String extension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 && dot + 1 < name.length()
+                ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+    }
+
+    private LinearLayout.LayoutParams fileRowParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(8));
+        return params;
     }
 
     private void confirmMoveSelectedToTrash() {
@@ -744,15 +1004,15 @@ public final class MainActivity extends Activity {
         ImageButton button = new ImageButton(this);
         button.setImageResource(imageResource);
         button.setImageTintList(ColorStateList.valueOf(Color.rgb(54, 86, 72)));
-        button.setBackground(round(Color.rgb(231, 239, 233), 24));
-        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+        button.setBackground(round(Color.rgb(231, 239, 233), 21));
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
         button.setContentDescription(description);
         return button;
     }
 
     private LinearLayout.LayoutParams iconParams(boolean withLeftMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(48));
-        if (withLeftMargin) params.setMargins(dp(4), 0, 0, 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(42));
+        if (withLeftMargin) params.setMargins(dp(3), 0, 0, 0);
         return params;
     }
 
@@ -786,4 +1046,20 @@ public final class MainActivity extends Activity {
 
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private static final class FileEntry {
+        final String id;
+        final String name;
+        final String mime;
+        final boolean directory;
+        final long size;
+
+        FileEntry(String id, String name, String mime, long size) {
+            this.id = id;
+            this.name = name == null ? "未命名" : name;
+            this.mime = mime;
+            this.directory = DocumentsContract.Document.MIME_TYPE_DIR.equals(mime);
+            this.size = size;
+        }
+    }
 }

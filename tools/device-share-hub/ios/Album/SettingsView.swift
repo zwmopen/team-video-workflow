@@ -17,13 +17,13 @@ final class SettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
+    override func numberOfSections(in tableView: UITableView) -> Int { return 7 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, library.supportsExternalFolderSelection ? 4 : 3, 3, 2, 1, 5][section]
+        return [3, library.supportsExternalFolderSelection ? 4 : 3, 3, 2, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return ["设备", "作品文件夹", "工作方式", "提醒", "隐私", "软件"][section]
+        return ["设备", "作品文件夹", "工作方式", "自动整理", "提醒", "隐私", "软件"][section]
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -59,35 +59,45 @@ final class SettingsViewController: UITableViewController {
             cell.selectionStyle = .default
         case (2, 0): cell.textLabel?.text = "点击作品后自动复制 TXT 文案"
         case (2, 1): cell.textLabel?.text = "全部图片进入 iOS 系统分享"
-        case (2, 2): cell.textLabel?.text = "次日移入回收站，保留 7 天"
+        case (2, 2): cell.textLabel?.text = "分享后按设置自动回收并删除"
         case (3, 0):
+            cell.textLabel?.text = "自动移入回收站"
+            cell.detailTextLabel?.text = "\(CleanupPreferences.moveHours) 小时"
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (3, 1):
+            cell.textLabel?.text = "自动彻底删除"
+            cell.detailTextLabel?.text = "\(CleanupPreferences.deleteHours) 小时"
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (4, 0):
             cell.textLabel?.text = "声音通知"
             cell.detailTextLabel?.text = "收到文件时显示通知并响铃"
             let toggle = UISwitch()
             toggle.isOn = NotificationPreferences.notificationsEnabled
             toggle.addTarget(self, action: #selector(notificationSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
-        case (3, 1):
+        case (4, 1):
             cell.textLabel?.text = "震动提醒"
             cell.detailTextLabel?.text = "开始、完成或失败时震动"
             let toggle = UISwitch()
             toggle.isOn = NotificationPreferences.vibrationEnabled
             toggle.addTarget(self, action: #selector(vibrationSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
-        case (4, 0):
+        case (5, 0):
             cell.textLabel?.text = "素材与记录只保存在所选文件夹，不上传服务器，也不修改图片拍摄信息。"
             cell.textLabel?.textColor = AppColors.secondaryText
-        case (5, 0):
+        case (6, 0):
             cell.textLabel?.text = "名称"
             cell.detailTextLabel?.text = "相册"
-        case (5, 1):
+        case (6, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.0"
-        case (5, 2):
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.1"
+        case (6, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
-        case (5, 3):
+        case (6, 3):
             cell.textLabel?.text = "软件说明"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
@@ -127,11 +137,13 @@ final class SettingsViewController: UITableViewController {
         } else if indexPath.section == 1 && indexPath.row == 3 {
             library.useManagedFolder()
             tableView.reloadData()
-        } else if indexPath.section == 5 && indexPath.row == 2 {
+        } else if indexPath.section == 3 {
+            promptForCleanupHours(editingMove: indexPath.row == 0)
+        } else if indexPath.section == 6 && indexPath.row == 2 {
             AlbumUpdateChecker.check(from: self)
-        } else if indexPath.section == 5 && indexPath.row == 3 {
+        } else if indexPath.section == 6 && indexPath.row == 3 {
             showAbout()
-        } else if indexPath.section == 5 && indexPath.row == 4 {
+        } else if indexPath.section == 6 && indexPath.row == 4 {
             library.copyDiagnostics()
             let alert = UIAlertController(title: nil, message: "诊断信息已复制", preferredStyle: .alert)
             present(alert, animated: true)
@@ -157,9 +169,43 @@ final class SettingsViewController: UITableViewController {
     }
 
     private func showAbout() {
-        let message = "相册用于管理作品、复制 TXT 文案并调用 iOS 系统分享，也能在同一 Wi‑Fi 下与 Windows、安卓和苹果设备互传文件。\n\n素材与记录只保存在你选择的文件夹；不自动发布、不模拟点击、不修改图片拍摄信息。分享过的作品次日进入回收站，并保留 7 天。"
+        let message = "相册用于管理作品、复制 TXT 文案并调用 iOS 系统分享，也能在同一 Wi‑Fi 下与 Windows、安卓和苹果设备互传文件。\n\n素材与记录只保存在你选择的文件夹；不自动发布、不模拟点击、不修改图片拍摄信息。默认在首次分享 1 小时后移入回收站并彻底删除，可在“自动整理”中调整为 1–10 小时。"
         let alert = UIAlertController(title: "关于相册", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func promptForCleanupHours(editingMove: Bool) {
+        let current = editingMove ? CleanupPreferences.moveHours : CleanupPreferences.deleteHours
+        let title = editingMove ? "自动移入回收站" : "自动彻底删除"
+        let alert = UIAlertController(
+            title: title,
+            message: "请输入 1–10 小时。彻底删除时间不能早于移入回收站时间。",
+            preferredStyle: .alert)
+        alert.addTextField { field in
+            field.text = "\(current)"
+            field.keyboardType = .numberPad
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "保存", style: .default) { [weak self, weak alert] _ in
+            guard let self = self,
+                  let text = alert?.textFields?.first?.text,
+                  let value = Int(text) else { return }
+            let move = editingMove ? value : CleanupPreferences.moveHours
+            let delete = editingMove ? max(value, CleanupPreferences.deleteHours) : value
+            guard CleanupPreferences.save(moveHours: move, deleteHours: delete) else {
+                let failed = UIAlertController(
+                    title: "没有保存",
+                    message: "请输入 1–10；彻底删除时间不能早于移入回收站时间。",
+                    preferredStyle: .alert)
+                failed.addAction(UIAlertAction(title: "知道了", style: .default))
+                self.present(failed, animated: true)
+                return
+            }
+            self.library.refresh(showConfirmation: false)
+            self.tableView.reloadData()
+        })
         present(alert, animated: true)
     }
 

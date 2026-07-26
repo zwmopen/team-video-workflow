@@ -177,7 +177,7 @@ final class WorkLibrary {
                 if batchFolder == nil {
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyyMMdd-HHmmss"
-                    let name = urls.count > 1 ? "导入作品-(formatter.string(from: Date()))" : "导入文件"
+                    let name = urls.count > 1 ? "导入作品-\(formatter.string(from: Date()))" : "导入文件"
                     batchFolder = StoredZipExtractor.uniqueDestination(for: name, under: root)
                     try FileManager.default.createDirectory(at: batchFolder!, withIntermediateDirectories: true)
                 }
@@ -187,8 +187,8 @@ final class WorkLibrary {
                 copied += 1
             }
             message = extracted > 0
-                ? "导入完成：(copied) 个文件，解压 (extracted) 个文件"
-                : "已导入 (copied) 个文件"
+                ? "导入完成：\(copied) 个文件，解压 \(extracted) 个文件"
+                : "已导入 \(copied) 个文件"
             refresh(showConfirmation: false)
         } catch { report(error) }
     }
@@ -215,7 +215,9 @@ final class WorkLibrary {
         do {
             try migrateLegacyTrash(root: root)
             state = try loadState(from: root)
-            try performMaintenance(root: root)
+            let now = Date()
+            try migrateLegacyCleanupTimestamps(root: root, now: now)
+            try performMaintenance(root: root, now: now)
             try saveState(to: root)
             let result = try scanner.scan(root: root, state: state)
             works = result.works
@@ -244,8 +246,13 @@ final class WorkLibrary {
 
         var record = state.works[work.key] ?? WorkState()
         record.shareCount += 1
-        record.lastShareDate = Self.dayFormatter.string(from: Date())
+        let now = Date()
+        record.lastShareDate = Self.dayFormatter.string(from: now)
+        if record.firstSharedAtMs == nil {
+            record.firstSharedAtMs = now.timeIntervalSince1970 * 1000
+        }
         record.trashedDate = nil
+        record.trashedAtMs = nil
         record.originalRelativePath = work.relativePath
         state.works[work.key] = record
         guard let root = rootURL else { throw LibraryError.noFolder }
@@ -316,6 +323,8 @@ final class WorkLibrary {
             let previous = record
             record.lastShareDate = nil
             record.trashedDate = nil
+            record.firstSharedAtMs = nil
+            record.trashedAtMs = nil
             record.trashFolderName = nil
             record.originalRelativePath = item.originalRelativePath
             state.works[item.key] = record
@@ -342,7 +351,9 @@ final class WorkLibrary {
                 try FileManager.default.removeItem(at: child)
             }
         }
-        state.works = state.works.filter { $0.value.trashedDate == nil }
+        state.works = state.works.filter {
+            $0.value.trashedDate == nil && $0.value.trashFolderName == nil
+        }
         try saveState(to: root)
         message = "回收站已清空"
         refresh(showConfirmation: false)
@@ -403,6 +414,7 @@ final class WorkLibrary {
         guard FileManager.default.fileExists(atPath: trashURL.path) else { return [] }
         return try childDirectories(of: trashURL).map { folder in
             let match = state.works.first { entry in
+                guard entry.value.trashedDate != nil || entry.value.trashFolderName != nil else { return false }
                 entry.value.trashFolderName == folder.lastPathComponent ||
                     (entry.value.trashFolderName == nil && entry.key == folder.lastPathComponent)
             }
@@ -448,13 +460,59 @@ final class WorkLibrary {
         }
     }
 
-    private func performMaintenance(root: URL) throws {
-        let today = Calendar.current.startOfDay(for: Date())
-        let todayText = Self.dayFormatter.string(from: today)
+    private func migrateLegacyCleanupTimestamps(root: URL, now: Date) throws {
+        var changed = false
+        for (key, original) in Array(state.works) {
+            var record = original
+            let legacyText = record.lastShareDate ?? record.trashedDate
+            if record.firstSharedAtMs == nil, let text = legacyText {
+                record.firstSharedAtMs = CleanupPolicy.legacyAnchor(dateText: text, now: now)
+            }
+            if record.trashedDate != nil, record.trashedAtMs == nil {
+                record.trashedAtMs = CleanupPolicy.legacyAnchor(
+                    dateText: record.trashedDate!, now: now)
+            }
+            if record.firstSharedAtMs != original.firstSharedAtMs ||
+                record.trashedAtMs != original.trashedAtMs {
+                state.works[key] = record
+                changed = true
+            }
+        }
+
+        let trashURL = root.appendingPathComponent(trashName, isDirectory: true)
+        if FileManager.default.fileExists(atPath: trashURL.path) {
+            for folder in try childDirectories(of: trashURL, includeHidden: true) {
+                let tracked = state.works.contains { entry in
+                    (entry.value.trashedDate != nil || entry.value.trashFolderName != nil) &&
+                    (entry.value.trashFolderName == folder.lastPathComponent ||
+                     (entry.value.trashFolderName == nil && entry.key == folder.lastPathComponent))
+                }
+                if tracked { continue }
+                var key = "legacy-trash-\(folder.lastPathComponent)"
+                while state.works[key] != nil { key += "-\(UUID().uuidString.prefix(4))" }
+                var record = WorkState()
+                record.originalRelativePath = folder.lastPathComponent
+                record.trashFolderName = folder.lastPathComponent
+                record.trashedDate = Self.dayFormatter.string(from: now)
+                record.firstSharedAtMs = now.timeIntervalSince1970 * 1000
+                record.trashedAtMs = record.firstSharedAtMs
+                state.works[key] = record
+                changed = true
+            }
+        }
+        if state.schemaVersion != 3 {
+            state.schemaVersion = 3
+            changed = true
+        }
+        if changed { try saveState(to: root) }
+    }
+
+    private func performMaintenance(root: URL, now: Date) throws {
+        let todayText = Self.dayFormatter.string(from: now)
         let trashURL = root.appendingPathComponent(trashName, isDirectory: true)
         for (key, record) in Array(state.works) where record.trashedDate == nil {
-            guard let lastText = record.lastShareDate,
-                  let lastDate = Self.dayFormatter.date(from: lastText), lastDate < today else { continue }
+            guard CleanupPolicy.isDue(anchorMilliseconds: record.firstSharedAtMs,
+                                      hours: CleanupPreferences.moveHours, now: now) else { continue }
             let original = record.originalRelativePath ?? key
             let source = url(forRelativePath: original, under: root)
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
@@ -465,6 +523,7 @@ final class WorkLibrary {
             try FileManager.default.moveItem(at: source, to: destination)
             var changed = record
             changed.trashedDate = todayText
+            changed.trashedAtMs = now.timeIntervalSince1970 * 1000
             changed.originalRelativePath = original
             changed.trashFolderName = trashFolder
             state.works[key] = changed
@@ -476,15 +535,16 @@ final class WorkLibrary {
             }
         }
         for (key, record) in Array(state.works) {
-            guard let text = record.trashedDate, let date = Self.dayFormatter.date(from: text),
-                  let expiry = Calendar.current.date(byAdding: .day, value: 7, to: date), expiry <= today else { continue }
+            guard record.trashedDate != nil || record.trashFolderName != nil,
+                  CleanupPolicy.isDue(anchorMilliseconds: record.firstSharedAtMs ?? record.trashedAtMs,
+                                      hours: CleanupPreferences.deleteHours, now: now) else { continue }
             let folder = trashURL.appendingPathComponent(record.trashFolderName ??
                 URL(fileURLWithPath: key).lastPathComponent, isDirectory: true)
             if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
             state.works.removeValue(forKey: key)
             try saveState(to: root)
         }
-        try purgeExpiredImageTrash(root: root, today: today)
+        try purgeExpiredImageTrash(root: root, today: now)
     }
 
     private func purgeExpiredImageTrash(root: URL, today: Date) throws {
@@ -555,7 +615,7 @@ final class WorkLibrary {
         let value = DateFormatter()
         value.calendar = Calendar(identifier: .gregorian)
         value.locale = Locale(identifier: "en_US_POSIX")
-        value.timeZone = .current
+        value.timeZone = CleanupPolicy.beijingTimeZone
         value.dateFormat = "yyyy-MM-dd"
         return value
     }()

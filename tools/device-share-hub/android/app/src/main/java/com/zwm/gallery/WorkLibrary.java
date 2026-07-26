@@ -10,7 +10,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -23,6 +25,7 @@ import java.util.Properties;
 public final class WorkLibrary {
     private static final String META_FILE = "meta.properties";
     private static final Object MIGRATION_LOCK = new Object();
+    private static final ZoneId BEIJING = ZoneId.of("Asia/Shanghai");
 
     private final File root;
     private final File activeRoot;
@@ -206,7 +209,7 @@ public final class WorkLibrary {
     public synchronized WorkEntry markShareAttempt(String id, long nowMs) throws IOException {
         WorkEntry entry = requireEntry(activeRoot, id);
         Properties meta = loadMeta(entry.directory);
-        meta.setProperty("sharedDate", LocalDate.now().toString());
+        meta.setProperty("sharedDate", Instant.ofEpochMilli(nowMs).atZone(BEIJING).toLocalDate().toString());
         if (parseLong(meta.getProperty("firstSharedAtMs", "0")) <= 0) {
             meta.setProperty("firstSharedAtMs", Long.toString(nowMs));
         }
@@ -214,6 +217,38 @@ public final class WorkLibrary {
         meta.setProperty("shareCount", Integer.toString(count + 1));
         saveMeta(entry.directory, meta);
         return readEntry(entry.directory);
+    }
+
+    /**
+     * Converts day-only records written by 0.5.5 and earlier into the precise cleanup clock.
+     * Earlier Beijing dates are already due; a same-day record receives a one-hour grace period
+     * beginning at upgrade so a recent share is never guessed to be older than it is.
+     */
+    public synchronized int migrateLegacyCleanupTimestamps(long nowMs) throws IOException {
+        LocalDate today = Instant.ofEpochMilli(nowMs).atZone(BEIJING).toLocalDate();
+        int migrated = migrateLegacyCleanupTimestamps(activeRoot, nowMs, today, false);
+        return migrated + migrateLegacyCleanupTimestamps(trashRoot, nowMs, today, true);
+    }
+
+    private int migrateLegacyCleanupTimestamps(
+            File parent, long nowMs, LocalDate today, boolean trashed) throws IOException {
+        int migrated = 0;
+        for (WorkEntry entry : list(parent)) {
+            if (entry.firstSharedAtMs > 0) continue;
+            LocalDate legacyDate = entry.sharedDate != null ? entry.sharedDate : entry.trashedDate;
+            if (legacyDate == null) continue;
+            long anchor = legacyDate.isBefore(today)
+                    ? legacyDate.atStartOfDay(BEIJING).toInstant().toEpochMilli()
+                    : nowMs;
+            Properties meta = loadMeta(entry.directory);
+            meta.setProperty("firstSharedAtMs", Long.toString(anchor));
+            if (trashed && entry.trashedAtMs <= 0) {
+                meta.setProperty("trashedAtMs", Long.toString(anchor));
+            }
+            saveMeta(entry.directory, meta);
+            migrated++;
+        }
+        return migrated;
     }
 
     /** Moves selected managed image copies into this work's recoverable image bin. */
@@ -338,7 +373,8 @@ public final class WorkLibrary {
     public synchronized WorkEntry moveToTrash(String id, long trashedAtMs) throws IOException {
         WorkEntry entry = requireEntry(activeRoot, id);
         Properties meta = loadMeta(entry.directory);
-        meta.setProperty("trashedDate", LocalDate.now().toString());
+        meta.setProperty("trashedDate",
+                Instant.ofEpochMilli(trashedAtMs).atZone(BEIJING).toLocalDate().toString());
         meta.setProperty("trashedAtMs", Long.toString(trashedAtMs));
         saveMeta(entry.directory, meta);
         File destination = child(trashRoot, entry.id);

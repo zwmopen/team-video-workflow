@@ -102,7 +102,7 @@ public final class OnlineService extends Service {
     public void onCreate() {
         super.onCreate();
         createChannel();
-        cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 2, 5, TimeUnit.MINUTES);
+        cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
 
     @Override

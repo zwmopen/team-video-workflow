@@ -23,6 +23,7 @@ final class CleanupCoordinator {
         GalleryShareBridge.cleanupExpired(context, now);
         result.cacheEntriesDeleted = AppCacheCleaner.clean(context, now);
         WorkLibrary library = new WorkLibrary(new File(context.getFilesDir(), "work-library"));
+        result.legacyTimestampsMigrated = library.migrateLegacyCleanupTimestamps(now);
         result.moved = library.maintain(now, settings.moveAfterMs()).size();
         Uri tree = selectedTree(context);
         File legacy = legacyRoot(context, tree);
@@ -60,6 +61,7 @@ final class CleanupCoordinator {
         int moved;
         int deleted;
         int cacheEntriesDeleted;
+        int legacyTimestampsMigrated;
         String failure = "";
     }
 }

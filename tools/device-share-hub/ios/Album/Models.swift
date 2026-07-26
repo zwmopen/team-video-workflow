@@ -24,7 +24,7 @@ struct TrashItem: Identifiable, Hashable {
 }
 
 struct LibraryState: Codable {
-    var schemaVersion = 2
+    var schemaVersion = 3
     var works: [String: WorkState] = [:]
 }
 
@@ -32,6 +32,8 @@ struct WorkState: Codable {
     var shareCount = 0
     var lastShareDate: String?
     var trashedDate: String?
+    var firstSharedAtMs: Double?
+    var trashedAtMs: Double?
     var originalRelativePath: String?
     var trashFolderName: String?
 }

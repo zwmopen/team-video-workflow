@@ -7,9 +7,9 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.7，原生 Win32 x64 |
-| Android | 相册 0.5.5，versionCode 32，`com.zwm.gallery` |
-| iPhone | 相册 0.5.0，build 19，源码 bundle id `com.zwm.album` |
-| 当前主要变化 | 点击即记账、防重复作品、笔记/文件双模式、1 小时作品与缓存清理 |
+| Android | 相册 0.5.6，versionCode 33，`com.zwm.gallery` |
+| iPhone | 相册 0.5.1，build 20，源码 bundle id `com.zwm.album` |
+| 当前主要变化 | 单页作品/文件模式、系统式文件图标、北京时间旧记录迁移、两端精确小时清理 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
@@ -51,7 +51,18 @@
 - Windows + iPhone 侧载：`docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md`
 - V3.4 传送设计：`docs/V3.4_CROSS_DEVICE_TRANSFER.md`
 
-## 2026-07-23 实际状态
+## 2026-07-26 实际状态
+
+### Android 0.5.6 / iPhone 0.5.1
+
+- Android 不再从首页启动独立文件浏览页。顶部“模式、传送、刷新、回收站、设置”冻结不动，模式按钮只替换下方作品网格或文件列表；文件夹内返回先退一级，根目录返回切回作品。五个入口都有短文字反馈。
+- Android 文件列表使用文件夹、图片、文本、PDF、压缩包、视频、音频与普通文件独立图标；ZIP 是文档加拉链。顶部标题、数量、圆形按钮和间距针对 360dp 实机重新平衡。
+- Android 与 iPhone 都把旧自然日记录迁移到北京时间精确毫秒：昨天及更早按当前规则到期；当天从升级时刻起保留完整 1 小时。iPhone 无状态旧回收站同样从升级时刻保留 1 小时。
+- iPhone 自动移入回收站和彻底删除分别支持 1～10 小时，默认均为 1；前台每分钟维护，重新打开立即维护。版本为 0.5.1/build 20，继续保持 iOS 12 最低版本和原状态文件兼容。
+- VIVO Y36t 实机覆盖前为 0.5.4/code 31、13 个作品、15 个回收站、根目录 `Download/Lark`。0.5.6 迁移后仍为 13 个作品，回收站和真实 `相册回收站` 均为 0，设备名与目录授权保留；同日 1 次分享作品没有被首次启动立即删除。
+- 同一 VIVO 已覆盖正式 Release 0.5.6/code 33；`run-as` 报告包不可调试。单元测试、Release 编译与 Release Lint 成功。实机模式切换保持 `MainActivity` 不变，文件根目录显示 15 项，返回后恢复 13 个作品。
+- iPhone 连接设备为 iPhone13,2 / iOS 26.5.2；覆盖安装前实际版本为 0.4.7/build 18，最终侧载 bundle id 为 `com.zwm.album.TXA6HP98BX`。新 IPA 必须沿用这个最终标识覆盖，禁止卸载绕过，以免丢失 bookmark 与本机状态。安装与实体清理结果在本版云构建完成后补入发布记录。
+- 本轮未替用户进入任何内容平台或执行真实发布；界面、文件扫描、迁移和覆盖安装证据与外部平台发布结果分开记录。
 
 ### 2026-07-26 Android 0.5.5
 
