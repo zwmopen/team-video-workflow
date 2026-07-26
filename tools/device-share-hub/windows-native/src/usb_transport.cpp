@@ -440,22 +440,18 @@ std::vector<UsbPeer> EnumerateConnectedAndroidUsb() {
         if (!phone) continue;
         wchar_t instance[2048]{};
         if (!SetupDiGetDeviceInstanceIdW(devices, &info, instance, ARRAYSIZE(instance), nullptr)) continue;
-        wchar_t name[512]{};
-        if (!SetupDiGetDeviceRegistryPropertyW(
-                devices, &info, SPDRP_FRIENDLYNAME, nullptr,
-                reinterpret_cast<PBYTE>(name), sizeof(name), nullptr)) {
-            SetupDiGetDeviceRegistryPropertyW(
-                devices, &info, SPDRP_DEVICEDESC, nullptr,
-                reinterpret_cast<PBYTE>(name), sizeof(name), nullptr);
-        }
         UsbPeer peer;
         peer.id = L"usbraw:" + std::wstring(instance);
         peer.locator = instance;
-        peer.name = name[0] ? name : L"Android USB 手机";
-        peer.model = L"Android";
+        // A charge/debug-only interface usually exposes a driver description such as
+        // "Android Composite ADB Interface". That is implementation detail, not a
+        // useful device name. Keep the card human-readable until MTP can provide the
+        // phone's actual name.
+        peer.name = L"安卓手机";
+        peer.model = L"USB 已连接";
         peer.kind = UsbTransportKind::DetectedOnly;
         peer.ready = false;
-        peer.hint = L"已连接；请把 USB 用途切换为“文件传输”";
+        peer.hint = L"请把手机 USB 用途切换为“文件传输”";
         result.push_back(peer);
     }
     SetupDiDestroyDeviceInfoList(devices);

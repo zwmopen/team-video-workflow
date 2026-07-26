@@ -186,7 +186,7 @@ std::string WindowsBeacon() {
 
 std::wstring StateLabel(const std::wstring& state) {
     if (state == L"usb") return L"USB 可传";
-    if (state == L"usb_pending") return L"USB 待授权";
+    if (state == L"usb_pending") return L"待文件传输";
     if (state == L"receiving") return L"正在接收";
     if (state == L"ready") return L"等待手机分享";
     if (state == L"sharing") return L"已打开分享";
@@ -1302,8 +1302,11 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
 
     SetTextColor(dc, RGB(105, 112, 120));
     std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
-    if (device.usbReady && device.state != L"usb") sub += L"  ·  USB 优先";
-    else if (!device.usbPeer.id.empty() && device.state != L"usb_pending") {
+    if (device.state == L"usb_pending" && !device.usbPeer.hint.empty()) {
+        sub = device.usbPeer.hint;
+    } else if (device.usbReady && device.state != L"usb") {
+        sub += L"  ·  USB 优先";
+    } else if (!device.usbPeer.id.empty()) {
         sub += L"  ·  USB 已连接，待文件传输";
     }
     RECT subRect{rect.left + 68, rect.top + 38, rect.right - 125, rect.bottom - 8};

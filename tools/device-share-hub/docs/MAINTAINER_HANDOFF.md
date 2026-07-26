@@ -3,6 +3,7 @@
 ## 2026-07-26 当前增量
 
 - Windows V3.8：`windows-native/src/usb_transport.*` 实现 WPD/MTP 与 iPhone House Arrest 文件共享；`usb_bridge.py` 作为 EXE 资源内置。通道优先级 USB → Wi‑Fi。
+- USB 只检测到充电/调试接口时，界面隐藏系统驱动名并提示把手机 USB 用途切换为“文件传输”；不把 ADB 作为正式传送依赖。
 - 传送历史：`%LOCALAPPDATA%\ZwmDeviceShareHub\transfer-history.tsv`，只在接收端提交/校验成功后写入；文件夹指纹包含相对路径、大小和逐文件 SHA-256。
 - Android 0.5.7/code34：外部来源消失后二次确认并清除私有副本。K60 真机测试前备份位于 `D:\AICode\运行数据\device-share-hub\backups\k60-before-source-reconcile-20260726.tgz`。
 - 真机证据：K60 外部 `Download/Lark` 为 24 个作品；正式 0.5.7 覆盖后首页 24，两个幽灵活动项和两个幽灵回收项已清除，目录授权保留。
@@ -14,10 +15,10 @@
 
 | 项目 | 当前值 |
 |---|---|
-| Windows | 素材投送中控 V3.7，原生 Win32 x64 |
-| Android | 相册 0.5.6，versionCode 33，`com.zwm.gallery` |
+| Windows | 素材投送中控 V3.8，原生 Win32 x64 |
+| Android | 相册 0.5.7，versionCode 34，`com.zwm.gallery` |
 | iPhone | 相册 0.5.1，build 20，源码 bundle id `com.zwm.album` |
-| 当前主要变化 | 单页作品/文件模式、系统式文件图标、北京时间旧记录迁移、两端精确小时清理 |
+| 当前主要变化 | 来源一致性修复、成功传送内容指纹去重、Android/iPhone USB 通道与 USB → Wi‑Fi 自动回退 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
 | 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
