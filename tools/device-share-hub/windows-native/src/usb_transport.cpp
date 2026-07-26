@@ -22,6 +22,15 @@ public:
     ~ComPtr() { reset(); }
     ComPtr(const ComPtr&) = delete;
     ComPtr& operator=(const ComPtr&) = delete;
+    ComPtr(ComPtr&& other) noexcept : value_(other.value_) { other.value_ = nullptr; }
+    ComPtr& operator=(ComPtr&& other) noexcept {
+        if (this != &other) {
+            reset();
+            value_ = other.value_;
+            other.value_ = nullptr;
+        }
+        return *this;
+    }
     T** put() { reset(); return &value_; }
     T* get() const { return value_; }
     T* operator->() const { return value_; }

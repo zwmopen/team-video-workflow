@@ -234,6 +234,13 @@ std::filesystem::path DeviceRemarkPath() {
     return base / L"ZwmDeviceShareHub" / L"device-remarks.tsv";
 }
 
+std::filesystem::path TransferHistoryPath() {
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
+    return base / L"ZwmDeviceShareHub" / L"transfer-history.tsv";
+}
+
 void WriteDiagnosticLog(const std::wstring& event, const std::wstring& detail) {
     std::lock_guard<std::mutex> lock(gLogMutex);
     try {
@@ -1068,6 +1075,28 @@ void RefreshDeviceList() {
                 ++it;
             }
         }
+        for (const auto& [usbId, peer] : gUsbPeers) {
+            auto sameDevice = std::find_if(fresh.begin(), fresh.end(), [&](const Device& candidate) {
+                bool sameName = !peer.name.empty() && _wcsicmp(candidate.name.c_str(), peer.name.c_str()) == 0;
+                bool sameModel = !peer.model.empty() && !candidate.model.empty()
+                    && _wcsicmp(candidate.model.c_str(), peer.model.c_str()) == 0;
+                return sameName || sameModel;
+            });
+            if (sameDevice != fresh.end()) {
+                sameDevice->usbReady = peer.ready;
+                sameDevice->usbPeer = peer;
+            } else {
+                Device device;
+                device.id = usbId;
+                device.name = peer.name;
+                device.model = peer.model;
+                device.state = peer.ready ? L"usb" : L"usb_pending";
+                device.usbReady = peer.ready;
+                device.usbPeer = peer;
+                device.lastSeen = now;
+                fresh.push_back(device);
+            }
+        }
     }
     std::sort(fresh.begin(), fresh.end(), [](const Device& left, const Device& right) {
         return DisplayNameFor(left) < DisplayNameFor(right);
@@ -1376,13 +1405,6 @@ void HandleDrop(HDROP drop) {
     std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
 }
 
-std::filesystem::path TransferHistoryPath() {
-    wchar_t buffer[MAX_PATH]{};
-    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
-    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
-    return base / L"ZwmDeviceShareHub" / L"transfer-history.tsv";
-}
-
 void DrawActionButton(const DRAWITEMSTRUCT* item) {
     RECT rect = item->rcItem;
     bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
@@ -1421,28 +1443,6 @@ std::vector<std::filesystem::path> PickPaths(bool folder) {
         } else {
             IShellItemArray* items = nullptr;
             if (SUCCEEDED(dialog->GetResults(&items))) { DWORD count = 0; items->GetCount(&count); for (DWORD i = 0; i < count; ++i) { IShellItem* item = nullptr; if (SUCCEEDED(items->GetItemAt(i, &item))) { PWSTR path = nullptr; if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) { result.emplace_back(path); CoTaskMemFree(path); } item->Release(); } } items->Release(); }
-        }
-        for (const auto& [usbId, peer] : gUsbPeers) {
-            auto sameDevice = std::find_if(fresh.begin(), fresh.end(), [&](const Device& candidate) {
-                bool sameName = !peer.name.empty() && _wcsicmp(candidate.name.c_str(), peer.name.c_str()) == 0;
-                bool sameModel = !peer.model.empty() && !candidate.model.empty()
-                    && _wcsicmp(candidate.model.c_str(), peer.model.c_str()) == 0;
-                return sameName || sameModel;
-            });
-            if (sameDevice != fresh.end()) {
-                sameDevice->usbReady = peer.ready;
-                sameDevice->usbPeer = peer;
-            } else {
-                Device device;
-                device.id = usbId;
-                device.name = peer.name;
-                device.model = peer.model;
-                device.state = peer.ready ? L"usb" : L"usb_pending";
-                device.usbReady = peer.ready;
-                device.usbPeer = peer;
-                device.lastSeen = now;
-                fresh.push_back(device);
-            }
         }
     }
     dialog->Release(); return result;

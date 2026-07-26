@@ -796,13 +796,38 @@ public final class MainActivity extends Activity {
         statusText.setText("正在读取 Lark 文件夹…");
         worker.execute(() -> {
             try {
-                DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
-                        getContentResolver(), Uri.parse(stored), library(), new File(getCacheDir(), "tree-import"));
+                DocumentTreeImporter.ImportResult result;
+                String scanWarning = "";
+                try {
+                    result = DocumentTreeImporter.importTree(
+                            getContentResolver(), Uri.parse(stored), library(),
+                            new File(getCacheDir(), "tree-import"));
+                } catch (Exception scanError) {
+                    // A few vendor document providers can leave one stale database row after
+                    // the user deletes a folder in the system file manager. Reconciliation of
+                    // already imported works must still run instead of leaving shareable ghosts.
+                    scanWarning = scanError.getMessage() == null
+                            ? scanError.getClass().getSimpleName() : scanError.getMessage();
+                    result = new DocumentTreeImporter.ImportResult(
+                            0, 0, 0, 0, 0, "scanError=" + scanWarning,
+                            java.util.Collections.emptySet());
+                    DiagnosticLog.write(this, "tree_scan_partial", scanWarning);
+                }
                 LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
                 WorkLibrary.ReconcileResult reconciled =
                         ExternalTrashManager.reconcileMissingExternalSources(
                                 getContentResolver(), Uri.parse(stored), library(),
                                 result.detectedDocumentIds);
+                if (reconciled.pendingConfirmation > 0) {
+                    Thread.sleep(2_200L);
+                    WorkLibrary.ReconcileResult confirmed =
+                            ExternalTrashManager.reconcileMissingExternalSources(
+                                    getContentResolver(), Uri.parse(stored), library(),
+                                    result.detectedDocumentIds);
+                    reconciled.activeRemoved += confirmed.activeRemoved;
+                    reconciled.trashRemoved += confirmed.trashRemoved;
+                    reconciled.pendingConfirmation = confirmed.pendingConfirmation;
+                }
                 ExternalTrashManager.Result trashSync = syncExternalTrash(library());
                 int activeCount = library().listActive().size();
                 OnlineService.publishWorkCount(this, activeCount);
@@ -819,16 +844,19 @@ public final class MainActivity extends Activity {
                               + " trashRemoved=" + reconciled.trashRemoved
                               + " sourcePending=" + reconciled.pendingConfirmation
                               + " trashMoved=" + trashSync.moved
-                                + " trashMoveFailures=" + trashSync.failures.size()
-                                + " notes=" + result.scanNotes);
+                              + " trashMoveFailures=" + trashSync.failures.size()
+                              + " notes=" + result.scanNotes);
+                final String scanWarningMessage = scanWarning;
+                final DocumentTreeImporter.ImportResult completedScan = result;
                 runOnUiThread(() -> {
-                    int imported = result.imported + hidden.imported;
+                    int imported = completedScan.imported + hidden.imported;
                     String message = imported > 0
                             ? "新增 " + imported + " 个作品"
                             : activeCount > 0
                             ? "已是最新，共识别 " + activeCount + " 个作品"
                             : "没识别到作品：请选择包含“图片 + TXT”的作品文件夹";
-                    if (result.aggregateFolders > 0) message += "，已优先使用子文件夹";
+                    if (completedScan.aggregateFolders > 0) message += "，已优先使用子文件夹";
+                    if (!scanWarningMessage.isEmpty()) message += "，已跳过失效目录";
                     statusText.setText(message);
                     if (notifyWhenFinished) toast("已刷新，共 " + activeCount + " 个作品");
                     refreshWorks();
