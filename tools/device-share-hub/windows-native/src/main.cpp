@@ -1295,7 +1295,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
         sub = device.usbPeer.hint;
     } else if (device.usbReady && device.state != L"usb") {
         sub += L"  ·  USB 优先";
-    } else if (!device.usbPeer.id.empty()) {
+    } else if (!device.usbPeer.id.empty() && !device.usbReady) {
         sub += L"  ·  USB 已连接，待文件传输";
     }
     RECT subRect{rect.left + 68, rect.top + 38, rect.right - 125, rect.bottom - 8};
