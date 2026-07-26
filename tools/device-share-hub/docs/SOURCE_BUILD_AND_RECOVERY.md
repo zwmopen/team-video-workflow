@@ -14,6 +14,8 @@
 
 ## 云端构建
 
+构建账号按 `zwmopen` 主账号 → `rpgzwm` 第一备用 → `idmzwm-sys` 第二备用切换。两个备用仓库只镜像主仓库同一提交并运行构建，不能在备用仓库单独开发或形成产品分叉。
+
 推送涉及 `tools/device-share-hub/**` 的提交后，GitHub Actions 自动执行：
 
 - Windows 11/10 x64：Visual Studio 2022 + CMake，生成原生便携 EXE；
@@ -24,6 +26,8 @@
 CI 生成的 IPA 不含 Apple ID、证书、设备 UDID 或密码，安装时由 Sideloadly/AltStore 使用用户自己的免费 Apple ID 重新签名。
 
 ## 本地构建入口
+
+当前 Windows 电脑已经具备 Java 22、Android SDK 36、build-tools 35/36、ADB、Gradle 9.4.1 和现有 Android 签名文件；Android 可直接本机构建，不需要再安装模拟器或重复下载 SDK。C 盘空间紧张时不安装完整 Visual Studio，Windows 与 iPhone 优先使用云端构建，临时工具链必须放在 D 盘并在验收后清理。
 
 ### Windows
 

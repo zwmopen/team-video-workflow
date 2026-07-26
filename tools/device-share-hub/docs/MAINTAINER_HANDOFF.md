@@ -1,4 +1,4 @@
-# 分享中控 V3.9 维护交接
+# 分享中控 V3.9.1 维护交接
 
 ## 2026-07-26 当前增量
 
@@ -18,6 +18,10 @@
 - Windows V3.9 增加设备级 USB/WiFi/远程传送权限持久化与右键菜单；设备首次登记默认允许，卡片只显示真实在线通道。Android 0.5.8 与 iPhone 0.5.2 会持久记录在局域网发现过的电脑身份。远程中继服务尚未部署，因此“远程”不会显示为已经连通。
 - 最终构建 run `30191579830` 对功能提交 `74858f4` 的 Windows、Android、iPhone 全部成功。公开发布为 `gallery-updates v0.5.8`；APK/IPA/EXE SHA-256 分别为 `F3AD74B9F47FF98ECF28B5E145D641BB0227445A2FF5062300FB2D4A077B8B34`、`C1860FE11B9E766DA7729FBF859756E28D94BFEB992847BBEC9AA21531C6A7D9`、`9068E010BA94A87AFD2AA4C27BF12483951DB7275F8A2FA8AB4C5B1F1990EFE9`。
 - Redmi K60 已覆盖安装最终 Android 0.5.8/code35，安装前后均为 22 个作品；传送页实体发现电脑与另一台手机并显示 WiFi。iPhone 本轮未连接，不能把云端构建和 IPA 结构校验写成实体安装结果。
+- Windows V3.9.1 把同一台 K60 的 `Xiaomi K60`、`Redmi K60`、`Xiaomi 23013RK75C`、`mondrian` 归为同一硬件身份；设备卡只保留一行，右侧按 USB → WiFi → 远程显示真实可用标签。
+- V3.9.1 在 Redmi K60 完成两次独立实机传送：Windows 原生 MTP/USB 写入 `Download/Lark` 成功，局域网 WiFi 任务提交成功；两次均从手机拉回核对 SHA-256 一致，测试文件随后从电脑和手机精确删除。
+- 第三构建账号 `idmzwm-sys` 已通过 GitHub 官方设备授权接入，本机构建镜像为私有仓库 `idmzwm-sys/team-video-workflow-build`。run `30193335275` 对提交 `a825fb9` 的 Windows、Android、iPhone 三项全部成功；它只作为额度兜底，不是源码真源。
+- Windows V3.9.1 当前桌面 EXE SHA-256 为 `7F7A1925462E63BA69B84ACEC9F436446142F8E1B9D3633D8205DD91AC2097B5`；最大化 2560×1600 与默认窗口均实测显示右侧通道标签。远程后端尚未部署，因此实体测试只显示 `USB · WiFi`，不显示“远程”。
 
 更新时间：2026-07-26
 
@@ -25,13 +29,13 @@
 
 | 项目 | 当前值 |
 |---|---|
-| Windows | 素材投送中控 V3.9，原生 Win32 x64 |
+| Windows | 素材投送中控 V3.9.1，原生 Win32 x64 |
 | Android | 相册 0.5.8，versionCode 35，`com.zwm.gallery` |
 | iPhone | 相册 0.5.2，build 21，源码 bundle id `com.zwm.album` |
 | 当前主要变化 | 设备通道权限、平台图标、备注层级、来源一致性修复、内容指纹去重与 USB → Wi‑Fi 自动回退 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
 | 主源码 | <https://github.com/zwmopen/team-video-workflow> |
-| 构建备用仓库 | `rpgzwm/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
+| 构建备用仓库 | `rpgzwm/team-video-workflow-build`、`idmzwm-sys/team-video-workflow-build`，只用于主账号额度不足时运行三端构建 |
 | 安装包发布 | <https://github.com/zwmopen/gallery-updates/releases> |
 | Android 更新索引 | <https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json> |
 
