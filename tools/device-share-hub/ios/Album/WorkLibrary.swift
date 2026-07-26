@@ -415,7 +415,7 @@ final class WorkLibrary {
         return try childDirectories(of: trashURL).map { folder in
             let match = state.works.first { entry in
                 guard entry.value.trashedDate != nil || entry.value.trashFolderName != nil else { return false }
-                entry.value.trashFolderName == folder.lastPathComponent ||
+                return entry.value.trashFolderName == folder.lastPathComponent ||
                     (entry.value.trashFolderName == nil && entry.key == folder.lastPathComponent)
             }
             let key = match?.key ?? folder.lastPathComponent
