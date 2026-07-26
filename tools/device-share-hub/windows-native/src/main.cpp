@@ -1082,17 +1082,6 @@ void RefreshDeviceList() {
                     && _wcsicmp(candidate.model.c_str(), peer.model.c_str()) == 0;
                 return sameName || sameModel;
             });
-            if (sameDevice == fresh.end() && peer.kind == UsbTransportKind::DetectedOnly) {
-                auto onlyAndroid = fresh.end();
-                for (auto candidate = fresh.begin(); candidate != fresh.end(); ++candidate) {
-                    bool apple = candidate->model.find(L"iPhone") != std::wstring::npos
-                        || candidate->id.find(L"ios-") == 0;
-                    if (apple || candidate->ip.empty()) continue;
-                    if (onlyAndroid != fresh.end()) { onlyAndroid = fresh.end(); break; }
-                    onlyAndroid = candidate;
-                }
-                sameDevice = onlyAndroid;
-            }
             if (sameDevice != fresh.end()) {
                 sameDevice->usbReady = peer.ready;
                 sameDevice->usbPeer = peer;
