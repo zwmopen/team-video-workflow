@@ -57,7 +57,6 @@ constexpr int IDC_TOGGLE_WIFI = 206;
 constexpr int IDC_TOGGLE_REMOTE = 207;
 constexpr int IDC_REFRESH_DEVICES = 106;
 constexpr int IDC_SEND_PICKER = 107;
-constexpr int IDC_OPEN_LIBRARY = 108;
 constexpr int IDC_LIBRARY_LIST = 301;
 constexpr int IDC_LIBRARY_CHOOSE = 302;
 constexpr int IDC_LIBRARY_ARCHIVE_CHOOSE = 303;
@@ -70,7 +69,6 @@ constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
-constexpr wchar_t LIBRARY_CLASS[] = L"ZwmDeviceShareHubLibrary";
 
 struct Device {
     std::wstring id;
@@ -109,7 +107,6 @@ HWND gDeviceList = nullptr;
 HWND gStatus = nullptr;
 HWND gLogButton = nullptr;
 HWND gRefreshButton = nullptr;
-HWND gLibraryButton = nullptr;
 HWND gProgress = nullptr;
 HWND gCancelButton = nullptr;
 HWND gSendButton = nullptr;
@@ -139,9 +136,15 @@ std::filesystem::path gChannelPreferencePath;
 std::unique_ptr<ContentStore> gContentStore;
 std::map<std::wstring, UsbPeer> gUsbPeers;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
-HWND gLibraryWindow = nullptr;
 HWND gLibraryList = nullptr;
 HWND gLibraryPathLabel = nullptr;
+HWND gLibraryTitle = nullptr;
+HWND gDeviceTitle = nullptr;
+HWND gLibraryChooseButton = nullptr;
+HWND gArchiveChooseButton = nullptr;
+HWND gLibraryRefreshButton = nullptr;
+HWND gLibrarySendButton = nullptr;
+HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
 
 std::wstring Utf8ToWide(const std::string& value) {
@@ -1715,7 +1718,7 @@ void DrawActionButton(const DRAWITEMSTRUCT* item) {
     RECT rect = item->rcItem;
     bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
     bool pressed = (item->itemState & ODS_SELECTED) != 0;
-    bool primary = item->CtlID == IDC_SEND_PICKER;
+    bool primary = item->CtlID == IDC_LIBRARY_SEND;
     COLORREF fill = primary ? RGB(38, 145, 94) : RGB(255, 255, 255);
     if (pressed) fill = primary ? RGB(31, 122, 78) : RGB(235, 232, 226);
     if (!enabled) fill = RGB(235, 233, 229);
@@ -1859,17 +1862,17 @@ std::optional<std::filesystem::path> SelectedLibraryItem() {
 
 void SendSelectedLibraryItem() {
     if (gUploadInProgress) {
-        MessageBoxW(gLibraryWindow, L"上一批素材还在传送。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"上一批素材还在传送。", L"素材库", MB_OK | MB_ICONINFORMATION);
         return;
     }
     auto source = SelectedLibraryItem();
     if (!source) {
-        MessageBoxW(gLibraryWindow, L"请先选择一个作品文件夹。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"请先在左侧选择一个作品文件夹。", L"素材库", MB_OK | MB_ICONINFORMATION);
         return;
     }
     int deviceIndex = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
     if (deviceIndex < 0 || deviceIndex >= static_cast<int>(gDisplayedDevices.size())) {
-        MessageBoxW(gLibraryWindow, L"请先在中控主窗口选择一台在线设备。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"请先在右侧选择一台在线设备。", L"素材库", MB_OK | MB_ICONINFORMATION);
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(deviceIndex)];
@@ -1878,25 +1881,25 @@ void SendSelectedLibraryItem() {
 
 void ArchiveSelectedLibraryItem() {
     if (gArchiveInProgress) {
-        MessageBoxW(gLibraryWindow, L"上一项归档还在处理。", L"安全归档", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"上一项归档还在处理。", L"安全归档", MB_OK | MB_ICONINFORMATION);
         return;
     }
     auto source = SelectedLibraryItem();
     if (!source) {
-        MessageBoxW(gLibraryWindow, L"请先选择一个作品文件夹。", L"安全归档", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"请先在左侧选择一个作品文件夹。", L"安全归档", MB_OK | MB_ICONINFORMATION);
         return;
     }
     std::filesystem::path archiveRoot;
     if (gContentStore) archiveRoot = gContentStore->GetSetting(L"archive_path");
     if (archiveRoot.empty() || !std::filesystem::is_directory(archiveRoot)) {
-        auto selected = PickSingleFolder(gLibraryWindow, L"选择归档压缩包保存目录");
+        auto selected = PickSingleFolder(gWindow, L"选择归档压缩包保存目录");
         if (!selected) return;
         archiveRoot = *selected;
         if (gContentStore) gContentStore->SetSetting(L"archive_path", archiveRoot.wstring());
     }
     std::wstring message = L"将“" + source->filename().wstring() +
         L"”压缩并校验，成功后把原文件夹移入 Windows 回收站。\n\n归档包保存到：\n" + archiveRoot.wstring();
-    if (MessageBoxW(gLibraryWindow, message.c_str(), L"确认已使用并归档", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) != IDOK) return;
+    if (MessageBoxW(gWindow, message.c_str(), L"确认已使用并归档", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) != IDOK) return;
 
     gArchiveInProgress = true;
     std::thread([source = *source, archiveRoot] {
@@ -1939,98 +1942,8 @@ void ArchiveSelectedLibraryItem() {
         std::error_code ignored;
         if (!temporary.empty()) std::filesystem::remove(temporary, ignored);
         gArchiveInProgress = false;
-        if (gLibraryWindow) PostMessageW(gLibraryWindow, WM_LIBRARY_REFRESHED, 0, 0);
+        if (gWindow) PostMessageW(gWindow, WM_LIBRARY_REFRESHED, 0, 0);
     }).detach();
-}
-
-LRESULT CALLBACK LibraryProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    switch (message) {
-        case WM_CREATE: {
-            gLibraryWindow = window;
-            HFONT font = gFont ? gFont : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-            HWND title = CreateWindowW(L"STATIC", L"素材库与安全归档", WS_CHILD | WS_VISIBLE,
-                18, 16, 360, 30, window, nullptr, nullptr, nullptr);
-            SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置素材目录", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
-                18, 52, 620, 24, window, nullptr, nullptr, nullptr);
-            SendMessageW(gLibraryPathLabel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-            gLibraryList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-                18, 84, 620, 300, window,
-                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_LIST)), nullptr, nullptr);
-            SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-            const struct { int id; const wchar_t* label; int x; int width; } buttons[] = {
-                {IDC_LIBRARY_CHOOSE, L"设置素材目录", 18, 116},
-                {IDC_LIBRARY_ARCHIVE_CHOOSE, L"设置归档目录", 144, 116},
-                {IDC_LIBRARY_REFRESH, L"刷新", 270, 78},
-                {IDC_LIBRARY_SEND, L"传送选中项", 412, 104},
-                {IDC_LIBRARY_ARCHIVE, L"已使用并归档", 526, 112}
-            };
-            for (const auto& button : buttons) {
-                HWND control = CreateWindowW(L"BUTTON", button.label, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                    button.x, 400, button.width, 36, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(button.id)), nullptr, nullptr);
-                SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-            }
-            RefreshLibraryList();
-            return 0;
-        }
-        case WM_COMMAND:
-            if (LOWORD(wParam) == IDC_LIBRARY_CHOOSE) {
-                auto folder = PickSingleFolder(window, L"选择待分发素材总目录");
-                if (folder && gContentStore) { gContentStore->SetSetting(L"library_path", folder->wstring()); RefreshLibraryList(); }
-                return 0;
-            }
-            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE_CHOOSE) {
-                auto folder = PickSingleFolder(window, L"选择归档压缩包保存目录");
-                if (folder && gContentStore) gContentStore->SetSetting(L"archive_path", folder->wstring());
-                return 0;
-            }
-            if (LOWORD(wParam) == IDC_LIBRARY_REFRESH) { RefreshLibraryList(); return 0; }
-            if (LOWORD(wParam) == IDC_LIBRARY_SEND) { SendSelectedLibraryItem(); return 0; }
-            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE) { ArchiveSelectedLibraryItem(); return 0; }
-            if (LOWORD(wParam) == IDC_LIBRARY_LIST && HIWORD(wParam) == LBN_DBLCLK) { SendSelectedLibraryItem(); return 0; }
-            break;
-        case WM_LIBRARY_REFRESHED:
-            RefreshLibraryList();
-            return 0;
-        case WM_CLOSE:
-            DestroyWindow(window);
-            return 0;
-        case WM_DESTROY:
-            gLibraryWindow = nullptr;
-            gLibraryList = nullptr;
-            gLibraryPathLabel = nullptr;
-            gLibraryItems.clear();
-            return 0;
-    }
-    return DefWindowProcW(window, message, wParam, lParam);
-}
-
-void OpenLibraryWindow() {
-    if (gLibraryWindow && IsWindow(gLibraryWindow)) {
-        ShowWindow(gLibraryWindow, SW_RESTORE);
-        SetForegroundWindow(gLibraryWindow);
-        return;
-    }
-    HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetModuleHandleW(nullptr));
-    static bool registered = false;
-    if (!registered) {
-        WNDCLASSEXW cls{};
-        cls.cbSize = sizeof(cls);
-        cls.lpfnWndProc = LibraryProc;
-        cls.hInstance = instance;
-        cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_MAIN_ICON));
-        cls.hbrBackground = CreateSolidBrush(RGB(245, 247, 249));
-        cls.lpszClassName = LIBRARY_CLASS;
-        RegisterClassExW(&cls);
-        registered = true;
-    }
-    gLibraryWindow = CreateWindowExW(WS_EX_APPWINDOW, LIBRARY_CLASS, L"素材库与安全归档",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 674, 486, gWindow, nullptr, instance, nullptr);
-    ShowWindow(gLibraryWindow, SW_SHOW);
-    UpdateWindow(gLibraryWindow);
 }
 
 void UsbDiscoveryLoop() {
@@ -2068,19 +1981,39 @@ void Layout(HWND window) {
     GetClientRect(window, &client);
     int width = client.right - client.left;
     int height = client.bottom - client.top;
-    const int margin = 22;
-    MoveWindow(gRefreshButton, width - margin - 118, 18, 118, 36, TRUE);
-    MoveWindow(gLibraryButton, width - margin - 246, 18, 118, 36, TRUE);
-    MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 218), TRUE);
+    const int margin = 24;
+    const int gap = 20;
+    const int contentTop = 104;
+    const int bottomTop = height - 112;
+    const int available = width - margin * 2 - gap;
+    const int leftWidth = std::max(520, available * 61 / 100);
+    const int rightX = margin + leftWidth + gap;
+    const int rightWidth = std::max(330, width - margin - rightX);
+    const int listTop = contentTop + 58;
+    const int actionTop = bottomTop - 54;
+    const int listHeight = std::max(150, actionTop - listTop - 12);
+
+    MoveWindow(gLibraryTitle, margin, contentTop, leftWidth - 120, 30, TRUE);
+    MoveWindow(gLibraryPathLabel, margin, contentTop + 32, leftWidth - 88, 24, TRUE);
+    MoveWindow(gLibraryRefreshButton, margin + leftWidth - 78, contentTop + 22, 78, 34, TRUE);
+    MoveWindow(gLibraryList, margin, listTop, leftWidth, listHeight, TRUE);
+    MoveWindow(gLibraryChooseButton, margin, actionTop, 116, 38, TRUE);
+    MoveWindow(gArchiveChooseButton, margin + 126, actionTop, 116, 38, TRUE);
+    MoveWindow(gArchiveButton, margin + leftWidth - 256, actionTop, 122, 38, TRUE);
+    MoveWindow(gLibrarySendButton, margin + leftWidth - 124, actionTop, 124, 38, TRUE);
+
+    MoveWindow(gDeviceTitle, rightX, contentTop, rightWidth - 128, 30, TRUE);
+    MoveWindow(gRefreshButton, rightX + rightWidth - 118, contentTop - 4, 118, 36, TRUE);
+    MoveWindow(gDeviceList, rightX, contentTop + 42, rightWidth, std::max(150, actionTop - contentTop - 54), TRUE);
+    MoveWindow(gSendButton, rightX, actionTop, rightWidth, 38, TRUE);
+
     int buttonWidth = 92;
-    int sendWidth = 100;
     int cancelWidth = 76;
-    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - sendWidth - 30);
+    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - 20);
     MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
     MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
     MoveWindow(gLogButton, margin + statusWidth + cancelWidth + 20, height - 72, buttonWidth, 38, TRUE);
-    MoveWindow(gSendButton, width - margin - sendWidth, height - 72, sendWidth, 38, TRUE);
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -2092,20 +2025,42 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.0.0", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.1.0", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
-                                     WS_CHILD | WS_VISIBLE, 22, 54, 640, 26, window, nullptr, nullptr, nullptr);
+            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备，然后直接传送；所有日常操作都在这一页。",
+                                     WS_CHILD | WS_VISIBLE, 22, 54, 840, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
+                                           0, 0, 200, 30, window, nullptr, nullptr, nullptr);
+            SendMessageW(gLibraryTitle, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
+            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置素材目录", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
+                                               0, 0, 400, 24, window, nullptr, nullptr, nullptr);
+            SendMessageW(gLibraryPathLabel, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gLibraryList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                0, 0, 400, 240, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_LIST)), nullptr, nullptr);
+            SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gLibraryChooseButton = CreateWindowW(L"BUTTON", L"设置素材目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_CHOOSE)), nullptr, nullptr);
+            gArchiveChooseButton = CreateWindowW(L"BUTTON", L"设置归档目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE_CHOOSE)), nullptr, nullptr);
+            gLibraryRefreshButton = CreateWindowW(L"BUTTON", L"刷新", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 78, 34, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_REFRESH)), nullptr, nullptr);
+            gArchiveButton = CreateWindowW(L"BUTTON", L"已使用并归档", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 122, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE)), nullptr, nullptr);
+            gLibrarySendButton = CreateWindowW(L"BUTTON", L"传送选中素材", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 124, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_SEND)), nullptr, nullptr);
+            for (HWND control : {gLibraryChooseButton, gArchiveChooseButton, gLibraryRefreshButton, gArchiveButton, gLibrarySendButton})
+                SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gDeviceTitle = CreateWindowW(L"STATIC", L"在线设备", WS_CHILD | WS_VISIBLE,
+                                          0, 0, 200, 30, window, nullptr, nullptr, nullptr);
+            SendMessageW(gDeviceTitle, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             gRefreshButton = CreateWindowW(L"BUTTON", L"↻  刷新", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                            560, 18, 118, 36, window,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_REFRESH_DEVICES)), nullptr, nullptr);
             SendMessageW(gRefreshButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gLibraryButton = CreateWindowW(L"BUTTON", L"素材库", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                                           432, 18, 118, 36, window,
-                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_OPEN_LIBRARY)), nullptr, nullptr);
-            SendMessageW(gLibraryButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(0, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
                 22, 94, 640, 280, window, reinterpret_cast<HMENU>(101), nullptr, nullptr);
@@ -2127,9 +2082,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gLogButton = CreateWindowW(L"BUTTON", L"诊断", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                        540, 520, 136, 38, window, reinterpret_cast<HMENU>(103), nullptr, nullptr);
             SendMessageW(gLogButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gSendButton = CreateWindowW(L"BUTTON", L"✈  传送", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            gSendButton = CreateWindowW(L"BUTTON", L"传送其他文件或文件夹…", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                         0, 0, 100, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SEND_PICKER)), nullptr, nullptr);
             SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            RefreshLibraryList();
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
             gUsbDiscoveryThread = std::thread(UsbDiscoveryLoop);
@@ -2162,10 +2118,20 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 if (command == IDC_PICK_FOLDER) ChooseAndSend(true);
                 return 0;
             }
-            if (LOWORD(wParam) == IDC_OPEN_LIBRARY) {
-                OpenLibraryWindow();
+            if (LOWORD(wParam) == IDC_LIBRARY_CHOOSE) {
+                auto folder = PickSingleFolder(window, L"选择待分发素材总目录");
+                if (folder && gContentStore) { gContentStore->SetSetting(L"library_path", folder->wstring()); RefreshLibraryList(); }
                 return 0;
             }
+            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE_CHOOSE) {
+                auto folder = PickSingleFolder(window, L"选择归档压缩包保存目录");
+                if (folder && gContentStore) gContentStore->SetSetting(L"archive_path", folder->wstring());
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_LIBRARY_REFRESH) { RefreshLibraryList(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_SEND) { SendSelectedLibraryItem(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE) { ArchiveSelectedLibraryItem(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_LIST && HIWORD(wParam) == LBN_DBLCLK) { SendSelectedLibraryItem(); return 0; }
             if (LOWORD(wParam) == 105) {
                 if (gUploadInProgress) {
                     gCancelRequested = true;
@@ -2184,6 +2150,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         case WM_SIZE:
             Layout(window);
             return 0;
+        case WM_GETMINMAXINFO: {
+            auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+            info->ptMinTrackSize.x = 980;
+            info->ptMinTrackSize.y = 640;
+            return 0;
+        }
         case WM_MEASUREITEM: {
             auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
             if (measure->CtlID == 101) measure->itemHeight = 76;
@@ -2212,6 +2184,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             break;
         case WM_DEVICES_CHANGED:
             RefreshDeviceList();
+            return 0;
+        case WM_LIBRARY_REFRESHED:
+            RefreshLibraryList();
             return 0;
         case WM_STATUS_CHANGED: {
             auto* text = reinterpret_cast<std::wstring*>(lParam);
@@ -2278,8 +2253,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.0.0",
-                                   WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.1.0",
+                                   WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
     ShowWindow(window, showCommand);
