@@ -2,6 +2,14 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-018 Durable Object 升级后纯测试通过、真实 R2 下载返回 500
+
+- 现象：0.1.1 的语法、类型、10 项纯协议测试和 Wrangler dry-run 都通过，但第二备用 CI run `30265632265` 在真实启动 Worker 后，接收端下载 R2 对象返回 HTTP 500；同一 run 的三端应用构建不受影响。
+- 根因：为接入当前 `getByName()` 路由时仍导出旧式普通 Durable Object 类，Node 测试无法直接加载 `cloudflare:workers`，导致运行时入口与可测试核心没有正确分层。
+- 修复：`src/index.js` 只保留 Cloudflare 运行时包装类并正式继承 `DurableObject`；协议状态机移入 `src/relay-core.js`，Node 测试直接使用核心类；CI 的 HTTP 失败会自动输出 Worker 日志。
+- 证据：本地 10 项协议测试、类型检查与 dry-run 通过；第二备用 CI run `30266289195` 实际启动 Worker、Durable Object 和 R2，完成上传、下载、ACK 删除，远程任务成功；Windows、Android、iPhone 同 run 全部成功。
+- 回归要求：不得为了让 Node 直接导入入口而移除 `DurableObject` 基类；每次修改远程运行时必须同时保留纯协议测试和 Linux Worker/DO/R2 HTTP 闭环。
+
 ## DSH-015 系统文件管理器删除后仍显示私有“幽灵作品”
 
 - 现象：外部 `Download/Lark` 已删除作品，首页仍可预览、复制并分享；外部回收站为空，App 回收站仍有旧副本。

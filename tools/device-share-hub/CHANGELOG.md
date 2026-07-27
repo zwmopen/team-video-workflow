@@ -7,7 +7,7 @@
 - 增加远程开关、设备撤销、会话立即失效、WebSocket 在线通知、密文上传/提交/下载/取消/确认和最长 24 小时过期清理。
 - 中继包升级到 0.1.1，增加 HTTPS 在线心跳、收件箱/发件箱轮询和结构化请求日志；移动端即使不能长期保持 WebSocket，也能上报真实在线状态并拉取已提交任务。
 - 云端清单不含文件名、用户路径、明文或明文密钥；接收成功 ACK 后立即删除密文。
-- 协议测试增至 10 项，覆盖在线心跳与收发箱可见性；Cloudflare API 类型检查、依赖高危审计和 Wrangler 部署预检通过。第二备用 CI run `30252544159` 曾实际启动上一版 Worker，并跑通 Durable Object、R2 密文上传/下载与 ACK 删除；0.1.1 尚待新的 CI/正式部署复核。
+- 协议测试增至 10 项，覆盖在线心跳与收发箱可见性；Cloudflare API 类型检查、依赖高危审计和 Wrangler 部署预检通过。第二备用 CI run `30266289195` 已实际启动 0.1.1 Worker，并跑通 Durable Object、R2 密文上传/下载与 ACK 删除；同一 run 的 Windows、Android、iPhone 构建全部成功。
 - 同一 CI run 的 Windows、Android、iPhone 原有构建全部成功；本机 Cloudflare 运行时仍因 Windows `workerd` 访问冲突无法启动，Linux CI 是当前集成运行证据。
 - 本阶段未部署云端、未接入三端客户端、未完成异网真机传送，正式版继续隐藏“远程”标签。
 

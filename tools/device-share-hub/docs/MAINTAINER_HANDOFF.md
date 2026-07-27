@@ -5,6 +5,7 @@
 - 新增 `remote-relay/`，使用 Cloudflare Worker + SQLite Durable Object + 私有 R2；当前候选包版本 `0.1.1`。
 - 服务端已实现管理公钥绑定的工作区、电脑签发成员凭证、设备签名挑战、24 小时会话、WebSocket 在线状态、远程开关、设备撤销、密文任务和最长 24 小时清理。
 - 0.1.1 增加 `POST /v1/presence`、`GET /v1/inbox`、`GET /v1/outbox` 和结构化请求日志，供 Android/iPhone 后台受限时以 HTTPS 心跳和轮询维持真实状态；对应协议测试从 8 项增至 10 项。
+- 第二备用构建 run `30266289195` 已验证 0.1.1：Linux 实际启动 Worker、Durable Object 与本地 R2，并通过完整 HTTP 上传、下载和 ACK 删除；Windows、Android、iPhone 三项构建同 run 全部成功。功能提交为 `cec4889`。
 - 文件名、用户路径、明文和明文密钥不进入云端清单；接收端 ACK、取消或过期后删除全部密文。
 - 8 项 Node 协议测试、JS 语法检查、Cloudflare API 类型检查、npm 高危依赖审计和 Wrangler 部署预检通过；CI 已增加独立 `remote-relay-check`。
 - 第二备用构建 run `30252544159` 的远程任务实际启动 Linux Worker，并完成管理员/成员身份、Durable Object 会话、R2 密文上传、接收端下载、ACK 和删除后不可再次读取的 HTTP 闭环；同一 run 的 Windows、Android、iPhone 三项也全部成功。
