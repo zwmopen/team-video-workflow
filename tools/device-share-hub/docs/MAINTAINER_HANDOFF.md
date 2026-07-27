@@ -6,7 +6,8 @@
 - `%LOCALAPPDATA%\ZwmDeviceShareHub\content-history.db` 成为成功传送、设置与归档事件的本地真源；首次启动从 `transfer-history.tsv` 幂等迁移，旧文件保留，数据库失败时旧 TSV 仍可降级使用。
 - 素材库读取用户设置目录的一级文件夹；从库内传送仍调用同一 `UploadToDevice`，因此保留内容指纹、按设备重复提醒、接收端 commit/USB 校验成功后才登记的边界。
 - 安全归档顺序固定为：内容指纹 → 临时 ZIP → ZIP 结构/文件数校验 → 复制后 SHA-256 校验 → 原子命名归档包 → 写入 `archive_ready` → 原目录移入 Windows 回收站 → 写入 `archived`。不得改为先删源目录或静默覆盖同名 ZIP。
-- 第二备用构建 run `30269352290` 已全部成功：Windows 编译与 `content_store_tests`、远程 Worker/DO/R2 HTTP 闭环、Android 正式构建/Lint 和 iPhone 测试/IPA 打包均通过。
+- 第二备用构建 run `30269352290` 已全部成功；最终 V4.0.0 命名与文档提交 `6950320` 的 run `30270126979` 也全部成功：Windows 编译与 `content_store_tests`、远程 Worker/DO/R2 HTTP 闭环、Android 正式构建/Lint 和 iPhone 测试/IPA 打包均通过。
+- 最终 Windows EXE 已放桌面：`C:\Users\z\Desktop\素材投送中控-Windows-V4.0.0.exe`，SHA-256 为 `E8307BE321E90D5D14B2AC3873CB17B96E10E04EF1F126A36DE5E6CC7F7AEA5F`；旧版本未删除，可随时回退。
 - 同一候选 EXE 已在本机启动并创建 49,152 字节 SQLite 数据库，诊断记录 `content_database_ready`；原 156 字节 TSV 保留未删除。自动化能识别主窗口“素材库”按钮，但 Windows 安全检查/单实例状态阻止了第二次自动打开归档子窗口，因此真实目录选择、临时样本归档和回收站恢复仍是发布前实体复核项。
 
 ## 2026-07-27 远程传送服务基础
