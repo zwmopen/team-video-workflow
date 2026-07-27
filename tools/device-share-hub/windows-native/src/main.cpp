@@ -1956,7 +1956,8 @@ LRESULT CALLBACK LibraryProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
             SendMessageW(gLibraryPathLabel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             gLibraryList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-                18, 84, 620, 300, window, reinterpret_cast<HMENU>(IDC_LIBRARY_LIST), nullptr, nullptr);
+                18, 84, 620, 300, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_LIST)), nullptr, nullptr);
             SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             const struct { int id; const wchar_t* label; int x; int width; } buttons[] = {
                 {IDC_LIBRARY_CHOOSE, L"设置素材目录", 18, 116},
@@ -2091,7 +2092,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.0", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.0.0", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -2277,7 +2278,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.0",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.0.0",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
