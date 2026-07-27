@@ -13,6 +13,7 @@
 
 #include "receiver.h"
 #include "usb_transport.h"
+#include "content_store.h"
 
 #include <algorithm>
 #include <atomic>
@@ -25,6 +26,7 @@
 #include <functional>
 #include <iomanip>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -121,7 +123,9 @@ HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
 std::filesystem::path gTransferHistoryPath;
+std::filesystem::path gContentDatabasePath;
 std::filesystem::path gChannelPreferencePath;
+std::unique_ptr<ContentStore> gContentStore;
 std::map<std::wstring, UsbPeer> gUsbPeers;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
 
@@ -255,6 +259,13 @@ std::filesystem::path TransferHistoryPath() {
     DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
     std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
     return base / L"ZwmDeviceShareHub" / L"transfer-history.tsv";
+}
+
+std::filesystem::path ContentDatabasePath() {
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+    std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
+    return base / L"ZwmDeviceShareHub" / L"content-history.db";
 }
 
 std::filesystem::path ChannelPreferencePath() {
@@ -845,6 +856,13 @@ std::wstring SafeHistoryField(std::wstring value) {
 
 std::map<std::wstring, std::wstring> PreviousTransfersForDevice(
         const std::wstring& deviceId, const std::wstring& deviceName) {
+    if (gContentStore) {
+        try {
+            return gContentStore->PreviousTransfersForDevice(deviceId, deviceName);
+        } catch (const std::exception& error) {
+            WriteDiagnosticLog(L"content_database_query_failed", Utf8ToWide(error.what()));
+        }
+    }
     std::map<std::wstring, std::wstring> result;
     if (gTransferHistoryPath.empty()) gTransferHistoryPath = TransferHistoryPath();
     std::ifstream input(gTransferHistoryPath, std::ios::binary);
@@ -862,6 +880,20 @@ std::map<std::wstring, std::wstring> PreviousTransfersForDevice(
 void RecordSuccessfulTransfers(
         const Device& device, const std::vector<TransferFingerprint>& fingerprints,
         const std::wstring& channel) {
+    if (gContentStore) {
+        try {
+            std::vector<StoredTransferItem> items;
+            items.reserve(fingerprints.size());
+            for (const auto& fingerprint : fingerprints) {
+                items.push_back({fingerprint.hash, fingerprint.source, fingerprint.files, fingerprint.images});
+            }
+            gContentStore->RecordSuccessfulTransfers(
+                device.id, device.name, channel, NowStamp(), items);
+            return;
+        } catch (const std::exception& error) {
+            WriteDiagnosticLog(L"content_database_write_failed", Utf8ToWide(error.what()));
+        }
+    }
     if (gTransferHistoryPath.empty()) gTransferHistoryPath = TransferHistoryPath();
     std::filesystem::create_directories(gTransferHistoryPath.parent_path());
     std::ofstream output(gTransferHistoryPath, std::ios::binary | std::ios::app);
@@ -1922,6 +1954,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     ConfigureUsbTransport(instance, WriteDiagnosticLog);
     LoadDeviceRemarks();
     LoadChannelPreferences();
+    try {
+        gContentDatabasePath = ContentDatabasePath();
+        gContentStore = std::make_unique<ContentStore>(gContentDatabasePath);
+        gContentStore->Initialize(TransferHistoryPath());
+        WriteDiagnosticLog(L"content_database_ready", gContentDatabasePath.wstring());
+    } catch (const std::exception& error) {
+        gContentStore.reset();
+        WriteDiagnosticLog(L"content_database_init_failed", Utf8ToWide(error.what()));
+    }
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);

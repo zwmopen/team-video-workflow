@@ -74,6 +74,10 @@ jobs:
           }
           cmake --build tools/device-share-hub/windows-native/build --config Release *>&1 | Tee-Object -FilePath $log -Append
           $status = $LASTEXITCODE
+          if ($status -eq 0) {
+            ctest --test-dir tools/device-share-hub/windows-native/build -C Release --output-on-failure *>&1 | Tee-Object -FilePath $log -Append
+            $status = $LASTEXITCODE
+          }
           "status=$status" >> $env:GITHUB_OUTPUT
           if ($status -eq 0) {
             New-Item -ItemType Directory -Force -Path tools/device-share-hub/windows-native/out | Out-Null
