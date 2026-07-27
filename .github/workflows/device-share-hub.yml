@@ -53,7 +53,10 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:8791/v1/health >/dev/null
-          npm run test:http
+          npm run test:http || {
+            cat "$RUNNER_TEMP/device-share-relay.log"
+            exit 1
+          }
 
   windows-portable:
     runs-on: windows-2022

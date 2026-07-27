@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { canonicalize } from "../src/index.js";
+import { canonicalize } from "../src/relay-core.js";
 
 const baseUrl = process.env.RELAY_BASE_URL || "http://127.0.0.1:8791";
 

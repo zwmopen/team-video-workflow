@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalize, validCertificate, WorkspaceRelay } from "../src/index.js";
+import { canonicalize, validCertificate, WorkspaceRelayCore } from "../src/relay-core.js";
 
 function base64Url(bytes) {
   return Buffer.from(bytes).toString("base64url");
@@ -97,7 +97,7 @@ function createRelay() {
       return [];
     },
   };
-  return { relay: new WorkspaceRelay(context, { REMOTE_OBJECTS: bucket }), storage, bucket };
+  return { relay: new WorkspaceRelayCore(context, { REMOTE_OBJECTS: bucket }), storage, bucket };
 }
 
 async function jsonRequest(path, body, token = null, method = "POST") {
