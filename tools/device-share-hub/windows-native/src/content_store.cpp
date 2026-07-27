@@ -1,6 +1,6 @@
 #include "content_store.h"
 
-#include <winsqlite3.h>
+#include "winsqlite_compat.h"
 
 #include <fstream>
 #include <mutex>
