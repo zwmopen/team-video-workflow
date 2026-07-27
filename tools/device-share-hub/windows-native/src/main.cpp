@@ -67,6 +67,7 @@ constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
+constexpr int DEVICE_RETENTION_SECONDS = 600;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
 
@@ -1227,7 +1228,7 @@ void RefreshDeviceList() {
     {
         std::lock_guard<std::mutex> lock(gDeviceMutex);
         for (auto it = gDevices.begin(); it != gDevices.end();) {
-            if (now - it->second.lastSeen > std::chrono::seconds(15)) it = gDevices.erase(it);
+            if (now - it->second.lastSeen > std::chrono::seconds(DEVICE_RETENTION_SECONDS)) it = gDevices.erase(it);
             else {
                 fresh.push_back(it->second);
                 ++it;
@@ -1986,7 +1987,7 @@ void Layout(HWND window) {
     const int contentTop = 104;
     const int bottomTop = height - 112;
     const int available = width - margin * 2 - gap;
-    const int leftWidth = std::max(520, available * 61 / 100);
+    const int leftWidth = std::max(380, available * 38 / 100);
     const int rightX = margin + leftWidth + gap;
     const int rightWidth = std::max(330, width - margin - rightX);
     const int listTop = contentTop + 58;
@@ -2025,10 +2026,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.1.0", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.1.1", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备，然后直接传送；所有日常操作都在这一页。",
+            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可以把任意文件或文件夹直接拖到设备卡片。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 840, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
@@ -2095,15 +2096,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_REFRESH_DEVICES) {
-                {
-                    std::lock_guard<std::mutex> lock(gDeviceMutex);
-                    gDevices.clear();
-                }
                 RefreshDeviceList();
-                SetWindowTextW(gStatus, L"正在刷新设备…");
+                SetWindowTextW(gStatus, L"正在确认设备在线状态，已有设备不会被清空…");
                 gRefreshRequested = true;
                 gUsbRefreshRequested = true;
-                WriteDiagnosticLog(L"discovery_manual_refresh", L"device list cleared and probe requested");
+                WriteDiagnosticLog(L"discovery_manual_refresh", L"known devices retained and probe requested");
                 return 0;
             }
             if (LOWORD(wParam) == IDC_SEND_PICKER) {
@@ -2253,7 +2250,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.1.0",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.1.1",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
