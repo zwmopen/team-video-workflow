@@ -108,5 +108,5 @@ HKDF `info` 必须包含协议版本、工作区、发送设备、接收设备�
 
 - 当前只实现加密中继基础，WebRTC/ICE 远程直连未实现；
 - 服务尚未部署，三端尚未生成系统级设备密钥或调用这些入口；
-- Windows 本机 `workerd` 在启动本地 Cloudflare 运行时时出现访问冲突；JS 语法、纯协议测试、依赖审计和 Wrangler 部署预检已通过，但本机 Durable Object/R2 集成运行需在 CI/Linux 或修复 Windows 运行库后复核；
+- Windows 本机 `workerd` 在启动本地 Cloudflare 运行时时出现访问冲突；第二备用 CI run `30252544159` 已在 Linux 实际跑通 Worker、Durable Object、R2 上传/下载和 ACK 删除，本机环境兼容仍待后续修复；
 - 没有手机流量与异地 WiFi 的实体证据前，正式界面继续隐藏“远程”标签。

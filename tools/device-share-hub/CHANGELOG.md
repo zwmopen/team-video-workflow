@@ -6,7 +6,8 @@
 - 工作区 ID 与管理电脑公钥绑定；成员使用电脑签发凭证和设备签名挑战登录，伪造管理电脑不能替换根身份。
 - 增加远程开关、设备撤销、会话立即失效、WebSocket 在线通知、密文上传/提交/下载/取消/确认和最长 24 小时过期清理。
 - 云端清单不含文件名、用户路径、明文或明文密钥；接收成功 ACK 后立即删除密文。
-- 新增 8 项协议测试、Cloudflare API 类型检查、依赖高危审计和 Wrangler 部署预检；本机 Cloudflare 运行时因 Windows `workerd` 访问冲突未完成本地 DO/R2 集成运行。
+- 新增 8 项协议测试、Cloudflare API 类型检查、依赖高危审计和 Wrangler 部署预检；第二备用 CI run `30252544159` 进一步实际启动 Worker，并跑通 Durable Object、R2 密文上传/下载与 ACK 删除。
+- 同一 CI run 的 Windows、Android、iPhone 原有构建全部成功；本机 Cloudflare 运行时仍因 Windows `workerd` 访问冲突无法启动，Linux CI 是当前集成运行证据。
 - 本阶段未部署云端、未接入三端客户端、未完成异网真机传送，正式版继续隐藏“远程”标签。
 
 ## Windows V3.9.1 - 2026-07-26

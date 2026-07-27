@@ -6,7 +6,8 @@
 - 服务端已实现管理公钥绑定的工作区、电脑签发成员凭证、设备签名挑战、24 小时会话、WebSocket 在线状态、远程开关、设备撤销、密文任务和最长 24 小时清理。
 - 文件名、用户路径、明文和明文密钥不进入云端清单；接收端 ACK、取消或过期后删除全部密文。
 - 8 项 Node 协议测试、JS 语法检查、Cloudflare API 类型检查、npm 高危依赖审计和 Wrangler 部署预检通过；CI 已增加独立 `remote-relay-check`。
-- Windows 本机 `workerd` 启动发生访问冲突，未完成本机 Durable Object/R2 集成运行。此问题不等于服务代码已失败，也不能写成集成测试通过；下一步先由 CI/Linux 复核。
+- 第二备用构建 run `30252544159` 的远程任务实际启动 Linux Worker，并完成管理员/成员身份、Durable Object 会话、R2 密文上传、接收端下载、ACK 和删除后不可再次读取的 HTTP 闭环；同一 run 的 Windows、Android、iPhone 三项也全部成功。
+- Windows 本机 `workerd` 启动发生访问冲突；因此本机 DO/R2 仍未运行，当前集成证据来自 Linux CI。主账号与第一备用账号本轮都在任何步骤开始前因运行资源失败，不是代码或测试失败。
 - 三端客户端尚未生成系统密钥、交换成员凭证或调用服务；Cloudflare 正式服务未部署，手机流量/异地 WiFi 未实测，Windows 继续保持 `remoteConnected=false`。
 - 权威协议：`docs/REMOTE_PROTOCOL_V1.md`；服务入口：`remote-relay/README.md`。
 
