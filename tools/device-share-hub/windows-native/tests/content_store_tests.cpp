@@ -37,6 +37,14 @@ int wmain() {
     assert(store.GetSetting(L"library_path") == L"D:\\素材库");
     assert(store.GetSetting(L"missing") == L"");
 
+    StoredTransferItem archived{L"new-hash", source, 5, 4};
+    store.RecordArchiveState(archived, L"archive_ready", root / L"Work 2.zip", L"zip-hash",
+                             L"2026-07-27 12:05:00.000", L"压缩包已校验");
+    assert(store.StateForFingerprint(L"new-hash") == L"archive_ready");
+    store.RecordArchiveState(archived, L"archived", root / L"Work 2.zip", L"zip-hash",
+                             L"2026-07-27 12:06:00.000", L"原目录已移入回收站");
+    assert(store.StateForFingerprint(L"new-hash") == L"archived");
+
     std::filesystem::remove_all(root);
     std::wcout << L"content_store_tests passed\n";
     return 0;

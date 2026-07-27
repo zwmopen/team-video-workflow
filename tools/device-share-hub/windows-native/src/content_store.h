@@ -29,6 +29,14 @@ public:
 
     std::wstring GetSetting(const std::wstring& key) const;
     void SetSetting(const std::wstring& key, const std::wstring& value) const;
+    void RecordArchiveState(
+        const StoredTransferItem& item,
+        const std::wstring& state,
+        const std::filesystem::path& archivePath,
+        const std::wstring& archiveHash,
+        const std::wstring& timestamp,
+        const std::wstring& detail) const;
+    std::wstring StateForFingerprint(const std::wstring& fingerprint) const;
 
     const std::filesystem::path& DatabasePath() const { return databasePath_; }
 

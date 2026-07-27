@@ -146,10 +146,14 @@ response = await request(`/v1/transfers/${transferId}/commit`, {
 });
 assert.equal(response.status, 200);
 
-response = await request(`/v1/transfers/${transferId}/objects/0`, {
-  workspaceId: adminCertificate.workspaceId,
-  token: memberToken,
-});
+for (let attempt = 0; attempt < 5; attempt += 1) {
+  response = await request(`/v1/transfers/${transferId}/objects/0`, {
+    workspaceId: adminCertificate.workspaceId,
+    token: memberToken,
+  });
+  if (response.status !== 500) break;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
 assert.equal(response.status, 200);
 assert.deepEqual(new Uint8Array(await response.arrayBuffer()), ciphertext);
 

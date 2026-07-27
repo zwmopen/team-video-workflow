@@ -49,6 +49,7 @@ namespace {
 constexpr UINT WM_DEVICES_CHANGED = WM_APP + 1;
 constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
 constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
+constexpr UINT WM_LIBRARY_REFRESHED = WM_APP + 4;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
 constexpr int IDC_TOGGLE_USB = 205;
@@ -56,12 +57,20 @@ constexpr int IDC_TOGGLE_WIFI = 206;
 constexpr int IDC_TOGGLE_REMOTE = 207;
 constexpr int IDC_REFRESH_DEVICES = 106;
 constexpr int IDC_SEND_PICKER = 107;
+constexpr int IDC_OPEN_LIBRARY = 108;
+constexpr int IDC_LIBRARY_LIST = 301;
+constexpr int IDC_LIBRARY_CHOOSE = 302;
+constexpr int IDC_LIBRARY_ARCHIVE_CHOOSE = 303;
+constexpr int IDC_LIBRARY_SEND = 304;
+constexpr int IDC_LIBRARY_ARCHIVE = 305;
+constexpr int IDC_LIBRARY_REFRESH = 306;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
+constexpr wchar_t LIBRARY_CLASS[] = L"ZwmDeviceShareHubLibrary";
 
 struct Device {
     std::wstring id;
@@ -100,6 +109,7 @@ HWND gDeviceList = nullptr;
 HWND gStatus = nullptr;
 HWND gLogButton = nullptr;
 HWND gRefreshButton = nullptr;
+HWND gLibraryButton = nullptr;
 HWND gProgress = nullptr;
 HWND gCancelButton = nullptr;
 HWND gSendButton = nullptr;
@@ -116,6 +126,7 @@ std::atomic<bool> gUploadInProgress{false};
 std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
 std::atomic<bool> gUsbRefreshRequested{false};
+std::atomic<bool> gArchiveInProgress{false};
 std::thread gDiscoveryThread;
 std::thread gReceiverThread;
 std::thread gUsbDiscoveryThread;
@@ -128,6 +139,10 @@ std::filesystem::path gChannelPreferencePath;
 std::unique_ptr<ContentStore> gContentStore;
 std::map<std::wstring, UsbPeer> gUsbPeers;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
+HWND gLibraryWindow = nullptr;
+HWND gLibraryList = nullptr;
+HWND gLibraryPathLabel = nullptr;
+std::vector<std::filesystem::path> gLibraryItems;
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -1739,6 +1754,284 @@ std::vector<std::filesystem::path> PickPaths(bool folder) {
     dialog->Release(); return result;
 }
 
+std::optional<std::filesystem::path> PickSingleFolder(HWND owner, const std::wstring& title) {
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return std::nullopt;
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(title.c_str());
+    std::optional<std::filesystem::path> result;
+    if (SUCCEEDED(dialog->Show(owner))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item))) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                result = std::filesystem::path(path);
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+    dialog->Release();
+    return result;
+}
+
+uint16_t ReadLe16(const unsigned char* value) {
+    return static_cast<uint16_t>(value[0] | (static_cast<uint16_t>(value[1]) << 8));
+}
+
+uint32_t ReadLe32(const unsigned char* value) {
+    return static_cast<uint32_t>(value[0]) |
+        (static_cast<uint32_t>(value[1]) << 8) |
+        (static_cast<uint32_t>(value[2]) << 16) |
+        (static_cast<uint32_t>(value[3]) << 24);
+}
+
+bool VerifyCreatedArchive(const std::filesystem::path& archive, uint64_t expectedFiles) {
+    if (!std::filesystem::is_regular_file(archive) || std::filesystem::file_size(archive) < 22) return false;
+    std::ifstream input(archive, std::ios::binary);
+    input.seekg(-22, std::ios::end);
+    unsigned char end[22]{};
+    input.read(reinterpret_cast<char*>(end), sizeof(end));
+    if (input.gcount() != sizeof(end) || ReadLe32(end) != 0x06054b50u) return false;
+    uint16_t entries = ReadLe16(end + 10);
+    uint32_t centralSize = ReadLe32(end + 12);
+    uint32_t centralOffset = ReadLe32(end + 16);
+    uint64_t archiveSize = std::filesystem::file_size(archive);
+    return entries == expectedFiles && centralSize > 0 &&
+        static_cast<uint64_t>(centralOffset) + centralSize + 22 == archiveSize;
+}
+
+bool MoveFolderToRecycleBin(const std::filesystem::path& folder) {
+    HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IFileOperation* operation = nullptr;
+    IShellItem* item = nullptr;
+    bool success = false;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&operation))) &&
+        SUCCEEDED(SHCreateItemFromParsingName(folder.c_str(), nullptr, IID_PPV_ARGS(&item)))) {
+        operation->SetOperationFlags(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT);
+        if (SUCCEEDED(operation->DeleteItem(item, nullptr)) && SUCCEEDED(operation->PerformOperations())) {
+            BOOL aborted = TRUE;
+            if (SUCCEEDED(operation->GetAnyOperationsAborted(&aborted))) success = aborted == FALSE;
+        }
+    }
+    if (item) item->Release();
+    if (operation) operation->Release();
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    return success;
+}
+
+std::filesystem::path LibraryRoot() {
+    if (!gContentStore) return {};
+    return std::filesystem::path(gContentStore->GetSetting(L"library_path"));
+}
+
+void RefreshLibraryList() {
+    if (!gLibraryList || !IsWindow(gLibraryList)) return;
+    SendMessageW(gLibraryList, LB_RESETCONTENT, 0, 0);
+    gLibraryItems.clear();
+    try {
+        std::filesystem::path root = LibraryRoot();
+        SetWindowTextW(gLibraryPathLabel, root.empty() ? L"尚未设置素材目录" : root.c_str());
+        if (root.empty() || !std::filesystem::is_directory(root)) return;
+        for (const auto& entry : std::filesystem::directory_iterator(root, std::filesystem::directory_options::skip_permission_denied)) {
+            if (entry.is_directory()) gLibraryItems.push_back(entry.path());
+        }
+        std::sort(gLibraryItems.begin(), gLibraryItems.end(), [](const auto& left, const auto& right) {
+            return _wcsicmp(left.filename().c_str(), right.filename().c_str()) < 0;
+        });
+        for (const auto& item : gLibraryItems) {
+            std::wstring label = L"待分发  ·  " + item.filename().wstring();
+            SendMessageW(gLibraryList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        }
+    } catch (const std::exception& error) {
+        WriteDiagnosticLog(L"library_refresh_failed", Utf8ToWide(error.what()));
+    }
+}
+
+std::optional<std::filesystem::path> SelectedLibraryItem() {
+    if (!gLibraryList) return std::nullopt;
+    int index = static_cast<int>(SendMessageW(gLibraryList, LB_GETCURSEL, 0, 0));
+    if (index < 0 || index >= static_cast<int>(gLibraryItems.size())) return std::nullopt;
+    return gLibraryItems[static_cast<size_t>(index)];
+}
+
+void SendSelectedLibraryItem() {
+    if (gUploadInProgress) {
+        MessageBoxW(gLibraryWindow, L"上一批素材还在传送。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    auto source = SelectedLibraryItem();
+    if (!source) {
+        MessageBoxW(gLibraryWindow, L"请先选择一个作品文件夹。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    int deviceIndex = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
+    if (deviceIndex < 0 || deviceIndex >= static_cast<int>(gDisplayedDevices.size())) {
+        MessageBoxW(gLibraryWindow, L"请先在中控主窗口选择一台在线设备。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    Device device = gDisplayedDevices[static_cast<size_t>(deviceIndex)];
+    std::thread(UploadToDevice, device, std::vector<std::filesystem::path>{*source}, std::wstring()).detach();
+}
+
+void ArchiveSelectedLibraryItem() {
+    if (gArchiveInProgress) {
+        MessageBoxW(gLibraryWindow, L"上一项归档还在处理。", L"安全归档", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    auto source = SelectedLibraryItem();
+    if (!source) {
+        MessageBoxW(gLibraryWindow, L"请先选择一个作品文件夹。", L"安全归档", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    std::filesystem::path archiveRoot;
+    if (gContentStore) archiveRoot = gContentStore->GetSetting(L"archive_path");
+    if (archiveRoot.empty() || !std::filesystem::is_directory(archiveRoot)) {
+        auto selected = PickSingleFolder(gLibraryWindow, L"选择归档压缩包保存目录");
+        if (!selected) return;
+        archiveRoot = *selected;
+        if (gContentStore) gContentStore->SetSetting(L"archive_path", archiveRoot.wstring());
+    }
+    std::wstring message = L"将“" + source->filename().wstring() +
+        L"”压缩并校验，成功后把原文件夹移入 Windows 回收站。\n\n归档包保存到：\n" + archiveRoot.wstring();
+    if (MessageBoxW(gLibraryWindow, message.c_str(), L"确认已使用并归档", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) != IDOK) return;
+
+    gArchiveInProgress = true;
+    std::thread([source = *source, archiveRoot] {
+        std::filesystem::path temporary;
+        std::filesystem::path partial;
+        try {
+            PostStatus(L"正在生成并校验归档包…");
+            TransferFingerprint fingerprint = FingerprintItem(source);
+            temporary = CreateFolderZip(source, L"archive-" + NewTaskId());
+            std::filesystem::create_directories(archiveRoot);
+            std::filesystem::path destination = archiveRoot / (source.filename().wstring() + L".zip");
+            if (std::filesystem::exists(destination)) throw std::runtime_error("归档目录已有同名 ZIP，请先核对，未覆盖任何文件");
+            partial = destination;
+            partial += L".partial";
+            if (std::filesystem::exists(partial)) std::filesystem::remove(partial);
+            std::filesystem::copy_file(temporary, partial, std::filesystem::copy_options::none);
+            if (!VerifyCreatedArchive(partial, fingerprint.files)) throw std::runtime_error("归档包结构校验失败，原文件夹仍保留");
+            std::wstring temporaryHash = Sha256File(temporary);
+            std::wstring archiveHash = Sha256File(partial);
+            if (temporaryHash != archiveHash) throw std::runtime_error("归档包复制校验失败，原文件夹仍保留");
+            std::filesystem::rename(partial, destination);
+            StoredTransferItem stored{fingerprint.hash, source, fingerprint.files, fingerprint.images};
+            if (gContentStore) {
+                gContentStore->RecordArchiveState(stored, L"archive_ready", destination, archiveHash, NowStamp(), L"压缩包已生成并通过结构与 SHA-256 校验");
+            }
+            if (!MoveFolderToRecycleBin(source)) {
+                throw std::runtime_error("归档包已安全保存，但原文件夹未能移入回收站，请稍后重试");
+            }
+            if (gContentStore) {
+                gContentStore->RecordArchiveState(stored, L"archived", destination, archiveHash, NowStamp(), L"原文件夹已移入 Windows 回收站");
+            }
+            WriteDiagnosticLog(L"library_item_archived", source.filename().wstring() + L" files=" + std::to_wstring(fingerprint.files));
+            PostStatus(L"归档完成：压缩包已校验，原文件夹已移入回收站");
+        } catch (const std::exception& error) {
+            WriteDiagnosticLog(L"library_archive_failed", Utf8ToWide(error.what()));
+            PostStatus(L"归档未完全完成：" + Utf8ToWide(error.what()));
+            std::error_code ignored;
+            if (!partial.empty()) std::filesystem::remove(partial, ignored);
+        }
+        std::error_code ignored;
+        if (!temporary.empty()) std::filesystem::remove(temporary, ignored);
+        gArchiveInProgress = false;
+        if (gLibraryWindow) PostMessageW(gLibraryWindow, WM_LIBRARY_REFRESHED, 0, 0);
+    }).detach();
+}
+
+LRESULT CALLBACK LibraryProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_CREATE: {
+            gLibraryWindow = window;
+            HFONT font = gFont ? gFont : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HWND title = CreateWindowW(L"STATIC", L"素材库与安全归档", WS_CHILD | WS_VISIBLE,
+                18, 16, 360, 30, window, nullptr, nullptr, nullptr);
+            SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
+            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置素材目录", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
+                18, 52, 620, 24, window, nullptr, nullptr, nullptr);
+            SendMessageW(gLibraryPathLabel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            gLibraryList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                18, 84, 620, 300, window, reinterpret_cast<HMENU>(IDC_LIBRARY_LIST), nullptr, nullptr);
+            SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            const struct { int id; const wchar_t* label; int x; int width; } buttons[] = {
+                {IDC_LIBRARY_CHOOSE, L"设置素材目录", 18, 116},
+                {IDC_LIBRARY_ARCHIVE_CHOOSE, L"设置归档目录", 144, 116},
+                {IDC_LIBRARY_REFRESH, L"刷新", 270, 78},
+                {IDC_LIBRARY_SEND, L"传送选中项", 412, 104},
+                {IDC_LIBRARY_ARCHIVE, L"已使用并归档", 526, 112}
+            };
+            for (const auto& button : buttons) {
+                HWND control = CreateWindowW(L"BUTTON", button.label, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                    button.x, 400, button.width, 36, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(button.id)), nullptr, nullptr);
+                SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            }
+            RefreshLibraryList();
+            return 0;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDC_LIBRARY_CHOOSE) {
+                auto folder = PickSingleFolder(window, L"选择待分发素材总目录");
+                if (folder && gContentStore) { gContentStore->SetSetting(L"library_path", folder->wstring()); RefreshLibraryList(); }
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE_CHOOSE) {
+                auto folder = PickSingleFolder(window, L"选择归档压缩包保存目录");
+                if (folder && gContentStore) gContentStore->SetSetting(L"archive_path", folder->wstring());
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_LIBRARY_REFRESH) { RefreshLibraryList(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_SEND) { SendSelectedLibraryItem(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE) { ArchiveSelectedLibraryItem(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_LIST && HIWORD(wParam) == LBN_DBLCLK) { SendSelectedLibraryItem(); return 0; }
+            break;
+        case WM_LIBRARY_REFRESHED:
+            RefreshLibraryList();
+            return 0;
+        case WM_CLOSE:
+            DestroyWindow(window);
+            return 0;
+        case WM_DESTROY:
+            gLibraryWindow = nullptr;
+            gLibraryList = nullptr;
+            gLibraryPathLabel = nullptr;
+            gLibraryItems.clear();
+            return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+void OpenLibraryWindow() {
+    if (gLibraryWindow && IsWindow(gLibraryWindow)) {
+        ShowWindow(gLibraryWindow, SW_RESTORE);
+        SetForegroundWindow(gLibraryWindow);
+        return;
+    }
+    HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetModuleHandleW(nullptr));
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW cls{};
+        cls.cbSize = sizeof(cls);
+        cls.lpfnWndProc = LibraryProc;
+        cls.hInstance = instance;
+        cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_MAIN_ICON));
+        cls.hbrBackground = CreateSolidBrush(RGB(245, 247, 249));
+        cls.lpszClassName = LIBRARY_CLASS;
+        RegisterClassExW(&cls);
+        registered = true;
+    }
+    gLibraryWindow = CreateWindowExW(WS_EX_APPWINDOW, LIBRARY_CLASS, L"素材库与安全归档",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        CW_USEDEFAULT, CW_USEDEFAULT, 674, 486, gWindow, nullptr, instance, nullptr);
+    ShowWindow(gLibraryWindow, SW_SHOW);
+    UpdateWindow(gLibraryWindow);
+}
+
 void UsbDiscoveryLoop() {
     while (gRunning) {
         try {
@@ -1776,6 +2069,7 @@ void Layout(HWND window) {
     int height = client.bottom - client.top;
     const int margin = 22;
     MoveWindow(gRefreshButton, width - margin - 118, 18, 118, 36, TRUE);
+    MoveWindow(gLibraryButton, width - margin - 246, 18, 118, 36, TRUE);
     MoveWindow(gDeviceList, margin, 94, width - margin * 2, std::max(170, height - 218), TRUE);
     int buttonWidth = 92;
     int sendWidth = 100;
@@ -1797,7 +2091,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V3.9.1", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.0", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"拖入任意文件、ZIP 或整个文件夹；原目录结构会保留。",
@@ -1807,6 +2101,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                            560, 18, 118, 36, window,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_REFRESH_DEVICES)), nullptr, nullptr);
             SendMessageW(gRefreshButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gLibraryButton = CreateWindowW(L"BUTTON", L"素材库", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                           432, 18, 118, 36, window,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_OPEN_LIBRARY)), nullptr, nullptr);
+            SendMessageW(gLibraryButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(0, L"LISTBOX", nullptr,
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
                 22, 94, 640, 280, window, reinterpret_cast<HMENU>(101), nullptr, nullptr);
@@ -1861,6 +2159,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 DestroyMenu(menu);
                 if (command == IDC_PICK_FILES) ChooseAndSend(false);
                 if (command == IDC_PICK_FOLDER) ChooseAndSend(true);
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_OPEN_LIBRARY) {
+                OpenLibraryWindow();
                 return 0;
             }
             if (LOWORD(wParam) == 105) {
@@ -1975,7 +2277,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V3.9.1",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.0",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

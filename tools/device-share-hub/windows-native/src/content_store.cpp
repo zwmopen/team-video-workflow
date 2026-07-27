@@ -1,5 +1,7 @@
 #include "content_store.h"
 
+#include <windows.h>
+
 #include "winsqlite_compat.h"
 
 #include <fstream>
@@ -165,7 +167,8 @@ void ContentStore::Initialize(const std::filesystem::path& legacyHistoryPath) {
     database.Execute(
         "CREATE TABLE IF NOT EXISTS content_items("
         "fingerprint TEXT PRIMARY KEY, display_name TEXT NOT NULL, current_path TEXT NOT NULL DEFAULT '', "
-        "state TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+        "state TEXT NOT NULL DEFAULT 'ready', archive_path TEXT NOT NULL DEFAULT '', archive_hash TEXT NOT NULL DEFAULT '', "
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS transfer_events("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '', "
         "device_name TEXT NOT NULL, channel TEXT NOT NULL, transferred_at TEXT NOT NULL, source_name TEXT NOT NULL, "
@@ -173,6 +176,9 @@ void ContentStore::Initialize(const std::filesystem::path& legacyHistoryPath) {
         "CREATE INDEX IF NOT EXISTS idx_transfer_device_fingerprint ON transfer_events(device_id, fingerprint);"
         "CREATE INDEX IF NOT EXISTS idx_transfer_name_fingerprint ON transfer_events(device_name, fingerprint);"
         "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS archive_events("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, state TEXT NOT NULL, "
+        "archive_path TEXT NOT NULL, archive_hash TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '');"
         "CREATE TABLE IF NOT EXISTS migrations(key TEXT PRIMARY KEY, completed_at TEXT NOT NULL);"
     );
 
@@ -253,4 +259,54 @@ void ContentStore::SetSetting(const std::wstring& key, const std::wstring& value
     statement.Text(1, key);
     statement.Text(2, value);
     statement.Run();
+}
+
+void ContentStore::RecordArchiveState(
+        const StoredTransferItem& item,
+        const std::wstring& state,
+        const std::filesystem::path& archivePath,
+        const std::wstring& archiveHash,
+        const std::wstring& timestamp,
+        const std::wstring& detail) const {
+    std::lock_guard<std::mutex> lock(gDatabaseMutex);
+    Database database(databasePath_);
+    database.Execute("BEGIN IMMEDIATE;");
+    try {
+        Statement content(database.Get(),
+            "INSERT INTO content_items(fingerprint, display_name, current_path, state, archive_path, archive_hash, created_at, updated_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(fingerprint) DO UPDATE SET "
+            "display_name=excluded.display_name, current_path=excluded.current_path, state=excluded.state, "
+            "archive_path=excluded.archive_path, archive_hash=excluded.archive_hash, updated_at=excluded.updated_at;");
+        content.Text(1, item.fingerprint);
+        content.Text(2, item.source.filename().wstring());
+        content.Text(3, state == L"archived" ? L"" : item.source.wstring());
+        content.Text(4, state);
+        content.Text(5, archivePath.wstring());
+        content.Text(6, archiveHash);
+        content.Text(7, timestamp);
+        content.Text(8, timestamp);
+        content.Run();
+
+        Statement event(database.Get(),
+            "INSERT INTO archive_events(fingerprint, state, archive_path, archive_hash, occurred_at, detail) VALUES(?, ?, ?, ?, ?, ?);");
+        event.Text(1, item.fingerprint);
+        event.Text(2, state);
+        event.Text(3, archivePath.wstring());
+        event.Text(4, archiveHash);
+        event.Text(5, timestamp);
+        event.Text(6, detail);
+        event.Run();
+        database.Execute("COMMIT;");
+    } catch (...) {
+        database.Execute("ROLLBACK;");
+        throw;
+    }
+}
+
+std::wstring ContentStore::StateForFingerprint(const std::wstring& fingerprint) const {
+    std::lock_guard<std::mutex> lock(gDatabaseMutex);
+    Database database(databasePath_);
+    Statement query(database.Get(), "SELECT state FROM content_items WHERE fingerprint=?;");
+    query.Text(1, fingerprint);
+    return sqlite3_step(query.Get()) == SQLITE_ROW ? ColumnText(query.Get(), 0) : L"ready";
 }
