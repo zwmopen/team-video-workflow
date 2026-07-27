@@ -14,6 +14,47 @@ on:
       - '.github/workflows/device-share-hub.yml'
 
 jobs:
+  remote-relay-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/device-share-hub/remote-relay
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/device-share-hub/remote-relay/package-lock.json
+      - name: Install exact relay dependencies
+        run: npm ci
+      - name: Audit, test and validate relay package
+        run: |
+          npm audit --audit-level=high
+          npm run check
+          npm run typecheck
+          npm test
+          npx wrangler deploy --dry-run
+      - name: Exercise local Worker, Durable Object and R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler dev --port 8791 > "$RUNNER_TEMP/device-share-relay.log" 2>&1 &
+          relay_pid=$!
+          trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8791/v1/health >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$relay_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/device-share-relay.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8791/v1/health >/dev/null
+          npm run test:http
+
   windows-portable:
     runs-on: windows-2022
     steps:

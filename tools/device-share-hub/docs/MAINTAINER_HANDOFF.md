@@ -1,5 +1,15 @@
 # 分享中控 V3.9.1 维护交接
 
+## 2026-07-27 远程传送服务基础
+
+- 新增 `remote-relay/`，使用 Cloudflare Worker + SQLite Durable Object + 私有 R2；当前包版本 `0.1.0`。
+- 服务端已实现管理公钥绑定的工作区、电脑签发成员凭证、设备签名挑战、24 小时会话、WebSocket 在线状态、远程开关、设备撤销、密文任务和最长 24 小时清理。
+- 文件名、用户路径、明文和明文密钥不进入云端清单；接收端 ACK、取消或过期后删除全部密文。
+- 8 项 Node 协议测试、JS 语法检查、Cloudflare API 类型检查、npm 高危依赖审计和 Wrangler 部署预检通过；CI 已增加独立 `remote-relay-check`。
+- Windows 本机 `workerd` 启动发生访问冲突，未完成本机 Durable Object/R2 集成运行。此问题不等于服务代码已失败，也不能写成集成测试通过；下一步先由 CI/Linux 复核。
+- 三端客户端尚未生成系统密钥、交换成员凭证或调用服务；Cloudflare 正式服务未部署，手机流量/异地 WiFi 未实测，Windows 继续保持 `remoteConnected=false`。
+- 权威协议：`docs/REMOTE_PROTOCOL_V1.md`；服务入口：`remote-relay/README.md`。
+
 ## 2026-07-26 当前增量
 
 - Windows V3.8：`windows-native/src/usb_transport.*` 实现 WPD/MTP 与 iPhone House Arrest 文件共享；`usb_bridge.py` 作为 EXE 资源内置。通道优先级 USB → Wi‑Fi。
@@ -59,7 +69,9 @@
 | `windows-native/` | Win32 UI、发现、发送、接收、日志和进度 |
 | `android/app/src/main/java/com/zwm/gallery/` | SAF 目录、作品库、回收站、分享、发现与传送 |
 | `ios/Album/` | UIKit/Swift 作品库、目录授权、分享、发现与传送 |
+| `remote-relay/` | 远程设备身份、在线会话、短期密文中继与自动清理 |
 | `docs/PROTOCOL.md` | 局域网发现与 HTTP 传输协议 |
+| `docs/REMOTE_PROTOCOL_V1.md` | 远程身份、签名、密钥封装和中继协议 |
 | `.github/workflows/device-share-hub.yml` | Windows、Android、iOS 三端构建与检查 |
 
 ## 文档路由

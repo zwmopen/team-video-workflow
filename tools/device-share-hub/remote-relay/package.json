@@ -1,0 +1,19 @@
+{
+  "name": "device-share-hub-remote-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.js && node --check test/protocol.test.js && node --check scripts/http-smoke.js",
+    "typecheck": "tsc -p jsconfig.json",
+    "test": "node --test",
+    "test:http": "node scripts/http-smoke.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260727.1",
+    "typescript": "7.0.2",
+    "wrangler": "4.114.0"
+  }
+}

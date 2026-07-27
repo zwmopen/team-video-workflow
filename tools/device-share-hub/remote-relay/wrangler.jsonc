@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zwm-device-share-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-27",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WORKSPACES",
+        "class_name": "WorkspaceRelay"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "WorkspaceRelay"
+      ]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "REMOTE_OBJECTS",
+      "bucket_name": "zwm-device-share-relay"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

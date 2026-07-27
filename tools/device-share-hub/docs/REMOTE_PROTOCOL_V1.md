@@ -1,0 +1,112 @@
+# 远程传送协议 V1
+
+状态：服务端基础已实现、本地协议测试通过；三端客户端与正式云端尚未接入。
+
+## 目标与边界
+
+- 保留现有 USB → 局域网 WiFi 优先级，只在两者都不可用时尝试远程；
+- 不暴露手机或电脑入站端口，不要求 IP、配对码或命令行；
+- 云端只看到设备标识、密文字节数、密文哈希和加密密钥包，不看到文件名、路径、文件明文或明文密钥；
+- 每台设备使用独立私钥，不能把同一把万能密钥写入所有安装包；
+- 服务部署、客户端编译和跨网络实体传送是三种不同证据。
+
+## 设备组身份
+
+### 密钥
+
+每台设备首次安装生成两组 P-256 密钥：
+
+- ECDSA P-256：签名身份挑战和成员凭证；
+- ECDH P-256：为接收设备封装单次传送密钥。
+
+私钥保留在系统密钥存储中，不进入发现广播、日志、仓库或云端。公钥使用不含 `d` 的 EC JWK。
+
+### 工作区
+
+管理电脑生成自签名管理员凭证。工作区 ID 固定为：
+
+```text
+ws_ + SHA-256(canonical(adminSigningPublicJwk)) 的前 32 个十六进制字符
+```
+
+因此另一把管理密钥不能抢占相同工作区。服务端第一次登记后固定管理员公钥指纹；后续管理员登录必须与这把根密钥一致。
+
+### 成员凭证
+
+管理员为每台 Android、iPhone 或其他电脑签发：
+
+```json
+{
+  "version": 1,
+  "workspaceId": "ws_...",
+  "deviceId": "device_...",
+  "deviceName": "用户可见名称",
+  "role": "member",
+  "signingPublicKey": { "kty": "EC", "crv": "P-256", "x": "...", "y": "..." },
+  "agreementPublicKey": { "kty": "EC", "crv": "P-256", "x": "...", "y": "..." },
+  "serial": 1,
+  "issuedAt": 0,
+  "expiresAt": 0
+}
+```
+
+签名输入使用递归键名排序、无多余空格的 canonical JSON UTF-8。签名算法为 ES256；协议传输统一使用 64 字节 `r || s` 原始签名的 base64url 表示。Android/Windows 若系统 API 返回 ASN.1 DER，客户端层必须做严格转换。
+
+## 登录
+
+1. `POST /v1/challenges` 创建 5 分钟有效的随机挑战；
+2. 设备使用自己的签名私钥签署完整挑战对象；
+3. `POST /v1/sessions` 同时提交成员凭证、管理员签名和挑战签名；
+4. 服务端核对根身份、凭证序号、撤销/远程开关和挑战后，发放 24 小时短期 Bearer 会话；
+5. 客户端用短期会话连接 `/v1/socket`，服务端只把真实在线连接显示为远程可达。
+
+关闭远程会立即失效该设备的全部会话并断开 WebSocket；撤销设备还会保留独立的撤销状态。客户端必须分别显示“远程已关闭”“设备离线”“设备已撤销”。
+
+## 端到端密文
+
+每次传送：
+
+1. 发送端生成 32 字节随机内容密钥；
+2. 每个对象生成独立 12 字节 nonce，使用 AES-256-GCM 加密；
+3. 对接收设备的 ECDH P-256 公钥生成一次性发送公钥；
+4. ECDH 共享秘密经 HKDF-SHA256 派生包装密钥；
+5. 包装密钥使用 AES-256-GCM 加密“内容密钥 + 文件名/路径/明文哈希/对象 nonce 清单”；
+6. 服务端只保存包装后的 `encryptedKeyPackage` 与对象密文。
+
+HKDF `info` 必须包含协议版本、工作区、发送设备、接收设备和随机 `keyContext`；对象 AES-GCM 的 AAD 必须包含协议版本、`keyContext` 与对象序号，防止跨任务替换。
+
+接收端下载后按以下顺序处理：
+
+```text
+密文 SHA-256 → 解开接收端专用密钥包 → AES-GCM 验证 →
+明文 SHA-256 → 安全暂存 → 原子提交到接收目录 → ACK
+```
+
+只有本地落盘和明文校验都成功后才能发送 ACK。ACK 后服务立即删除全部 R2 密文；失败或取消也删除；最长 24 小时自动过期。
+
+## 服务入口
+
+| 入口 | 作用 |
+|---|---|
+| `GET /v1/health` | 无敏感信息的运行状态 |
+| `POST /v1/workspaces/register` | 首次固定管理电脑根身份 |
+| `POST /v1/challenges` | 创建签名挑战 |
+| `POST /v1/sessions` | 验证设备并创建短期会话 |
+| `GET /v1/socket` | 在线状态和任务通知 |
+| `GET /v1/devices` | 当前成员与真实在线状态 |
+| `POST /v1/devices/{id}/remote` | 管理电脑开启/关闭远程 |
+| `POST /v1/devices/{id}/revoke` | 管理电脑撤销设备 |
+| `POST /v1/transfers` | 创建密文传送清单 |
+| `PUT /v1/transfers/{id}/objects/{index}` | 上传单个密文对象 |
+| `POST /v1/transfers/{id}/commit` | 全部密文上传后通知接收端 |
+| `GET /v1/transfers/{id}` | 读取加密清单与状态 |
+| `GET /v1/transfers/{id}/objects/{index}` | 接收端下载密文 |
+| `POST /v1/transfers/{id}/ack` | 接收成功并删除云端密文 |
+| `POST /v1/transfers/{id}/cancel` | 取消并删除云端密文 |
+
+## 当前限制
+
+- 当前只实现加密中继基础，WebRTC/ICE 远程直连未实现；
+- 服务尚未部署，三端尚未生成系统级设备密钥或调用这些入口；
+- Windows 本机 `workerd` 在启动本地 Cloudflare 运行时时出现访问冲突；JS 语法、纯协议测试、依赖审计和 Wrangler 部署预检已通过，但本机 Durable Object/R2 集成运行需在 CI/Linux 或修复 Windows 运行库后复核；
+- 没有手机流量与异地 WiFi 的实体证据前，正式界面继续隐藏“远程”标签。

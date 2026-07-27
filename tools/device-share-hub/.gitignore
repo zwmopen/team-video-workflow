@@ -6,5 +6,7 @@ windows-native/out/
 .local-test/
 artifacts/
 devimages/
+remote-relay/node_modules/
+remote-relay/.wrangler/
 *.apk
 *.exe
