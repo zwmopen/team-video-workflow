@@ -58,7 +58,7 @@ ws_ + SHA-256(canonical(adminSigningPublicJwk)) 的前 32 个十六进制字符
 2. 设备使用自己的签名私钥签署完整挑战对象；
 3. `POST /v1/sessions` 同时提交成员凭证、管理员签名和挑战签名；
 4. 服务端核对根身份、凭证序号、撤销/远程开关和挑战后，发放 24 小时短期 Bearer 会话；
-5. 客户端用短期会话连接 `/v1/socket`，服务端只把真实在线连接显示为远程可达。
+5. 前台客户端优先用短期会话连接 `/v1/socket`；无法长期保持 WebSocket 的移动端每 10 秒调用 `/v1/presence`，20 秒内收到的心跳同样视为真实在线；超过 60 秒的心跳记录自动清理。
 
 关闭远程会立即失效该设备的全部会话并断开 WebSocket；撤销设备还会保留独立的撤销状态。客户端必须分别显示“远程已关闭”“设备离线”“设备已撤销”。
 
@@ -93,7 +93,10 @@ HKDF `info` 必须包含协议版本、工作区、发送设备、接收设备�
 | `POST /v1/challenges` | 创建签名挑战 |
 | `POST /v1/sessions` | 验证设备并创建短期会话 |
 | `GET /v1/socket` | 在线状态和任务通知 |
+| `POST /v1/presence` | 移动端后台受限时的在线心跳 |
 | `GET /v1/devices` | 当前成员与真实在线状态 |
+| `GET /v1/inbox` | 接收端轮询已提交且可下载的任务 |
+| `GET /v1/outbox` | 发送端查看上传中、已提交及终态任务 |
 | `POST /v1/devices/{id}/remote` | 管理电脑开启/关闭远程 |
 | `POST /v1/devices/{id}/revoke` | 管理电脑撤销设备 |
 | `POST /v1/transfers` | 创建密文传送清单 |

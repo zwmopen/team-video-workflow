@@ -2,13 +2,15 @@
 
 ## 2026-07-27 远程传送服务基础
 
-- 新增 `remote-relay/`，使用 Cloudflare Worker + SQLite Durable Object + 私有 R2；当前包版本 `0.1.0`。
+- 新增 `remote-relay/`，使用 Cloudflare Worker + SQLite Durable Object + 私有 R2；当前候选包版本 `0.1.1`。
 - 服务端已实现管理公钥绑定的工作区、电脑签发成员凭证、设备签名挑战、24 小时会话、WebSocket 在线状态、远程开关、设备撤销、密文任务和最长 24 小时清理。
+- 0.1.1 增加 `POST /v1/presence`、`GET /v1/inbox`、`GET /v1/outbox` 和结构化请求日志，供 Android/iPhone 后台受限时以 HTTPS 心跳和轮询维持真实状态；对应协议测试从 8 项增至 10 项。
 - 文件名、用户路径、明文和明文密钥不进入云端清单；接收端 ACK、取消或过期后删除全部密文。
 - 8 项 Node 协议测试、JS 语法检查、Cloudflare API 类型检查、npm 高危依赖审计和 Wrangler 部署预检通过；CI 已增加独立 `remote-relay-check`。
 - 第二备用构建 run `30252544159` 的远程任务实际启动 Linux Worker，并完成管理员/成员身份、Durable Object 会话、R2 密文上传、接收端下载、ACK 和删除后不可再次读取的 HTTP 闭环；同一 run 的 Windows、Android、iPhone 三项也全部成功。
 - Windows 本机 `workerd` 启动发生访问冲突；因此本机 DO/R2 仍未运行，当前集成证据来自 Linux CI。主账号与第一备用账号本轮都在任何步骤开始前因运行资源失败，不是代码或测试失败。
 - 三端客户端尚未生成系统密钥、交换成员凭证或调用服务；Cloudflare 正式服务未部署，手机流量/异地 WiFi 未实测，Windows 继续保持 `remoteConnected=false`。
+- 2026-07-27 再次恢复 Cloudflare 授权时，账号信息可读，但 Workers/R2 资源接口返回认证错误；Wrangler 登录页默认申请 28 项权限，超出当前部署所需范围，未替用户静默授权。此项是正式部署阻塞，不影响本地代码与 dry-run 证据。
 - 权威协议：`docs/REMOTE_PROTOCOL_V1.md`；服务入口：`remote-relay/README.md`。
 - 仓库边界再次确认：`zwmopen/team-video-workflow` 是唯一源码真源。两个备用私有仓库只在主账号额度不可用、准备实际执行构建时同步当次提交；不得把日常开发、文档收口或“多一份备份”作为同步理由。本轮 `d205630` 同步备用仓库是为了实际运行 CI，其中第二备用 run `30252544159` 提供了有效证据；后续 `df54b80/07d3054` 的纯同步不应作为惯例重复。
 

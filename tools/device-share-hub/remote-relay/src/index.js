@@ -10,6 +10,8 @@ const MAX_TRANSFER_BYTES = 20 * 1024 * 1024 * 1024;
 export default {
   /** @param {Request} request @param {Env} env */
   async fetch(request, env) {
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
     const url = new URL(request.url);
     if (url.pathname === "/v1/health") {
       return json({ ok: true, protocol: 1, service: "device-share-relay" });
@@ -23,8 +25,11 @@ export default {
       return problem(400, "invalid_workspace", "工作区身份无效");
     }
 
-    const objectId = env.WORKSPACES.idFromName(workspaceId);
-    return env.WORKSPACES.get(objectId).fetch(request);
+    const response = await env.WORKSPACES.getByName(workspaceId).fetch(request);
+    console.log(JSON.stringify({ level: "info", event: "relay_request", requestId,
+      method: request.method, path: url.pathname, status: response.status,
+      durationMs: Date.now() - startedAt }));
+    return response;
   },
 };
 
@@ -60,6 +65,15 @@ export class WorkspaceRelay {
       }
       if (method === "GET" && url.pathname === "/v1/devices") {
         return this.listDevices(session);
+      }
+      if (method === "POST" && url.pathname === "/v1/presence") {
+        return await this.heartbeat(session);
+      }
+      if (method === "GET" && url.pathname === "/v1/inbox") {
+        return await this.listTransfers(session, true);
+      }
+      if (method === "GET" && url.pathname === "/v1/outbox") {
+        return await this.listTransfers(session, false);
       }
       const deviceMatch = url.pathname.match(
         /^\/v1\/devices\/([A-Za-z0-9_-]+)\/(remote|revoke)$/,
@@ -98,7 +112,7 @@ export class WorkspaceRelay {
 
       return problem(404, "not_found", "远程服务没有这个入口");
     } catch (error) {
-      console.error("relay_request_failed", safeError(error));
+      console.error(JSON.stringify({ level: "error", event: "relay_request_failed", ...safeError(error) }));
       return problem(500, "internal_error", "远程服务暂时不可用，请稍后重试");
     }
   }
@@ -281,21 +295,49 @@ export class WorkspaceRelay {
 
   async listDevices(session) {
     const members = await this.listStored("member:");
-    const online = new Set(
+    const socketOnline = new Set(
       this.ctx.getWebSockets().map((socket) => socket.deserializeAttachment()?.deviceId).filter(Boolean),
     );
+    const presence = await this.listStored("presence:");
+    const now = Date.now();
     const devices = [];
     for (const value of members.values()) {
       devices.push({
         deviceId: value.certificate.deviceId,
         name: value.certificate.deviceName || "",
         role: value.certificate.role,
-        online: online.has(value.certificate.deviceId),
+        online: socketOnline.has(value.certificate.deviceId) ||
+          Number(presence.get(`presence:${value.certificate.deviceId}`)?.seenAt || 0) >= now - 20_000,
         revoked: Boolean(value.revokedAt),
         remoteAllowed: value.channels?.remote !== false,
+        signingPublicKey: value.certificate.signingPublicKey,
+        agreementPublicKey: value.certificate.agreementPublicKey,
+        certificate: value.certificate,
+        certificateSignature: value.certificateSignature,
       });
     }
     return json({ viewerDeviceId: session.deviceId, devices });
+  }
+
+  async heartbeat(session) {
+    const seenAt = Date.now();
+    await this.ctx.storage.put(`presence:${session.deviceId}`, { seenAt });
+    await this.scheduleCleanup(seenAt + 60_000);
+    return json({ ok: true, deviceId: session.deviceId, seenAt });
+  }
+
+  async listTransfers(session, inbox) {
+    const transfers = await this.listStored("transfer:");
+    const selected = [];
+    for (const transfer of transfers.values()) {
+      const matches = inbox
+        ? transfer.recipientDeviceId === session.deviceId && transfer.status === "ready"
+        : transfer.senderDeviceId === session.deviceId &&
+          ["uploading", "ready", "completed", "cancelled", "expired"].includes(transfer.status);
+      if (matches) selected.push(transfer);
+    }
+    selected.sort((left, right) => right.createdAt - left.createdAt);
+    return json({ transfers: selected.slice(0, 100), serverTime: Date.now() });
   }
 
   async setRemoteAllowed(request, session, deviceId) {
@@ -532,6 +574,11 @@ export class WorkspaceRelay {
             nextExpiry === null ? value.expiresAt : Math.min(nextExpiry, value.expiresAt);
         }
       }
+    }
+    const presence = await this.listStored("presence:");
+    for (const [key, value] of presence) {
+      if (Number(value.seenAt || 0) < now - 60_000) await this.ctx.storage.delete(key);
+      else nextExpiry = nextExpiry === null ? value.seenAt + 60_000 : Math.min(nextExpiry, value.seenAt + 60_000);
     }
 
     const transfers = await this.listStored("transfer:");

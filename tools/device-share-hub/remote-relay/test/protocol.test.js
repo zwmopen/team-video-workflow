@@ -313,6 +313,80 @@ test("admin can disable remote access and invalidate existing device sessions", 
   assert.equal((await response.json()).code, "unauthorized");
 });
 
+test("heartbeat makes a device visible as online without a websocket", async () => {
+  const state = await bootstrap();
+  let response = await state.relay.fetch(
+    await jsonRequest("/v1/presence", {}, state.token),
+  );
+  assert.equal(response.status, 200);
+
+  response = await state.relay.fetch(
+    new Request("https://relay.test/v1/devices", {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  assert.equal(response.status, 200);
+  const devices = (await response.json()).devices;
+  assert.equal(
+    devices.find((device) => device.deviceId === state.memberCertificate.deviceId)?.online,
+    true,
+  );
+});
+
+test("sender outbox and recipient inbox expose committed transfers", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const ciphertext = crypto.getRandomValues(new Uint8Array(16));
+  const cipherSha256 = Buffer.from(
+    await crypto.subtle.digest("SHA-256", ciphertext),
+  ).toString("hex");
+
+  let response = await state.relay.fetch(
+    await jsonRequest(
+      "/v1/transfers",
+      {
+        recipientDeviceId: state.memberCertificate.deviceId,
+        encryptedKeyPackage: { algorithm: "P256-HKDF-SHA256-A256GCM", value: "opaque" },
+        objects: [{ index: 0, cipherBytes: ciphertext.byteLength, cipherSha256 }],
+      },
+      adminToken,
+    ),
+  );
+  const transferId = (await response.json()).transferId;
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/0`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Length": String(ciphertext.byteLength),
+      },
+      body: ciphertext,
+      duplex: "half",
+    }),
+  );
+  assert.equal(response.status, 200);
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/transfers/${transferId}/commit`, {}, adminToken),
+  );
+  assert.equal(response.status, 200);
+
+  response = await state.relay.fetch(
+    new Request("https://relay.test/v1/inbox", {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).transfers.map((item) => item.transferId), [transferId]);
+
+  response = await state.relay.fetch(
+    new Request("https://relay.test/v1/outbox", {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).transfers.map((item) => item.transferId), [transferId]);
+});
+
 test("ciphertext is deleted after recipient acknowledgement", async () => {
   const state = await bootstrap();
   const adminToken = await createAdminSession(state);
