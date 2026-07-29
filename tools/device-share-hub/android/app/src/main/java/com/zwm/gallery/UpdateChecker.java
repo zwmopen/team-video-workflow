@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
 import android.net.Uri;
+import android.os.Environment;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -148,6 +149,8 @@ final class UpdateChecker {
                     .setTitle("相册 " + version + " 更新")
                     .setDescription("下载完成后，点系统通知安装")
                     .setMimeType("application/vnd.android.package-archive")
+                    .setDestinationInExternalPublicDir(
+                            Environment.DIRECTORY_DOWNLOADS, updateFileName(version))
                     .setAllowedOverMetered(true)
                     .setAllowedOverRoaming(false)
                     .setNotificationVisibility(
@@ -193,6 +196,13 @@ final class UpdateChecker {
             if (a != b) return a > b;
         }
         return false;
+    }
+
+    static String updateFileName(String version) {
+        String safeVersion = version == null ? "" :
+                version.trim().replaceAll("[^0-9A-Za-z._-]", "_");
+        if (safeVersion.isEmpty()) safeVersion = "latest";
+        return "相册-Android-" + safeVersion + ".apk";
     }
 
     private static int number(String value) {

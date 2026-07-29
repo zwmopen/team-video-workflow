@@ -86,7 +86,7 @@
 | 项目 | 当前值 |
 |---|---|
 | Windows | 素材投送中控 V3.9.1，原生 Win32 x64 |
-| Android | 相册 0.5.9，versionCode 36，`com.zwm.gallery` |
+| Android | 相册 0.5.10，versionCode 37，`com.zwm.gallery` |
 | iPhone | 相册 0.5.2，build 21，源码 bundle id `com.zwm.album` |
 | 当前主要变化 | 设备通道权限、平台图标、备注层级、来源一致性修复、内容指纹去重与 USB → Wi‑Fi 自动回退 |
 | 当前功能提交 | 发布后以本文件所在提交为准 |
