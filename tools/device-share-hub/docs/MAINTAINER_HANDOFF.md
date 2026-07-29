@@ -1,5 +1,13 @@
 # 分享中控 V4.1.1 维护交接
 
+## 2026-07-29 Android 0.5.9 正式发布
+
+- Android 0.5.9/code 36 的功能源码提交为 `5c881f2`；公开 Release 为 [`gallery-updates v0.5.9`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.5.9)，APK SHA-256 为 `7F5AA4FA66CACDC398A2911AF63C83CFCF394B55A1F5F4071073BAE8D0B91395`，并同时发布提交对应的源码 ZIP 与 `SHA256SUMS.txt`。
+- `latest.json` 已同步到 0.5.9/code 36。重新从公开地址下载的 APK 哈希与索引一致；签名证书 SHA-256 为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，与 0.5.8 一致，正式清单无 Debug 标志。
+- 备用构建 run `30412045382` 中 Android 单元测试、Release 构建、Release Lint、安装权限门禁均成功，Windows 与 iPhone 任务也成功；整体 run 仅因未启用的远程中继在 Wrangler 4.114.0 本地 HTTP 冒烟末段触发 request-stream 运行时错误而失败，此错误不属于 Android 0.5.9 发布包。
+- 公开 APK 已在当时连接的 VIVO `V2327A` 上覆盖安装成功，原 4 个作品仍可读取，四分类入口正常，页面显示“已是最新”，回收站物理目录为空；该次属于公开包安装与首页冒烟，不替代后续按 1—9 项对该机型进行完整验收。
+- 华为 P30 `ELE-AL00` 已在发布前完成 0.5.9 正式候选包覆盖安装、目录读取、分类与回收站真机验收；针对鸿蒙 `.hwbk` 隐藏侧文件和 DocumentsProvider 过期条目的清空逻辑已验证真实目录为空。
+
 ## 2026-07-27 Windows 设备发现回归修复
 
 - 用户实机反馈 V4.1.0 右侧一度显示 0 台，而同一时段至少 3 台在线。诊断日志确认 V4.1.0 启动后实际发现 `192.168.0.102/.104/.107` 三台；设备随后因 15 秒广播过期被移除，用户点刷新又触发 `gDevices.clear()`，导致列表长期为空。
