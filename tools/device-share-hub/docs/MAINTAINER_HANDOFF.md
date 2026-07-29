@@ -7,6 +7,7 @@
 - 剪切板同步只用于当前局域网已发现并持久登记的手机；以来源 IP 加设备 ID 做便利校验，不宣称远程级加密认证。手机版继续不含坚果云。
 - 功能源码提交为 `936f9ce`。本机 Gradle 9.4.1 下 51 个单元测试、Debug/Release 构建、Release Lint、APK 签名与清单校验通过；签名证书 SHA-256 仍为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，可覆盖 0.5.10。
 - 公开 Release 为 [`gallery-updates v0.6.0`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.0)，APK SHA-256 为 `84C53FF17FD3A74B1464C3857BF12D8C7833EBF8FD4C3085AA3977EBD711869D`；更新索引提交 `f6759d7` 已指向 0.6.0/code 38。公网重新下载 APK 的大小 777046 字节，哈希与索引完全一致。
+- 主仓库 Actions run `30456810103` 的四个 job 均在执行任何步骤前被 GitHub 拒绝启动，注解明确为账户付款失败或 Actions spending limit；这是仓库计费状态，不是构建失败。本机 Android 全门禁结果与公网包校验作为本次发布证据，恢复额度后应补跑同一提交。
 - 当前 ADB 无设备，不能把悬浮窗授权、截图权限、系统分享和多手机剪切板同步写成真机通过；设备接入后需按兼容矩阵逐台覆盖安装，不得跳过真实文件夹删除/清空回收站回归。
 
 ## 2026-07-29 Android 0.5.10 更新文件名修复
