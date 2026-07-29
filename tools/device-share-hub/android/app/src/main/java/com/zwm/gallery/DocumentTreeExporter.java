@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -72,6 +73,44 @@ final class DocumentTreeExporter {
         try (InputStream input = new FileInputStream(source)) {
             copyBounded(resolver, target, input, MAX_ENTRY_BYTES);
         }
+    }
+
+    static ExportResult exportBundle(
+            ContentResolver resolver, Uri tree, String folderName,
+            List<File> sources, List<String> displayNames, List<String> mimes,
+            String text) throws IOException {
+        Uri root = DocumentsContract.buildDocumentUriUsingTree(
+                tree, DocumentsContract.getTreeDocumentId(tree));
+        Map<String, Uri> directories = new HashMap<>();
+        directories.put("", root);
+        String safeFolder = safeDisplayName(folderName);
+        Uri folder = ensureDirectory(resolver, tree, directories, safeFolder);
+        int files = 0;
+        for (int index = 0; index < sources.size(); index++) {
+            String displayName = safeDisplayName(displayNames.get(index));
+            String mime = index < mimes.size() ? mimes.get(index) : "";
+            Uri target = DocumentsContract.createDocument(
+                    resolver, folder,
+                    mime == null || mime.isEmpty() ? mimeFor(displayName) : mime,
+                    displayName);
+            if (target == null) throw new IOException("无法创建文件：" + displayName);
+            try (InputStream input = new FileInputStream(sources.get(index))) {
+                copyBounded(resolver, target, input, MAX_ENTRY_BYTES);
+            }
+            files++;
+        }
+        String cleanText = text == null ? "" : text.trim();
+        if (!cleanText.isEmpty()) {
+            Uri target = DocumentsContract.createDocument(
+                    resolver, folder, "text/plain", "文案.txt");
+            if (target == null) throw new IOException("无法创建文案.txt");
+            try (OutputStream output = resolver.openOutputStream(target, "w")) {
+                if (output == null) throw new IOException("无法写入文案.txt");
+                output.write(cleanText.getBytes(StandardCharsets.UTF_8));
+            }
+            files++;
+        }
+        return new ExportResult(files, 1);
     }
 
     static String validateArchivePath(String raw) {

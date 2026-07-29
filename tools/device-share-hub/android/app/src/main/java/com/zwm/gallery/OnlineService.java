@@ -1,5 +1,6 @@
 package com.zwm.gallery;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -8,11 +9,26 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.Context;
+import android.content.pm.PackageManager;
+import android.database.ContentObserver;
+import android.database.Cursor;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.provider.Settings;
+import android.provider.MediaStore;
+import android.net.Uri;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.WindowManager;
+import android.widget.Button;
 
 import org.json.JSONObject;
 
@@ -50,6 +66,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 public final class OnlineService extends Service {
     public static final String ACTION_START = "com.zwm.gallery.START";
@@ -60,12 +77,17 @@ public final class OnlineService extends Service {
     public static final String ACTION_PEERS_CHANGED = "com.zwm.gallery.PEERS_CHANGED";
     public static final String ACTION_SHARE_OPENED = "com.zwm.gallery.SHARE_OPENED";
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
+    public static final String ACTION_CLIPBOARD_CHANGED = "com.zwm.gallery.CLIPBOARD_CHANGED";
+    public static final String ACTION_REFRESH_OVERLAY = "com.zwm.gallery.REFRESH_OVERLAY";
+    public static final String ACTION_REFRESH_SCREENSHOTS = "com.zwm.gallery.REFRESH_SCREENSHOTS";
 
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
     private static final String PREF_WORK_COUNT = "advertisedWorkCount";
+    private static final String PREF_REGISTERED_PEERS = "registeredPeers";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
+    public static final String SCREENSHOT_CHANNEL_ID = "device_share_screenshots_v1";
     private static final int FOREGROUND_NOTIFICATION_ID = 3401;
     private static final int TASK_NOTIFICATION_ID = 3402;
     private static final int HTTP_PORT = 45833;
@@ -84,6 +106,12 @@ public final class OnlineService extends Service {
     private volatile ServerSocket serverSocket;
     private volatile DatagramSocket discoverySocket;
     private boolean discoveryRecovering;
+    private WindowManager overlayManager;
+    private Button clipboardOverlay;
+    private WindowManager.LayoutParams clipboardOverlayParams;
+    private ContentObserver screenshotObserver;
+    private long lastScreenshotDate;
+    private long lastScreenshotId;
     private final Object taskLock = new Object();
     private IncomingTask activeTask;
 
@@ -103,6 +131,7 @@ public final class OnlineService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        ensureIdentity();
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
@@ -127,7 +156,6 @@ public final class OnlineService extends Service {
             notifyStatus("局域网接收已开启");
             return START_STICKY;
         }
-
         startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
         DiagnosticLog.write(this, "service_start", "receiver foreground service started");
         requestExecutor.execute(this::runCleanup);
@@ -137,6 +165,14 @@ public final class OnlineService extends Service {
             serviceExecutor.execute(this::discoveryLoop);
         }
         notifyStatus("局域网接收已开启，等待电脑自动发现");
+        if (ACTION_REFRESH_OVERLAY.equals(action)) {
+            refreshClipboardOverlay();
+        } else if (ACTION_REFRESH_SCREENSHOTS.equals(action)) {
+            startScreenshotObserverIfAllowed();
+        } else {
+            refreshClipboardOverlay();
+            startScreenshotObserverIfAllowed();
+        }
         return START_STICKY;
     }
 
@@ -147,6 +183,8 @@ public final class OnlineService extends Service {
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();
         cleanupExecutor.shutdownNow();
+        stopScreenshotObserver();
+        removeClipboardOverlay();
         super.onDestroy();
     }
 
@@ -225,6 +263,10 @@ public final class OnlineService extends Service {
                     writeJson(output, 200, deviceInfo());
                     return;
                 }
+                if ("POST".equals(request.method) && "/v2/clipboard".equals(request.path)) {
+                    syncClipboard(request, input, output, client.getInetAddress());
+                    return;
+                }
                 if ("POST".equals(request.method) && "/v2/tasks".equals(request.path)) {
                     createTask(request, input, output);
                     return;
@@ -276,8 +318,9 @@ public final class OnlineService extends Service {
             File taskDir = new File(new File(getCacheDir(), "share"), taskId);
             deleteRecursively(taskDir);
             if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
-            activeTask = new IncomingTask(taskId, body.optString("text", ""), fileCount, taskDir,
-                    System.currentTimeMillis());
+            activeTask = new IncomingTask(
+                    taskId, body.optString("text", ""), body.optBoolean("autoShare", false),
+                    fileCount, taskDir, System.currentTimeMillis());
             currentTaskId = taskId;
             state = "receiving";
         }
@@ -367,6 +410,9 @@ public final class OnlineService extends Service {
         String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
         if (!treeValue.isEmpty()) {
             android.net.Uri tree = android.net.Uri.parse(treeValue);
+            java.util.ArrayList<File> directFiles = new java.util.ArrayList<>();
+            java.util.ArrayList<String> directNames = new java.util.ArrayList<>();
+            java.util.ArrayList<String> directMimes = new java.util.ArrayList<>();
             java.util.ArrayList<File> directImages = new java.util.ArrayList<>();
             int exportedDirectories = 0;
             for (int index = 0; index < task.fileCount; index++) {
@@ -378,19 +424,26 @@ public final class OnlineService extends Service {
                     deliveredFiles += exported.files;
                     exportedDirectories += exported.directories;
                 } else {
-                    DocumentTreeExporter.exportFile(getContentResolver(), tree,
-                            file.file, file.name, file.mime);
-                    deliveredFiles++;
+                    directFiles.add(file.file);
+                    directNames.add(file.name);
+                    directMimes.add(file.mime);
                     if (WorkRules.isSupportedImage(file.name)) directImages.add(file.file);
                 }
+            }
+            if (!directFiles.isEmpty()) {
+                DocumentTreeExporter.ExportResult exported =
+                        DocumentTreeExporter.exportBundle(
+                                getContentResolver(), tree, "接收-" + task.id,
+                                directFiles, directNames, directMimes, task.text);
+                deliveredFiles += exported.files;
+                exportedDirectories += exported.directories;
             }
             DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
                     getContentResolver(), tree, library, new File(getCacheDir(), "tree-import-service"));
             imported = result.imported;
-            if (!directImages.isEmpty()) {
-                library.importWork(task.id, "电脑传入的作品", task.text, directImages, "");
-                imported++;
-                autoShareWorkId = task.id;
+            if (task.autoShare && !directImages.isEmpty()) {
+                WorkLibrary.WorkEntry matched = library.findByContent(task.text, directImages);
+                if (matched != null) autoShareWorkId = matched.id;
             }
             DiagnosticLog.write(this, "tree_export", "files=" + deliveredFiles
                     + " directories=" + exportedDirectories + " works=" + imported);
@@ -409,7 +462,7 @@ public final class OnlineService extends Service {
                 library.importWork(task.id, "电脑传入的作品", task.text, images, "");
                 imported = 1;
                 deliveredFiles = task.fileCount;
-                autoShareWorkId = task.id;
+                if (task.autoShare) autoShareWorkId = task.id;
             } else {
                 throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用文件");
             }
@@ -495,6 +548,34 @@ public final class OnlineService extends Service {
                 Thread::sleep);
     }
 
+    private void syncClipboard(
+            HttpRequest request, InputStream input, OutputStream output, InetAddress sourceAddress)
+            throws Exception {
+        if (request.contentLength < 0 || request.contentLength > 1024L * 1024L) {
+            throw new HttpError(413, "剪切板同步数据过大");
+        }
+        ClipboardSyncPayload.Decoded payload =
+                ClipboardSyncPayload.decode(readExact(input, request.contentLength));
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        Set<String> registered = preferences.getStringSet(
+                PREF_REGISTERED_PEERS, Collections.emptySet());
+        PeerDevice peer = PEERS.get(payload.senderId);
+        String sourceIp = sourceAddress == null ? "" : sourceAddress.getHostAddress();
+        if (!registered.contains(payload.senderId)
+                || peer == null || !peer.ip.equals(sourceIp)) {
+            throw new HttpError(403, "发送设备尚未登记");
+        }
+        SharedClipboardStore store = new SharedClipboardStore(
+                new File(getFilesDir(), "shared-clipboard"));
+        int changed = store.merge(payload.items);
+        if (changed > 0) {
+            sendBroadcast(new Intent(ACTION_CLIPBOARD_CHANGED).setPackage(getPackageName()));
+            DiagnosticLog.write(this, "clipboard_received",
+                    "peer=" + payload.senderId + " changed=" + changed);
+        }
+        writeJson(output, 200, new JSONObject().put("changed", changed));
+    }
+
     private void runDiscoverySession() throws Exception {
         try (DatagramSocket socket = new DatagramSocket(null)) {
             discoverySocket = socket;
@@ -558,8 +639,14 @@ public final class OnlineService extends Service {
             PeerDevice peer = new PeerDevice(id, decodeB64(parts[4]), decodeB64(parts[5]),
                     address.getHostAddress(), port, decodeB64(parts[6]), workCount,
                     System.currentTimeMillis());
+            SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+            Set<String> registeredPeers = new HashSet<>(preferences.getStringSet(
+                    PREF_REGISTERED_PEERS, Collections.emptySet()));
+            if (registeredPeers.add(id)) {
+                preferences.edit().putStringSet(PREF_REGISTERED_PEERS, registeredPeers).apply();
+                DiagnosticLog.write(this, "peer_registered", peer.name);
+            }
             if (id.startsWith("windows-") || "Windows PC".equals(peer.model)) {
-                SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
                 Set<String> registered = new HashSet<>(preferences.getStringSet("registeredComputers",
                         Collections.emptySet()));
                 if (registered.add(id)) {
@@ -572,10 +659,236 @@ public final class OnlineService extends Service {
             if (changed) {
                 sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));
                 DiagnosticLog.write(this, "peer_found", peer.name + " " + peer.ip);
+                if (!id.startsWith("windows-") && !"Windows PC".equals(peer.model)) {
+                    requestExecutor.execute(() -> pushClipboardToPeer(peer));
+                }
             }
         } catch (Exception error) {
             DiagnosticLog.write(this, "peer_packet_invalid", compact(error.getMessage()));
         }
+    }
+
+    private void pushClipboardToPeer(PeerDevice peer) {
+        try {
+            SharedClipboardStore store = new SharedClipboardStore(
+                    new File(getFilesDir(), "shared-clipboard"));
+            List<SharedClipboardStore.Item> items = store.all();
+            if (items.isEmpty()) return;
+            String senderId = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getString("deviceId", "");
+            new TransferClient(getContentResolver(), getCacheDir())
+                    .syncClipboard(peer, senderId, items);
+            DiagnosticLog.write(this, "clipboard_peer_synced", peer.name);
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "clipboard_peer_sync_skipped",
+                    peer.name + " " + compact(error.getMessage()));
+        }
+    }
+
+    private void refreshClipboardOverlay() {
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        boolean enabled = preferences.getBoolean("clipboardOverlayEnabled", true);
+        if (!enabled || !Settings.canDrawOverlays(this)) {
+            removeClipboardOverlay();
+            return;
+        }
+        if (clipboardOverlay != null) return;
+        overlayManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (overlayManager == null) return;
+        OverlayButton button = new OverlayButton(this);
+        button.setText("贴");
+        button.setTextSize(15);
+        button.setTextColor(Color.WHITE);
+        button.setAllCaps(false);
+        button.setPadding(0, 0, 0, 0);
+        button.setContentDescription("打开共享剪切板");
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.OVAL);
+        background.setColor(Color.rgb(54, 105, 72));
+        background.setStroke(dp(1), Color.argb(100, 255, 255, 255));
+        button.setBackground(background);
+        button.setElevation(dp(6));
+        button.setOnClickListener(v -> startActivity(
+                new Intent(this, ClipboardActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        clipboardOverlayParams = new WindowManager.LayoutParams(
+                dp(52), dp(52),
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        clipboardOverlayParams.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+        clipboardOverlayParams.x = dp(6);
+        clipboardOverlayParams.y = preferences.getInt("clipboardOverlayY", 0);
+        button.setOnTouchListener(new android.view.View.OnTouchListener() {
+            float startRawY;
+            int startY;
+            boolean moved;
+            @Override public boolean onTouch(android.view.View view, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    startRawY = event.getRawY();
+                    startY = clipboardOverlayParams.y;
+                    moved = false;
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                    int delta = Math.round(event.getRawY() - startRawY);
+                    if (Math.abs(delta) > dp(4)) moved = true;
+                    clipboardOverlayParams.y = startY + delta;
+                    try { overlayManager.updateViewLayout(button, clipboardOverlayParams); }
+                    catch (Exception ignored) { }
+                    return moved;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP && moved) {
+                    preferences.edit().putInt("clipboardOverlayY", clipboardOverlayParams.y).apply();
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    view.performClick();
+                    return true;
+                }
+                return true;
+            }
+        });
+        try {
+            overlayManager.addView(button, clipboardOverlayParams);
+            clipboardOverlay = button;
+            DiagnosticLog.write(this, "clipboard_overlay_shown", "enabled");
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "clipboard_overlay_failed", compact(error.getMessage()));
+        }
+    }
+
+    private void removeClipboardOverlay() {
+        if (overlayManager != null && clipboardOverlay != null) {
+            try { overlayManager.removeView(clipboardOverlay); }
+            catch (Exception ignored) { }
+        }
+        clipboardOverlay = null;
+        clipboardOverlayParams = null;
+    }
+
+    private void startScreenshotObserverIfAllowed() {
+        stopScreenshotObserver();
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (!preferences.getBoolean("screenshotSyncEnabled", false)
+                || preferences.getString("screenshotTargetPeerId", "").isEmpty()
+                || !hasScreenshotPermission()) {
+            return;
+        }
+        ScreenshotRow latest = queryLatestImage();
+        lastScreenshotDate = latest == null
+                ? System.currentTimeMillis() / 1000L : latest.dateAdded;
+        lastScreenshotId = latest == null ? 0 : latest.id;
+        screenshotObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override public void onChange(boolean selfChange, Uri uri) {
+                requestExecutor.execute(() -> detectLatestScreenshot(uri));
+            }
+            @Override public void onChange(boolean selfChange) {
+                requestExecutor.execute(() -> detectLatestScreenshot(null));
+            }
+        };
+        getContentResolver().registerContentObserver(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, screenshotObserver);
+        DiagnosticLog.write(this, "screenshot_observer_started",
+                preferences.getString("screenshotTargetPeerId", ""));
+    }
+
+    private void stopScreenshotObserver() {
+        if (screenshotObserver == null) return;
+        try { getContentResolver().unregisterContentObserver(screenshotObserver); }
+        catch (Exception ignored) { }
+        screenshotObserver = null;
+    }
+
+    private boolean hasScreenshotPermission() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES)
+                    == PackageManager.PERMISSION_GRANTED;
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void detectLatestScreenshot(Uri changedUri) {
+        ScreenshotRow row = queryLatestImage();
+        if (row == null
+                || row.dateAdded < lastScreenshotDate
+                || (row.dateAdded == lastScreenshotDate && row.id <= lastScreenshotId)) {
+            return;
+        }
+        lastScreenshotDate = row.dateAdded;
+        lastScreenshotId = row.id;
+        if (!ScreenshotDetector.isScreenshot(row.name, row.relativePath)) return;
+        showScreenshotPrompt(row.uri);
+    }
+
+    private ScreenshotRow queryLatestImage() {
+        String[] projection = Build.VERSION.SDK_INT >= 29
+                ? new String[]{
+                        MediaStore.Images.Media._ID,
+                        MediaStore.Images.Media.DISPLAY_NAME,
+                        MediaStore.Images.Media.RELATIVE_PATH,
+                        MediaStore.Images.Media.DATE_ADDED}
+                : new String[]{
+                        MediaStore.Images.Media._ID,
+                        MediaStore.Images.Media.DISPLAY_NAME,
+                        MediaStore.Images.Media.DATA,
+                        MediaStore.Images.Media.DATE_ADDED};
+        try (Cursor cursor = getContentResolver().query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
+                null, null, MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+            if (cursor == null || !cursor.moveToFirst()) return null;
+            long id = cursor.getLong(0);
+            return new ScreenshotRow(id,
+                    Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            Long.toString(id)),
+                    cursor.getString(1), cursor.getString(2), cursor.getLong(3));
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "screenshot_query_failed", compact(error.getMessage()));
+            return null;
+        }
+    }
+
+    private void showScreenshotPrompt(Uri uri) {
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String peerId = preferences.getString("screenshotTargetPeerId", "");
+        String peerName = preferences.getString("screenshotTargetPeerName", "主设备");
+        if (peerId.isEmpty()) return;
+        Intent send = new Intent(this, ScreenshotSendReceiver.class)
+                .setAction(ScreenshotSendReceiver.ACTION_SEND)
+                .putExtra(ScreenshotSendReceiver.EXTRA_URI, uri.toString())
+                .putExtra(ScreenshotSendReceiver.EXTRA_PEER_ID, peerId);
+        PendingIntent action = PendingIntent.getBroadcast(
+                this, 42, send,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification notification = new Notification.Builder(this, SCREENSHOT_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setContentTitle("发送刚才的截图？")
+                .setContentText("发送到“" + peerName + "”")
+                .addAction(new Notification.Action.Builder(
+                        null, "发送", action).build())
+                .setAutoCancel(true)
+                .build();
+        getSystemService(NotificationManager.class)
+                .notify(ScreenshotSendReceiver.NOTIFICATION_ID, notification);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void ensureIdentity() {
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (!preferences.getString("deviceId", "").isEmpty()) return;
+        String androidId = Settings.Secure.getString(
+                getContentResolver(), Settings.Secure.ANDROID_ID);
+        String stable = androidId == null || androidId.isEmpty()
+                ? UUID.randomUUID().toString() : androidId;
+        preferences.edit()
+                .putString("deviceId", "android-" + stable)
+                .putString("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
+                .apply();
     }
 
     private static String decodeB64(String value) {
@@ -670,9 +983,14 @@ public final class OnlineService extends Service {
         alerts.setDescription("由设置中的声音通知开关控制");
         alerts.enableVibration(false);
 
+        NotificationChannel screenshots = new NotificationChannel(
+                SCREENSHOT_CHANNEL_ID, "截图发送提醒", NotificationManager.IMPORTANCE_DEFAULT);
+        screenshots.setDescription("截图后询问是否发送到主设备");
+
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.createNotificationChannel(foreground);
         manager.createNotificationChannel(alerts);
+        manager.createNotificationChannel(screenshots);
     }
 
     private void notifyTransferEvent(String title, String text, int notificationId, String autoShareWorkId) {
@@ -775,17 +1093,47 @@ public final class OnlineService extends Service {
     private static final class IncomingTask {
         final String id;
         final String text;
+        final boolean autoShare;
         final int fileCount;
         final File dir;
         final long startedAtMs;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
 
-        IncomingTask(String id, String text, int fileCount, File dir, long startedAtMs) {
+        IncomingTask(
+                String id, String text, boolean autoShare, int fileCount,
+                File dir, long startedAtMs) {
             this.id = id;
             this.text = text;
+            this.autoShare = autoShare;
             this.fileCount = fileCount;
             this.dir = dir;
             this.startedAtMs = startedAtMs;
+        }
+    }
+
+    private static final class ScreenshotRow {
+        final long id;
+        final Uri uri;
+        final String name;
+        final String relativePath;
+        final long dateAdded;
+
+        ScreenshotRow(long id, Uri uri, String name, String relativePath, long dateAdded) {
+            this.id = id;
+            this.uri = uri;
+            this.name = name;
+            this.relativePath = relativePath;
+            this.dateAdded = dateAdded;
+        }
+    }
+
+    private static final class OverlayButton extends Button {
+        OverlayButton(Context context) {
+            super(context);
+        }
+
+        @Override public boolean performClick() {
+            return super.performClick();
         }
     }
 

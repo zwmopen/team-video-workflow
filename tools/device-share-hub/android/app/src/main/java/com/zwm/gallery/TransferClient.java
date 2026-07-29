@@ -40,13 +40,30 @@ final class TransferClient {
     }
 
     void sendFiles(PeerDevice peer, List<Uri> uris, Progress progress) throws Exception {
+        sendFiles(peer, uris, "", false, progress);
+    }
+
+    void sendFiles(PeerDevice peer, List<Uri> uris, String text, Progress progress)
+            throws Exception {
+        sendFiles(peer, uris, text, false, progress);
+    }
+
+    void sendFiles(
+            PeerDevice peer, List<Uri> uris, String text, boolean autoShare,
+            Progress progress) throws Exception {
         if (uris.isEmpty()) throw new IOException("没有选择文件");
         ArrayList<Source> sources = new ArrayList<>();
         for (Uri uri : uris) sources.add(source(uri));
-        send(peer, sources, progress);
+        send(peer, sources, text, autoShare, progress);
     }
 
     void sendLocalFiles(PeerDevice peer, List<File> files, Progress progress) throws Exception {
+        sendLocalFiles(peer, files, "", false, progress);
+    }
+
+    void sendLocalFiles(
+            PeerDevice peer, List<File> files, String text, boolean autoShare,
+            Progress progress) throws Exception {
         if (files.isEmpty()) throw new IOException("没有选择文件");
         ArrayList<Source> sources = new ArrayList<>();
         for (File file : files) {
@@ -54,7 +71,7 @@ final class TransferClient {
             sources.add(new Source(Uri.fromFile(file), file.getName(),
                     mimeForName(file.getName()), file.length(), file));
         }
-        send(peer, sources, progress);
+        send(peer, sources, text, autoShare, progress);
     }
 
     void sendFolder(PeerDevice peer, Uri tree, Progress progress) throws Exception {
@@ -63,15 +80,26 @@ final class TransferClient {
         try {
             ArrayList<Source> sources = new ArrayList<>();
             sources.add(new Source(Uri.fromFile(archive), archive.getName(), "application/zip", archive.length(), archive));
-            send(peer, sources, progress);
+            send(peer, sources, "", false, progress);
         } finally {
             archive.delete();
         }
     }
 
-    private void send(PeerDevice peer, List<Source> sources, Progress progress) throws Exception {
+    void syncClipboard(
+            PeerDevice peer, String senderId, List<SharedClipboardStore.Item> items) throws Exception {
+        byte[] body = ClipboardSyncPayload.encode(senderId, items);
+        request(peer, "POST", "/v2/clipboard", "application/json", body, null);
+    }
+
+    private void send(
+            PeerDevice peer, List<Source> sources, String text, boolean autoShare,
+            Progress progress) throws Exception {
         String taskId = "android-" + UUID.randomUUID().toString().toLowerCase(Locale.ROOT);
-        JSONObject task = new JSONObject().put("taskId", taskId).put("text", "").put("fileCount", sources.size());
+        JSONObject task = new JSONObject().put("taskId", taskId)
+                .put("text", text == null ? "" : text)
+                .put("autoShare", autoShare)
+                .put("fileCount", sources.size());
         request(peer, "POST", "/v2/tasks", "application/json", task.toString().getBytes(StandardCharsets.UTF_8), null);
         long total = 0;
         for (Source source : sources) total += source.size;

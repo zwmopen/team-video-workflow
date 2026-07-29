@@ -17,6 +17,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.content.pm.PackageManager;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.widget.Button;
@@ -31,6 +32,7 @@ public final class SettingsActivity extends Activity {
     private static final String PREFS = "device_share";
     private static final int REQUEST_TREE = 71;
     private static final int REQUEST_NOTIFICATIONS = 72;
+    private static final int REQUEST_SCREENSHOTS = 73;
     private EditText deviceName;
     private TextView pathText;
     private Switch soundSwitch;
@@ -115,6 +117,24 @@ public final class SettingsActivity extends Activity {
         });
         root.addView(vibrationSwitch, settingMargins(dp(20)));
 
+        root.addView(label("剪切板与截图"));
+        Switch overlaySwitch = settingSwitch(
+                "悬浮剪切板",
+                "在其他应用上方显示“贴”按钮；默认开启，可随时关闭",
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                        .getBoolean("clipboardOverlayEnabled", true));
+        overlaySwitch.setOnCheckedChangeListener((button, enabled) ->
+                changeClipboardOverlay(enabled));
+        root.addView(overlaySwitch, settingMargins(dp(10)));
+        Switch screenshotSwitch = settingSwitch(
+                "截图发送提醒",
+                "截图后询问是否发送到共享剪切板里设置的主设备",
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                        .getBoolean("screenshotSyncEnabled", false));
+        screenshotSwitch.setOnCheckedChangeListener((button, enabled) ->
+                changeScreenshotSync(enabled));
+        root.addView(screenshotSwitch, settingMargins(dp(20)));
+
         root.addView(label("软件"));
         Switch autoUpdateSwitch = settingSwitch(
                 "自动检查并下载更新",
@@ -178,6 +198,8 @@ public final class SettingsActivity extends Activity {
     protected void onResume() {
         super.onResume();
         UpdateChecker.reportDownloadProblem(this);
+        startService(new Intent(this, OnlineService.class)
+                .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
     }
 
     private void changeSoundNotifications(boolean enabled) {
@@ -197,11 +219,72 @@ public final class SettingsActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_SCREENSHOTS) {
+            boolean granted = grantResults.length > 0;
+            for (int result : grantResults) {
+                granted &= result == PackageManager.PERMISSION_GRANTED;
+            }
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean("screenshotSyncEnabled", granted).apply();
+            startService(new Intent(this, OnlineService.class)
+                    .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
+            toast(granted ? "截图提醒已开启" : "需要允许读取图片才能识别新截图");
+            return;
+        }
         if (requestCode != REQUEST_NOTIFICATIONS) return;
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("soundNotificationsEnabled", granted).apply();
         soundSwitch.setChecked(granted);
         toast(granted ? "声音通知已打开" : "系统没有允许通知");
+    }
+
+    private void changeClipboardOverlay(boolean enabled) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean("clipboardOverlayEnabled", enabled).apply();
+        if (enabled && !Settings.canDrawOverlays(this)) {
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+        } else {
+            startService(new Intent(this, OnlineService.class)
+                    .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
+        }
+    }
+
+    private void changeScreenshotSync(boolean enabled) {
+        if (!enabled) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean("screenshotSyncEnabled", false).apply();
+            startService(new Intent(this, OnlineService.class)
+                    .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
+            return;
+        }
+        String target = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("screenshotTargetPeerId", "");
+        if (target.isEmpty()) {
+            toast("请先到共享剪切板选择截图接收设备");
+            startActivity(new Intent(this, ClipboardActivity.class));
+        }
+        String permission = Build.VERSION.SDK_INT >= 33
+                ? Manifest.permission.READ_MEDIA_IMAGES
+                : Manifest.permission.READ_EXTERNAL_STORAGE;
+        boolean needsImages = checkSelfPermission(permission)
+                != PackageManager.PERMISSION_GRANTED;
+        boolean needsNotifications = Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED;
+        if (needsImages || needsNotifications) {
+            requestPermissions(Build.VERSION.SDK_INT >= 33
+                            ? new String[]{Manifest.permission.READ_MEDIA_IMAGES,
+                                    Manifest.permission.POST_NOTIFICATIONS}
+                            : new String[]{permission},
+                    REQUEST_SCREENSHOTS);
+            return;
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean("screenshotSyncEnabled", true).apply();
+        startService(new Intent(this, OnlineService.class)
+                .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
+        toast("截图提醒已开启");
     }
 
     private void vibrateOnce() {
@@ -253,8 +336,12 @@ public final class SettingsActivity extends Activity {
                         + "点一次“复制并分享”，应用会立即记录一次，文案自动进入剪贴板，作品图片交给系统分享面板。再次分享会先提醒，避免误发同一个作品。默认 1 小时后进入回收站并从文件管理中彻底删除，时间可在设置中调整。\n\n"
                         + "跨设备传送\n"
                         + "电脑、Android 和 iPhone 在同一 Wi‑Fi 下自动发现。选择设备和文件即可传送，过程带有进度、完整性校验和结果提示。\n\n"
+                        + "共享剪切板与截图\n"
+                        + "左侧是剪切板记录，右侧是常用语；同组在线手机会同步新增、修改和删除。允许悬浮窗后可在其他应用点“贴”快速打开；还可指定截图接收设备，截图后由系统通知询问是否发送。\n\n"
+                        + "系统分享\n"
+                        + "其他应用的分享面板里可以选择“相册”，再选择在线设备。普通文件按真实文件夹存放，只有图片和文字一起直接分享时才进入分享准备。\n\n"
                         + "设计思路\n"
-                        + "内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站都保存在本机；覆盖升级会延续现有数据。")
+                        + "内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站都保存在本机；覆盖升级会延续现有数据。坚果云只属于电脑端，不进入手机版。")
                 .setPositiveButton("知道了", null).show();
     }
 

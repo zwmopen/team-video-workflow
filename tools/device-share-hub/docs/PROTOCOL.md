@@ -40,9 +40,14 @@ Content-Type: application/json
 {
   "taskId": "task-...",
   "text": "可选文案",
+  "autoShare": false,
   "fileCount": 8
 }
 ```
+
+`autoShare` 是可选布尔值，缺省为 `false`。普通文件、文件夹和截图传送必须为
+`false`，接收端只落盘；Android 系统分享目标收到“图片＋文字”时可设为 `true`，
+接收端完成真实文件夹导入后才进入分享准备。旧客户端不发送该字段时行为保持安全。
 
 ### 2. 上传文件
 
@@ -63,6 +68,32 @@ POST /v2/tasks/{taskId}/commit
 ```
 
 接收端校验文件完整后写入私有作品库，并通知手机作品列表刷新。若任务是单个 ZIP，接收端会把其中每个有效作品文件夹分别导入；不会自动弹出分享页。
+
+## 共享剪切板同步
+
+同一可信 Wi-Fi 下已互相发现并登记的 Android 设备可发送：
+
+```http
+POST /v2/clipboard
+Content-Type: application/json
+
+{
+  "senderId": "android-...",
+  "items": [
+    {
+      "id": "android-...-uuid",
+      "kind": "clipboard",
+      "text": "内容",
+      "updatedAt": 1785312000000,
+      "deleted": false
+    }
+  ]
+}
+```
+
+`kind` 为 `clipboard` 或 `phrase`。删除使用墓碑记录；相同 ID 按
+`updatedAt` 后写优先合并。接收端只接受当前局域网来源 IP 与已登记设备一致的请求。
+这仍是可信局域网便利机制，不等同于远程模式的密码学身份认证。
 
 ### 4. 取消失败任务
 

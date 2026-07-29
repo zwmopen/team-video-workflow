@@ -41,8 +41,10 @@ import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -74,6 +76,8 @@ public final class MainActivity extends Activity {
     private final LinkedHashSet<String> selectedWorkIds = new LinkedHashSet<>();
     private String selectedCategory = WorkCategory.ALL;
     private LinearLayout categoryBar;
+    private final Map<String, Button> categoryButtons = new LinkedHashMap<>();
+    private final Map<String, String> categoryLabels = new LinkedHashMap<>();
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -104,7 +108,10 @@ public final class MainActivity extends Activity {
         UpdateChecker.checkOnLaunch(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
         worker.execute(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
-        getWindow().getDecorView().post(this::showInitialFolderPromptIfNeeded);
+        getWindow().getDecorView().post(() -> {
+            showInitialFolderPromptIfNeeded();
+            maybeOfferClipboardOverlay();
+        });
     }
 
     @Override
@@ -256,7 +263,7 @@ public final class MainActivity extends Activity {
         categoryBar.setPadding(dp(12), 0, dp(12), dp(10));
         addCategoryButton("全部", WorkCategory.ALL);
         addCategoryButton("转化帖", WorkCategory.CONVERSION);
-        addCategoryButton("泛流量帖", WorkCategory.TRAFFIC);
+        addCategoryButton("发流量帖", WorkCategory.TRAFFIC);
         addCategoryButton("未分类", WorkCategory.UNCATEGORIZED);
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
@@ -293,18 +300,18 @@ public final class MainActivity extends Activity {
                 Gravity.END | Gravity.BOTTOM);
         quickParams.setMargins(0, 0, dp(22), dp(24));
         frame.addView(quickTrashButton, quickParams);
-        Button conversion = new Button(this);
-        conversion.setText("流量\n转化");
-        conversion.setAllCaps(false);
-        conversion.setTextSize(12);
-        conversion.setTextColor(Color.WHITE);
-        conversion.setBackground(round(Color.rgb(70, 89, 111), 16));
-        conversion.setOnClickListener(v ->
-                startActivity(new Intent(this, ConversionActivity.class)));
-        FrameLayout.LayoutParams conversionParams = new FrameLayout.LayoutParams(dp(58), dp(58),
+        Button clipboard = new Button(this);
+        clipboard.setText("剪切板");
+        clipboard.setAllCaps(false);
+        clipboard.setTextSize(12);
+        clipboard.setTextColor(Color.WHITE);
+        clipboard.setBackground(round(Color.rgb(70, 89, 111), 16));
+        clipboard.setOnClickListener(v ->
+                startActivity(new Intent(this, ClipboardActivity.class)));
+        FrameLayout.LayoutParams conversionParams = new FrameLayout.LayoutParams(dp(64), dp(54),
                 Gravity.START | Gravity.BOTTOM);
         conversionParams.setMargins(dp(8), 0, 0, dp(24));
-        frame.addView(conversion, conversionParams);
+        frame.addView(clipboard, conversionParams);
         return frame;
     }
 
@@ -386,6 +393,7 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
         if (fileMode) return;
+        if (!showingTrash) updateCategoryCounts(entries);
         if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
             ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
             for (WorkLibrary.WorkEntry entry : entries) {
@@ -526,6 +534,45 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1);
         if (categoryBar.getChildCount() > 0) params.setMargins(dp(5), 0, 0, 0);
         categoryBar.addView(button, params);
+        categoryButtons.put(category, button);
+        categoryLabels.put(category, label);
+    }
+
+    private void updateCategoryCounts(List<WorkLibrary.WorkEntry> entries) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        counts.put(WorkCategory.ALL, entries.size());
+        counts.put(WorkCategory.CONVERSION, 0);
+        counts.put(WorkCategory.TRAFFIC, 0);
+        counts.put(WorkCategory.UNCATEGORIZED, 0);
+        for (WorkLibrary.WorkEntry entry : entries) {
+            if (counts.containsKey(entry.category)) {
+                counts.put(entry.category, counts.get(entry.category) + 1);
+            }
+        }
+        for (Map.Entry<String, Button> item : categoryButtons.entrySet()) {
+            int count = counts.containsKey(item.getKey()) ? counts.get(item.getKey()) : 0;
+            item.getValue().setText(categoryLabels.get(item.getKey()) + " " + count);
+            boolean selected = item.getKey().equals(selectedCategory);
+            item.getValue().setAlpha(selected ? 1f : 0.72f);
+        }
+    }
+
+    private void maybeOfferClipboardOverlay() {
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (!preferences.getBoolean("clipboardOverlayEnabled", true)
+                || preferences.getBoolean("clipboardOverlayPermissionAsked", false)
+                || Settings.canDrawOverlays(this)) {
+            return;
+        }
+        preferences.edit().putBoolean("clipboardOverlayPermissionAsked", true).apply();
+        new AlertDialog.Builder(this)
+                .setTitle("开启悬浮剪切板？")
+                .setMessage("开启后，在其他应用中也能点“贴”打开共享剪切板。可随时在设置中关闭。")
+                .setNegativeButton("暂不", null)
+                .setPositiveButton("去开启", (dialog, which) ->
+                        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()))))
+                .show();
     }
 
     private String deleteCountdown(WorkLibrary.WorkEntry work) {
@@ -1020,6 +1067,8 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         UpdateChecker.reportDownloadProblem(this);
+        startService(new Intent(this, OnlineService.class)
+                .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
     }
 
     private String treeName(Uri tree) {
