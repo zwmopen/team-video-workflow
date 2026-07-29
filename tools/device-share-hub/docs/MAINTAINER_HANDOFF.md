@@ -1,5 +1,13 @@
 # 分享中控 V4.1.1 维护交接
 
+## 2026-07-29 Android 0.5.10 更新文件名修复
+
+- 用户反馈 0.5.9 下载后的更新文件可能没有 `.apk` 后缀。根因是系统 `DownloadManager` 请求只设置了展示标题和 MIME，没有明确设置落盘文件名；GitHub 重定向后的厂商下载实现可能不保留源文件扩展名。
+- 0.5.10/code 37 明确保存到系统下载目录，文件名固定为 `相册-Android-0.5.10.apk`；新增回归测试覆盖正常版本、空版本和含空格版本，保留启动自动检查、自动下载、SHA-256 校验与系统安装确认。
+- 功能提交为 `9c39b68`，备用构建 run `30416349557` 的 Android 单元测试、Release 构建、Release Lint、安装权限门禁全部成功；同 run 的 Windows 和远程中继检查也成功。
+- 公开 Release 为 [`gallery-updates v0.5.10`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.5.10)，APK SHA-256 为 `47EB541086AA1A4D8BE32FEEDF2860AA11A4590A2F4046919898D4313C14252D`；`latest.json` 已同步 0.5.10/code 37 并使用无查询参数的直接 APK 地址，帮助仍运行 0.5.9 的旧下载器保留文件名。
+- 公网重新下载哈希与索引一致，最终响应明确返回 `Content-Disposition: attachment; filename=album-Android-v0.5.10.apk` 和 APK MIME。准备做 0.5.9 → 0.5.10 自动下载真机检查时设备已断开，实际系统下载目录中的中文目标文件名需下次设备连接后补验。
+
 ## 2026-07-29 Android 0.5.9 正式发布
 
 - Android 0.5.9/code 36 的功能源码提交为 `5c881f2`；公开 Release 为 [`gallery-updates v0.5.9`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.5.9)，APK SHA-256 为 `7F5AA4FA66CACDC398A2911AF63C83CFCF394B55A1F5F4071073BAE8D0B91395`，并同时发布提交对应的源码 ZIP 与 `SHA256SUMS.txt`。
