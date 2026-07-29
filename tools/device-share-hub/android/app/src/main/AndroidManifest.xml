@@ -34,6 +34,11 @@
             android:theme="@style/AppTheme" />
 
         <activity
+            android:name=".ConversionActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+
+        <activity
             android:name=".TransferActivity"
             android:exported="false"
             android:theme="@style/AppTheme" />

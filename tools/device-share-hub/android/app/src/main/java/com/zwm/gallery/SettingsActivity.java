@@ -75,13 +75,29 @@ public final class SettingsActivity extends Activity {
 
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
-        root.addView(settingCaption("自动移入回收站（小时）", "从第一次点击“复制并分享”开始计时，可填 1～10"));
-        moveAfterMinutes = numberField(Integer.toString(Math.max(1, cleanup.moveMinutes / 60)));
+        root.addView(settingCaption("自动移入回收站（小时）", "从第一次点击“复制并分享”开始计时，可填 0～720"));
+        moveAfterMinutes = numberField(Integer.toString(Math.max(0, cleanup.moveMinutes / 60)));
         root.addView(moveAfterMinutes, new LinearLayout.LayoutParams(-1, dp(52)));
-        root.addView(settingCaption("自动彻底删除（小时）", "会同时从手机文件管理中删除，可填 1～10"),
+        root.addView(settingCaption("自动彻底删除（小时）", "会同时从手机文件管理中删除，可填 0～720"),
                 margins(0, dp(10), 0, 0));
-        deleteAfterMinutes = numberField(Integer.toString(Math.max(1, cleanup.deleteMinutes / 60)));
+        deleteAfterMinutes = numberField(Integer.toString(Math.max(0, cleanup.deleteMinutes / 60)));
         root.addView(deleteAfterMinutes, new LinearLayout.LayoutParams(-1, dp(52)));
+        LinearLayout presets = new LinearLayout(this);
+        presets.setOrientation(LinearLayout.HORIZONTAL);
+        int[] presetHours = {0, 1, 3, 6, 24};
+        String[] presetLabels = {"立刻", "1小时", "3小时", "6小时", "24小时"};
+        for (int index = 0; index < presetHours.length; index++) {
+            final int hours = presetHours[index];
+            Button preset = button(presetLabels[index], false);
+            preset.setOnClickListener(v -> {
+                moveAfterMinutes.setText(Integer.toString(hours));
+                deleteAfterMinutes.setText(Integer.toString(hours));
+            });
+            LinearLayout.LayoutParams presetParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+            if (index > 0) presetParams.setMargins(dp(4), 0, 0, 0);
+            presets.addView(preset, presetParams);
+        }
+        root.addView(presets, margins(0, dp(8), 0, 0));
         Button saveCleanup = button("保存自动整理时间", false);
         saveCleanup.setOnClickListener(v -> saveCleanupSettings());
         root.addView(saveCleanup, margins(0, dp(10), 0, dp(20)));
@@ -100,6 +116,15 @@ public final class SettingsActivity extends Activity {
         root.addView(vibrationSwitch, settingMargins(dp(20)));
 
         root.addView(label("软件"));
+        Switch autoUpdateSwitch = settingSwitch(
+                "自动检查并下载更新",
+                "每次打开相册时检查；发现新版后自动交给系统下载，安装仍需系统确认一次",
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                        .getBoolean(UpdateChecker.PREF_AUTO_UPDATE_ENABLED, true));
+        autoUpdateSwitch.setOnCheckedChangeListener((button, enabled) ->
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putBoolean(UpdateChecker.PREF_AUTO_UPDATE_ENABLED, enabled).apply());
+        root.addView(autoUpdateSwitch, settingMargins(dp(10)));
         TextView version = text("当前版本  " + UpdateChecker.currentVersion(this), 16, true);
         version.setPadding(dp(14), dp(16), dp(14), dp(16));
         version.setBackground(round(Color.WHITE, 14));
@@ -136,16 +161,16 @@ public final class SettingsActivity extends Activity {
         try {
             int moveHours = Integer.parseInt(moveAfterMinutes.getText().toString().trim());
             int deleteHours = Integer.parseInt(deleteAfterMinutes.getText().toString().trim());
-            if (moveHours < 1 || moveHours > 10 || deleteHours < 1 || deleteHours > 10
+            if (moveHours < 0 || moveHours > 720 || deleteHours < 0 || deleteHours > 720
                     || !CleanupSettings.save(this, moveHours * 60, deleteHours * 60)) {
-                toast("请输入 1～10，彻底删除时间不能早于回收时间");
+                toast("请输入 0～720，彻底删除时间不能早于回收时间");
                 return;
             }
             DiagnosticLog.write(this, "cleanup_settings_saved",
                     "moveHours=" + moveHours + " deleteHours=" + deleteHours);
             toast("自动整理时间已保存");
         } catch (NumberFormatException error) {
-            toast("请输入 1～10 的整数小时");
+            toast("请输入 0～720 的整数小时");
         }
     }
 
@@ -199,7 +224,8 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_TREE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode != REQUEST_TREE
+                || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri tree = data.getData();
         try {
             if ((data.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {

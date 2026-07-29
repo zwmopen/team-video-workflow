@@ -57,7 +57,8 @@ public final class WorkLibrary {
             String text,
             List<File> sourceImages,
             String warning) throws IOException {
-        return importWork(id, name, text, sourceImages, warning, "", "", "");
+        return importWork(id, name, text, sourceImages, warning, "", "", "",
+                WorkCategory.UNCATEGORIZED);
     }
 
     public synchronized WorkEntry importWork(
@@ -69,6 +70,21 @@ public final class WorkLibrary {
             String sourceDocumentId,
             String sourceParentDocumentId,
             String sourceRelativePath) throws IOException {
+        return importWork(id, name, text, sourceImages, warning, sourceDocumentId,
+                sourceParentDocumentId, sourceRelativePath,
+                WorkCategory.fromPath(sourceRelativePath));
+    }
+
+    public synchronized WorkEntry importWork(
+            String id,
+            String name,
+            String text,
+            List<File> sourceImages,
+            String warning,
+            String sourceDocumentId,
+            String sourceParentDocumentId,
+            String sourceRelativePath,
+            String category) throws IOException {
         validateId(id);
         if (sourceImages == null || sourceImages.isEmpty()) {
             throw new IOException("作品中没有可导入的图片");
@@ -107,6 +123,7 @@ public final class WorkLibrary {
             meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
             meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
             meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
+            meta.setProperty("category", normalizeCategory(category));
             meta.setProperty("contentSignature", signature(valueOrEmpty(text), contentHashes));
             meta.setProperty("image.count", Integer.toString(storedImages.size()));
             for (int index = 0; index < storedImages.size(); index++) {
@@ -160,6 +177,23 @@ public final class WorkLibrary {
         return null;
     }
 
+    public synchronized WorkEntry findByContent(String text, List<File> sourceImages) throws IOException {
+        ArrayList<String> hashes = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        for (File source : sourceImages) {
+            String hash = hashFile(source);
+            if (seen.add(hash)) hashes.add(hash);
+        }
+        String wanted = signature(text, hashes);
+        for (WorkEntry entry : list(activeRoot)) {
+            if (wanted.equals(ensureContentSignature(entry))) return entry;
+        }
+        for (WorkEntry entry : list(trashRoot)) {
+            if (wanted.equals(ensureContentSignature(entry))) return entry;
+        }
+        return null;
+    }
+
     public int reconciledDuplicates() {
         return reconciledDuplicates;
     }
@@ -180,6 +214,7 @@ public final class WorkLibrary {
         }
         if (sourceRelativePath != null && !sourceRelativePath.isEmpty()) {
             meta.setProperty("sourceRelativePath", sourceRelativePath);
+            meta.setProperty("category", WorkCategory.fromPath(sourceRelativePath));
         }
         saveMeta(directory, meta);
     }
@@ -330,6 +365,16 @@ public final class WorkLibrary {
         saveMeta(directory, meta);
     }
 
+    public synchronized void updateCategory(String id, String category) throws IOException {
+        validateId(id);
+        File directory = child(activeRoot, id);
+        if (!directory.isDirectory()) directory = child(trashRoot, id);
+        if (!directory.isDirectory()) return;
+        Properties meta = loadMeta(directory);
+        meta.setProperty("category", normalizeCategory(category));
+        saveMeta(directory, meta);
+    }
+
     private static ArrayList<File> collectImageTrashFiles(File root) {
         ArrayList<File> result = new ArrayList<>();
         File[] children = root.listFiles();
@@ -446,6 +491,28 @@ public final class WorkLibrary {
             }
             deleteTree(entry.directory);
             result.trashRemoved++;
+        }
+        return result;
+    }
+
+    public synchronized ReconcileResult reconcileExternalRelativePaths(
+            Set<String> detectedRelativePaths, long nowMs) throws IOException {
+        HashSet<String> existing = new HashSet<>();
+        for (String path : detectedRelativePaths) existing.add(normalizeSourcePath(path));
+        ReconcileResult result = new ReconcileResult();
+        for (WorkEntry entry : new ArrayList<>(list(activeRoot))) {
+            String path = normalizeSourcePath(entry.sourceRelativePath);
+            if (path.isEmpty()) continue;
+            if (existing.contains(path)) {
+                clearMissingMarker(entry.directory);
+                continue;
+            }
+            if (!missingConfirmed(entry.directory, nowMs)) {
+                result.pendingConfirmation++;
+                continue;
+            }
+            deleteTree(entry.directory);
+            result.activeRemoved++;
         }
         return result;
     }
@@ -744,6 +811,8 @@ public final class WorkLibrary {
                 meta.getProperty("sourceRelativePath", ""),
                 meta.getProperty("trashDocumentId", ""),
                 meta.getProperty("externalTrashName", ""),
+                normalizeCategory(meta.getProperty("category",
+                        WorkCategory.fromPath(meta.getProperty("sourceRelativePath", "")))),
                 directory.getCanonicalFile());
     }
 
@@ -848,6 +917,11 @@ public final class WorkLibrary {
         return value == null ? "" : value;
     }
 
+    private static String normalizeCategory(String value) {
+        if (WorkCategory.CONVERSION.equals(value) || WorkCategory.TRAFFIC.equals(value)) return value;
+        return WorkCategory.UNCATEGORIZED;
+    }
+
     public static final class WorkEntry {
         public final String id;
         public final String name;
@@ -864,6 +938,7 @@ public final class WorkLibrary {
         public final String sourceRelativePath;
         public final String trashDocumentId;
         public final String externalTrashName;
+        public final String category;
         public final File directory;
 
         private WorkEntry(String id, String name, String text, String warning,
@@ -871,6 +946,7 @@ public final class WorkLibrary {
                           int shareCount, long firstSharedAtMs, long trashedAtMs,
                           String sourceDocumentId, String sourceParentDocumentId,
                           String sourceRelativePath, String trashDocumentId, String externalTrashName,
+                          String category,
                           File directory) {
             this.id = id;
             this.name = name;
@@ -887,6 +963,7 @@ public final class WorkLibrary {
             this.sourceRelativePath = sourceRelativePath;
             this.trashDocumentId = trashDocumentId;
             this.externalTrashName = externalTrashName;
+            this.category = category;
             this.directory = directory;
         }
     }

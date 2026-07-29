@@ -23,7 +23,7 @@ final class CleanupSettings {
     }
 
     static boolean save(Context context, int moveMinutes, int deleteMinutes) {
-        if (moveMinutes < 1 || deleteMinutes < moveMinutes || deleteMinutes > MAX_MINUTES) return false;
+        if (moveMinutes < 0 || deleteMinutes < moveMinutes || deleteMinutes > MAX_MINUTES) return false;
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putInt(MOVE_AFTER_MINUTES, moveMinutes)
                 .putInt(DELETE_AFTER_MINUTES, deleteMinutes)
@@ -32,7 +32,7 @@ final class CleanupSettings {
     }
 
     private static int clamp(int value) {
-        return Math.max(1, Math.min(MAX_MINUTES, value));
+        return Math.max(0, Math.min(MAX_MINUTES, value));
     }
 
     static final class Values {

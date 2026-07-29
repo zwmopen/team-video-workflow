@@ -248,6 +248,7 @@ public final class OnlineService extends Service {
                 String message = "接收失败：" + compact(error.getMessage());
                 notifyStatus(message);
                 notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
+                OperationLog.add(this, "接收失败", compact(error.getMessage()));
                 writeText(output, error.code, error.getMessage());
             } catch (Exception error) {
                 Log.w(TAG, "request failed", error);
@@ -255,6 +256,7 @@ public final class OnlineService extends Service {
                 String message = "接收失败：" + compact(error.getMessage());
                 notifyStatus(message);
                 notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
+                OperationLog.add(this, "接收失败", compact(error.getMessage()));
                 writeText(output, 500, compact(error.getMessage()));
             }
         } catch (Exception error) {
@@ -274,7 +276,8 @@ public final class OnlineService extends Service {
             File taskDir = new File(new File(getCacheDir(), "share"), taskId);
             deleteRecursively(taskDir);
             if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
-            activeTask = new IncomingTask(taskId, body.optString("text", ""), fileCount, taskDir);
+            activeTask = new IncomingTask(taskId, body.optString("text", ""), fileCount, taskDir,
+                    System.currentTimeMillis());
             currentTaskId = taskId;
             state = "receiving";
         }
@@ -322,8 +325,9 @@ public final class OnlineService extends Service {
                 long now = System.currentTimeMillis();
                 if (now - lastNotice >= 700 || remaining == 0) {
                     lastNotice = now;
-                    int percent = request.contentLength <= 0 ? 0 : (int) Math.min(100, (received * 100) / request.contentLength);
-                    notifyStatus("正在接收第 " + (index + 1) + "/" + task.fileCount + " 个文件：" + percent + "%");
+                    int filePercent = request.contentLength <= 0 ? 0 : (int) Math.min(100, (received * 100) / request.contentLength);
+                    int overall = Math.min(100, (index * 100 + filePercent) / task.fileCount);
+                    notifyStatus("正在传送文件 " + overall + "%（" + (index + 1) + "/" + task.fileCount + "）");
                 }
             }
             fileOutput.flush();
@@ -421,7 +425,8 @@ public final class OnlineService extends Service {
         DiagnosticLog.write(this, "task_committed", taskId + " files=" + deliveredFiles + " works=" + imported);
         publishWorkCount(this, library.listActive().size());
         writeText(output, 200, "OK");
-        onTaskReady(taskId, deliveredFiles, imported, autoShareWorkId);
+        onTaskReady(taskId, deliveredFiles, imported, autoShareWorkId,
+                Math.max(1, System.currentTimeMillis() - task.startedAtMs));
     }
 
     private void cancelTask(String taskId, OutputStream output) throws Exception {
@@ -437,12 +442,15 @@ public final class OnlineService extends Service {
         writeText(output, 200, "OK");
     }
 
-    private void onTaskReady(String taskId, int deliveredFiles, int imported, String autoShareWorkId) {
+    private void onTaskReady(String taskId, int deliveredFiles, int imported,
+                             String autoShareWorkId, long elapsedMs) {
         String summary = imported > 0
                 ? "已收到 " + deliveredFiles + " 个文件，识别 " + imported + " 个新作品"
                 : "已收到 " + deliveredFiles + " 个文件";
+        summary += "，耗时 " + formatElapsed(elapsedMs);
         notifyStatus(summary);
         notifyTransferEvent("素材已接收", summary, TASK_NOTIFICATION_ID, autoShareWorkId);
+        OperationLog.add(this, "接收完成", summary);
         if (MainActivity.isVisible) {
             sendBroadcast(new Intent(ACTION_TASK_READY)
                     .setPackage(getPackageName())
@@ -522,6 +530,12 @@ public final class OnlineService extends Service {
         } finally {
             discoverySocket = null;
         }
+    }
+
+    private static String formatElapsed(long elapsedMs) {
+        long seconds = Math.max(1, (elapsedMs + 999) / 1000);
+        return seconds < 60 ? seconds + " 秒"
+                : (seconds / 60) + " 分 " + (seconds % 60) + " 秒";
     }
 
     private void handleDiscoveryFailure(Exception error) {
@@ -763,13 +777,15 @@ public final class OnlineService extends Service {
         final String text;
         final int fileCount;
         final File dir;
+        final long startedAtMs;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
 
-        IncomingTask(String id, String text, int fileCount, File dir) {
+        IncomingTask(String id, String text, int fileCount, File dir, long startedAtMs) {
             this.id = id;
             this.text = text;
             this.fileCount = fileCount;
             this.dir = dir;
+            this.startedAtMs = startedAtMs;
         }
     }
 

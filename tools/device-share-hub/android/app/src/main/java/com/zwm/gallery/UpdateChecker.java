@@ -24,14 +24,23 @@ final class UpdateChecker {
     static final String PREF_PENDING_DOWNLOAD_VERSION = "pendingUpdateDownloadVersion";
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
+    static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
 
     private UpdateChecker() {
     }
 
-    static void checkDaily(Activity activity) {
-        long last = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
-                .getLong("lastUpdateCheck", 0);
-        if (System.currentTimeMillis() - last < ONE_DAY_MS) return;
+    static void checkOnLaunch(Activity activity) {
+        android.content.SharedPreferences prefs =
+                activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
+        String pendingVersion = prefs.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
+        if (!pendingVersion.isEmpty() && !isNewer(pendingVersion, currentVersion(activity))) {
+            prefs.edit()
+                    .remove(PREF_PENDING_DOWNLOAD_ID)
+                    .remove(PREF_PENDING_DOWNLOAD_SHA256)
+                    .remove(PREF_PENDING_DOWNLOAD_VERSION)
+                    .apply();
+        }
+        if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
         check(activity, true);
     }
 
@@ -47,7 +56,10 @@ final class UpdateChecker {
                 String current = currentVersion(activity);
                 markChecked(activity);
                 activity.runOnUiThread(() -> {
-                    if (isNewer(tag, current)) showUpdate(activity, tag, apkUrl, sha256);
+                    if (isNewer(tag, current)) {
+                        if (silent) downloadWithSystem(activity, tag, apkUrl, sha256);
+                        else showUpdate(activity, tag, apkUrl, sha256);
+                    }
                     else if (!silent) toast(activity, "当前已经是最新版本 " + current);
                 });
             } catch (Exception error) {
@@ -119,6 +131,11 @@ final class UpdateChecker {
     private static void downloadWithSystem(
             Activity activity, String version, String apkUrl, String expectedSha256) {
         try {
+            long pendingId = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
+                    .getLong(PREF_PENDING_DOWNLOAD_ID, -1L);
+            String pendingVersion = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
+                    .getString(PREF_PENDING_DOWNLOAD_VERSION, "");
+            if (pendingId >= 0 && version.equals(pendingVersion)) return;
             Uri uri = Uri.parse(apkUrl.trim());
             if (!"https".equalsIgnoreCase(uri.getScheme())) {
                 throw new IllegalArgumentException("更新地址不是安全连接");

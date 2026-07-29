@@ -99,23 +99,49 @@ final class ExternalTrashManager {
             } else if (!entry.sourceRelativePath.isEmpty() && legacyRoot != null) {
                 moveLegacyToTrash(entry, legacyRoot, library);
                 result.moved++;
+            } else if (legacyRoot != null) {
+                File existingTrash = findLegacyTrashEntry(legacyRoot, entry);
+                if (existingTrash != null) {
+                    library.updateExternalTrashLocation(entry.id, "", existingTrash.getName());
+                    result.alreadyMissing++;
+                }
             } else if ((!entry.sourceDocumentId.isEmpty() && tree == null)
                     || (!entry.sourceRelativePath.isEmpty() && legacyRoot == null)) {
                 throw new IOException("请重新选择作品文件夹后再清理");
             }
         } catch (FileNotFoundException missing) {
-            // The selected folder is the source of truth. A manual file-manager deletion must
-            // not leave a private copy that still looks shareable or recoverable.
-            try {
-                library.deleteTrash(entry.id);
-                result.alreadyMissing++;
-            } catch (IOException cleanupFailure) {
-                result.failures.add(entry.name + "：" + safeMessage(cleanupFailure));
-            }
+            recoverMissingHuaweiSource(legacyRoot, library, entry, result);
         } catch (Exception error) {
-            result.failures.add(entry.name + "：" + safeMessage(error));
+            // HarmonyOS sometimes transports FileNotFoundException through Binder as a
+            // runtime ParcelableException, so checking only the Java exception type is
+            // insufficient.
+            if (isMissingDocument(error)) {
+                recoverMissingHuaweiSource(legacyRoot, library, entry, result);
+            } else {
+                result.failures.add(entry.name + "：" + safeMessage(error));
+            }
         }
         return result;
+    }
+
+    private static void recoverMissingHuaweiSource(
+            File legacyRoot, WorkLibrary library, WorkLibrary.WorkEntry entry, Result result) {
+        try {
+            File existingTrash = legacyRoot == null ? null : findLegacyTrashEntry(legacyRoot, entry);
+            if (existingTrash != null) {
+                library.updateExternalTrashLocation(entry.id, "", existingTrash.getName());
+                result.alreadyMissing++;
+            } else if (legacyRoot != null && !entry.sourceRelativePath.isEmpty()
+                    && safeRelative(legacyRoot, entry.sourceRelativePath).exists()) {
+                moveLegacyToTrash(entry, legacyRoot, library);
+                result.moved++;
+            } else {
+                library.deleteTrash(entry.id);
+                result.alreadyMissing++;
+            }
+        } catch (IOException cleanupFailure) {
+            result.failures.add(entry.name + "：" + safeMessage(cleanupFailure));
+        }
     }
 
     static Result purgeExpired(ContentResolver resolver, Uri tree, File legacyRoot,
@@ -157,14 +183,73 @@ final class ExternalTrashManager {
         for (WorkLibrary.WorkEntry entry : library.listTrash()) {
             try {
                 deleteExternalEntry(resolver, tree, legacyRoot, library, entry, result);
+                library.deleteTrash(entry.id);
             } catch (FileNotFoundException missing) {
-                library.clearExternalTrashLocation(entry.id);
+                library.deleteTrash(entry.id);
                 result.alreadyMissing++;
             } catch (Exception error) {
                 result.failures.add(entry.name + "：" + safeMessage(error));
             }
         }
+        // Old Huawei builds could lose the private locator while leaving the real folder
+        // behind. "Clear trash" means clearing the dedicated external trash directory too,
+        // including those orphaned children.
+        // On Android 10 Huawei devices the direct, user-approved legacy view is more
+        // reliable than MediaProvider for folders that were created before the upgrade.
+        if (legacyRoot != null) {
+            int failuresBeforeOrphanCleanup = result.failures.size();
+            clearLegacyTrashChildren(legacyRoot, result);
+            File[] remaining = safeChild(legacyRoot, TRASH_NAME).listFiles();
+            if (remaining == null || remaining.length > 0) {
+                result.failures.add("仍有 " + (remaining == null ? "未知数量" : remaining.length)
+                        + " 个原文件夹未删除");
+            } else {
+                while (result.failures.size() > failuresBeforeOrphanCleanup) {
+                    result.failures.remove(result.failures.size() - 1);
+                }
+            }
+        } else if (tree != null) {
+            clearSafTrashChildren(resolver, tree, result);
+        }
         return result;
+    }
+
+    private static void clearSafTrashChildren(
+            ContentResolver resolver, Uri tree, Result result) throws IOException {
+        Uri trash = ensureSafTrash(resolver, tree);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
+                tree, DocumentsContract.getDocumentId(trash));
+        ArrayList<Uri> targets = new ArrayList<>();
+        try (Cursor cursor = resolver.query(children,
+                new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
+            if (cursor == null) throw new IOException("系统没有返回回收站内容");
+            while (cursor.moveToNext()) {
+                targets.add(DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0)));
+            }
+        }
+        for (Uri target : targets) {
+            try {
+                if (DocumentsContract.deleteDocument(resolver, target)) result.deleted++;
+                else result.failures.add("系统没有删除一个回收站项目");
+            } catch (Exception error) {
+                if (isMissingDocument(error)) result.alreadyMissing++;
+                else result.failures.add("回收站项目：" + safeMessage(error));
+            }
+        }
+    }
+
+    private static void clearLegacyTrashChildren(File legacyRoot, Result result) throws IOException {
+        File trashRoot = safeChild(legacyRoot, TRASH_NAME);
+        File[] children = trashRoot.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            try {
+                deleteTreeWithVendorRetries(child);
+                result.deleted++;
+            } catch (IOException error) {
+                result.failures.add(child.getName() + "：" + safeMessage(error));
+            }
+        }
     }
 
     private static void deleteExternalEntry(
@@ -172,19 +257,109 @@ final class ExternalTrashManager {
             WorkLibrary.WorkEntry entry, Result result) throws IOException {
         if (!entry.trashDocumentId.isEmpty() && tree != null) {
             Uri target = DocumentsContract.buildDocumentUriUsingTree(tree, entry.trashDocumentId);
-            if (!DocumentsContract.deleteDocument(resolver, target)) {
-                throw new IOException("系统没有删除回收站原文件夹");
+            try {
+                if (!DocumentsContract.deleteDocument(resolver, target)) {
+                    throw new IOException("系统没有删除回收站原文件夹");
+                }
+                result.deleted++;
+            } catch (Exception staleHuaweiIndex) {
+                if (!isMissingDocument(staleHuaweiIndex)) {
+                    if (staleHuaweiIndex instanceof IOException) {
+                        throw (IOException) staleHuaweiIndex;
+                    }
+                    throw new IOException("系统无法删除回收站原文件夹", staleHuaweiIndex);
+                }
+                deleteLegacyFallback(legacyRoot, entry, result);
             }
-            result.deleted++;
-        } else if (!entry.externalTrashName.isEmpty() && legacyRoot != null) {
+        } else if (!entry.externalTrashName.isEmpty() && tree != null && legacyRoot == null) {
+            Uri trash = ensureSafTrash(resolver, tree);
+            Uri target = findSafChildByName(resolver, tree, trash, entry.externalTrashName);
+            if (target == null) {
+                result.alreadyMissing++;
+            } else if (!DocumentsContract.deleteDocument(resolver, target)) {
+                throw new IOException("系统没有删除回收站原文件夹");
+            } else {
+                result.deleted++;
+            }
+        } else if (legacyRoot != null && (!entry.externalTrashName.isEmpty()
+                || !entry.trashDocumentId.isEmpty() || !entry.sourceDocumentId.isEmpty())) {
             File trashRoot = safeChild(legacyRoot, TRASH_NAME);
-            deleteTree(safeChild(trashRoot, entry.externalTrashName));
-            result.deleted++;
+            File target = !entry.externalTrashName.isEmpty()
+                    ? safeChild(trashRoot, entry.externalTrashName)
+                    : findLegacyTrashEntry(legacyRoot, entry);
+            if (target != null && target.exists()) {
+                deleteTreeWithVendorRetries(target);
+                result.deleted++;
+            } else {
+                result.alreadyMissing++;
+            }
         } else if ((!entry.sourceDocumentId.isEmpty() && tree == null)
                 || (!entry.sourceRelativePath.isEmpty() && legacyRoot == null)) {
             throw new IOException("请重新选择作品文件夹后再清理");
         }
         library.clearExternalTrashLocation(entry.id);
+    }
+
+    private static Uri findSafChildByName(
+            ContentResolver resolver, Uri tree, Uri parent, String displayName) throws IOException {
+        String parentId = DocumentsContract.getDocumentId(parent);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        String[] projection = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME
+        };
+        try (Cursor cursor = resolver.query(children, projection, null, null, null)) {
+            if (cursor == null) throw new IOException("系统没有返回回收站内容");
+            Uri match = null;
+            while (cursor.moveToNext()) {
+                if (!displayName.equals(cursor.getString(1))) continue;
+                if (match != null) throw new IOException("回收站存在重复同名文件夹");
+                match = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+            }
+            return match;
+        }
+    }
+
+    private static void deleteLegacyFallback(
+            File legacyRoot, WorkLibrary.WorkEntry entry, Result result) throws IOException {
+        File fallback = legacyRoot == null ? null : findLegacyTrashEntry(legacyRoot, entry);
+        if (fallback != null && fallback.exists()) {
+            deleteTreeWithVendorRetries(fallback);
+            result.deleted++;
+        } else {
+            result.alreadyMissing++;
+        }
+    }
+
+    private static boolean isMissingDocument(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof FileNotFoundException) return true;
+            String message = current.getMessage();
+            if (message != null && (message.contains("No item at content://")
+                    || message.contains("Missing file")
+                    || message.contains("Failed to determine"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static File findLegacyTrashEntry(File legacyRoot, WorkLibrary.WorkEntry entry)
+            throws IOException {
+        File trashRoot = safeChild(legacyRoot, TRASH_NAME);
+        if (!trashRoot.isDirectory()) return null;
+        File[] children = trashRoot.listFiles();
+        if (children == null) throw new IOException("无法读取相册回收站");
+        String prefix = entry.id + "--";
+        File match = null;
+        for (File child : children) {
+            if (!child.getName().startsWith(prefix)) continue;
+            if (match != null) throw new IOException("回收站存在重复作品，请重新连接文件夹");
+            match = child;
+        }
+        return match;
     }
 
     static void restoreSource(ContentResolver resolver, Uri tree, File legacyRoot,
@@ -277,7 +452,46 @@ final class ExternalTrashManager {
             if (children == null) throw new IOException("无法读取回收站目录");
             for (File child : children) deleteTree(child);
         }
-        if (target.exists() && !target.delete()) throw new IOException("无法删除“" + target.getName() + "”");
+        if (target.exists() && !target.delete()) {
+            // Huawei Gallery protects freshly generated .hwbk sidecars by suffix. Renaming
+            // the sidecar inside the already-authorized trash folder releases that special
+            // handling and lets the normal delete complete.
+            if (target.isFile() && target.getName().endsWith(".hwbk")) {
+                File renamed = new File(target.getParentFile(),
+                        ".zwm-delete-" + Long.toHexString(System.nanoTime()));
+                if (target.renameTo(renamed) && renamed.delete()) return;
+            }
+            throw new IOException("无法删除“" + target.getName() + "”");
+        }
+    }
+
+    private static void deleteTreeWithVendorRetries(File target) throws IOException {
+        IOException last = null;
+        int consecutiveMissingChecks = 0;
+        // Huawei Gallery may create .hwbk sidecars while the original image is being
+        // deleted, and can recreate the directory shortly after it first disappears.
+        // Require two delayed "still missing" checks before reporting success.
+        for (int attempt = 0; attempt < 12; attempt++) {
+            if (target.exists()) {
+                consecutiveMissingChecks = 0;
+                try {
+                    deleteTree(target);
+                } catch (IOException error) {
+                    last = error;
+                }
+            }
+            try {
+                Thread.sleep(150L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IOException("清空回收站已中断", interrupted);
+            }
+            if (!target.exists()) {
+                consecutiveMissingChecks++;
+                if (consecutiveMissingChecks >= 2) return;
+            }
+        }
+        throw last == null ? new IOException("无法删除“" + target.getName() + "”") : last;
     }
 
     private static String safeMessage(Exception error) {

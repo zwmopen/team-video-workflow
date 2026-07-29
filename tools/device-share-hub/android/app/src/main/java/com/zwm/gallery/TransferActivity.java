@@ -111,6 +111,19 @@ public final class TransferActivity extends Activity {
         status.setGravity(Gravity.CENTER);
         status.setTextColor(Color.rgb(71, 104, 87));
         root.addView(status, margins(0, dp(12), 0, 0));
+        TextView recordsTitle = text("操作记录", 16, true);
+        root.addView(recordsTitle, margins(0, dp(24), 0, dp(8)));
+        List<String> records = OperationLog.recent(this, 12);
+        if (records.isEmpty()) {
+            root.addView(text("暂无传送记录", 13, false));
+        } else {
+            for (String record : records) {
+                TextView item = text(record, 13, false);
+                item.setPadding(dp(12), dp(10), dp(12), dp(10));
+                item.setBackground(round(Color.WHITE, 12));
+                root.addView(item, margins(0, 0, 0, dp(7)));
+            }
+        }
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
@@ -201,9 +214,12 @@ public final class TransferActivity extends Activity {
             try {
                 work.run(new TransferClient(getContentResolver(), getCacheDir()));
                 DiagnosticLog.write(this, "outgoing_done", target.name + " " + target.ip);
+                OperationLog.add(this, "发送完成", target.name);
             } catch (Exception error) {
                 DiagnosticLog.write(this, "outgoing_failed", target.name + " " + error.getMessage());
                 updateProgress(0, "传送失败：" + (error.getMessage() == null ? "请检查两台设备的 Wi‑Fi" : error.getMessage()));
+                OperationLog.add(this, "发送失败",
+                        target.name + "：" + (error.getMessage() == null ? "网络异常" : error.getMessage()));
             }
         });
     }

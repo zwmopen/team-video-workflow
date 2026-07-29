@@ -72,6 +72,8 @@ public final class MainActivity extends Activity {
     private final ArrayDeque<String> filePath = new ArrayDeque<>();
     private boolean initialFolderPromptShown;
     private final LinkedHashSet<String> selectedWorkIds = new LinkedHashSet<>();
+    private String selectedCategory = WorkCategory.ALL;
+    private LinearLayout categoryBar;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -99,7 +101,7 @@ public final class MainActivity extends Activity {
         startReceiver();
         requestLegacyStoragePermission();
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
-        UpdateChecker.checkDaily(this);
+        UpdateChecker.checkOnLaunch(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
         worker.execute(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
         getWindow().getDecorView().post(this::showInitialFolderPromptIfNeeded);
@@ -249,6 +251,13 @@ public final class MainActivity extends Activity {
             startActivity(new Intent(this, SettingsActivity.class));
         });
         titleRow.addView(settings, iconParams(true));
+        categoryBar = new LinearLayout(this);
+        categoryBar.setOrientation(LinearLayout.HORIZONTAL);
+        categoryBar.setPadding(dp(12), 0, dp(12), dp(10));
+        addCategoryButton("全部", WorkCategory.ALL);
+        addCategoryButton("转化帖", WorkCategory.CONVERSION);
+        addCategoryButton("泛流量帖", WorkCategory.TRAFFIC);
+        addCategoryButton("未分类", WorkCategory.UNCATEGORIZED);
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(worksContainer);
@@ -271,6 +280,7 @@ public final class MainActivity extends Activity {
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(Color.rgb(246, 244, 240));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+        frozenLayout.addView(categoryBar, new LinearLayout.LayoutParams(-1, dp(48)));
         frozenLayout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
@@ -283,6 +293,18 @@ public final class MainActivity extends Activity {
                 Gravity.END | Gravity.BOTTOM);
         quickParams.setMargins(0, 0, dp(22), dp(24));
         frame.addView(quickTrashButton, quickParams);
+        Button conversion = new Button(this);
+        conversion.setText("流量\n转化");
+        conversion.setAllCaps(false);
+        conversion.setTextSize(12);
+        conversion.setTextColor(Color.WHITE);
+        conversion.setBackground(round(Color.rgb(70, 89, 111), 16));
+        conversion.setOnClickListener(v ->
+                startActivity(new Intent(this, ConversionActivity.class)));
+        FrameLayout.LayoutParams conversionParams = new FrameLayout.LayoutParams(dp(58), dp(58),
+                Gravity.START | Gravity.BOTTOM);
+        conversionParams.setMargins(dp(8), 0, 0, dp(24));
+        frame.addView(conversion, conversionParams);
         return frame;
     }
 
@@ -345,6 +367,7 @@ public final class MainActivity extends Activity {
     private void clearTrash() {
         worker.execute(() -> {
             try {
+                DiagnosticLog.write(this, "trash_clear_started", "user confirmed");
                 WorkLibrary library = library();
                 ExternalTrashManager.Result result = clearExternalTrash(library);
                 if (!result.succeeded()) {
@@ -354,6 +377,8 @@ public final class MainActivity extends Activity {
                 DiagnosticLog.write(this, "trash_cleared", "user confirmed");
                 runOnUiThread(() -> { toast("回收站已清空"); refreshWorks(); });
             } catch (Exception error) {
+                DiagnosticLog.write(this, "trash_clear_failed",
+                        error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
                 runOnUiThread(() -> toast("清空失败：" + error.getMessage()));
             }
         });
@@ -361,6 +386,13 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
         if (fileMode) return;
+        if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
+            ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
+            for (WorkLibrary.WorkEntry entry : entries) {
+                if (selectedCategory.equals(entry.category)) filtered.add(entry);
+            }
+            entries = filtered;
+        }
         worksContainer.removeAllViews();
         LinkedHashSet<String> visibleIds = new LinkedHashSet<>();
         for (WorkLibrary.WorkEntry entry : entries) {
@@ -371,7 +403,10 @@ public final class MainActivity extends Activity {
         quickTrashButton.setVisibility(selecting ? View.VISIBLE : View.GONE);
         headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : "作品"));
         scannedCountText.setText(String.valueOf(entries.size()));
-        rightModeButton.setEnabled(!showingTrash || !entries.isEmpty());
+        // Huawei can leave real folders in the external trash after its document index
+        // forgets the corresponding app record, so clearing must remain available even
+        // when the private list already looks empty.
+        rightModeButton.setEnabled(true);
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
         if (entries.isEmpty()) {
             TextView empty = text(showingTrash ? "回收站是空的" : "还没有作品\n从电脑拖入 ZIP，或选择手机里的 Lark 文件夹", 14, false);
@@ -433,7 +468,10 @@ public final class MainActivity extends Activity {
         nameRow.addView(checkBox, new LinearLayout.LayoutParams(dp(42), dp(42)));
         card.addView(nameRow);
         String detail = work.images.size() + " 张图片";
-        if (work.shareCount > 0) detail += "\n✓ 已发起分享 " + work.shareCount + " 次";
+        if (work.shareCount > 0) {
+            detail += "\n✓ 已分享 " + work.shareCount + " 次";
+            detail += "\n" + deleteCountdown(work);
+        }
         else if (work.trashedDate != null) detail += "\n等待自动清理";
         else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
         TextView meta = text(detail, 12, false);
@@ -471,6 +509,35 @@ public final class MainActivity extends Activity {
         action.setOnLongClickListener(select);
         card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         return card;
+    }
+
+    private void addCategoryButton(String label, String category) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setMinHeight(dp(40));
+        button.setPadding(dp(4), 0, dp(4), 0);
+        button.setOnClickListener(v -> {
+            selectedCategory = category;
+            refreshWorks();
+            toast("已显示" + label);
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1);
+        if (categoryBar.getChildCount() > 0) params.setMargins(dp(5), 0, 0, 0);
+        categoryBar.addView(button, params);
+    }
+
+    private String deleteCountdown(WorkLibrary.WorkEntry work) {
+        long remaining = CleanupSettings.read(this).deleteAfterMs()
+                - Math.max(0, System.currentTimeMillis() - work.firstSharedAtMs);
+        if (remaining <= 0) return "即将自动删除";
+        long minutes = Math.max(1, (remaining + 59_999L) / 60_000L);
+        if (minutes < 60) return minutes + " 分钟后自动删除";
+        long hours = minutes / 60;
+        long rest = minutes % 60;
+        return rest == 0 ? hours + " 小时后自动删除"
+                : hours + " 小时 " + rest + " 分钟后自动删除";
     }
 
     private void openShare(WorkLibrary.WorkEntry work) {
@@ -796,8 +863,43 @@ public final class MainActivity extends Activity {
         statusText.setText("正在读取 Lark 文件夹…");
         worker.execute(() -> {
             try {
+                Uri selected = Uri.parse(stored);
+                File legacy = legacyRoot(selected);
+                if (!isTreeReadable(selected)) {
+                    if (legacy == null) {
+                        DiagnosticLog.write(this, "tree_permission_stale", "reselect required");
+                        runOnUiThread(() -> showFolderPermissionRecovery());
+                        return;
+                    }
+                    LegacyHiddenFolderImporter.Result fallback =
+                            LegacyHiddenFolderImporter.importAllFrom(legacy, library());
+                    WorkLibrary.ReconcileResult reconciled =
+                            library().reconcileExternalRelativePaths(
+                                    fallback.detectedRelativePaths, System.currentTimeMillis());
+                    if (reconciled.pendingConfirmation > 0) {
+                        Thread.sleep(2_200L);
+                        reconciled = library().reconcileExternalRelativePaths(
+                                fallback.detectedRelativePaths, System.currentTimeMillis());
+                    }
+                    ExternalTrashManager.Result trashSync =
+                            ExternalTrashManager.moveTrashedSources(
+                                    getContentResolver(), null, legacy, library());
+                    int activeCount = library().listActive().size();
+                    OnlineService.publishWorkCount(this, activeCount);
+                    DiagnosticLog.write(this, "tree_legacy_recovered",
+                            "detected=" + fallback.detected + " imported=" + fallback.imported
+                                    + " removed=" + reconciled.activeRemoved
+                                    + " trashMoved=" + trashSync.moved);
+                    runOnUiThread(() -> {
+                        statusText.setText("已自动恢复 Lark 文件夹，共识别 " + activeCount + " 个作品");
+                        if (notifyWhenFinished) toast("已刷新，共 " + activeCount + " 个作品");
+                        refreshWorks();
+                    });
+                    return;
+                }
                 DocumentTreeImporter.ImportResult result;
                 String scanWarning = "";
+                boolean legacyFallbackUsed = false;
                 try {
                     result = DocumentTreeImporter.importTree(
                             getContentResolver(), Uri.parse(stored), library(),
@@ -813,15 +915,29 @@ public final class MainActivity extends Activity {
                             java.util.Collections.emptySet());
                     DiagnosticLog.write(this, "tree_scan_partial", scanWarning);
                 }
-                LegacyHiddenFolderImporter.Result hidden = importLegacyHiddenFolders(Uri.parse(stored));
-                WorkLibrary.ReconcileResult reconciled =
-                        ExternalTrashManager.reconcileMissingExternalSources(
-                                getContentResolver(), Uri.parse(stored), library(),
-                                result.detectedDocumentIds);
+                LegacyHiddenFolderImporter.Result hidden;
+                WorkLibrary.ReconcileResult reconciled;
+                if (legacy != null) {
+                    // Android 10 Huawei/HarmonyOS exposes the real selected directory but its
+                    // DocumentsProvider index can be stale in both directions: dead rows remain
+                    // and newly created folders arrive late. Use the real directory as source of
+                    // truth whenever it is safely resolvable.
+                    hidden = LegacyHiddenFolderImporter.importAllFrom(legacy, library());
+                    reconciled = library().reconcileExternalRelativePaths(
+                            hidden.detectedRelativePaths, System.currentTimeMillis());
+                    legacyFallbackUsed = true;
+                } else {
+                    hidden = importLegacyHiddenFolders(Uri.parse(stored));
+                    reconciled = ExternalTrashManager.reconcileMissingExternalSources(
+                            getContentResolver(), Uri.parse(stored), library(),
+                            result.detectedDocumentIds);
+                }
                 if (reconciled.pendingConfirmation > 0) {
                     Thread.sleep(2_200L);
-                    WorkLibrary.ReconcileResult confirmed =
-                            ExternalTrashManager.reconcileMissingExternalSources(
+                    WorkLibrary.ReconcileResult confirmed = legacyFallbackUsed
+                            ? library().reconcileExternalRelativePaths(
+                                    hidden.detectedRelativePaths, System.currentTimeMillis())
+                            : ExternalTrashManager.reconcileMissingExternalSources(
                                     getContentResolver(), Uri.parse(stored), library(),
                                     result.detectedDocumentIds);
                     reconciled.activeRemoved += confirmed.activeRemoved;
@@ -970,9 +1086,11 @@ public final class MainActivity extends Activity {
 
     private ExternalTrashManager.Result syncExternalTrash(WorkLibrary library) throws IOException {
         Uri tree = selectedTree();
-        if (tree == null) return new ExternalTrashManager.Result();
+        File legacy = tree == null ? null : legacyRoot(tree);
+        Uri usableTree = isTreeReadable(tree) ? tree : null;
+        if (usableTree == null && legacy == null) return new ExternalTrashManager.Result();
         ExternalTrashManager.Result result = ExternalTrashManager.moveTrashedSources(
-                getContentResolver(), tree, legacyRoot(tree), library);
+                getContentResolver(), usableTree, legacy, library);
         if (!result.succeeded()) {
             DiagnosticLog.write(this, "external_trash_move_failed", result.firstFailure());
         }
@@ -981,14 +1099,18 @@ public final class MainActivity extends Activity {
 
     private ExternalTrashManager.Result clearExternalTrash(WorkLibrary library) throws IOException {
         Uri tree = selectedTree();
+        File legacy = tree == null ? null : legacyRoot(tree);
+        Uri usableTree = isTreeReadable(tree) ? tree : null;
         return ExternalTrashManager.clearTrackedTrash(
-                getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library);
+                getContentResolver(), usableTree, legacy, library);
     }
 
     private ExternalTrashManager.Result purgeExpiredTrash(WorkLibrary library) throws IOException {
         Uri tree = selectedTree();
+        File legacy = tree == null ? null : legacyRoot(tree);
+        Uri usableTree = isTreeReadable(tree) ? tree : null;
         return ExternalTrashManager.purgeExpired(
-                getContentResolver(), tree, tree == null ? null : legacyRoot(tree),
+                getContentResolver(), usableTree, legacy,
                 library, LocalDate.now());
     }
 
@@ -1002,7 +1124,10 @@ public final class MainActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             return null;
         }
-        String selectedName = treeName(tree);
+        String selectedName = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_TREE_NAME, "");
+        if (selectedName == null || selectedName.trim().isEmpty()
+                || "已设置".equals(selectedName)) selectedName = treeName(tree);
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 .getCanonicalFile();
         File selected = new File(downloads, selectedName).getCanonicalFile();
@@ -1011,6 +1136,33 @@ public final class MainActivity extends Activity {
             return null;
         }
         return selected;
+    }
+
+    private boolean isTreeReadable(Uri tree) {
+        if (tree == null) return false;
+        try {
+            String rootId = DocumentsContract.getTreeDocumentId(tree);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId);
+            try (Cursor cursor = getContentResolver().query(children,
+                    new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
+                if (cursor == null) return false;
+                cursor.getCount();
+                return true;
+            }
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void showFolderPermissionRecovery() {
+        statusText.setText("作品文件夹权限已失效，请重新选择 Lark 文件夹");
+        if (isFinishing()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("重新连接作品文件夹")
+                .setMessage("华为系统更新了文件夹地址。重新选择一次 Lark 后，作品、回收站和文件管理器会继续双向同步，现有记录不会丢失。")
+                .setNegativeButton("稍后", null)
+                .setPositiveButton("重新选择", (dialog, which) -> chooseFolder())
+                .show();
     }
 
     private LinearLayout card() {

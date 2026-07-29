@@ -6,8 +6,10 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Android 10 fallback for dot-prefixed folders omitted by some Huawei document providers. */
 final class LegacyHiddenFolderImporter {
@@ -18,15 +20,29 @@ final class LegacyHiddenFolderImporter {
     }
 
     static Result importFrom(File root, WorkLibrary library) throws Exception {
+        return importFrom(root, library, true);
+    }
+
+    static Result importAllFrom(File root, WorkLibrary library) throws Exception {
+        return importFrom(root, library, false);
+    }
+
+    private static Result importFrom(File root, WorkLibrary library, boolean hiddenOnly) throws Exception {
         Result result = new Result();
         if (root == null || !root.isDirectory()) return result;
-        scan(root.getCanonicalFile(), root.getCanonicalFile(), 0, library, result);
+        scan(root.getCanonicalFile(), root.getCanonicalFile(), 0, library, result, hiddenOnly);
         return result;
     }
 
     private static void scan(File root, File directory, int depth, WorkLibrary library, Result result)
             throws Exception {
+        scan(root, directory, depth, library, result, true);
+    }
+
+    private static void scan(File root, File directory, int depth, WorkLibrary library, Result result,
+                             boolean hiddenOnly) throws Exception {
         if (depth > MAX_DEPTH) return;
+        if (!directory.equals(root) && ExternalTrashManager.TRASH_NAME.equals(directory.getName())) return;
         result.scannedFolders++;
         File[] children = directory.listFiles();
         if (children == null) return;
@@ -49,10 +65,11 @@ final class LegacyHiddenFolderImporter {
             }
         }
 
-        for (File folder : folders) scan(root, folder, depth + 1, library, result);
+        for (File folder : folders) scan(root, folder, depth + 1, library, result, hiddenOnly);
 
         // The normal SAF importer handles visible folders. This fallback only fills Huawei's hidden gap.
-        if (!directory.getName().startsWith(".") || images.isEmpty() || texts.isEmpty()) return;
+        if ((hiddenOnly && !directory.getName().startsWith("."))
+                || images.isEmpty() || texts.isEmpty()) return;
         String captionName = WorkRules.chooseCaption(textNames);
         File caption = null;
         for (File text : texts) if (captionName.equals(text.getName())) caption = text;
@@ -60,9 +77,12 @@ final class LegacyHiddenFolderImporter {
 
         result.detected++;
         String sourceRelativePath = relativePath(root, directory);
+        String category = WorkCategory.fromPath(sourceRelativePath);
+        result.detectedRelativePaths.add(sourceRelativePath);
         WorkLibrary.WorkEntry existingSource = library.findBySourceRelativePath(sourceRelativePath);
         if (existingSource != null) {
             library.updateSourceReference(existingSource.id, "", "", sourceRelativePath);
+            library.updateCategory(existingSource.id, category);
             result.skipped++;
             return;
         }
@@ -71,15 +91,19 @@ final class LegacyHiddenFolderImporter {
         if (!id.matches("[A-Za-z0-9._-]{1,120}")) {
             id = "huawei-hidden-" + Integer.toHexString(relativePath(root, directory).hashCode());
         }
-        if (library.contains(id)) {
-            library.updateSourceReference(id, "", "", sourceRelativePath);
+        String captionText = readText(caption);
+        WorkLibrary.WorkEntry matchingContent = library.findByContent(captionText, images);
+        if (library.contains(id) || matchingContent != null) {
+            String existingId = matchingContent == null ? id : matchingContent.id;
+            library.updateSourceReference(existingId, "", "", sourceRelativePath);
+            library.updateCategory(existingId, category);
             result.skipped++;
             return;
         }
         String name = directory.getName().replaceFirst("^\\.+", "");
         String warning = texts.size() > 1 ? "检测到多个 TXT，已使用“" + captionName + "”" : "";
         library.importWork(id, name.isEmpty() ? directory.getName() : name,
-                readText(caption), images, warning, "", "", sourceRelativePath);
+                captionText, images, warning, "", "", sourceRelativePath, category);
         result.imported++;
     }
 
@@ -111,5 +135,6 @@ final class LegacyHiddenFolderImporter {
         int detected;
         int imported;
         int skipped;
+        final Set<String> detectedRelativePaths = new HashSet<>();
     }
 }

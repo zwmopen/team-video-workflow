@@ -31,7 +31,8 @@ final class DocumentTreeImporter {
         String rootId = DocumentsContract.getTreeDocumentId(tree);
         ScanStats stats = new ScanStats();
         ArrayList<Folder> works = new ArrayList<>();
-        scan(resolver, tree, rootId, rootId, leafName(rootId), 0, works, stats);
+        scan(resolver, tree, rootId, rootId, leafName(rootId), 0, works, stats,
+                WorkCategory.UNCATEGORIZED);
         int imported = 0;
         int skipped = 0;
         HashSet<String> detectedDocumentIds = new HashSet<>();
@@ -42,6 +43,7 @@ final class DocumentTreeImporter {
             if (!id.matches("[A-Za-z0-9._-]{1,120}")) id = "lark-" + Integer.toHexString(work.documentId.hashCode());
             if (library.contains(id)) {
                 library.updateSourceReference(id, work.documentId, work.parentDocumentId, "");
+                library.updateCategory(id, work.category);
                 skipped++;
                 continue;
             }
@@ -60,7 +62,7 @@ final class DocumentTreeImporter {
                 String warning = work.textCount > 1
                         ? "检测到多个 TXT，已使用“" + work.caption.name + "”" : "";
                 library.importWork(id, work.name, text, images, warning,
-                        work.documentId, work.parentDocumentId, "");
+                        work.documentId, work.parentDocumentId, "", work.category);
                 imported++;
             } finally {
                 deleteTree(temporary);
@@ -71,9 +73,12 @@ final class DocumentTreeImporter {
     }
 
     private static int scan(ContentResolver resolver, Uri tree, String documentId, String parentDocumentId,
-                            String displayName, int depth, List<Folder> works, ScanStats stats) throws Exception {
+                            String displayName, int depth, List<Folder> works, ScanStats stats,
+                            String inheritedCategory) throws Exception {
         if (depth > MAX_DEPTH) return 0;
         if (isTrashFolderName(displayName)) return 0;
+        String category = WorkCategory.fromPath(displayName);
+        if (WorkCategory.UNCATEGORIZED.equals(category)) category = inheritedCategory;
         stats.scannedFolders++;
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId);
         ArrayList<Item> files = new ArrayList<>();
@@ -117,13 +122,13 @@ final class DocumentTreeImporter {
         for (Item folder : folders) {
             try {
                 childWorks += scan(resolver, tree, folder.documentId, documentId,
-                        folder.name, depth + 1, works, stats);
+                        folder.name, depth + 1, works, stats, category);
             } catch (Exception error) {
-                if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(folder.mime)) {
-                    stats.addFolderNote(folder.name, error.getMessage());
-                } else {
-                    throw error;
-                }
+                // Huawei/HarmonyOS may keep a stale MediaProvider row after a folder was
+                // moved or deleted. One broken child must not make the whole granted tree
+                // unreadable; keep scanning its healthy siblings and surface the skipped
+                // folder in diagnostics.
+                stats.addFolderNote(folder.name, error.getMessage());
             }
         }
         if (!images.isEmpty() && !captionName.isEmpty()) {
@@ -132,7 +137,7 @@ final class DocumentTreeImporter {
             if (caption != null) {
                 if (childWorks == 0) {
                     works.add(new Folder(documentId, displayName, images, caption, marker,
-                            texts.size(), parentDocumentId));
+                            texts.size(), parentDocumentId, category));
                     return 1;
                 }
                 stats.aggregateFolders++;
@@ -270,8 +275,9 @@ final class DocumentTreeImporter {
         final Item marker;
         final int textCount;
         final String parentDocumentId;
+        final String category;
         Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker,
-               int textCount, String parentDocumentId) {
+               int textCount, String parentDocumentId, String category) {
             this.documentId = documentId;
             this.name = name;
             this.images = images;
@@ -279,6 +285,7 @@ final class DocumentTreeImporter {
             this.marker = marker;
             this.textCount = textCount;
             this.parentDocumentId = parentDocumentId;
+            this.category = category;
         }
     }
 }
