@@ -7,6 +7,8 @@
 - 悬浮面板改为可获取焦点，添加到窗口 180ms 后再读取剪切板，以适配 Android 10+ 只允许焦点应用读取的隐私边界；点新增先关闭面板，避免压住普通编辑页。点击任意最新值或固定话术都会立即保存并同步在线手机。
 - 设备超过 15 秒在线窗口后再次出现，即使名称、IP 和作品数都没变，也会重新推送当前剪切快照。更新下载持续记录进行中/已校验完成状态，防止未安装前重复下载；安装完成后的首次启动移除本 App 跟踪的已下载 APK。
 - 本机 Gradle 9.4.1 下 58 项单元测试、Release 构建与 Release Lint 已通过；正式候选 APK 为 versionCode 40/versionName 0.6.2，大小 786974 字节，SHA-256 为 `18470E8D6188F7BED083A769D3FC22F1BC2189759AA0108FD231E0404CD13B82`。APK 使用 v2 签名，证书 SHA-256 仍为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，清单不含 `REQUEST_INSTALL_PACKAGES` 和 Debug 标志。
+- 功能源码提交为 `4c9b132`。公开 Release 为 [`gallery-updates v0.6.2`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.2)，更新索引提交 `8565b63` 已指向 0.6.2/code 40；公网重新下载的 `album-Android-v0.6.2.apk` 为 786974 字节，SHA-256 与 raw 索引完全一致。Release 同时附带对应源码压缩包和 `SHA256SUMS.txt`。
+- 主仓库 Actions run [`30527726117`](https://github.com/zwmopen/team-video-workflow/actions/runs/30527726117) 仍因主账号付款失败或 spending limit 在任务启动前被 GitHub 拒绝，四个 job 均未实际执行；它不是代码测试失败，本次 Android 交付证据采用上述同一源码的本机完整门禁。
 - 当前无 ADB 设备连接；悬浮窗焦点读取、两机离线 20 秒后的自动补齐、固定话术即时同步和 DownloadManager 未安装重开均列为下一轮逐机实体测试，不能用本地自动检查代替。
 
 ## 2026-07-30 Android 0.6.1 可拖动缩放悬浮剪切板
