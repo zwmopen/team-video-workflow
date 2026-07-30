@@ -8,6 +8,7 @@
 - 常用语初始化自电脑端权威 `01-正式SOP/01-前端私聊承接与拉群SOP.md` 的 8 条“推荐回复”。使用稳定 ID 且只补不存在的记录，因此用户编辑和删除产生的新版本/墓碑不会被下次启动恢复覆盖。
 - 本机 Gradle 9.4.1 下单元测试、Debug/Release 构建与 Release Lint 已通过；正式 APK 为 versionCode 39/versionName 0.6.1，SHA-256 为 `96EA7FF25C164B6314CE3F59A62B68B98752257E2ADFDBD1AF664C465B64788F`，清单不含 `REQUEST_INSTALL_PACKAGES` 和 Debug 标志。
 - 功能源码提交为 `827b04f`。公开 Release 为 [`gallery-updates v0.6.1`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.1)，更新索引提交 `3377d55` 已指向 0.6.1/code 39；公网重新下载的 `album-Android-v0.6.1.apk` 为 785066 字节，SHA-256 与索引完全一致。Release 同时附带对应源码压缩包和 `SHA256SUMS.txt`。
+- 主仓库 Actions run [`30526135915`](https://github.com/zwmopen/team-video-workflow/actions/runs/30526135915) 因主账号付款失败或 spending limit 在任务启动前被 GitHub 拒绝，四个 job 均未实际执行；本次交付证据采用上述同一源码的本机完整 Android 门禁，不把账户账单故障写成代码测试失败。
 - 当前 ADB 未连接设备；系统悬浮窗授权、跨应用点击复制、横竖屏拖动边界和不同厂商拉伸手势仍须在下一台实体手机上补验，不能把本地构建结果写成真机通过。
 
 ## 2026-07-29 Android 0.6.0 共享剪切板与系统分享
