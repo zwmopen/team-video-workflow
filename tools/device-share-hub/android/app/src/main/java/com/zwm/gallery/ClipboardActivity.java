@@ -171,6 +171,10 @@ public final class ClipboardActivity extends Activity {
             if (showResult) toast("当前剪切板没有文字");
             return;
         }
+        syncClipboardText(text, showResult);
+    }
+
+    private void syncClipboardText(String text, boolean showResult) {
         status.setText("正在同步当前剪切板…");
         worker.execute(() -> {
             try {
@@ -178,10 +182,9 @@ public final class ClipboardActivity extends Activity {
                 SharedClipboardStore.Item newest = store.newestClipboard();
                 if (newest == null || !text.equals(newest.text)) {
                     store.add(deviceId(), SharedClipboardStore.KIND_CLIPBOARD,
-                            text, System.currentTimeMillis());
-                    store.trimVisible(SharedClipboardStore.KIND_CLIPBOARD,
-                            100, System.currentTimeMillis() + 1);
+                            text, store.nextTimestamp(System.currentTimeMillis()));
                 }
+                store.retainNewestClipboardOnly();
                 int synced = syncAll(store.syncSnapshot());
                 notifyClipboardChanged();
                 runOnUiThread(() -> {
@@ -283,7 +286,7 @@ public final class ClipboardActivity extends Activity {
                             SharedClipboardStore store = store();
                             if (item == null) {
                                 store.add(deviceId(), SharedClipboardStore.KIND_PHRASE,
-                                        value, System.currentTimeMillis());
+                                        value, store.nextTimestamp(System.currentTimeMillis()));
                             } else {
                                 store.put(item.id, item.kind, value, System.currentTimeMillis());
                             }
@@ -402,7 +405,8 @@ public final class ClipboardActivity extends Activity {
         ClipboardManager manager = getSystemService(ClipboardManager.class);
         if (manager != null) manager.setPrimaryClip(
                 ClipData.newPlainText("共享剪切板", value));
-        toast("已复制");
+        toast("已复制，正在同步");
+        syncClipboardText(value == null ? "" : value.trim(), false);
     }
 
     private SharedClipboardStore store() throws Exception {

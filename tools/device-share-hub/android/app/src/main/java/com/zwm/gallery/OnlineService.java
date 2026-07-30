@@ -103,6 +103,7 @@ public final class OnlineService extends Service {
     private static final int MAX_FILES = 100;
     private static final long MAX_JSON_BYTES = 2L * 1024L * 1024L;
     private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
+    private static final long PEER_TIMEOUT_MS = 15_000L;
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
@@ -129,7 +130,7 @@ public final class OnlineService extends Service {
     private IncomingTask activeTask;
 
     public static List<PeerDevice> peers() {
-        long cutoff = System.currentTimeMillis() - 15000;
+        long cutoff = System.currentTimeMillis() - PEER_TIMEOUT_MS;
         PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
         ArrayList<PeerDevice> result = new ArrayList<>(PEERS.values());
         result.sort((left, right) -> left.name.compareToIgnoreCase(right.name));
@@ -588,8 +589,7 @@ public final class OnlineService extends Service {
         SharedClipboardStore store = new SharedClipboardStore(
                 new File(getFilesDir(), "shared-clipboard"));
         int changed = store.merge(payload.items);
-        int pruned = store.retainLatestClipboardFrom(
-                payload.senderId, System.currentTimeMillis());
+        int pruned = store.retainNewestClipboardOnly();
         if (changed > 0 || pruned > 0) {
             sendBroadcast(new Intent(ACTION_CLIPBOARD_CHANGED).setPackage(getPackageName()));
             new Handler(Looper.getMainLooper()).post(this::refreshClipboardPanelContents);
@@ -659,9 +659,10 @@ public final class OnlineService extends Service {
             int port;
             try { port = Integer.parseInt(parts[3]); } catch (Exception ignored) { port = HTTP_PORT; }
             int workCount = parts.length >= 9 ? PeerDevice.parseWorkCount(parts[8]) : -1;
+            long now = System.currentTimeMillis();
             PeerDevice peer = new PeerDevice(id, decodeB64(parts[4]), decodeB64(parts[5]),
                     address.getHostAddress(), port, decodeB64(parts[6]), workCount,
-                    System.currentTimeMillis());
+                    now);
             SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
             Set<String> registeredPeers = new HashSet<>(preferences.getStringSet(
                     PREF_REGISTERED_PEERS, Collections.emptySet()));
@@ -678,10 +679,14 @@ public final class OnlineService extends Service {
                     notifyStatus("电脑已确认传送权限");
                 }
             }
-            boolean changed = !peer.equalsForDisplay(PEERS.put(id, peer));
-            if (changed) {
+            PeerDevice previous = PEERS.put(id, peer);
+            boolean reappeared = previous == null
+                    || previous.lastSeenMs < now - PEER_TIMEOUT_MS;
+            boolean changed = !peer.equalsForDisplay(previous);
+            if (changed || reappeared) {
                 sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));
-                DiagnosticLog.write(this, "peer_found", peer.name + " " + peer.ip);
+                DiagnosticLog.write(this, reappeared ? "peer_reappeared" : "peer_found",
+                        peer.name + " " + peer.ip);
                 if (!id.startsWith("windows-") && !"Windows PC".equals(peer.model)) {
                     requestExecutor.execute(() -> pushClipboardToPeer(peer));
                 }
@@ -849,9 +854,12 @@ public final class OnlineService extends Service {
         header.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
         Button add = overlayButton("＋");
         add.setContentDescription("新增固定常用语");
-        add.setOnClickListener(v -> startActivity(new Intent(this, ClipboardActivity.class)
-                .putExtra(ClipboardActivity.EXTRA_ADD_PHRASE, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        add.setOnClickListener(v -> {
+            removeClipboardPanel();
+            startActivity(new Intent(this, ClipboardActivity.class)
+                    .putExtra(ClipboardActivity.EXTRA_ADD_PHRASE, true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        });
         header.addView(add, new LinearLayout.LayoutParams(dp(42), dp(40)));
         Button close = overlayButton("×");
         close.setContentDescription("关闭共享剪切板");
@@ -892,7 +900,7 @@ public final class OnlineService extends Service {
 
         clipboardPanelParams = new WindowManager.LayoutParams(width, height,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         clipboardPanelParams.gravity = Gravity.START | Gravity.TOP;
@@ -965,7 +973,11 @@ public final class OnlineService extends Service {
         try {
             overlayManager.addView(shell, clipboardPanelParams);
             clipboardPanel = shell;
-            captureCurrentClipboardAndSync();
+            // Android 10+ only exposes another app's clipboard to the currently focused app.
+            // Let the focusable overlay settle before reading after the user's explicit tap.
+            shell.postDelayed(() -> {
+                if (clipboardPanel == shell) captureCurrentClipboardAndSync();
+            }, 180L);
             DiagnosticLog.write(this, "clipboard_panel_shown", "floating_resizable");
         } catch (Exception error) {
             clipboardPanelParams = null;
@@ -1006,6 +1018,10 @@ public final class OnlineService extends Service {
         CharSequence value = clip == null || clip.getItemCount() == 0
                 ? null : clip.getItemAt(0).coerceToText(this);
         String text = value == null ? "" : value.toString().trim();
+        captureClipboardTextAndSync(text);
+    }
+
+    private void captureClipboardTextAndSync(String text) {
         requestExecutor.execute(() -> {
             try {
                 SharedClipboardStore store = new SharedClipboardStore(
@@ -1017,10 +1033,10 @@ public final class OnlineService extends Service {
                         store.add(getSharedPreferences(PREFS, MODE_PRIVATE)
                                         .getString("deviceId", "device"),
                                 SharedClipboardStore.KIND_CLIPBOARD,
-                                text, System.currentTimeMillis());
-                        store.trimVisible(SharedClipboardStore.KIND_CLIPBOARD,
-                                100, System.currentTimeMillis() + 1);
+                                text, store.nextTimestamp(System.currentTimeMillis()));
                     }
+                    store.retainNewestClipboardOnly();
+                    List<SharedClipboardStore.Item> snapshot = store.syncSnapshot();
                     int synced = 0;
                     for (PeerDevice peer : peers()) {
                         if (peer.id.startsWith("windows-") || "Windows PC".equals(peer.model)) {
@@ -1031,7 +1047,7 @@ public final class OnlineService extends Service {
                                     .syncClipboard(peer,
                                             getSharedPreferences(PREFS, MODE_PRIVATE)
                                                     .getString("deviceId", ""),
-                                            store.syncSnapshot());
+                                            snapshot);
                             synced++;
                         } catch (Exception error) {
                             DiagnosticLog.write(this, "clipboard_sync_failed",
@@ -1113,7 +1129,8 @@ public final class OnlineService extends Service {
         ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         if (manager != null) manager.setPrimaryClip(
                 ClipData.newPlainText("共享剪切板", value));
-        if (clipboardPanelStatus != null) clipboardPanelStatus.setText("已复制");
+        if (clipboardPanelStatus != null) clipboardPanelStatus.setText("已复制，正在同步…");
+        captureClipboardTextAndSync(value == null ? "" : value.trim());
     }
 
     private TextView overlayText(String value, int size, boolean bold) {

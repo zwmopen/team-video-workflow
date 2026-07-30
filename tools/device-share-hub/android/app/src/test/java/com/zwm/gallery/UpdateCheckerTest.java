@@ -22,4 +22,21 @@ public final class UpdateCheckerTest {
         assertEquals("相册-Android-0.5.10_beta.apk",
                 UpdateChecker.updateFileName("0.5.10 beta"));
     }
+
+    @Test
+    public void onlyLiveOrCompletedDownloadsBlockDuplicateEnqueue() {
+        assertTrue(UpdateChecker.isDownloadStateUsable(
+                android.app.DownloadManager.STATUS_PENDING));
+        assertTrue(UpdateChecker.isDownloadStateUsable(
+                android.app.DownloadManager.STATUS_RUNNING));
+        assertTrue(UpdateChecker.isDownloadStateUsable(
+                android.app.DownloadManager.STATUS_PAUSED));
+        assertTrue(UpdateChecker.isDownloadStateUsable(
+                android.app.DownloadManager.STATUS_SUCCESSFUL));
+        assertFalse(UpdateChecker.isDownloadStateUsable(
+                android.app.DownloadManager.STATUS_FAILED));
+        assertEquals("安装包已经下载，点系统通知即可安装",
+                UpdateChecker.downloadStatusMessage(
+                        android.app.DownloadManager.STATUS_SUCCESSFUL));
+    }
 }

@@ -68,7 +68,7 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
         if (expected == null || expected.trim().isEmpty()) {
             DiagnosticLog.write(context, "update_system_download_complete",
                     version + " id=" + downloadId + " checksum=not_provided");
-            clearPending(preferences);
+            markReady(preferences, downloadId, version);
             return;
         }
 
@@ -95,7 +95,7 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
             }
             DiagnosticLog.write(context, "update_system_download_verified",
                     version + " id=" + downloadId);
-            clearPending(preferences);
+            markReady(preferences, downloadId, version);
         } catch (Exception error) {
             manager.remove(downloadId);
             preferences.edit()
@@ -111,6 +111,18 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
 
     private static void clearPending(SharedPreferences preferences) {
         preferences.edit()
+                .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_ID)
+                .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_SHA256)
+                .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_VERSION)
+                .apply();
+    }
+
+    private static void markReady(
+            SharedPreferences preferences, long downloadId, String version) {
+        preferences.edit()
+                .putLong(UpdateChecker.PREF_READY_DOWNLOAD_ID, downloadId)
+                .putString(UpdateChecker.PREF_READY_DOWNLOAD_VERSION,
+                        version == null ? "" : version)
                 .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_ID)
                 .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_SHA256)
                 .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_VERSION)

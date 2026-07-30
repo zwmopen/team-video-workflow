@@ -555,7 +555,7 @@ public final class MainActivity extends Activity {
         preferences.edit().putBoolean("clipboardOverlayPermissionAsked", true).apply();
         new AlertDialog.Builder(this)
                 .setTitle("开启悬浮剪切板？")
-                .setMessage("开启后，在其他应用中也能点“贴”打开共享剪切板。可随时在设置中关闭。")
+                .setMessage("开启后，在其他应用中也能点“剪”打开共享剪切板。可随时在设置中关闭。")
                 .setNegativeButton("暂不", null)
                 .setPositiveButton("去开启", (dialog, which) ->
                         startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,

@@ -5,6 +5,11 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -78,5 +83,57 @@ public final class SharedClipboardStoreTest {
         assertEquals(1, store.retainLatestClipboardFrom("phone-a", 300));
         assertEquals(2, store.visible(SharedClipboardStore.KIND_CLIPBOARD).size());
         assertEquals("最新内容", store.visible(SharedClipboardStore.KIND_CLIPBOARD).get(0).text);
+    }
+
+    @Test
+    public void equalTimestampConflictsConvergeDeterministically() throws Exception {
+        SharedClipboardStore left = new SharedClipboardStore(temporary.newFolder("conflict-left"));
+        SharedClipboardStore right = new SharedClipboardStore(temporary.newFolder("conflict-right"));
+        SharedClipboardStore.Item a = new SharedClipboardStore.Item(
+                "shared-phrase", SharedClipboardStore.KIND_PHRASE, "A", 100, false);
+        SharedClipboardStore.Item b = new SharedClipboardStore.Item(
+                "shared-phrase", SharedClipboardStore.KIND_PHRASE, "B", 100, false);
+
+        left.merge(Arrays.asList(a));
+        right.merge(Arrays.asList(b));
+        left.merge(Arrays.asList(b));
+        right.merge(Arrays.asList(a));
+
+        assertEquals("B", left.visible(SharedClipboardStore.KIND_PHRASE).get(0).text);
+        assertEquals("B", right.visible(SharedClipboardStore.KIND_PHRASE).get(0).text);
+    }
+
+    @Test
+    public void compactsClipboardToOnePhysicalCurrentValue() throws Exception {
+        SharedClipboardStore store = new SharedClipboardStore(temporary.newFolder("compact"));
+        store.add("phone-a", SharedClipboardStore.KIND_CLIPBOARD, "第一条", 100);
+        store.add("phone-b", SharedClipboardStore.KIND_CLIPBOARD, "第二条", 200);
+        store.add("phone-c", SharedClipboardStore.KIND_CLIPBOARD, "第三条", 300);
+
+        assertEquals(2, store.retainNewestClipboardOnly());
+        assertEquals(1, store.all().size());
+        assertEquals("第三条", store.newestClipboard().text);
+    }
+
+    @Test
+    public void separateStoreInstancesSerializeWritesToSameDirectory() throws Exception {
+        java.io.File root = temporary.newFolder("concurrent");
+        ExecutorService executor = Executors.newFixedThreadPool(6);
+        List<Future<?>> writes = new ArrayList<>();
+        for (int index = 0; index < 40; index++) {
+            final int value = index;
+            writes.add(executor.submit(() -> {
+                new SharedClipboardStore(root).put(
+                        "shared-phrase", SharedClipboardStore.KIND_PHRASE,
+                        "内容-" + value, 100);
+                return null;
+            }));
+        }
+        for (Future<?> write : writes) write.get();
+        executor.shutdownNow();
+
+        SharedClipboardStore store = new SharedClipboardStore(root);
+        assertEquals(1, store.all().size());
+        assertEquals(0, root.listFiles((dir, name) -> name.endsWith(".tmp")).length);
     }
 }

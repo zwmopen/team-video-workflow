@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
 import android.widget.Toast;
@@ -19,10 +20,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class UpdateChecker {
-    private static final long ONE_DAY_MS = 24L * 60L * 60L * 1000L;
     static final String PREF_PENDING_DOWNLOAD_ID = "pendingUpdateDownloadId";
     static final String PREF_PENDING_DOWNLOAD_SHA256 = "pendingUpdateDownloadSha256";
     static final String PREF_PENDING_DOWNLOAD_VERSION = "pendingUpdateDownloadVersion";
+    static final String PREF_READY_DOWNLOAD_ID = "readyUpdateDownloadId";
+    static final String PREF_READY_DOWNLOAD_VERSION = "readyUpdateDownloadVersion";
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
     static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
@@ -35,10 +37,19 @@ final class UpdateChecker {
                 activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
         String pendingVersion = prefs.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
         if (!pendingVersion.isEmpty() && !isNewer(pendingVersion, currentVersion(activity))) {
+            removeTrackedDownload(activity, prefs.getLong(PREF_PENDING_DOWNLOAD_ID, -1L));
             prefs.edit()
                     .remove(PREF_PENDING_DOWNLOAD_ID)
                     .remove(PREF_PENDING_DOWNLOAD_SHA256)
                     .remove(PREF_PENDING_DOWNLOAD_VERSION)
+                    .apply();
+        }
+        String readyVersion = prefs.getString(PREF_READY_DOWNLOAD_VERSION, "");
+        if (!readyVersion.isEmpty() && !isNewer(readyVersion, currentVersion(activity))) {
+            removeTrackedDownload(activity, prefs.getLong(PREF_READY_DOWNLOAD_ID, -1L));
+            prefs.edit()
+                    .remove(PREF_READY_DOWNLOAD_ID)
+                    .remove(PREF_READY_DOWNLOAD_VERSION)
                     .apply();
         }
         if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
@@ -132,11 +143,8 @@ final class UpdateChecker {
     private static void downloadWithSystem(
             Activity activity, String version, String apkUrl, String expectedSha256) {
         try {
-            long pendingId = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
-                    .getLong(PREF_PENDING_DOWNLOAD_ID, -1L);
-            String pendingVersion = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
-                    .getString(PREF_PENDING_DOWNLOAD_VERSION, "");
-            if (pendingId >= 0 && version.equals(pendingVersion)) return;
+            android.content.SharedPreferences preferences =
+                    activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
             Uri uri = Uri.parse(apkUrl.trim());
             if (!"https".equalsIgnoreCase(uri.getScheme())) {
                 throw new IllegalArgumentException("更新地址不是安全连接");
@@ -144,6 +152,32 @@ final class UpdateChecker {
             DownloadManager manager =
                     (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
             if (manager == null) throw new IllegalStateException("系统下载服务不可用");
+            long pendingId = preferences.getLong(PREF_PENDING_DOWNLOAD_ID, -1L);
+            String pendingVersion = preferences.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
+            int pendingStatus = trackedDownloadStatus(manager, pendingId);
+            if (pendingId >= 0 && version.equals(pendingVersion)
+                    && isDownloadStateUsable(pendingStatus)) {
+                toast(activity, downloadStatusMessage(pendingStatus));
+                return;
+            }
+            long readyId = preferences.getLong(PREF_READY_DOWNLOAD_ID, -1L);
+            String readyVersion = preferences.getString(PREF_READY_DOWNLOAD_VERSION, "");
+            int readyStatus = trackedDownloadStatus(manager, readyId);
+            if (readyId >= 0 && version.equals(readyVersion)
+                    && isDownloadStateUsable(readyStatus)) {
+                toast(activity, downloadStatusMessage(readyStatus));
+                return;
+            }
+
+            if (pendingId >= 0) manager.remove(pendingId);
+            if (readyId >= 0 && readyId != pendingId) manager.remove(readyId);
+            preferences.edit()
+                    .remove(PREF_PENDING_DOWNLOAD_ID)
+                    .remove(PREF_PENDING_DOWNLOAD_SHA256)
+                    .remove(PREF_PENDING_DOWNLOAD_VERSION)
+                    .remove(PREF_READY_DOWNLOAD_ID)
+                    .remove(PREF_READY_DOWNLOAD_VERSION)
+                    .commit();
 
             DownloadManager.Request request = new DownloadManager.Request(uri)
                     .setTitle("相册 " + version + " 更新")
@@ -156,7 +190,7 @@ final class UpdateChecker {
                     .setNotificationVisibility(
                             DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             long downloadId = manager.enqueue(request);
-            boolean stored = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE).edit()
+            boolean stored = preferences.edit()
                     .putLong(PREF_PENDING_DOWNLOAD_ID, downloadId)
                     .putString(PREF_PENDING_DOWNLOAD_SHA256,
                             expectedSha256 == null ? "" : expectedSha256.trim())
@@ -184,6 +218,38 @@ final class UpdateChecker {
         HttpURLConnection connection = (HttpURLConnection) new URL(value).openConnection();
         connection.setInstanceFollowRedirects(true);
         return connection;
+    }
+
+    private static int trackedDownloadStatus(DownloadManager manager, long downloadId) {
+        if (downloadId < 0) return -1;
+        try (Cursor cursor = manager.query(
+                new DownloadManager.Query().setFilterById(downloadId))) {
+            if (cursor == null || !cursor.moveToFirst()) return -1;
+            return cursor.getInt(
+                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+        } catch (Exception error) {
+            return -1;
+        }
+    }
+
+    static boolean isDownloadStateUsable(int status) {
+        return status == DownloadManager.STATUS_PENDING
+                || status == DownloadManager.STATUS_RUNNING
+                || status == DownloadManager.STATUS_PAUSED
+                || status == DownloadManager.STATUS_SUCCESSFUL;
+    }
+
+    static String downloadStatusMessage(int status) {
+        return status == DownloadManager.STATUS_SUCCESSFUL
+                ? "安装包已经下载，点系统通知即可安装"
+                : "更新包正在系统下载，请查看通知进度";
+    }
+
+    private static void removeTrackedDownload(Activity activity, long downloadId) {
+        if (downloadId < 0) return;
+        DownloadManager manager =
+                (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+        if (manager != null) manager.remove(downloadId);
     }
 
     static boolean isNewer(String candidate, String current) {
