@@ -40,6 +40,9 @@ public final class ClipboardActivity extends Activity {
     private LinearLayout phraseContainer;
     private TextView status;
     private Button screenshotTarget;
+    private Button latestToggle;
+    private boolean latestExpanded;
+    private String latestRenderedText = "";
     private boolean receiverRegistered;
 
     private final BroadcastReceiver clipboardReceiver = new BroadcastReceiver() {
@@ -123,12 +126,23 @@ public final class ClipboardActivity extends Activity {
 
         LinearLayout historyColumn = new LinearLayout(this);
         historyColumn.setOrientation(LinearLayout.VERTICAL);
-        historyColumn.addView(sectionTitle("最新剪切"));
+        LinearLayout latestTitle = new LinearLayout(this);
+        latestTitle.setOrientation(LinearLayout.HORIZONTAL);
+        latestTitle.setGravity(Gravity.CENTER_VERTICAL);
+        latestTitle.addView(sectionTitle("最新剪切"),
+                new LinearLayout.LayoutParams(0, -2, 1));
+        latestToggle = button("展开", false);
+        latestToggle.setContentDescription("展开或收起最新剪切内容");
+        latestToggle.setVisibility(View.GONE);
+        latestToggle.setOnClickListener(v -> {
+            latestExpanded = !latestExpanded;
+            render();
+        });
+        latestTitle.addView(latestToggle, new LinearLayout.LayoutParams(dp(68), dp(40)));
+        historyColumn.addView(latestTitle);
         historyContainer = new LinearLayout(this);
         historyContainer.setOrientation(LinearLayout.VERTICAL);
-        ScrollView historyScroll = new ScrollView(this);
-        historyScroll.addView(historyContainer);
-        historyColumn.addView(historyScroll, new LinearLayout.LayoutParams(-1, -2));
+        historyColumn.addView(historyContainer, new LinearLayout.LayoutParams(-1, -2));
         columns.addView(historyColumn, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout phraseColumn = new LinearLayout(this);
@@ -144,13 +158,14 @@ public final class ClipboardActivity extends Activity {
         phraseColumn.addView(phraseTitle);
         phraseContainer = new LinearLayout(this);
         phraseContainer.setOrientation(LinearLayout.VERTICAL);
-        ScrollView phraseScroll = new ScrollView(this);
-        phraseScroll.addView(phraseContainer);
-        phraseColumn.addView(phraseScroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout.LayoutParams phraseParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        phraseColumn.addView(phraseContainer, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams phraseParams = new LinearLayout.LayoutParams(-1, -2);
         phraseParams.setMargins(0, dp(8), 0, 0);
         columns.addView(phraseColumn, phraseParams);
-        root.addView(columns, new LinearLayout.LayoutParams(-1, 0, 1));
+        ScrollView contentScroll = new ScrollView(this);
+        contentScroll.setFillViewport(true);
+        contentScroll.addView(columns, new ScrollView.LayoutParams(-1, -2));
+        root.addView(contentScroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         status = text("正在读取…", 12, false);
         status.setGravity(Gravity.CENTER);
@@ -236,8 +251,23 @@ public final class ClipboardActivity extends Activity {
             List<SharedClipboardStore.Item> phrases) {
         historyContainer.removeAllViews();
         phraseContainer.removeAllViews();
+        String latestText = history.isEmpty() ? "" : history.get(0).text;
+        if (!latestText.equals(latestRenderedText)) {
+            latestRenderedText = latestText;
+            latestExpanded = false;
+        }
+        boolean collapsible = ClipboardDisplayPolicy.shouldCollapse(latestText);
+        latestToggle.setVisibility(collapsible ? View.VISIBLE : View.GONE);
+        latestToggle.setText(latestExpanded ? "收起" : "展开");
         if (history.isEmpty()) historyContainer.addView(empty("暂无记录"));
-        else historyContainer.addView(itemButton(history.get(0), false), itemMargins());
+        else {
+            Button latest = itemButton(history.get(0), false);
+            latest.setMaxLines(latestExpanded ? Integer.MAX_VALUE
+                    : ClipboardDisplayPolicy.COLLAPSED_LINES);
+            latest.setEllipsize(latestExpanded
+                    ? null : android.text.TextUtils.TruncateAt.END);
+            historyContainer.addView(latest, itemMargins());
+        }
         if (phrases.isEmpty()) phraseContainer.addView(empty("点右上角＋添加"));
         else for (SharedClipboardStore.Item item : phrases) {
             phraseContainer.addView(itemButton(item, true), itemMargins());
@@ -247,7 +277,7 @@ public final class ClipboardActivity extends Activity {
         screenshotTarget.setText(screenshotTargetText());
     }
 
-    private View itemButton(SharedClipboardStore.Item item, boolean phrase) {
+    private Button itemButton(SharedClipboardStore.Item item, boolean phrase) {
         Button button = new Button(this);
         button.setAllCaps(false);
         button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);

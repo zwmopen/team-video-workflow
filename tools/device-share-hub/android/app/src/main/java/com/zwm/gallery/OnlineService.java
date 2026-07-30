@@ -1,6 +1,7 @@
 package com.zwm.gallery;
 
 import android.Manifest;
+import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -93,6 +94,7 @@ public final class OnlineService extends Service {
     private static final String PREFS = "device_share";
     private static final String PREF_WORK_COUNT = "advertisedWorkCount";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
+    static final String PREF_OVERLAY_HIDDEN_UNTIL = "clipboardOverlayHiddenUntil";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     public static final String SCREENSHOT_CHANNEL_ID = "device_share_screenshots_v1";
@@ -123,6 +125,11 @@ public final class OnlineService extends Service {
     private LinearLayout clipboardHistoryContainer;
     private LinearLayout clipboardPhraseContainer;
     private TextView clipboardPanelStatus;
+    private Button clipboardLatestToggle;
+    private boolean clipboardLatestExpanded;
+    private String clipboardLatestRenderedText = "";
+    private final Handler overlayPauseHandler = new Handler(Looper.getMainLooper());
+    private final Runnable restoreClipboardOverlay = this::refreshClipboardOverlay;
     private ContentObserver screenshotObserver;
     private long lastScreenshotDate;
     private long lastScreenshotId;
@@ -204,6 +211,7 @@ public final class OnlineService extends Service {
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();
         cleanupExecutor.shutdownNow();
+        overlayPauseHandler.removeCallbacksAndMessages(null);
         stopScreenshotObserver();
         removeClipboardOverlay();
         super.onDestroy();
@@ -716,6 +724,18 @@ public final class OnlineService extends Service {
     private void refreshClipboardOverlay() {
         SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         boolean enabled = preferences.getBoolean("clipboardOverlayEnabled", true);
+        long now = System.currentTimeMillis();
+        long hiddenUntil = preferences.getLong(PREF_OVERLAY_HIDDEN_UNTIL, 0L);
+        overlayPauseHandler.removeCallbacks(restoreClipboardOverlay);
+        if (enabled && OverlayPausePolicy.isTemporarilyHidden(hiddenUntil, now)) {
+            removeClipboardOverlay();
+            overlayPauseHandler.postDelayed(restoreClipboardOverlay,
+                    Math.min(hiddenUntil - now, OverlayPausePolicy.ONE_DAY_MS));
+            return;
+        }
+        if (hiddenUntil != 0L) {
+            preferences.edit().remove(PREF_OVERLAY_HIDDEN_UNTIL).apply();
+        }
         if (!enabled || !Settings.canDrawOverlays(this)) {
             removeClipboardOverlay();
             return;
@@ -762,6 +782,12 @@ public final class OnlineService extends Service {
             int startX;
             int startY;
             boolean moved;
+            boolean holdTriggered;
+            final Runnable holdAction = () -> {
+                if (moved || clipboardOverlay != button) return;
+                holdTriggered = true;
+                showOverlayPauseChoices();
+            };
             @Override public boolean onTouch(android.view.View view, MotionEvent event) {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                     startRawX = event.getRawX();
@@ -769,12 +795,17 @@ public final class OnlineService extends Service {
                     startX = clipboardOverlayParams.x;
                     startY = clipboardOverlayParams.y;
                     moved = false;
+                    holdTriggered = false;
+                    view.postDelayed(holdAction, 5_000L);
                     return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                     int deltaX = Math.round(event.getRawX() - startRawX);
                     int deltaY = Math.round(event.getRawY() - startRawY);
-                    if (Math.abs(deltaX) > dp(4) || Math.abs(deltaY) > dp(4)) moved = true;
+                    if (Math.abs(deltaX) > dp(4) || Math.abs(deltaY) > dp(4)) {
+                        moved = true;
+                        view.removeCallbacks(holdAction);
+                    }
                     clipboardOverlayParams.x = clamp(startX + deltaX,
                             0, Math.max(0, screenWidth() - dp(52)));
                     clipboardOverlayParams.y = clamp(startY + deltaY,
@@ -784,6 +815,7 @@ public final class OnlineService extends Service {
                     return moved;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP && moved) {
+                    view.removeCallbacks(holdAction);
                     preferences.edit()
                             .putInt("clipboardOverlayX", clipboardOverlayParams.x)
                             .putInt("clipboardOverlayYV2", clipboardOverlayParams.y)
@@ -791,7 +823,13 @@ public final class OnlineService extends Service {
                     return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    view.removeCallbacks(holdAction);
+                    if (holdTriggered) return true;
                     view.performClick();
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    view.removeCallbacks(holdAction);
                     return true;
                 }
                 return true;
@@ -814,6 +852,54 @@ public final class OnlineService extends Service {
         }
         clipboardOverlay = null;
         clipboardOverlayParams = null;
+    }
+
+    private void showOverlayPauseChoices() {
+        if (!Settings.canDrawOverlays(this)) return;
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("关闭悬浮球多久？")
+                .setMessage("临时关闭到期会自动恢复；永久关闭后可在相册设置中重新开启。")
+                .setItems(new String[]{"30 秒", "5 分钟", "1 天", "永久关闭"},
+                        (whichDialog, which) -> {
+                            if (which == 3) pauseClipboardOverlayPermanently();
+                            else {
+                                long[] durations = {
+                                        OverlayPausePolicy.THIRTY_SECONDS_MS,
+                                        OverlayPausePolicy.FIVE_MINUTES_MS,
+                                        OverlayPausePolicy.ONE_DAY_MS};
+                                pauseClipboardOverlayFor(durations[which]);
+                            }
+                        })
+                .setNegativeButton("取消", null)
+                .create();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+        }
+        try { dialog.show(); }
+        catch (Exception error) {
+            DiagnosticLog.write(this, "clipboard_overlay_pause_dialog_failed",
+                    compact(error.getMessage()));
+        }
+    }
+
+    private void pauseClipboardOverlayFor(long durationMs) {
+        long until = OverlayPausePolicy.hiddenUntil(System.currentTimeMillis(), durationMs);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putLong(PREF_OVERLAY_HIDDEN_UNTIL, until)
+                .apply();
+        removeClipboardOverlay();
+        overlayPauseHandler.removeCallbacks(restoreClipboardOverlay);
+        overlayPauseHandler.postDelayed(restoreClipboardOverlay,
+                Math.min(durationMs, OverlayPausePolicy.ONE_DAY_MS));
+    }
+
+    private void pauseClipboardOverlayPermanently() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean("clipboardOverlayEnabled", false)
+                .remove(PREF_OVERLAY_HIDDEN_UNTIL)
+                .apply();
+        overlayPauseHandler.removeCallbacks(restoreClipboardOverlay);
+        removeClipboardOverlay();
     }
 
     private void toggleClipboardPanel() {
@@ -869,21 +955,42 @@ public final class OnlineService extends Service {
         header.addView(close, closeParams);
         body.addView(header, new LinearLayout.LayoutParams(-1, dp(48)));
 
+        LinearLayout latestHeader = new LinearLayout(this);
+        latestHeader.setOrientation(LinearLayout.HORIZONTAL);
+        latestHeader.setGravity(Gravity.CENTER_VERTICAL);
         TextView latestHeading = overlayText("最新剪切", 13, true);
         latestHeading.setPadding(dp(2), dp(2), dp(2), dp(5));
-        body.addView(latestHeading, new LinearLayout.LayoutParams(-1, dp(32)));
+        latestHeader.addView(latestHeading, new LinearLayout.LayoutParams(0, dp(36), 1));
+        clipboardLatestToggle = overlayButton("展开");
+        clipboardLatestToggle.setContentDescription("展开或收起最新剪切内容");
+        clipboardLatestToggle.setVisibility(View.GONE);
+        clipboardLatestToggle.setOnClickListener(v -> {
+            clipboardLatestExpanded = !clipboardLatestExpanded;
+            refreshClipboardPanelContents();
+        });
+        latestHeader.addView(clipboardLatestToggle,
+                new LinearLayout.LayoutParams(dp(58), dp(34)));
+        body.addView(latestHeader, new LinearLayout.LayoutParams(-1, dp(38)));
+
+        LinearLayout scrollingContent = new LinearLayout(this);
+        scrollingContent.setOrientation(LinearLayout.VERTICAL);
         clipboardHistoryContainer = new LinearLayout(this);
         clipboardHistoryContainer.setOrientation(LinearLayout.VERTICAL);
-        body.addView(clipboardHistoryContainer, new LinearLayout.LayoutParams(-1, -2));
+        scrollingContent.addView(clipboardHistoryContainer,
+                new LinearLayout.LayoutParams(-1, -2));
 
         TextView phraseHeading = overlayText("固定常用语", 13, true);
         phraseHeading.setPadding(dp(2), dp(8), dp(2), dp(5));
-        body.addView(phraseHeading, new LinearLayout.LayoutParams(-1, dp(40)));
+        scrollingContent.addView(phraseHeading, new LinearLayout.LayoutParams(-1, dp(40)));
         clipboardPhraseContainer = new LinearLayout(this);
         clipboardPhraseContainer.setOrientation(LinearLayout.VERTICAL);
-        ScrollView phraseScroll = new ScrollView(this);
-        phraseScroll.addView(clipboardPhraseContainer);
-        body.addView(phraseScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        scrollingContent.addView(clipboardPhraseContainer,
+                new LinearLayout.LayoutParams(-1, -2));
+        ScrollView contentScroll = new ScrollView(this);
+        contentScroll.setFillViewport(true);
+        contentScroll.addView(scrollingContent,
+                new ScrollView.LayoutParams(-1, -2));
+        body.addView(contentScroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         clipboardPanelStatus = overlayText("点击一条即可复制", 11, false);
         clipboardPanelStatus.setGravity(Gravity.CENTER);
@@ -984,6 +1091,9 @@ public final class OnlineService extends Service {
             clipboardHistoryContainer = null;
             clipboardPhraseContainer = null;
             clipboardPanelStatus = null;
+            clipboardLatestToggle = null;
+            clipboardLatestExpanded = false;
+            clipboardLatestRenderedText = "";
             DiagnosticLog.write(this, "clipboard_panel_failed", compact(error.getMessage()));
         }
     }
@@ -1082,9 +1192,25 @@ public final class OnlineService extends Service {
         if (clipboardHistoryContainer == null || clipboardPhraseContainer == null) return;
         clipboardHistoryContainer.removeAllViews();
         clipboardPhraseContainer.removeAllViews();
+        String latestText = history.isEmpty() ? "" : history.get(0).text;
+        if (!latestText.equals(clipboardLatestRenderedText)) {
+            clipboardLatestRenderedText = latestText;
+            clipboardLatestExpanded = false;
+        }
+        boolean collapsible = ClipboardDisplayPolicy.shouldCollapse(latestText);
+        if (clipboardLatestToggle != null) {
+            clipboardLatestToggle.setVisibility(collapsible ? View.VISIBLE : View.GONE);
+            clipboardLatestToggle.setText(clipboardLatestExpanded ? "收起" : "展开");
+        }
         if (history.isEmpty()) addOverlayEmpty(clipboardHistoryContainer, "暂无记录");
-        else clipboardHistoryContainer.addView(
-                overlayItem(history.get(0).text), overlayItemParams());
+        else {
+            Button latest = overlayItem(latestText);
+            latest.setMaxLines(clipboardLatestExpanded ? Integer.MAX_VALUE
+                    : ClipboardDisplayPolicy.COLLAPSED_LINES);
+            latest.setEllipsize(clipboardLatestExpanded
+                    ? null : android.text.TextUtils.TruncateAt.END);
+            clipboardHistoryContainer.addView(latest, overlayItemParams());
+        }
         if (phrases.isEmpty()) addOverlayEmpty(clipboardPhraseContainer, "暂无常用语");
         else for (SharedClipboardStore.Item item : phrases) {
             clipboardPhraseContainer.addView(overlayItem(item.text), overlayItemParams());
@@ -1182,6 +1308,9 @@ public final class OnlineService extends Service {
         clipboardHistoryContainer = null;
         clipboardPhraseContainer = null;
         clipboardPanelStatus = null;
+        clipboardLatestToggle = null;
+        clipboardLatestExpanded = false;
+        clipboardLatestRenderedText = "";
     }
 
     private int screenWidth() {

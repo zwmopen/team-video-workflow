@@ -240,7 +240,9 @@ public final class SettingsActivity extends Activity {
 
     private void changeClipboardOverlay(boolean enabled) {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean("clipboardOverlayEnabled", enabled).apply();
+                .putBoolean("clipboardOverlayEnabled", enabled)
+                .remove(OnlineService.PREF_OVERLAY_HIDDEN_UNTIL)
+                .apply();
         if (enabled && !Settings.canDrawOverlays(this)) {
             startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName())));
