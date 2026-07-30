@@ -6,6 +6,8 @@
 - 悬浮窗的最新剪切和固定常用语改为一个 ScrollView，标题栏、展开按钮和底部状态保持固定；普通 ClipboardActivity 也移除最新/常用语各自独立的嵌套滚动，使用一条纵向滚动链。
 - 悬浮球静止长按 5 秒弹出关闭时长，支持 30 秒、5 分钟、1 天和永久关闭。临时期限持久保存并由服务定时恢复；永久关闭写回原设置开关，从设置重新开启时同时清除未到期的临时暂停。
 - 本机 Gradle 9.4.1 下 62 项单元测试、Release 构建与 Release Lint 已通过；正式候选 APK 为 versionCode 41/versionName 0.6.3，大小 789834 字节，SHA-256 为 `7C7E2BED39A6AF99D73D53051162D75950D835FFEEDF98D6600B1F1B35605FF8`。APK 使用 v2 签名，证书 SHA-256 仍为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，清单不含 `REQUEST_INSTALL_PACKAGES` 和 Debug 标志。
+- 功能源码提交为 `e0b3c59`。公开 Release 为 [`gallery-updates v0.6.3`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.3)，更新索引提交 `cbdf4f7` 已指向 0.6.3/code 41；公网重新下载的 `album-Android-v0.6.3.apk` 为 789834 字节，SHA-256 与 raw 索引完全一致。Release 同时附带对应源码压缩包和 `SHA256SUMS.txt`。
+- 主仓库 Actions run [`30528898747`](https://github.com/zwmopen/team-video-workflow/actions/runs/30528898747) 仍因主账号付款失败或 spending limit 在任务启动前被 GitHub 拒绝，四个 job 均未实际执行；它不是代码测试失败，本次 Android 交付证据采用上述同一源码的本机完整门禁。
 - 当前无 ADB 设备连接；默认/最小窗口尺寸下的长文省略号、展开收起、继续下滑到末条话术，以及长按关闭、拖动不误触和到期自动恢复仍须在下一台实体手机补验。
 
 ## 2026-07-30 Android 0.6.2 深度可靠性修复
