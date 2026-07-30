@@ -9,11 +9,14 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.Context;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
@@ -27,8 +30,13 @@ import android.net.Uri;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 
 import org.json.JSONObject;
 
@@ -109,6 +117,11 @@ public final class OnlineService extends Service {
     private WindowManager overlayManager;
     private Button clipboardOverlay;
     private WindowManager.LayoutParams clipboardOverlayParams;
+    private View clipboardPanel;
+    private WindowManager.LayoutParams clipboardPanelParams;
+    private LinearLayout clipboardHistoryContainer;
+    private LinearLayout clipboardPhraseContainer;
+    private TextView clipboardPanelStatus;
     private ContentObserver screenshotObserver;
     private long lastScreenshotDate;
     private long lastScreenshotId;
@@ -132,6 +145,12 @@ public final class OnlineService extends Service {
     public void onCreate() {
         super.onCreate();
         ensureIdentity();
+        try {
+            ClipboardDefaults.ensure(new SharedClipboardStore(
+                    new File(getFilesDir(), "shared-clipboard")));
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "clipboard_defaults_failed", compact(error.getMessage()));
+        }
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
@@ -167,6 +186,7 @@ public final class OnlineService extends Service {
         notifyStatus("局域网接收已开启，等待电脑自动发现");
         if (ACTION_REFRESH_OVERLAY.equals(action)) {
             refreshClipboardOverlay();
+            refreshClipboardPanelContents();
         } else if (ACTION_REFRESH_SCREENSHOTS.equals(action)) {
             startScreenshotObserverIfAllowed();
         } else {
@@ -568,10 +588,13 @@ public final class OnlineService extends Service {
         SharedClipboardStore store = new SharedClipboardStore(
                 new File(getFilesDir(), "shared-clipboard"));
         int changed = store.merge(payload.items);
-        if (changed > 0) {
+        int pruned = store.retainLatestClipboardFrom(
+                payload.senderId, System.currentTimeMillis());
+        if (changed > 0 || pruned > 0) {
             sendBroadcast(new Intent(ACTION_CLIPBOARD_CHANGED).setPackage(getPackageName()));
+            new Handler(Looper.getMainLooper()).post(this::refreshClipboardPanelContents);
             DiagnosticLog.write(this, "clipboard_received",
-                    "peer=" + payload.senderId + " changed=" + changed);
+                    "peer=" + payload.senderId + " changed=" + changed + " pruned=" + pruned);
         }
         writeJson(output, 200, new JSONObject().put("changed", changed));
     }
@@ -672,7 +695,7 @@ public final class OnlineService extends Service {
         try {
             SharedClipboardStore store = new SharedClipboardStore(
                     new File(getFilesDir(), "shared-clipboard"));
-            List<SharedClipboardStore.Item> items = store.all();
+            List<SharedClipboardStore.Item> items = store.syncSnapshot();
             if (items.isEmpty()) return;
             String senderId = getSharedPreferences(PREFS, MODE_PRIVATE)
                     .getString("deviceId", "");
@@ -695,8 +718,14 @@ public final class OnlineService extends Service {
         if (clipboardOverlay != null) return;
         overlayManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         if (overlayManager == null) return;
+        try {
+            ClipboardDefaults.ensure(new SharedClipboardStore(
+                    new File(getFilesDir(), "shared-clipboard")));
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "clipboard_defaults_failed", compact(error.getMessage()));
+        }
         OverlayButton button = new OverlayButton(this);
-        button.setText("贴");
+        button.setText("剪");
         button.setTextSize(15);
         button.setTextColor(Color.WHITE);
         button.setAllCaps(false);
@@ -708,39 +737,52 @@ public final class OnlineService extends Service {
         background.setStroke(dp(1), Color.argb(100, 255, 255, 255));
         button.setBackground(background);
         button.setElevation(dp(6));
-        button.setOnClickListener(v -> startActivity(
-                new Intent(this, ClipboardActivity.class)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        button.setOnClickListener(v -> toggleClipboardPanel());
         clipboardOverlayParams = new WindowManager.LayoutParams(
                 dp(52), dp(52),
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
-        clipboardOverlayParams.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
-        clipboardOverlayParams.x = dp(6);
-        clipboardOverlayParams.y = preferences.getInt("clipboardOverlayY", 0);
+        clipboardOverlayParams.gravity = Gravity.START | Gravity.TOP;
+        clipboardOverlayParams.x = clamp(
+                preferences.getInt("clipboardOverlayX", screenWidth() - dp(64)),
+                0, Math.max(0, screenWidth() - dp(52)));
+        clipboardOverlayParams.y = clamp(
+                preferences.getInt("clipboardOverlayYV2", screenHeight() / 4),
+                0, Math.max(0, screenHeight() - dp(52)));
         button.setOnTouchListener(new android.view.View.OnTouchListener() {
+            float startRawX;
             float startRawY;
+            int startX;
             int startY;
             boolean moved;
             @Override public boolean onTouch(android.view.View view, MotionEvent event) {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    startRawX = event.getRawX();
                     startRawY = event.getRawY();
+                    startX = clipboardOverlayParams.x;
                     startY = clipboardOverlayParams.y;
                     moved = false;
                     return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                    int delta = Math.round(event.getRawY() - startRawY);
-                    if (Math.abs(delta) > dp(4)) moved = true;
-                    clipboardOverlayParams.y = startY + delta;
+                    int deltaX = Math.round(event.getRawX() - startRawX);
+                    int deltaY = Math.round(event.getRawY() - startRawY);
+                    if (Math.abs(deltaX) > dp(4) || Math.abs(deltaY) > dp(4)) moved = true;
+                    clipboardOverlayParams.x = clamp(startX + deltaX,
+                            0, Math.max(0, screenWidth() - dp(52)));
+                    clipboardOverlayParams.y = clamp(startY + deltaY,
+                            0, Math.max(0, screenHeight() - dp(52)));
                     try { overlayManager.updateViewLayout(button, clipboardOverlayParams); }
                     catch (Exception ignored) { }
                     return moved;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP && moved) {
-                    preferences.edit().putInt("clipboardOverlayY", clipboardOverlayParams.y).apply();
+                    preferences.edit()
+                            .putInt("clipboardOverlayX", clipboardOverlayParams.x)
+                            .putInt("clipboardOverlayYV2", clipboardOverlayParams.y)
+                            .apply();
                     return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP) {
@@ -760,12 +802,381 @@ public final class OnlineService extends Service {
     }
 
     private void removeClipboardOverlay() {
+        removeClipboardPanel();
         if (overlayManager != null && clipboardOverlay != null) {
             try { overlayManager.removeView(clipboardOverlay); }
             catch (Exception ignored) { }
         }
         clipboardOverlay = null;
         clipboardOverlayParams = null;
+    }
+
+    private void toggleClipboardPanel() {
+        if (clipboardPanel == null) showClipboardPanel();
+        else removeClipboardPanel();
+    }
+
+    private void showClipboardPanel() {
+        if (overlayManager == null || clipboardPanel != null) return;
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        int minimumWidth = dp(250);
+        int minimumHeight = dp(280);
+        int maximumWidth = Math.max(minimumWidth, screenWidth() - dp(16));
+        int maximumHeight = Math.max(minimumHeight, screenHeight() - dp(32));
+        int width = clamp(preferences.getInt("clipboardPanelWidth",
+                Math.min(dp(390), maximumWidth)), minimumWidth, maximumWidth);
+        int height = clamp(preferences.getInt("clipboardPanelHeight",
+                Math.min(dp(470), maximumHeight)), minimumHeight, maximumHeight);
+
+        FrameLayout shell = new FrameLayout(this);
+        GradientDrawable panelBackground = new GradientDrawable();
+        panelBackground.setColor(Color.rgb(246, 244, 240));
+        panelBackground.setCornerRadius(dp(18));
+        panelBackground.setStroke(dp(2), Color.rgb(74, 112, 90));
+        shell.setBackground(panelBackground);
+        shell.setElevation(dp(12));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(12), dp(10), dp(12), dp(16));
+        shell.addView(body, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(4), 0, 0, dp(8));
+        TextView title = overlayText("共享剪切板", 16, true);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
+        Button add = overlayButton("＋");
+        add.setContentDescription("新增固定常用语");
+        add.setOnClickListener(v -> startActivity(new Intent(this, ClipboardActivity.class)
+                .putExtra(ClipboardActivity.EXTRA_ADD_PHRASE, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        header.addView(add, new LinearLayout.LayoutParams(dp(42), dp(40)));
+        Button close = overlayButton("×");
+        close.setContentDescription("关闭共享剪切板");
+        close.setOnClickListener(v -> removeClipboardPanel());
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(dp(42), dp(40));
+        closeParams.setMargins(dp(5), 0, 0, 0);
+        header.addView(close, closeParams);
+        body.addView(header, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        TextView latestHeading = overlayText("最新剪切", 13, true);
+        latestHeading.setPadding(dp(2), dp(2), dp(2), dp(5));
+        body.addView(latestHeading, new LinearLayout.LayoutParams(-1, dp(32)));
+        clipboardHistoryContainer = new LinearLayout(this);
+        clipboardHistoryContainer.setOrientation(LinearLayout.VERTICAL);
+        body.addView(clipboardHistoryContainer, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView phraseHeading = overlayText("固定常用语", 13, true);
+        phraseHeading.setPadding(dp(2), dp(8), dp(2), dp(5));
+        body.addView(phraseHeading, new LinearLayout.LayoutParams(-1, dp(40)));
+        clipboardPhraseContainer = new LinearLayout(this);
+        clipboardPhraseContainer.setOrientation(LinearLayout.VERTICAL);
+        ScrollView phraseScroll = new ScrollView(this);
+        phraseScroll.addView(clipboardPhraseContainer);
+        body.addView(phraseScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        clipboardPanelStatus = overlayText("点击一条即可复制", 11, false);
+        clipboardPanelStatus.setGravity(Gravity.CENTER);
+        clipboardPanelStatus.setTextColor(Color.rgb(72, 105, 84));
+        body.addView(clipboardPanelStatus, new LinearLayout.LayoutParams(-1, dp(32)));
+
+        TextView resize = overlayText("↘", 24, true);
+        resize.setGravity(Gravity.CENTER);
+        resize.setTextColor(Color.rgb(54, 105, 72));
+        resize.setContentDescription("拖动调整剪切板窗口大小");
+        FrameLayout.LayoutParams resizeParams = new FrameLayout.LayoutParams(dp(42), dp(42),
+                Gravity.END | Gravity.BOTTOM);
+        shell.addView(resize, resizeParams);
+
+        clipboardPanelParams = new WindowManager.LayoutParams(width, height,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        clipboardPanelParams.gravity = Gravity.START | Gravity.TOP;
+        clipboardPanelParams.x = clamp(preferences.getInt("clipboardPanelX",
+                Math.max(dp(8), screenWidth() - width - dp(12))),
+                0, Math.max(0, screenWidth() - width));
+        clipboardPanelParams.y = clamp(preferences.getInt("clipboardPanelY",
+                screenHeight() / 4), 0, Math.max(0, screenHeight() - height));
+
+        header.setOnTouchListener(new View.OnTouchListener() {
+            float rawX;
+            float rawY;
+            int startX;
+            int startY;
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    rawX = event.getRawX();
+                    rawY = event.getRawY();
+                    startX = clipboardPanelParams.x;
+                    startY = clipboardPanelParams.y;
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                    clipboardPanelParams.x = clamp(startX + Math.round(event.getRawX() - rawX),
+                            0, Math.max(0, screenWidth() - clipboardPanelParams.width));
+                    clipboardPanelParams.y = clamp(startY + Math.round(event.getRawY() - rawY),
+                            0, Math.max(0, screenHeight() - clipboardPanelParams.height));
+                    updateClipboardPanelLayout();
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    saveClipboardPanelBounds();
+                    return true;
+                }
+                return true;
+            }
+        });
+        resize.setOnTouchListener(new View.OnTouchListener() {
+            float rawX;
+            float rawY;
+            int startWidth;
+            int startHeight;
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    rawX = event.getRawX();
+                    rawY = event.getRawY();
+                    startWidth = clipboardPanelParams.width;
+                    startHeight = clipboardPanelParams.height;
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                    clipboardPanelParams.width = clamp(
+                            startWidth + Math.round(event.getRawX() - rawX),
+                            minimumWidth, Math.max(minimumWidth,
+                                    screenWidth() - clipboardPanelParams.x));
+                    clipboardPanelParams.height = clamp(
+                            startHeight + Math.round(event.getRawY() - rawY),
+                            minimumHeight, Math.max(minimumHeight,
+                                    screenHeight() - clipboardPanelParams.y));
+                    updateClipboardPanelLayout();
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    saveClipboardPanelBounds();
+                    return true;
+                }
+                return true;
+            }
+        });
+        try {
+            overlayManager.addView(shell, clipboardPanelParams);
+            clipboardPanel = shell;
+            captureCurrentClipboardAndSync();
+            DiagnosticLog.write(this, "clipboard_panel_shown", "floating_resizable");
+        } catch (Exception error) {
+            clipboardPanelParams = null;
+            clipboardHistoryContainer = null;
+            clipboardPhraseContainer = null;
+            clipboardPanelStatus = null;
+            DiagnosticLog.write(this, "clipboard_panel_failed", compact(error.getMessage()));
+        }
+    }
+
+    private void refreshClipboardPanelContents() {
+        if (clipboardPanel == null || clipboardHistoryContainer == null
+                || clipboardPhraseContainer == null) return;
+        requestExecutor.execute(() -> {
+            try {
+                SharedClipboardStore store = new SharedClipboardStore(
+                        new File(getFilesDir(), "shared-clipboard"));
+                ClipboardDefaults.ensure(store);
+                List<SharedClipboardStore.Item> history =
+                        store.visible(SharedClipboardStore.KIND_CLIPBOARD);
+                List<SharedClipboardStore.Item> phrases =
+                        store.visible(SharedClipboardStore.KIND_PHRASE);
+                new Handler(Looper.getMainLooper()).post(() ->
+                        renderClipboardPanel(history, phrases));
+            } catch (Exception error) {
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    if (clipboardPanelStatus != null) {
+                        clipboardPanelStatus.setText("读取失败：" + compact(error.getMessage()));
+                    }
+                });
+            }
+        });
+    }
+
+    private void captureCurrentClipboardAndSync() {
+        ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        ClipData clip = manager == null ? null : manager.getPrimaryClip();
+        CharSequence value = clip == null || clip.getItemCount() == 0
+                ? null : clip.getItemAt(0).coerceToText(this);
+        String text = value == null ? "" : value.toString().trim();
+        requestExecutor.execute(() -> {
+            try {
+                SharedClipboardStore store = new SharedClipboardStore(
+                        new File(getFilesDir(), "shared-clipboard"));
+                ClipboardDefaults.ensure(store);
+                if (!text.isEmpty()) {
+                    SharedClipboardStore.Item newest = store.newestClipboard();
+                    if (newest == null || !text.equals(newest.text)) {
+                        store.add(getSharedPreferences(PREFS, MODE_PRIVATE)
+                                        .getString("deviceId", "device"),
+                                SharedClipboardStore.KIND_CLIPBOARD,
+                                text, System.currentTimeMillis());
+                        store.trimVisible(SharedClipboardStore.KIND_CLIPBOARD,
+                                100, System.currentTimeMillis() + 1);
+                    }
+                    int synced = 0;
+                    for (PeerDevice peer : peers()) {
+                        if (peer.id.startsWith("windows-") || "Windows PC".equals(peer.model)) {
+                            continue;
+                        }
+                        try {
+                            new TransferClient(getContentResolver(), getCacheDir())
+                                    .syncClipboard(peer,
+                                            getSharedPreferences(PREFS, MODE_PRIVATE)
+                                                    .getString("deviceId", ""),
+                                            store.syncSnapshot());
+                            synced++;
+                        } catch (Exception error) {
+                            DiagnosticLog.write(this, "clipboard_sync_failed",
+                                    peer.name + " " + compact(error.getMessage()));
+                        }
+                    }
+                    int finalSynced = synced;
+                    new Handler(Looper.getMainLooper()).post(() -> {
+                        refreshClipboardPanelContents();
+                        if (clipboardPanelStatus != null) {
+                            clipboardPanelStatus.setText(finalSynced == 0
+                                    ? "最新剪切已保存 · 暂无其他在线手机"
+                                    : "最新剪切已同步到 " + finalSynced + " 台在线手机");
+                        }
+                    });
+                } else {
+                    new Handler(Looper.getMainLooper()).post(
+                            this::refreshClipboardPanelContents);
+                }
+            } catch (Exception error) {
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    if (clipboardPanelStatus != null) {
+                        clipboardPanelStatus.setText("同步失败：" + compact(error.getMessage()));
+                    }
+                });
+            }
+        });
+    }
+
+    private void renderClipboardPanel(List<SharedClipboardStore.Item> history,
+                                      List<SharedClipboardStore.Item> phrases) {
+        if (clipboardHistoryContainer == null || clipboardPhraseContainer == null) return;
+        clipboardHistoryContainer.removeAllViews();
+        clipboardPhraseContainer.removeAllViews();
+        if (history.isEmpty()) addOverlayEmpty(clipboardHistoryContainer, "暂无记录");
+        else clipboardHistoryContainer.addView(
+                overlayItem(history.get(0).text), overlayItemParams());
+        if (phrases.isEmpty()) addOverlayEmpty(clipboardPhraseContainer, "暂无常用语");
+        else for (SharedClipboardStore.Item item : phrases) {
+            clipboardPhraseContainer.addView(overlayItem(item.text), overlayItemParams());
+        }
+        if (clipboardPanelStatus != null) {
+            clipboardPanelStatus.setText("最新剪切 " + (history.isEmpty() ? 0 : 1)
+                    + " 条 · 固定常用语 " + phrases.size() + " 条 · 点击复制");
+        }
+    }
+
+    private Button overlayItem(String value) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText(value);
+        button.setTextSize(12);
+        button.setTextColor(Color.rgb(38, 40, 37));
+        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        button.setPadding(dp(8), dp(6), dp(8), dp(6));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.WHITE);
+        background.setCornerRadius(dp(10));
+        background.setStroke(dp(1), Color.rgb(220, 218, 212));
+        button.setBackground(background);
+        button.setOnClickListener(v -> copyOverlayText(value));
+        return button;
+    }
+
+    private LinearLayout.LayoutParams overlayItemParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(6));
+        return params;
+    }
+
+    private void addOverlayEmpty(LinearLayout target, String value) {
+        TextView empty = overlayText(value, 12, false);
+        empty.setGravity(Gravity.CENTER);
+        empty.setTextColor(Color.GRAY);
+        target.addView(empty, new LinearLayout.LayoutParams(-1, dp(72)));
+    }
+
+    private void copyOverlayText(String value) {
+        ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (manager != null) manager.setPrimaryClip(
+                ClipData.newPlainText("共享剪切板", value));
+        if (clipboardPanelStatus != null) clipboardPanelStatus.setText("已复制");
+    }
+
+    private TextView overlayText(String value, int size, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(size);
+        view.setTextColor(Color.rgb(35, 35, 33));
+        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return view;
+    }
+
+    private Button overlayButton(String value) {
+        Button button = new Button(this);
+        button.setText(value);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setPadding(0, 0, 0, 0);
+        button.setTextColor(Color.rgb(45, 55, 48));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.rgb(232, 235, 229));
+        background.setCornerRadius(dp(10));
+        button.setBackground(background);
+        return button;
+    }
+
+    private void updateClipboardPanelLayout() {
+        if (overlayManager == null || clipboardPanel == null || clipboardPanelParams == null) return;
+        try { overlayManager.updateViewLayout(clipboardPanel, clipboardPanelParams); }
+        catch (Exception ignored) { }
+    }
+
+    private void saveClipboardPanelBounds() {
+        if (clipboardPanelParams == null) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt("clipboardPanelX", clipboardPanelParams.x)
+                .putInt("clipboardPanelY", clipboardPanelParams.y)
+                .putInt("clipboardPanelWidth", clipboardPanelParams.width)
+                .putInt("clipboardPanelHeight", clipboardPanelParams.height)
+                .apply();
+    }
+
+    private void removeClipboardPanel() {
+        if (overlayManager != null && clipboardPanel != null) {
+            try { overlayManager.removeView(clipboardPanel); }
+            catch (Exception ignored) { }
+        }
+        clipboardPanel = null;
+        clipboardPanelParams = null;
+        clipboardHistoryContainer = null;
+        clipboardPhraseContainer = null;
+        clipboardPanelStatus = null;
+    }
+
+    private int screenWidth() {
+        return getResources().getDisplayMetrics().widthPixels;
+    }
+
+    private int screenHeight() {
+        return getResources().getDisplayMetrics().heightPixels;
+    }
+
+    private static int clamp(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(Math.max(minimum, maximum), value));
     }
 
     private void startScreenshotObserverIfAllowed() {

@@ -32,6 +32,7 @@ import java.util.concurrent.Executors;
 
 /** Shared clipboard and reusable phrases for discovered devices in the same trusted group. */
 public final class ClipboardActivity extends Activity {
+    static final String EXTRA_ADD_PHRASE = "addPhrase";
     private static final String PREFS = "device_share";
     private static final int REQUEST_SCREENSHOT_IMAGES = 91;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -54,6 +55,9 @@ public final class ClipboardActivity extends Activity {
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
         captureAndSyncCurrentClipboard(false);
         render();
+        if (getIntent().getBooleanExtra(EXTRA_ADD_PHRASE, false)) {
+            getWindow().getDecorView().post(() -> editPhrase(null));
+        }
     }
 
     @Override protected void onStart() {
@@ -114,25 +118,25 @@ public final class ClipboardActivity extends Activity {
         root.addView(screenshotTarget, new LinearLayout.LayoutParams(-1, dp(48)));
 
         LinearLayout columns = new LinearLayout(this);
-        columns.setOrientation(LinearLayout.HORIZONTAL);
+        columns.setOrientation(LinearLayout.VERTICAL);
         columns.setPadding(0, dp(12), 0, 0);
 
         LinearLayout historyColumn = new LinearLayout(this);
         historyColumn.setOrientation(LinearLayout.VERTICAL);
-        historyColumn.addView(sectionTitle("剪切板记录"));
+        historyColumn.addView(sectionTitle("最新剪切"));
         historyContainer = new LinearLayout(this);
         historyContainer.setOrientation(LinearLayout.VERTICAL);
         ScrollView historyScroll = new ScrollView(this);
         historyScroll.addView(historyContainer);
-        historyColumn.addView(historyScroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        columns.addView(historyColumn, new LinearLayout.LayoutParams(0, -1, 1));
+        historyColumn.addView(historyScroll, new LinearLayout.LayoutParams(-1, -2));
+        columns.addView(historyColumn, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout phraseColumn = new LinearLayout(this);
         phraseColumn.setOrientation(LinearLayout.VERTICAL);
         LinearLayout phraseTitle = new LinearLayout(this);
         phraseTitle.setOrientation(LinearLayout.HORIZONTAL);
         phraseTitle.setGravity(Gravity.CENTER_VERTICAL);
-        phraseTitle.addView(sectionTitle("常用语"), new LinearLayout.LayoutParams(0, -2, 1));
+        phraseTitle.addView(sectionTitle("固定常用语"), new LinearLayout.LayoutParams(0, -2, 1));
         Button add = button("＋", true);
         add.setContentDescription("新增常用语");
         add.setOnClickListener(v -> editPhrase(null));
@@ -143,8 +147,8 @@ public final class ClipboardActivity extends Activity {
         ScrollView phraseScroll = new ScrollView(this);
         phraseScroll.addView(phraseContainer);
         phraseColumn.addView(phraseScroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout.LayoutParams phraseParams = new LinearLayout.LayoutParams(0, -1, 1);
-        phraseParams.setMargins(dp(8), 0, 0, 0);
+        LinearLayout.LayoutParams phraseParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        phraseParams.setMargins(0, dp(8), 0, 0);
         columns.addView(phraseColumn, phraseParams);
         root.addView(columns, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -178,7 +182,8 @@ public final class ClipboardActivity extends Activity {
                     store.trimVisible(SharedClipboardStore.KIND_CLIPBOARD,
                             100, System.currentTimeMillis() + 1);
                 }
-                int synced = syncAll(store.all());
+                int synced = syncAll(store.syncSnapshot());
+                notifyClipboardChanged();
                 runOnUiThread(() -> {
                     render();
                     status.setText(synced == 0
@@ -229,14 +234,13 @@ public final class ClipboardActivity extends Activity {
         historyContainer.removeAllViews();
         phraseContainer.removeAllViews();
         if (history.isEmpty()) historyContainer.addView(empty("暂无记录"));
-        else for (SharedClipboardStore.Item item : history) {
-            historyContainer.addView(itemButton(item, false), itemMargins());
-        }
+        else historyContainer.addView(itemButton(history.get(0), false), itemMargins());
         if (phrases.isEmpty()) phraseContainer.addView(empty("点右上角＋添加"));
         else for (SharedClipboardStore.Item item : phrases) {
             phraseContainer.addView(itemButton(item, true), itemMargins());
         }
-        status.setText("剪切板 " + history.size() + " 条 · 常用语 " + phrases.size() + " 条");
+        status.setText("最新剪切 " + (history.isEmpty() ? 0 : 1)
+                + " 条 · 固定常用语 " + phrases.size() + " 条");
         screenshotTarget.setText(screenshotTargetText());
     }
 
@@ -283,7 +287,8 @@ public final class ClipboardActivity extends Activity {
                             } else {
                                 store.put(item.id, item.kind, value, System.currentTimeMillis());
                             }
-                            int synced = syncAll(store.all());
+                            int synced = syncAll(store.syncSnapshot());
+                            notifyClipboardChanged();
                             runOnUiThread(() -> {
                                 render();
                                 status.setText("常用语已保存，同步 " + synced + " 台");
@@ -311,7 +316,8 @@ public final class ClipboardActivity extends Activity {
             try {
                 SharedClipboardStore store = store();
                 store.delete(item.id, System.currentTimeMillis());
-                int synced = syncAll(store.all());
+                int synced = syncAll(store.syncSnapshot());
+                notifyClipboardChanged();
                 runOnUiThread(() -> {
                     render();
                     status.setText("已删除并同步到 " + synced + " 台");
@@ -400,7 +406,17 @@ public final class ClipboardActivity extends Activity {
     }
 
     private SharedClipboardStore store() throws Exception {
-        return new SharedClipboardStore(new File(getFilesDir(), "shared-clipboard"));
+        SharedClipboardStore store = new SharedClipboardStore(
+                new File(getFilesDir(), "shared-clipboard"));
+        ClipboardDefaults.ensure(store);
+        return store;
+    }
+
+    private void notifyClipboardChanged() {
+        sendBroadcast(new Intent(OnlineService.ACTION_CLIPBOARD_CHANGED)
+                .setPackage(getPackageName()));
+        startService(new Intent(this, OnlineService.class)
+                .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
     }
 
     private String deviceId() {

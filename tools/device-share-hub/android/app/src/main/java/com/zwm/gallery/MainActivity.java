@@ -300,18 +300,6 @@ public final class MainActivity extends Activity {
                 Gravity.END | Gravity.BOTTOM);
         quickParams.setMargins(0, 0, dp(22), dp(24));
         frame.addView(quickTrashButton, quickParams);
-        Button clipboard = new Button(this);
-        clipboard.setText("剪切板");
-        clipboard.setAllCaps(false);
-        clipboard.setTextSize(12);
-        clipboard.setTextColor(Color.WHITE);
-        clipboard.setBackground(round(Color.rgb(70, 89, 111), 16));
-        clipboard.setOnClickListener(v ->
-                startActivity(new Intent(this, ClipboardActivity.class)));
-        FrameLayout.LayoutParams conversionParams = new FrameLayout.LayoutParams(dp(64), dp(54),
-                Gravity.START | Gravity.BOTTOM);
-        conversionParams.setMargins(dp(8), 0, 0, dp(24));
-        frame.addView(clipboard, conversionParams);
         return frame;
     }
 

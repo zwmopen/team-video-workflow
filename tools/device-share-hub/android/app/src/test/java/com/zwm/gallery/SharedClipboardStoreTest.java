@@ -38,4 +38,45 @@ public final class SharedClipboardStoreTest {
         assertEquals("第二条", store.newestClipboard().text);
         assertEquals(2, store.visible(SharedClipboardStore.KIND_CLIPBOARD).size());
     }
+
+    @Test
+    public void seedsFrontDeskPhrasesOnceAndKeepsDeletion() throws Exception {
+        SharedClipboardStore store = new SharedClipboardStore(temporary.newFolder("defaults"));
+        assertEquals(8, ClipboardDefaults.ensure(store));
+        assertEquals(0, ClipboardDefaults.ensure(store));
+        assertEquals(8, store.visible(SharedClipboardStore.KIND_PHRASE).size());
+
+        SharedClipboardStore.Item first =
+                store.visible(SharedClipboardStore.KIND_PHRASE).get(0);
+        store.delete(first.id, 100);
+        assertEquals(0, ClipboardDefaults.ensure(store));
+        assertEquals(7, store.visible(SharedClipboardStore.KIND_PHRASE).size());
+    }
+
+    @Test
+    public void syncsAllPhrasesButOnlyNewestClipboardValue() throws Exception {
+        SharedClipboardStore store = new SharedClipboardStore(temporary.newFolder("snapshot"));
+        store.add("phone-a", SharedClipboardStore.KIND_CLIPBOARD, "旧内容", 100);
+        store.add("phone-a", SharedClipboardStore.KIND_CLIPBOARD, "最新内容", 200);
+        store.add("phone-a", SharedClipboardStore.KIND_PHRASE, "常用语一", 50);
+        store.add("phone-a", SharedClipboardStore.KIND_PHRASE, "常用语二", 60);
+
+        java.util.List<SharedClipboardStore.Item> snapshot = store.syncSnapshot();
+        assertEquals(3, snapshot.size());
+        assertEquals("最新内容", snapshot.get(0).text);
+        assertEquals(2, snapshot.stream()
+                .filter(item -> SharedClipboardStore.KIND_PHRASE.equals(item.kind)).count());
+    }
+
+    @Test
+    public void receivingDeviceKeepsOnlyLatestValueFromEachSender() throws Exception {
+        SharedClipboardStore store = new SharedClipboardStore(temporary.newFolder("received"));
+        store.add("phone-a", SharedClipboardStore.KIND_CLIPBOARD, "旧内容", 100);
+        store.add("phone-a", SharedClipboardStore.KIND_CLIPBOARD, "最新内容", 200);
+        store.add("phone-b", SharedClipboardStore.KIND_CLIPBOARD, "另一台", 150);
+
+        assertEquals(1, store.retainLatestClipboardFrom("phone-a", 300));
+        assertEquals(2, store.visible(SharedClipboardStore.KIND_CLIPBOARD).size());
+        assertEquals("最新内容", store.visible(SharedClipboardStore.KIND_CLIPBOARD).get(0).text);
+    }
 }

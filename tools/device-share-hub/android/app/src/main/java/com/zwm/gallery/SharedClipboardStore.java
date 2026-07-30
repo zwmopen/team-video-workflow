@@ -46,6 +46,14 @@ final class SharedClipboardStore {
                 kind, text, updatedAt);
     }
 
+    synchronized boolean putIfAbsent(String id, String kind, String text, long updatedAt)
+            throws IOException {
+        String safeId = normalizeId(id);
+        if (read(safeId) != null) return false;
+        put(safeId, kind, text, updatedAt);
+        return true;
+    }
+
     synchronized Item delete(String id, long updatedAt) throws IOException {
         String safeId = normalizeId(id);
         Item existing = read(safeId);
@@ -98,6 +106,38 @@ final class SharedClipboardStore {
             return time != 0 ? time : left.id.compareTo(right.id);
         });
         return Collections.unmodifiableList(items);
+    }
+
+    /** Sync reusable phrases completely, but only the newest clipboard value. */
+    synchronized List<Item> syncSnapshot() throws IOException {
+        ArrayList<Item> result = new ArrayList<>();
+        boolean clipboardIncluded = false;
+        for (Item item : all()) {
+            if (KIND_PHRASE.equals(item.kind)) {
+                result.add(item);
+            } else if (!clipboardIncluded && !item.deleted) {
+                result.add(item);
+                clipboardIncluded = true;
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    /** Keep at most one visible clipboard value from a given sending device. */
+    synchronized int retainLatestClipboardFrom(String deviceId, long updatedAt) throws IOException {
+        String prefix = normalizeDeviceId(deviceId) + "-";
+        boolean retained = false;
+        int removed = 0;
+        for (Item item : visible(KIND_CLIPBOARD)) {
+            if (!item.id.startsWith(prefix)) continue;
+            if (!retained) {
+                retained = true;
+                continue;
+            }
+            delete(item.id, Math.max(updatedAt + removed, item.updatedAt + 1));
+            removed++;
+        }
+        return removed;
     }
 
     synchronized Item newestClipboard() throws IOException {
