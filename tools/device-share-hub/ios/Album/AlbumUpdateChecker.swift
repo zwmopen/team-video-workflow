@@ -19,7 +19,10 @@ enum AlbumUpdateChecker {
                         show(controller, title: "检查失败", message: "暂时无法连接更新服务，请确认网络后再试。")
                         return
                     }
-                    let raw = (object["version_name"] as? String) ?? (object["tag_name"] as? String) ?? ""
+                    let iosBlock = object["ios"] as? [String: Any]
+                    let raw = (iosBlock?["version_name"] as? String)
+                        ?? (object["version_name"] as? String)
+                        ?? (object["tag_name"] as? String) ?? ""
                     let candidate = raw.replacingOccurrences(of: "v", with: "", options: [.anchored, .caseInsensitive])
                     let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
                     guard isNewer(candidate, than: current) else {

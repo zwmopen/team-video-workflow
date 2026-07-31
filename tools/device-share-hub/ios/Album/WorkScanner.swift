@@ -80,7 +80,8 @@ final class WorkScanner {
                     folderURL: folder,
                     textURL: preferred,
                     imageURLs: images,
-                    shareCount: state.works[relativePath]?.shareCount ?? 0
+                    shareCount: state.works[relativePath]?.shareCount ?? 0,
+                    category: WorkCategory.from(path: relativePath)
                 ))
                 return
             }

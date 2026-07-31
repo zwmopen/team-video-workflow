@@ -8,6 +8,7 @@ struct WorkItem: Identifiable, Hashable {
     let textURL: URL
     let imageURLs: [URL]
     let shareCount: Int
+    let category: String
 
     var id: String { key }
 }

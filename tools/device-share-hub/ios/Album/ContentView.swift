@@ -9,6 +9,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var collectionView: UICollectionView!
     private var toastView: UILabel?
     private var initialFolderPromptShown = false
+    private var selectedCategory = WorkCategory.all
+    private var filterBar: UISegmentedControl!
+
+    private var filteredWorks: [WorkItem] {
+        guard selectedCategory != WorkCategory.all else { return library.works }
+        return library.works.filter { $0.category == selectedCategory }
+    }
 
     init(library: WorkLibrary) {
         self.library = library
@@ -21,6 +28,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         super.viewDidLoad()
         view.backgroundColor = AppColors.background
         configureNavigation()
+        configureFilterBar()
         configureCollection()
         configureEmptyView()
         library.onChange = { [weak self] in self?.render() }
@@ -81,6 +89,27 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         return UIBarButtonItem(customView: button)
     }
 
+    private func configureFilterBar() {
+        filterBar = UISegmentedControl(items: WorkCategory.filters.map { $0.label })
+        filterBar.selectedSegmentIndex = 0
+        filterBar.translatesAutoresizingMaskIntoConstraints = false
+        filterBar.addTarget(self, action: #selector(filterChanged(_:)), for: .valueChanged)
+        view.addSubview(filterBar)
+        NSLayoutConstraint.activate([
+            filterBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            filterBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            filterBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            filterBar.heightAnchor.constraint(equalToConstant: 32)
+        ])
+    }
+
+    @objc private func filterChanged(_ sender: UISegmentedControl) {
+        let index = sender.selectedSegmentIndex
+        selectedCategory = index >= 0 && index < WorkCategory.filters.count
+            ? WorkCategory.filters[index].id : WorkCategory.all
+        render()
+    }
+
     private func configureCollection() {
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 12
@@ -99,7 +128,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
+            collectionView.topAnchor.constraint(equalTo: filterBar.bottomAnchor, constant: 8),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
@@ -141,14 +170,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func render() {
         guard isViewLoaded else { return }
-        badge.text = " \(library.works.count) "
+        badge.text = " \(filteredWorks.count) "
         collectionView.reloadData()
         collectionView.refreshControl?.endRefreshing()
         let noFolder = library.folderName == nil
-        emptyStack.isHidden = !library.works.isEmpty || (!noFolder && library.scanSummary == nil)
-        collectionView.isHidden = library.works.isEmpty
+        let hasFiltered = !filteredWorks.isEmpty
+        emptyStack.isHidden = hasFiltered || (!noFolder && library.scanSummary == nil)
+        collectionView.isHidden = !hasFiltered
         if noFolder {
             emptyDetail.text = "只需选择一次。点击作品后会复制 TXT 文案，并把全部图片交给系统分享。"
+        } else if selectedCategory != WorkCategory.all && !library.works.isEmpty {
+            emptyDetail.text = "当前分类没有作品。切回“全部”可查看所有内容。"
         } else {
             emptyDetail.text = library.scanSummary ?? "没有找到同时包含图片和 TXT 的作品文件夹。"
         }
@@ -157,12 +189,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return library.works.count
+        return filteredWorks.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
-        let work = library.works[indexPath.item]
+        let work = filteredWorks[indexPath.item]
         cell.configure(work)
         cell.onShare = { [weak self, weak cell] in self?.share(work, source: cell) }
         return cell
