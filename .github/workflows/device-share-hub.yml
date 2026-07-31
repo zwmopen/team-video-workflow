@@ -112,7 +112,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v3
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Install Gradle 9.4.1
         run: |
