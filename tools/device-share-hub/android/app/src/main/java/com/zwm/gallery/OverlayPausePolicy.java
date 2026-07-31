@@ -1,8 +1,8 @@
 package com.zwm.gallery;
 
 final class OverlayPausePolicy {
-    static final long THIRTY_SECONDS_MS = 30_000L;
-    static final long FIVE_MINUTES_MS = 5L * 60L * 1000L;
+    static final long ONE_MINUTE_MS = 60_000L;
+    static final long THIRTY_MINUTES_MS = 30L * 60L * 1000L;
     static final long ONE_DAY_MS = 24L * 60L * 60L * 1000L;
 
     private OverlayPausePolicy() {

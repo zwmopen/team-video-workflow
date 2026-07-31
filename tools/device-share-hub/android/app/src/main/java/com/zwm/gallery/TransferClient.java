@@ -51,10 +51,15 @@ final class TransferClient {
     void sendFiles(
             PeerDevice peer, List<Uri> uris, String text, boolean autoShare,
             Progress progress) throws Exception {
+        sendFiles(peer, uris, text, autoShare, null, progress);
+    }
+
+    void sendFiles(PeerDevice peer, List<Uri> uris, String text, boolean autoShare,
+                   RelayTaskMetadata relay, Progress progress) throws Exception {
         if (uris.isEmpty()) throw new IOException("没有选择文件");
         ArrayList<Source> sources = new ArrayList<>();
         for (Uri uri : uris) sources.add(source(uri));
-        send(peer, sources, text, autoShare, progress);
+        send(peer, sources, text, autoShare, relay, progress);
     }
 
     void sendLocalFiles(PeerDevice peer, List<File> files, Progress progress) throws Exception {
@@ -71,7 +76,28 @@ final class TransferClient {
             sources.add(new Source(Uri.fromFile(file), file.getName(),
                     mimeForName(file.getName()), file.length(), file));
         }
-        send(peer, sources, text, autoShare, progress);
+        send(peer, sources, text, autoShare, null, progress);
+    }
+
+    void sendLocalFiles(PeerDevice peer, List<File> files, String text,
+                        RelayTaskMetadata relay, Progress progress) throws Exception {
+        sendLocalFiles(peer, files, null, text, relay, progress);
+    }
+
+    void sendLocalFiles(PeerDevice peer, List<File> files, List<String> names, String text,
+                        RelayTaskMetadata relay, Progress progress) throws Exception {
+        if (files.isEmpty()) throw new IOException("没有选择文件");
+        ArrayList<Source> sources = new ArrayList<>();
+        for (int index = 0; index < files.size(); index++) {
+            File file = files.get(index);
+            if (!file.isFile()) throw new IOException("文件不存在：" + file.getName());
+            String name = names != null && index < names.size()
+                    && names.get(index) != null && !names.get(index).trim().isEmpty()
+                    ? names.get(index).trim() : file.getName();
+            sources.add(new Source(Uri.fromFile(file), name,
+                    mimeForName(name), file.length(), file));
+        }
+        send(peer, sources, text, false, relay, progress);
     }
 
     void sendFolder(PeerDevice peer, Uri tree, Progress progress) throws Exception {
@@ -80,7 +106,7 @@ final class TransferClient {
         try {
             ArrayList<Source> sources = new ArrayList<>();
             sources.add(new Source(Uri.fromFile(archive), archive.getName(), "application/zip", archive.length(), archive));
-            send(peer, sources, "", false, progress);
+            send(peer, sources, "", false, null, progress);
         } finally {
             archive.delete();
         }
@@ -92,14 +118,26 @@ final class TransferClient {
         request(peer, "POST", "/v2/clipboard", "application/json", body, null);
     }
 
+    void syncClipboard(PeerDevice peer, String senderId, String originId, String messageId,
+                       int hopLimit, List<SharedClipboardStore.Item> items) throws Exception {
+        byte[] body = ClipboardSyncPayload.encode(
+                senderId, originId, messageId, hopLimit, items);
+        request(peer, "POST", "/v2/clipboard", "application/json", body, null);
+    }
+
     private void send(
             PeerDevice peer, List<Source> sources, String text, boolean autoShare,
-            Progress progress) throws Exception {
+            RelayTaskMetadata relay, Progress progress) throws Exception {
         String taskId = "android-" + UUID.randomUUID().toString().toLowerCase(Locale.ROOT);
         JSONObject task = new JSONObject().put("taskId", taskId)
                 .put("text", text == null ? "" : text)
                 .put("autoShare", autoShare)
                 .put("fileCount", sources.size());
+        if (relay != null) {
+            String senderId = relay.previousHopId.isEmpty()
+                    ? relay.originId : relay.previousHopId;
+            relay.addTo(task, senderId);
+        }
         request(peer, "POST", "/v2/tasks", "application/json", task.toString().getBytes(StandardCharsets.UTF_8), null);
         long total = 0;
         for (Source source : sources) total += source.size;

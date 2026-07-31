@@ -13,6 +13,7 @@ final class IncomingTransferService {
     private var udpListener: NWListener?
     private var beaconTimer: DispatchSourceTimer?
     private var tasks: [String: IncomingTask] = [:]
+    private var activeRelayIds = Set<String>()
     private var isRunning = false
     private var tcpReady = false
     private var udpReady = false
@@ -118,7 +119,10 @@ final class IncomingTransferService {
         beaconTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(2000), leeway: .milliseconds(180))
-        timer.setEventHandler { [weak self] in self?.broadcastBeacon() }
+        timer.setEventHandler { [weak self] in
+            self?.broadcastBeacon()
+            self?.processRelayQueue()
+        }
         timer.resume()
         beaconTimer = timer
     }
@@ -198,6 +202,13 @@ final class IncomingTransferService {
     private func handle(_ request: HTTPRequest) -> HTTPResponse {
         do {
             if request.method == "GET" && request.path == "/v2/info" { return infoResponse() }
+            if request.method == "POST" && request.path == "/v2/clipboard" {
+                guard let body = request.bodyData else {
+                    return HTTPResponse(status: 400, message: "剪切板数据为空")
+                }
+                try ClipboardBridge.shared.receive(body)
+                return HTTPResponse(status: 200, object: ["ok": true])
+            }
             if request.method == "POST" && request.path == "/v2/tasks" { return try createTask(request) }
             let pieces = request.path.split(separator: "/").map(String.init)
             if request.method == "PUT", pieces.count == 5, pieces[0] == "v2", pieces[1] == "tasks",
@@ -238,6 +249,8 @@ final class IncomingTransferService {
             "model": DeviceIdentity.model,
             "iosVersion": UIDevice.current.systemVersion,
             "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "relayVersion": 1,
+            "relayEnabled": true,
             "port": Int(transferHTTPPort),
             "state": "online",
             "workCount": library.advertisedWorkCount,
@@ -259,7 +272,14 @@ final class IncomingTransferService {
         let directory = incomingRoot.appendingPathComponent(taskID, isDirectory: true)
         try? FileManager.default.removeItem(at: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        tasks[taskID] = IncomingTask(id: taskID, expectedCount: fileCount, directory: directory)
+        let relay = RelayTaskInfo(object: object)
+        if relay.isRelay, relay.destinationId == DeviceIdentity.id,
+           relay.contentKind == "screenshot",
+           UserDefaults.standard.object(forKey: "album.screenshotReceiveEnabled") as? Bool == false {
+            throw TransferServiceError.forbidden("主设备已关闭截图接收")
+        }
+        tasks[taskID] = IncomingTask(id: taskID, expectedCount: fileCount,
+                                     directory: directory, relay: relay.isRelay ? relay : nil)
         updateStatus("正在接收 \(fileCount) 个项目…")
         TransferNotifications.shared.show("正在向你发送", body: "准备接收 \(fileCount) 个项目",
                                           id: "incoming-start-\(taskID)")
@@ -296,6 +316,14 @@ final class IncomingTransferService {
         guard task.files.count == task.expectedCount else {
             throw TransferServiceError.conflict("文件尚未全部接收，请稍后重试")
         }
+        if let relay = task.relay, relay.destinationId != DeviceIdentity.id {
+            try queueRelay(task)
+            tasks.removeValue(forKey: taskID)
+            processRelayQueue()
+            return HTTPResponse(status: 202, object: [
+                "ok": true, "relayStatus": "queued", "messageId": relay.messageId
+            ])
+        }
         guard let root = library.receivingRootURL else {
             throw TransferServiceError.conflict("作品文件夹不可用，请在设置里重新选择")
         }
@@ -331,6 +359,95 @@ final class IncomingTransferService {
         return root
     }
 
+    private var relayRoot: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let root = base.appendingPathComponent("RelayQueue", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func queueRelay(_ task: IncomingTask) throws {
+        guard let relay = task.relay else { return }
+        let destination = relayRoot.appendingPathComponent(relay.messageId, isDirectory: true)
+        try? FileManager.default.removeItem(at: destination)
+        var records: [[String: Any]] = []
+        for index in 0..<task.expectedCount {
+            guard let file = task.files[index] else {
+                throw TransferServiceError.conflict("中转文件不完整")
+            }
+            records.append(["stored": file.url.lastPathComponent,
+                            "name": file.name, "mime": file.mime])
+        }
+        let relayData = try JSONEncoder().encode(relay)
+        let relayObject = try JSONSerialization.jsonObject(with: relayData)
+        let manifest: [String: Any] = ["relay": relayObject, "files": records]
+        let data = try JSONSerialization.data(withJSONObject: manifest)
+        try data.write(to: task.directory.appendingPathComponent("relay.json"),
+                       options: .atomic)
+        try FileManager.default.moveItem(at: task.directory, to: destination)
+        updateStatus("截图已进入中转队列")
+    }
+
+    private func processRelayQueue() {
+        guard isRunning else { return }
+        let directories = (try? FileManager.default.contentsOfDirectory(
+            at: relayRoot, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])) ?? []
+        for directory in directories {
+            let manifestURL = directory.appendingPathComponent("relay.json")
+            guard let data = try? Data(contentsOf: manifestURL),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let relayObject = object["relay"],
+                  let relayData = try? JSONSerialization.data(withJSONObject: relayObject),
+                  let relay = try? JSONDecoder().decode(RelayTaskInfo.self, from: relayData) else {
+                try? FileManager.default.removeItem(at: directory)
+                continue
+            }
+            if relay.expired {
+                try? FileManager.default.removeItem(at: directory)
+                updateStatus("一条中转任务已过期并清理", isError: true)
+                continue
+            }
+            let peers = PeerDirectory.shared.peers()
+            let next = peers.first(where: { $0.id == relay.destinationId })
+                ?? peers.first(where: {
+                    $0.id != relay.previousHopId && $0.id != relay.originId
+                })
+            guard let peer = next, let records = object["files"] as? [[String: Any]] else {
+                continue
+            }
+            guard activeRelayIds.insert(relay.messageId).inserted else { continue }
+            let items = records.compactMap { record -> OutgoingItem? in
+                guard let stored = record["stored"] as? String,
+                      let name = record["name"] as? String else { return nil }
+                let url = directory.appendingPathComponent(stored)
+                guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+                return OutgoingItem(url: url, name: name,
+                                    mime: record["mime"] as? String
+                                        ?? "application/octet-stream",
+                                    temporary: false)
+            }
+            guard items.count == records.count else {
+                activeRelayIds.remove(relay.messageId)
+                continue
+            }
+            OutgoingTransferClient().send(items, to: peer, progress: { _, _ in },
+                                          relay: relay.forwarded()) { [weak self] result in
+                self?.queue.async {
+                    self?.activeRelayIds.remove(relay.messageId)
+                    switch result {
+                    case .success:
+                        try? FileManager.default.removeItem(at: directory)
+                        self?.updateStatus("截图中转完成")
+                    case .failure(let error):
+                        self?.updateStatus("截图等待继续中转：\(error.localizedDescription)",
+                                           isError: true)
+                    }
+                }
+            }
+        }
+    }
+
     private func updateStatus(_ text: String, isError: Bool = false) {
         UserDefaults.standard.set(text, forKey: "album.lastNetworkStatus.v1")
         DispatchQueue.main.async { [weak library] in library?.setNetworkStatus(text, isError: isError) }
@@ -356,12 +473,14 @@ private final class IncomingTask {
     let id: String
     let expectedCount: Int
     let directory: URL
+    let relay: RelayTaskInfo?
     var files: [Int: IncomingFile] = [:]
 
-    init(id: String, expectedCount: Int, directory: URL) {
+    init(id: String, expectedCount: Int, directory: URL, relay: RelayTaskInfo?) {
         self.id = id
         self.expectedCount = expectedCount
         self.directory = directory
+        self.relay = relay
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: directory) }
@@ -400,6 +519,7 @@ struct HTTPResponse {
         case 200: reason = "OK"
         case 201: reason = "Created"
         case 400: reason = "Bad Request"
+        case 403: reason = "Forbidden"
         case 404: reason = "Not Found"
         case 409: reason = "Conflict"
         case 413: reason = "Payload Too Large"
@@ -558,6 +678,7 @@ final class HTTPRequestReader {
 enum TransferServiceError: LocalizedError {
     case invalidPort
     case badRequest(String)
+    case forbidden(String)
     case notFound(String)
     case conflict(String)
     case unprocessable(String)
@@ -566,6 +687,7 @@ enum TransferServiceError: LocalizedError {
     var status: Int {
         switch self {
         case .badRequest, .invalidPort: return 400
+        case .forbidden: return 403
         case .notFound: return 404
         case .conflict: return 409
         case .tooLarge: return 413
@@ -576,7 +698,7 @@ enum TransferServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidPort: return "局域网端口无效"
-        case .badRequest(let message), .notFound(let message), .conflict(let message),
+        case .badRequest(let message), .forbidden(let message), .notFound(let message), .conflict(let message),
              .unprocessable(let message): return message
         case .tooLarge: return "文件过大，请分批传送"
         }

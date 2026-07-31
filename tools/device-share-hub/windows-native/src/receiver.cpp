@@ -7,6 +7,7 @@
 #include <bcrypt.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <cwchar>
@@ -28,6 +29,13 @@ struct Task {
     int expected = 0;
     std::filesystem::path directory;
     std::map<int, ReceivedFile> files;
+    std::string messageId;
+    std::string originId;
+    std::string destinationId;
+    std::string previousHopId;
+    std::string contentKind;
+    long long expiresAt = 0;
+    int hopLimit = 0;
 };
 
 std::wstring Utf8ToWide(const std::string& value) {
@@ -165,8 +173,63 @@ int JsonInt(const std::string& json, const std::string& key) {
     auto start = json.find('"' + key + '"'); if (start == std::string::npos) return 0;
     start = json.find(':', start); if (start == std::string::npos) return 0; return std::atoi(json.c_str() + start + 1);
 }
+long long JsonInt64(const std::string& json, const std::string& key) {
+    auto start = json.find('"' + key + '"'); if (start == std::string::npos) return 0;
+    start = json.find(':', start); if (start == std::string::npos) return 0;
+    return std::strtoll(json.c_str() + start + 1, nullptr, 10);
+}
 
-void Handle(SOCKET client, Task& task, const std::function<void(const std::wstring&)>& status,
+void PersistRelayTask(const Task& task) {
+    std::ofstream output(task.directory / L"relay.meta", std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("无法保存中转状态");
+    output << task.messageId << '\n' << task.originId << '\n' << task.destinationId << '\n'
+           << task.previousHopId << '\n' << task.contentKind << '\n' << task.expiresAt << '\n'
+           << task.hopLimit << '\n' << task.expected << '\n';
+    for (const auto& [index, file] : task.files) {
+        output << index << '|' << WideToUtf8(file.name) << '|'
+               << WideToUtf8(file.path.filename().wstring()) << '\n';
+    }
+    output.flush();
+}
+
+std::vector<Task> LoadRelayQueue() {
+    std::vector<Task> result;
+    for (const auto& directory : std::filesystem::directory_iterator(CacheRoot())) {
+        if (!directory.is_directory()) continue;
+        auto metadata = directory.path() / L"relay.meta";
+        if (!std::filesystem::is_regular_file(metadata)) continue;
+        std::ifstream input(metadata, std::ios::binary);
+        Task task; task.directory = directory.path();
+        std::string line;
+        if (!std::getline(input, task.messageId)
+            || !std::getline(input, task.originId)
+            || !std::getline(input, task.destinationId)
+            || !std::getline(input, task.previousHopId)
+            || !std::getline(input, task.contentKind)
+            || !std::getline(input, line)) continue;
+        task.expiresAt = std::strtoll(line.c_str(), nullptr, 10);
+        if (!std::getline(input, line)) continue; task.hopLimit = std::atoi(line.c_str());
+        if (!std::getline(input, line)) continue; task.expected = std::atoi(line.c_str());
+        while (std::getline(input, line)) {
+            auto first = line.find('|'), second = line.find('|', first == std::string::npos ? first : first + 1);
+            if (first == std::string::npos || second == std::string::npos) continue;
+            int index = std::atoi(line.substr(0, first).c_str());
+            auto path = task.directory / Utf8ToWide(line.substr(second + 1));
+            if (std::filesystem::is_regular_file(path)) {
+                task.files[index] = {Utf8ToWide(line.substr(first + 1, second - first - 1)), path};
+            }
+        }
+        if (!task.messageId.empty() && static_cast<int>(task.files.size()) == task.expected) {
+            result.push_back(std::move(task));
+        }
+    }
+    return result;
+}
+
+void Handle(SOCKET client, Task& task, std::vector<Task>& relayQueue,
+            const std::string& ownDeviceId,
+            const std::function<void(const std::string&)>& clipboard,
+            const std::function<void(const std::wstring&)>& status,
             const std::function<void(const std::wstring&, const std::wstring&)>& log) {
     std::string data; char buffer[64 * 1024]; size_t headerEnd = std::string::npos;
     while ((headerEnd = data.find("\r\n\r\n")) == std::string::npos) {
@@ -184,12 +247,23 @@ void Handle(SOCKET client, Task& task, const std::function<void(const std::wstri
         unsigned long long received = 0; if (!initial.empty()) { size_t take = static_cast<size_t>(std::min<unsigned long long>(length, initial.size())); output.write(initial.data(), take); received += take; }
         while (received < length) { int n = recv(client, buffer, static_cast<int>(std::min<unsigned long long>(sizeof(buffer), length - received)), 0); if (n <= 0) throw std::runtime_error("文件传送中断"); output.write(buffer, n); received += n; }
     };
-    if (method == "GET" && path == "/v2/info") { SendResponse(client, 200, "{\"protocol\":2,\"state\":\"online\"}"); return; }
+    if (method == "GET" && path == "/v2/info") { SendResponse(client, 200, "{\"protocol\":2,\"state\":\"online\",\"relayVersion\":1,\"relayEnabled\":true}"); return; }
+    if (method == "POST" && path == "/v2/clipboard") {
+        std::ostringstream body; readBody(body); clipboard(body.str());
+        SendResponse(client, 200, "{\"ok\":true}"); return;
+    }
     if (method == "POST" && path == "/v2/tasks") {
         std::ostringstream body; readBody(body); auto json = body.str(); auto id = JsonString(json, "taskId"); int count = JsonInt(json, "fileCount");
         if (id.empty() || count < 1 || count > 100) { SendResponse(client, 400, "任务信息无效"); return; }
         if (!task.id.empty()) { SendResponse(client, 409, "电脑正在接收另一批文件"); return; }
         task.id = id; task.expected = count; task.directory = CacheRoot() / Utf8ToWide(id); std::filesystem::remove_all(task.directory); std::filesystem::create_directories(task.directory);
+        task.messageId = JsonString(json, "messageId");
+        task.originId = JsonString(json, "originId");
+        task.destinationId = JsonString(json, "destinationId");
+        task.previousHopId = JsonString(json, "previousHopId");
+        task.contentKind = JsonString(json, "contentKind");
+        task.expiresAt = JsonInt64(json, "expiresAt");
+        task.hopLimit = JsonInt(json, "hopLimit");
         status(L"正在接收 " + std::to_wstring(count) + L" 个项目…"); log(L"incoming_task", Utf8ToWide(id)); SendResponse(client, 201, "OK"); return;
     }
     auto pieces = Split(path, '/');
@@ -205,6 +279,12 @@ void Handle(SOCKET client, Task& task, const std::function<void(const std::wstri
         if (pieces[4] == "cancel") { std::filesystem::remove_all(task.directory); task = {}; status(L"传送已取消"); SendResponse(client, 200, "OK"); return; }
         if (pieces[4] == "commit") {
             if (static_cast<int>(task.files.size()) != task.expected) { SendResponse(client, 409, "文件尚未接收完整"); return; }
+            if (!task.destinationId.empty() && task.destinationId != ownDeviceId) {
+                PersistRelayTask(task);
+                relayQueue.push_back(std::move(task)); task = {};
+                status(L"截图已进入中转队列");
+                SendResponse(client, 202, "{\"relayStatus\":\"queued\"}"); return;
+            }
             auto root = ReceiveRoot(); int count = 0;
             for (int i = 0; i < task.expected; ++i) { auto& file = task.files.at(i); auto lower = Lower(WideToUtf8(file.name)); if (lower.rfind("album-folder-", 0) == 0 && lower.size() > 4 && lower.substr(lower.size() - 4) == ".zip") count += ExtractStoredZip(file.path, root); else { std::filesystem::rename(file.path, Unique(root, file.name)); ++count; } }
             auto id = task.id; std::filesystem::remove_all(task.directory); task = {}; status(L"已收到 " + std::to_wstring(count) + L" 个文件，保存在“下载\\相册收件箱”"); log(L"incoming_commit", Utf8ToWide(id)); SendResponse(client, 200, "OK"); return;
@@ -212,22 +292,59 @@ void Handle(SOCKET client, Task& task, const std::function<void(const std::wstri
     }
     SendResponse(client, 404, "请求路径不存在");
 }
+
+void ProcessRelayQueue(std::vector<Task>& queued,
+                       const std::function<bool(const RelayIncomingTask&, std::wstring&)>& relay,
+                       const std::function<void(const std::wstring&)>& status,
+                       const std::function<void(const std::wstring&, const std::wstring&)>& log) {
+    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (auto it = queued.begin(); it != queued.end();) {
+        if (it->expiresAt <= now || it->hopLimit <= 0) {
+            std::error_code ignored; std::filesystem::remove_all(it->directory, ignored);
+            log(L"relay_expired", Utf8ToWide(it->messageId));
+            it = queued.erase(it); continue;
+        }
+        RelayIncomingTask package;
+        package.messageId = it->messageId; package.originId = it->originId;
+        package.destinationId = it->destinationId; package.previousHopId = it->previousHopId;
+        package.contentKind = it->contentKind; package.expiresAt = it->expiresAt;
+        package.hopLimit = it->hopLimit;
+        for (const auto& [index, file] : it->files) package.files.push_back({file.name, file.path});
+        std::wstring error;
+        if (relay(package, error)) {
+            std::error_code ignored; std::filesystem::remove_all(it->directory, ignored);
+            log(L"relay_delivered", Utf8ToWide(it->messageId));
+            status(L"截图中转完成");
+            it = queued.erase(it);
+        } else {
+            if (!error.empty()) log(L"relay_retry_waiting", error);
+            ++it;
+        }
+    }
+}
 }
 
 void RunLanReceiver(std::atomic<bool>& running,
                     const std::function<void(const std::wstring&)>& status,
-                    const std::function<void(const std::wstring&, const std::wstring&)>& log) {
+                    const std::function<void(const std::wstring&, const std::wstring&)>& log,
+                    const std::string& ownDeviceId,
+                    const std::function<bool(const RelayIncomingTask&, std::wstring&)>& relay,
+                    const std::function<void(const std::string&)>& clipboard) {
     WSADATA data{}; if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { log(L"receiver_failed", L"WSAStartup"); return; }
     SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); if (server == INVALID_SOCKET) { WSACleanup(); return; }
     BOOL yes = TRUE; setsockopt(server, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
     sockaddr_in address{}; address.sin_family = AF_INET; address.sin_addr.s_addr = INADDR_ANY; address.sin_port = htons(PORT);
     if (bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR || listen(server, 4) == SOCKET_ERROR) { log(L"receiver_failed", L"tcp port 45833 occupied"); closesocket(server); WSACleanup(); return; }
     log(L"receiver_ready", L"tcp=45833"); Task task;
+    std::vector<Task> relayQueue = LoadRelayQueue();
     while (running) {
         fd_set set; FD_ZERO(&set); FD_SET(server, &set); timeval timeout{0, 350000};
-        if (select(0, &set, nullptr, nullptr, &timeout) <= 0) continue;
+        if (select(0, &set, nullptr, nullptr, &timeout) <= 0) {
+            ProcessRelayQueue(relayQueue, relay, status, log); continue;
+        }
         SOCKET client = accept(server, nullptr, nullptr); if (client == INVALID_SOCKET) continue;
-        try { Handle(client, task, status, log); }
+        try { Handle(client, task, relayQueue, ownDeviceId, clipboard, status, log); }
         catch (const std::exception& error) { log(L"receiver_request_failed", Utf8ToWide(error.what())); SendResponse(client, 500, error.what()); }
         closesocket(client);
     }

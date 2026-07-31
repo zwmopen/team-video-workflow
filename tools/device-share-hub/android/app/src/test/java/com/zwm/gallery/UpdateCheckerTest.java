@@ -17,9 +17,9 @@ public final class UpdateCheckerTest {
 
     @Test
     public void updateDownloadAlwaysUsesApkExtension() {
-        assertEquals("相册-Android-0.5.10.apk", UpdateChecker.updateFileName("0.5.10"));
-        assertEquals("相册-Android-latest.apk", UpdateChecker.updateFileName(""));
-        assertEquals("相册-Android-0.5.10_beta.apk",
+        assertEquals("album-Android-0.5.10.apk", UpdateChecker.updateFileName("0.5.10"));
+        assertEquals("album-Android-latest.apk", UpdateChecker.updateFileName(""));
+        assertEquals("album-Android-0.5.10_beta.apk",
                 UpdateChecker.updateFileName("0.5.10 beta"));
     }
 
@@ -35,7 +35,7 @@ public final class UpdateCheckerTest {
                 android.app.DownloadManager.STATUS_SUCCESSFUL));
         assertFalse(UpdateChecker.isDownloadStateUsable(
                 android.app.DownloadManager.STATUS_FAILED));
-        assertEquals("安装包已经下载，点系统通知即可安装",
+        assertEquals("安装包已经验证，点相册更新通知即可安装",
                 UpdateChecker.downloadStatusMessage(
                         android.app.DownloadManager.STATUS_SUCCESSFUL));
     }

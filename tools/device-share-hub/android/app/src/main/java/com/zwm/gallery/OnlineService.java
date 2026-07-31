@@ -39,12 +39,14 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -107,6 +109,8 @@ public final class OnlineService extends Service {
     private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
     private static final long PEER_TIMEOUT_MS = 15_000L;
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Long> SEEN_CLIPBOARD_MESSAGES =
+            new ConcurrentHashMap<>();
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
@@ -219,6 +223,7 @@ public final class OnlineService extends Service {
 
     private void runCleanup() {
         try {
+            processRelayQueue();
             CleanupCoordinator.Result result = CleanupCoordinator.run(this);
             if (result.moved > 0 || result.deleted > 0 || result.cacheEntriesDeleted > 0) {
                 DiagnosticLog.write(this, "scheduled_cleanup",
@@ -340,8 +345,22 @@ public final class OnlineService extends Service {
         JSONObject body = new JSONObject(new String(readExact(input, request.contentLength), StandardCharsets.UTF_8));
         String taskId = body.optString("taskId", "").trim();
         int fileCount = body.optInt("fileCount", 0);
+        RelayTaskMetadata relay = RelayTaskMetadata.fromJson(body);
         if (!taskId.matches("[A-Za-z0-9._-]{6,100}")) throw new HttpError(400, "taskId 无效");
         if (fileCount < 1 || fileCount > MAX_FILES) throw new HttpError(400, "文件数量无效");
+        String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("deviceId", "");
+        if (relay != null) {
+            if (relay.expiresAt <= System.currentTimeMillis()) {
+                throw new HttpError(410, "中转任务已经过期");
+            }
+            if ("screenshot".equals(relay.contentKind)
+                    && ownId.equals(relay.destinationId)
+                    && !getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getBoolean("screenshotReceiveEnabled", true)) {
+                throw new HttpError(403, "主设备已关闭截图接收");
+            }
+        }
         synchronized (taskLock) {
             if (activeTask != null) throw new HttpError(409, "正在接收另一批素材，请稍后重试");
             File taskDir = new File(new File(getCacheDir(), "share"), taskId);
@@ -349,7 +368,7 @@ public final class OnlineService extends Service {
             if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
             activeTask = new IncomingTask(
                     taskId, body.optString("text", ""), body.optBoolean("autoShare", false),
-                    fileCount, taskDir, System.currentTimeMillis());
+                    fileCount, taskDir, System.currentTimeMillis(), relay);
             currentTaskId = taskId;
             state = "receiving";
         }
@@ -429,6 +448,23 @@ public final class OnlineService extends Service {
             task = activeTask;
             if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
             if (task.files.size() != task.fileCount) throw new HttpError(409, "文件尚未全部上传");
+        }
+
+        String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("deviceId", "");
+        if (task.relay != null && !ownId.equals(task.relay.destinationId)) {
+            queueRelayTask(task);
+            synchronized (taskLock) {
+                if (activeTask != task) throw new HttpError(409, "任务状态已变化");
+                activeTask = null;
+                currentTaskId = "";
+                state = "online";
+            }
+            writeJson(output, 202, new JSONObject()
+                    .put("relayStatus", "queued")
+                    .put("messageId", task.relay.messageId));
+            requestExecutor.execute(this::processRelayQueue);
+            return;
         }
 
         WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
@@ -549,10 +585,132 @@ public final class OnlineService extends Service {
                 .put("model", Build.MANUFACTURER + " " + Build.MODEL)
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("appVersion", installedVersion())
+                .put("relayVersion", 1)
+                .put("relayEnabled", true)
+                .put("screenshotReceiveEnabled",
+                        prefs.getBoolean("screenshotReceiveEnabled", true))
                 .put("port", HTTP_PORT)
                 .put("state", state)
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
+    }
+
+    private void queueRelayTask(IncomingTask task) throws Exception {
+        File root = new File(getCacheDir(), "relay-queue");
+        if (!root.isDirectory() && !root.mkdirs()) {
+            throw new HttpError(500, "无法创建中转缓存");
+        }
+        File destination = new File(root, task.relay.messageId);
+        deleteRecursively(destination);
+        JSONObject manifest = new JSONObject()
+                .put("text", task.text)
+                .put("messageId", task.relay.messageId)
+                .put("originId", task.relay.originId)
+                .put("destinationId", task.relay.destinationId)
+                .put("previousHopId", task.relay.previousHopId)
+                .put("contentKind", task.relay.contentKind)
+                .put("expiresAt", task.relay.expiresAt)
+                .put("hopLimit", task.relay.hopLimit);
+        JSONArray files = new JSONArray();
+        for (int index = 0; index < task.fileCount; index++) {
+            ReceivedFile file = task.files.get(index);
+            if (file == null) throw new HttpError(409, "中转文件不完整");
+            files.put(new JSONObject()
+                    .put("stored", file.storedName)
+                    .put("name", file.name));
+        }
+        manifest.put("files", files);
+        try (FileOutputStream output = new FileOutputStream(
+                new File(task.dir, "relay.json"), false)) {
+            output.write(manifest.toString().getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            output.getFD().sync();
+        }
+        if (!task.dir.renameTo(destination)) {
+            throw new HttpError(500, "无法保存中转任务");
+        }
+        DiagnosticLog.write(this, "relay_queued",
+                task.relay.messageId + " to=" + task.relay.destinationId);
+        OperationLog.add(this, "截图等待中转", task.relay.destinationId);
+    }
+
+    private void processRelayQueue() {
+        File root = new File(getCacheDir(), "relay-queue");
+        File[] queued = root.listFiles(File::isDirectory);
+        if (queued == null) return;
+        for (File directory : queued) {
+            try {
+                processRelayDirectory(directory);
+            } catch (Exception error) {
+                DiagnosticLog.write(this, "relay_retry_waiting",
+                        directory.getName() + " " + compact(error.getMessage()));
+            }
+        }
+    }
+
+    private void processRelayDirectory(File directory) throws Exception {
+        File manifestFile = new File(directory, "relay.json");
+        if (!manifestFile.isFile()) {
+            deleteRecursively(directory);
+            return;
+        }
+        byte[] bytes;
+        try (FileInputStream input = new FileInputStream(manifestFile)) {
+            bytes = readExact(input, manifestFile.length());
+        }
+        JSONObject manifest = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+        RelayTaskMetadata relay = new RelayTaskMetadata(
+                manifest.optString("messageId", directory.getName()),
+                manifest.optString("originId", ""),
+                manifest.optString("destinationId", ""),
+                manifest.optString("previousHopId", ""),
+                manifest.optString("contentKind", "file"),
+                manifest.optLong("expiresAt", 0),
+                manifest.optInt("hopLimit", 0));
+        if (System.currentTimeMillis() >= relay.expiresAt || relay.hopLimit <= 0) {
+            deleteRecursively(directory);
+            OperationLog.add(this, "中转已过期", relay.destinationId);
+            DiagnosticLog.write(this, "relay_expired", relay.messageId);
+            return;
+        }
+        PeerDevice next = null;
+        for (PeerDevice peer : peers()) {
+            if (peer.id.equals(relay.destinationId)) {
+                next = peer;
+                break;
+            }
+        }
+        if (next == null) {
+            for (PeerDevice peer : peers()) {
+                if (!peer.id.equals(relay.previousHopId)
+                        && !peer.id.equals(relay.originId)) {
+                    next = peer;
+                    break;
+                }
+            }
+        }
+        if (next == null) throw new IllegalStateException("暂时没有下一跳设备");
+        JSONArray records = manifest.getJSONArray("files");
+        ArrayList<File> files = new ArrayList<>();
+        ArrayList<String> names = new ArrayList<>();
+        for (int index = 0; index < records.length(); index++) {
+            JSONObject record = records.getJSONObject(index);
+            File file = new File(directory, record.getString("stored"));
+            if (!file.isFile()) throw new IllegalStateException("中转缓存文件缺失");
+            files.add(file);
+            names.add(record.optString("name", file.getName()));
+        }
+        String currentId = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("deviceId", "");
+        RelayTaskMetadata forwarded = relay.forwardedBy(currentId);
+        PeerDevice finalNext = next;
+        new TransferClient(getContentResolver(), getCacheDir()).sendLocalFiles(
+                finalNext, files, names, manifest.optString("text", ""), forwarded,
+                (percent, text) -> notifyStatus("正在中转截图 " + percent + "%"));
+        deleteRecursively(directory);
+        OperationLog.add(this, "中转发送完成", finalNext.name);
+        DiagnosticLog.write(this, "relay_delivered",
+                relay.messageId + " via=" + finalNext.id);
     }
 
     private static boolean isZip(ReceivedFile file) {
@@ -594,17 +752,57 @@ public final class OnlineService extends Service {
                 || peer == null || !peer.ip.equals(sourceIp)) {
             throw new HttpError(403, "发送设备尚未登记");
         }
+        long now = System.currentTimeMillis();
+        SEEN_CLIPBOARD_MESSAGES.entrySet().removeIf(
+                entry -> entry.getValue() < now - TimeUnit.HOURS.toMillis(1));
+        boolean firstSeen = SEEN_CLIPBOARD_MESSAGES.putIfAbsent(
+                payload.messageId, now) == null;
         SharedClipboardStore store = new SharedClipboardStore(
                 new File(getFilesDir(), "shared-clipboard"));
         int changed = store.merge(payload.items);
         int pruned = store.retainNewestClipboardOnly();
         if (changed > 0 || pruned > 0) {
+            writeNewestClipboardToSystem(store);
             sendBroadcast(new Intent(ACTION_CLIPBOARD_CHANGED).setPackage(getPackageName()));
             new Handler(Looper.getMainLooper()).post(this::refreshClipboardPanelContents);
             DiagnosticLog.write(this, "clipboard_received",
                     "peer=" + payload.senderId + " changed=" + changed + " pruned=" + pruned);
         }
         writeJson(output, 200, new JSONObject().put("changed", changed));
+        if (firstSeen && payload.hopLimit > 0) {
+            requestExecutor.execute(() -> forwardClipboard(payload));
+        }
+    }
+
+    private void writeNewestClipboardToSystem(SharedClipboardStore store) {
+        try {
+            SharedClipboardStore.Item newest = store.newestClipboard();
+            if (newest == null || newest.deleted || newest.text.trim().isEmpty()) return;
+            ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (manager != null) {
+                manager.setPrimaryClip(ClipData.newPlainText("共享剪切板", newest.text));
+            }
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "clipboard_system_write_failed",
+                    compact(error.getMessage()));
+        }
+    }
+
+    private void forwardClipboard(ClipboardSyncPayload.Decoded payload) {
+        String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("deviceId", "");
+        for (PeerDevice candidate : peers()) {
+            if (candidate.id.equals(payload.senderId)
+                    || candidate.id.equals(payload.originId)) continue;
+            try {
+                new TransferClient(getContentResolver(), getCacheDir()).syncClipboard(
+                        candidate, ownId, payload.originId, payload.messageId,
+                        payload.hopLimit - 1, payload.items);
+            } catch (Exception error) {
+                DiagnosticLog.write(this, "clipboard_relay_skipped",
+                        candidate.name + " " + compact(error.getMessage()));
+            }
+        }
     }
 
     private void runDiscoverySession() throws Exception {
@@ -859,14 +1057,13 @@ public final class OnlineService extends Service {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("关闭悬浮球多久？")
                 .setMessage("临时关闭到期会自动恢复；永久关闭后可在相册设置中重新开启。")
-                .setItems(new String[]{"30 秒", "5 分钟", "1 天", "永久关闭"},
+                .setItems(new String[]{"1 分钟", "30 分钟", "永久关闭"},
                         (whichDialog, which) -> {
-                            if (which == 3) pauseClipboardOverlayPermanently();
+                            if (which == 2) pauseClipboardOverlayPermanently();
                             else {
                                 long[] durations = {
-                                        OverlayPausePolicy.THIRTY_SECONDS_MS,
-                                        OverlayPausePolicy.FIVE_MINUTES_MS,
-                                        OverlayPausePolicy.ONE_DAY_MS};
+                                        OverlayPausePolicy.ONE_MINUTE_MS,
+                                        OverlayPausePolicy.THIRTY_MINUTES_MS};
                                 pauseClipboardOverlayFor(durations[which]);
                             }
                         })
@@ -914,10 +1111,12 @@ public final class OnlineService extends Service {
         int minimumHeight = dp(280);
         int maximumWidth = Math.max(minimumWidth, screenWidth() - dp(16));
         int maximumHeight = Math.max(minimumHeight, screenHeight() - dp(32));
+        int defaultWidth = clamp(screenWidth() / 2, minimumWidth, maximumWidth);
+        int defaultHeight = clamp(screenHeight() / 2, minimumHeight, maximumHeight);
         int width = clamp(preferences.getInt("clipboardPanelWidth",
-                Math.min(dp(390), maximumWidth)), minimumWidth, maximumWidth);
+                defaultWidth), minimumWidth, maximumWidth);
         int height = clamp(preferences.getInt("clipboardPanelHeight",
-                Math.min(dp(470), maximumHeight)), minimumHeight, maximumHeight);
+                defaultHeight), minimumHeight, maximumHeight);
 
         FrameLayout shell = new FrameLayout(this);
         GradientDrawable panelBackground = new GradientDrawable();
@@ -1008,14 +1207,22 @@ public final class OnlineService extends Service {
         clipboardPanelParams = new WindowManager.LayoutParams(width, height,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         clipboardPanelParams.gravity = Gravity.START | Gravity.TOP;
         clipboardPanelParams.x = clamp(preferences.getInt("clipboardPanelX",
-                Math.max(dp(8), screenWidth() - width - dp(12))),
+                Math.max(0, (screenWidth() - width) / 2)),
                 0, Math.max(0, screenWidth() - width));
         clipboardPanelParams.y = clamp(preferences.getInt("clipboardPanelY",
-                screenHeight() / 4), 0, Math.max(0, screenHeight() - height));
+                dp(8)), 0, Math.max(0, screenHeight() - height));
+        shell.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
+                removeClipboardPanel();
+                return true;
+            }
+            return false;
+        });
 
         header.setOnTouchListener(new View.OnTouchListener() {
             float rawX;
@@ -1329,7 +1536,6 @@ public final class OnlineService extends Service {
         stopScreenshotObserver();
         SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         if (!preferences.getBoolean("screenshotSyncEnabled", false)
-                || preferences.getString("screenshotTargetPeerId", "").isEmpty()
                 || !hasScreenshotPermission()) {
             return;
         }
@@ -1411,24 +1617,30 @@ public final class OnlineService extends Service {
         SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         String peerId = preferences.getString("screenshotTargetPeerId", "");
         String peerName = preferences.getString("screenshotTargetPeerName", "主设备");
-        if (peerId.isEmpty()) return;
+        boolean autoSend = preferences.getBoolean("screenshotAutoSendEnabled", true);
+        if (peerId.isEmpty() || !autoSend) {
+            preferences.edit().putString("pendingScreenshotUri", uri.toString()).apply();
+            PendingIntent open = PendingIntent.getActivity(
+                    this, 43, new Intent(this, ClipboardActivity.class)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Notification pending = new Notification.Builder(this, SCREENSHOT_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_menu_camera)
+                    .setContentTitle("发现一张新截图")
+                    .setContentText("打开相册选择要发送到的设备")
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .build();
+            getSystemService(NotificationManager.class)
+                    .notify(ScreenshotSendReceiver.NOTIFICATION_ID, pending);
+            return;
+        }
         Intent send = new Intent(this, ScreenshotSendReceiver.class)
                 .setAction(ScreenshotSendReceiver.ACTION_SEND)
                 .putExtra(ScreenshotSendReceiver.EXTRA_URI, uri.toString())
                 .putExtra(ScreenshotSendReceiver.EXTRA_PEER_ID, peerId);
-        PendingIntent action = PendingIntent.getBroadcast(
-                this, 42, send,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification notification = new Notification.Builder(this, SCREENSHOT_CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("发送刚才的截图？")
-                .setContentText("发送到“" + peerName + "”")
-                .addAction(new Notification.Action.Builder(
-                        null, "发送", action).build())
-                .setAutoCancel(true)
-                .build();
-        getSystemService(NotificationManager.class)
-                .notify(ScreenshotSendReceiver.NOTIFICATION_ID, notification);
+        sendBroadcast(send);
+        DiagnosticLog.write(this, "screenshot_auto_send", peerName);
     }
 
     private int dp(int value) {
@@ -1654,17 +1866,19 @@ public final class OnlineService extends Service {
         final int fileCount;
         final File dir;
         final long startedAtMs;
+        final RelayTaskMetadata relay;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
 
         IncomingTask(
                 String id, String text, boolean autoShare, int fileCount,
-                File dir, long startedAtMs) {
+                File dir, long startedAtMs, RelayTaskMetadata relay) {
             this.id = id;
             this.text = text;
             this.autoShare = autoShare;
             this.fileCount = fileCount;
             this.dir = dir;
             this.startedAtMs = startedAtMs;
+            this.relay = relay;
         }
     }
 

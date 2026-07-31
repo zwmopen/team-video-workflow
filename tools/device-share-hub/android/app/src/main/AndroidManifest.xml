@@ -37,6 +37,12 @@
             android:theme="@style/AppTheme" />
 
         <activity
+            android:name=".UpdateInstallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
             android:name=".ClipboardActivity"
             android:exported="false"
             android:theme="@style/AppTheme" />

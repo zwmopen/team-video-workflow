@@ -25,6 +25,7 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
     }()
 
     func send(_ items: [OutgoingItem], to peer: TransferPeer, progress: @escaping Progress,
+              relay: RelayTaskInfo? = nil,
               completion: @escaping (Result<Void, Error>) -> Void) {
         queue.async {
             do {
@@ -35,7 +36,11 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
                 if self.totalBytes <= 0 { self.totalBytes = 1 }
                 self.completedBytes = 0
                 let taskID = "ios-\(UUID().uuidString.lowercased())"
-                let json = try JSONSerialization.data(withJSONObject: ["taskId": taskID, "text": "", "fileCount": items.count])
+                var taskObject: [String: Any] = [
+                    "taskId": taskID, "text": "", "fileCount": items.count
+                ]
+                relay?.add(to: &taskObject)
+                let json = try JSONSerialization.data(withJSONObject: taskObject)
                 try self.perform(peer: peer, method: "POST", path: "/v2/tasks", body: json, file: nil,
                                  headers: ["Content-Type": "application/json"])
                 do {

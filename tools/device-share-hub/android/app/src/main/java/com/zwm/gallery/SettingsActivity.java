@@ -127,13 +127,34 @@ public final class SettingsActivity extends Activity {
                 changeClipboardOverlay(enabled));
         root.addView(overlaySwitch, settingMargins(dp(10)));
         Switch screenshotSwitch = settingSwitch(
-                "截图发送提醒",
-                "截图后询问是否发送到共享剪切板里设置的主设备",
+                "自动识别新截图",
+                "识别系统相册里的新截图；关闭后不读取也不发送",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
                         .getBoolean("screenshotSyncEnabled", false));
         screenshotSwitch.setOnCheckedChangeListener((button, enabled) ->
                 changeScreenshotSync(enabled));
         root.addView(screenshotSwitch, settingMargins(dp(20)));
+        Switch screenshotAutoSwitch = settingSwitch(
+                "自动发送到主设备",
+                "已设置主设备时直接发送；关闭后进入相册再逐张选择",
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                        .getBoolean("screenshotAutoSendEnabled", true));
+        screenshotAutoSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean("screenshotAutoSendEnabled", enabled).apply();
+            startService(new Intent(this, OnlineService.class)
+                    .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
+        });
+        root.addView(screenshotAutoSwitch, settingMargins(dp(10)));
+        Switch screenshotReceiveSwitch = settingSwitch(
+                "允许作为主设备接收",
+                "关闭后拒绝其他设备自动发送的截图，普通文件传送不受影响",
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                        .getBoolean("screenshotReceiveEnabled", true));
+        screenshotReceiveSwitch.setOnCheckedChangeListener((button, enabled) ->
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putBoolean("screenshotReceiveEnabled", enabled).apply());
+        root.addView(screenshotReceiveSwitch, settingMargins(dp(20)));
 
         root.addView(label("软件"));
         Switch autoUpdateSwitch = settingSwitch(
@@ -262,10 +283,6 @@ public final class SettingsActivity extends Activity {
         }
         String target = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString("screenshotTargetPeerId", "");
-        if (target.isEmpty()) {
-            toast("请先到共享剪切板选择截图接收设备");
-            startActivity(new Intent(this, ClipboardActivity.class));
-        }
         String permission = Build.VERSION.SDK_INT >= 33
                 ? Manifest.permission.READ_MEDIA_IMAGES
                 : Manifest.permission.READ_EXTERNAL_STORAGE;

@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -116,6 +117,7 @@ HFONT gTitleFont = nullptr;
 std::mutex gDeviceMutex;
 std::mutex gLogMutex;
 std::mutex gPreferenceMutex;
+std::mutex gClipboardMutex;
 std::map<std::wstring, Device> gDevices;
 std::map<std::wstring, std::wstring> gDeviceRemarks;
 std::vector<Device> gDisplayedDevices;
@@ -125,6 +127,7 @@ std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
 std::atomic<bool> gUsbRefreshRequested{false};
 std::atomic<bool> gArchiveInProgress{false};
+std::atomic<bool> gClipboardSyncInProgress{false};
 std::thread gDiscoveryThread;
 std::thread gReceiverThread;
 std::thread gUsbDiscoveryThread;
@@ -137,6 +140,8 @@ std::filesystem::path gChannelPreferencePath;
 std::unique_ptr<ContentStore> gContentStore;
 std::map<std::wstring, UsbPeer> gUsbPeers;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
+std::wstring gLastClipboardText;
+std::map<std::string, std::chrono::steady_clock::time_point> gSeenClipboardMessages;
 HWND gLibraryList = nullptr;
 HWND gLibraryPathLabel = nullptr;
 HWND gLibraryTitle = nullptr;
@@ -997,10 +1002,12 @@ public:
     }
 
     void PutFile(const std::wstring& path, const std::filesystem::path& file, const std::wstring& mime, const std::wstring& sha256,
-                 const std::function<void(uintmax_t, uintmax_t)>& onProgress) {
+                 const std::function<void(uintmax_t, uintmax_t)>& onProgress,
+                 const std::wstring& advertisedName = L"") {
         uintmax_t size64 = std::filesystem::file_size(file);
         if (size64 > 0xFFFFFFFFull) throw std::runtime_error("单个文件暂不支持超过 4GB");
-        std::wstring encodedName = Utf8ToWide(PercentEncodeUtf8(file.filename().wstring()));
+        std::wstring encodedName = Utf8ToWide(PercentEncodeUtf8(
+            advertisedName.empty() ? file.filename().wstring() : advertisedName));
         std::wstring headers = L"Content-Type: application/octet-stream\r\n"
             L"Expect:\r\n"
             L"X-File-Name: " + encodedName + L"\r\n"
@@ -1103,6 +1110,168 @@ private:
         return text;
     }
 };
+
+bool RelayIncomingToNext(const RelayIncomingTask& task, std::wstring& failure) {
+    Device next;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(gDeviceMutex);
+        auto direct = gDevices.find(Utf8ToWide(task.destinationId));
+        if (direct != gDevices.end() && !direct->second.ip.empty() && direct->second.wifiAllowed) {
+            next = direct->second; found = true;
+        } else {
+            for (const auto& [id, candidate] : gDevices) {
+                std::string rawId = WideToUtf8(id);
+                if (rawId == task.previousHopId || rawId == task.originId
+                    || candidate.ip.empty() || !candidate.wifiAllowed) continue;
+                next = candidate; found = true; break;
+            }
+        }
+    }
+    if (!found) { failure = L"暂时没有可用的下一跳设备"; return false; }
+    try {
+        std::wstring taskId = NewTaskId();
+        HttpClient client(next.ip, next.port);
+        std::ostringstream json;
+        json << "{\"taskId\":\"" << WideToUtf8(taskId)
+             << "\",\"text\":\"\",\"fileCount\":" << task.files.size()
+             << ",\"messageId\":\"" << task.messageId
+             << "\",\"originId\":\"" << task.originId
+             << "\",\"destinationId\":\"" << task.destinationId
+             << "\",\"previousHopId\":\"" << WindowsDeviceId()
+             << "\",\"senderId\":\"" << WindowsDeviceId()
+             << "\",\"contentKind\":\"" << task.contentKind
+             << "\",\"expiresAt\":" << task.expiresAt
+             << ",\"hopLimit\":" << std::max(0, task.hopLimit - 1) << "}";
+        client.PostJson(L"/v2/tasks", json.str());
+        for (size_t index = 0; index < task.files.size(); ++index) {
+            const auto& item = task.files[index];
+            std::wstring route = L"/v2/tasks/" + taskId + L"/files/" + std::to_wstring(index);
+            client.PutFile(route, item.path, MimeForPath(item.path), Sha256File(item.path),
+                           nullptr, item.name);
+        }
+        client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
+        return true;
+    } catch (const std::exception& error) {
+        failure = Utf8ToWide(error.what());
+        return false;
+    }
+}
+
+std::string JsonValue(const std::string& json, const std::string& key) {
+    auto start = json.find('"' + key + '"'); if (start == std::string::npos) return {};
+    start = json.find(':', start); if (start == std::string::npos) return {};
+    start = json.find('"', start); if (start == std::string::npos) return {};
+    std::string result;
+    for (size_t i = start + 1; i < json.size(); ++i) {
+        char c = json[i];
+        if (c == '"' && (i == 0 || json[i - 1] != '\\')) break;
+        if (c == '\\' && i + 1 < json.size()) {
+            char escaped = json[++i];
+            if (escaped == 'n') result.push_back('\n');
+            else if (escaped == 'r') result.push_back('\r');
+            else if (escaped == 't') result.push_back('\t');
+            else result.push_back(escaped);
+        } else result.push_back(c);
+    }
+    return result;
+}
+
+int JsonNumber(const std::string& json, const std::string& key, int fallback) {
+    auto start = json.find('"' + key + '"'); if (start == std::string::npos) return fallback;
+    start = json.find(':', start); if (start == std::string::npos) return fallback;
+    return std::atoi(json.c_str() + start + 1);
+}
+
+std::wstring ReadWindowsClipboard() {
+    if (!OpenClipboard(gWindow)) return {};
+    HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+    if (!handle) { CloseClipboard(); return {}; }
+    const wchar_t* value = static_cast<const wchar_t*>(GlobalLock(handle));
+    std::wstring result = value ? value : L"";
+    if (value) GlobalUnlock(handle);
+    CloseClipboard();
+    return result;
+}
+
+void WriteWindowsClipboard(const std::wstring& text) {
+    if (text.empty() || !OpenClipboard(gWindow)) return;
+    EmptyClipboard();
+    SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (memory) {
+        void* target = GlobalLock(memory);
+        memcpy(target, text.c_str(), bytes);
+        GlobalUnlock(memory);
+        if (!SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
+    }
+    CloseClipboard();
+}
+
+void BroadcastClipboardText(const std::wstring& text, const std::string& messageId,
+                            const std::string& originId, int hopLimit,
+                            const std::set<std::string>& excluded) {
+    if (text.empty() || hopLimit < 0) return;
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::ostringstream json;
+    json << "{\"senderId\":\"" << WindowsDeviceId() << "\",\"originId\":\""
+         << originId << "\",\"messageId\":\"" << messageId << "\",\"hopLimit\":"
+         << hopLimit << ",\"items\":[{\"id\":\"" << messageId
+         << "\",\"kind\":\"clipboard\",\"text\":\"" << JsonEscape(text)
+         << "\",\"updatedAt\":" << timestamp << ",\"deleted\":false}]}";
+    std::vector<Device> peers;
+    {
+        std::lock_guard<std::mutex> lock(gDeviceMutex);
+        for (const auto& [id, device] : gDevices) {
+            if (!device.ip.empty() && device.wifiAllowed
+                && !excluded.count(WideToUtf8(id))) peers.push_back(device);
+        }
+    }
+    for (const auto& peer : peers) {
+        try { HttpClient(peer.ip, peer.port).PostJson(L"/v2/clipboard", json.str()); }
+        catch (...) { }
+    }
+}
+
+void HandleClipboardFromPeer(const std::string& json) {
+    std::string messageId = JsonValue(json, "messageId");
+    std::string senderId = JsonValue(json, "senderId");
+    std::string originId = JsonValue(json, "originId");
+    std::wstring text = Utf8ToWide(JsonValue(json, "text"));
+    int hopLimit = JsonNumber(json, "hopLimit", 0);
+    if (messageId.empty() || text.empty()) return;
+    {
+        std::lock_guard<std::mutex> lock(gClipboardMutex);
+        auto cutoff = std::chrono::steady_clock::now() - std::chrono::hours(1);
+        for (auto it = gSeenClipboardMessages.begin(); it != gSeenClipboardMessages.end();) {
+            if (it->second < cutoff) it = gSeenClipboardMessages.erase(it); else ++it;
+        }
+        if (gSeenClipboardMessages.count(messageId)) return;
+        gSeenClipboardMessages[messageId] = std::chrono::steady_clock::now();
+        gLastClipboardText = text;
+    }
+    WriteWindowsClipboard(text);
+    if (hopLimit > 0) {
+        BroadcastClipboardText(text, messageId,
+            originId.empty() ? senderId : originId, hopLimit - 1,
+            {senderId, originId});
+    }
+}
+
+void SyncWindowsClipboard() {
+    std::wstring text = ReadWindowsClipboard();
+    if (text.empty()) return;
+    std::string messageId;
+    {
+        std::lock_guard<std::mutex> lock(gClipboardMutex);
+        if (text == gLastClipboardText) return;
+        gLastClipboardText = text;
+        messageId = "windows-clip-" + std::to_string(GetTickCount64());
+        gSeenClipboardMessages[messageId] = std::chrono::steady_clock::now();
+    }
+    BroadcastClipboardText(text, messageId, WindowsDeviceId(), 4, {});
+}
 
 void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption) {
     std::wstring taskId = NewTaskId();
@@ -2026,7 +2195,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.1.1", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.1.2", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可以把任意文件或文件夹直接拖到设备卡片。",
@@ -2090,7 +2259,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
             gUsbDiscoveryThread = std::thread(UsbDiscoveryLoop);
-            gReceiverThread = std::thread([] { RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog); });
+            gReceiverThread = std::thread([] {
+                RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog,
+                               WindowsDeviceId(), RelayIncomingToNext,
+                               HandleClipboardFromPeer);
+            });
             SetTimer(window, 1, 2500, nullptr);
             return 0;
         }
@@ -2200,6 +2373,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         case WM_TIMER:
             RefreshDeviceList();
+            if (!gClipboardSyncInProgress.exchange(true)) {
+                std::thread([] {
+                    SyncWindowsClipboard();
+                    gClipboardSyncInProgress = false;
+                }).detach();
+            }
             return 0;
         case WM_DESTROY:
             gRunning = false;
@@ -2250,7 +2429,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.1.1",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.1.2",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

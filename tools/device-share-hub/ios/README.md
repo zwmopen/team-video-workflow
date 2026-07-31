@@ -1,23 +1,23 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.4.3
+版本：0.5.3 / build 22
 
-状态：可安装使用，真机记录见下文
+状态：候选版本；云端构建和当前轮次真机记录见维护交接
 
-0.4.3 继续用同一个安装包覆盖 iOS 12 及以上：iPhone 6 使用应用自己的固定作品库，并可从空作品页或设置页导入文件、标准 ZIP；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。作为接收端时请让“相册”留在前台；声音通知和震动提醒可以在设置中分别开关，默认均关闭。
+0.5.3 继续用同一个安装包覆盖 iOS 12 及以上：iPhone 6 使用应用自己的固定作品库，并可从空作品页或设置页导入文件、标准 ZIP；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用在前台时可同步最新剪切板并承担局域网中转；离开前台后不承诺持续在线，重新进入后继续未过期队列。
 
 这是现有“素材投送中控”的 iPhone 客户端，不是另一个项目。它提供递归作品列表、复制文案、多图系统分享、打开分享次数、次日回收和回收站保留 7 天。
 
 ## 下载构建产物
 
-每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.4.3` artifact，解压得到：
+每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载 `album-ios-altstore-v0.5.3` artifact，解压得到：
 
-- `album-iOS-v0.4.3-altstore.ipa`
-- `album-iOS-v0.4.3-altstore.ipa.sha256`
+- `album-iOS-v0.5.3-altstore.ipa`
+- `album-iOS-v0.5.3-altstore.ipa.sha256`
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-0.4.3 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；实体检查完成后再创建正式 GitHub Release。
+0.5.3 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；实体检查完成后再创建正式 GitHub Release。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 

@@ -19,7 +19,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 7 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, library.supportsExternalFolderSelection ? 4 : 3, 3, 2, 2, 1, 5][section]
+        return [3, library.supportsExternalFolderSelection ? 4 : 3, 3, 2, 2, 2, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -87,12 +87,21 @@ final class SettingsViewController: UITableViewController {
         case (5, 0):
             cell.textLabel?.text = "素材与记录只保存在所选文件夹，不上传服务器，也不修改图片拍摄信息。"
             cell.textLabel?.textColor = AppColors.secondaryText
+        case (5, 1):
+            cell.textLabel?.text = "允许作为主设备接收"
+            cell.detailTextLabel?.text = "允许其他设备自动发送截图"
+            let toggle = UISwitch()
+            toggle.isOn = UserDefaults.standard.object(
+                forKey: "album.screenshotReceiveEnabled") as? Bool ?? true
+            toggle.addTarget(self, action: #selector(
+                screenshotReceiveSwitchChanged(_:)), for: .valueChanged)
+            cell.accessoryView = toggle
         case (6, 0):
             cell.textLabel?.text = "名称"
             cell.detailTextLabel?.text = "相册"
         case (6, 1):
             cell.textLabel?.text = "版本"
-            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.2"
+            cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.3"
         case (6, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
@@ -166,6 +175,10 @@ final class SettingsViewController: UITableViewController {
     @objc private func vibrationSwitchChanged(_ sender: UISwitch) {
         NotificationPreferences.vibrationEnabled = sender.isOn
         if sender.isOn { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
+    }
+
+    @objc private func screenshotReceiveSwitchChanged(_ sender: UISwitch) {
+        UserDefaults.standard.set(sender.isOn, forKey: "album.screenshotReceiveEnabled")
     }
 
     private func showAbout() {

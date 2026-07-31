@@ -34,14 +34,26 @@ public final class ScreenshotSendReceiver extends BroadcastReceiver {
                         break;
                     }
                 }
-                if (target == null) throw new IllegalStateException("接收设备当前不在线");
                 PeerDevice finalTarget = target;
+                if (finalTarget == null) {
+                    for (PeerDevice peer : OnlineService.peers()) {
+                        if (!peer.id.equals(peerId)) {
+                            finalTarget = peer;
+                            break;
+                        }
+                    }
+                }
+                if (finalTarget == null) throw new IllegalStateException("没有可用的直连或中转设备");
+                PeerDevice chosenTarget = finalTarget;
+                String ownId = app.getSharedPreferences("device_share", Context.MODE_PRIVATE)
+                        .getString("deviceId", "");
+                RelayTaskMetadata relay = RelayTaskMetadata.screenshot(ownId, peerId);
                 new TransferClient(app.getContentResolver(), app.getCacheDir())
-                        .sendFiles(finalTarget, Collections.singletonList(Uri.parse(uriValue)),
-                                "", false, (percent, text) -> notifyResult(
-                                        app, "截图发送中 " + percent + "%", finalTarget.name, true));
-                OperationLog.add(app, "截图发送完成", finalTarget.name);
-                notifyResult(app, "截图已发送", finalTarget.name, false);
+                        .sendFiles(chosenTarget, Collections.singletonList(Uri.parse(uriValue)),
+                                "", false, relay, (percent, text) -> notifyResult(
+                                        app, "截图发送中 " + percent + "%", chosenTarget.name, true));
+                OperationLog.add(app, "截图发送完成", chosenTarget.name);
+                notifyResult(app, "截图已发送", chosenTarget.name, false);
             } catch (Exception error) {
                 String message = error.getMessage() == null ? "未知错误" : error.getMessage();
                 OperationLog.add(app, "截图发送失败", message);

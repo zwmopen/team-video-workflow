@@ -41,13 +41,26 @@ Content-Type: application/json
   "taskId": "task-...",
   "text": "可选文案",
   "autoShare": false,
-  "fileCount": 8
+  "fileCount": 8,
+  "messageId": "msg-...",
+  "originId": "android-...",
+  "destinationId": "windows-...",
+  "contentKind": "screenshot",
+  "expiresAt": 1785315600000,
+  "hopLimit": 4
 }
 ```
 
 `autoShare` 是可选布尔值，缺省为 `false`。普通文件、文件夹和截图传送必须为
 `false`，接收端只落盘；Android 系统分享目标收到“图片＋文字”时可设为 `true`，
 接收端完成真实文件夹导入后才进入分享准备。旧客户端不发送该字段时行为保持安全。
+
+`messageId`、`originId`、`destinationId`、`contentKind`、`expiresAt` 和
+`hopLimit` 均为可选中转字段。没有这些字段时仍按旧版直接传送；存在最终目标且当前
+设备不是目标时，可信新版客户端把完整任务保存为 `queued`，返回 HTTP `202`，再选择
+直连目标或下一台新版可信设备转发。每次转发减少 `hopLimit`，同一 `messageId`
+只处理一次；任务在最终目标确认接收、超过 `expiresAt` 或一小时后删除中转副本。
+旧客户端可以继续发现和直传，但不能承担多级中转。
 
 ### 2. 上传文件
 
@@ -79,6 +92,9 @@ Content-Type: application/json
 
 {
   "senderId": "android-...",
+  "originId": "android-...",
+  "messageId": "clipboard-uuid",
+  "hopLimit": 4,
   "items": [
     {
       "id": "android-...-uuid",
@@ -95,6 +111,10 @@ Content-Type: application/json
 `updatedAt` 后写优先合并。接收端只接受当前局域网来源 IP 与已登记设备一致的请求。
 这仍是可信局域网便利机制，不等同于远程模式的密码学身份认证。
 
+新版实时剪切只保留最新一条，使用 `messageId + originId` 在一小时窗口内去重；
+需要中转时逐跳减少 `hopLimit`。Android 可把收到的最新值写入系统剪切板，iPhone
+仅在前台读写，Windows 使用桌面剪切板；固定常用语仍按条目 ID 同步增删改。
+
 ### 4. 取消失败任务
 
 ```http
@@ -110,7 +130,9 @@ POST /v2/tasks/{taskId}/cancel
 - `ready`：兼容旧版客户端的保留状态；V3 正常提交后直接回到 `online`。
 - `sharing`：兼容旧版客户端的保留状态；V3 分享操作不阻塞继续接收。
 
-`GET /v2/info` 在手机端同时返回 `workCount`。扩展字段均为可选，旧客户端忽略尾部发现字段仍可继续发现和传送。
+`GET /v2/info` 在手机端同时返回 `workCount`。新版还可返回
+`relayVersion`、`relayEnabled` 和 `screenshotReceiveEnabled`；扩展字段均为可选，
+旧客户端忽略未知字段仍可继续发现和直接传送。
 
 ## 安全边界
 

@@ -12,6 +12,7 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -25,6 +26,7 @@ final class UpdateChecker {
     static final String PREF_PENDING_DOWNLOAD_VERSION = "pendingUpdateDownloadVersion";
     static final String PREF_READY_DOWNLOAD_ID = "readyUpdateDownloadId";
     static final String PREF_READY_DOWNLOAD_VERSION = "readyUpdateDownloadVersion";
+    static final String PREF_READY_FILE_NAME = "readyUpdateFileName";
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
     static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
@@ -47,9 +49,11 @@ final class UpdateChecker {
         String readyVersion = prefs.getString(PREF_READY_DOWNLOAD_VERSION, "");
         if (!readyVersion.isEmpty() && !isNewer(readyVersion, currentVersion(activity))) {
             removeTrackedDownload(activity, prefs.getLong(PREF_READY_DOWNLOAD_ID, -1L));
+            removeReadyFile(activity, prefs.getString(PREF_READY_FILE_NAME, ""));
             prefs.edit()
                     .remove(PREF_READY_DOWNLOAD_ID)
                     .remove(PREF_READY_DOWNLOAD_VERSION)
+                    .remove(PREF_READY_FILE_NAME)
                     .apply();
         }
         if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
@@ -171,12 +175,14 @@ final class UpdateChecker {
 
             if (pendingId >= 0) manager.remove(pendingId);
             if (readyId >= 0 && readyId != pendingId) manager.remove(readyId);
+            removeReadyFile(activity, preferences.getString(PREF_READY_FILE_NAME, ""));
             preferences.edit()
                     .remove(PREF_PENDING_DOWNLOAD_ID)
                     .remove(PREF_PENDING_DOWNLOAD_SHA256)
                     .remove(PREF_PENDING_DOWNLOAD_VERSION)
                     .remove(PREF_READY_DOWNLOAD_ID)
                     .remove(PREF_READY_DOWNLOAD_VERSION)
+                    .remove(PREF_READY_FILE_NAME)
                     .commit();
 
             DownloadManager.Request request = new DownloadManager.Request(uri)
@@ -187,8 +193,7 @@ final class UpdateChecker {
                             Environment.DIRECTORY_DOWNLOADS, updateFileName(version))
                     .setAllowedOverMetered(true)
                     .setAllowedOverRoaming(false)
-                    .setNotificationVisibility(
-                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
             long downloadId = manager.enqueue(request);
             boolean stored = preferences.edit()
                     .putLong(PREF_PENDING_DOWNLOAD_ID, downloadId)
@@ -241,7 +246,7 @@ final class UpdateChecker {
 
     static String downloadStatusMessage(int status) {
         return status == DownloadManager.STATUS_SUCCESSFUL
-                ? "安装包已经下载，点系统通知即可安装"
+                ? "安装包已经验证，点相册更新通知即可安装"
                 : "更新包正在系统下载，请查看通知进度";
     }
 
@@ -250,6 +255,14 @@ final class UpdateChecker {
         DownloadManager manager =
                 (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
         if (manager != null) manager.remove(downloadId);
+    }
+
+    private static void removeReadyFile(Activity activity, String fileName) {
+        if (fileName == null || !fileName.matches("[A-Za-z0-9._-]+\\.apk")) return;
+        File file = new File(new File(activity.getFilesDir(), "updates"), fileName);
+        if (file.isFile() && !file.delete()) {
+            DiagnosticLog.write(activity, "update_old_file_delete_failed", fileName);
+        }
     }
 
     static boolean isNewer(String candidate, String current) {
@@ -268,7 +281,7 @@ final class UpdateChecker {
         String safeVersion = version == null ? "" :
                 version.trim().replaceAll("[^0-9A-Za-z._-]", "_");
         if (safeVersion.isEmpty()) safeVersion = "latest";
-        return "相册-Android-" + safeVersion + ".apk";
+        return "album-Android-" + safeVersion + ".apk";
     }
 
     private static int number(String value) {

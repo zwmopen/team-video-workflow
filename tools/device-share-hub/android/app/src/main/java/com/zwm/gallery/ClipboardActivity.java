@@ -73,6 +73,7 @@ public final class ClipboardActivity extends Activity {
         }
         receiverRegistered = true;
         render();
+        getWindow().getDecorView().post(this::promptPendingScreenshot);
     }
 
     @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
@@ -379,11 +380,43 @@ public final class ClipboardActivity extends Activity {
                             .putString("screenshotTargetPeerId", peer.id)
                             .putString("screenshotTargetPeerName", peer.name)
                             .putBoolean("screenshotSyncEnabled", true)
+                            .putBoolean("screenshotAutoSendEnabled", true)
                             .apply();
                     screenshotTarget.setText(screenshotTargetText());
                     ensureScreenshotPermission();
                     toast("截图提醒将发送到“" + peer.name + "”");
                 })
+                .show();
+    }
+
+    private void promptPendingScreenshot() {
+        String uri = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("pendingScreenshotUri", "");
+        if (uri.isEmpty() || isFinishing()) return;
+        List<PeerDevice> peers = OnlineService.peers();
+        if (peers.isEmpty()) {
+            status.setText("有一张截图待发送；暂无在线设备");
+            return;
+        }
+        String[] names = new String[peers.size()];
+        for (int index = 0; index < peers.size(); index++) {
+            names[index] = peers.get(index).name + " · " + peers.get(index).model;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("发送刚才的截图")
+                .setItems(names, (dialog, which) -> {
+                    PeerDevice peer = peers.get(which);
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .remove("pendingScreenshotUri").apply();
+                    sendBroadcast(new Intent(this, ScreenshotSendReceiver.class)
+                            .setAction(ScreenshotSendReceiver.ACTION_SEND)
+                            .putExtra(ScreenshotSendReceiver.EXTRA_URI, uri)
+                            .putExtra(ScreenshotSendReceiver.EXTRA_PEER_ID, peer.id));
+                })
+                .setNegativeButton("暂不发送", null)
+                .setNeutralButton("忽略这张", (dialog, which) ->
+                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                .remove("pendingScreenshotUri").apply())
                 .show();
     }
 
