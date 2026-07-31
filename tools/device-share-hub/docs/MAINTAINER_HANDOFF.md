@@ -8,7 +8,10 @@
 - Android 更新副本改为纯英文 `.apk` 文件名，完成下载后依次检查 SHA-256、APK 可解析性、包名、版本号和签名；验证前不显示安装入口，失败副本删除并允许重新下载。
 - 本机 Android 20 个测试套件共 64 项测试通过，Release APK 构建和 Release Lint 通过。候选包为 versionName 0.6.4/versionCode 42，797426 字节，v2 签名证书 SHA-256 仍为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，不含 `REQUEST_INSTALL_PACKAGES` 和 Debug 标志。
 - 当前 Windows 没有本地 C++ 工具链，iPhone 也不能在 Windows 编译；两端必须以本次源码提交的 GitHub macOS/Windows 构建结果作为候选包证据。
-- 当前没有可见的红米 ADB 和 iPhone 数据线连接。红米 0.6.3 应用内升级、华为文件/回收站、iPhone 前台剪切板与中转、多级热点拓扑均不得在设备接入前标记真机通过。
+- 功能源码提交为 `201e449`。主账号 run `30613630387` 和第一备用 run `30613700017` 均在执行步骤前被账单/额度拦截；第二备用 run [`30613740118`](https://github.com/idmzwm-sys/team-video-workflow-build/actions/runs/30613740118) 的 Windows 编译与测试、Android 64 项单元测试/Release/Lint、iPhone 模拟器测试和真机 SDK 构建、远程服务闭环全部通过。
+- 公开 Release 为 [`gallery-updates v0.6.4`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.4)，包含 APK、IPA、Windows EXE、显式源码 ZIP 和校验清单。更新索引提交 `9759a9c` 已指向 Android 0.6.4/code 42；从公网重新下载的 APK 为 797334 字节，SHA-256 `11F1BF88DE778734A7DB478466930D62F91BE0C62D0AC7F2DEA07E884F3043B9`，与索引一致。
+- iPhone 数据线已重新识别，侧载后设备应用清单确认 `0.5.3`、build 22、最低 iOS 12.0 且描述文件已验证。该证据只证明签名覆盖安装成功；前台剪切板、中转、截图拒收和业务数据保留仍需在屏幕上逐项操作后记录。
+- 当前没有可见的红米 ADB。红米 0.6.3 应用内升级、华为文件/回收站和多级热点拓扑均不得在设备接入前标记真机通过。
 
 ## 2026-07-30 Android 0.6.3 长剪切折叠与统一滚动
 
