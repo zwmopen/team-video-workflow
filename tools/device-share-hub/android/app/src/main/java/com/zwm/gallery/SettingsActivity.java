@@ -19,6 +19,10 @@ import android.content.pm.PackageManager;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
@@ -456,11 +460,21 @@ public final class SettingsActivity extends Activity {
     }
     private Switch settingSwitch(String title, String detail, boolean checked) {
         Switch value = new Switch(this);
-        value.setText(title + "\n" + detail);
-        value.setTextSize(15);
+        String content = title + "\n" + detail;
+        SpannableString styled = new SpannableString(content);
+        int detailStart = title.length() + 1;
+        styled.setSpan(new RelativeSizeSpan(0.78f), detailStart, content.length(),
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        styled.setSpan(new ForegroundColorSpan(Color.rgb(115, 115, 111)),
+                detailStart, content.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        value.setText(styled);
+        value.setTextSize(16);
         value.setTextColor(Color.rgb(35, 35, 33));
         value.setChecked(checked);
-        value.setPadding(dp(14), dp(9), dp(14), dp(9));
+        value.setGravity(Gravity.CENTER_VERTICAL);
+        value.setLineSpacing(dp(2), 1f);
+        value.setMinHeight(dp(78));
+        value.setPadding(dp(14), dp(10), dp(14), dp(10));
         value.setBackground(round(Color.WHITE, 14));
         return value;
     }
@@ -468,7 +482,7 @@ public final class SettingsActivity extends Activity {
     private Button button(String value, boolean primary) { Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(15); b.setTextColor(primary ? Color.WHITE : Color.rgb(45, 45, 42)); b.setBackground(round(primary ? Color.rgb(54, 105, 72) : Color.rgb(232, 230, 225), 14)); b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); return b; }
     private GradientDrawable round(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
     private LinearLayout.LayoutParams margins(int left, int top, int right, int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(48)); p.setMargins(left, top, right, bottom); return p; }
-    private LinearLayout.LayoutParams settingMargins(int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(66)); p.setMargins(0, 0, 0, bottom); return p; }
+    private LinearLayout.LayoutParams settingMargins(int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.setMargins(0, 0, 0, bottom); return p; }
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }
