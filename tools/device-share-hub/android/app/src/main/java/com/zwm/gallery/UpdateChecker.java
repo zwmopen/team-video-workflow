@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
@@ -57,7 +58,8 @@ final class UpdateChecker {
                     .apply();
         }
         if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
-        check(activity, true);
+        if (!readyVersion.isEmpty() && isNewer(readyVersion, currentVersion(activity))) return;
+        check(activity, false);
     }
 
     static void check(Activity activity, boolean silent) {
@@ -101,6 +103,29 @@ final class UpdateChecker {
                 .show();
     }
 
+    static boolean showReadyInstallPrompt(Activity activity) {
+        android.content.SharedPreferences preferences =
+                activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
+        String version = preferences.getString(PREF_READY_DOWNLOAD_VERSION, "");
+        String fileName = preferences.getString(PREF_READY_FILE_NAME, "");
+        if (!isNewer(version, currentVersion(activity))
+                || fileName == null
+                || !fileName.matches("[A-Za-z0-9._-]+\\.apk")) return false;
+        File file = new File(new File(activity.getFilesDir(), "updates"), fileName);
+        if (!file.isFile()) return false;
+        String size = String.format(java.util.Locale.US, "%.2f MB",
+                file.length() / 1024d / 1024d);
+        new AlertDialog.Builder(activity)
+                .setTitle("更新 " + version + " 已准备好")
+                .setMessage(fileName + "\n" + size
+                        + "\n\n安装包已校验。点击“安装”进入 Android 系统安装界面。")
+                .setNegativeButton("稍后", null)
+                .setPositiveButton("安装", (dialog, which) ->
+                        activity.startActivity(new Intent(activity, UpdateInstallActivity.class)))
+                .show();
+        return true;
+    }
+
     static String currentVersion(Activity activity) {
         try {
             return activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0).versionName;
@@ -134,11 +159,11 @@ final class UpdateChecker {
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
                 .setTitle("发现新版本 " + version)
                 .setMessage(downloadable
-                        ? "点击后由 Android 系统下载并校验。相册仍在前台时会自动打开系统安装页，你只需确认安装；不在前台时保留可点击通知。"
+                        ? "是否下载更新？下载完成后会先校验安装包，再由你点击“安装”进入 Android 系统安装界面。"
                         : "新版本尚未准备好安装包，请稍后再试。")
                 .setNegativeButton("稍后", null);
         if (downloadable) {
-            builder.setPositiveButton("系统下载", (dialog, which) ->
+            builder.setPositiveButton("下载更新", (dialog, which) ->
                     downloadWithSystem(activity, version, apkUrl, sha256));
         }
         builder.show();
@@ -187,7 +212,7 @@ final class UpdateChecker {
 
             DownloadManager.Request request = new DownloadManager.Request(uri)
                     .setTitle("相册 " + version + " 更新")
-                    .setDescription("下载完成并校验后打开系统安装页")
+                    .setDescription("下载完成并校验后，由你确认安装")
                     .setMimeType("application/vnd.android.package-archive")
                     .setDestinationInExternalPublicDir(
                             Environment.DIRECTORY_DOWNLOADS, updateFileName(version))
@@ -208,7 +233,7 @@ final class UpdateChecker {
             }
             DiagnosticLog.write(activity, "update_system_download_started",
                     version + " id=" + downloadId);
-            toast(activity, "正在下载；校验完成后会打开系统安装页");
+            toast(activity, "正在下载；校验完成后会提示安装");
         } catch (Exception error) {
             DiagnosticLog.write(activity, "update_system_download_failed", error.getMessage());
             new AlertDialog.Builder(activity)
@@ -246,7 +271,7 @@ final class UpdateChecker {
 
     static String downloadStatusMessage(int status) {
         return status == DownloadManager.STATUS_SUCCESSFUL
-                ? "安装包已经验证，正在准备系统安装页"
+                ? "安装包已经验证，请点击安装"
                 : "更新包正在系统下载，请查看通知进度";
     }
 

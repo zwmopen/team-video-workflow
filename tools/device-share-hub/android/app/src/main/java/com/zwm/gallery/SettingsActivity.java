@@ -160,8 +160,8 @@ public final class SettingsActivity extends Activity {
 
         root.addView(label("软件"));
         SettingSwitchRow autoUpdateSwitch = settingSwitch(
-                "自动检查并下载更新",
-                "每次打开相册时检查；发现新版后自动交给系统下载，安装仍需系统确认一次",
+                "自动检查更新",
+                "每次打开相册时检查；发现新版后由你确认下载和安装",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
                         .getBoolean(UpdateChecker.PREF_AUTO_UPDATE_ENABLED, true));
         autoUpdateSwitch.setOnCheckedChangeListener((button, enabled) ->

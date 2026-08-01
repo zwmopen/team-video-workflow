@@ -1,7 +1,6 @@
 package com.zwm.gallery;
 
 import android.app.DownloadManager;
-import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -12,8 +11,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.Handler;
-import android.os.Looper;
 
 import java.io.InputStream;
 import java.io.File;
@@ -24,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class UpdateDownloadReceiver extends BroadcastReceiver {
+    static final String ACTION_UPDATE_READY = "com.zwm.gallery.UPDATE_READY";
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
@@ -118,7 +116,8 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
             UpdatePackageValidator.validate(context, local, version);
             markReady(preferences, downloadId, version, fileName);
             notifyReady(context, version, fileName);
-            openInstallerWhenAppIsVisible(context, fileName);
+            context.sendBroadcast(new Intent(ACTION_UPDATE_READY)
+                    .setPackage(context.getPackageName()));
         } catch (Exception error) {
             manager.remove(downloadId);
             preferences.edit()
@@ -176,32 +175,6 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
                 .setAutoCancel(false)
                 .build();
         manager.notify(4402, notification);
-    }
-
-    private static void openInstallerWhenAppIsVisible(Context context, String fileName) {
-        ActivityManager.RunningAppProcessInfo process =
-                new ActivityManager.RunningAppProcessInfo();
-        ActivityManager.getMyMemoryState(process);
-        if (!shouldAutoOpenInstaller(process.importance)) {
-            DiagnosticLog.write(context, "update_installer_deferred",
-                    fileName + " app_not_visible");
-            return;
-        }
-        new Handler(Looper.getMainLooper()).post(() -> {
-            try {
-                context.startActivity(new Intent(context, UpdateInstallActivity.class)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                DiagnosticLog.write(context, "update_installer_auto_open_requested", fileName);
-            } catch (Exception error) {
-                DiagnosticLog.write(context, "update_installer_auto_open_failed",
-                        error.getMessage());
-            }
-        });
-    }
-
-    static boolean shouldAutoOpenInstaller(int processImportance) {
-        return processImportance
-                <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
     }
 
     static String sha256(InputStream input) throws Exception {
