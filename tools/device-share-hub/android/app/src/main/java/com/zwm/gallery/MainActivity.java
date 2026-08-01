@@ -88,7 +88,6 @@ public final class MainActivity extends Activity {
     private ProgressBar refreshSpinner;
     private TextView refreshIndicatorText;
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
-    private boolean updateReadyPromptShown;
     private final Map<String, Button> categoryButtons = new LinkedHashMap<>();
     private final Map<String, String> categoryLabels = new LinkedHashMap<>();
 
@@ -106,10 +105,6 @@ public final class MainActivity extends Activity {
             if (OnlineService.ACTION_STATUS.equals(intent.getAction())) {
                 String message = intent.getStringExtra("message");
                 if (message != null) statusText.setText(message);
-            }
-            if (UpdateDownloadReceiver.ACTION_UPDATE_READY.equals(intent.getAction())
-                    && !updateReadyPromptShown) {
-                updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(MainActivity.this);
             }
         }
     };
@@ -138,7 +133,6 @@ public final class MainActivity extends Activity {
         IntentFilter filter = new IntentFilter();
         filter.addAction(OnlineService.ACTION_TASK_READY);
         filter.addAction(OnlineService.ACTION_STATUS);
-        filter.addAction(UpdateDownloadReceiver.ACTION_UPDATE_READY);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
         if (fileMode) {
@@ -1202,9 +1196,6 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         UpdateChecker.reportDownloadProblem(this);
-        if (!updateReadyPromptShown) {
-            updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
-        }
         startService(new Intent(this, OnlineService.class)
                 .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
     }

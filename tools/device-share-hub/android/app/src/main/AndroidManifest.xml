@@ -13,8 +13,6 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <application
@@ -36,12 +34,6 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:theme="@style/AppTheme" />
-
-        <activity
-            android:name=".UpdateInstallActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
             android:theme="@style/AppTheme" />
 
         <activity
@@ -94,14 +86,18 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
-        <service
-            android:name=".AppUpdateService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
         <receiver
             android:name=".ScreenshotSendReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".UpdateDownloadReceiver"
+            android:exported="true"
+            android:permission="android.permission.SEND_DOWNLOAD_COMPLETED_INTENTS">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name=".ShareFileProvider"

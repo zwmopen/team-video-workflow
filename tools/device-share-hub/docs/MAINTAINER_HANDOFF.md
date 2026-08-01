@@ -1,5 +1,14 @@
 # 分享中控 V4.1.2 维护交接
 
+## 2026-08-01 Android 系统下载更新 0.6.14 候选
+
+- Android 0.6.14/code 52；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。只改变 Android 更新交互，不回退其他功能或数据结构。
+- 每次启动自动检查仍保留；发现新版后先弹窗，用户点击“系统下载”才创建 DownloadManager 任务。下载完成后由用户点击系统完成通知进入安装。
+- 删除 `REQUEST_INSTALL_PACKAGES`、`FOREGROUND_SERVICE_DATA_SYNC`、`AppUpdateService`、`UpdateInstallActivity`、私有 APK 复制与应用安装通知。相册不再出现“允许来自此来源”授权页，也不主动打开系统安装器。
+- `UpdateDownloadReceiver` 只接受与本机记录任务 ID 相同的系统完成事件，后台核对 Release 清单中的 SHA-256；不一致时删除系统下载并在下次进入应用时提示。接收器不提供安装入口。
+- APK 目标名固定为 `album-Android-0.6.14.apk`，位于系统 Downloads；更新发现继续使用 GitHub Release API 与同一 Release 的 `SHA256SUMS.txt`。
+- 本机 20 个测试套件共 64 项全部通过，Release 构建与 Release Lint 通过；候选 APK 为 0.6.14/code 52，v2 签名证书 SHA-256 保持 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，清单不含安装来源权限或 Debug 标志。系统下载和系统通知点击仍需 Android 真机联网复核，不能以自动测试代替。
+
 ## 2026-08-01 Android 确认式更新 0.6.13 候选
 
 - Android 0.6.13/code 51；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。修正版 0.6.11/code 49 仅作为实体升级起点；0.6.12/code 50 是首轮应用自有下载的过渡发布。

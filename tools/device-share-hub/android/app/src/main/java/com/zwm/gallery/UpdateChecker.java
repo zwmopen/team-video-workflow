@@ -2,15 +2,16 @@ package com.zwm.gallery;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.Intent;
+import android.app.DownloadManager;
+import android.content.Context;
 import android.net.Uri;
+import android.os.Environment;
 import android.widget.Toast;
 
 import org.json.JSONObject;
 import org.json.JSONArray;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -22,13 +23,9 @@ final class UpdateChecker {
     static final String PREF_PENDING_DOWNLOAD_ID = "pendingUpdateDownloadId";
     static final String PREF_PENDING_DOWNLOAD_SHA256 = "pendingUpdateDownloadSha256";
     static final String PREF_PENDING_DOWNLOAD_VERSION = "pendingUpdateDownloadVersion";
-    static final String PREF_READY_DOWNLOAD_ID = "readyUpdateDownloadId";
-    static final String PREF_READY_DOWNLOAD_VERSION = "readyUpdateDownloadVersion";
-    static final String PREF_READY_FILE_NAME = "readyUpdateFileName";
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
     static final String PREF_DOWNLOAD_ERROR = "updateDownloadError";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
-    static final String RESULT_DOWNLOAD_FAILED = "download_failed";
     static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
 
     private UpdateChecker() {
@@ -45,17 +42,7 @@ final class UpdateChecker {
                     .remove(PREF_PENDING_DOWNLOAD_VERSION)
                     .apply();
         }
-        String readyVersion = prefs.getString(PREF_READY_DOWNLOAD_VERSION, "");
-        if (!readyVersion.isEmpty() && !isNewer(readyVersion, currentVersion(activity))) {
-            removeReadyFile(activity, prefs.getString(PREF_READY_FILE_NAME, ""));
-            prefs.edit()
-                    .remove(PREF_READY_DOWNLOAD_ID)
-                    .remove(PREF_READY_DOWNLOAD_VERSION)
-                    .remove(PREF_READY_FILE_NAME)
-                    .apply();
-        }
         if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
-        if (!readyVersion.isEmpty() && isNewer(readyVersion, currentVersion(activity))) return;
         check(activity, false);
     }
 
@@ -72,8 +59,7 @@ final class UpdateChecker {
                 markChecked(activity);
                 activity.runOnUiThread(() -> {
                     if (isNewer(tag, current)) {
-                        if (silent) downloadUpdate(activity, tag, apkUrl, sha256);
-                        else showUpdate(activity, tag, apkUrl, sha256);
+                        showUpdate(activity, tag, apkUrl, sha256);
                     }
                     else if (!silent) toast(activity, "当前已经是最新版本 " + current);
                 });
@@ -90,45 +76,19 @@ final class UpdateChecker {
     static void reportDownloadProblem(Activity activity) {
         String result = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
                 .getString(PREF_DOWNLOAD_RESULT, "");
-        if (!RESULT_CHECKSUM_FAILED.equals(result) && !RESULT_DOWNLOAD_FAILED.equals(result)) return;
+        if (!RESULT_CHECKSUM_FAILED.equals(result)) return;
         String detail = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
                 .getString(PREF_DOWNLOAD_ERROR, "");
         activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE).edit()
                 .remove(PREF_DOWNLOAD_RESULT)
                 .remove(PREF_DOWNLOAD_ERROR)
                 .apply();
-        boolean invalid = RESULT_CHECKSUM_FAILED.equals(result);
         new AlertDialog.Builder(activity)
-                .setTitle(invalid ? "更新包校验失败" : "更新下载中断")
-                .setMessage(invalid
-                        ? "下载文件与发布版本不一致或系统无法解析，已自动删除。请重新下载。"
-                        : "下载没有完成，已保留进度。请重新点击“下载更新”继续。"
-                                + (detail.isEmpty() ? "" : "\n\n原因：" + detail))
+                .setTitle("更新包校验失败")
+                .setMessage("系统下载的文件与发布版本不一致，已自动删除。请重新下载。"
+                        + (detail.isEmpty() ? "" : "\n\n原因：" + detail))
                 .setPositiveButton("知道了", null)
                 .show();
-    }
-
-    static boolean showReadyInstallPrompt(Activity activity) {
-        android.content.SharedPreferences preferences =
-                activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
-        String version = preferences.getString(PREF_READY_DOWNLOAD_VERSION, "");
-        String fileName = preferences.getString(PREF_READY_FILE_NAME, "");
-        if (!isNewer(version, currentVersion(activity))
-                || fileName == null
-                || !fileName.matches("[A-Za-z0-9._-]+\\.apk")) return false;
-        File file = new File(new File(activity.getFilesDir(), "updates"), fileName);
-        if (!file.isFile()) return false;
-        String size = String.format(java.util.Locale.US, "%.2f MB",
-                file.length() / 1024d / 1024d);
-        new AlertDialog.Builder(activity)
-                .setTitle("更新 " + version + " 已准备好")
-                .setMessage(fileName + "\n" + size
-                        + "\n\n安装包已校验。点击“安装”进入 Android 系统安装界面。")
-                .setNegativeButton("稍后", null)
-                .setPositiveButton("安装", (dialog, which) ->
-                        activity.startActivity(new Intent(activity, UpdateInstallActivity.class)))
-                .show();
-        return true;
     }
 
     static String currentVersion(Activity activity) {
@@ -232,17 +192,17 @@ final class UpdateChecker {
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
                 .setTitle("发现新版本 " + version)
                 .setMessage(downloadable
-                        ? "是否下载更新？下载完成后会先校验安装包，再由你点击“安装”进入 Android 系统安装界面。"
+                        ? "点击后由 Android 系统下载。下载完成时点系统通知，再确认安装即可；相册不申请“安装其他应用”权限。"
                         : "新版本尚未准备好安装包，请稍后再试。")
                 .setNegativeButton("稍后", null);
         if (downloadable) {
-            builder.setPositiveButton("下载更新", (dialog, which) ->
-                    downloadUpdate(activity, version, apkUrl, sha256));
+            builder.setPositiveButton("系统下载", (dialog, which) ->
+                    downloadWithSystem(activity, version, apkUrl, sha256));
         }
         builder.show();
     }
 
-    private static void downloadUpdate(
+    private static void downloadWithSystem(
             Activity activity, String version, String apkUrl, String expectedSha256) {
         try {
             android.content.SharedPreferences preferences =
@@ -251,17 +211,23 @@ final class UpdateChecker {
             if (!"https".equalsIgnoreCase(uri.getScheme())) {
                 throw new IllegalArgumentException("更新地址不是安全连接");
             }
-            String pendingVersion = preferences.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
-            String readyVersion = preferences.getString(PREF_READY_DOWNLOAD_VERSION, "");
-            if (version.equals(readyVersion)
-                    && showReadyInstallPrompt(activity)) {
-                return;
-            }
-            if (!pendingVersion.isEmpty() && !version.equals(pendingVersion)) {
-                AppUpdateService.deletePartial(activity, pendingVersion);
-            }
+            DownloadManager manager =
+                    (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager == null) throw new IllegalStateException("系统下载服务不可用");
+
+            String fileName = updateFileName(version);
+            DownloadManager.Request request = new DownloadManager.Request(uri)
+                    .setTitle("相册 " + version + " 更新")
+                    .setDescription(fileName + " · 下载完成后点系统通知安装")
+                    .setMimeType("application/vnd.android.package-archive")
+                    .setAllowedOverMetered(true)
+                    .setAllowedOverRoaming(false)
+                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                    .setNotificationVisibility(
+                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            long downloadId = manager.enqueue(request);
             boolean stored = preferences.edit()
-                    .putLong(PREF_PENDING_DOWNLOAD_ID, -1L)
+                    .putLong(PREF_PENDING_DOWNLOAD_ID, downloadId)
                     .putString(PREF_PENDING_DOWNLOAD_SHA256,
                             expectedSha256 == null ? "" : expectedSha256.trim())
                     .putString(PREF_PENDING_DOWNLOAD_VERSION, version)
@@ -269,13 +235,14 @@ final class UpdateChecker {
                     .remove(PREF_DOWNLOAD_ERROR)
                     .commit();
             if (!stored) {
+                manager.remove(downloadId);
                 throw new IllegalStateException("无法保存下载状态");
             }
-            AppUpdateService.start(activity, version, apkUrl.trim(), expectedSha256);
-            DiagnosticLog.write(activity, "update_app_download_started", version);
-            toast(activity, "正在下载更新，可在通知中查看进度");
+            DiagnosticLog.write(activity, "update_system_download_started",
+                    version + " id=" + downloadId);
+            toast(activity, "已交给系统下载，完成后点通知安装");
         } catch (Exception error) {
-            DiagnosticLog.write(activity, "update_app_download_start_failed", error.getMessage());
+            DiagnosticLog.write(activity, "update_system_download_failed", error.getMessage());
             new AlertDialog.Builder(activity)
                     .setTitle("无法开始下载")
                     .setMessage(error.getMessage() == null ? "请确认网络后重试" : error.getMessage())
@@ -288,14 +255,6 @@ final class UpdateChecker {
         HttpURLConnection connection = (HttpURLConnection) new URL(value).openConnection();
         connection.setInstanceFollowRedirects(true);
         return connection;
-    }
-
-    private static void removeReadyFile(Activity activity, String fileName) {
-        if (fileName == null || !fileName.matches("[A-Za-z0-9._-]+\\.apk")) return;
-        File file = new File(new File(activity.getFilesDir(), "updates"), fileName);
-        if (file.isFile() && !file.delete()) {
-            DiagnosticLog.write(activity, "update_old_file_delete_failed", fileName);
-        }
     }
 
     static boolean isNewer(String candidate, String current) {
