@@ -6,6 +6,8 @@
 - iPhone 首页四分类增加数量并修复筛选后卡片索引错误；Android 和 iPhone 自动整理统一为紧凑设置行、常用预设与 0～720 小时自定义输入。
 - Redmi Note 8 已由正式 0.6.4 同签名覆盖安装 0.6.5 候选版，原有 1 个作品、Lark 目录和设备名称均保留；四分类、紧凑设置行、预设弹窗、即时保存、130% 系统字体及恢复 1 小时默认值完成实体操作。开关卡片的标题与浅色小字说明已分层并改为内容自适应高度。
 - Android 本机单元测试、Release 构建和 Release Lint 通过。iPhone 必须以 macOS CI 编译及用户重新连接的实体设备侧载为准，未连接前不标记真机通过。
+- 最终源码提交 `ccee89a` 的 GitHub Actions run `30683557353` 已在重跑瞬时 Wrangler 本地服务故障后全部通过：Android、iPhone、Windows 与协议闭环均成功。公开 Release 为 [`gallery-updates v0.6.5`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.5)。
+- 更新索引提交 `a83a551` 已指向 Android 0.6.5/code 43 与 iPhone 0.6.5/build 24。公网 APK 为 798242 字节，SHA-256 `5E862A0EB5AAF8B8E91425CB2B2F98BDBDB17399372F0DDDE44BBA9B9BA9DA58`；重新下载后哈希一致并已覆盖安装回 Redmi Note 8。IPA SHA-256 为 `A5CC0BD4D1229EC368D5D7B14C14364A4FDD4D38C5827E7B4ED6582A8E6E87BD`。
 
 ## 2026-07-31 三端剪切板、截图与局域网中转候选
 
