@@ -154,6 +154,9 @@ public final class TransferActivity extends Activity {
         peersContainer.removeAllViews();
         if (selected != null && !matchesSelectedChannel(selected)) selected = null;
         if (peers.isEmpty()) {
+            if (status != null) status.setText(CHANNEL_USB.equals(selectedChannel)
+                    ? "未发现 USB 电脑，请先打开 USB 网络共享"
+                    : "正在发现附近设备…");
             String emptyMessage = CHANNEL_USB.equals(selectedChannel)
                     ? "暂未发现 USB 电脑\n请连接数据线，并打开手机的 USB 网络共享"
                     : "暂未发现设备\n请在另一台设备上打开“相册”或电脑中控";
