@@ -302,7 +302,8 @@ public final class TransferActivity extends Activity {
             try {
                 work.run(new TransferClient(getContentResolver(), getCacheDir()));
                 DiagnosticLog.write(this, "outgoing_done", target.name + " " + target.ip);
-                OperationLog.add(this, "发送完成", target.name);
+                updateProgress(100, target.transport + " 传送完成 · “" + target.name + "”");
+                OperationLog.add(this, "发送完成", target.name + " · " + target.transport);
             } catch (Exception error) {
                 DiagnosticLog.write(this, "outgoing_failed", target.name + " " + error.getMessage());
                 updateProgress(0, "传送失败：" + (error.getMessage() == null ? "请检查两台设备的 Wi‑Fi" : error.getMessage()));
