@@ -40,4 +40,14 @@ public final class UpdateCheckerTest {
         assertFalse(AppUpdateService.isRedirect(200));
         assertFalse(AppUpdateService.isRedirect(404));
     }
+
+    @Test
+    public void selectsChecksumForExactApkAsset() {
+        String hash = "df5d639dabc3ba0f1781225d34bfa65bc92c1d31b6093414198557684f623f85";
+        String manifest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  old.apk\n"
+                + hash + "  album-Android-v0.6.12.apk\n";
+        assertEquals(hash, UpdateChecker.checksumFor(
+                manifest, "album-Android-v0.6.12.apk"));
+        assertEquals("", UpdateChecker.checksumFor(manifest, "missing.apk"));
+    }
 }

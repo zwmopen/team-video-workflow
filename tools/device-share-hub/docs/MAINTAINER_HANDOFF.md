@@ -1,14 +1,16 @@
 # 分享中控 V4.1.2 维护交接
 
-## 2026-08-01 Android 确认式更新 0.6.12 候选
+## 2026-08-01 Android 确认式更新 0.6.13 候选
 
-- Android 0.6.12/code 50；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。修正版 0.6.11/code 49 仅作为实体升级起点，不作为最终保留版本。
+- Android 0.6.13/code 51；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。修正版 0.6.11/code 49 仅作为实体升级起点；0.6.12/code 50 是首轮应用自有下载的过渡发布。
 - 每次启动仍自动检查版本，但发现新版后先弹窗，由用户点击“下载更新”；完成 SHA-256、包名、版本和签名校验后，再弹包含版本、文件名和大小的“安装”按钮。
 - 删除下载完成广播直接启动安装 Activity 的路径，规避 Android/MIUI 后台界面启动限制；首页不在前台时使用常驻通知，下次返回首页再次提示。
 - Redmi 公网回归先捕获到 `DOWNLOAD_COMPLETE` 外部 UID 投递限制；开放接收器后又确认 MIUI 将 GitHub 下载交给迅雷内核并返回状态 700。新版不再把用户确认后的 APK 交给系统 `DownloadManager`，而是启动前台 `dataSync` 服务自行执行 HTTPS 下载、有限跳转、断点续传和持续通知。
 - 下载临时文件保存在应用私有 `files/updates/*.apk.part`；网络失败保留以便续传，校验失败立即删除。通过 SHA-256、APK 解析、包名、版本码和签名校验后才改名为 `.apk`，并广播首页显示“安装”按钮。
+- Redmi 0.6.11 → 0.6.12 公网实测没有再出现迅雷/系统下载提示，应用通知持续更新进度并在约 24 秒后下载完；但 MIUI 的 `PackageManager` 对 v2 APK 返回空 `SigningInfo`，校验器误报“安装包没有签名”。0.6.13 同时请求 `GET_SIGNING_CERTIFICATES` 与兼容 `GET_SIGNATURES`，新版字段为空时回退旧字段。
+- 同机移动网络连续访问 raw 更新索引超时，更新发现改为 GitHub Release API，并从该 Release 的 `SHA256SUMS.txt` 精确选择 APK 哈希；文件名必须完全匹配，避免拿错资产。
 - 后台文件传送继续由 `OnlineService` 负责，首页可见状态仍保留给传送和截图提示，不与更新下载混用。
-- 本机 20 个测试套件共 65 项单元测试、Release 构建与 Release Lint 已通过。候选 APK 为 809414 字节，SHA-256 `CE74423E168D492D3B5CE87F66E9257AF8E91EFCA6AEFC42C58FC2DAC73D3E30`；v2 签名证书仍为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`。正式发布后用已安装修复版 0.6.11 的 Redmi Note 8 完成 0.6.11 → 0.6.12 公网升级全流程，再补充 CI、Release 和实体证据。
+- 首轮 0.6.12 本机 20 个测试套件共 65 项单元测试、Release 构建与 Lint 通过，CI 四项全部通过；公开 APK SHA-256 为 `DF5D639DABC3BA0F1781225D34BFA65BC92C1D31B6093414198557684F623F85`。0.6.13 增加 Release 清单精确匹配测试后，本机 20 个套件共 66 项测试、Release 构建与 Lint 通过；候选 APK 810402 字节，SHA-256 `A4EE7937D1E376BCE26C9FC29B3093DE4879C991ACE2840B484FA3D98E7F4869`。红米在安装诊断版后 ADB 断开，最终签名回退与“安装”点击进入系统页必须在设备重新连接后补验。
 
 ## 2026-08-01 Android 真机交互修复 0.6.8 正式版
 

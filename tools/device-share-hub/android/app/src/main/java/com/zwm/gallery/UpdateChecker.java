@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.widget.Toast;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -140,8 +141,8 @@ final class UpdateChecker {
 
     private static JSONObject fetchManifest() throws Exception {
         HttpURLConnection connection = open(UpdateEndpoint.RELEASE_API);
-        connection.setConnectTimeout(8000);
-        connection.setReadTimeout(8000);
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(20000);
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("User-Agent", "zwm-gallery-android");
         int code = connection.getResponseCode();
@@ -155,7 +156,75 @@ final class UpdateChecker {
         } finally {
             connection.disconnect();
         }
-        return new JSONObject(body.toString());
+        JSONObject value = new JSONObject(body.toString());
+        if (!value.optString("apk_url", "").isEmpty()) return value;
+        return normalizeGitHubRelease(value);
+    }
+
+    private static JSONObject normalizeGitHubRelease(JSONObject release) throws Exception {
+        JSONArray assets = release.optJSONArray("assets");
+        if (assets == null) throw new IllegalStateException("发布版本没有安装包清单");
+        String apkName = "";
+        String apkUrl = "";
+        String checksumsUrl = "";
+        for (int index = 0; index < assets.length(); index++) {
+            JSONObject asset = assets.optJSONObject(index);
+            if (asset == null) continue;
+            String name = asset.optString("name", "");
+            String url = asset.optString("browser_download_url", "");
+            if (name.matches("(?i)[A-Za-z0-9._-]+\\.apk")) {
+                apkName = name;
+                apkUrl = url;
+            } else if ("SHA256SUMS.txt".equalsIgnoreCase(name)) {
+                checksumsUrl = url;
+            }
+        }
+        if (apkUrl.isEmpty() || checksumsUrl.isEmpty()) {
+            throw new IllegalStateException("发布版本缺少 APK 或校验清单");
+        }
+        String checksum = checksumFor(fetchText(checksumsUrl, 256 * 1024), apkName);
+        if (checksum.isEmpty()) throw new IllegalStateException("校验清单没有当前 APK");
+        return new JSONObject()
+                .put("tag_name", release.optString("tag_name", ""))
+                .put("version_name", release.optString("tag_name", "").replaceFirst("^[vV]", ""))
+                .put("apk_url", apkUrl)
+                .put("sha256", checksum);
+    }
+
+    private static String fetchText(String url, int limit) throws Exception {
+        HttpURLConnection connection = open(url);
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(20000);
+        connection.setRequestProperty("Accept", "text/plain,*/*");
+        connection.setRequestProperty("User-Agent", "zwm-gallery-android");
+        int code = connection.getResponseCode();
+        if (code != 200) throw new IllegalStateException("校验服务返回 " + code);
+        StringBuilder body = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                connection.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null && body.length() < limit) {
+                body.append(line).append('\n');
+            }
+        } finally {
+            connection.disconnect();
+        }
+        return body.toString();
+    }
+
+    static String checksumFor(String checksums, String fileName) {
+        if (checksums == null || fileName == null) return "";
+        for (String line : checksums.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            int separator = trimmed.indexOf(' ');
+            if (separator <= 0) continue;
+            String hash = trimmed.substring(0, separator);
+            String name = trimmed.substring(separator).trim().replaceFirst("^[*]", "");
+            if (name.equals(fileName) && hash.matches("(?i)[0-9a-f]{64}")) {
+                return hash.toLowerCase(java.util.Locale.US);
+            }
+        }
+        return "";
     }
 
     private static void showUpdate(Activity activity, String version, String apkUrl, String sha256) {

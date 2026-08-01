@@ -2,7 +2,7 @@ package com.zwm.gallery;
 
 final class UpdateEndpoint {
     static final String RELEASE_API =
-            "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest.json";
+            "https://api.github.com/repos/zwmopen/gallery-updates/releases/latest";
 
     private UpdateEndpoint() {
     }

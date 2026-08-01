@@ -19,9 +19,10 @@ final class UpdatePackageValidator {
             throw new IllegalStateException("安装包不完整");
         }
         PackageManager manager = context.getPackageManager();
-        int signingFlags = Build.VERSION.SDK_INT >= 28
-                ? PackageManager.GET_SIGNING_CERTIFICATES
-                : PackageManager.GET_SIGNATURES;
+        int signingFlags = PackageManager.GET_SIGNATURES;
+        if (Build.VERSION.SDK_INT >= 28) {
+            signingFlags |= PackageManager.GET_SIGNING_CERTIFICATES;
+        }
         PackageInfo candidate = manager.getPackageArchiveInfo(
                 apk.getAbsolutePath(), signingFlags);
         if (candidate == null) throw new IllegalStateException("系统无法解析下载的 APK");
@@ -48,6 +49,9 @@ final class UpdatePackageValidator {
             signatures = info.signingInfo.hasMultipleSigners()
                     ? info.signingInfo.getApkContentsSigners()
                     : info.signingInfo.getSigningCertificateHistory();
+            if (signatures == null || signatures.length == 0) {
+                signatures = info.signatures;
+            }
         } else {
             signatures = info.signatures;
         }
