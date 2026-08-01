@@ -11,6 +11,7 @@
 - 同机移动网络连续访问 raw 更新索引超时，更新发现改为 GitHub Release API，并从该 Release 的 `SHA256SUMS.txt` 精确选择 APK 哈希；文件名必须完全匹配，避免拿错资产。
 - 后台文件传送继续由 `OnlineService` 负责，首页可见状态仍保留给传送和截图提示，不与更新下载混用。
 - 首轮 0.6.12 本机 20 个测试套件共 65 项单元测试、Release 构建与 Lint 通过，CI 四项全部通过；公开 APK SHA-256 为 `DF5D639DABC3BA0F1781225D34BFA65BC92C1D31B6093414198557684F623F85`。0.6.13 增加 Release 清单精确匹配测试后，本机 20 个套件共 66 项测试、Release 构建与 Lint 通过；候选 APK 810402 字节，SHA-256 `A4EE7937D1E376BCE26C9FC29B3093DE4879C991ACE2840B484FA3D98E7F4869`。红米在安装诊断版后 ADB 断开，最终签名回退与“安装”点击进入系统页必须在设备重新连接后补验。
+- 0.6.13 源码提交 `8e62fa5`；Actions run `30694602779` 的 Android、iPhone、Windows 已通过，远程中继首次瞬态失败后已发起失败任务重跑。公开 Release 为 [`gallery-updates v0.6.13`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.13)，更新索引提交 `d62589e` 已指向 0.6.13/code 51。公网重新下载 APK 为 810226 字节，SHA-256 `F00835EC3E5817232C4C652B9732E1D1513F33ACEB4D0BE29D8798112347867B`，与索引和 `SHA256SUMS.txt` 一致；v2 签名证书保持原升级链。
 
 ## 2026-08-01 Android 真机交互修复 0.6.8 正式版
 
