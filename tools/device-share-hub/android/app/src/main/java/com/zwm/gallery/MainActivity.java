@@ -24,6 +24,8 @@ import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
+import android.animation.LayoutTransition;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.FrameLayout;
@@ -76,6 +78,8 @@ public final class MainActivity extends Activity {
     private final LinkedHashSet<String> selectedWorkIds = new LinkedHashSet<>();
     private String selectedCategory = WorkCategory.ALL;
     private LinearLayout categoryBar;
+    private FrameLayout categorySelector;
+    private View categoryIndicator;
     private final Map<String, Button> categoryButtons = new LinkedHashMap<>();
     private final Map<String, String> categoryLabels = new LinkedHashMap<>();
 
@@ -190,30 +194,28 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(pad, dp(8), pad, dp(36));
-        root.setBackgroundColor(Color.rgb(246, 244, 240));
+        root.setBackgroundColor(Color.rgb(248, 249, 248));
 
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.setPadding(dp(12), dp(18), dp(12), dp(14));
-        titleRow.setBackgroundColor(Color.rgb(246, 244, 240));
+        titleRow.setBackgroundColor(Color.rgb(248, 249, 248));
         LinearLayout titleCluster = new LinearLayout(this);
         titleCluster.setOrientation(LinearLayout.HORIZONTAL);
         titleCluster.setGravity(Gravity.CENTER_VERTICAL);
-        headingText = text("作品", 23, true);
+        headingText = text("", 20, true);
         headingText.setSingleLine(true);
         headingText.setAutoSizeTextTypeUniformWithConfiguration(18, 23, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP);
         titleCluster.addView(headingText, new LinearLayout.LayoutParams(-2, -2));
-        scannedCountText = text("0", 12, true);
+        scannedCountText = text("", 12, true);
         scannedCountText.setSingleLine(true);
         scannedCountText.setTextColor(Color.rgb(53, 105, 82));
         scannedCountText.setGravity(Gravity.CENTER);
         scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
         scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
-        LinearLayout.LayoutParams countParams = new LinearLayout.LayoutParams(-2, -2);
-        countParams.setMargins(dp(4), 0, 0, 0);
-        titleCluster.addView(scannedCountText, countParams);
+        scannedCountText.setVisibility(View.GONE);
         titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
         modeButton = iconButton(R.drawable.ic_file_folder, "切换到文件浏览");
         modeButton.setOnClickListener(v -> {
@@ -260,13 +262,26 @@ public final class MainActivity extends Activity {
         titleRow.addView(settings, iconParams(true));
         categoryBar = new LinearLayout(this);
         categoryBar.setOrientation(LinearLayout.HORIZONTAL);
-        categoryBar.setPadding(dp(12), 0, dp(12), dp(10));
+        categoryBar.setGravity(Gravity.CENTER_VERTICAL);
         addCategoryButton("全部", WorkCategory.ALL);
-        addCategoryButton("转化帖", WorkCategory.CONVERSION);
-        addCategoryButton("发流量帖", WorkCategory.TRAFFIC);
+        addCategoryButton("转化", WorkCategory.CONVERSION);
+        addCategoryButton("泛流量", WorkCategory.TRAFFIC);
         addCategoryButton("未分类", WorkCategory.UNCATEGORIZED);
+        categoryIndicator = new View(this);
+        categoryIndicator.setBackground(round(Color.WHITE, 10));
+        categoryIndicator.setElevation(dp(2));
+        categorySelector = new FrameLayout(this);
+        categorySelector.setPadding(0, dp(2), 0, dp(6));
+        categorySelector.setBackground(round(Color.rgb(232, 234, 233), 11));
+        categorySelector.addView(categoryIndicator, new FrameLayout.LayoutParams(0, dp(40)));
+        categorySelector.addView(categoryBar, new FrameLayout.LayoutParams(-1, dp(40)));
+        categorySelector.addOnLayoutChangeListener((v, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> animateCategoryIndicator(false));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
+        LayoutTransition contentTransition = new LayoutTransition();
+        contentTransition.setDuration(180);
+        worksContainer.setLayoutTransition(contentTransition);
         root.addView(worksContainer);
 
         statusText = text("局域网接收已开启", 13, false);
@@ -280,14 +295,27 @@ public final class MainActivity extends Activity {
         footerNote.setTextColor(Color.GRAY);
         root.addView(footerNote, margins(0, dp(12), 0, 0));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
+        SpringScrollView scroll = new SpringScrollView(this);
+        scroll.setOnPullRefresh(() -> {
+            if (fileMode) {
+                refreshFiles();
+                toast("正在刷新文件");
+            } else if (showingTrash) {
+                refreshWorks();
+                toast("正在刷新回收站");
+            } else {
+                importSelectedTree(true);
+                toast("正在刷新作品");
+            }
+        });
         scroll.addView(root);
         LinearLayout frozenLayout = new LinearLayout(this);
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
-        frozenLayout.setBackgroundColor(Color.rgb(246, 244, 240));
+        frozenLayout.setBackgroundColor(Color.rgb(248, 249, 248));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
-        frozenLayout.addView(categoryBar, new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(48));
+        categoryParams.setMargins(dp(12), 0, dp(12), 0);
+        frozenLayout.addView(categorySelector, categoryParams);
         frozenLayout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
@@ -330,11 +358,12 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
+        categorySelector.setVisibility(View.VISIBLE);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新作品");
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
         rightModeButton.setContentDescription("回收站");
-        headingText.setText("作品");
+        headingText.setText("");
         refreshWorks();
     }
 
@@ -342,6 +371,7 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = true;
+        categorySelector.setVisibility(View.GONE);
         leftModeButton.setImageResource(R.drawable.ic_album_back);
         leftModeButton.setContentDescription("返回作品");
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
@@ -397,7 +427,7 @@ public final class MainActivity extends Activity {
         selectedWorkIds.retainAll(visibleIds);
         boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
         quickTrashButton.setVisibility(selecting ? View.VISIBLE : View.GONE);
-        headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : "作品"));
+        headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : ""));
         scannedCountText.setText(String.valueOf(entries.size()));
         // Huawei can leave real folders in the external trash after its document index
         // forgets the corresponding app record, so clearing must remain available even
@@ -514,8 +544,11 @@ public final class MainActivity extends Activity {
         button.setTextSize(12);
         button.setMinHeight(dp(40));
         button.setPadding(dp(4), 0, dp(4), 0);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setElevation(0);
         button.setOnClickListener(v -> {
             selectedCategory = category;
+            animateCategoryIndicator(true);
             refreshWorks();
             toast("已显示" + label);
         });
@@ -541,8 +574,33 @@ public final class MainActivity extends Activity {
             int count = counts.containsKey(item.getKey()) ? counts.get(item.getKey()) : 0;
             item.getValue().setText(categoryLabels.get(item.getKey()) + " " + count);
             boolean selected = item.getKey().equals(selectedCategory);
-            item.getValue().setAlpha(selected ? 1f : 0.72f);
+            item.getValue().setTextColor(selected ? Color.rgb(24, 25, 24) : Color.rgb(104, 108, 106));
+            item.getValue().setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
+            item.getValue().animate().scaleX(selected ? 1f : 0.98f)
+                    .scaleY(selected ? 1f : 0.98f).alpha(selected ? 1f : 0.78f)
+                    .setDuration(180).start();
         }
+        animateCategoryIndicator(true);
+    }
+
+    private void animateCategoryIndicator(boolean animated) {
+        if (categorySelector == null || categoryIndicator == null || categorySelector.getWidth() <= 0) return;
+        int width = categorySelector.getWidth() / Math.max(1, categoryButtons.size());
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) categoryIndicator.getLayoutParams();
+        if (params.width != width || params.height != dp(40)) {
+            params.width = width;
+            params.height = dp(40);
+            categoryIndicator.setLayoutParams(params);
+        }
+        int index = 0;
+        for (String category : categoryButtons.keySet()) {
+            if (category.equals(selectedCategory)) break;
+            index++;
+        }
+        float target = index * width;
+        if (!animated) categoryIndicator.setTranslationX(target);
+        else categoryIndicator.animate().translationX(target).setDuration(240)
+                .setInterpolator(new DecelerateInterpolator(1.7f)).start();
     }
 
     private void maybeOfferClipboardOverlay() {
@@ -606,6 +664,7 @@ public final class MainActivity extends Activity {
 
     private void leaveFileMode() {
         fileMode = false;
+        categorySelector.setVisibility(View.VISIBLE);
         fileTree = null;
         filePath.clear();
         modeButton.setImageResource(R.drawable.ic_file_folder);
@@ -624,6 +683,7 @@ public final class MainActivity extends Activity {
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
         fileMode = true;
+        categorySelector.setVisibility(View.GONE);
         modeButton.setImageResource(R.drawable.ic_album_share);
         modeButton.setContentDescription("切换到作品分享");
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
@@ -1208,7 +1268,7 @@ public final class MainActivity extends Activity {
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(12), dp(11), dp(12), dp(11));
         card.setBackground(roundWithStroke(
-                Color.rgb(254, 254, 252), 16, Color.rgb(226, 224, 218)));
+                Color.WHITE, 16, Color.rgb(224, 228, 226)));
         card.setElevation(dp(1));
         return card;
     }
@@ -1219,7 +1279,7 @@ public final class MainActivity extends Activity {
         button.setTextSize(14);
         button.setAllCaps(false);
         button.setTextColor(primary ? Color.WHITE : Color.rgb(47, 48, 46));
-        button.setBackground(round(primary ? Color.rgb(54, 105, 72) : Color.rgb(232, 230, 225), 14));
+        button.setBackground(round(primary ? Color.rgb(15, 155, 99) : Color.rgb(232, 234, 233), 14));
         button.setPadding(dp(13), 0, dp(13), 0);
         return button;
     }
@@ -1227,8 +1287,8 @@ public final class MainActivity extends Activity {
     private ImageButton iconButton(int imageResource, String description) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(imageResource);
-        button.setImageTintList(ColorStateList.valueOf(Color.rgb(54, 86, 72)));
-        button.setBackground(round(Color.rgb(231, 239, 233), 21));
+        button.setImageTintList(ColorStateList.valueOf(Color.rgb(15, 135, 88)));
+        button.setBackground(round(Color.rgb(226, 244, 236), 21));
         button.setPadding(dp(9), dp(9), dp(9), dp(9));
         button.setContentDescription(description);
         return button;

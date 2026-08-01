@@ -27,7 +27,6 @@ import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -49,11 +48,11 @@ public final class SettingsActivity extends Activity {
         setContentView(ScreenInsets.protect(buildUi()));
     }
 
-    private ScrollView buildUi() {
+    private SpringScrollView buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(20), dp(24), dp(20), dp(36));
-        root.setBackgroundColor(Color.rgb(246, 244, 240));
+        root.setBackgroundColor(Color.rgb(242, 242, 247));
 
         TextView title = text("设置", 28, true);
         root.addView(title);
@@ -170,7 +169,7 @@ public final class SettingsActivity extends Activity {
         back.setOnClickListener(v -> finish());
         root.addView(back, margins(0, dp(28), 0, 0));
 
-        ScrollView scroll = new ScrollView(this);
+        SpringScrollView scroll = new SpringScrollView(this);
         scroll.addView(root);
         return scroll;
     }
@@ -479,7 +478,7 @@ public final class SettingsActivity extends Activity {
         return value;
     }
     private TextView text(String value, int sp, boolean bold) { TextView v = new TextView(this); v.setText(value); v.setTextSize(sp); v.setTextColor(Color.rgb(35, 35, 33)); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v; }
-    private Button button(String value, boolean primary) { Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(15); b.setTextColor(primary ? Color.WHITE : Color.rgb(45, 45, 42)); b.setBackground(round(primary ? Color.rgb(54, 105, 72) : Color.rgb(232, 230, 225), 14)); b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); return b; }
+    private Button button(String value, boolean primary) { Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(15); b.setTextColor(primary ? Color.WHITE : Color.rgb(45, 45, 42)); b.setBackground(round(primary ? Color.rgb(15, 155, 99) : Color.rgb(229, 231, 230), 14)); b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); return b; }
     private GradientDrawable round(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
     private LinearLayout.LayoutParams margins(int left, int top, int right, int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(48)); p.setMargins(left, top, right, bottom); return p; }
     private LinearLayout.LayoutParams settingMargins(int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.setMargins(0, 0, 0, bottom); return p; }

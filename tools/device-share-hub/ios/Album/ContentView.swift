@@ -2,8 +2,6 @@ import UIKit
 
 final class LibraryViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     private let library: WorkLibrary
-    private let titleText = UILabel()
-    private let badge = UILabel()
     private let emptyStack = UIStackView()
     private let emptyDetail = UILabel()
     private var collectionView: UICollectionView!
@@ -50,21 +48,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func configureNavigation() {
-        titleText.text = "作品"
-        titleText.font = .boldSystemFont(ofSize: 17)
-        badge.font = .boldSystemFont(ofSize: 12)
-        badge.textColor = view.tintColor
-        badge.textAlignment = .center
-        badge.backgroundColor = view.tintColor.withAlphaComponent(0.12)
-        badge.layer.cornerRadius = 13
-        badge.clipsToBounds = true
-        badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 30).isActive = true
-        badge.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        let stack = UIStackView(arrangedSubviews: [titleText, badge])
-        stack.axis = .horizontal
-        stack.spacing = 8
-        stack.alignment = .center
-        navigationItem.titleView = stack
+        navigationItem.titleView = nil
+        navigationItem.leftBarButtonItem = toolbarItem(
+            .folder, label: "切换到文件浏览", action: #selector(openFiles))
         navigationItem.rightBarButtonItems = [
             toolbarItem(.settings, label: "设置", action: #selector(openSettings)),
             toolbarItem(.trash, label: "回收站", action: #selector(openTrash)),
@@ -177,7 +163,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func render() {
         guard isViewLoaded else { return }
         updateFilterTitles()
-        badge.text = " \(library.works.count) "
         collectionView.reloadData()
         collectionView.refreshControl?.endRefreshing()
         let noFolder = library.folderName == nil
@@ -255,6 +240,15 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationController?.pushViewController(SettingsViewController(library: library), animated: true)
     }
 
+    @objc private func openFiles() {
+        guard let root = library.receivingRootURL else {
+            showError("请先在设置中选择作品文件夹。")
+            return
+        }
+        navigationController?.pushViewController(
+            LibraryFilesViewController(rootURL: root, currentURL: root), animated: true)
+    }
+
     private func presentFolderPicker() {
         guard #available(iOS 13.0, *) else { return }
         let picker = FolderPickerController()
@@ -317,7 +311,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 }
 
-enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings }
+enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder }
 
 enum AlbumToolbarIcon {
     static func image(_ symbol: AlbumToolbarSymbol, color: UIColor) -> UIImage {
@@ -346,12 +340,15 @@ enum AlbumToolbarIcon {
                 dot.fill()
             }
         case .refresh:
-            path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 7.6,
-                        startAngle: -.pi * 0.15, endAngle: .pi * 1.55, clockwise: true)
-            path.stroke()
-            let arrow = UIBezierPath()
-            arrow.move(to: CGPoint(x: 17.3, y: 3.2)); arrow.addLine(to: CGPoint(x: 19.7, y: 7.5))
-            arrow.addLine(to: CGPoint(x: 14.8, y: 7.0)); arrow.stroke()
+            path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 7.2,
+                        startAngle: -.pi * 0.10, endAngle: .pi * 0.90, clockwise: true)
+            path.move(to: CGPoint(x: 4.3, y: 11.5))
+            path.addArc(withCenter: CGPoint(x: 11.5, y: 11.5), radius: 7.2,
+                        startAngle: .pi * 0.90, endAngle: .pi * 1.90, clockwise: true)
+            path.move(to: CGPoint(x: 17.0, y: 4.6)); path.addLine(to: CGPoint(x: 18.9, y: 7.6))
+            path.addLine(to: CGPoint(x: 15.4, y: 7.2))
+            path.move(to: CGPoint(x: 6.0, y: 18.4)); path.addLine(to: CGPoint(x: 4.1, y: 15.4))
+            path.addLine(to: CGPoint(x: 7.6, y: 15.8)); path.stroke()
         case .trash:
             path.move(to: CGPoint(x: 5.8, y: 7)); path.addLine(to: CGPoint(x: 17.2, y: 7))
             path.move(to: CGPoint(x: 8.5, y: 4.2)); path.addLine(to: CGPoint(x: 14.5, y: 4.2))
@@ -370,6 +367,11 @@ enum AlbumToolbarIcon {
                 path.addLine(to: CGPoint(x: 11.5 + cos(angle) * 8.2, y: 11.5 + sin(angle) * 8.2))
             }
             path.stroke()
+        case .folder:
+            path.move(to: CGPoint(x: 2.5, y: 7.2)); path.addLine(to: CGPoint(x: 8.8, y: 7.2))
+            path.addLine(to: CGPoint(x: 10.7, y: 9.2)); path.addLine(to: CGPoint(x: 20.5, y: 9.2))
+            path.addLine(to: CGPoint(x: 19.2, y: 18.6)); path.addLine(to: CGPoint(x: 3.8, y: 18.6))
+            path.close(); path.stroke()
         }
         return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
