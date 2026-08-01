@@ -2,6 +2,22 @@ import XCTest
 @testable import Album
 
 final class CleanupPolicyTests: XCTestCase {
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: CleanupPreferences.moveHoursKey)
+        UserDefaults.standard.removeObject(forKey: CleanupPreferences.deleteHoursKey)
+        super.tearDown()
+    }
+
+    func testCleanupPreferencesAcceptImmediateAndLongCustomDelay() {
+        XCTAssertTrue(CleanupPreferences.save(moveHours: 0, deleteHours: 720))
+        XCTAssertEqual(CleanupPreferences.moveHours, 0)
+        XCTAssertEqual(CleanupPreferences.deleteHours, 720)
+    }
+
+    func testCleanupPreferencesRejectDeleteBeforeMove() {
+        XCTAssertFalse(CleanupPreferences.save(moveHours: 24, deleteHours: 3))
+    }
+
     func testOneHourBoundaryIsExact() {
         let now = Date(timeIntervalSince1970: 10_000)
         let anchor = now.timeIntervalSince1970 * 1000

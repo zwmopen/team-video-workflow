@@ -4,7 +4,7 @@ enum CleanupPreferences {
     static let moveHoursKey = "album.cleanup.moveHours.v1"
     static let deleteHoursKey = "album.cleanup.deleteHours.v1"
     static let defaultHours = 1
-    static let maximumHours = 10
+    static let maximumHours = 720
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -23,7 +23,7 @@ enum CleanupPreferences {
 
     @discardableResult
     static func save(moveHours: Int, deleteHours: Int) -> Bool {
-        guard (1...maximumHours).contains(moveHours),
+        guard (0...maximumHours).contains(moveHours),
               (moveHours...maximumHours).contains(deleteHours) else { return false }
         UserDefaults.standard.set(moveHours, forKey: moveHoursKey)
         UserDefaults.standard.set(deleteHours, forKey: deleteHoursKey)
@@ -31,7 +31,7 @@ enum CleanupPreferences {
     }
 
     private static func clamped(_ value: Int) -> Int {
-        return min(maximumHours, max(1, value))
+        return min(maximumHours, max(0, value))
     }
 }
 

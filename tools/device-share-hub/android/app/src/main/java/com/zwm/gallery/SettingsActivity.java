@@ -36,8 +36,8 @@ public final class SettingsActivity extends Activity {
     private EditText deviceName;
     private TextView pathText;
     private Switch soundSwitch;
-    private EditText moveAfterMinutes;
-    private EditText deleteAfterMinutes;
+    private TextView moveAfterText;
+    private TextView deleteAfterText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,32 +77,14 @@ public final class SettingsActivity extends Activity {
 
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
-        root.addView(settingCaption("自动移入回收站（小时）", "从第一次点击“复制并分享”开始计时，可填 0～720"));
-        moveAfterMinutes = numberField(Integer.toString(Math.max(0, cleanup.moveMinutes / 60)));
-        root.addView(moveAfterMinutes, new LinearLayout.LayoutParams(-1, dp(52)));
-        root.addView(settingCaption("自动彻底删除（小时）", "会同时从手机文件管理中删除，可填 0～720"),
-                margins(0, dp(10), 0, 0));
-        deleteAfterMinutes = numberField(Integer.toString(Math.max(0, cleanup.deleteMinutes / 60)));
-        root.addView(deleteAfterMinutes, new LinearLayout.LayoutParams(-1, dp(52)));
-        LinearLayout presets = new LinearLayout(this);
-        presets.setOrientation(LinearLayout.HORIZONTAL);
-        int[] presetHours = {0, 1, 3, 6, 24};
-        String[] presetLabels = {"立刻", "1小时", "3小时", "6小时", "24小时"};
-        for (int index = 0; index < presetHours.length; index++) {
-            final int hours = presetHours[index];
-            Button preset = button(presetLabels[index], false);
-            preset.setOnClickListener(v -> {
-                moveAfterMinutes.setText(Integer.toString(hours));
-                deleteAfterMinutes.setText(Integer.toString(hours));
-            });
-            LinearLayout.LayoutParams presetParams = new LinearLayout.LayoutParams(0, dp(44), 1);
-            if (index > 0) presetParams.setMargins(dp(4), 0, 0, 0);
-            presets.addView(preset, presetParams);
-        }
-        root.addView(presets, margins(0, dp(8), 0, 0));
-        Button saveCleanup = button("保存自动整理时间", false);
-        saveCleanup.setOnClickListener(v -> saveCleanupSettings());
-        root.addView(saveCleanup, margins(0, dp(10), 0, dp(20)));
+        LinearLayout moveRow = cleanupRow("自动移入回收站", cleanup.moveMinutes / 60);
+        moveAfterText = (TextView) moveRow.getChildAt(1);
+        moveRow.setOnClickListener(v -> showCleanupPicker(true));
+        root.addView(moveRow, settingMargins(dp(8)));
+        LinearLayout deleteRow = cleanupRow("自动彻底删除", cleanup.deleteMinutes / 60);
+        deleteAfterText = (TextView) deleteRow.getChildAt(1);
+        deleteRow.setOnClickListener(v -> showCleanupPicker(false));
+        root.addView(deleteRow, settingMargins(dp(20)));
 
         root.addView(label("提醒"));
         soundSwitch = settingSwitch("声音通知", "收到文件时显示通知并响铃",
@@ -198,21 +180,70 @@ public final class SettingsActivity extends Activity {
         toast("已保存，电脑端会自动刷新");
     }
 
-    private void saveCleanupSettings() {
-        try {
-            int moveHours = Integer.parseInt(moveAfterMinutes.getText().toString().trim());
-            int deleteHours = Integer.parseInt(deleteAfterMinutes.getText().toString().trim());
-            if (moveHours < 0 || moveHours > 720 || deleteHours < 0 || deleteHours > 720
-                    || !CleanupSettings.save(this, moveHours * 60, deleteHours * 60)) {
-                toast("请输入 0～720，彻底删除时间不能早于回收时间");
-                return;
-            }
-            DiagnosticLog.write(this, "cleanup_settings_saved",
-                    "moveHours=" + moveHours + " deleteHours=" + deleteHours);
-            toast("自动整理时间已保存");
-        } catch (NumberFormatException error) {
-            toast("请输入 0～720 的整数小时");
+    private void showCleanupPicker(boolean editingMove) {
+        CleanupSettings.Values current = CleanupSettings.read(this);
+        int currentHours = (editingMove ? current.moveMinutes : current.deleteMinutes) / 60;
+        int[] hours = {0, 1, 3, 6, 24};
+        String[] labels = {"立刻", "1 小时后", "3 小时后", "6 小时后", "24 小时后", "自定义…"};
+        int checked = -1;
+        for (int index = 0; index < hours.length; index++) {
+            if (hours[index] == currentHours) checked = index;
         }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(editingMove ? "自动移入回收站" : "自动彻底删除")
+                .setSingleChoiceItems(labels, checked, null)
+                .setNegativeButton("取消", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getListView().setOnItemClickListener((parent, view, position, id) -> {
+            dialog.dismiss();
+            if (position == hours.length) showCustomCleanupHours(editingMove, currentHours);
+            else saveCleanupHours(editingMove, hours[position]);
+        }));
+        dialog.show();
+    }
+
+    private void showCustomCleanupHours(boolean editingMove, int currentHours) {
+        EditText input = numberField(Integer.toString(currentHours));
+        input.setSelectAllOnFocus(true);
+        LinearLayout holder = new LinearLayout(this);
+        holder.setPadding(dp(22), dp(4), dp(22), 0);
+        holder.addView(input, new LinearLayout.LayoutParams(-1, dp(52)));
+        new AlertDialog.Builder(this)
+                .setTitle("自定义小时数")
+                .setMessage("请输入 0～720 的整数；0 表示立刻。")
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    try {
+                        saveCleanupHours(editingMove,
+                                Integer.parseInt(input.getText().toString().trim()));
+                    } catch (NumberFormatException error) {
+                        toast("请输入 0～720 的整数小时");
+                    }
+                }).show();
+    }
+
+    private void saveCleanupHours(boolean editingMove, int hours) {
+        if (hours < 0 || hours > 720) {
+            toast("请输入 0～720 的整数小时");
+            return;
+        }
+        CleanupSettings.Values current = CleanupSettings.read(this);
+        int moveHours = editingMove ? hours : current.moveMinutes / 60;
+        int deleteHours = editingMove ? Math.max(hours, current.deleteMinutes / 60) : hours;
+        if (deleteHours < moveHours) {
+            toast("彻底删除时间不能早于移入回收站");
+            return;
+        }
+        if (!CleanupSettings.save(this, moveHours * 60, deleteHours * 60)) {
+            toast("自动整理时间没有保存");
+            return;
+        }
+        moveAfterText.setText(cleanupTimingText(moveHours));
+        deleteAfterText.setText(cleanupTimingText(deleteHours));
+        DiagnosticLog.write(this, "cleanup_settings_saved",
+                "moveHours=" + moveHours + " deleteHours=" + deleteHours);
+        toast("已保存");
     }
 
     @Override
@@ -393,6 +424,26 @@ public final class SettingsActivity extends Activity {
         value.setTextColor(Color.rgb(70, 70, 67));
         value.setPadding(0, 0, 0, dp(7));
         return value;
+    }
+    private LinearLayout cleanupRow(String title, int hours) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(8), dp(14), dp(8));
+        row.setBackground(round(Color.WHITE, 14));
+        row.setClickable(true);
+        row.setFocusable(true);
+        TextView titleView = text(title, 15, false);
+        TextView timingView = text(cleanupTimingText(hours), 15, false);
+        timingView.setTextColor(Color.rgb(85, 85, 82));
+        timingView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        row.addView(titleView, new LinearLayout.LayoutParams(0, -1, 1));
+        row.addView(timingView, new LinearLayout.LayoutParams(-2, -1));
+        return row;
+    }
+    private String cleanupTimingText(int hours) {
+        String timing = hours == 0 ? "立刻" : hours + " 小时后";
+        return timing + "  ›";
     }
     private EditText numberField(String value) {
         EditText field = new EditText(this);

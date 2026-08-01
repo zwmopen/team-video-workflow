@@ -93,13 +93,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         filterBar = UISegmentedControl(items: WorkCategory.filters.map { $0.label })
         filterBar.selectedSegmentIndex = 0
         filterBar.translatesAutoresizingMaskIntoConstraints = false
+        filterBar.backgroundColor = AppColors.secondaryBackground
+        filterBar.layer.cornerRadius = 10
+        filterBar.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 12, weight: .semibold)],
+                                         for: .normal)
+        if #available(iOS 13.0, *) { filterBar.selectedSegmentTintColor = .white }
+        else { filterBar.tintColor = view.tintColor }
         filterBar.addTarget(self, action: #selector(filterChanged(_:)), for: .valueChanged)
         view.addSubview(filterBar)
         NSLayoutConstraint.activate([
             filterBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             filterBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             filterBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
-            filterBar.heightAnchor.constraint(equalToConstant: 32)
+            filterBar.heightAnchor.constraint(equalToConstant: 36)
         ])
     }
 
@@ -170,7 +176,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func render() {
         guard isViewLoaded else { return }
-        badge.text = " \(filteredWorks.count) "
+        updateFilterTitles()
+        badge.text = " \(library.works.count) "
         collectionView.reloadData()
         collectionView.refreshControl?.endRefreshing()
         let noFolder = library.folderName == nil
@@ -188,6 +195,22 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if let message = library.message { showToast(message) }
     }
 
+    private func updateFilterTitles() {
+        for (index, filter) in WorkCategory.filters.enumerated() {
+            let count = filter.id == WorkCategory.all
+                ? library.works.count
+                : library.works.filter { $0.category == filter.id }.count
+            let compactLabel: String
+            switch filter.id {
+            case WorkCategory.conversion: compactLabel = "转化"
+            case WorkCategory.traffic: compactLabel = "泛流量"
+            default: compactLabel = filter.label
+            }
+            filterBar.setTitle("\(compactLabel) \(count)", forSegmentAt: index)
+        }
+        filterBar.accessibilityLabel = "作品分类"
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         return filteredWorks.count
     }
@@ -201,7 +224,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let work = library.works[indexPath.item]
+        let work = filteredWorks[indexPath.item]
         navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
     }
 

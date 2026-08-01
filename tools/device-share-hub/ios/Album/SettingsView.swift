@@ -62,12 +62,12 @@ final class SettingsViewController: UITableViewController {
         case (2, 2): cell.textLabel?.text = "分享后按设置自动回收并删除"
         case (3, 0):
             cell.textLabel?.text = "自动移入回收站"
-            cell.detailTextLabel?.text = "\(CleanupPreferences.moveHours) 小时"
+            cell.detailTextLabel?.text = cleanupTimingText(CleanupPreferences.moveHours)
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
         case (3, 1):
             cell.textLabel?.text = "自动彻底删除"
-            cell.detailTextLabel?.text = "\(CleanupPreferences.deleteHours) 小时"
+            cell.detailTextLabel?.text = cleanupTimingText(CleanupPreferences.deleteHours)
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
         case (4, 0):
@@ -147,7 +147,7 @@ final class SettingsViewController: UITableViewController {
             library.useManagedFolder()
             tableView.reloadData()
         } else if indexPath.section == 3 {
-            promptForCleanupHours(editingMove: indexPath.row == 0)
+            showCleanupChoices(editingMove: indexPath.row == 0)
         } else if indexPath.section == 6 && indexPath.row == 2 {
             AlbumUpdateChecker.check(from: self)
         } else if indexPath.section == 6 && indexPath.row == 3 {
@@ -182,19 +182,39 @@ final class SettingsViewController: UITableViewController {
     }
 
     private func showAbout() {
-        let message = "相册用于管理作品、复制 TXT 文案并调用 iOS 系统分享，也能在同一 Wi‑Fi 下与 Windows、安卓和苹果设备互传文件。\n\n素材与记录只保存在你选择的文件夹；不自动发布、不模拟点击、不修改图片拍摄信息。默认在首次分享 1 小时后移入回收站并彻底删除，可在“自动整理”中调整为 1–10 小时。"
+        let message = "相册用于管理作品、复制 TXT 文案并调用 iOS 系统分享，也能在同一 Wi‑Fi 下与 Windows、安卓和苹果设备互传文件。\n\n素材与记录只保存在你选择的文件夹；不自动发布、不模拟点击、不修改图片拍摄信息。默认在首次分享 1 小时后移入回收站并彻底删除，可在“自动整理”中选择常用时间或输入 0～720 小时。"
         let alert = UIAlertController(title: "关于相册", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
         present(alert, animated: true)
     }
 
-    private func promptForCleanupHours(editingMove: Bool) {
+    private func showCleanupChoices(editingMove: Bool) {
         let current = editingMove ? CleanupPreferences.moveHours : CleanupPreferences.deleteHours
         let title = editingMove ? "自动移入回收站" : "自动彻底删除"
-        let alert = UIAlertController(
-            title: title,
-            message: "请输入 1–10 小时。彻底删除时间不能早于移入回收站时间。",
-            preferredStyle: .alert)
+        let alert = UIAlertController(title: title, message: "选择后立即保存", preferredStyle: .actionSheet)
+        [(0, "立刻"), (1, "1 小时后"), (3, "3 小时后"),
+         (6, "6 小时后"), (24, "24 小时后")].forEach { preset in
+            let (hours, label) = preset
+            alert.addAction(UIAlertAction(title: label + (hours == current ? "  ✓" : ""),
+                                          style: .default) { [weak self] _ in
+                self?.saveCleanupChoice(hours, editingMove: editingMove)
+            })
+        }
+        alert.addAction(UIAlertAction(title: "自定义…", style: .default) { [weak self] _ in
+            self?.showCustomCleanupHours(editingMove: editingMove, current: current)
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
+    }
+
+    private func showCustomCleanupHours(editingMove: Bool, current: Int) {
+        let alert = UIAlertController(title: "自定义小时数",
+                                      message: "请输入 0～720 的整数；0 表示立刻。",
+                                      preferredStyle: .alert)
         alert.addTextField { field in
             field.text = "\(current)"
             field.keyboardType = .numberPad
@@ -202,24 +222,29 @@ final class SettingsViewController: UITableViewController {
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "保存", style: .default) { [weak self, weak alert] _ in
-            guard let self = self,
-                  let text = alert?.textFields?.first?.text,
-                  let value = Int(text) else { return }
-            let move = editingMove ? value : CleanupPreferences.moveHours
-            let delete = editingMove ? max(value, CleanupPreferences.deleteHours) : value
-            guard CleanupPreferences.save(moveHours: move, deleteHours: delete) else {
-                let failed = UIAlertController(
-                    title: "没有保存",
-                    message: "请输入 1–10；彻底删除时间不能早于移入回收站时间。",
-                    preferredStyle: .alert)
-                failed.addAction(UIAlertAction(title: "知道了", style: .default))
-                self.present(failed, animated: true)
-                return
-            }
-            self.library.refresh(showConfirmation: false)
-            self.tableView.reloadData()
+            guard let text = alert?.textFields?.first?.text, let value = Int(text) else { return }
+            self?.saveCleanupChoice(value, editingMove: editingMove)
         })
         present(alert, animated: true)
+    }
+
+    private func saveCleanupChoice(_ value: Int, editingMove: Bool) {
+        let move = editingMove ? value : CleanupPreferences.moveHours
+        let delete = editingMove ? max(value, CleanupPreferences.deleteHours) : value
+        guard CleanupPreferences.save(moveHours: move, deleteHours: delete) else {
+            let failed = UIAlertController(title: "没有保存",
+                                           message: "请输入 0～720；彻底删除不能早于移入回收站。",
+                                           preferredStyle: .alert)
+            failed.addAction(UIAlertAction(title: "知道了", style: .default))
+            present(failed, animated: true)
+            return
+        }
+        library.refresh(showConfirmation: false)
+        tableView.reloadData()
+    }
+
+    private func cleanupTimingText(_ hours: Int) -> String {
+        return hours == 0 ? "立刻" : "\(hours) 小时后"
     }
 
     private func promptForDeviceName() {
