@@ -5,7 +5,7 @@
 - Android 0.6.7/code 45 与 iPhone 0.6.7/build 26 删除首页顶部刷新按钮，作品和文件模式统一使用下拉刷新；Android 回收站仍显示必要返回入口。
 - 源码提交 `bffd295` 的 GitHub Actions run `30685974568` 已全部通过：Android Release、iPhone 真机 SDK 构建、Windows 与远程协议闭环均成功。Android 本机单元测试、Release 构建和 Release Lint 同样通过。
 - 正式安装包已发布到 [`gallery-updates v0.6.7`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.7)。更新索引提交 `a280878` 已指向 Android 0.6.7/code 45 与 iPhone 0.6.7/build 26；APK 为 799370 字节、SHA-256 `3049B536D7F70F2A9B79CA50320FF986D633ADC53AFF966A79A4AFDFDF4B1294`，IPA 为 17208963 字节、SHA-256 `0B5058BB570CF4C0967EADFE1E9740122D5028BC96EBE7FAD4BD3F107FE43D01`。
-- iPhone 0.6.7/build 26 已在 iPhone 12 / iOS 26.5.2 沿原应用标识完成签名覆盖安装；Sideloadly 的签名、打包、上传和系统安装最终显示 `Done / 100%`，设备应用清单真实读取到 0.6.7/build 26，直接启动成功（PID 4346）。启动后设置页截图确认新版剪切板/截图控制与版本号；首页分类、下拉刷新手感和顶部按钮仍需返回首页后继续实体操作，不用安装成功代替界面验收。
+- iPhone 0.6.7/build 26 已在 iPhone 12 / iOS 26.5.2 沿原应用标识完成签名覆盖安装；Sideloadly 的签名、打包、上传和系统安装最终显示 `Done / 100%`，设备应用清单真实读取到 0.6.7/build 26，直接启动成功（PID 4346）。设置页截图确认新版剪切板/截图控制与版本号；返回首页后的真机截图确认顶部刷新按钮和重复“作品/总数”均已删除，保留文件夹、传送、回收站和设置，并显示“全部 16、转化 11、泛流量 0、未分类 5”。分类切换动画与下拉刷新手感仍需触屏操作，不用静态截图代替动态验收。
 
 ## 2026-08-01 双端原生交互统一 0.6.6 候选
 
