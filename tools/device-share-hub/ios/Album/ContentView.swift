@@ -54,7 +54,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationItem.rightBarButtonItems = [
             toolbarItem(.settings, label: "设置", action: #selector(openSettings)),
             toolbarItem(.trash, label: "回收站", action: #selector(openTrash)),
-            toolbarItem(.refresh, label: "刷新作品", action: #selector(refreshTapped)),
             toolbarItem(.plane, label: "传送文件", action: #selector(openTransfer))
         ]
     }
@@ -229,7 +228,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
-    @objc private func refreshTapped() { library.refresh() }
     @objc private func emptyAction() {
         library.supportsExternalFolderSelection ? presentFolderPicker() : presentImportPicker()
     }

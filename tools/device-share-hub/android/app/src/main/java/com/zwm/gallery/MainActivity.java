@@ -230,6 +230,7 @@ public final class MainActivity extends Activity {
         });
         titleRow.addView(transfer, iconParams(true));
         leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
+        leftModeButton.setVisibility(View.GONE);
         leftModeButton.setOnClickListener(v -> {
             if (fileMode) {
                 refreshFiles();
@@ -361,6 +362,7 @@ public final class MainActivity extends Activity {
         categorySelector.setVisibility(View.VISIBLE);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新作品");
+        leftModeButton.setVisibility(View.GONE);
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
         rightModeButton.setContentDescription("回收站");
         headingText.setText("");
@@ -374,6 +376,7 @@ public final class MainActivity extends Activity {
         categorySelector.setVisibility(View.GONE);
         leftModeButton.setImageResource(R.drawable.ic_album_back);
         leftModeButton.setContentDescription("返回作品");
+        leftModeButton.setVisibility(View.VISIBLE);
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
         rightModeButton.setContentDescription("清空回收站");
         headingText.setText("回收站");
@@ -688,6 +691,7 @@ public final class MainActivity extends Activity {
         modeButton.setContentDescription("切换到作品分享");
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新文件");
+        leftModeButton.setVisibility(View.GONE);
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
         rightModeButton.setContentDescription("回收站");
         footerNote.setVisibility(View.GONE);
