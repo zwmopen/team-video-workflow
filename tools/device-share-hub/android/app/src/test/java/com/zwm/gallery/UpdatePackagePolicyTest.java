@@ -8,17 +8,19 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public final class UpdatePackagePolicyTest {
     @Test
-    public void releaseManifestDoesNotRequestAppInstallerCapability() throws Exception {
+    public void releaseManifestDeclaresUserConfirmedInstallerCapability() throws Exception {
         String manifest = new String(
                 Files.readAllBytes(Paths.get("src/main/AndroidManifest.xml")),
                 StandardCharsets.UTF_8);
 
-        assertFalse(
-                "Android updates must be downloaded by the system; the app must not request installer capability",
+        assertTrue(
+                "App-owned verified APKs require Android's user-controlled install-source permission",
                 manifest.contains("android.permission.REQUEST_INSTALL_PACKAGES"));
+        assertFalse(manifest.contains("android.permission.INSTALL_PACKAGES"));
     }
 
     @Test

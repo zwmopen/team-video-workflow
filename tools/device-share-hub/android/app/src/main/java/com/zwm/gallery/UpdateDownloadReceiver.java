@@ -139,12 +139,12 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
                 .apply();
     }
 
-    private static void markReady(
+    static void markReady(
             SharedPreferences preferences, long downloadId, String version) {
         markReady(preferences, downloadId, version, "");
     }
 
-    private static void markReady(
+    static void markReady(
             SharedPreferences preferences, long downloadId, String version, String fileName) {
         preferences.edit()
                 .putLong(UpdateChecker.PREF_READY_DOWNLOAD_ID, downloadId)
@@ -158,7 +158,7 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
                 .apply();
     }
 
-    private static void notifyReady(Context context, String version, String fileName) {
+    static void notifyReady(Context context, String version, String fileName) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) return;
         String channelId = "device_share_updates_v2";

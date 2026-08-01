@@ -2,12 +2,8 @@ package com.zwm.gallery;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.DownloadManager;
-import android.content.Context;
 import android.content.Intent;
-import android.database.Cursor;
 import android.net.Uri;
-import android.os.Environment;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -29,7 +25,9 @@ final class UpdateChecker {
     static final String PREF_READY_DOWNLOAD_VERSION = "readyUpdateDownloadVersion";
     static final String PREF_READY_FILE_NAME = "readyUpdateFileName";
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
+    static final String PREF_DOWNLOAD_ERROR = "updateDownloadError";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
+    static final String RESULT_DOWNLOAD_FAILED = "download_failed";
     static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
 
     private UpdateChecker() {
@@ -40,7 +38,6 @@ final class UpdateChecker {
                 activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
         String pendingVersion = prefs.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
         if (!pendingVersion.isEmpty() && !isNewer(pendingVersion, currentVersion(activity))) {
-            removeTrackedDownload(activity, prefs.getLong(PREF_PENDING_DOWNLOAD_ID, -1L));
             prefs.edit()
                     .remove(PREF_PENDING_DOWNLOAD_ID)
                     .remove(PREF_PENDING_DOWNLOAD_SHA256)
@@ -49,7 +46,6 @@ final class UpdateChecker {
         }
         String readyVersion = prefs.getString(PREF_READY_DOWNLOAD_VERSION, "");
         if (!readyVersion.isEmpty() && !isNewer(readyVersion, currentVersion(activity))) {
-            removeTrackedDownload(activity, prefs.getLong(PREF_READY_DOWNLOAD_ID, -1L));
             removeReadyFile(activity, prefs.getString(PREF_READY_FILE_NAME, ""));
             prefs.edit()
                     .remove(PREF_READY_DOWNLOAD_ID)
@@ -75,7 +71,7 @@ final class UpdateChecker {
                 markChecked(activity);
                 activity.runOnUiThread(() -> {
                     if (isNewer(tag, current)) {
-                        if (silent) downloadWithSystem(activity, tag, apkUrl, sha256);
+                        if (silent) downloadUpdate(activity, tag, apkUrl, sha256);
                         else showUpdate(activity, tag, apkUrl, sha256);
                     }
                     else if (!silent) toast(activity, "当前已经是最新版本 " + current);
@@ -93,12 +89,20 @@ final class UpdateChecker {
     static void reportDownloadProblem(Activity activity) {
         String result = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
                 .getString(PREF_DOWNLOAD_RESULT, "");
-        if (!RESULT_CHECKSUM_FAILED.equals(result)) return;
+        if (!RESULT_CHECKSUM_FAILED.equals(result) && !RESULT_DOWNLOAD_FAILED.equals(result)) return;
+        String detail = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
+                .getString(PREF_DOWNLOAD_ERROR, "");
         activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE).edit()
-                .remove(PREF_DOWNLOAD_RESULT).apply();
+                .remove(PREF_DOWNLOAD_RESULT)
+                .remove(PREF_DOWNLOAD_ERROR)
+                .apply();
+        boolean invalid = RESULT_CHECKSUM_FAILED.equals(result);
         new AlertDialog.Builder(activity)
-                .setTitle("更新包校验失败")
-                .setMessage("系统下载的文件与发布版本不一致，已自动删除。请重新检查更新。")
+                .setTitle(invalid ? "更新包校验失败" : "更新下载中断")
+                .setMessage(invalid
+                        ? "下载文件与发布版本不一致或系统无法解析，已自动删除。请重新下载。"
+                        : "下载没有完成，已保留进度。请重新点击“下载更新”继续。"
+                                + (detail.isEmpty() ? "" : "\n\n原因：" + detail))
                 .setPositiveButton("知道了", null)
                 .show();
     }
@@ -164,12 +168,12 @@ final class UpdateChecker {
                 .setNegativeButton("稍后", null);
         if (downloadable) {
             builder.setPositiveButton("下载更新", (dialog, which) ->
-                    downloadWithSystem(activity, version, apkUrl, sha256));
+                    downloadUpdate(activity, version, apkUrl, sha256));
         }
         builder.show();
     }
 
-    private static void downloadWithSystem(
+    private static void downloadUpdate(
             Activity activity, String version, String apkUrl, String expectedSha256) {
         try {
             android.content.SharedPreferences preferences =
@@ -178,64 +182,31 @@ final class UpdateChecker {
             if (!"https".equalsIgnoreCase(uri.getScheme())) {
                 throw new IllegalArgumentException("更新地址不是安全连接");
             }
-            DownloadManager manager =
-                    (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
-            if (manager == null) throw new IllegalStateException("系统下载服务不可用");
-            long pendingId = preferences.getLong(PREF_PENDING_DOWNLOAD_ID, -1L);
             String pendingVersion = preferences.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
-            int pendingStatus = trackedDownloadStatus(manager, pendingId);
-            if (pendingId >= 0 && version.equals(pendingVersion)
-                    && isDownloadStateUsable(pendingStatus)) {
-                toast(activity, downloadStatusMessage(pendingStatus));
-                return;
-            }
-            long readyId = preferences.getLong(PREF_READY_DOWNLOAD_ID, -1L);
             String readyVersion = preferences.getString(PREF_READY_DOWNLOAD_VERSION, "");
-            int readyStatus = trackedDownloadStatus(manager, readyId);
-            if (readyId >= 0 && version.equals(readyVersion)
-                    && isDownloadStateUsable(readyStatus)) {
-                toast(activity, downloadStatusMessage(readyStatus));
+            if (version.equals(readyVersion)
+                    && showReadyInstallPrompt(activity)) {
                 return;
             }
-
-            if (pendingId >= 0) manager.remove(pendingId);
-            if (readyId >= 0 && readyId != pendingId) manager.remove(readyId);
-            removeReadyFile(activity, preferences.getString(PREF_READY_FILE_NAME, ""));
-            preferences.edit()
-                    .remove(PREF_PENDING_DOWNLOAD_ID)
-                    .remove(PREF_PENDING_DOWNLOAD_SHA256)
-                    .remove(PREF_PENDING_DOWNLOAD_VERSION)
-                    .remove(PREF_READY_DOWNLOAD_ID)
-                    .remove(PREF_READY_DOWNLOAD_VERSION)
-                    .remove(PREF_READY_FILE_NAME)
-                    .commit();
-
-            DownloadManager.Request request = new DownloadManager.Request(uri)
-                    .setTitle("相册 " + version + " 更新")
-                    .setDescription("下载完成并校验后，由你确认安装")
-                    .setMimeType("application/vnd.android.package-archive")
-                    .setDestinationInExternalPublicDir(
-                            Environment.DIRECTORY_DOWNLOADS, updateFileName(version))
-                    .setAllowedOverMetered(true)
-                    .setAllowedOverRoaming(false)
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
-            long downloadId = manager.enqueue(request);
+            if (!pendingVersion.isEmpty() && !version.equals(pendingVersion)) {
+                AppUpdateService.deletePartial(activity, pendingVersion);
+            }
             boolean stored = preferences.edit()
-                    .putLong(PREF_PENDING_DOWNLOAD_ID, downloadId)
+                    .putLong(PREF_PENDING_DOWNLOAD_ID, -1L)
                     .putString(PREF_PENDING_DOWNLOAD_SHA256,
                             expectedSha256 == null ? "" : expectedSha256.trim())
                     .putString(PREF_PENDING_DOWNLOAD_VERSION, version)
                     .remove(PREF_DOWNLOAD_RESULT)
+                    .remove(PREF_DOWNLOAD_ERROR)
                     .commit();
             if (!stored) {
-                manager.remove(downloadId);
                 throw new IllegalStateException("无法保存下载状态");
             }
-            DiagnosticLog.write(activity, "update_system_download_started",
-                    version + " id=" + downloadId);
-            toast(activity, "正在下载；校验完成后会提示安装");
+            AppUpdateService.start(activity, version, apkUrl.trim(), expectedSha256);
+            DiagnosticLog.write(activity, "update_app_download_started", version);
+            toast(activity, "正在下载更新，可在通知中查看进度");
         } catch (Exception error) {
-            DiagnosticLog.write(activity, "update_system_download_failed", error.getMessage());
+            DiagnosticLog.write(activity, "update_app_download_start_failed", error.getMessage());
             new AlertDialog.Builder(activity)
                     .setTitle("无法开始下载")
                     .setMessage(error.getMessage() == null ? "请确认网络后重试" : error.getMessage())
@@ -248,38 +219,6 @@ final class UpdateChecker {
         HttpURLConnection connection = (HttpURLConnection) new URL(value).openConnection();
         connection.setInstanceFollowRedirects(true);
         return connection;
-    }
-
-    private static int trackedDownloadStatus(DownloadManager manager, long downloadId) {
-        if (downloadId < 0) return -1;
-        try (Cursor cursor = manager.query(
-                new DownloadManager.Query().setFilterById(downloadId))) {
-            if (cursor == null || !cursor.moveToFirst()) return -1;
-            return cursor.getInt(
-                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-        } catch (Exception error) {
-            return -1;
-        }
-    }
-
-    static boolean isDownloadStateUsable(int status) {
-        return status == DownloadManager.STATUS_PENDING
-                || status == DownloadManager.STATUS_RUNNING
-                || status == DownloadManager.STATUS_PAUSED
-                || status == DownloadManager.STATUS_SUCCESSFUL;
-    }
-
-    static String downloadStatusMessage(int status) {
-        return status == DownloadManager.STATUS_SUCCESSFUL
-                ? "安装包已经验证，请点击安装"
-                : "更新包正在系统下载，请查看通知进度";
-    }
-
-    private static void removeTrackedDownload(Activity activity, long downloadId) {
-        if (downloadId < 0) return;
-        DownloadManager manager =
-                (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
-        if (manager != null) manager.remove(downloadId);
     }
 
     private static void removeReadyFile(Activity activity, String fileName) {

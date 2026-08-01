@@ -24,19 +24,20 @@ public final class UpdateCheckerTest {
     }
 
     @Test
-    public void onlyLiveOrCompletedDownloadsBlockDuplicateEnqueue() {
-        assertTrue(UpdateChecker.isDownloadStateUsable(
-                android.app.DownloadManager.STATUS_PENDING));
-        assertTrue(UpdateChecker.isDownloadStateUsable(
-                android.app.DownloadManager.STATUS_RUNNING));
-        assertTrue(UpdateChecker.isDownloadStateUsable(
-                android.app.DownloadManager.STATUS_PAUSED));
-        assertTrue(UpdateChecker.isDownloadStateUsable(
-                android.app.DownloadManager.STATUS_SUCCESSFUL));
-        assertFalse(UpdateChecker.isDownloadStateUsable(
-                android.app.DownloadManager.STATUS_FAILED));
-        assertEquals("安装包已经验证，请点击安装",
-                UpdateChecker.downloadStatusMessage(
-                        android.app.DownloadManager.STATUS_SUCCESSFUL));
+    public void appDownloaderOnlyAppendsMatchingPartialResponses() {
+        assertTrue(AppUpdateService.shouldAppend(1024, 206, "bytes 1024-2047/4096"));
+        assertFalse(AppUpdateService.shouldAppend(1024, 200, null));
+        assertFalse(AppUpdateService.shouldAppend(1024, 206, "bytes 0-2047/4096"));
+        assertFalse(AppUpdateService.shouldAppend(0, 206, "bytes 0-2047/4096"));
+    }
+
+    @Test
+    public void appDownloaderOnlyFollowsExpectedRedirectCodes() {
+        assertTrue(AppUpdateService.isRedirect(301));
+        assertTrue(AppUpdateService.isRedirect(302));
+        assertTrue(AppUpdateService.isRedirect(307));
+        assertTrue(AppUpdateService.isRedirect(308));
+        assertFalse(AppUpdateService.isRedirect(200));
+        assertFalse(AppUpdateService.isRedirect(404));
     }
 }

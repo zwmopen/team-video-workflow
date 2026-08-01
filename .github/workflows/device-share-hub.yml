@@ -128,8 +128,8 @@ jobs:
           if [ "$build_status" -eq 0 ]; then
             apk="app/build/outputs/apk/release/app-release.apk"
             "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" >> /tmp/device-share-android-build.log 2>&1
-            if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" | grep -q 'android.permission.REQUEST_INSTALL_PACKAGES'; then
-              echo "Release APK must not request REQUEST_INSTALL_PACKAGES" >> /tmp/device-share-android-build.log
+            if ! "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" | grep -q 'android.permission.REQUEST_INSTALL_PACKAGES'; then
+              echo "Release APK must declare REQUEST_INSTALL_PACKAGES for the user-confirmed app-owned installer flow" >> /tmp/device-share-android-build.log
               build_status=1
             fi
             if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep -q 'application-debuggable'; then

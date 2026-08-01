@@ -1,13 +1,14 @@
 # 分享中控 V4.1.2 维护交接
 
-## 2026-08-01 Android 确认式更新 0.6.11 候选
+## 2026-08-01 Android 确认式更新 0.6.12 候选
 
-- Android 0.6.11/code 49；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。0.6.10/code 48 仅作为修复后实体升级起点，不作为最终保留版本。
+- Android 0.6.12/code 50；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。修正版 0.6.11/code 49 仅作为实体升级起点，不作为最终保留版本。
 - 每次启动仍自动检查版本，但发现新版后先弹窗，由用户点击“下载更新”；完成 SHA-256、包名、版本和签名校验后，再弹包含版本、文件名和大小的“安装”按钮。
 - 删除下载完成广播直接启动安装 Activity 的路径，规避 Android/MIUI 后台界面启动限制；首页不在前台时使用常驻通知，下次返回首页再次提示。
-- Redmi 公网回归捕获到系统日志 `Permission Denial ... DOWNLOAD_COMPLETE ... receiver not exported`。下载接收器现允许系统下载进程投递，业务代码仍只接受偏好中登记的下载 ID，并继续做 SHA-256、包名、版本与签名校验。
+- Redmi 公网回归先捕获到 `DOWNLOAD_COMPLETE` 外部 UID 投递限制；开放接收器后又确认 MIUI 将 GitHub 下载交给迅雷内核并返回状态 700。新版不再把用户确认后的 APK 交给系统 `DownloadManager`，而是启动前台 `dataSync` 服务自行执行 HTTPS 下载、有限跳转、断点续传和持续通知。
+- 下载临时文件保存在应用私有 `files/updates/*.apk.part`；网络失败保留以便续传，校验失败立即删除。通过 SHA-256、APK 解析、包名、版本码和签名校验后才改名为 `.apk`，并广播首页显示“安装”按钮。
 - 后台文件传送继续由 `OnlineService` 负责，首页可见状态仍保留给传送和截图提示，不与更新下载混用。
-- 本机 20 个测试套件共 64 项单元测试、Release 构建与 Release Lint 通过；正式发布后用已安装修复版 0.6.10 的 Redmi Note 8 完成 0.6.10 → 0.6.11 公网升级全流程，再补充 CI、Release、哈希和实体证据。
+- 本机 20 个测试套件共 65 项单元测试、Release 构建与 Release Lint 已通过。候选 APK 为 809414 字节，SHA-256 `CE74423E168D492D3B5CE87F66E9257AF8E91EFCA6AEFC42C58FC2DAC73D3E30`；v2 签名证书仍为 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`。正式发布后用已安装修复版 0.6.11 的 Redmi Note 8 完成 0.6.11 → 0.6.12 公网升级全流程，再补充 CI、Release 和实体证据。
 
 ## 2026-08-01 Android 真机交互修复 0.6.8 正式版
 
