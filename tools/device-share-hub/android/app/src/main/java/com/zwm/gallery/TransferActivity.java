@@ -1,6 +1,7 @@
 package com.zwm.gallery;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -32,11 +33,18 @@ public final class TransferActivity extends Activity {
     public static final String EXTRA_LOCAL_PATHS = "localPaths";
     private static final int PICK_FILES = 81;
     private static final int PICK_FOLDER = 82;
+    private static final String PREFS = "device_share";
+    private static final String PREF_TRANSFER_CHANNEL = "outgoingTransferChannel";
+    private static final String CHANNEL_AUTO = "auto";
+    private static final String CHANNEL_USB = "usb";
+    private static final String CHANNEL_WIFI = "wifi";
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private LinearLayout peersContainer;
     private TextView status;
     private ProgressBar progress;
+    private Button channelButton;
     private PeerDevice selected;
+    private String selectedChannel;
     private boolean receiverRegistered;
     private ArrayList<String> pendingLocalPaths;
     private final Handler refreshHandler = new Handler(Looper.getMainLooper());
@@ -51,6 +59,8 @@ public final class TransferActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         pendingLocalPaths = getIntent().getStringArrayListExtra(EXTRA_LOCAL_PATHS);
+        selectedChannel = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_TRANSFER_CHANNEL, CHANNEL_AUTO);
         setTitle("传送");
         setContentView(ScreenInsets.protect(buildUi()));
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
@@ -85,9 +95,17 @@ public final class TransferActivity extends Activity {
         root.setBackgroundColor(Color.rgb(246, 244, 240));
         TextView title = text("传送到", 28, true);
         root.addView(title);
-        TextView hint = text("先选设备，再选文件或文件夹。两台设备需在同一 Wi‑Fi。", 14, false);
+        TextView hint = text("先选传送方式和设备，再选文件或文件夹。同一 Wi‑Fi 可直连；数据线需要打开 USB 网络共享。", 14, false);
         hint.setTextColor(Color.rgb(103, 100, 95));
         root.addView(hint, margins(0, dp(8), 0, dp(14)));
+        channelButton = new Button(this);
+        channelButton.setAllCaps(false);
+        channelButton.setTextSize(15);
+        channelButton.setTextColor(Color.rgb(38, 115, 77));
+        channelButton.setBackground(round(Color.WHITE, 14));
+        channelButton.setOnClickListener(v -> chooseChannel());
+        updateChannelButton();
+        root.addView(channelButton, margins(0, 0, 0, dp(12)));
         peersContainer = new LinearLayout(this);
         peersContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(peersContainer);
@@ -132,14 +150,23 @@ public final class TransferActivity extends Activity {
 
     private void renderPeers() {
         if (peersContainer == null) return;
-        List<PeerDevice> peers = OnlineService.peers();
+        List<PeerDevice> peers = filteredPeers(OnlineService.peers());
         peersContainer.removeAllViews();
+        if (selected != null && !matchesSelectedChannel(selected)) selected = null;
         if (peers.isEmpty()) {
-            TextView empty = text("暂未发现设备\n请在另一台设备上打开“相册”或电脑中控", 15, false);
+            String emptyMessage = CHANNEL_USB.equals(selectedChannel)
+                    ? "暂未发现 USB 电脑\n请连接数据线，并打开手机的 USB 网络共享"
+                    : "暂未发现设备\n请在另一台设备上打开“相册”或电脑中控";
+            TextView empty = text(emptyMessage, 15, false);
             empty.setGravity(Gravity.CENTER);
             empty.setTextColor(Color.GRAY);
             empty.setPadding(dp(12), dp(24), dp(12), dp(24));
             peersContainer.addView(empty);
+            if (CHANNEL_USB.equals(selectedChannel)) {
+                Button tether = action("打开 USB 网络共享设置");
+                tether.setOnClickListener(v -> openUsbTetherSettings());
+                peersContainer.addView(tether, margins(0, 0, 0, dp(9)));
+            }
             return;
         }
         if (selected == null) status.setText("已发现 " + peers.size() + " 台设备，请选择");
@@ -150,7 +177,7 @@ public final class TransferActivity extends Activity {
             item.setPadding(dp(16), dp(10), dp(16), dp(10));
             String displayName = peer.name;
             if (peer.workCount >= 0) displayName += "（作品数 " + peer.workCount + "）";
-            item.setText(displayName + "\n" + peer.model + "  ·  WiFi");
+            item.setText(displayName + "\n" + peer.model + "  ·  " + peer.transport);
             item.setTextSize(15);
             boolean chosen = selected != null && selected.id.equals(peer.id);
             item.setTextColor(chosen ? Color.WHITE : Color.rgb(38, 39, 38));
@@ -162,6 +189,64 @@ public final class TransferActivity extends Activity {
                 if (pendingLocalPaths != null && !pendingLocalPaths.isEmpty()) sendPendingLocalFiles();
             });
             peersContainer.addView(item, margins(0, 0, 0, dp(9)));
+        }
+    }
+
+    private List<PeerDevice> filteredPeers(List<PeerDevice> peers) {
+        if (CHANNEL_AUTO.equals(selectedChannel)) return peers;
+        ArrayList<PeerDevice> filtered = new ArrayList<>();
+        for (PeerDevice peer : peers) if (matchesSelectedChannel(peer)) filtered.add(peer);
+        return filtered;
+    }
+
+    private boolean matchesSelectedChannel(PeerDevice peer) {
+        if (peer == null || CHANNEL_AUTO.equals(selectedChannel)) return true;
+        return CHANNEL_USB.equals(selectedChannel)
+                ? "USB".equals(peer.transport) : "WiFi".equals(peer.transport);
+    }
+
+    private void chooseChannel() {
+        String[] labels = {"自动选择", "USB（需开启 USB 网络共享）", "Wi‑Fi"};
+        String[] values = {CHANNEL_AUTO, CHANNEL_USB, CHANNEL_WIFI};
+        int checked = CHANNEL_USB.equals(selectedChannel) ? 1
+                : CHANNEL_WIFI.equals(selectedChannel) ? 2 : 0;
+        new AlertDialog.Builder(this)
+                .setTitle("传送方式")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    selectedChannel = values[which];
+                    selected = null;
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString(PREF_TRANSFER_CHANNEL, selectedChannel).apply();
+                    updateChannelButton();
+                    renderPeers();
+                    dialog.dismiss();
+                    if (CHANNEL_USB.equals(selectedChannel)
+                            && filteredPeers(OnlineService.peers()).isEmpty()) {
+                        Toast.makeText(this, "请打开 USB 网络共享，电脑会自动出现",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void updateChannelButton() {
+        if (channelButton == null) return;
+        String label = CHANNEL_USB.equals(selectedChannel) ? "USB"
+                : CHANNEL_WIFI.equals(selectedChannel) ? "Wi‑Fi" : "自动";
+        channelButton.setText("传送方式：" + label + "  ›");
+    }
+
+    private void openUsbTetherSettings() {
+        try {
+            startActivity(new Intent("android.settings.TETHER_SETTINGS"));
+        } catch (Exception error) {
+            try {
+                startActivity(new Intent(Settings.ACTION_WIRELESS_SETTINGS));
+            } catch (Exception ignored) {
+                Toast.makeText(this, "请在系统设置中打开“USB 网络共享”",
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 

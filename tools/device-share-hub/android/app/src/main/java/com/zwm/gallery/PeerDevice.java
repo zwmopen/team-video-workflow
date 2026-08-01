@@ -9,9 +9,15 @@ public final class PeerDevice {
     public final String state;
     public final int workCount;
     public final long lastSeenMs;
+    public final String transport;
 
     PeerDevice(String id, String name, String model, String ip, int port, String state,
                int workCount, long lastSeenMs) {
+        this(id, name, model, ip, port, state, workCount, lastSeenMs, "WiFi");
+    }
+
+    PeerDevice(String id, String name, String model, String ip, int port, String state,
+               int workCount, long lastSeenMs, String transport) {
         this.id = id;
         this.name = name == null || name.trim().isEmpty() ? model : name;
         this.model = model == null ? "" : model;
@@ -20,6 +26,7 @@ public final class PeerDevice {
         this.state = state == null ? "online" : state;
         this.workCount = workCount;
         this.lastSeenMs = lastSeenMs;
+        this.transport = normalizeTransport(transport);
     }
 
     static int parseWorkCount(String value) {
@@ -30,6 +37,10 @@ public final class PeerDevice {
     boolean equalsForDisplay(PeerDevice other) {
         return other != null && name.equals(other.name) && model.equals(other.model)
                 && ip.equals(other.ip) && port == other.port && state.equals(other.state)
-                && workCount == other.workCount;
+                && workCount == other.workCount && transport.equals(other.transport);
+    }
+
+    static String normalizeTransport(String value) {
+        return "USB".equalsIgnoreCase(value) ? "USB" : "WiFi";
     }
 }

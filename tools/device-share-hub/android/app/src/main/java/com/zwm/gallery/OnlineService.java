@@ -868,7 +868,7 @@ public final class OnlineService extends Service {
             long now = System.currentTimeMillis();
             PeerDevice peer = new PeerDevice(id, decodeB64(parts[4]), decodeB64(parts[5]),
                     address.getHostAddress(), port, decodeB64(parts[6]), workCount,
-                    now);
+                    now, transportFor(address));
             SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
             Set<String> registeredPeers = new HashSet<>(preferences.getStringSet(
                     PREF_REGISTERED_PEERS, Collections.emptySet()));
@@ -1699,6 +1699,47 @@ public final class OnlineService extends Service {
         }
         try { result.add(InetAddress.getByName("255.255.255.255")); } catch (Exception ignored) { }
         return result;
+    }
+
+    private String transportFor(InetAddress remote) {
+        if (remote == null || remote.getAddress().length != 4) return "WiFi";
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface network : Collections.list(interfaces)) {
+                if (!network.isUp() || network.isLoopback()) continue;
+                for (InterfaceAddress candidate : network.getInterfaceAddresses()) {
+                    InetAddress local = candidate.getAddress();
+                    if (local == null || local.getAddress().length != 4) continue;
+                    if (!sameSubnet(local.getAddress(), remote.getAddress(),
+                            candidate.getNetworkPrefixLength())) continue;
+                    String name = network.getName() == null ? "" :
+                            network.getName().toLowerCase(Locale.US);
+                    if (isUsbNetworkInterface(name)) return "USB";
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "WiFi";
+    }
+
+    static boolean isUsbNetworkInterface(String name) {
+        if (name == null) return false;
+        String value = name.toLowerCase(Locale.US);
+        return value.contains("rndis") || value.startsWith("usb")
+                || value.contains("ncm") || value.contains("tether");
+    }
+
+    static boolean sameSubnet(byte[] left, byte[] right, int prefixLength) {
+        if (left == null || right == null || left.length != right.length
+                || prefixLength < 0 || prefixLength > left.length * 8) return false;
+        int fullBytes = prefixLength / 8;
+        int remainingBits = prefixLength % 8;
+        for (int index = 0; index < fullBytes; index++) {
+            if (left[index] != right[index]) return false;
+        }
+        if (remainingBits == 0) return true;
+        int mask = 0xff << (8 - remainingBits);
+        return (left[fullBytes] & mask) == (right[fullBytes] & mask);
     }
 
     private Notification buildForegroundNotification(String text) {

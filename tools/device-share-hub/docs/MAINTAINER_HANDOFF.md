@@ -7,7 +7,9 @@
 - 删除 `REQUEST_INSTALL_PACKAGES`、`FOREGROUND_SERVICE_DATA_SYNC`、`AppUpdateService`、`UpdateInstallActivity`、私有 APK 复制与应用安装通知。相册不再出现“允许来自此来源”授权页，也不主动打开系统安装器。
 - `UpdateDownloadReceiver` 只接受与本机记录任务 ID 相同的系统完成事件，后台核对 Release 清单中的 SHA-256；不一致时删除系统下载并在下次进入应用时提示。接收器不提供安装入口。
 - APK 目标名固定为 `album-Android-0.6.14.apk`，位于系统 Downloads；更新发现继续使用 GitHub Release API 与同一 Release 的 `SHA256SUMS.txt`。
-- 本机 20 个测试套件共 64 项全部通过，Release 构建与 Release Lint 通过；候选 APK 为 0.6.14/code 52，v2 签名证书 SHA-256 保持 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，清单不含安装来源权限或 Debug 标志。系统下载和系统通知点击仍需 Android 真机联网复核，不能以自动测试代替。
+- 本机 20 个测试套件共 66 项全部通过，Release 构建与 Release Lint 通过；候选 APK 为 0.6.14/code 52，v2 签名证书 SHA-256 保持 `CAC54653FDFDBD19E0D9952FECA70E9B2A0530CE6676EB17A3EC24A56BE1848B`，清单不含安装来源权限或 Debug 标志。系统下载和系统通知点击仍需 Android 真机联网复核，不能以自动测试代替。
+- 同一候选继续补齐手机→电脑 USB：传送页增加可记忆的自动/USB/Wi‑Fi筛选；USB 模式打开系统 tether 设置，经 `rndis0/usb0/ncm/tether` 接口与对端同子网时把电脑标为 USB。普通 MTP 仍只是 Windows 主机写手机，反向必须使用 USB 网络共享，不引入 ADB 或自定义驱动。
+- 2026-08-01 接入手机实读为 Android 0.6.13/code 51；手机 Wi‑Fi 为 `192.168.0.0/24`，电脑 Wi‑Fi 为 `10.40.243.0/24`，且 Windows 没有 RNDIS/NCM 网卡，所以旧版手机看不到电脑符合网络拓扑。功能代码完成后设备从 ADB 断开，覆盖安装与 USB 网络共享实测仍待重连，不能标记真机通过。
 
 ## 2026-08-01 Android 确认式更新 0.6.13 候选
 
