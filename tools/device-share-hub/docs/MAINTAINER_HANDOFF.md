@@ -1,5 +1,12 @@
 # 分享中控 V4.1.2 维护交接
 
+## 2026-08-01 Android 0.6.14 正式发布
+
+- 正式 Release：[`gallery-updates v0.6.14`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.14)；更新索引提交 `c89df9d` 已指向 Android 0.6.14/code 52。
+- 公网 APK 重新下载后 SHA-256 为 `583349684332EF771C08108B09A1F0CEDABB99EB0E226C10A02440B08FADDD03`，与 `latest.json` 和 Release 内 `SHA256SUMS.txt` 一致；包名 `com.zwm.gallery`、v2 签名证书和原升级链一致，清单不含 `REQUEST_INSTALL_PACKAGES`。
+- 最终 CI run [`30705203161`](https://github.com/zwmopen/team-video-workflow/actions/runs/30705203161) 的 Android、iPhone、Windows 构建成功。`remote-relay-check` 仅在 Wrangler 本地 Worker/DO/R2 集成步骤出现既有瞬态故障；包管理、单元测试和校验步骤成功，本轮功能不接入公网中继。
+- Android 真机已覆盖安装 0.6.14/code 52，并完成 RNDIS USB 网络共享下的手机→电脑和电脑→手机双向实传，接收文件 SHA-256 与源文件一致。公开更新索引已经发布，但仍保留“从旧版应用内确认下载→系统通知点击安装”的完整实体回归项，不能用 ADB 覆盖结果替代。
+
 ## 2026-08-01 Android 系统下载更新 0.6.14 候选
 
 - Android 0.6.14/code 52；iPhone 保持 0.6.7/build 26，Windows 保持 V4.1.2。只改变 Android 更新交互，不回退其他功能或数据结构。
