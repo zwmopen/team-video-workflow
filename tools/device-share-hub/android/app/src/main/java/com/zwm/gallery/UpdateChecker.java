@@ -134,7 +134,7 @@ final class UpdateChecker {
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
                 .setTitle("发现新版本 " + version)
                 .setMessage(downloadable
-                        ? "点击后由 Android 系统下载。下载完成时点系统通知，再确认安装即可；相册不再申请“安装其他应用”权限。"
+                        ? "点击后由 Android 系统下载并校验。相册仍在前台时会自动打开系统安装页，你只需确认安装；不在前台时保留可点击通知。"
                         : "新版本尚未准备好安装包，请稍后再试。")
                 .setNegativeButton("稍后", null);
         if (downloadable) {
@@ -187,7 +187,7 @@ final class UpdateChecker {
 
             DownloadManager.Request request = new DownloadManager.Request(uri)
                     .setTitle("相册 " + version + " 更新")
-                    .setDescription("下载完成后，点系统通知安装")
+                    .setDescription("下载完成并校验后打开系统安装页")
                     .setMimeType("application/vnd.android.package-archive")
                     .setDestinationInExternalPublicDir(
                             Environment.DIRECTORY_DOWNLOADS, updateFileName(version))
@@ -208,7 +208,7 @@ final class UpdateChecker {
             }
             DiagnosticLog.write(activity, "update_system_download_started",
                     version + " id=" + downloadId);
-            toast(activity, "已交给系统下载，完成后点通知安装");
+            toast(activity, "正在下载；校验完成后会打开系统安装页");
         } catch (Exception error) {
             DiagnosticLog.write(activity, "update_system_download_failed", error.getMessage());
             new AlertDialog.Builder(activity)
@@ -246,7 +246,7 @@ final class UpdateChecker {
 
     static String downloadStatusMessage(int status) {
         return status == DownloadManager.STATUS_SUCCESSFUL
-                ? "安装包已经验证，点相册更新通知即可安装"
+                ? "安装包已经验证，正在准备系统安装页"
                 : "更新包正在系统下载，请查看通知进度";
     }
 

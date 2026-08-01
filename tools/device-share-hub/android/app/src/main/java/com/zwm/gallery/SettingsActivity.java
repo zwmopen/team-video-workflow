@@ -7,7 +7,11 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.animation.ValueAnimator;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -19,17 +23,19 @@ import android.content.pm.PackageManager;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.text.InputType;
-import android.text.SpannableString;
-import android.text.Spanned;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.Button;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 public final class SettingsActivity extends Activity {
     private static final String PREFS = "device_share";
@@ -38,9 +44,10 @@ public final class SettingsActivity extends Activity {
     private static final int REQUEST_SCREENSHOTS = 73;
     private EditText deviceName;
     private TextView pathText;
-    private Switch soundSwitch;
+    private SettingSwitchRow soundSwitch;
     private TextView moveAfterText;
     private TextView deleteAfterText;
+    private TextView mainDeviceText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,12 +58,14 @@ public final class SettingsActivity extends Activity {
     private SpringScrollView buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(24), dp(20), dp(36));
+        root.setPadding(dp(16), dp(20), dp(16), dp(36));
         root.setBackgroundColor(Color.rgb(242, 242, 247));
 
-        TextView title = text("设置", 28, true);
+        TextView title = text("设置", 26, true);
         root.addView(title);
-        root.addView(text("只保留真正有用的设置。", 14, false), margins(0, dp(4), 0, dp(20)));
+        TextView subtitle = text("常用选项集中在这里，修改后立即生效。", 12, false);
+        subtitle.setTextColor(Color.rgb(118, 118, 123));
+        root.addView(subtitle, margins(0, dp(4), 0, dp(20)));
 
         root.addView(label("手机名称（电脑端显示）"));
         deviceName = new EditText(this);
@@ -94,7 +103,7 @@ public final class SettingsActivity extends Activity {
                 getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("soundNotificationsEnabled", false));
         soundSwitch.setOnCheckedChangeListener((button, enabled) -> changeSoundNotifications(enabled));
         root.addView(soundSwitch, settingMargins(dp(10)));
-        Switch vibrationSwitch = settingSwitch("震动提醒", "开始、完成或失败时震动",
+        SettingSwitchRow vibrationSwitch = settingSwitch("震动提醒", "开始、完成或失败时震动",
                 getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("vibrationEnabled", false));
         vibrationSwitch.setOnCheckedChangeListener((button, enabled) -> {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("vibrationEnabled", enabled).apply();
@@ -103,7 +112,7 @@ public final class SettingsActivity extends Activity {
         root.addView(vibrationSwitch, settingMargins(dp(20)));
 
         root.addView(label("剪切板与截图"));
-        Switch overlaySwitch = settingSwitch(
+        SettingSwitchRow overlaySwitch = settingSwitch(
                 "悬浮剪切板",
                 "在其他应用上方显示“贴”按钮；默认开启，可随时关闭",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -111,7 +120,7 @@ public final class SettingsActivity extends Activity {
         overlaySwitch.setOnCheckedChangeListener((button, enabled) ->
                 changeClipboardOverlay(enabled));
         root.addView(overlaySwitch, settingMargins(dp(10)));
-        Switch screenshotSwitch = settingSwitch(
+        SettingSwitchRow screenshotSwitch = settingSwitch(
                 "自动识别新截图",
                 "识别系统相册里的新截图；关闭后不读取也不发送",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -119,7 +128,7 @@ public final class SettingsActivity extends Activity {
         screenshotSwitch.setOnCheckedChangeListener((button, enabled) ->
                 changeScreenshotSync(enabled));
         root.addView(screenshotSwitch, settingMargins(dp(20)));
-        Switch screenshotAutoSwitch = settingSwitch(
+        SettingSwitchRow screenshotAutoSwitch = settingSwitch(
                 "自动发送到主设备",
                 "已设置主设备时直接发送；关闭后进入相册再逐张选择",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -129,9 +138,17 @@ public final class SettingsActivity extends Activity {
                     .putBoolean("screenshotAutoSendEnabled", enabled).apply();
             startService(new Intent(this, OnlineService.class)
                     .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
+            if (enabled && getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getString("screenshotTargetPeerId", "").isEmpty()) {
+                showMainDevicePicker();
+            }
         });
         root.addView(screenshotAutoSwitch, settingMargins(dp(10)));
-        Switch screenshotReceiveSwitch = settingSwitch(
+        LinearLayout mainDeviceRow = choiceRow("截图主设备", currentMainDeviceLabel());
+        mainDeviceText = (TextView) mainDeviceRow.getChildAt(1);
+        mainDeviceRow.setOnClickListener(v -> showMainDevicePicker());
+        root.addView(mainDeviceRow, settingMargins(dp(10)));
+        SettingSwitchRow screenshotReceiveSwitch = settingSwitch(
                 "允许作为主设备接收",
                 "关闭后拒绝其他设备自动发送的截图，普通文件传送不受影响",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -142,7 +159,7 @@ public final class SettingsActivity extends Activity {
         root.addView(screenshotReceiveSwitch, settingMargins(dp(20)));
 
         root.addView(label("软件"));
-        Switch autoUpdateSwitch = settingSwitch(
+        SettingSwitchRow autoUpdateSwitch = settingSwitch(
                 "自动检查并下载更新",
                 "每次打开相册时检查；发现新版后自动交给系统下载，安装仍需系统确认一次",
                 getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -203,6 +220,71 @@ public final class SettingsActivity extends Activity {
             else saveCleanupHours(editingMove, hours[position]);
         }));
         dialog.show();
+    }
+
+    private void showMainDevicePicker() {
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        Set<String> registered = preferences.getStringSet(
+                "registeredPeers", Collections.emptySet());
+        String ownId = preferences.getString("deviceId", "");
+        List<PeerDevice> available = new ArrayList<>();
+        for (PeerDevice peer : OnlineService.peers()) {
+            if (!peer.id.equals(ownId) && registered.contains(peer.id)) available.add(peer);
+        }
+        String currentId = preferences.getString("screenshotTargetPeerId", "");
+        ArrayList<String> labels = new ArrayList<>();
+        labels.add("不选择主设备");
+        int checked = currentId.isEmpty() ? 0 : -1;
+        for (int index = 0; index < available.size(); index++) {
+            PeerDevice peer = available.get(index);
+            String suffix = peer.model.isEmpty() || peer.model.equals(peer.name)
+                    ? "在线" : peer.model + " · 在线";
+            labels.add(peer.name + "\n" + suffix);
+            if (peer.id.equals(currentId)) checked = index + 1;
+        }
+        if (available.isEmpty()) {
+            labels.add("当前没有其他在线可信设备");
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("选择截图主设备")
+                .setSingleChoiceItems(labels.toArray(new String[0]), checked, null)
+                .setNegativeButton("取消", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getListView().setOnItemClickListener(
+                (parent, view, position, id) -> {
+                    if (available.isEmpty() && position == 1) return;
+                    SharedPreferences.Editor editor = preferences.edit();
+                    if (position == 0) {
+                        editor.remove("screenshotTargetPeerId")
+                                .remove("screenshotTargetPeerName").apply();
+                    } else {
+                        PeerDevice peer = available.get(position - 1);
+                        editor.putString("screenshotTargetPeerId", peer.id)
+                                .putString("screenshotTargetPeerName", peer.name).apply();
+                    }
+                    mainDeviceText.setText(currentMainDeviceLabel());
+                    startService(new Intent(this, OnlineService.class)
+                            .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
+                    dialog.dismiss();
+                    toast(position == 0 ? "已取消主设备" : "主设备已保存");
+                }));
+        dialog.show();
+    }
+
+    private String currentMainDeviceLabel() {
+        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String id = preferences.getString("screenshotTargetPeerId", "");
+        if (id.isEmpty()) return "未选择  ›";
+        String name = preferences.getString("screenshotTargetPeerName", "主设备");
+        boolean online = false;
+        for (PeerDevice peer : OnlineService.peers()) {
+            if (peer.id.equals(id)) {
+                name = peer.name;
+                online = true;
+                break;
+            }
+        }
+        return name + (online ? " · 在线  ›" : " · 离线  ›");
     }
 
     private void showCustomCleanupHours(boolean editingMove, int currentHours) {
@@ -444,6 +526,23 @@ public final class SettingsActivity extends Activity {
         row.addView(timingView, new LinearLayout.LayoutParams(-2, -1));
         return row;
     }
+    private LinearLayout choiceRow(String title, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(14), dp(11));
+        row.setMinimumHeight(dp(58));
+        row.setBackground(round(Color.WHITE, 16));
+        row.setClickable(true);
+        row.setFocusable(true);
+        TextView titleView = text(title, 15, false);
+        TextView valueView = text(value, 13, false);
+        valueView.setTextColor(Color.rgb(118, 118, 123));
+        valueView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        row.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
+        row.addView(valueView, new LinearLayout.LayoutParams(-2, -2));
+        return row;
+    }
     private String cleanupTimingText(int hours) {
         String timing = hours == 0 ? "立刻" : hours + " 小时后";
         return timing + "  ›";
@@ -457,25 +556,131 @@ public final class SettingsActivity extends Activity {
         field.setPadding(dp(14), 0, dp(14), 0);
         return field;
     }
-    private Switch settingSwitch(String title, String detail, boolean checked) {
-        Switch value = new Switch(this);
-        String content = title + "\n" + detail;
-        SpannableString styled = new SpannableString(content);
-        int detailStart = title.length() + 1;
-        styled.setSpan(new RelativeSizeSpan(0.78f), detailStart, content.length(),
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        styled.setSpan(new ForegroundColorSpan(Color.rgb(115, 115, 111)),
-                detailStart, content.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        value.setText(styled);
-        value.setTextSize(16);
-        value.setTextColor(Color.rgb(35, 35, 33));
-        value.setChecked(checked);
-        value.setGravity(Gravity.CENTER_VERTICAL);
-        value.setLineSpacing(dp(2), 1f);
-        value.setMinHeight(dp(78));
-        value.setPadding(dp(14), dp(10), dp(14), dp(10));
-        value.setBackground(round(Color.WHITE, 14));
-        return value;
+    private SettingSwitchRow settingSwitch(String title, String detail, boolean checked) {
+        return new SettingSwitchRow(title, detail, checked);
+    }
+
+    private final class SettingSwitchRow extends LinearLayout {
+        private final IOSSwitch control;
+
+        SettingSwitchRow(String title, String detail, boolean checked) {
+            super(SettingsActivity.this);
+            setOrientation(HORIZONTAL);
+            setGravity(Gravity.CENTER_VERTICAL);
+            setPadding(dp(14), dp(10), dp(14), dp(10));
+            setMinimumHeight(dp(72));
+            setBackground(round(Color.WHITE, 16));
+            LinearLayout copy = new LinearLayout(SettingsActivity.this);
+            copy.setOrientation(VERTICAL);
+            TextView titleView = text(title, 15, false);
+            TextView detailView = text(detail, 12, false);
+            detailView.setTextColor(Color.rgb(118, 118, 123));
+            detailView.setLineSpacing(dp(1), 1f);
+            detailView.setMaxLines(2);
+            copy.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(-1, -2);
+            detailParams.setMargins(0, dp(3), 0, 0);
+            copy.addView(detailView, detailParams);
+            addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+
+            control = new IOSSwitch();
+            control.setChecked(checked);
+            LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(dp(56), dp(40));
+            controlParams.setMargins(dp(12), 0, 0, 0);
+            addView(control, controlParams);
+            setOnClickListener(v -> control.toggle());
+        }
+
+        void setOnCheckedChangeListener(CompoundButton.OnCheckedChangeListener listener) {
+            control.setOnCheckedChangeListener(listener);
+        }
+
+        void setChecked(boolean checked) {
+            control.setChecked(checked);
+        }
+    }
+
+    /** A complete, vendor-independent iOS-style capsule switch. */
+    private final class IOSSwitch extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF track = new RectF();
+        private boolean checked;
+        private float position;
+        private CompoundButton.OnCheckedChangeListener listener;
+        private ValueAnimator animator;
+
+        IOSSwitch() {
+            super(SettingsActivity.this);
+            setClickable(true);
+            setFocusable(true);
+            setContentDescription("开关");
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+            setOnClickListener(v -> toggle());
+        }
+
+        void setOnCheckedChangeListener(CompoundButton.OnCheckedChangeListener value) {
+            listener = value;
+        }
+
+        void setChecked(boolean value) {
+            if (checked == value && position == (value ? 1f : 0f)) return;
+            checked = value;
+            position = value ? 1f : 0f;
+            invalidate();
+        }
+
+        void toggle() {
+            checked = !checked;
+            animateTo(checked ? 1f : 0f);
+            if (listener != null) listener.onCheckedChanged(null, checked);
+            announceForAccessibility(checked ? "已打开" : "已关闭");
+        }
+
+        private void animateTo(float target) {
+            if (animator != null) animator.cancel();
+            animator = ValueAnimator.ofFloat(position, target);
+            animator.setDuration(180);
+            animator.addUpdateListener(value -> {
+                position = (float) value.getAnimatedValue();
+                invalidate();
+            });
+            animator.start();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float density = getResources().getDisplayMetrics().density;
+            float left = 2f * density;
+            float top = 4f * density;
+            float right = getWidth() - 2f * density;
+            float bottom = getHeight() - 4f * density;
+            float radius = (bottom - top) / 2f;
+            track.set(left, top, right, bottom);
+
+            paint.clearShadowLayer();
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(blend(Color.rgb(209, 209, 214), Color.rgb(52, 199, 89), position));
+            canvas.drawRoundRect(track, radius, radius, paint);
+
+            float inset = 2f * density;
+            float thumbRadius = radius - inset;
+            float startX = left + radius;
+            float endX = right - radius;
+            float centerX = startX + (endX - startX) * position;
+            float centerY = (top + bottom) / 2f;
+            paint.setColor(Color.WHITE);
+            paint.setShadowLayer(2.5f * density, 0, 1f * density, 0x55000000);
+            canvas.drawCircle(centerX, centerY, thumbRadius, paint);
+            paint.clearShadowLayer();
+        }
+
+        private int blend(int from, int to, float amount) {
+            int red = Math.round(Color.red(from) + (Color.red(to) - Color.red(from)) * amount);
+            int green = Math.round(Color.green(from) + (Color.green(to) - Color.green(from)) * amount);
+            int blue = Math.round(Color.blue(from) + (Color.blue(to) - Color.blue(from)) * amount);
+            return Color.rgb(red, green, blue);
+        }
     }
     private TextView text(String value, int sp, boolean bold) { TextView v = new TextView(this); v.setText(value); v.setTextSize(sp); v.setTextColor(Color.rgb(35, 35, 33)); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v; }
     private Button button(String value, boolean primary) { Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(15); b.setTextColor(primary ? Color.WHITE : Color.rgb(45, 45, 42)); b.setBackground(round(primary ? Color.rgb(15, 155, 99) : Color.rgb(229, 231, 230), 14)); b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); return b; }

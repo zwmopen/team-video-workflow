@@ -20,6 +20,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.view.Gravity;
@@ -32,6 +34,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -80,6 +83,11 @@ public final class MainActivity extends Activity {
     private LinearLayout categoryBar;
     private FrameLayout categorySelector;
     private View categoryIndicator;
+    private SpringScrollView contentScroll;
+    private LinearLayout refreshIndicator;
+    private ProgressBar refreshSpinner;
+    private TextView refreshIndicatorText;
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private final Map<String, Button> categoryButtons = new LinkedHashMap<>();
     private final Map<String, String> categoryLabels = new LinkedHashMap<>();
 
@@ -216,13 +224,13 @@ public final class MainActivity extends Activity {
         scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
         scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
         scannedCountText.setVisibility(View.GONE);
-        titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
         modeButton = iconButton(R.drawable.ic_file_folder, "切换到文件浏览");
         modeButton.setOnClickListener(v -> {
             if (fileMode) showWorksMode();
             else showFileMode();
         });
         titleRow.addView(modeButton, iconParams(false));
+        titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
         ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
         transfer.setOnClickListener(v -> {
             toast("文件传输");
@@ -270,12 +278,13 @@ public final class MainActivity extends Activity {
         addCategoryButton("未分类", WorkCategory.UNCATEGORIZED);
         categoryIndicator = new View(this);
         categoryIndicator.setBackground(round(Color.WHITE, 10));
-        categoryIndicator.setElevation(dp(2));
+        categoryIndicator.setElevation(dp(1));
         categorySelector = new FrameLayout(this);
-        categorySelector.setPadding(0, dp(2), 0, dp(6));
+        categorySelector.setPadding(dp(3), dp(3), dp(3), dp(3));
         categorySelector.setBackground(round(Color.rgb(232, 234, 233), 11));
-        categorySelector.addView(categoryIndicator, new FrameLayout.LayoutParams(0, dp(40)));
-        categorySelector.addView(categoryBar, new FrameLayout.LayoutParams(-1, dp(40)));
+        categorySelector.addView(categoryIndicator, new FrameLayout.LayoutParams(0, dp(38)));
+        categoryBar.setElevation(dp(2));
+        categorySelector.addView(categoryBar, new FrameLayout.LayoutParams(-1, dp(38)));
         categorySelector.addOnLayoutChangeListener((v, left, top, right, bottom,
                 oldLeft, oldTop, oldRight, oldBottom) -> animateCategoryIndicator(false));
         worksContainer = new LinearLayout(this);
@@ -296,28 +305,55 @@ public final class MainActivity extends Activity {
         footerNote.setTextColor(Color.GRAY);
         root.addView(footerNote, margins(0, dp(12), 0, 0));
 
-        SpringScrollView scroll = new SpringScrollView(this);
-        scroll.setOnPullRefresh(() -> {
-            if (fileMode) {
-                refreshFiles();
-                toast("正在刷新文件");
-            } else if (showingTrash) {
-                refreshWorks();
-                toast("正在刷新回收站");
-            } else {
-                importSelectedTree(true);
-                toast("正在刷新作品");
+        contentScroll = new SpringScrollView(this);
+        contentScroll.setPullRefreshListener(new SpringScrollView.PullRefreshListener() {
+            @Override public void onPull(float progress, boolean ready) {
+                showPullProgress(progress, ready);
+            }
+
+            @Override public void onRefresh() {
+                beginVisibleRefresh();
+                if (fileMode) refreshFiles();
+                else if (showingTrash) refreshWorks();
+                else importSelectedTree(true);
+            }
+
+            @Override public void onReset() {
+                if (refreshIndicator != null && refreshSpinner.getVisibility() != View.VISIBLE) {
+                    refreshIndicator.animate().alpha(0f).setDuration(140).start();
+                }
             }
         });
-        scroll.addView(root);
+        contentScroll.addView(root);
+        FrameLayout contentFrame = new FrameLayout(this);
+        refreshIndicator = new LinearLayout(this);
+        refreshIndicator.setOrientation(LinearLayout.HORIZONTAL);
+        refreshIndicator.setGravity(Gravity.CENTER);
+        refreshIndicator.setAlpha(0f);
+        refreshIndicator.setPadding(dp(12), dp(7), dp(12), dp(7));
+        refreshIndicator.setBackground(round(Color.WHITE, 16));
+        refreshSpinner = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+        refreshSpinner.setIndeterminateTintList(ColorStateList.valueOf(Color.rgb(16, 151, 99)));
+        refreshSpinner.setVisibility(View.GONE);
+        refreshIndicatorText = text("下拉刷新", 12, false);
+        refreshIndicatorText.setTextColor(Color.rgb(80, 86, 82));
+        refreshIndicator.addView(refreshSpinner, new LinearLayout.LayoutParams(dp(20), dp(20)));
+        LinearLayout.LayoutParams refreshTextParams = new LinearLayout.LayoutParams(-2, -2);
+        refreshTextParams.setMargins(dp(7), 0, 0, 0);
+        refreshIndicator.addView(refreshIndicatorText, refreshTextParams);
+        FrameLayout.LayoutParams refreshParams = new FrameLayout.LayoutParams(-2, dp(38),
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        refreshParams.setMargins(0, dp(6), 0, 0);
+        contentFrame.addView(refreshIndicator, refreshParams);
+        contentFrame.addView(contentScroll, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout frozenLayout = new LinearLayout(this);
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(Color.rgb(248, 249, 248));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(48));
+        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(44));
         categoryParams.setMargins(dp(12), 0, dp(12), 0);
         frozenLayout.addView(categorySelector, categoryParams);
-        frozenLayout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        frozenLayout.addView(contentFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
         quickTrashButton = iconButton(R.drawable.ic_album_trash, "把选中的作品移到回收站");
@@ -347,10 +383,16 @@ public final class MainActivity extends Activity {
                 List<WorkLibrary.WorkEntry> activeEntries = library.listActive();
                 List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : activeEntries;
                 OnlineService.publishWorkCount(this, activeEntries.size());
-                runOnUiThread(() -> renderWorks(entries));
+                runOnUiThread(() -> {
+                    renderWorks(entries);
+                    finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + entries.size() + " 个");
+                });
             } catch (Exception error) {
                 DiagnosticLog.write(this, "library_refresh_failed", error.getMessage());
-                runOnUiThread(() -> statusText.setText("读取作品失败：" + error.getMessage()));
+                runOnUiThread(() -> {
+                    statusText.setText("读取作品失败：" + error.getMessage());
+                    finishVisibleRefresh("刷新失败");
+                });
             }
         });
     }
@@ -556,7 +598,6 @@ public final class MainActivity extends Activity {
             toast("已显示" + label);
         });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1);
-        if (categoryBar.getChildCount() > 0) params.setMargins(dp(5), 0, 0, 0);
         categoryBar.addView(button, params);
         categoryButtons.put(category, button);
         categoryLabels.put(category, label);
@@ -588,11 +629,13 @@ public final class MainActivity extends Activity {
 
     private void animateCategoryIndicator(boolean animated) {
         if (categorySelector == null || categoryIndicator == null || categorySelector.getWidth() <= 0) return;
-        int width = categorySelector.getWidth() / Math.max(1, categoryButtons.size());
+        int available = categorySelector.getWidth()
+                - categorySelector.getPaddingLeft() - categorySelector.getPaddingRight();
+        int width = available / Math.max(1, categoryButtons.size());
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) categoryIndicator.getLayoutParams();
-        if (params.width != width || params.height != dp(40)) {
+        if (params.width != width || params.height != dp(38)) {
             params.width = width;
-            params.height = dp(40);
+            params.height = dp(38);
             categoryIndicator.setLayoutParams(params);
         }
         int index = 0;
@@ -604,6 +647,36 @@ public final class MainActivity extends Activity {
         if (!animated) categoryIndicator.setTranslationX(target);
         else categoryIndicator.animate().translationX(target).setDuration(240)
                 .setInterpolator(new DecelerateInterpolator(1.7f)).start();
+    }
+
+    private void showPullProgress(float progress, boolean ready) {
+        if (refreshIndicator == null) return;
+        refreshSpinner.setVisibility(View.GONE);
+        refreshIndicatorText.setText(ready ? "松开刷新" : "下拉刷新");
+        refreshIndicator.setAlpha(Math.max(0.18f, progress));
+        refreshIndicator.setScaleX(0.92f + 0.08f * progress);
+        refreshIndicator.setScaleY(0.92f + 0.08f * progress);
+    }
+
+    private void beginVisibleRefresh() {
+        refreshIndicator.animate().cancel();
+        refreshIndicator.setAlpha(1f);
+        refreshIndicator.setScaleX(1f);
+        refreshIndicator.setScaleY(1f);
+        refreshSpinner.setVisibility(View.VISIBLE);
+        refreshIndicatorText.setText(fileMode ? "正在刷新文件…"
+                : showingTrash ? "正在刷新回收站…" : "正在刷新作品…");
+    }
+
+    private void finishVisibleRefresh(String result) {
+        if (contentScroll == null || refreshIndicator == null
+                || refreshSpinner.getVisibility() != View.VISIBLE) return;
+        refreshSpinner.setVisibility(View.GONE);
+        refreshIndicatorText.setText(result);
+        uiHandler.postDelayed(() -> {
+            contentScroll.finishRefresh();
+            refreshIndicator.animate().alpha(0f).setDuration(180).start();
+        }, 520);
     }
 
     private void maybeOfferClipboardOverlay() {
@@ -720,9 +793,13 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     renderFiles(entries);
                     statusText.setText("已刷新，共 " + entries.size() + " 项");
+                    finishVisibleRefresh("已刷新，共 " + entries.size() + " 项");
                 });
             } catch (Exception error) {
-                runOnUiThread(() -> statusText.setText("读取文件失败：" + error.getMessage()));
+                runOnUiThread(() -> {
+                    statusText.setText("读取文件失败：" + error.getMessage());
+                    finishVisibleRefresh("刷新失败");
+                });
             }
         });
     }

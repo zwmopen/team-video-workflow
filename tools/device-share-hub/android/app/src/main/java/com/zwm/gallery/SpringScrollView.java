@@ -8,8 +8,16 @@ import android.widget.ScrollView;
 
 /** A restrained iOS-like edge resistance for content and settings lists. */
 public final class SpringScrollView extends ScrollView {
+    public interface PullRefreshListener {
+        void onPull(float progress, boolean ready);
+        void onRefresh();
+        void onReset();
+    }
+
     private float lastY;
-    private Runnable pullRefresh;
+    private PullRefreshListener pullRefreshListener;
+    private boolean refreshing;
+    private final int refreshThresholdDp = 58;
 
     public SpringScrollView(Context context) { super(context); init(); }
     public SpringScrollView(Context context, AttributeSet attrs) { super(context, attrs); init(); }
@@ -19,10 +27,32 @@ public final class SpringScrollView extends ScrollView {
         setFillViewport(true);
     }
 
-    public void setOnPullRefresh(Runnable action) { pullRefresh = action; }
+    public void setOnPullRefresh(Runnable action) {
+        if (action == null) {
+            pullRefreshListener = null;
+            return;
+        }
+        pullRefreshListener = new PullRefreshListener() {
+            @Override public void onPull(float progress, boolean ready) { }
+            @Override public void onRefresh() { action.run(); }
+            @Override public void onReset() { }
+        };
+    }
+
+    public void setPullRefreshListener(PullRefreshListener listener) {
+        pullRefreshListener = listener;
+    }
+
+    public void finishRefresh() {
+        refreshing = false;
+        animate().translationY(0f).setDuration(300)
+                .setInterpolator(new DecelerateInterpolator(1.8f)).start();
+        if (pullRefreshListener != null) pullRefreshListener.onReset();
+    }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) lastY = event.getY();
+        if (refreshing) return true;
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
             float currentY = event.getY();
             float delta = currentY - lastY;
@@ -34,15 +64,28 @@ public final class SpringScrollView extends ScrollView {
                 float limit = getHeight() * 0.12f;
                 float next = Math.max(-limit, Math.min(limit, getTranslationY() + delta * 0.28f));
                 setTranslationY(next);
+                if (atTop && next > 0 && pullRefreshListener != null) {
+                    float progress = Math.min(1f, next / dp(refreshThresholdDp));
+                    pullRefreshListener.onPull(progress, progress >= 1f);
+                }
             }
             lastY = currentY;
         }
         if (event.getActionMasked() == MotionEvent.ACTION_UP
                 || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-            if (event.getActionMasked() == MotionEvent.ACTION_UP && getTranslationY() >= dp(54)
-                    && pullRefresh != null) pullRefresh.run();
-            animate().translationY(0f).setDuration(360)
-                    .setInterpolator(new DecelerateInterpolator(1.8f)).start();
+            boolean shouldRefresh = event.getActionMasked() == MotionEvent.ACTION_UP
+                    && getTranslationY() >= dp(refreshThresholdDp)
+                    && pullRefreshListener != null;
+            if (shouldRefresh) {
+                refreshing = true;
+                animate().translationY(dp(52)).setDuration(180)
+                        .setInterpolator(new DecelerateInterpolator(1.8f)).start();
+                pullRefreshListener.onRefresh();
+            } else {
+                animate().translationY(0f).setDuration(360)
+                        .setInterpolator(new DecelerateInterpolator(1.8f)).start();
+                if (pullRefreshListener != null) pullRefreshListener.onReset();
+            }
         }
         return super.onTouchEvent(event);
     }

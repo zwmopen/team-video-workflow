@@ -35,7 +35,7 @@ public final class UpdateCheckerTest {
                 android.app.DownloadManager.STATUS_SUCCESSFUL));
         assertFalse(UpdateChecker.isDownloadStateUsable(
                 android.app.DownloadManager.STATUS_FAILED));
-        assertEquals("安装包已经验证，点相册更新通知即可安装",
+        assertEquals("安装包已经验证，正在准备系统安装页",
                 UpdateChecker.downloadStatusMessage(
                         android.app.DownloadManager.STATUS_SUCCESSFUL));
     }
