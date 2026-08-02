@@ -99,9 +99,11 @@ public final class OnlineService extends Service {
     static final String PREF_OVERLAY_HIDDEN_UNTIL = "clipboardOverlayHiddenUntil";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
+    private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
     public static final String SCREENSHOT_CHANNEL_ID = "device_share_screenshots_v1";
     private static final int FOREGROUND_NOTIFICATION_ID = 3401;
     private static final int TASK_NOTIFICATION_ID = 3402;
+    private static final int TRANSFER_PROGRESS_NOTIFICATION_ID = 3403;
     private static final int HTTP_PORT = 45833;
     private static final int DISCOVERY_PORT = 45834;
     private static final int MAX_FILES = 100;
@@ -323,6 +325,7 @@ public final class OnlineService extends Service {
                 DiagnosticLog.write(this, "http_error", error.code + " " + compact(error.getMessage()));
                 String message = "接收失败：" + compact(error.getMessage());
                 notifyStatus(message);
+                cancelTransferProgressNotification();
                 notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
                 OperationLog.add(this, "接收失败", compact(error.getMessage()));
                 writeText(output, error.code, error.getMessage());
@@ -331,6 +334,7 @@ public final class OnlineService extends Service {
                 DiagnosticLog.write(this, "request_failed", compact(error.getMessage()));
                 String message = "接收失败：" + compact(error.getMessage());
                 notifyStatus(message);
+                cancelTransferProgressNotification();
                 notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
                 OperationLog.add(this, "接收失败", compact(error.getMessage()));
                 writeText(output, 500, compact(error.getMessage()));
@@ -374,7 +378,7 @@ public final class OnlineService extends Service {
         }
         DiagnosticLog.write(this, "task_created", taskId + " files=" + fileCount);
         notifyStatus("正在接收 " + fileCount + " 个文件…");
-        notifyTransferEvent("正在接收文件", "共 " + fileCount + " 个文件", 3403, null);
+        notifyTransferProgress(0, "正在接收文件，共 " + fileCount + " 个文件");
         writeText(output, 201, "OK");
     }
 
@@ -418,7 +422,10 @@ public final class OnlineService extends Service {
                     lastNotice = now;
                     int filePercent = request.contentLength <= 0 ? 0 : (int) Math.min(100, (received * 100) / request.contentLength);
                     int overall = Math.min(100, (index * 100 + filePercent) / task.fileCount);
-                    notifyStatus("正在传送文件 " + overall + "%（" + (index + 1) + "/" + task.fileCount + "）");
+                    String progress = "正在传送文件 " + overall + "%（"
+                            + (index + 1) + "/" + task.fileCount + "）";
+                    notifyStatus(progress);
+                    notifyTransferProgress(overall, progress);
                 }
             }
             fileOutput.flush();
@@ -566,6 +573,7 @@ public final class OnlineService extends Service {
                 ? "已收到 " + deliveredFiles + " 个文件，识别 " + imported + " 个新作品"
                 : "已收到 " + deliveredFiles + " 个文件";
         summary += "，耗时 " + formatElapsed(elapsedMs);
+        cancelTransferProgressNotification();
         notifyStatus(summary);
         notifyTransferEvent("素材已接收", summary, TASK_NOTIFICATION_ID, autoShareWorkId);
         OperationLog.add(this, "接收完成", summary);
@@ -1758,7 +1766,7 @@ public final class OnlineService extends Service {
                 .build();
     }
 
-    private Notification buildTaskNotification(String title, String text, String autoShareWorkId) {
+    private Notification buildTaskNotification(String channelId, String title, String text, String autoShareWorkId) {
         Intent target = autoShareWorkId == null || autoShareWorkId.isEmpty()
                 ? new Intent(this, MainActivity.class)
                 : new Intent(this, ShareActivity.class).putExtra(ShareActivity.EXTRA_WORK_ID, autoShareWorkId);
@@ -1768,7 +1776,7 @@ public final class OnlineService extends Service {
                 target,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
-        return new Notification.Builder(this, ALERT_CHANNEL_ID)
+        return new Notification.Builder(this, channelId)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle(title)
                 .setContentText(text)
@@ -1781,6 +1789,33 @@ public final class OnlineService extends Service {
         getSystemService(NotificationManager.class).cancel(TASK_NOTIFICATION_ID);
     }
 
+    private Notification buildTransferProgressNotification(int percent, String text) {
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                this, 3, new Intent(this, MainActivity.class),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        return new Notification.Builder(this, SILENT_ALERT_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle("相册正在接收文件")
+                .setContentText(text)
+                .setContentIntent(contentIntent)
+                .setProgress(100, Math.max(0, Math.min(100, percent)), false)
+                .setOngoing(true)
+                .build();
+    }
+
+    private void notifyTransferProgress(int percent, String text) {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) {
+            manager.notify(TRANSFER_PROGRESS_NOTIFICATION_ID,
+                    buildTransferProgressNotification(percent, text));
+        }
+    }
+
+    private void cancelTransferProgressNotification() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.cancel(TRANSFER_PROGRESS_NOTIFICATION_ID);
+    }
+
     private void createChannel() {
         NotificationChannel foreground = new NotificationChannel(
                 FOREGROUND_CHANNEL_ID, "局域网接收服务", NotificationManager.IMPORTANCE_LOW);
@@ -1790,8 +1825,14 @@ public final class OnlineService extends Service {
 
         NotificationChannel alerts = new NotificationChannel(
                 ALERT_CHANNEL_ID, "文件接收提醒", NotificationManager.IMPORTANCE_DEFAULT);
-        alerts.setDescription("由设置中的声音通知开关控制");
+        alerts.setDescription("接收完成和失败提醒；声音由设置控制");
         alerts.enableVibration(false);
+
+        NotificationChannel silentAlerts = new NotificationChannel(
+                SILENT_ALERT_CHANNEL_ID, "文件接收进度", NotificationManager.IMPORTANCE_LOW);
+        silentAlerts.setDescription("显示接收进度，不响铃、不震动");
+        silentAlerts.setSound(null, null);
+        silentAlerts.enableVibration(false);
 
         NotificationChannel screenshots = new NotificationChannel(
                 SCREENSHOT_CHANNEL_ID, "截图发送提醒", NotificationManager.IMPORTANCE_DEFAULT);
@@ -1800,15 +1841,16 @@ public final class OnlineService extends Service {
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.createNotificationChannel(foreground);
         manager.createNotificationChannel(alerts);
+        manager.createNotificationChannel(silentAlerts);
         manager.createNotificationChannel(screenshots);
     }
 
     private void notifyTransferEvent(String title, String text, int notificationId, String autoShareWorkId) {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (prefs.getBoolean("soundNotificationsEnabled", false)) {
-            getSystemService(NotificationManager.class).notify(
-                    notificationId, buildTaskNotification(title, text, autoShareWorkId));
-        }
+        String channel = prefs.getBoolean("soundNotificationsEnabled", false)
+                ? ALERT_CHANNEL_ID : SILENT_ALERT_CHANNEL_ID;
+        getSystemService(NotificationManager.class).notify(
+                notificationId, buildTaskNotification(channel, title, text, autoShareWorkId));
         if (prefs.getBoolean("vibrationEnabled", false)) vibrateOnce();
     }
 

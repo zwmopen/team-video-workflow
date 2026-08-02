@@ -122,6 +122,8 @@ HWND gStatus = nullptr;
 HWND gLogButton = nullptr;
 HWND gRefreshButton = nullptr;
 HWND gProgress = nullptr;
+HWND gShellProgressPopup = nullptr;
+HWND gShellProgressText = nullptr;
 HWND gCancelButton = nullptr;
 HWND gSendButton = nullptr;
 HFONT gFont = nullptr;
@@ -135,6 +137,7 @@ std::map<std::wstring, std::wstring> gDeviceRemarks;
 std::vector<Device> gDisplayedDevices;
 std::atomic<bool> gRunning{true};
 std::atomic<bool> gUploadInProgress{false};
+std::atomic<bool> gShellTransferActive{false};
 std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
 std::atomic<bool> gActiveProbeRequested{false};
@@ -302,6 +305,35 @@ void PostShellTransferNotice(std::wstring message, bool success) {
     if (!PostMessageW(gWindow, WM_SHELL_TRANSFER_NOTICE, 0, reinterpret_cast<LPARAM>(notice))) {
         delete notice;
     }
+}
+
+void PositionShellProgressPopup() {
+    if (!gShellProgressPopup) return;
+    HMONITOR monitor = MonitorFromWindow(gWindow, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info{sizeof(info)};
+    if (!GetMonitorInfoW(monitor, &info)) return;
+    constexpr int width = 420;
+    constexpr int height = 54;
+    constexpr int margin = 18;
+    SetWindowPos(gShellProgressPopup, HWND_TOPMOST,
+                 info.rcWork.right - width - margin,
+                 info.rcWork.bottom - height - margin,
+                 width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+void ShowShellProgress(const std::wstring& text, int /*percent*/, bool /*indeterminate*/ = false) {
+    if (!gShellProgressPopup || !gShellProgressText) return;
+    KillTimer(gWindow, 3);
+    SetWindowTextW(gShellProgressText, text.c_str());
+    PositionShellProgressPopup();
+}
+
+void FinishShellProgress(const std::wstring& text, bool success) {
+    if (!gShellProgressPopup || !gShellProgressText) return;
+    SetWindowTextW(gShellProgressText, text.c_str());
+    PositionShellProgressPopup();
+    SetTimer(gWindow, 3, success ? 3500 : 7000, nullptr);
 }
 
 std::filesystem::path TransferHistoryPath() {
@@ -1526,6 +1558,8 @@ void ProcessPendingShellSend() {
     std::vector<std::filesystem::path> paths = std::move(gPendingShellSend->invocation.paths);
     gPendingShellSend.reset();
     WriteDiagnosticLog(L"send_to_started", device.name + L" items=" + std::to_wstring(paths.size()));
+    gShellTransferActive = true;
+    ShowShellProgress(L"正在发送到“" + device.name + L"”…", 0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
     std::thread(UploadToDevice, device, std::move(paths), std::wstring(), false, true).detach();
 }
@@ -2669,6 +2703,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gSendButton = CreateWindowW(L"BUTTON", L"传送其他文件或文件夹…", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                         0, 0, 100, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SEND_PICKER)), nullptr, nullptr);
             SendMessageW(gSendButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gShellProgressPopup = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                L"STATIC", nullptr, WS_POPUP | WS_BORDER,
+                0, 0, 420, 54, window, nullptr, nullptr, nullptr);
+            gShellProgressText = CreateWindowW(
+                L"STATIC", L"准备传送…", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
+                18, 10, 384, 34, gShellProgressPopup, nullptr, nullptr, nullptr);
+            SendMessageW(gShellProgressText, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            ShowWindow(gShellProgressPopup, SW_HIDE);
             RefreshLibraryList();
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
@@ -2795,6 +2838,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             auto* text = reinterpret_cast<std::wstring*>(lParam);
             if (text) {
                 SetWindowTextW(gStatus, text->c_str());
+                if (gShellTransferActive && gShellProgressText) {
+                    SetWindowTextW(gShellProgressText, text->c_str());
+                    PositionShellProgressPopup();
+                }
                 delete text;
             }
             return 0;
@@ -2803,16 +2850,25 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SendMessageW(gProgress, PBM_SETPOS, wParam, 0);
             ShowWindow(gProgress, lParam ? SW_SHOW : SW_HIDE);
             EnableWindow(gCancelButton, lParam && wParam < 100 && gUploadInProgress);
+            if (gShellTransferActive && lParam) {
+                ShowShellProgress(L"正在传送… " + std::to_wstring(wParam) + L"%",
+                                  static_cast<int>(wParam));
+            }
             return 0;
         case WM_SHELL_TRANSFER_NOTICE: {
             std::unique_ptr<ShellTransferNotice> notice(
                 reinterpret_cast<ShellTransferNotice*>(lParam));
             if (!notice) return 0;
-            MessageBoxW(gWindow, notice->message.c_str(), L"相册投送",
-                        MB_OK | (notice->success ? MB_ICONINFORMATION : MB_ICONERROR));
+            gShellTransferActive = false;
+            FinishShellProgress(notice->message, notice->success);
             return 0;
         }
         case WM_TIMER:
+            if (wParam == 3) {
+                KillTimer(window, 3);
+                ShowWindow(gShellProgressPopup, SW_HIDE);
+                return 0;
+            }
             RefreshDeviceList();
             if (!gClipboardSyncInProgress.exchange(true)) {
                 std::thread([] {
