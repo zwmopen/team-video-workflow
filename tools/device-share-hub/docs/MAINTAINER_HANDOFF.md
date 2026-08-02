@@ -18,8 +18,8 @@
 
 - 主账号 run `30736561129` 的 Windows、Android、iPhone 均成功；`remote-relay-check` 为瞬态本地 Worker/R2 闭环失败，不影响三端编译。
 - 按备用额度规则将提交 `919d9cd` 同步到 `rpgzwm/team-video-workflow-build` 和 `idmzwm-sys/team-video-workflow-build`。备用 `idmzwm-sys` run `30736760595` 的 Windows、Android、iPhone、remote-relay 四项全部成功，作为本次交付构建依据。
-- 公开 Release [`gallery-updates v0.6.14`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.14) 已替换为 Android 0.6.15、Windows V4.2.1、iPhone 0.6.7 资产；`latest.json` 已指向 Android versionCode 53。APK SHA-256 `A1F63F6A1F8140240F27F34614389E97757E159E59AC21BE7E12E866175B3418`，Windows EXE `B671DE0AAFA589533F9821180C213EFE841F28C1224FE1FD4A345B9EFE3BE080`，iPhone IPA `ED4FEADFF4252A04265A14F3964B97E194CC71062E980A3EFDA293BA417E8F25`。
-- 三个公开安装包和 SHA256SUMS 已重新下载核对一致；新源码快照为 `team-video-workflow-source-919d9cd.zip`。Android 真机安装、系统通知权限和后台接收仍需用户连接红米/华为后逐台复核。
+- 公开 Release [`gallery-updates v0.6.14`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.14) 已替换为 Android 0.6.15、Windows V4.2.1、iPhone 0.6.7 资产；`latest.json` 已指向 Android versionCode 53。最终 APK SHA-256 `9262270E696D293E7C9AB9030D5B5917546894508BAC7DD722B48BF69E2A4037`，Windows EXE `4FDBFBD08909364B433C40E68EB52C8FD0DF9B2B9CCC150A5224873B3A57BFA2`，iPhone IPA `D015EE8DCF6555B9C9BACF728375045CB2F52E73EC7B3C7F9CEAC0D2CB600917`。
+- 三个公开安装包和 SHA256SUMS 已重新下载核对一致；新源码快照为 `team-video-workflow-source-9ff62f2.zip`。Android 真机安装、系统通知权限和后台接收仍需用户连接红米/华为后逐台复核。
 
 ## 2026-08-02 Windows 右键“发送到”在线设备候选
 
