@@ -131,12 +131,14 @@ std::atomic<bool> gRunning{true};
 std::atomic<bool> gUploadInProgress{false};
 std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
+std::atomic<bool> gActiveProbeRequested{false};
 std::atomic<bool> gUsbRefreshRequested{false};
 std::atomic<bool> gArchiveInProgress{false};
 std::atomic<bool> gClipboardSyncInProgress{false};
 std::thread gDiscoveryThread;
 std::thread gReceiverThread;
 std::thread gUsbDiscoveryThread;
+std::thread gActiveProbeThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
@@ -1428,7 +1430,7 @@ void ProcessPendingShellSend() {
     auto now = std::chrono::steady_clock::now();
     auto found = std::find_if(gDisplayedDevices.begin(), gDisplayedDevices.end(), [now](const Device& device) {
         bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(18);
+            && now - device.lastSeen <= std::chrono::seconds(35);
         bool liveUsb = device.usbReady && device.usbAllowed;
         return gPendingShellSend && device.id == gPendingShellSend->invocation.deviceId
             && (liveWifi || liveUsb);
@@ -1457,7 +1459,7 @@ void SyncSendToMenu(const std::vector<Device>& devices,
     std::wstring signature;
     for (const Device& device : devices) {
         bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(18);
+            && now - device.lastSeen <= std::chrono::seconds(35);
         bool liveUsb = device.usbReady && device.usbAllowed;
         if (!liveWifi && !liveUsb) continue;
         std::wstring display = DisplayNameFor(device);
@@ -1594,6 +1596,147 @@ std::vector<sockaddr_in> DiscoveryTargets() {
         targets.push_back(target);
     }
     return targets;
+}
+
+std::vector<std::wstring> ActiveProbeTargets() {
+    std::set<std::wstring> targets;
+    ULONG size = 16 * 1024;
+    std::vector<unsigned char> buffer(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+    ULONG status = GetAdaptersAddresses(AF_INET,
+        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+        nullptr, adapters, &size);
+    if (status == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(size);
+        adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+        status = GetAdaptersAddresses(AF_INET,
+            GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+            nullptr, adapters, &size);
+    }
+    if (status != NO_ERROR) return {};
+    for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || !adapter->FirstGatewayAddress) continue;
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+            if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
+            auto* ipv4 = reinterpret_cast<sockaddr_in*>(unicast->Address.lpSockaddr);
+            ULONG host = ntohl(ipv4->sin_addr.s_addr);
+            unsigned int first = (host >> 24) & 0xff;
+            unsigned int second = (host >> 16) & 0xff;
+            bool privateAddress = first == 10 || (first == 172 && second >= 16 && second <= 31)
+                || (first == 192 && second == 168);
+            if (!privateAddress) continue;
+            ULONG prefix24 = host & 0xffffff00u;
+            for (ULONG last = 1; last < 255; ++last) {
+                ULONG candidateHost = prefix24 | last;
+                if (candidateHost == host) continue;
+                in_addr address{};
+                address.s_addr = htonl(candidateHost);
+                wchar_t text[INET_ADDRSTRLEN]{};
+                if (InetNtopW(AF_INET, &address, text, INET_ADDRSTRLEN)) targets.insert(text);
+            }
+        }
+    }
+    return {targets.begin(), targets.end()};
+}
+
+std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
+    HINTERNET session = WinHttpOpen(L"ZwmDeviceShare/4.2-active-discovery",
+        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return std::nullopt;
+    WinHttpSetTimeouts(session, 400, 400, 500, 800);
+    DWORD retries = 0;
+    WinHttpSetOption(session, WINHTTP_OPTION_CONNECT_RETRIES, &retries, sizeof(retries));
+    HINTERNET connection = WinHttpConnect(session, host.c_str(), 45833, 0);
+    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", L"/v2/info", nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0) : nullptr;
+    std::optional<Device> result;
+    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, nullptr)) {
+        DWORD httpStatus = 0;
+        DWORD statusSize = sizeof(httpStatus);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX, &httpStatus, &statusSize, WINHTTP_NO_HEADER_INDEX)
+                && httpStatus == 200) {
+            std::string body;
+            while (true) {
+                DWORD available = 0;
+                if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+                size_t offset = body.size();
+                body.resize(offset + available);
+                DWORD read = 0;
+                if (!WinHttpReadData(request, body.data() + offset, available, &read)) {
+                    body.clear();
+                    break;
+                }
+                body.resize(offset + read);
+            }
+            if (JsonNumber(body, "protocol", 0) == 2) {
+                Device device;
+                device.id = Utf8ToWide(JsonValue(body, "deviceId"));
+                device.name = Utf8ToWide(JsonValue(body, "name"));
+                device.model = Utf8ToWide(JsonValue(body, "model"));
+                device.state = Utf8ToWide(JsonValue(body, "state"));
+                device.ip = host;
+                device.port = static_cast<INTERNET_PORT>(std::clamp(JsonNumber(body, "port", 45833), 1, 65535));
+                device.workCount = std::max(-1, JsonNumber(body, "workCount", -1));
+                device.lastSeen = std::chrono::steady_clock::now();
+                if (!device.id.empty() && !device.name.empty()) result = std::move(device);
+            }
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    return result;
+}
+
+void ActiveProbeLoop() {
+    auto nextProbe = std::chrono::steady_clock::now();
+    while (gRunning) {
+        auto now = std::chrono::steady_clock::now();
+        if (gActiveProbeRequested.exchange(false)) nextProbe = now;
+        if (now >= nextProbe) {
+            std::vector<std::wstring> targets = ActiveProbeTargets();
+            std::atomic<size_t> cursor{0};
+            std::mutex resultMutex;
+            std::vector<Device> found;
+            size_t workerCount = std::min<size_t>(64, targets.size());
+            std::vector<std::thread> workers;
+            workers.reserve(workerCount);
+            for (size_t worker = 0; worker < workerCount; ++worker) {
+                workers.emplace_back([&] {
+                    while (gRunning) {
+                        size_t index = cursor.fetch_add(1);
+                        if (index >= targets.size()) break;
+                        auto device = ProbeDeviceHost(targets[index]);
+                        if (device) {
+                            std::lock_guard<std::mutex> lock(resultMutex);
+                            found.push_back(std::move(*device));
+                        }
+                    }
+                });
+            }
+            for (auto& worker : workers) worker.join();
+            for (Device& device : found) {
+                bool newlyRegistered = false;
+                ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
+                device.usbAllowed = channels.usb;
+                device.wifiAllowed = channels.wifi;
+                device.remoteAllowed = channels.remote;
+                std::lock_guard<std::mutex> lock(gDeviceMutex);
+                bool isNew = gDevices.find(device.id) == gDevices.end();
+                gDevices[device.id] = device;
+                if (isNew) WriteDiagnosticLog(L"device_found_active", device.name);
+            }
+            if (!found.empty() && gWindow) PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
+            WriteDiagnosticLog(L"active_discovery", L"targets=" + std::to_wstring(targets.size())
+                + L" devices=" + std::to_wstring(found.size()));
+            nextProbe = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        }
+        for (int tick = 0; tick < 10 && gRunning && !gActiveProbeRequested; ++tick) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
 }
 
 void DiscoveryLoop() {
@@ -2348,6 +2491,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             RefreshLibraryList();
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
+            gActiveProbeThread = std::thread(ActiveProbeLoop);
             gUsbDiscoveryThread = std::thread(UsbDiscoveryLoop);
             gReceiverThread = std::thread([] {
                 RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog,
@@ -2362,6 +2506,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 RefreshDeviceList();
                 SetWindowTextW(gStatus, L"正在确认设备在线状态，已有设备不会被清空…");
                 gRefreshRequested = true;
+                gActiveProbeRequested = true;
                 gUsbRefreshRequested = true;
                 WriteDiagnosticLog(L"discovery_manual_refresh", L"known devices retained and probe requested");
                 return 0;
@@ -2482,6 +2627,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gRunning = false;
             KillTimer(window, 1);
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
+            if (gActiveProbeThread.joinable()) gActiveProbeThread.join();
             if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
             if (gReceiverThread.joinable()) gReceiverThread.join();
             send_to::RemoveShortcuts();
