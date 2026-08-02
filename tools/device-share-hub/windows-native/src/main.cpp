@@ -2669,7 +2669,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (!copy || copy->dwData != send_to::kCopyDataId) return FALSE;
             auto invocation = send_to::Deserialize(copy->lpData, copy->cbData);
             if (!invocation || !QueueShellSend(std::move(*invocation))) return FALSE;
-            ProcessPendingShellSend();
+            // Return to the shell helper immediately. Device selection is modal
+            // and must run after WM_COPYDATA completes, otherwise the helper's
+            // SendMessageTimeout can report a false failure while the user is
+            // still choosing a device.
+            PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
             return TRUE;
         }
         case WM_DEVICES_CHANGED:
