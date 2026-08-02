@@ -1638,57 +1638,87 @@ std::vector<std::wstring> ActiveProbeTargets() {
 }
 
 std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
-    HINTERNET session = WinHttpOpen(L"ZwmDeviceShare/4.2-active-discovery",
-        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return std::nullopt;
-    WinHttpSetTimeouts(session, 400, 400, 500, 800);
-    DWORD retries = 0;
-    WinHttpSetOption(session, WINHTTP_OPTION_CONNECT_RETRIES, &retries, sizeof(retries));
-    HINTERNET connection = WinHttpConnect(session, host.c_str(), 45833, 0);
-    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", L"/v2/info", nullptr,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0) : nullptr;
-    std::optional<Device> result;
-    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, nullptr)) {
-        DWORD httpStatus = 0;
-        DWORD statusSize = sizeof(httpStatus);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                WINHTTP_HEADER_NAME_BY_INDEX, &httpStatus, &statusSize, WINHTTP_NO_HEADER_INDEX)
-                && httpStatus == 200) {
-            std::string body;
-            while (true) {
-                DWORD available = 0;
-                if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
-                size_t offset = body.size();
-                body.resize(offset + available);
-                DWORD read = 0;
-                if (!WinHttpReadData(request, body.data() + offset, available, &read)) {
-                    body.clear();
-                    break;
-                }
-                body.resize(offset + read);
-            }
-            if (JsonNumber(body, "protocol", 0) == 2) {
-                Device device;
-                device.id = Utf8ToWide(JsonValue(body, "deviceId"));
-                device.name = Utf8ToWide(JsonValue(body, "name"));
-                device.model = Utf8ToWide(JsonValue(body, "model"));
-                device.state = Utf8ToWide(JsonValue(body, "state"));
-                device.ip = host;
-                device.port = static_cast<INTERNET_PORT>(std::clamp(JsonNumber(body, "port", 45833), 1, 65535));
-                device.workCount = std::max(-1, JsonNumber(body, "workCount", -1));
-                device.lastSeen = std::chrono::steady_clock::now();
-                if (!device.id.empty() && !device.name.empty()) result = std::move(device);
-            }
+    sockaddr_in endpoint{};
+    endpoint.sin_family = AF_INET;
+    endpoint.sin_port = htons(45833);
+    if (InetPtonW(AF_INET, host.c_str(), &endpoint.sin_addr) != 1) return std::nullopt;
+
+    SOCKET socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socketHandle == INVALID_SOCKET) return std::nullopt;
+    u_long nonBlocking = 1;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    int connected = connect(socketHandle, reinterpret_cast<sockaddr*>(&endpoint), sizeof(endpoint));
+    if (connected == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
+        closesocket(socketHandle);
+        return std::nullopt;
+    }
+    if (connected == SOCKET_ERROR) {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(socketHandle, &writable);
+        timeval timeout{0, 400000};
+        if (select(0, nullptr, &writable, nullptr, &timeout) <= 0) {
+            closesocket(socketHandle);
+            return std::nullopt;
+        }
+        int socketError = 0;
+        int errorSize = sizeof(socketError);
+        if (getsockopt(socketHandle, SOL_SOCKET, SO_ERROR,
+                reinterpret_cast<char*>(&socketError), &errorSize) == SOCKET_ERROR || socketError != 0) {
+            closesocket(socketHandle);
+            return std::nullopt;
         }
     }
-    if (request) WinHttpCloseHandle(request);
-    if (connection) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    return result;
+    nonBlocking = 0;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    DWORD timeoutMs = 800;
+    setsockopt(socketHandle, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    setsockopt(socketHandle, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+
+    const char request[] = "GET /v2/info HTTP/1.1\r\nHost: device\r\nConnection: close\r\n\r\n";
+    size_t sentTotal = 0;
+    while (sentTotal < sizeof(request) - 1) {
+        int sent = send(socketHandle, request + sentTotal, static_cast<int>(sizeof(request) - 1 - sentTotal), 0);
+        if (sent <= 0) {
+            closesocket(socketHandle);
+            return std::nullopt;
+        }
+        sentTotal += static_cast<size_t>(sent);
+    }
+    std::string response;
+    char buffer[4096];
+    while (response.size() < 64 * 1024) {
+        int read = recv(socketHandle, buffer, sizeof(buffer), 0);
+        if (read <= 0) break;
+        response.append(buffer, static_cast<size_t>(read));
+    }
+    closesocket(socketHandle);
+    size_t bodyStart = response.find("\r\n\r\n");
+    if (bodyStart == std::string::npos
+            || (response.rfind("HTTP/1.1 200", 0) != 0 && response.rfind("HTTP/1.0 200", 0) != 0)) {
+        return std::nullopt;
+    }
+    std::string body = response.substr(bodyStart + 4);
+    if (JsonNumber(body, "protocol", 0) != 2) return std::nullopt;
+    Device device;
+    device.id = Utf8ToWide(JsonValue(body, "deviceId"));
+    device.name = Utf8ToWide(JsonValue(body, "name"));
+    device.model = Utf8ToWide(JsonValue(body, "model"));
+    device.state = Utf8ToWide(JsonValue(body, "state"));
+    device.ip = host;
+    device.port = static_cast<INTERNET_PORT>(std::clamp(JsonNumber(body, "port", 45833), 1, 65535));
+    device.workCount = std::max(-1, JsonNumber(body, "workCount", -1));
+    device.lastSeen = std::chrono::steady_clock::now();
+    if (device.id.empty() || device.name.empty()) return std::nullopt;
+    return device;
 }
 
 void ActiveProbeLoop() {
+    WSADATA socketData{};
+    if (WSAStartup(MAKEWORD(2, 2), &socketData) != 0) {
+        WriteDiagnosticLog(L"active_discovery_failed", L"WSAStartup failed");
+        return;
+    }
     auto nextProbe = std::chrono::steady_clock::now();
     while (gRunning) {
         auto now = std::chrono::steady_clock::now();
@@ -1735,6 +1765,7 @@ void ActiveProbeLoop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
+    WSACleanup();
 }
 
 void DiscoveryLoop() {
