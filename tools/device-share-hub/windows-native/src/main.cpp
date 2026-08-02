@@ -1694,6 +1694,10 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     }
     closesocket(socketHandle);
     size_t bodyStart = response.find("\r\n\r\n");
+    if (!response.empty()) {
+        WriteDiagnosticLog(L"active_probe_response", host + L" bytes=" + std::to_wstring(response.size())
+            + L" headers=" + std::to_wstring(bodyStart == std::string::npos ? 0 : bodyStart));
+    }
     if (bodyStart == std::string::npos
             || (response.rfind("HTTP/1.1 200", 0) != 0 && response.rfind("HTTP/1.0 200", 0) != 0)) {
         return std::nullopt;
