@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -22,6 +23,8 @@ namespace {
 constexpr unsigned short PORT = 45833;
 constexpr size_t MAX_HEADERS = 64 * 1024;
 constexpr unsigned long long MAX_FILE = 4ull * 1024 * 1024 * 1024;
+std::mutex gReceiveRootMutex;
+std::filesystem::path gConfiguredReceiveRoot;
 
 struct ReceivedFile { std::wstring name; std::filesystem::path path; };
 struct Task {
@@ -95,6 +98,12 @@ std::filesystem::path CacheRoot() {
 }
 
 std::filesystem::path ReceiveRoot() {
+    {
+        std::lock_guard<std::mutex> lock(gReceiveRootMutex);
+        if (!gConfiguredReceiveRoot.empty() && std::filesystem::is_directory(gConfiguredReceiveRoot)) {
+            return gConfiguredReceiveRoot;
+        }
+    }
     PWSTR path = nullptr; std::filesystem::path root;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &path))) { root = path; CoTaskMemFree(path); }
     else root = std::filesystem::temp_directory_path();
@@ -323,6 +332,11 @@ void ProcessRelayQueue(std::vector<Task>& queued,
         }
     }
 }
+}
+
+void SetReceiveRoot(const std::filesystem::path& root) {
+    std::lock_guard<std::mutex> lock(gReceiveRootMutex);
+    gConfiguredReceiveRoot = root;
 }
 
 void RunLanReceiver(std::atomic<bool>& running,

@@ -51,6 +51,7 @@ namespace {
 constexpr UINT WM_DEVICES_CHANGED = WM_APP + 1;
 constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
 constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
+constexpr UINT WM_SHELL_TRANSFER_NOTICE = WM_APP + 8;
 constexpr UINT WM_LIBRARY_REFRESHED = WM_APP + 4;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
@@ -110,6 +111,11 @@ struct PendingShellSend {
     std::chrono::steady_clock::time_point queuedAt;
 };
 
+struct ShellTransferNotice {
+    std::wstring message;
+    bool success = false;
+};
+
 HWND gWindow = nullptr;
 HWND gDeviceList = nullptr;
 HWND gStatus = nullptr;
@@ -160,6 +166,7 @@ HWND gLibraryRefreshButton = nullptr;
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
+std::set<std::wstring> gExpandedLibraryFolders;
 std::optional<PendingShellSend> gPendingShellSend;
 std::filesystem::path gExecutablePath;
 std::wstring gLastSendToSignature;
@@ -287,6 +294,14 @@ std::filesystem::path DeviceRemarkPath() {
     DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
     std::filesystem::path base = length > 0 ? std::filesystem::path(buffer) : std::filesystem::temp_directory_path();
     return base / L"ZwmDeviceShareHub" / L"device-remarks.tsv";
+}
+
+void PostShellTransferNotice(std::wstring message, bool success) {
+    if (!gWindow) return;
+    auto* notice = new ShellTransferNotice{std::move(message), success};
+    if (!PostMessageW(gWindow, WM_SHELL_TRANSFER_NOTICE, 0, reinterpret_cast<LPARAM>(notice))) {
+        delete notice;
+    }
 }
 
 std::filesystem::path TransferHistoryPath() {
@@ -1284,16 +1299,20 @@ void SyncWindowsClipboard() {
     BroadcastClipboardText(text, messageId, WindowsDeviceId(), 4, {});
 }
 
-void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption) {
+void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
+                    bool checkHistory, bool notifyCompletion) {
     std::wstring taskId = NewTaskId();
     gUploadInProgress = true;
     gCancelRequested = false;
     PostProgress(0, true);
     std::vector<std::filesystem::path> temporaryArchives;
     try {
-        std::vector<TransferFingerprint> fingerprints = CheckTransferHistory(device, files);
-        files.clear();
-        for (const auto& item : fingerprints) files.push_back(item.source);
+        std::vector<TransferFingerprint> fingerprints;
+        if (checkHistory) {
+            fingerprints = CheckTransferHistory(device, files);
+            files.clear();
+            for (const auto& item : fingerprints) files.push_back(item.source);
+        }
         if (files.empty()) {
             PostProgress(0, false);
             PostStatus(L"已跳过传送过的项目");
@@ -1315,6 +1334,9 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                     });
                 RecordSuccessfulTransfers(device, fingerprints, L"USB");
                 WriteDiagnosticLog(L"usb_upload_done", device.name);
+                if (notifyCompletion) {
+                    PostShellTransferNotice(L"已通过 USB 传送到“" + device.name + L"”。", true);
+                }
                 PostProgress(100, true);
                 PostStatus(L"已通过 USB 传送到“" + device.name + L"”");
                 gUploadInProgress = false;
@@ -1378,10 +1400,16 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
         RecordSuccessfulTransfers(device, fingerprints, L"Wi-Fi");
         WriteDiagnosticLog(L"upload_commit", taskId);
+        if (notifyCompletion) {
+            PostShellTransferNotice(L"已传送到“" + device.name + L"”的接收文件夹。", true);
+        }
         PostProgress(100, true);
         PostStatus(L"已传送到 “" + device.name + L"” 的接收文件夹");
     } catch (const std::exception& error) {
         WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
+        if (notifyCompletion) {
+            PostShellTransferNotice(L"传送失败：" + Utf8ToWide(error.what()), false);
+        }
         try {
             HttpClient cleanup(device.ip, device.port);
             cleanup.PostEmpty(L"/v2/tasks/" + taskId + L"/cancel");
@@ -1498,7 +1526,8 @@ void ProcessPendingShellSend() {
     std::vector<std::filesystem::path> paths = std::move(gPendingShellSend->invocation.paths);
     gPendingShellSend.reset();
     WriteDiagnosticLog(L"send_to_started", device.name + L" items=" + std::to_wstring(paths.size()));
-    std::thread(UploadToDevice, device, std::move(paths), std::wstring()).detach();
+    PostStatus(L"准备发送到“" + device.name + L"”…");
+    std::thread(UploadToDevice, device, std::move(paths), std::wstring(), false, true).detach();
 }
 
 void SyncSendToMenu(const std::vector<Device>& devices,
@@ -2191,7 +2220,7 @@ void HandleDrop(HDROP drop) {
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
-    std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
+    std::thread(UploadToDevice, device, std::move(files), std::wstring(), true, false).detach();
 }
 
 void DrawActionButton(const DRAWITEMSTRUCT* item) {
@@ -2310,7 +2339,7 @@ std::filesystem::path LibraryRoot() {
     return std::filesystem::path(gContentStore->GetSetting(L"library_path"));
 }
 
-void RefreshLibraryList() {
+void RefreshLibraryListLegacy() {
     if (!gLibraryList || !IsWindow(gLibraryList)) return;
     SendMessageW(gLibraryList, LB_RESETCONTENT, 0, 0);
     gLibraryItems.clear();
@@ -2333,11 +2362,82 @@ void RefreshLibraryList() {
     }
 }
 
+void RefreshLibraryList() {
+    if (!gLibraryList || !IsWindow(gLibraryList)) return;
+    SendMessageW(gLibraryList, LB_RESETCONTENT, 0, 0);
+    gLibraryItems.clear();
+    try {
+        std::filesystem::path root = LibraryRoot();
+        SetWindowTextW(gLibraryPathLabel, root.empty() ? L"尚未设置发送根目录" : root.c_str());
+        if (root.empty() || !std::filesystem::is_directory(root)) return;
+        std::set<std::wstring> visited;
+        std::function<void(const std::filesystem::path&, int)> appendChildren;
+        appendChildren = [&](const std::filesystem::path& parent, int depth) {
+            if (depth > 12 || gLibraryItems.size() >= 5000) return;
+            std::error_code canonicalError;
+            std::wstring canonical = std::filesystem::weakly_canonical(parent, canonicalError).wstring();
+            if (!canonical.empty() && !visited.insert(canonical).second) return;
+            std::vector<std::filesystem::directory_entry> entries;
+            std::error_code iteratorError;
+            for (std::filesystem::directory_iterator iterator(parent,
+                    std::filesystem::directory_options::skip_permission_denied, iteratorError), end;
+                    iterator != end && !iteratorError; iterator.increment(iteratorError)) {
+                entries.push_back(*iterator);
+            }
+            std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+                std::error_code leftError, rightError;
+                bool leftDirectory = left.is_directory(leftError);
+                bool rightDirectory = right.is_directory(rightError);
+                if (leftDirectory != rightDirectory) return leftDirectory;
+                return _wcsicmp(left.path().filename().c_str(), right.path().filename().c_str()) < 0;
+            });
+            for (const auto& entry : entries) {
+                if (gLibraryItems.size() >= 5000) break;
+                std::error_code typeError;
+                bool directory = entry.is_directory(typeError);
+                if (typeError) continue;
+                gLibraryItems.push_back(entry.path());
+                std::wstring key = entry.path().wstring();
+                std::wstring label(static_cast<size_t>(depth) * 2, L' ');
+                label += directory ? (gExpandedLibraryFolders.count(key) ? L"[-] " : L"[+] ") : L"    ";
+                label += entry.path().filename().wstring();
+                SendMessageW(gLibraryList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+                if (directory && gExpandedLibraryFolders.count(key)) appendChildren(entry.path(), depth + 1);
+            }
+        };
+        appendChildren(root, 0);
+    } catch (const std::exception& error) {
+        WriteDiagnosticLog(L"library_tree_refresh_failed", Utf8ToWide(error.what()));
+    }
+}
+
 std::optional<std::filesystem::path> SelectedLibraryItem() {
     if (!gLibraryList) return std::nullopt;
     int index = static_cast<int>(SendMessageW(gLibraryList, LB_GETCURSEL, 0, 0));
     if (index < 0 || index >= static_cast<int>(gLibraryItems.size())) return std::nullopt;
     return gLibraryItems[static_cast<size_t>(index)];
+}
+
+void SendSelectedLibraryItem();
+
+void HandleLibraryDoubleClick() {
+    auto selected = SelectedLibraryItem();
+    if (!selected) return;
+    std::error_code ignored;
+    if (std::filesystem::is_directory(*selected, ignored)) {
+        std::wstring key = selected->wstring();
+        if (gExpandedLibraryFolders.count(key)) gExpandedLibraryFolders.erase(key);
+        else gExpandedLibraryFolders.insert(key);
+        RefreshLibraryList();
+        for (size_t index = 0; index < gLibraryItems.size(); ++index) {
+            if (gLibraryItems[index] == *selected) {
+                SendMessageW(gLibraryList, LB_SETCURSEL, index, 0);
+                break;
+            }
+        }
+        return;
+    }
+    SendSelectedLibraryItem();
 }
 
 void SendSelectedLibraryItem() {
@@ -2356,7 +2456,7 @@ void SendSelectedLibraryItem() {
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(deviceIndex)];
-    std::thread(UploadToDevice, device, std::vector<std::filesystem::path>{*source}, std::wstring()).detach();
+    std::thread(UploadToDevice, device, std::vector<std::filesystem::path>{*source}, std::wstring(), true, false).detach();
 }
 
 void ArchiveSelectedLibraryItem() {
@@ -2453,7 +2553,7 @@ void ChooseAndSend(bool folder) {
     if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) { MessageBoxW(gWindow, L"请先选择一台在线设备。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
     auto files = PickPaths(folder); if (files.empty()) return;
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
-    std::thread(UploadToDevice, device, std::move(files), std::wstring()).detach();
+    std::thread(UploadToDevice, device, std::move(files), std::wstring(), true, false).detach();
 }
 
 void Layout(HWND window) {
@@ -2470,17 +2570,21 @@ void Layout(HWND window) {
     const int rightX = margin + leftWidth + gap;
     const int rightWidth = std::max(330, width - margin - rightX);
     const int listTop = contentTop + 58;
-    const int actionTop = bottomTop - 54;
+    const int actionTop = bottomTop - 88;
     const int listHeight = std::max(150, actionTop - listTop - 12);
 
     MoveWindow(gLibraryTitle, margin, contentTop, leftWidth - 120, 30, TRUE);
     MoveWindow(gLibraryPathLabel, margin, contentTop + 32, leftWidth - 88, 24, TRUE);
     MoveWindow(gLibraryRefreshButton, margin + leftWidth - 78, contentTop + 22, 78, 34, TRUE);
     MoveWindow(gLibraryList, margin, listTop, leftWidth, listHeight, TRUE);
-    MoveWindow(gLibraryChooseButton, margin, actionTop, 116, 38, TRUE);
-    MoveWindow(gArchiveChooseButton, margin + 126, actionTop, 116, 38, TRUE);
-    MoveWindow(gArchiveButton, margin + leftWidth - 256, actionTop, 122, 38, TRUE);
-    MoveWindow(gLibrarySendButton, margin + leftWidth - 124, actionTop, 124, 38, TRUE);
+    const int libraryButtonGap = 8;
+    const int libraryButtonWidth = (leftWidth - libraryButtonGap) / 2;
+    MoveWindow(gLibraryChooseButton, margin, actionTop, libraryButtonWidth, 38, TRUE);
+    MoveWindow(gArchiveChooseButton, margin + libraryButtonWidth + libraryButtonGap, actionTop,
+               libraryButtonWidth, 38, TRUE);
+    MoveWindow(gArchiveButton, margin, actionTop + 44, libraryButtonWidth, 38, TRUE);
+    MoveWindow(gLibrarySendButton, margin + libraryButtonWidth + libraryButtonGap, actionTop + 44,
+               libraryButtonWidth, 38, TRUE);
 
     MoveWindow(gDeviceTitle, rightX, contentTop, rightWidth - 128, 30, TRUE);
     MoveWindow(gRefreshButton, rightX + rightWidth - 118, contentTop - 4, 118, 36, TRUE);
@@ -2514,7 +2618,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
                                            0, 0, 200, 30, window, nullptr, nullptr, nullptr);
             SendMessageW(gLibraryTitle, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置素材目录", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
+            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置发送根目录", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
                                                0, 0, 400, 24, window, nullptr, nullptr, nullptr);
             SendMessageW(gLibraryPathLabel, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gLibraryList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
@@ -2522,7 +2626,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 0, 0, 400, 240, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_LIST)), nullptr, nullptr);
             SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gLibraryChooseButton = CreateWindowW(L"BUTTON", L"设置素材目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            gLibraryChooseButton = CreateWindowW(L"BUTTON", L"设置发送根目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_CHOOSE)), nullptr, nullptr);
             gArchiveChooseButton = CreateWindowW(L"BUTTON", L"设置归档目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE_CHOOSE)), nullptr, nullptr);
@@ -2601,8 +2705,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 return 0;
             }
             if (LOWORD(wParam) == IDC_LIBRARY_CHOOSE) {
-                auto folder = PickSingleFolder(window, L"选择待分发素材总目录");
-                if (folder && gContentStore) { gContentStore->SetSetting(L"library_path", folder->wstring()); RefreshLibraryList(); }
+                auto folder = PickSingleFolder(window, L"选择发送和接收共用根目录");
+                if (folder && gContentStore) {
+                    gContentStore->SetSetting(L"library_path", folder->wstring());
+                    SetReceiveRoot(*folder);
+                    gExpandedLibraryFolders.clear();
+                    RefreshLibraryList();
+                }
                 return 0;
             }
             if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE_CHOOSE) {
@@ -2613,7 +2722,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (LOWORD(wParam) == IDC_LIBRARY_REFRESH) { RefreshLibraryList(); return 0; }
             if (LOWORD(wParam) == IDC_LIBRARY_SEND) { SendSelectedLibraryItem(); return 0; }
             if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE) { ArchiveSelectedLibraryItem(); return 0; }
-            if (LOWORD(wParam) == IDC_LIBRARY_LIST && HIWORD(wParam) == LBN_DBLCLK) { SendSelectedLibraryItem(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_LIST && HIWORD(wParam) == LBN_DBLCLK) { HandleLibraryDoubleClick(); return 0; }
             if (LOWORD(wParam) == 105) {
                 if (gUploadInProgress) {
                     gCancelRequested = true;
@@ -2695,6 +2804,14 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             ShowWindow(gProgress, lParam ? SW_SHOW : SW_HIDE);
             EnableWindow(gCancelButton, lParam && wParam < 100 && gUploadInProgress);
             return 0;
+        case WM_SHELL_TRANSFER_NOTICE: {
+            std::unique_ptr<ShellTransferNotice> notice(
+                reinterpret_cast<ShellTransferNotice*>(lParam));
+            if (!notice) return 0;
+            MessageBoxW(gWindow, notice->message.c_str(), L"相册投送",
+                        MB_OK | (notice->success ? MB_ICONINFORMATION : MB_ICONERROR));
+            return 0;
+        }
         case WM_TIMER:
             RefreshDeviceList();
             if (!gClipboardSyncInProgress.exchange(true)) {
@@ -2782,6 +2899,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         gContentStore.reset();
         WriteDiagnosticLog(L"content_database_init_failed", Utf8ToWide(error.what()));
     }
+    SetReceiveRoot(LibraryRoot());
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
