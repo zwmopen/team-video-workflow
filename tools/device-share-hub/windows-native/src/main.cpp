@@ -2719,6 +2719,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                HandleClipboardFromPeer);
             });
             SetTimer(window, 1, 2500, nullptr);
+            // Register the single root SendTo entry immediately.  It must be
+            // available even before the first phone is discovered; the picker
+            // will populate its live device list when the user invokes it.
+            SyncSendToMenu({}, std::chrono::steady_clock::now());
             return 0;
         }
         case WM_COMMAND:
