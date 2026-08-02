@@ -2,6 +2,7 @@
 
 ## 2026-08-02 Windows 右键“发送到”在线设备候选
 
+- 已正式更新 [`gallery-updates v0.6.14`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.14)：Windows 资产替换为 `Album-Windows-V4.2.0.exe`，SHA-256 为 `E915FE56DE9626ACFB13C7DDC8A93033076560EA1AB1627994C99D597FCC0D27`，公网重新下载核对一致；源码快照为提交 `76f2023d`。最终 Actions run `30733830138` 的 Windows、Android、iOS 和 remote relay 四项全部成功。
 - 实体回归补充：最初主动发现因未请求 Windows 网关信息得到 `targets=0`；补齐 `GAA_FLAG_INCLUDE_GATEWAYS` 后改用带连接截止时间的原生 LAN socket 探测，最终日志为 `targets=253 devices=1`，真实生成 `1号｜公司｜红米13.lnk`。同一时间共享传送脚本也发现该手机，菜单和协议发现结果一致。
 - 右键传送闭环：合成 protocol 2 接收端完成“设备快捷方式参数 → 第二进程 → `WM_COPYDATA` → 主实例 → 既有上传协议 → commit”，35 字节源文件与接收文件 SHA-256 完全一致；停止合成端并等待 35 秒后测试快捷方式被自动移除，真实在线手机项保留。
 
