@@ -1600,18 +1600,16 @@ std::vector<sockaddr_in> DiscoveryTargets() {
 
 std::vector<std::wstring> ActiveProbeTargets() {
     std::set<std::wstring> targets;
+    constexpr ULONG adapterFlags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST
+        | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS;
     ULONG size = 16 * 1024;
     std::vector<unsigned char> buffer(size);
     auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
-    ULONG status = GetAdaptersAddresses(AF_INET,
-        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
-        nullptr, adapters, &size);
+    ULONG status = GetAdaptersAddresses(AF_INET, adapterFlags, nullptr, adapters, &size);
     if (status == ERROR_BUFFER_OVERFLOW) {
         buffer.resize(size);
         adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
-        status = GetAdaptersAddresses(AF_INET,
-            GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
-            nullptr, adapters, &size);
+        status = GetAdaptersAddresses(AF_INET, adapterFlags, nullptr, adapters, &size);
     }
     if (status != NO_ERROR) return {};
     for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
