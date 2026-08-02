@@ -13,6 +13,16 @@ int wmain() {
     auto none = send_to::ParseArguments({L"ordinary-file.txt"});
     assert(!none.requested && !none.invocation);
 
+    auto picker = send_to::ParseArguments({L"--send-to-picker", std::filesystem::current_path().wstring()});
+    assert(picker.requested && picker.invocation);
+    assert(picker.invocation->deviceId.empty());
+    assert(picker.invocation->paths.size() == 1);
+
+    auto pickerPayload = send_to::Serialize(*picker.invocation);
+    auto restoredPicker = send_to::Deserialize(pickerPayload.data(), pickerPayload.size() * sizeof(wchar_t));
+    assert(restoredPicker && restoredPicker->deviceId.empty());
+    assert(restoredPicker->paths == picker.invocation->paths);
+
     send_to::Invocation invocation;
     invocation.deviceId = original;
     invocation.paths = {L"C:\\临时\\一个文件.txt", L"D:\\有 空格\\文件夹"};

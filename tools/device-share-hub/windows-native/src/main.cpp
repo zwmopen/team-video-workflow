@@ -1428,6 +1428,54 @@ bool QueueShellSend(send_to::Invocation invocation) {
 void ProcessPendingShellSend() {
     if (!gPendingShellSend || gUploadInProgress) return;
     auto now = std::chrono::steady_clock::now();
+    if (gPendingShellSend->invocation.deviceId.empty()) {
+        std::vector<Device> online;
+        for (const Device& device : gDisplayedDevices) {
+            bool liveWifi = !device.ip.empty() && device.wifiAllowed
+                && now - device.lastSeen <= std::chrono::seconds(35);
+            bool liveUsb = device.usbReady && device.usbAllowed;
+            if (liveWifi || liveUsb) online.push_back(device);
+        }
+        if (online.empty()) {
+            gActiveProbeRequested = true;
+            if (now - gPendingShellSend->queuedAt > std::chrono::seconds(20)) {
+                gPendingShellSend.reset();
+                MessageBoxW(gWindow, L"当前没有发现可接收的在线设备。请确认手机相册已打开或允许后台接收后重试。",
+                            L"相册投送", MB_OK | MB_ICONINFORMATION);
+            } else if (gStatus) {
+                SetWindowTextW(gStatus, L"正在查找在线相册设备…");
+            }
+            return;
+        }
+
+        HMENU picker = CreatePopupMenu();
+        if (!picker) {
+            gPendingShellSend.reset();
+            return;
+        }
+        AppendMenuW(picker, MF_STRING | MF_DISABLED, 0, L"选择发送设备");
+        AppendMenuW(picker, MF_SEPARATOR, 0, nullptr);
+        constexpr UINT firstCommand = 46000;
+        for (size_t index = 0; index < online.size(); ++index) {
+            std::wstring label = DisplayNameFor(online[index]);
+            std::replace(label.begin(), label.end(), L'\n', L' ');
+            AppendMenuW(picker, MF_STRING, firstCommand + static_cast<UINT>(index), label.c_str());
+        }
+        POINT point{};
+        GetCursorPos(&point);
+        BringMainWindowForward();
+        UINT selected = TrackPopupMenu(picker, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                                       point.x, point.y, 0, gWindow, nullptr);
+        DestroyMenu(picker);
+        if (selected < firstCommand || selected >= firstCommand + online.size()) {
+            WriteDiagnosticLog(L"send_to_picker_cancelled", L"items=" + std::to_wstring(gPendingShellSend->invocation.paths.size()));
+            gPendingShellSend.reset();
+            return;
+        }
+        const Device& selectedDevice = online[selected - firstCommand];
+        gPendingShellSend->invocation.deviceId = selectedDevice.id;
+        WriteDiagnosticLog(L"send_to_picker_selected", selectedDevice.name);
+    }
     auto found = std::find_if(gDisplayedDevices.begin(), gDisplayedDevices.end(), [now](const Device& device) {
         bool liveWifi = !device.ip.empty() && device.wifiAllowed
             && now - device.lastSeen <= std::chrono::seconds(35);
@@ -2457,10 +2505,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.2.0", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.2.1", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可右键文件 → 发送到 → 相册在线设备。",
+            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可右键文件 → 发送到相册设备，再选择在线设备。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 840, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
@@ -2742,7 +2790,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.2.0",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.2.1",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

@@ -9,6 +9,7 @@
 #include <cwchar>
 #include <cwctype>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
@@ -19,6 +20,8 @@ namespace {
 constexpr wchar_t kMenuFolderName[] = L"相册在线设备";
 constexpr wchar_t kMarkerName[] = L".zwm-device-share-hub";
 constexpr wchar_t kArgumentName[] = L"--send-to-device-id";
+constexpr wchar_t kPickerArgumentName[] = L"--send-to-picker";
+constexpr wchar_t kPickerShortcutName[] = L"发送到相册设备.lnk";
 
 std::optional<std::filesystem::path> SendToRoot() {
     PWSTR raw = nullptr;
@@ -50,7 +53,7 @@ std::wstring SanitizeFileName(std::wstring value) {
 
 bool CreateShortcut(const std::filesystem::path& shortcut,
                     const std::filesystem::path& executable,
-                    const std::wstring& encodedId,
+                    const std::wstring& arguments,
                     std::wstring* error) {
     IShellLinkW* link = nullptr;
     HRESULT status = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -59,10 +62,9 @@ bool CreateShortcut(const std::filesystem::path& shortcut,
         if (error) *error = L"无法创建 Windows 发送到快捷方式";
         return false;
     }
-    std::wstring arguments = std::wstring(kArgumentName) + L" " + encodedId;
     link->SetPath(executable.c_str());
     link->SetArguments(arguments.c_str());
-    link->SetDescription(L"通过素材投送中控发送到这台在线设备");
+    link->SetDescription(L"通过素材投送中控选择在线设备并发送原文件");
     link->SetIconLocation(executable.c_str(), 0);
     IPersistFile* persist = nullptr;
     status = link->QueryInterface(IID_PPV_ARGS(&persist));
@@ -111,22 +113,30 @@ std::optional<std::wstring> DecodeDeviceId(const std::wstring& value) {
 
 ParseResult ParseArguments(const std::vector<std::wstring>& arguments) {
     ParseResult result;
-    auto marker = std::find(arguments.begin(), arguments.end(), kArgumentName);
-    if (marker == arguments.end()) return result;
+    auto pickerMarker = std::find(arguments.begin(), arguments.end(), kPickerArgumentName);
+    auto deviceMarker = std::find(arguments.begin(), arguments.end(), kArgumentName);
+    if (pickerMarker == arguments.end() && deviceMarker == arguments.end()) return result;
     result.requested = true;
-    if (++marker == arguments.end()) {
-        result.error = L"发送到菜单缺少目标设备";
-        return result;
-    }
-    auto deviceId = DecodeDeviceId(*marker);
-    if (!deviceId || deviceId->empty()) {
-        result.error = L"发送到菜单中的设备标识无效";
-        return result;
-    }
     Invocation invocation;
-    invocation.deviceId = *deviceId;
-    for (++marker; marker != arguments.end(); ++marker) {
-        std::filesystem::path path(*marker);
+    auto pathStart = arguments.end();
+    if (pickerMarker != arguments.end()) {
+        pathStart = std::next(pickerMarker);
+    } else {
+        auto encodedId = std::next(deviceMarker);
+        if (encodedId == arguments.end()) {
+            result.error = L"发送到菜单缺少目标设备";
+            return result;
+        }
+        auto deviceId = DecodeDeviceId(*encodedId);
+        if (!deviceId || deviceId->empty()) {
+            result.error = L"发送到菜单中的设备标识无效";
+            return result;
+        }
+        invocation.deviceId = *deviceId;
+        pathStart = std::next(encodedId);
+    }
+    for (auto pathArgument = pathStart; pathArgument != arguments.end(); ++pathArgument) {
+        std::filesystem::path path(*pathArgument);
         std::error_code ignored;
         if (std::filesystem::is_regular_file(path, ignored) || std::filesystem::is_directory(path, ignored)) {
             invocation.paths.push_back(std::move(path));
@@ -186,7 +196,7 @@ std::optional<Invocation> Deserialize(const void* data, size_t bytes) {
         return value;
     };
     auto deviceId = take();
-    if (!deviceId || deviceId->empty()) return std::nullopt;
+    if (!deviceId) return std::nullopt;
     Invocation invocation;
     invocation.deviceId = *deviceId;
     while (offset < count) {
@@ -203,58 +213,37 @@ std::optional<Invocation> Deserialize(const void* data, size_t bytes) {
 bool SyncShortcuts(const std::vector<DeviceEntry>& devices,
                    const std::filesystem::path& executable,
                    std::wstring* error) {
-    if (devices.empty()) {
-        RemoveShortcuts();
-        return true;
-    }
-    std::filesystem::path folder = MenuFolder();
-    if (folder.empty()) {
+    (void)devices;
+    auto root = SendToRoot();
+    if (!root) {
         if (error) *error = L"找不到 Windows 发送到目录";
         return false;
     }
-    std::error_code filesystemError;
-    if (std::filesystem::exists(folder, filesystemError) && !IsOwnedFolder(folder)) {
-        if (error) *error = L"发送到目录已有同名文件夹，为避免覆盖未修改它";
-        return false;
-    }
-    std::filesystem::create_directories(folder, filesystemError);
-    if (filesystemError) {
-        if (error) *error = L"无法创建相册在线设备菜单";
-        return false;
-    }
-    if (!IsOwnedFolder(folder)) {
-        std::ofstream marker(folder / kMarkerName, std::ios::binary | std::ios::trunc);
-        marker << "ZwmDeviceShareHub SendTo menu v1\n";
-        marker.close();
-    }
+    if (!CreateShortcut(*root / kPickerShortcutName, executable, kPickerArgumentName, error)) return false;
 
-    std::set<std::wstring> desired;
-    std::map<std::wstring, int> duplicateNames;
-    struct ShortcutSpec { std::filesystem::path path; std::wstring encodedId; };
-    std::vector<ShortcutSpec> specs;
-    for (const auto& device : devices) {
-        std::wstring base = SanitizeFileName(device.displayName);
-        int duplicate = ++duplicateNames[base];
-        if (duplicate > 1) base += L" (" + std::to_wstring(duplicate) + L")";
-        std::wstring fileName = base + L".lnk";
-        desired.insert(fileName);
-        specs.push_back({folder / fileName, EncodeDeviceId(device.id)});
-    }
-    for (const auto& entry : std::filesystem::directory_iterator(folder, filesystemError)) {
-        if (filesystemError) break;
-        if (entry.path().extension() == L".lnk" && !desired.count(entry.path().filename().wstring())) {
-            std::filesystem::remove(entry.path(), filesystemError);
-            filesystemError.clear();
+    // Remove the obsolete subfolder design. Windows treats a SendTo subfolder as
+    // a copy destination rather than a cascading menu, so only delete files owned
+    // by this app and leave any unexpected payload untouched.
+    std::filesystem::path legacyFolder = MenuFolder();
+    if (IsOwnedFolder(legacyFolder)) {
+        std::error_code ignored;
+        for (const auto& entry : std::filesystem::directory_iterator(legacyFolder, ignored)) {
+            if (entry.path().extension() == L".lnk") std::filesystem::remove(entry.path(), ignored);
+            ignored.clear();
         }
+        std::filesystem::remove(legacyFolder / kMarkerName, ignored);
+        ignored.clear();
+        std::filesystem::remove(legacyFolder, ignored);
     }
-    for (const auto& spec : specs) {
-        if (!CreateShortcut(spec.path, executable, spec.encodedId, error)) return false;
-    }
-    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, folder.c_str(), nullptr);
+    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, root->c_str(), nullptr);
     return true;
 }
 
 void RemoveShortcuts() {
+    if (auto root = SendToRoot()) {
+        std::error_code ignored;
+        std::filesystem::remove(*root / kPickerShortcutName, ignored);
+    }
     std::filesystem::path folder = MenuFolder();
     if (!IsOwnedFolder(folder)) return;
     std::error_code ignored;
