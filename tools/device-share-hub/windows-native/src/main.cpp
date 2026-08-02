@@ -14,6 +14,7 @@
 #include "receiver.h"
 #include "usb_transport.h"
 #include "content_store.h"
+#include "send_to_integration.h"
 
 #include <algorithm>
 #include <atomic>
@@ -104,6 +105,11 @@ struct ChannelPreferences {
     bool remote = true;
 };
 
+struct PendingShellSend {
+    send_to::Invocation invocation;
+    std::chrono::steady_clock::time_point queuedAt;
+};
+
 HWND gWindow = nullptr;
 HWND gDeviceList = nullptr;
 HWND gStatus = nullptr;
@@ -152,6 +158,9 @@ HWND gLibraryRefreshButton = nullptr;
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
+std::optional<PendingShellSend> gPendingShellSend;
+std::filesystem::path gExecutablePath;
+std::wstring gLastSendToSignature;
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -1391,6 +1400,85 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     std::filesystem::remove(std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"), ignored);
 }
 
+void BringMainWindowForward() {
+    if (!gWindow) return;
+    if (IsIconic(gWindow)) ShowWindow(gWindow, SW_RESTORE);
+    else ShowWindow(gWindow, SW_SHOW);
+    SetForegroundWindow(gWindow);
+}
+
+bool QueueShellSend(send_to::Invocation invocation) {
+    if (gUploadInProgress || gPendingShellSend) return false;
+    std::vector<std::filesystem::path> valid;
+    for (const auto& path : invocation.paths) {
+        std::error_code ignored;
+        if (std::filesystem::is_regular_file(path, ignored) || std::filesystem::is_directory(path, ignored)) {
+            valid.push_back(path);
+        }
+    }
+    if (valid.empty() || valid.size() > 100) return false;
+    invocation.paths = std::move(valid);
+    gPendingShellSend = PendingShellSend{std::move(invocation), std::chrono::steady_clock::now()};
+    BringMainWindowForward();
+    return true;
+}
+
+void ProcessPendingShellSend() {
+    if (!gPendingShellSend || gUploadInProgress) return;
+    auto now = std::chrono::steady_clock::now();
+    auto found = std::find_if(gDisplayedDevices.begin(), gDisplayedDevices.end(), [now](const Device& device) {
+        bool liveWifi = !device.ip.empty() && device.wifiAllowed
+            && now - device.lastSeen <= std::chrono::seconds(18);
+        bool liveUsb = device.usbReady && device.usbAllowed;
+        return gPendingShellSend && device.id == gPendingShellSend->invocation.deviceId
+            && (liveWifi || liveUsb);
+    });
+    if (found == gDisplayedDevices.end()) {
+        if (now - gPendingShellSend->queuedAt > std::chrono::seconds(20)) {
+            WriteDiagnosticLog(L"send_to_device_offline", gPendingShellSend->invocation.deviceId);
+            gPendingShellSend.reset();
+            MessageBoxW(gWindow, L"目标设备已经离线，请重新打开右键“发送到”菜单选择在线设备。",
+                        L"相册投送", MB_OK | MB_ICONINFORMATION);
+        } else if (gStatus) {
+            SetWindowTextW(gStatus, L"正在确认右键“发送到”选择的设备…");
+        }
+        return;
+    }
+    Device device = *found;
+    std::vector<std::filesystem::path> paths = std::move(gPendingShellSend->invocation.paths);
+    gPendingShellSend.reset();
+    WriteDiagnosticLog(L"send_to_started", device.name + L" items=" + std::to_wstring(paths.size()));
+    std::thread(UploadToDevice, device, std::move(paths), std::wstring()).detach();
+}
+
+void SyncSendToMenu(const std::vector<Device>& devices,
+                    std::chrono::steady_clock::time_point now) {
+    std::vector<send_to::DeviceEntry> online;
+    std::wstring signature;
+    for (const Device& device : devices) {
+        bool liveWifi = !device.ip.empty() && device.wifiAllowed
+            && now - device.lastSeen <= std::chrono::seconds(18);
+        bool liveUsb = device.usbReady && device.usbAllowed;
+        if (!liveWifi && !liveUsb) continue;
+        std::wstring display = DisplayNameFor(device);
+        online.push_back({device.id, display});
+        signature += device.id + L"\x1f" + display + L"\x1e";
+    }
+    if (signature == gLastSendToSignature && !gExecutablePath.empty()) return;
+    if (gExecutablePath.empty()) {
+        std::vector<wchar_t> buffer(32768, L'\0');
+        DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length > 0 && length < buffer.size()) gExecutablePath = std::wstring(buffer.data(), length);
+    }
+    std::wstring error;
+    if (!gExecutablePath.empty() && send_to::SyncShortcuts(online, gExecutablePath, &error)) {
+        gLastSendToSignature = signature;
+        WriteDiagnosticLog(L"send_to_synced", L"online=" + std::to_wstring(online.size()));
+    } else if (!error.empty()) {
+        WriteDiagnosticLog(L"send_to_sync_failed", error);
+    }
+}
+
 void RefreshDeviceList() {
     auto now = std::chrono::steady_clock::now();
     std::vector<Device> fresh;
@@ -1464,6 +1552,8 @@ void RefreshDeviceList() {
     std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开“相册”并连接同一 Wi‑Fi。"
                                                      : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台设备；可拖入任意文件、ZIP 或整个文件夹。";
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
+    SyncSendToMenu(gDisplayedDevices, now);
+    ProcessPendingShellSend();
 }
 
 std::vector<sockaddr_in> DiscoveryTargets() {
@@ -2195,10 +2285,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.1.2", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.2.0", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可以把任意文件或文件夹直接拖到设备卡片。",
+            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可右键文件 → 发送到 → 相册在线设备。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 840, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
@@ -2352,6 +2442,14 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 return 0;
             }
             break;
+        case WM_COPYDATA: {
+            auto* copy = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
+            if (!copy || copy->dwData != send_to::kCopyDataId) return FALSE;
+            auto invocation = send_to::Deserialize(copy->lpData, copy->cbData);
+            if (!invocation || !QueueShellSend(std::move(*invocation))) return FALSE;
+            ProcessPendingShellSend();
+            return TRUE;
+        }
         case WM_DEVICES_CHANGED:
             RefreshDeviceList();
             return 0;
@@ -2386,6 +2484,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
             if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
             if (gReceiverThread.joinable()) gReceiverThread.join();
+            send_to::RemoveShortcuts();
             if (gFont) DeleteObject(gFont);
             if (gTitleFont) DeleteObject(gTitleFont);
             PostQuitMessage(0);
@@ -2393,19 +2492,58 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     }
     return DefWindowProcW(window, message, wParam, lParam);
 }
+
+bool ForwardShellSendToRunningInstance(const send_to::Invocation& invocation) {
+    HWND target = nullptr;
+    for (int attempt = 0; attempt < 20 && !target; ++attempt) {
+        target = FindWindowW(WINDOW_CLASS, nullptr);
+        if (!target) Sleep(100);
+    }
+    if (!target) return false;
+    auto payload = send_to::Serialize(invocation);
+    COPYDATASTRUCT copy{};
+    copy.dwData = send_to::kCopyDataId;
+    copy.cbData = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
+    copy.lpData = payload.data();
+    DWORD_PTR result = 0;
+    if (!SendMessageTimeoutW(target, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&copy),
+                             SMTO_ABORTIFHUNG | SMTO_BLOCK, 5000, &result) || result == FALSE) {
+        return false;
+    }
+    if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
+    else ShowWindow(target, SW_SHOW);
+    SetForegroundWindow(target);
+    return true;
+}
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+    send_to::ParseResult launch = send_to::ParseProcessCommandLine();
+    if (launch.requested && !launch.invocation) {
+        MessageBoxW(nullptr, launch.error.c_str(), L"相册投送", MB_OK | MB_ICONWARNING);
+        return 2;
+    }
     gSingleInstance = CreateMutexW(nullptr, TRUE, L"Local\\ZwmDeviceShareHubSingleton");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(nullptr, L"素材投送中控已经打开。", L"素材投送", MB_OK | MB_ICONINFORMATION);
-        return 0;
+    bool alreadyRunning = gSingleInstance && GetLastError() == ERROR_ALREADY_EXISTS;
+    if (alreadyRunning) {
+        bool forwarded = launch.invocation && ForwardShellSendToRunningInstance(*launch.invocation);
+        if (launch.invocation && !forwarded) {
+            MessageBoxW(nullptr, L"目标设备可能已经离线，或中控正在传送另一批文件。请稍后重新选择。",
+                        L"相册投送", MB_OK | MB_ICONINFORMATION);
+        } else if (!launch.invocation) {
+            MessageBoxW(nullptr, L"素材投送中控已经打开。", L"素材投送", MB_OK | MB_ICONINFORMATION);
+        }
+        if (gSingleInstance) CloseHandle(gSingleInstance);
+        return forwarded || !launch.invocation ? 0 : 3;
     }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS};
     InitCommonControlsEx(&controls);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ConfigureUsbTransport(instance, WriteDiagnosticLog);
+    if (launch.invocation) {
+        gPendingShellSend = PendingShellSend{std::move(*launch.invocation), std::chrono::steady_clock::now()};
+    }
     LoadDeviceRemarks();
     LoadChannelPreferences();
     try {
@@ -2429,7 +2567,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.1.2",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.2.0",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
