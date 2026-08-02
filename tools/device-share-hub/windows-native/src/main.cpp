@@ -1332,11 +1332,13 @@ void SyncWindowsClipboard() {
 }
 
 void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
-                    bool checkHistory, bool notifyCompletion) {
+                    bool checkHistory, bool /*notifyCompletion*/) {
     std::wstring taskId = NewTaskId();
     gUploadInProgress = true;
+    gShellTransferActive = true;
     gCancelRequested = false;
     PostProgress(0, true);
+    PostStatus(L"准备发送到“" + device.name + L"”…");
     std::vector<std::filesystem::path> temporaryArchives;
     try {
         std::vector<TransferFingerprint> fingerprints;
@@ -1349,6 +1351,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             PostProgress(0, false);
             PostStatus(L"已跳过传送过的项目");
             gUploadInProgress = false;
+            gShellTransferActive = false;
             gCancelRequested = false;
             return;
         }
@@ -1366,9 +1369,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                     });
                 RecordSuccessfulTransfers(device, fingerprints, L"USB");
                 WriteDiagnosticLog(L"usb_upload_done", device.name);
-                if (notifyCompletion) {
-                    PostShellTransferNotice(L"已通过 USB 传送到“" + device.name + L"”。", true);
-                }
+                PostShellTransferNotice(L"已通过 USB 传送到“" + device.name + L"”。", true);
                 PostProgress(100, true);
                 PostStatus(L"已通过 USB 传送到“" + device.name + L"”");
                 gUploadInProgress = false;
@@ -1432,16 +1433,12 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
         RecordSuccessfulTransfers(device, fingerprints, L"Wi-Fi");
         WriteDiagnosticLog(L"upload_commit", taskId);
-        if (notifyCompletion) {
-            PostShellTransferNotice(L"已传送到“" + device.name + L"”的接收文件夹。", true);
-        }
+        PostShellTransferNotice(L"已传送到“" + device.name + L"”的接收文件夹。", true);
         PostProgress(100, true);
         PostStatus(L"已传送到 “" + device.name + L"” 的接收文件夹");
     } catch (const std::exception& error) {
         WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
-        if (notifyCompletion) {
-            PostShellTransferNotice(L"传送失败：" + Utf8ToWide(error.what()), false);
-        }
+        PostShellTransferNotice(L"传送失败：" + Utf8ToWide(error.what()), false);
         try {
             HttpClient cleanup(device.ip, device.port);
             cleanup.PostEmpty(L"/v2/tasks/" + taskId + L"/cancel");
@@ -1453,6 +1450,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         PostStatus(L"传送失败：" + Utf8ToWide(error.what()));
     }
     gUploadInProgress = false;
+    gShellTransferActive = false;
     gCancelRequested = false;
     for (const auto& archive : temporaryArchives) {
         std::error_code ignored;
