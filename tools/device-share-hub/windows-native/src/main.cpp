@@ -1460,11 +1460,10 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     std::filesystem::remove(std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"), ignored);
 }
 
-void BringMainWindowForward() {
-    if (!gWindow) return;
-    if (IsIconic(gWindow)) ShowWindow(gWindow, SW_RESTORE);
-    else ShowWindow(gWindow, SW_SHOW);
-    SetForegroundWindow(gWindow);
+// Shell SendTo is a background entry point. Keep discovery and receiving
+// alive without restoring the full application panel.
+void PrepareShellPicker() {
+    if (gWindow && IsWindowVisible(gWindow)) SetForegroundWindow(gWindow);
 }
 
 bool QueueShellSend(send_to::Invocation invocation) {
@@ -1479,7 +1478,6 @@ bool QueueShellSend(send_to::Invocation invocation) {
     if (valid.empty() || valid.size() > 100) return false;
     invocation.paths = std::move(valid);
     gPendingShellSend = PendingShellSend{std::move(invocation), std::chrono::steady_clock::now()};
-    BringMainWindowForward();
     return true;
 }
 
@@ -1521,9 +1519,9 @@ void ProcessPendingShellSend() {
         }
         POINT point{};
         GetCursorPos(&point);
-        BringMainWindowForward();
+        PrepareShellPicker();
         UINT selected = TrackPopupMenu(picker, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-                                       point.x, point.y, 0, gWindow, nullptr);
+                                       point.x, point.y, 0, nullptr, nullptr);
         DestroyMenu(picker);
         if (selected < firstCommand || selected >= firstCommand + online.size()) {
             WriteDiagnosticLog(L"send_to_picker_cancelled", L"items=" + std::to_wstring(gPendingShellSend->invocation.paths.size()));
@@ -2882,7 +2880,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (gActiveProbeThread.joinable()) gActiveProbeThread.join();
             if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
             if (gReceiverThread.joinable()) gReceiverThread.join();
-            send_to::RemoveShortcuts();
+            // Keep the root SendTo shortcut persistent so Explorer can start
+            // the hidden discovery/receiver host on the next right-click.
+            // The shortcut is refreshed whenever discovery runs and can be
+            // removed by the installer/uninstaller, not by a normal exit.
             if (gFont) DeleteObject(gFont);
             if (gTitleFont) DeleteObject(gTitleFont);
             PostQuitMessage(0);
@@ -2908,9 +2909,8 @@ bool ForwardShellSendToRunningInstance(const send_to::Invocation& invocation) {
                              SMTO_ABORTIFHUNG | SMTO_BLOCK, 5000, &result) || result == FALSE) {
         return false;
     }
-    if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
-    else ShowWindow(target, SW_SHOW);
-    SetForegroundWindow(target);
+    // Keep the existing instance in the background. The shell picker and the
+    // transient transfer notice are the only UI shown for this invocation.
     return true;
 }
 }
@@ -2970,7 +2970,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
-    ShowWindow(window, showCommand);
+    // A SendTo invocation starts the resident discovery/receiver host on
+    // demand, but must not pop open the full main panel.
+    ShowWindow(window, launch.invocation ? SW_HIDE : showCommand);
     UpdateWindow(window);
 
     MSG message{};
