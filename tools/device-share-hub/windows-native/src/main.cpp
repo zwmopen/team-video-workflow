@@ -53,6 +53,7 @@ constexpr UINT WM_STATUS_CHANGED = WM_APP + 2;
 constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
 constexpr UINT WM_SHELL_TRANSFER_NOTICE = WM_APP + 8;
 constexpr UINT WM_LIBRARY_REFRESHED = WM_APP + 4;
+constexpr UINT WM_TRAYICON = WM_APP + 5;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
 constexpr int IDC_TOGGLE_USB = 205;
@@ -66,6 +67,10 @@ constexpr int IDC_LIBRARY_ARCHIVE_CHOOSE = 303;
 constexpr int IDC_LIBRARY_SEND = 304;
 constexpr int IDC_LIBRARY_ARCHIVE = 305;
 constexpr int IDC_LIBRARY_REFRESH = 306;
+constexpr int IDC_LIBRARY_SEARCH = 307;
+constexpr int IDC_AUTOSTART = 308;
+constexpr int IDC_DARKMODE = 309;
+constexpr int IDC_SELECT_ALL = 310;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
@@ -143,6 +148,9 @@ std::atomic<bool> gCancelRequested{false};
 std::atomic<bool> gRefreshRequested{false};
 std::atomic<bool> gActiveProbeRequested{false};
 std::atomic<bool> gUsbRefreshRequested{false};
+std::chrono::steady_clock::time_point gManualRefreshAt{};
+NOTIFYICONDATAW gTrayIcon{};
+bool gTrayIconAdded = false;
 std::atomic<bool> gArchiveInProgress{false};
 std::atomic<bool> gClipboardSyncInProgress{false};
 std::thread gDiscoveryThread;
@@ -163,6 +171,9 @@ std::map<std::string, std::chrono::steady_clock::time_point> gSeenClipboardMessa
 HWND gLibraryList = nullptr;
 HWND gLibraryPathLabel = nullptr;
 HWND gLibraryTitle = nullptr;
+HWND gLibrarySearchBox = nullptr;
+HWND gAutoStartCheck = nullptr;
+std::wstring gLibrarySearchText;
 HWND gDeviceTitle = nullptr;
 HWND gLibraryChooseButton = nullptr;
 HWND gArchiveChooseButton = nullptr;
@@ -174,6 +185,67 @@ std::set<std::wstring> gExpandedLibraryFolders;
 std::optional<PendingShellSend> gPendingShellSend;
 std::filesystem::path gExecutablePath;
 std::wstring gLastSendToSignature;
+
+struct TransferJob {
+    Device device;
+    std::vector<std::filesystem::path> files;
+    std::wstring caption;
+    bool checkHistory = true;
+};
+std::vector<TransferJob> gTransferQueue;
+std::mutex gQueueMutex;
+std::atomic<size_t> gQueueTotal{0};
+std::atomic<size_t> gQueueIndex{0};
+
+struct ThemeColors {
+    COLORREF windowBg;
+    COLORREF listBg;
+    COLORREF listSelectedBg;
+    COLORREF text;
+    COLORREF subText;
+    COLORREF border;
+    COLORREF buttonBg;
+    COLORREF buttonPressed;
+    COLORREF buttonDisabled;
+    COLORREF buttonBorder;
+    COLORREF buttonPrimary;
+    COLORREF buttonPrimaryPressed;
+    COLORREF buttonText;
+    COLORREF buttonPrimaryText;
+    COLORREF badgeBg;
+    COLORREF badgeBorder;
+    COLORREF badgeText;
+    COLORREF statusText;
+};
+const ThemeColors gLightTheme = {
+    RGB(245, 247, 249), RGB(255, 255, 255), RGB(232, 243, 236),
+    RGB(25, 28, 32), RGB(105, 112, 120), RGB(229, 226, 220),
+    RGB(255, 255, 255), RGB(235, 232, 226), RGB(235, 233, 229), RGB(222, 218, 211),
+    RGB(38, 145, 94), RGB(31, 122, 78), RGB(52, 52, 49), RGB(255, 255, 255),
+    RGB(232, 245, 239), RGB(187, 222, 204), RGB(43, 105, 82), RGB(60, 64, 70)
+};
+const ThemeColors gDarkTheme = {
+    RGB(30, 33, 40), RGB(38, 42, 51), RGB(45, 65, 55),
+    RGB(230, 233, 237), RGB(150, 158, 168), RGB(55, 60, 70),
+    RGB(45, 50, 58), RGB(55, 60, 70), RGB(50, 53, 58), RGB(60, 65, 75),
+    RGB(38, 145, 94), RGB(31, 122, 78), RGB(220, 223, 227), RGB(255, 255, 255),
+    RGB(40, 55, 48), RGB(60, 100, 80), RGB(130, 200, 160), RGB(200, 205, 212)
+};
+bool gDarkMode = false;
+HWND gDarkModeCheck = nullptr;
+HBRUSH gBgBrush = nullptr;
+HBRUSH gListBrush = nullptr;
+HBRUSH gEditBrush = nullptr;
+const ThemeColors& CurrentTheme() { return gDarkMode ? gDarkTheme : gLightTheme; }
+void UpdateBgBrush() {
+    const auto& theme = CurrentTheme();
+    if (gBgBrush) DeleteObject(gBgBrush);
+    gBgBrush = CreateSolidBrush(theme.windowBg);
+    if (gListBrush) DeleteObject(gListBrush);
+    gListBrush = CreateSolidBrush(theme.listBg);
+    if (gEditBrush) DeleteObject(gEditBrush);
+    gEditBrush = CreateSolidBrush(theme.listBg);
+}
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -306,6 +378,67 @@ void PostShellTransferNotice(std::wstring message, bool success) {
     if (!PostMessageW(gWindow, WM_SHELL_TRANSFER_NOTICE, 0, reinterpret_cast<LPARAM>(notice))) {
         delete notice;
     }
+}
+
+void ShowTrayBalloon(const std::wstring& title, const std::wstring& message, DWORD infoFlags) {
+    if (!gTrayIconAdded) return;
+    gTrayIcon.dwInfoFlags = infoFlags;
+    wcsncpy(gTrayIcon.szInfoTitle, title.c_str(), 63);
+    gTrayIcon.szInfoTitle[63] = 0;
+    wcsncpy(gTrayIcon.szInfo, message.c_str(), 255);
+    gTrayIcon.szInfo[255] = 0;
+    gTrayIcon.uFlags = NIF_INFO;
+    Shell_NotifyIconW(NIM_MODIFY, &gTrayIcon);
+}
+
+void AddTrayIcon(HWND owner) {
+    if (gTrayIconAdded) return;
+    gTrayIcon.cbSize = sizeof(gTrayIcon);
+    gTrayIcon.hWnd = owner;
+    gTrayIcon.uID = 1;
+    gTrayIcon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    gTrayIcon.uCallbackMessage = WM_TRAYICON;
+    gTrayIcon.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wcsncpy(gTrayIcon.szTip, L"素材投送中控", 127);
+    gTrayIcon.szTip[127] = 0;
+    Shell_NotifyIconW(NIM_ADD, &gTrayIcon);
+    gTrayIconAdded = true;
+}
+
+void RemoveTrayIcon() {
+    if (!gTrayIconAdded) return;
+    Shell_NotifyIconW(NIM_DELETE, &gTrayIcon);
+    gTrayIconAdded = false;
+}
+
+bool IsAutoStartEnabled() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_READ, &key) != ERROR_SUCCESS) return false;
+    wchar_t value[MAX_PATH]{};
+    DWORD size = sizeof(value);
+    DWORD type = 0;
+    LRESULT result = RegQueryValueExW(key, L"ZwmDeviceShareHub", nullptr, &type,
+                                      reinterpret_cast<LPBYTE>(value), &size);
+    RegCloseKey(key);
+    return result == ERROR_SUCCESS && type == REG_SZ;
+}
+
+void SetAutoStart(bool enable) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) return;
+    if (enable) {
+        wchar_t exePath[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        std::wstring cmd = std::wstring(L"\"") + exePath + L"\"";
+        RegSetValueExW(key, L"ZwmDeviceShareHub", 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(cmd.c_str()),
+                       static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+    } else {
+        RegDeleteValueW(key, L"ZwmDeviceShareHub");
+    }
+    RegCloseKey(key);
 }
 
 void PositionShellProgressPopup() {
@@ -742,7 +875,7 @@ std::wstring NewTaskId() {
     return buffer;
 }
 
-std::wstring Sha256File(const std::filesystem::path& path) {
+std::wstring Sha256File(const std::filesystem::path& path, std::function<void(int)> progress = {}) {
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     DWORD objectLength = 0;
@@ -768,6 +901,9 @@ std::wstring Sha256File(const std::filesystem::path& path) {
         throw std::runtime_error("无法读取文件");
     }
     std::vector<char> buffer(1024 * 1024);
+    std::error_code sizeError;
+    uintmax_t fileSize = std::filesystem::file_size(path, sizeError);
+    uintmax_t bytesRead = 0;
     while (input) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         std::streamsize count = input.gcount();
@@ -775,6 +911,10 @@ std::wstring Sha256File(const std::filesystem::path& path) {
             BCryptDestroyHash(hash);
             closeAlgorithm();
             throw std::runtime_error("SHA-256 计算失败");
+        }
+        if (progress && !sizeError && fileSize > 0) {
+            bytesRead += static_cast<uintmax_t>(count);
+            progress(static_cast<int>(std::min<uintmax_t>(100, bytesRead * 100 / fileSize)));
         }
     }
     if (BCryptFinishHash(hash, digest.data(), hashLength, 0) != 0) {
@@ -880,11 +1020,11 @@ bool IsImagePath(const std::filesystem::path& path) {
     return extensions.count(extension) > 0;
 }
 
-TransferFingerprint FingerprintItem(const std::filesystem::path& source) {
+TransferFingerprint FingerprintItem(const std::filesystem::path& source, std::function<void(int)> progress) {
     TransferFingerprint result;
     result.source = source;
     if (std::filesystem::is_regular_file(source)) {
-        result.hash = Sha256File(source);
+        result.hash = Sha256File(source, progress);
         result.bytes = std::filesystem::file_size(source);
         result.files = 1;
         result.images = IsImagePath(source) ? 1 : 0;
@@ -907,10 +1047,16 @@ TransferFingerprint FingerprintItem(const std::filesystem::path& source) {
     try {
         std::ofstream output(manifest, std::ios::binary | std::ios::trunc);
         if (!output) throw std::runtime_error("无法建立内容指纹");
-        for (const auto& file : files) {
+        for (size_t fi = 0; fi < files.size(); ++fi) {
+            const auto& file = files[fi];
             std::wstring relative = std::filesystem::relative(file, source).generic_wstring();
             uint64_t size = std::filesystem::file_size(file);
-            std::wstring fileHash = Sha256File(file);
+            std::wstring fileHash = Sha256File(file, [&](int pct) {
+                if (progress) {
+                    int overall = static_cast<int>((fi * 100 + pct) / std::max<size_t>(1, files.size()));
+                    progress(overall);
+                }
+            });
             std::string line = WideToUtf8(relative) + "\t" + std::to_string(size)
                 + "\t" + WideToUtf8(fileHash) + "\n";
             output.write(line.data(), static_cast<std::streamsize>(line.size()));
@@ -1000,8 +1146,13 @@ void RecordSuccessfulTransfers(
 std::vector<TransferFingerprint> CheckTransferHistory(
         const Device& device, const std::vector<std::filesystem::path>& inputs) {
     std::vector<TransferFingerprint> fingerprints;
-    PostStatus(L"正在核对是否传送过…");
-    for (const auto& input : inputs) fingerprints.push_back(FingerprintItem(input));
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        PostStatus(L"正在核对 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(inputs.size()) + L"：" + inputs[i].filename().wstring());
+        fingerprints.push_back(FingerprintItem(inputs[i], [&](int pct) {
+            PostStatus(L"正在计算校验值 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(inputs.size())
+                       + L"：" + inputs[i].filename().wstring() + L" (" + std::to_wstring(pct) + L"%)");
+        }));
+    }
     auto previous = PreviousTransfersForDevice(device.id, device.name);
     std::vector<size_t> duplicates;
     for (size_t index = 0; index < fingerprints.size(); ++index) {
@@ -1599,13 +1750,29 @@ void RefreshDeviceList() {
     std::vector<Device> fresh;
     {
         std::lock_guard<std::mutex> lock(gDeviceMutex);
+        bool manualRefreshExpired = false;
+        if (gManualRefreshAt != std::chrono::steady_clock::time_point{}
+                && now - gManualRefreshAt > std::chrono::seconds(5)) {
+            manualRefreshExpired = true;
+        }
         for (auto it = gDevices.begin(); it != gDevices.end();) {
-            if (now - it->second.lastSeen > std::chrono::seconds(DEVICE_RETENTION_SECONDS)) it = gDevices.erase(it);
+            bool remove = false;
+            if (now - it->second.lastSeen > std::chrono::seconds(DEVICE_RETENTION_SECONDS)) {
+                remove = true;
+            } else if (manualRefreshExpired
+                       && !it->second.ip.empty()
+                       && it->second.usbPeer.id.empty()
+                       && it->second.lastSeen < gManualRefreshAt) {
+                remove = true;
+                WriteDiagnosticLog(L"device_removed_after_manual_refresh", it->second.name);
+            }
+            if (remove) it = gDevices.erase(it);
             else {
                 fresh.push_back(it->second);
                 ++it;
             }
         }
+        if (manualRefreshExpired) gManualRefreshAt = {};
         for (const auto& [usbId, peer] : gUsbPeers) {
             auto sameDevice = std::find_if(fresh.begin(), fresh.end(), [&](const Device& candidate) {
                 bool sameName = !peer.name.empty() && _wcsicmp(candidate.name.c_str(), peer.name.c_str()) == 0;
@@ -1642,6 +1809,20 @@ void RefreshDeviceList() {
         return DisplayNameFor(left) < DisplayNameFor(right);
     });
     int previous = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
+    std::set<std::wstring> selectedIds;
+    {
+        LRESULT selCount = SendMessageW(gDeviceList, LB_GETSELCOUNT, 0, 0);
+        if (selCount > 0) {
+            std::vector<int> selIndices(static_cast<size_t>(selCount));
+            SendMessageW(gDeviceList, LB_GETSELITEMS, static_cast<WPARAM>(selCount),
+                         reinterpret_cast<LPARAM>(selIndices.data()));
+            for (int idx : selIndices) {
+                if (idx >= 0 && idx < static_cast<int>(gDisplayedDevices.size())) {
+                    selectedIds.insert(gDisplayedDevices[static_cast<size_t>(idx)].id);
+                }
+            }
+        }
+    }
     SendMessageW(gDeviceList, WM_SETREDRAW, FALSE, 0);
     SendMessageW(gDeviceList, LB_RESETCONTENT, 0, 0);
     gDisplayedDevices = fresh;
@@ -1661,11 +1842,22 @@ void RefreshDeviceList() {
             WriteDiagnosticLog(L"device_routes", device.name + L" " + routeState);
         }
     }
-    if (!gDisplayedDevices.empty()) SendMessageW(gDeviceList, LB_SETCURSEL, std::clamp(previous, 0, static_cast<int>(gDisplayedDevices.size()) - 1), 0);
+    if (!gDisplayedDevices.empty()) {
+        bool anySelected = false;
+        for (size_t i = 0; i < gDisplayedDevices.size(); ++i) {
+            if (selectedIds.count(gDisplayedDevices[i].id)) {
+                SendMessageW(gDeviceList, LB_SETSEL, TRUE, static_cast<WPARAM>(i));
+                anySelected = true;
+            }
+        }
+        if (!anySelected) {
+            SendMessageW(gDeviceList, LB_SETCURSEL, std::clamp(previous, 0, static_cast<int>(gDisplayedDevices.size()) - 1), 0);
+        }
+    }
     SendMessageW(gDeviceList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(gDeviceList, nullptr, TRUE);
     std::wstring summary = gDisplayedDevices.empty() ? L"未发现设备。请确认手机已打开“相册”并连接同一 Wi‑Fi。"
-                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台设备；可拖入任意文件、ZIP 或整个文件夹。";
+                                                     : L"已发现 " + std::to_wstring(gDisplayedDevices.size()) + L" 台设备；可点选多台批量发送，或拖入文件。";
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
     SyncSendToMenu(gDisplayedDevices, now);
     ProcessPendingShellSend();
@@ -2070,10 +2262,11 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     HDC dc = item->hDC;
     RECT rect = item->rcItem;
     bool selected = (item->itemState & ODS_SELECTED) != 0;
-    HBRUSH background = CreateSolidBrush(selected ? RGB(232, 243, 236) : RGB(255, 255, 255));
+    const auto& theme = CurrentTheme();
+    HBRUSH background = CreateSolidBrush(selected ? theme.listSelectedBg : theme.listBg);
     FillRect(dc, &rect, background);
     DeleteObject(background);
-    HPEN border = CreatePen(PS_SOLID, 1, selected ? RGB(38, 145, 94) : RGB(229, 226, 220));
+    HPEN border = CreatePen(PS_SOLID, 1, selected ? theme.buttonPrimary : theme.border);
     HGDIOBJ oldPen = SelectObject(dc, border);
     HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     RoundRect(dc, rect.left + 4, rect.top + 4, rect.right - 4, rect.bottom - 4, 20, 20);
@@ -2087,7 +2280,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     DrawPlatformIcon(dc, platformRect, isApple);
 
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(25, 28, 32));
+    SetTextColor(dc, theme.text);
     SelectObject(dc, gFont);
     RECT listClient{};
     RECT clipRect{};
@@ -2107,7 +2300,7 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     }
     DrawTextW(dc, displayName.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    SetTextColor(dc, RGB(105, 112, 120));
+    SetTextColor(dc, theme.subText);
     std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
     if (device.state == L"usb_pending" && !device.usbPeer.hint.empty()) {
         sub = device.usbPeer.hint;
@@ -2148,12 +2341,12 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
         lastBadgeGeometry[device.id] = badgeGeometry;
         WriteDiagnosticLog(L"route_badge_geometry", device.name + L" " + badgeGeometry);
     }
-    SetTextColor(dc, RGB(43, 105, 82));
+    SetTextColor(dc, theme.badgeText);
     for (const auto& value : channelLabels) {
         int badgeWidth = value == L"远程" ? 58 : 52;
         RECT badgeRect{badgeLeft, rect.top + 8, badgeLeft + badgeWidth, rect.top + 34};
-        HBRUSH badgeBrush = CreateSolidBrush(RGB(232, 245, 239));
-        HPEN badgePen = CreatePen(PS_SOLID, 1, RGB(187, 222, 204));
+        HBRUSH badgeBrush = CreateSolidBrush(theme.badgeBg);
+        HPEN badgePen = CreatePen(PS_SOLID, 1, theme.badgeBorder);
         HGDIOBJ oldBadgeBrush = SelectObject(dc, badgeBrush);
         HGDIOBJ oldBadgePen = SelectObject(dc, badgePen);
         RoundRect(dc, badgeRect.left, badgeRect.top, badgeRect.right, badgeRect.bottom, 13, 13);
@@ -2328,11 +2521,12 @@ void DrawActionButton(const DRAWITEMSTRUCT* item) {
     bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
     bool pressed = (item->itemState & ODS_SELECTED) != 0;
     bool primary = item->CtlID == IDC_LIBRARY_SEND;
-    COLORREF fill = primary ? RGB(38, 145, 94) : RGB(255, 255, 255);
-    if (pressed) fill = primary ? RGB(31, 122, 78) : RGB(235, 232, 226);
-    if (!enabled) fill = RGB(235, 233, 229);
+    const auto& theme = CurrentTheme();
+    COLORREF fill = primary ? theme.buttonPrimary : theme.buttonBg;
+    if (pressed) fill = primary ? theme.buttonPrimaryPressed : theme.buttonPressed;
+    if (!enabled) fill = theme.buttonDisabled;
     HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, primary ? fill : RGB(222, 218, 211));
+    HPEN pen = CreatePen(PS_SOLID, 1, primary ? fill : theme.buttonBorder);
     HGDIOBJ oldBrush = SelectObject(item->hDC, brush);
     HGDIOBJ oldPen = SelectObject(item->hDC, pen);
     RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 18, 18);
@@ -2341,7 +2535,7 @@ void DrawActionButton(const DRAWITEMSTRUCT* item) {
     wchar_t label[96]{}; GetWindowTextW(item->hwndItem, label, 95);
     SetBkMode(item->hDC, TRANSPARENT);
     SetTextColor(item->hDC, !enabled ? RGB(150, 150, 145)
-                                     : (primary ? RGB(255, 255, 255) : RGB(52, 52, 49)));
+                                     : (primary ? theme.buttonPrimaryText : theme.buttonText));
     SelectObject(item->hDC, gFont);
     DrawTextW(item->hDC, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
@@ -2439,6 +2633,43 @@ std::filesystem::path LibraryRoot() {
     return std::filesystem::path(gContentStore->GetSetting(L"library_path"));
 }
 
+std::wstring FormatFileSize(uintmax_t bytes) {
+    if (bytes < 1024) return std::to_wstring(bytes) + L" B";
+    if (bytes < 1024 * 1024) return std::to_wstring(bytes / 1024) + L" KB";
+    if (bytes < 1024ULL * 1024 * 1024) {
+        wchar_t buf[32];
+        swprintf(buf, 32, L"%.1f MB", static_cast<double>(bytes) / (1024 * 1024));
+        return buf;
+    }
+    wchar_t buf[32];
+    swprintf(buf, 32, L"%.2f GB", static_cast<double>(bytes) / (1024ULL * 1024 * 1024));
+    return buf;
+}
+
+std::wstring FormatDirectorySize(const std::filesystem::path& dir) {
+    uintmax_t totalSize = 0;
+    uintmax_t fileCount = 0;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir,
+            std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (!ec && entry.is_regular_file(ec)) {
+            totalSize += entry.file_size(ec);
+            ++fileCount;
+        }
+    }
+    if (fileCount == 0) return L"空";
+    return std::to_wstring(fileCount) + L"项 · " + FormatFileSize(totalSize);
+}
+
+bool MatchesSearch(const std::wstring& text, const std::wstring& filter) {
+    if (filter.empty()) return true;
+    std::wstring lowerText = text;
+    std::wstring lowerFilter = filter;
+    std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), ::towlower);
+    std::transform(lowerFilter.begin(), lowerFilter.end(), lowerFilter.begin(), ::towlower);
+    return lowerText.find(lowerFilter) != std::wstring::npos;
+}
+
 void RefreshLibraryListLegacy() {
     if (!gLibraryList || !IsWindow(gLibraryList)) return;
     SendMessageW(gLibraryList, LB_RESETCONTENT, 0, 0);
@@ -2496,11 +2727,25 @@ void RefreshLibraryList() {
                 std::error_code typeError;
                 bool directory = entry.is_directory(typeError);
                 if (typeError) continue;
+                std::wstring filename = entry.path().filename().wstring();
+                if (!MatchesSearch(filename, gLibrarySearchText)) {
+                    if (directory && gExpandedLibraryFolders.count(entry.path().wstring())) {
+                        appendChildren(entry.path(), depth + 1);
+                    }
+                    continue;
+                }
                 gLibraryItems.push_back(entry.path());
                 std::wstring key = entry.path().wstring();
                 std::wstring label(static_cast<size_t>(depth) * 2, L' ');
                 label += directory ? (gExpandedLibraryFolders.count(key) ? L"[-] " : L"[+] ") : L"    ";
-                label += entry.path().filename().wstring();
+                label += filename;
+                if (directory) {
+                    label += L"  (" + FormatDirectorySize(entry.path()) + L")";
+                } else {
+                    std::error_code sizeError;
+                    auto fileSize = std::filesystem::file_size(entry.path(), sizeError);
+                    if (!sizeError) label += L"  (" + FormatFileSize(fileSize) + L")";
+                }
                 SendMessageW(gLibraryList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
                 if (directory && gExpandedLibraryFolders.count(key)) appendChildren(entry.path(), depth + 1);
             }
@@ -2540,6 +2785,28 @@ void HandleLibraryDoubleClick() {
     SendSelectedLibraryItem();
 }
 
+std::vector<Device> GetSelectedDevices() {
+    std::vector<Device> result;
+    if (!gDeviceList || gDisplayedDevices.empty()) return result;
+    LRESULT count = SendMessageW(gDeviceList, LB_GETSELCOUNT, 0, 0);
+    if (count <= 0) {
+        int sel = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
+        if (sel >= 0 && sel < static_cast<int>(gDisplayedDevices.size())) {
+            result.push_back(gDisplayedDevices[static_cast<size_t>(sel)]);
+        }
+        return result;
+    }
+    std::vector<int> indices(static_cast<size_t>(count));
+    SendMessageW(gDeviceList, LB_GETSELITEMS, static_cast<WPARAM>(count),
+                 reinterpret_cast<LPARAM>(indices.data()));
+    for (int idx : indices) {
+        if (idx >= 0 && idx < static_cast<int>(gDisplayedDevices.size())) {
+            result.push_back(gDisplayedDevices[static_cast<size_t>(idx)]);
+        }
+    }
+    return result;
+}
+
 void SendSelectedLibraryItem() {
     if (gUploadInProgress) {
         MessageBoxW(gWindow, L"上一批素材还在传送。", L"素材库", MB_OK | MB_ICONINFORMATION);
@@ -2550,13 +2817,29 @@ void SendSelectedLibraryItem() {
         MessageBoxW(gWindow, L"请先在左侧选择一个作品文件夹。", L"素材库", MB_OK | MB_ICONINFORMATION);
         return;
     }
-    int deviceIndex = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
-    if (deviceIndex < 0 || deviceIndex >= static_cast<int>(gDisplayedDevices.size())) {
-        MessageBoxW(gWindow, L"请先在右侧选择一台在线设备。", L"素材库", MB_OK | MB_ICONINFORMATION);
+    auto devices = GetSelectedDevices();
+    if (devices.empty()) {
+        MessageBoxW(gWindow, L"请先在右侧选择至少一台在线设备。\n提示：可点选多台设备进行批量发送。", L"素材库", MB_OK | MB_ICONINFORMATION);
         return;
     }
-    Device device = gDisplayedDevices[static_cast<size_t>(deviceIndex)];
-    std::thread(UploadToDevice, device, std::vector<std::filesystem::path>{*source}, std::wstring(), true, false).detach();
+    std::vector<std::filesystem::path> files{*source};
+    if (devices.size() == 1) {
+        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
+        return;
+    }
+    gQueueTotal = devices.size();
+    gQueueIndex = 0;
+    std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
+        for (size_t i = 0; i < devices.size(); ++i) {
+            gQueueIndex = i + 1;
+            PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
+                       + L"：正在发送到“" + devices[i].name + L"”…");
+            UploadToDevice(devices[i], files, std::wstring(), true, false);
+        }
+        gQueueTotal = 0;
+        gQueueIndex = 0;
+        PostStatus(L"批量传送完成，共 " + std::to_wstring(devices.size()) + L" 台设备。");
+    }).detach();
 }
 
 void ArchiveSelectedLibraryItem() {
@@ -2649,11 +2932,26 @@ void UsbDiscoveryLoop() {
 
 void ChooseAndSend(bool folder) {
     if (gUploadInProgress) { MessageBoxW(gWindow, L"上一批文件还在传送。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
-    int index = static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0));
-    if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) { MessageBoxW(gWindow, L"请先选择一台在线设备。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
+    auto devices = GetSelectedDevices();
+    if (devices.empty()) { MessageBoxW(gWindow, L"请先选择至少一台在线设备。\n提示：可点选多台设备进行批量发送。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
     auto files = PickPaths(folder); if (files.empty()) return;
-    Device device = gDisplayedDevices[static_cast<size_t>(index)];
-    std::thread(UploadToDevice, device, std::move(files), std::wstring(), true, false).detach();
+    if (devices.size() == 1) {
+        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
+        return;
+    }
+    gQueueTotal = devices.size();
+    gQueueIndex = 0;
+    std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
+        for (size_t i = 0; i < devices.size(); ++i) {
+            gQueueIndex = i + 1;
+            PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
+                       + L"：正在发送到“" + devices[i].name + L"”…");
+            UploadToDevice(devices[i], files, std::wstring(), true, false);
+        }
+        gQueueTotal = 0;
+        gQueueIndex = 0;
+        PostStatus(L"批量传送完成，共 " + std::to_wstring(devices.size()) + L" 台设备。");
+    }).detach();
 }
 
 void Layout(HWND window) {
@@ -2669,14 +2967,17 @@ void Layout(HWND window) {
     const int leftWidth = std::max(380, available * 38 / 100);
     const int rightX = margin + leftWidth + gap;
     const int rightWidth = std::max(330, width - margin - rightX);
-    const int listTop = contentTop + 58;
     const int actionTop = bottomTop - 88;
-    const int listHeight = std::max(150, actionTop - listTop - 12);
 
     MoveWindow(gLibraryTitle, margin, contentTop, leftWidth - 120, 30, TRUE);
-    MoveWindow(gLibraryPathLabel, margin, contentTop + 32, leftWidth - 88, 24, TRUE);
+    MoveWindow(gLibraryPathLabel, margin, contentTop + 32, leftWidth - 200, 24, TRUE);
     MoveWindow(gLibraryRefreshButton, margin + leftWidth - 78, contentTop + 22, 78, 34, TRUE);
-    MoveWindow(gLibraryList, margin, listTop, leftWidth, listHeight, TRUE);
+    if (gLibrarySearchBox) {
+        MoveWindow(gLibrarySearchBox, margin + leftWidth - 200, contentTop + 32, 110, 22, TRUE);
+    }
+    const int searchListTop = contentTop + 62;
+    const int listHeight = std::max(150, actionTop - searchListTop - 12);
+    MoveWindow(gLibraryList, margin, searchListTop, leftWidth, listHeight, TRUE);
     const int libraryButtonGap = 8;
     const int libraryButtonWidth = (leftWidth - libraryButtonGap) / 2;
     MoveWindow(gLibraryChooseButton, margin, actionTop, libraryButtonWidth, 38, TRUE);
@@ -2686,18 +2987,30 @@ void Layout(HWND window) {
     MoveWindow(gLibrarySendButton, margin + libraryButtonWidth + libraryButtonGap, actionTop + 44,
                libraryButtonWidth, 38, TRUE);
 
-    MoveWindow(gDeviceTitle, rightX, contentTop, rightWidth - 128, 30, TRUE);
+    MoveWindow(gDeviceTitle, rightX, contentTop, rightWidth - 250, 30, TRUE);
     MoveWindow(gRefreshButton, rightX + rightWidth - 118, contentTop - 4, 118, 36, TRUE);
+    HWND selectAllBtn = GetDlgItem(window, IDC_SELECT_ALL);
+    if (selectAllBtn) {
+        MoveWindow(selectAllBtn, rightX + rightWidth - 240, contentTop - 4, 110, 36, TRUE);
+    }
     MoveWindow(gDeviceList, rightX, contentTop + 42, rightWidth, std::max(150, actionTop - contentTop - 54), TRUE);
     MoveWindow(gSendButton, rightX, actionTop, rightWidth, 38, TRUE);
 
     int buttonWidth = 92;
     int cancelWidth = 76;
-    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - 20);
+    int autoStartWidth = 100;
+    int darkModeWidth = 100;
+    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - autoStartWidth - darkModeWidth - 40);
     MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
     MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
     MoveWindow(gLogButton, margin + statusWidth + cancelWidth + 20, height - 72, buttonWidth, 38, TRUE);
+    if (gAutoStartCheck) {
+        MoveWindow(gAutoStartCheck, margin + statusWidth + cancelWidth + buttonWidth + 30, height - 68, autoStartWidth, 24, TRUE);
+    }
+    if (gDarkModeCheck) {
+        MoveWindow(gDarkModeCheck, margin + statusWidth + cancelWidth + buttonWidth + autoStartWidth + 40, height - 68, darkModeWidth, 24, TRUE);
+    }
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -2709,10 +3022,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.2.2", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.3.0", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可右键文件 → 发送到相册设备，再选择在线设备。",
+            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备（可点选多台批量发送）；也可右键文件 → 发送到相册设备。",
                                      WS_CHILD | WS_VISIBLE, 22, 54, 840, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
@@ -2732,6 +3045,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE_CHOOSE)), nullptr, nullptr);
             gLibraryRefreshButton = CreateWindowW(L"BUTTON", L"刷新", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 78, 34, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_REFRESH)), nullptr, nullptr);
+            gLibrarySearchBox = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NOHIDESEL,
+                0, 0, 110, 22, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_SEARCH)), nullptr, nullptr);
+            SendMessageW(gLibrarySearchBox, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            SendMessageW(gLibrarySearchBox, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"搜索素材…"));
             gArchiveButton = CreateWindowW(L"BUTTON", L"已使用并归档", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 122, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE)), nullptr, nullptr);
             gLibrarySendButton = CreateWindowW(L"BUTTON", L"传送选中素材", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
@@ -2746,7 +3064,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_REFRESH_DEVICES)), nullptr, nullptr);
             SendMessageW(gRefreshButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceList = CreateWindowExW(0, L"LISTBOX", nullptr,
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT,
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_NOINTEGRALHEIGHT | LBS_MULTIPLESEL,
                 22, 94, 640, 280, window, reinterpret_cast<HMENU>(101), nullptr, nullptr);
             SendMessageW(gDeviceList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gStatus = CreateWindowW(L"STATIC", L"正在搜索同一局域网内的手机…",
@@ -2778,6 +3096,23 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 18, 10, 384, 34, gShellProgressPopup, nullptr, nullptr, nullptr);
             SendMessageW(gShellProgressText, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             ShowWindow(gShellProgressPopup, SW_HIDE);
+            gAutoStartCheck = CreateWindowW(L"BUTTON", L"开机自启",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                0, 0, 120, 24, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_AUTOSTART)), nullptr, nullptr);
+            SendMessageW(gAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            SendMessageW(gAutoStartCheck, BM_SETCHECK, IsAutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+            gDarkModeCheck = CreateWindowW(L"BUTTON", L"暗色模式",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                0, 0, 100, 24, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_DARKMODE)), nullptr, nullptr);
+            SendMessageW(gDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            if (gContentStore) gDarkMode = gContentStore->GetSetting(L"dark_mode") == L"1";
+            SendMessageW(gDarkModeCheck, BM_SETCHECK, gDarkMode ? BST_CHECKED : BST_UNCHECKED, 0);
+            UpdateBgBrush();
+            HWND selectAllBtn = CreateWindowW(L"BUTTON", L"全选设备",
+                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 100, 34, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SELECT_ALL)), nullptr, nullptr);
+            SendMessageW(selectAllBtn, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddTrayIcon(window);
             RefreshLibraryList();
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
@@ -2798,11 +3133,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_REFRESH_DEVICES) {
                 RefreshDeviceList();
-                SetWindowTextW(gStatus, L"正在确认设备在线状态，已有设备不会被清空…");
+                gManualRefreshAt = std::chrono::steady_clock::now();
+                SetWindowTextW(gStatus, L"正在重新探测设备在线状态…");
                 gRefreshRequested = true;
                 gActiveProbeRequested = true;
                 gUsbRefreshRequested = true;
-                WriteDiagnosticLog(L"discovery_manual_refresh", L"known devices retained and probe requested");
+                SetTimer(window, 2, 6000, nullptr);
+                WriteDiagnosticLog(L"discovery_manual_refresh", L"probe requested, stale cleanup in 6s");
                 return 0;
             }
             if (LOWORD(wParam) == IDC_SEND_PICKER) {
@@ -2836,6 +3173,35 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (LOWORD(wParam) == IDC_LIBRARY_SEND) { SendSelectedLibraryItem(); return 0; }
             if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE) { ArchiveSelectedLibraryItem(); return 0; }
             if (LOWORD(wParam) == IDC_LIBRARY_LIST && HIWORD(wParam) == LBN_DBLCLK) { HandleLibraryDoubleClick(); return 0; }
+            if (LOWORD(wParam) == IDC_LIBRARY_SEARCH && HIWORD(wParam) == EN_CHANGE) {
+                wchar_t searchText[256]{};
+                GetWindowTextW(gLibrarySearchBox, searchText, 256);
+                gLibrarySearchText = searchText;
+                RefreshLibraryList();
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_AUTOSTART) {
+                bool checked = SendMessageW(gAutoStartCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                SetAutoStart(checked);
+                SetWindowTextW(gStatus, checked ? L"已开启开机自启。" : L"已关闭开机自启。");
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_DARKMODE) {
+                gDarkMode = SendMessageW(gDarkModeCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                if (gContentStore) gContentStore->SetSetting(L"dark_mode", gDarkMode ? L"1" : L"0");
+                UpdateBgBrush();
+                InvalidateRect(window, nullptr, TRUE);
+                SetWindowTextW(gStatus, gDarkMode ? L"已切换到暗色模式。" : L"已切换到亮色模式。");
+                return 0;
+            }
+            if (LOWORD(wParam) == IDC_SELECT_ALL) {
+                int count = static_cast<int>(gDisplayedDevices.size());
+                for (int i = 0; i < count; ++i) {
+                    SendMessageW(gDeviceList, LB_SETSEL, TRUE, i);
+                }
+                SetWindowTextW(gStatus, L"已全选设备，点击「传送选中素材」可批量发送。");
+                return 0;
+            }
             if (LOWORD(wParam) == 105) {
                 if (gUploadInProgress) {
                     gCancelRequested = true;
@@ -2876,6 +3242,31 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 return TRUE;
             }
             break;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORDLG: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            const auto& theme = CurrentTheme();
+            SetTextColor(dc, theme.statusText);
+            SetBkColor(dc, theme.windowBg);
+            if (!gBgBrush) UpdateBgBrush();
+            return reinterpret_cast<LRESULT>(gBgBrush);
+        }
+        case WM_CTLCOLORLISTBOX: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            const auto& theme = CurrentTheme();
+            SetTextColor(dc, theme.text);
+            SetBkColor(dc, theme.listBg);
+            if (!gListBrush) UpdateBgBrush();
+            return reinterpret_cast<LRESULT>(gListBrush);
+        }
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            const auto& theme = CurrentTheme();
+            SetTextColor(dc, theme.text);
+            SetBkColor(dc, theme.listBg);
+            if (!gEditBrush) UpdateBgBrush();
+            return reinterpret_cast<LRESULT>(gEditBrush);
         }
         case WM_DROPFILES:
             HandleDrop(reinterpret_cast<HDROP>(wParam));
@@ -2931,9 +3322,31 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (!notice) return 0;
             gShellTransferActive = false;
             FinishShellProgress(notice->message, notice->success);
+            ShowTrayBalloon(notice->success ? L"传送完成" : L"传送失败",
+                            notice->message,
+                            notice->success ? NIIF_INFO : NIIF_WARNING);
             return 0;
         }
+        case WM_TRAYICON:
+            if (lParam == WM_LBUTTONDBLCLK) {
+                if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+                SetForegroundWindow(window);
+            }
+            return 0;
+        case WM_SYSCOMMAND:
+            if (wParam == SC_MINIMIZE) {
+                ShowWindow(window, SW_HIDE);
+                ShowTrayBalloon(L"素材投送中控", L"程序已最小化到托盘，双击图标恢复。", NIIF_INFO);
+                return 0;
+            }
+            break;
         case WM_TIMER:
+            if (wParam == 2) {
+                KillTimer(window, 2);
+                RefreshDeviceList();
+                SetWindowTextW(gStatus, L"设备列表已刷新。");
+                return 0;
+            }
             if (wParam == 3) {
                 KillTimer(window, 3);
                 ShowWindow(gShellProgressPopup, SW_HIDE);
@@ -2947,9 +3360,18 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 }).detach();
             }
             return 0;
+        case WM_ERASEBKGND: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            RECT client{};
+            GetClientRect(window, &client);
+            if (!gBgBrush) UpdateBgBrush();
+            FillRect(dc, &client, gBgBrush);
+            return 1;
+        }
         case WM_DESTROY:
             gRunning = false;
             KillTimer(window, 1);
+            RemoveTrayIcon();
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
             if (gActiveProbeThread.joinable()) gActiveProbeThread.join();
             if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
@@ -2960,6 +3382,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             // removed by the installer/uninstaller, not by a normal exit.
             if (gFont) DeleteObject(gFont);
             if (gTitleFont) DeleteObject(gTitleFont);
+            if (gBgBrush) DeleteObject(gBgBrush);
+            if (gListBrush) DeleteObject(gListBrush);
+            if (gEditBrush) DeleteObject(gEditBrush);
             PostQuitMessage(0);
             return 0;
     }
@@ -3040,7 +3465,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.2.2",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.3.0",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
