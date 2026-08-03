@@ -2827,6 +2827,13 @@ void SendSelectedLibraryItem() {
         std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
         return;
     }
+    std::wstring confirmMsg = L"将把素材发送到以下 " + std::to_wstring(devices.size()) + L" 台设备：\n\n";
+    for (size_t i = 0; i < devices.size() && i < 8; ++i) {
+        confirmMsg += L"  • " + DisplayNameFor(devices[i]) + L"\n";
+    }
+    if (devices.size() > 8) confirmMsg += L"  … 等 " + std::to_wstring(devices.size()) + L" 台\n";
+    confirmMsg += L"\n确认开始批量传送？";
+    if (MessageBoxW(gWindow, confirmMsg.c_str(), L"批量传送确认", MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) != IDOK) return;
     gQueueTotal = devices.size();
     gQueueIndex = 0;
     std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
@@ -2939,6 +2946,8 @@ void ChooseAndSend(bool folder) {
         std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
         return;
     }
+    std::wstring confirmMsg = L"将把选中的文件发送到 " + std::to_wstring(devices.size()) + L" 台设备，确认？";
+    if (MessageBoxW(gWindow, confirmMsg.c_str(), L"批量传送确认", MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) != IDOK) return;
     gQueueTotal = devices.size();
     gQueueIndex = 0;
     std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
