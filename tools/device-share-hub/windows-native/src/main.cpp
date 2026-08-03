@@ -1665,6 +1665,8 @@ void RefreshDeviceList() {
     ProcessPendingShellSend();
 }
 
+bool IsVirtualAdapter(const IP_ADAPTER_ADDRESSES* adapter);
+
 std::vector<sockaddr_in> DiscoveryTargets() {
     std::set<ULONG> addresses{INADDR_BROADCAST};
     ULONG size = 16 * 1024;
@@ -1683,6 +1685,7 @@ std::vector<sockaddr_in> DiscoveryTargets() {
     if (status == NO_ERROR) {
         for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
             if (adapter->OperStatus != IfOperStatusUp) continue;
+            if (IsVirtualAdapter(adapter)) continue;
             for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
                 if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
                 auto* ipv4 = reinterpret_cast<sockaddr_in*>(unicast->Address.lpSockaddr);
@@ -1705,6 +1708,50 @@ std::vector<sockaddr_in> DiscoveryTargets() {
     return targets;
 }
 
+bool IsVirtualAdapter(const IP_ADAPTER_ADDRESSES* adapter) {
+    if (!adapter) return true;
+    if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) return true;
+    if (adapter->IfType == IF_TYPE_TUNNEL) return true;
+    std::wstring friendly = adapter->FriendlyName ? adapter->FriendlyName : L"";
+    std::wstring desc = adapter->Description ? adapter->Description : L"";
+    auto toLower = [](std::wstring s) {
+        std::transform(s.begin(), s.end(), s.begin(), towlower);
+        return s;
+    };
+    std::wstring fl = toLower(friendly);
+    std::wstring dl = toLower(desc);
+    static const std::wstring kVirtualMarkers[] = {
+        L"wsl", L"vmware", L"hyper-v", L"virtualbox", L"virtual ethernet",
+        L"tap-windows", L"tunnel", L"ppp", L"ras", L"vpn"
+    };
+    for (const auto& marker : kVirtualMarkers) {
+        if (fl.find(marker) != std::wstring::npos) return true;
+        if (dl.find(marker) != std::wstring::npos) return true;
+    }
+    return false;
+}
+
+void AddArpTableTargets(std::set<std::wstring>& targets) {
+    MIB_IPNET_TABLE2* table = nullptr;
+    if (GetIpNetTable2(AF_INET, &table) != NO_ERROR || !table) return;
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        auto& row = table->Table[i];
+        if (row.Address.si_family != AF_INET) continue;
+        if (row.State != NlnsReachable && row.State != NlnsStale
+            && row.State != NlnsDelay && row.State != NlnsProbe) continue;
+        wchar_t text[INET_ADDRSTRLEN]{};
+        if (InetNtopW(AF_INET, &row.Address.Ipv4.sin_addr, text, INET_ADDRSTRLEN)) {
+            std::wstring ip(text);
+            if (ip == L"255.255.255.255") continue;
+            unsigned int first = 0;
+            try { first = static_cast<unsigned int>(std::stoul(ip)); } catch (...) {}
+            if (first == 0 || first == 127) continue;
+            targets.insert(ip);
+        }
+    }
+    FreeMibTable(table);
+}
+
 std::vector<std::wstring> ActiveProbeTargets() {
     std::set<std::wstring> targets;
     constexpr ULONG adapterFlags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST
@@ -1718,29 +1765,39 @@ std::vector<std::wstring> ActiveProbeTargets() {
         adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
         status = GetAdaptersAddresses(AF_INET, adapterFlags, nullptr, adapters, &size);
     }
-    if (status != NO_ERROR) return {};
-    for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
-        if (adapter->OperStatus != IfOperStatusUp || !adapter->FirstGatewayAddress) continue;
-        for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
-            if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
-            auto* ipv4 = reinterpret_cast<sockaddr_in*>(unicast->Address.lpSockaddr);
-            ULONG host = ntohl(ipv4->sin_addr.s_addr);
-            unsigned int first = (host >> 24) & 0xff;
-            unsigned int second = (host >> 16) & 0xff;
-            bool privateAddress = first == 10 || (first == 172 && second >= 16 && second <= 31)
-                || (first == 192 && second == 168);
-            if (!privateAddress) continue;
-            ULONG prefix24 = host & 0xffffff00u;
-            for (ULONG last = 1; last < 255; ++last) {
-                ULONG candidateHost = prefix24 | last;
-                if (candidateHost == host) continue;
-                in_addr address{};
-                address.s_addr = htonl(candidateHost);
-                wchar_t text[INET_ADDRSTRLEN]{};
-                if (InetNtopW(AF_INET, &address, text, INET_ADDRSTRLEN)) targets.insert(text);
+    if (status == NO_ERROR) {
+        for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+            if (adapter->OperStatus != IfOperStatusUp) continue;
+            if (IsVirtualAdapter(adapter)) continue;
+            for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+                if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
+                auto* ipv4 = reinterpret_cast<sockaddr_in*>(unicast->Address.lpSockaddr);
+                ULONG host = ntohl(ipv4->sin_addr.s_addr);
+                unsigned int first = (host >> 24) & 0xff;
+                unsigned int second = (host >> 16) & 0xff;
+                bool privateAddress = first == 10 || (first == 172 && second >= 16 && second <= 31)
+                    || (first == 192 && second == 168);
+                if (!privateAddress) continue;
+                ULONG prefix = unicast->OnLinkPrefixLength;
+                if (prefix == 0 || prefix > 32) prefix = 24;
+                ULONG scanPrefix = (prefix < 24) ? 24 : prefix;
+                ULONG mask = (scanPrefix >= 32) ? 0xffffffffu : (0xffffffffu << (32 - scanPrefix));
+                ULONG network = host & mask;
+                ULONG range = (scanPrefix >= 31) ? 2 : (1u << (32 - scanPrefix));
+                for (ULONG offset = 0; offset < range; ++offset) {
+                    ULONG candidateHost = network | offset;
+                    if (candidateHost == host) continue;
+                    if ((candidateHost & 0xff) == 0xff) continue;
+                    if ((candidateHost & 0xff) == 0x00) continue;
+                    in_addr address{};
+                    address.s_addr = htonl(candidateHost);
+                    wchar_t text[INET_ADDRSTRLEN]{};
+                    if (InetNtopW(AF_INET, &address, text, INET_ADDRSTRLEN)) targets.insert(text);
+                }
             }
         }
     }
+    AddArpTableTargets(targets);
     return {targets.begin(), targets.end()};
 }
 
@@ -1763,7 +1820,7 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
         fd_set writable;
         FD_ZERO(&writable);
         FD_SET(socketHandle, &writable);
-        timeval timeout{0, 400000};
+        timeval timeout{0, 800000};
         if (select(0, nullptr, &writable, nullptr, &timeout) <= 0) {
             closesocket(socketHandle);
             return std::nullopt;
@@ -1778,7 +1835,7 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     }
     nonBlocking = 0;
     ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
-    DWORD timeoutMs = 800;
+    DWORD timeoutMs = 1500;
     setsockopt(socketHandle, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
     setsockopt(socketHandle, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
 
