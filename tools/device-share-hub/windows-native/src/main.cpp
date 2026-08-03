@@ -70,7 +70,7 @@ constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
-constexpr int DEVICE_RETENTION_SECONDS = 600;
+constexpr int DEVICE_RETENTION_SECONDS = 90;
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
 
@@ -90,6 +90,7 @@ struct Device {
     bool remoteConnected = false;
     UsbPeer usbPeer;
     std::chrono::steady_clock::time_point lastSeen;
+    std::chrono::steady_clock::time_point lastSentTime;
 };
 
 struct TransferFingerprint {
@@ -962,6 +963,11 @@ std::map<std::wstring, std::wstring> PreviousTransfersForDevice(
 void RecordSuccessfulTransfers(
         const Device& device, const std::vector<TransferFingerprint>& fingerprints,
         const std::wstring& channel) {
+    {
+        std::lock_guard<std::mutex> lock(gDeviceMutex);
+        auto it = gDevices.find(device.id);
+        if (it != gDevices.end()) it->second.lastSentTime = std::chrono::steady_clock::now();
+    }
     if (gContentStore) {
         try {
             std::vector<StoredTransferItem> items;
@@ -1142,7 +1148,7 @@ private:
             throw std::runtime_error("无法读取手机响应");
         }
         if (status < 200 || status >= 300) {
-            if (status == 409) throw std::runtime_error("手机上还有一批素材未处理");
+            if (status == 409) throw std::runtime_error("手机上还有上一批素材没处理完，请在手机端确认后再试");
             std::wstring body = ReadResponseText(request);
             std::wstring message = L"手机返回错误 " + std::to_wstring(status);
             if (!body.empty()) message += L"：" + body;
@@ -1494,7 +1500,7 @@ void ProcessPendingShellSend() {
         }
         if (online.empty()) {
             gActiveProbeRequested = true;
-            if (now - gPendingShellSend->queuedAt > std::chrono::seconds(20)) {
+            if (now - gPendingShellSend->queuedAt > std::chrono::seconds(8)) {
                 gPendingShellSend.reset();
                 MessageBoxW(gWindow, L"当前没有发现可接收的在线设备。请确认手机相册已打开或允许后台接收后重试。",
                             L"相册投送", MB_OK | MB_ICONINFORMATION);
@@ -1540,7 +1546,7 @@ void ProcessPendingShellSend() {
             && (liveWifi || liveUsb);
     });
     if (found == gDisplayedDevices.end()) {
-        if (now - gPendingShellSend->queuedAt > std::chrono::seconds(20)) {
+        if (now - gPendingShellSend->queuedAt > std::chrono::seconds(8)) {
             WriteDiagnosticLog(L"send_to_device_offline", gPendingShellSend->invocation.deviceId);
             gPendingShellSend.reset();
             MessageBoxW(gWindow, L"目标设备已经离线，请重新打开右键“发送到”菜单选择在线设备。",
@@ -2108,6 +2114,13 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
     } else if (!device.usbPeer.id.empty() && !device.usbReady) {
         sub += L"  ·  USB 已连接，待文件传输";
     }
+    if (device.lastSentTime != std::chrono::steady_clock::time_point{}) {
+        auto elapsed = std::chrono::steady_clock::now() - device.lastSentTime;
+        auto secs = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+        if (secs < 60) sub += L"  ·  刚刚传过";
+        else if (secs < 3600) sub += L"  ·  " + std::to_wstring(secs / 60) + L"分钟前传过";
+        else if (secs < 86400) sub += L"  ·  " + std::to_wstring(secs / 3600) + L"小时前传过";
+    }
     RECT subRect{rect.left + 68, rect.top + 37, rect.right - 16, rect.bottom - 8};
     DrawTextW(dc, sub.c_str(), -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -2284,7 +2297,7 @@ void HandleDrop(HDROP drop) {
     int index = HIWORD(hit) ? static_cast<int>(SendMessageW(gDeviceList, LB_GETCURSEL, 0, 0)) : LOWORD(hit);
     if (index < 0 || index >= static_cast<int>(gDisplayedDevices.size())) {
         DragFinish(drop);
-        MessageBoxW(gWindow, L"请把文件拖到一台在线手机的卡片上。", L"素材投送", MB_OK | MB_ICONINFORMATION);
+        SetWindowTextW(gStatus, L"请把文件拖到右侧某台在线手机的卡片上。");
         return;
     }
     UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
@@ -2696,7 +2709,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.2.1", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.2.2", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备；也可右键文件 → 发送到相册设备，再选择在线设备。",
@@ -3027,7 +3040,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.2.1",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.2.2",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
