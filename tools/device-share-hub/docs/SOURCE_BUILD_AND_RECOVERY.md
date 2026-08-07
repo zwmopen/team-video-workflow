@@ -44,8 +44,8 @@ cmake --build tools/device-share-hub/windows-native/build --config Release
 gradle :app:testDebugUnitTest :app:assembleRelease :app:lintRelease
 ```
 
-正式 APK 还必须用 Android build-tools 核对：不含
-`android.permission.REQUEST_INSTALL_PACKAGES`、特权 `INSTALL_PACKAGES` 或 `application-debuggable`。更新交给系统 DownloadManager，用户从系统完成通知进入安装，相册本身不承担安装来源。
+正式 APK 还必须用 Android build-tools 核对：包含
+`android.permission.REQUEST_INSTALL_PACKAGES` 和 `android.permission.FOREGROUND_SERVICE_DATA_SYNC`，但不含特权 `INSTALL_PACKAGES` 或 `application-debuggable`。更新由应用自有 HTTPS 服务断点下载并校验，用户从应用通知进入系统安装器，最终安装确认仍由 Android 完成。
 
 ### iPhone
 

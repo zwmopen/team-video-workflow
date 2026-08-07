@@ -3049,7 +3049,7 @@ void ArchiveSelectedLibraryItem() {
         std::filesystem::path partial;
         try {
             PostStatus(L"正在生成并校验归档包…");
-            TransferFingerprint fingerprint = FingerprintItem(source);
+            TransferFingerprint fingerprint = FingerprintItem(source, nullptr);
             temporary = CreateFolderZip(source, L"archive-" + NewTaskId());
             std::filesystem::create_directories(archiveRoot);
             std::filesystem::path destination = archiveRoot / (source.filename().wstring() + L".zip");
