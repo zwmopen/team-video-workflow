@@ -48,6 +48,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func configureNavigation() {
+        // 首页没有文字标题时，系统会把二级页面的返回按钮显示成默认的 “Back”。
+        // 明确指定中文，确保设置页等页面始终显示“返回”。
+        navigationItem.backBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)
         navigationItem.titleView = nil
         navigationItem.leftBarButtonItem = toolbarItem(
             .folder, label: "切换到文件浏览", action: #selector(openFiles))
