@@ -7,6 +7,7 @@
 - Windows 版本检查调用 GitHub 公开 Release API，默认启动后延迟检查一次并每 6 小时复查；只提示并打开发布页面，不静默替换 EXE。网络不可用时手动检查显示可行动错误。
 - 本轮源码版本为 Windows V4.3.2；Actions run `31189387373` 的 Windows、Android、iOS 构建均成功，Windows artifact 已核对为 `文件收发中控-Windows-V4.3.2.exe`。该提交尚未创建正式 Release。
 - 同一 run 的 `remote-relay-check` 仍因现有 `wrangler → miniflare → undici` 依赖审计（3 个漏洞，含 1 个 high）失败；这不影响三端编译，但在中继发布前必须单独升级依赖并重跑审计。
+- 用户对产品形态的长期要求：通用软件的设置能力应进入独立设置窗口，按目录、更新、功能、说明和诊断分组；本版本右上角弹出菜单是过渡入口，后续扩展设置时应迁移为真正设置窗口，不继续堆叠菜单项。
 
 ## 2026-08-07 本轮开发交接
 
