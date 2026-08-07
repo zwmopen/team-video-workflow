@@ -1,12 +1,19 @@
 package com.zwm.gallery;
 
 import android.app.DownloadManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
+
+import java.io.File;
+import java.io.FileOutputStream;
 
 import java.io.InputStream;
 import java.security.MessageDigest;
@@ -15,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class UpdateDownloadReceiver extends BroadcastReceiver {
+    static final String ACTION_UPDATE_READY = "com.zwm.gallery.UPDATE_READY";
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
@@ -117,6 +125,38 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
                 .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_SHA256)
                 .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_VERSION)
                 .apply();
+    }
+
+    static void markReady(SharedPreferences preferences, long downloadId, String version) {
+        markReady(preferences, downloadId, version, "");
+    }
+
+    static void markReady(SharedPreferences preferences, long downloadId, String version, String fileName) {
+        preferences.edit()
+                .putLong(UpdateChecker.PREF_READY_DOWNLOAD_ID, downloadId)
+                .putString(UpdateChecker.PREF_READY_DOWNLOAD_VERSION, version == null ? "" : version)
+                .putString(UpdateChecker.PREF_READY_FILE_NAME, fileName == null ? "" : fileName)
+                .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_ID)
+                .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_SHA256)
+                .remove(UpdateChecker.PREF_PENDING_DOWNLOAD_VERSION)
+                .apply();
+    }
+
+    static void notifyReady(Context context, String version, String fileName) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        String channelId = "device_share_updates_v2";
+        manager.createNotificationChannel(new NotificationChannel(
+                channelId, "软件更新", NotificationManager.IMPORTANCE_HIGH));
+        PendingIntent install = PendingIntent.getActivity(context, 4402,
+                new Intent(context, UpdateInstallActivity.class),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification notification = new Notification.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("相册 " + version + " 已下载并验证")
+                .setContentText(fileName + " · 点此安装")
+                .setContentIntent(install).setAutoCancel(false).build();
+        manager.notify(4402, notification);
     }
 
     static String sha256(InputStream input) throws Exception {

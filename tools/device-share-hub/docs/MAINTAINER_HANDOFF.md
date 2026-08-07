@@ -1,4 +1,11 @@
-# 分享中控 V4.2.1 维护交接
+# 分享中控 V4.3.1 维护交接
+
+## 2026-08-07 本轮开发交接
+
+- Android 已恢复应用内 HTTPS 断点更新链：`AppUpdateService`、`UpdatePackageValidator`、`UpdateInstallActivity`。系统安装仍由用户确认，应用不会静默安装。
+- Windows 已在主窗口底部加入“功能设置”，设置保存到现有 `ContentStore`：`auto_restock_enabled`、`auto_restock_threshold`。自动补货只选择包含文本帖子和图片的作品文件夹，并且只对在线、已上报作品数且低于阈值的设备触发。
+- 更新包投送复用既有 `UploadToDevice`，不新增 IP/ADB/Root 配置；Android 收到 APK 后会校验包名、版本码和签名，合格包进入私有更新目录，安装动作仍由用户确认。
+- Android `testDebugUnitTest assembleRelease` 已通过（66 项单元测试）；已用一台真实 Android 11 旧版手机验证 0.6.16 APK 的 LAN/V2 传输和接收 commit。本机没有 Visual Studio/CMake 工具链，Windows EXE 构建、Android 手机上的实际覆盖安装和第二台手机验收待后续现场连接完成。
 
 ## 2026-08-02 Windows 右键入口误复制修复
 

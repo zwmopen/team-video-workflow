@@ -449,6 +449,41 @@ public final class OnlineService extends Service {
         writeText(output, 200, "OK");
     }
 
+    private boolean isIncomingUpdatePackage(ReceivedFile file) {
+        return file != null && file.file != null && file.file.isFile()
+                && file.name.toLowerCase(Locale.US).endsWith(".apk");
+    }
+
+    private int stageIncomingUpdatePackage(ReceivedFile source) throws Exception {
+        String version = UpdatePackageValidator.archiveVersionName(this, source.file);
+        UpdatePackageValidator.validate(this, source.file, version);
+        File root = new File(getFilesDir(), "updates");
+        if (!root.isDirectory() && !root.mkdirs()) throw new HttpError(500, "无法创建更新缓存目录");
+        String fileName = UpdateChecker.updateFileName(version);
+        File target = new File(root, fileName);
+        File temp = new File(root, fileName + ".incoming");
+        if (temp.isFile() && !temp.delete()) throw new HttpError(500, "无法清理未完成的更新包");
+        try (InputStream input = new BufferedInputStream(new FileInputStream(source.file));
+             FileOutputStream raw = new FileOutputStream(temp);
+             BufferedOutputStream output = new BufferedOutputStream(raw)) {
+            byte[] buffer = new byte[128 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.flush();
+            raw.getFD().sync();
+        }
+        if (target.isFile() && !target.delete()) throw new HttpError(500, "无法替换旧的更新包");
+        if (!temp.renameTo(target)) throw new HttpError(500, "无法保存已校验的更新包");
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        UpdateDownloadReceiver.markReady(prefs, -1L, version, fileName);
+        prefs.edit().remove(UpdateChecker.PREF_DOWNLOAD_RESULT)
+                .remove(UpdateChecker.PREF_DOWNLOAD_ERROR).apply();
+        UpdateDownloadReceiver.notifyReady(this, version, fileName);
+        sendBroadcast(new Intent(UpdateDownloadReceiver.ACTION_UPDATE_READY).setPackage(getPackageName()));
+        DiagnosticLog.write(this, "update_package_received", version + " bytes=" + target.length());
+        return 1;
+    }
+
     private void commitTask(String taskId, OutputStream output) throws Exception {
         IncomingTask task;
         synchronized (taskLock) {
@@ -480,7 +515,9 @@ public final class OnlineService extends Service {
         String autoShareWorkId = "";
         ReceivedFile only = task.fileCount == 1 ? task.files.get(0) : null;
         String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
-        if (!treeValue.isEmpty()) {
+        if (isIncomingUpdatePackage(only)) {
+            deliveredFiles = stageIncomingUpdatePackage(only);
+        } else if (!treeValue.isEmpty()) {
             android.net.Uri tree = android.net.Uri.parse(treeValue);
             java.util.ArrayList<File> directFiles = new java.util.ArrayList<>();
             java.util.ArrayList<String> directNames = new java.util.ArrayList<>();

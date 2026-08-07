@@ -1,5 +1,13 @@
 # 变更记录
 
+## Android 0.6.16 / Windows V4.3.1 功能设置 - 2026-08-07
+
+- Android 更新改回应用内 HTTPS 断点下载：下载完成后执行 SHA-256、APK 包名、版本号、版本码和签名校验，再由用户点击通知进入系统安装器，避免 MIUI/部分系统的 DownloadManager 失败。
+- Android 接收端识别电脑投送的 APK 更新包：同样执行包名、版本码和签名校验，合格后进入应用私有更新目录并提示安装；普通素材接收路径不变。
+- Windows 新增“功能设置”：可开启通用自动补货、设置低库存阈值（默认 7 个作品），按作品文件夹（帖子文本 + 图片）自动投送到低于阈值的在线设备。
+- Windows 新增更新包投送入口，可把 APK/EXE/ZIP 发送到选中设备；Android APK 会进入校验安装流程，电脑端继续沿用现有 USB → Wi-Fi、进度、校验和完成反馈。
+- Android 单元测试、Release 构建和 Release Lint 已通过；已用一台真实 Android 11 旧版手机完成 0.6.16 APK 的 LAN/V2 投送并收到 commit。Windows 真机/安装包仍需在有 Visual Studio 工具链后验收。
+
 ## Android 0.6.15 / iPhone 0.6.7 / Windows V4.2.1 - 2026-08-02
 
 - 修复 Windows 将“发送到”下的子文件夹视为普通复制目的地、导致用户文件被误复制进系统 `SendTo` 目录的问题。

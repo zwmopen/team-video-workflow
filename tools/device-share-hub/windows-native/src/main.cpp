@@ -71,6 +71,10 @@ constexpr int IDC_LIBRARY_SEARCH = 307;
 constexpr int IDC_AUTOSTART = 308;
 constexpr int IDC_DARKMODE = 309;
 constexpr int IDC_SELECT_ALL = 310;
+constexpr int IDC_FEATURE_SETTINGS = 311;
+constexpr int IDM_AUTO_RESTOCK_TOGGLE = 312;
+constexpr int IDM_AUTO_RESTOCK_THRESHOLD = 313;
+constexpr int IDM_SEND_UPDATE_PACKAGE = 314;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
@@ -168,6 +172,8 @@ std::map<std::wstring, UsbPeer> gUsbPeers;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
 std::wstring gLastClipboardText;
 std::map<std::string, std::chrono::steady_clock::time_point> gSeenClipboardMessages;
+std::mutex gAutoRestockMutex;
+std::map<std::wstring, std::chrono::steady_clock::time_point> gAutoRestockCooldown;
 HWND gLibraryList = nullptr;
 HWND gLibraryPathLabel = nullptr;
 HWND gLibraryTitle = nullptr;
@@ -178,6 +184,7 @@ HWND gDeviceTitle = nullptr;
 HWND gLibraryChooseButton = nullptr;
 HWND gArchiveChooseButton = nullptr;
 HWND gLibraryRefreshButton = nullptr;
+HWND gFeatureSettingsButton = nullptr;
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
@@ -246,6 +253,8 @@ void UpdateBgBrush() {
     if (gEditBrush) DeleteObject(gEditBrush);
     gEditBrush = CreateSolidBrush(theme.listBg);
 }
+
+void MaybeAutoRestock();
 
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -1861,6 +1870,7 @@ void RefreshDeviceList() {
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
     SyncSendToMenu(gDisplayedDevices, now);
     ProcessPendingShellSend();
+    MaybeAutoRestock();
 }
 
 bool IsVirtualAdapter(const IP_ADAPTER_ADDRESSES* adapter);
@@ -2807,6 +2817,168 @@ std::vector<Device> GetSelectedDevices() {
     return result;
 }
 
+bool IsWorkFolder(const std::filesystem::path& folder) {
+    if (!std::filesystem::is_directory(folder)) return false;
+    bool hasPost = false;
+    bool hasImage = false;
+    std::error_code error;
+    std::filesystem::recursive_directory_iterator iterator(
+        folder, std::filesystem::directory_options::skip_permission_denied, error);
+    for (const auto& entry : iterator) {
+        if (error) { error.clear(); continue; }
+        if (!entry.is_regular_file(error)) { error.clear(); continue; }
+        std::wstring extension = entry.path().extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+        if (extension == L".txt" || extension == L".md") hasPost = true;
+        if (extension == L".jpg" || extension == L".jpeg" || extension == L".png"
+                || extension == L".webp" || extension == L".heic" || extension == L".heif") hasImage = true;
+        if (hasPost && hasImage) return true;
+    }
+    return false;
+}
+
+std::optional<std::filesystem::path> PickAutoRestockSource() {
+    std::filesystem::path root = LibraryRoot();
+    if (root.empty() || !std::filesystem::is_directory(root)) return std::nullopt;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(
+            root, std::filesystem::directory_options::skip_permission_denied, error)) {
+        if (error) { error.clear(); continue; }
+        if (entry.is_directory(error) && IsWorkFolder(entry.path())) return entry.path();
+        error.clear();
+    }
+    return std::nullopt;
+}
+
+int AutoRestockThreshold() {
+    if (!gContentStore) return 7;
+    try {
+        int value = std::stoi(gContentStore->GetSetting(L"auto_restock_threshold"));
+        return std::clamp(value, 1, 500);
+    } catch (...) {
+        return 7;
+    }
+}
+
+void MaybeAutoRestock() {
+    if (!gContentStore || gContentStore->GetSetting(L"auto_restock_enabled") != L"1"
+            || gUploadInProgress || gArchiveInProgress) return;
+    auto source = PickAutoRestockSource();
+    if (!source) return;
+    const auto now = std::chrono::steady_clock::now();
+    const int threshold = AutoRestockThreshold();
+    Device selected;
+    {
+        std::lock_guard<std::mutex> lock(gAutoRestockMutex);
+        for (auto it = gAutoRestockCooldown.begin(); it != gAutoRestockCooldown.end();) {
+            if (now - it->second > std::chrono::minutes(10)) it = gAutoRestockCooldown.erase(it);
+            else ++it;
+        }
+        for (const Device& device : gDisplayedDevices) {
+            bool liveWifi = !device.ip.empty() && device.wifiAllowed
+                    && now - device.lastSeen <= std::chrono::seconds(35);
+            bool liveUsb = device.usbReady && device.usbAllowed;
+            if (!liveWifi && !liveUsb) continue;
+            if (device.workCount < 0 || device.workCount >= threshold) continue;
+            auto cooldown = gAutoRestockCooldown.find(device.id);
+            if (cooldown != gAutoRestockCooldown.end()
+                    && now - cooldown->second < std::chrono::minutes(2)) continue;
+            selected = device;
+            gAutoRestockCooldown[device.id] = now;
+            break;
+        }
+    }
+    if (selected.id.empty()) return;
+    auto folder = *source;
+    WriteDiagnosticLog(L"auto_restock_started", DisplayNameFor(selected)
+                       + L" workCount=" + std::to_wstring(selected.workCount)
+                       + L" threshold=" + std::to_wstring(threshold)
+                       + L" source=" + folder.wstring());
+    PostStatus(L"自动补货：正在把“" + folder.filename().wstring()
+               + L"”发送到“" + DisplayNameFor(selected) + L"”");
+    std::thread([selected, folder] {
+        UploadToDevice(selected, {folder}, std::wstring(), true, false);
+        WriteDiagnosticLog(L"auto_restock_finished", DisplayNameFor(selected));
+    }).detach();
+}
+
+void SendUpdatePackage() {
+    if (gUploadInProgress) {
+        MessageBoxW(gWindow, L"上一批传送还在进行，请完成后再发送更新包。", L"发送更新包", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    auto devices = GetSelectedDevices();
+    if (devices.empty()) {
+        MessageBoxW(gWindow, L"请先在右侧选择要接收更新包的设备。", L"发送更新包", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    auto files = PickPaths(false);
+    if (files.size() != 1) return;
+    std::wstring extension = files.front().extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+    if (extension != L".apk" && extension != L".exe" && extension != L".zip") {
+        MessageBoxW(gWindow, L"请选择 APK、EXE 或 ZIP 更新包。", L"发送更新包", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (devices.size() > 1 && MessageBoxW(
+            gWindow, (L"将更新包发送到 " + std::to_wstring(devices.size())
+                      + L" 台设备，是否继续？").c_str(), L"发送更新包",
+            MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) != IDOK) return;
+    gQueueTotal = devices.size();
+    gQueueIndex = 0;
+    std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
+        for (size_t index = 0; index < devices.size(); ++index) {
+            gQueueIndex = index + 1;
+            PostStatus(L"发送更新包：" + std::to_wstring(index + 1) + L"/"
+                       + std::to_wstring(devices.size()) + L" → " + DisplayNameFor(devices[index]));
+            UploadToDevice(devices[index], files, L"", false, false);
+        }
+        gQueueTotal = 0;
+        gQueueIndex = 0;
+        PostStatus(L"更新包发送完成");
+    }).detach();
+}
+
+void ShowFeatureSettingsMenu() {
+    HMENU menu = CreatePopupMenu();
+    bool enabled = gContentStore && gContentStore->GetSetting(L"auto_restock_enabled") == L"1";
+    AppendMenuW(menu, MF_STRING | (enabled ? MF_CHECKED : 0), IDM_AUTO_RESTOCK_TOGGLE,
+                L"自动补货（按作品数量）");
+    AppendMenuW(menu, MF_STRING, IDM_AUTO_RESTOCK_THRESHOLD,
+                (L"设置补货阈值（当前 " + std::to_wstring(AutoRestockThreshold()) + L"）").c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_SEND_UPDATE_PACKAGE, L"发送更新包到选中设备…");
+    RECT rect{};
+    GetWindowRect(gFeatureSettingsButton, &rect);
+    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
+                                 rect.right, rect.top, 0, gWindow, nullptr);
+    DestroyMenu(menu);
+    if (command == IDM_AUTO_RESTOCK_TOGGLE && gContentStore) {
+        bool next = !enabled;
+        gContentStore->SetSetting(L"auto_restock_enabled", next ? L"1" : L"0");
+        PostStatus(next ? L"已开启自动补货：设备低于阈值时会自动发送作品文件夹"
+                        : L"已关闭自动补货");
+        return;
+    }
+    if (command == IDM_AUTO_RESTOCK_THRESHOLD && gContentStore) {
+        auto answer = PromptForText(gWindow, L"自动补货阈值",
+                                    L"低于多少个作品时自动补货（1-500）",
+                                    std::to_wstring(AutoRestockThreshold()));
+        if (!answer) return;
+        try {
+            size_t consumed = 0;
+            int value = std::stoi(*answer, &consumed);
+            if (consumed != answer->size() || value < 1 || value > 500) throw std::invalid_argument("range");
+            gContentStore->SetSetting(L"auto_restock_threshold", std::to_wstring(value));
+            PostStatus(L"自动补货阈值已设为 " + std::to_wstring(value) + L" 个作品");
+        } catch (...) {
+            MessageBoxW(gWindow, L"请输入 1 到 500 之间的整数。", L"自动补货阈值", MB_OK | MB_ICONWARNING);
+        }
+        return;
+    }
+    if (command == IDM_SEND_UPDATE_PACKAGE) SendUpdatePackage();
+}
+
 void SendSelectedLibraryItem() {
     if (gUploadInProgress) {
         MessageBoxW(gWindow, L"上一批素材还在传送。", L"素材库", MB_OK | MB_ICONINFORMATION);
@@ -3009,7 +3181,9 @@ void Layout(HWND window) {
     int cancelWidth = 76;
     int autoStartWidth = 100;
     int darkModeWidth = 100;
-    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - autoStartWidth - darkModeWidth - 40);
+    int featureWidth = 108;
+    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth
+                               - autoStartWidth - darkModeWidth - featureWidth - 60);
     MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
     MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
@@ -3019,6 +3193,10 @@ void Layout(HWND window) {
     }
     if (gDarkModeCheck) {
         MoveWindow(gDarkModeCheck, margin + statusWidth + cancelWidth + buttonWidth + autoStartWidth + 40, height - 68, darkModeWidth, 24, TRUE);
+    }
+    if (gFeatureSettingsButton) {
+        MoveWindow(gFeatureSettingsButton, margin + statusWidth + cancelWidth + buttonWidth
+                   + autoStartWidth + darkModeWidth + 50, height - 72, featureWidth, 38, TRUE);
     }
 }
 
@@ -3031,7 +3209,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.3.0", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.3.1", WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
             HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备（可点选多台批量发送）；也可右键文件 → 发送到相册设备。",
@@ -3116,6 +3294,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SendMessageW(gDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             if (gContentStore) gDarkMode = gContentStore->GetSetting(L"dark_mode") == L"1";
             SendMessageW(gDarkModeCheck, BM_SETCHECK, gDarkMode ? BST_CHECKED : BST_UNCHECKED, 0);
+            gFeatureSettingsButton = CreateWindowW(L"BUTTON", L"功能设置",
+                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 108, 38, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_FEATURE_SETTINGS)), nullptr, nullptr);
+            SendMessageW(gFeatureSettingsButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             UpdateBgBrush();
             HWND selectAllBtn = CreateWindowW(L"BUTTON", L"全选设备",
                 WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
@@ -3140,6 +3323,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         case WM_COMMAND:
+            if (LOWORD(wParam) == IDC_FEATURE_SETTINGS) {
+                ShowFeatureSettingsMenu();
+                return 0;
+            }
             if (LOWORD(wParam) == IDC_REFRESH_DEVICES) {
                 RefreshDeviceList();
                 gManualRefreshAt = std::chrono::steady_clock::now();
@@ -3474,7 +3661,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.3.0",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.3.1",
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;

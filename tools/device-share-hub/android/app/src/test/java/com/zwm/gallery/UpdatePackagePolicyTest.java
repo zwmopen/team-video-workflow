@@ -12,17 +12,13 @@ import static org.junit.Assert.assertTrue;
 
 public final class UpdatePackagePolicyTest {
     @Test
-    public void releaseManifestDelegatesInstallationToSystemDownloads() throws Exception {
+    public void releaseManifestDeclaresUserConfirmedInstallerCapability() throws Exception {
         String manifest = new String(
                 Files.readAllBytes(Paths.get("src/main/AndroidManifest.xml")),
                 StandardCharsets.UTF_8);
 
-        assertFalse(manifest.contains("android.permission.REQUEST_INSTALL_PACKAGES"));
+        assertTrue(manifest.contains("android.permission.REQUEST_INSTALL_PACKAGES"));
         assertFalse(manifest.contains("android.permission.INSTALL_PACKAGES"));
-        assertTrue(manifest.contains("android.intent.action.DOWNLOAD_COMPLETE"));
-        assertTrue(manifest.contains("android.permission.SEND_DOWNLOAD_COMPLETED_INTENTS"));
-        assertFalse(manifest.contains("UpdateInstallActivity"));
-        assertFalse(manifest.contains("AppUpdateService"));
     }
 
     @Test
