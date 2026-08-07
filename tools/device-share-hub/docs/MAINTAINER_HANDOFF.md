@@ -1,5 +1,14 @@
 # 文件收发中控 V4.3.2 维护交接
 
+## 2026-08-07 实机安装与 Wi-Fi 传输验收
+
+- Windows 最新候选包 `文件收发中控-Windows-V4.3.2.exe` 已放置到桌面并启动，窗口标题为 `文件收发中控 V4.3.2`；旧版 V4.1.1 已移入回收站，不作为日常运行版本。
+- Redmi Note 8 已通过 ADB 覆盖安装当前 Android 候选包，实读 `versionName=0.6.16`、`versionCode=54`；安装后仍保留原应用数据与目录授权。
+- iPhone 12 在线实读 `appVersion=0.6.7`、`build=26`，与当前 iOS 构建产物一致；Windows 端没有在未授权 Apple ID 的情况下静默重签 IPA。
+- 局域网发现同时找到 Redmi Note 8 与 iPhone 12，随后各完成一次 140 字节校验文件的 Wi-Fi 实际提交：Android 返回 `committed=true`；iOS 返回 `ok=true, received=1`。两次均经过 SHA-256 计算、HTTP 上传和接收端确认。
+- 当前 `gallery-updates` 正式 Release 仍是 v0.6.14，Android 0.6.16 / Windows V4.3.2 属于当前主仓库 CI 候选包，尚未创建新的正式 Release；对外更新通道不能把候选包描述成已发布版本。
+- 本次校验只使用临时文件，没有改动用户素材库；临时文件保留在设备接收目录中，后续可从文件浏览器删除。
+
 ## 2026-08-07 通用设置与版本检查
 
 - Windows 主窗口右上角新增“设置”按钮，集中管理原始目录（收发文件根目录）、GitHub 版本检查、补货/更新包功能和软件介绍。
