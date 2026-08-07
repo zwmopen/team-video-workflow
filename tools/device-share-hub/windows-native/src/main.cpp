@@ -54,6 +54,7 @@ constexpr UINT WM_PROGRESS_CHANGED = WM_APP + 3;
 constexpr UINT WM_SHELL_TRANSFER_NOTICE = WM_APP + 8;
 constexpr UINT WM_LIBRARY_REFRESHED = WM_APP + 4;
 constexpr UINT WM_TRAYICON = WM_APP + 5;
+constexpr UINT WM_UPDATE_RESULT = WM_APP + 10;
 constexpr int IDC_RENAME_DEVICE = 201;
 constexpr int IDC_CLEAR_DEVICE_REMARK = 202;
 constexpr int IDC_TOGGLE_USB = 205;
@@ -75,11 +76,20 @@ constexpr int IDC_FEATURE_SETTINGS = 311;
 constexpr int IDM_AUTO_RESTOCK_TOGGLE = 312;
 constexpr int IDM_AUTO_RESTOCK_THRESHOLD = 313;
 constexpr int IDM_SEND_UPDATE_PACKAGE = 314;
+constexpr int IDC_SETTINGS = 315;
+constexpr int IDM_SETTINGS_ROOT = 316;
+constexpr int IDM_SETTINGS_AUTO_UPDATE = 317;
+constexpr int IDM_SETTINGS_CHECK_UPDATE = 318;
+constexpr int IDM_SETTINGS_FEATURES = 319;
+constexpr int IDM_SETTINGS_ABOUT = 320;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
+constexpr wchar_t APP_VERSION[] = L"4.3.2";
+constexpr wchar_t GITHUB_RELEASE_HOST[] = L"api.github.com";
+constexpr wchar_t GITHUB_RELEASE_PATH[] = L"/repos/zwmopen/team-video-workflow/releases/latest";
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
 
@@ -124,6 +134,13 @@ struct PendingShellSend {
 struct ShellTransferNotice {
     std::wstring message;
     bool success = false;
+};
+
+struct UpdateCheckResult {
+    bool success = false;
+    bool hasUpdate = false;
+    std::wstring message;
+    std::wstring releaseUrl;
 };
 
 HWND gWindow = nullptr;
@@ -185,6 +202,7 @@ HWND gLibraryChooseButton = nullptr;
 HWND gArchiveChooseButton = nullptr;
 HWND gLibraryRefreshButton = nullptr;
 HWND gFeatureSettingsButton = nullptr;
+HWND gSettingsButton = nullptr;
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
@@ -192,6 +210,7 @@ std::set<std::wstring> gExpandedLibraryFolders;
 std::optional<PendingShellSend> gPendingShellSend;
 std::filesystem::path gExecutablePath;
 std::wstring gLastSendToSignature;
+std::atomic<bool> gUpdateCheckInProgress{false};
 
 struct TransferJob {
     Device device;
@@ -358,6 +377,172 @@ void PostProgress(int percent, bool visible) {
                               static_cast<WPARAM>(std::clamp(percent, 0, 100)), visible ? 1 : 0);
 }
 
+std::string JsonStringValue(const std::string& body, const std::string& key) {
+    const std::string marker = "\"" + key + "\"";
+    size_t keyPosition = body.find(marker);
+    if (keyPosition == std::string::npos) return {};
+    size_t colon = body.find(':', keyPosition + marker.size());
+    if (colon == std::string::npos) return {};
+    size_t quote = body.find('"', colon + 1);
+    if (quote == std::string::npos) return {};
+    std::string result;
+    bool escaped = false;
+    for (size_t index = quote + 1; index < body.size(); ++index) {
+        char value = body[index];
+        if (escaped) {
+            switch (value) {
+                case '"': result.push_back('"'); break;
+                case '\\': result.push_back('\\'); break;
+                case '/': result.push_back('/'); break;
+                case 'n': result.push_back('\n'); break;
+                case 'r': result.push_back('\r'); break;
+                case 't': result.push_back('\t'); break;
+                default: result.push_back(value); break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (value == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (value == '"') break;
+        result.push_back(value);
+    }
+    return result;
+}
+
+std::vector<int> VersionNumbers(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && (value[start] < '0' || value[start] > '9')) ++start;
+    if (start == value.size()) return {};
+    size_t end = start;
+    while (end < value.size() && ((value[end] >= '0' && value[end] <= '9') || value[end] == '.')) ++end;
+    std::vector<int> result;
+    for (const auto& field : Split(value.substr(start, end - start), '.')) {
+        if (field.empty()) break;
+        try {
+            result.push_back(std::stoi(field));
+        } catch (...) {
+            return {};
+        }
+    }
+    return result;
+}
+
+int CompareVersions(const std::vector<int>& left, const std::vector<int>& right) {
+    const size_t count = std::max(left.size(), right.size());
+    for (size_t index = 0; index < count; ++index) {
+        int leftValue = index < left.size() ? left[index] : 0;
+        int rightValue = index < right.size() ? right[index] : 0;
+        if (leftValue != rightValue) return leftValue < rightValue ? -1 : 1;
+    }
+    return 0;
+}
+
+struct GitHubRelease {
+    std::string tag;
+    std::string name;
+    std::string url;
+};
+
+std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        error = L"无法建立 GitHub 网络会话。";
+        return std::nullopt;
+    }
+    WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
+    HINTERNET connection = WinHttpConnect(session, GITHUB_RELEASE_HOST, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connection) {
+        WinHttpCloseHandle(session);
+        error = L"无法连接 GitHub。";
+        return std::nullopt;
+    }
+    HINTERNET request = WinHttpOpenRequest(connection, L"GET", GITHUB_RELEASE_PATH, nullptr,
+                                           WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           WINHTTP_FLAG_SECURE);
+    if (!request) {
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        error = L"无法创建 GitHub 版本请求。";
+        return std::nullopt;
+    }
+    WinHttpAddRequestHeaders(request,
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.2\r\n",
+                              -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                   WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
+    bool received = sent && WinHttpReceiveResponse(request, nullptr) != FALSE;
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    if (received) WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                      WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    std::string body;
+    if (received && status == 200) {
+        DWORD available = 0;
+        while (WinHttpQueryDataAvailable(request, &available) && available > 0) {
+            std::string chunk(available, '\0');
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+            body.append(chunk.data(), read);
+            if (read == 0) break;
+        }
+    }
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    if (!sent || !received || status != 200 || body.empty()) {
+        error = status == 403 ? L"GitHub 暂时限制了请求频率。" : L"GitHub 版本接口暂时不可用。";
+        return std::nullopt;
+    }
+    GitHubRelease release{
+        JsonStringValue(body, "tag_name"),
+        JsonStringValue(body, "name"),
+        JsonStringValue(body, "html_url")
+    };
+    if (release.tag.empty() || release.url.empty() || VersionNumbers(release.tag).empty()) {
+        error = L"GitHub 返回的版本信息不完整。";
+        return std::nullopt;
+    }
+    return release;
+}
+
+void CheckForUpdates(bool manual) {
+    if (gUpdateCheckInProgress.exchange(true)) {
+        if (manual) PostStatus(L"正在检查 GitHub 最新版本，请稍候…");
+        return;
+    }
+    if (manual) PostStatus(L"正在检查 GitHub 最新版本…");
+    std::thread([manual] {
+        UpdateCheckResult result;
+        std::wstring error;
+        auto release = FetchLatestGitHubRelease(error);
+        if (!release) {
+            result.message = error;
+        } else {
+            const auto latestVersion = VersionNumbers(release->tag);
+            const auto currentVersion = VersionNumbers(WideToUtf8(APP_VERSION));
+            result.success = true;
+            result.hasUpdate = CompareVersions(currentVersion, latestVersion) < 0;
+            result.releaseUrl = Utf8ToWide(release->url);
+            std::wstring latestTag = Utf8ToWide(release->tag);
+            if (result.hasUpdate) {
+                result.message = L"发现 GitHub 新版本 " + latestTag + L"（当前 V" + APP_VERSION + L"）。";
+            } else {
+                result.message = L"当前已是最新版本（V" + std::wstring(APP_VERSION) + L"；GitHub " + latestTag + L"）。";
+            }
+        }
+        gUpdateCheckInProgress = false;
+        if (gRunning && gWindow) {
+            auto* payload = new UpdateCheckResult(std::move(result));
+            if (!PostMessageW(gWindow, WM_UPDATE_RESULT, manual ? 1 : 0,
+                              reinterpret_cast<LPARAM>(payload))) delete payload;
+        }
+    }).detach();
+}
+
 std::wstring NowStamp() {
     SYSTEMTIME local{};
     GetLocalTime(&local);
@@ -408,7 +593,7 @@ void AddTrayIcon(HWND owner) {
     gTrayIcon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     gTrayIcon.uCallbackMessage = WM_TRAYICON;
     gTrayIcon.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wcsncpy(gTrayIcon.szTip, L"素材投送中控", 127);
+    wcsncpy(gTrayIcon.szTip, L"文件收发中控", 127);
     gTrayIcon.szTip[127] = 0;
     Shell_NotifyIconW(NIM_ADD, &gTrayIcon);
     gTrayIconAdded = true;
@@ -2515,11 +2700,11 @@ void HandleDrop(HDROP drop) {
     }
     DragFinish(drop);
     if (files.empty()) {
-        MessageBoxW(gWindow, L"没有找到可传送的文件或文件夹。", L"素材投送", MB_OK | MB_ICONWARNING);
+        MessageBoxW(gWindow, L"没有找到可传送的文件或文件夹。", L"文件收发", MB_OK | MB_ICONWARNING);
         return;
     }
     if (files.size() > 100) {
-        MessageBoxW(gWindow, L"单次最多拖入 100 个顶层项目；文件夹内部可包含更多文件。", L"素材投送", MB_OK | MB_ICONWARNING);
+        MessageBoxW(gWindow, L"单次最多拖入 100 个顶层项目；文件夹内部可包含更多文件。", L"文件收发", MB_OK | MB_ICONWARNING);
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
@@ -2686,7 +2871,7 @@ void RefreshLibraryListLegacy() {
     gLibraryItems.clear();
     try {
         std::filesystem::path root = LibraryRoot();
-        SetWindowTextW(gLibraryPathLabel, root.empty() ? L"尚未设置素材目录" : root.c_str());
+        SetWindowTextW(gLibraryPathLabel, root.empty() ? L"尚未设置原始目录（收发文件根目录）" : root.c_str());
         if (root.empty() || !std::filesystem::is_directory(root)) return;
         for (const auto& entry : std::filesystem::directory_iterator(root, std::filesystem::directory_options::skip_permission_denied)) {
             if (entry.is_directory()) gLibraryItems.push_back(entry.path());
@@ -2709,7 +2894,7 @@ void RefreshLibraryList() {
     gLibraryItems.clear();
     try {
         std::filesystem::path root = LibraryRoot();
-        SetWindowTextW(gLibraryPathLabel, root.empty() ? L"尚未设置发送根目录" : root.c_str());
+        SetWindowTextW(gLibraryPathLabel, root.empty() ? L"尚未设置原始目录（收发文件根目录）" : root.c_str());
         if (root.empty() || !std::filesystem::is_directory(root)) return;
         std::set<std::wstring> visited;
         std::function<void(const std::filesystem::path&, int)> appendChildren;
@@ -2939,6 +3124,75 @@ void SendUpdatePackage() {
     }).detach();
 }
 
+bool IsAutoUpdateEnabled() {
+    return !gContentStore || gContentStore->GetSetting(L"auto_update_enabled") != L"0";
+}
+
+void ChooseLibraryRoot() {
+    MessageBoxW(gWindow,
+                L"原始目录是电脑端的收发文件根目录：\n"
+                L"电脑从这里选择要发送的文件和文件夹，手机或其他设备收到的内容也会落到这里。\n"
+                L"它不限定行业或文件类型，图片、文档、压缩包和普通文件都可以使用。",
+                L"原始目录说明", MB_OK | MB_ICONINFORMATION);
+    auto folder = PickSingleFolder(gWindow, L"选择原始目录（收发文件根目录）");
+    if (!folder || !gContentStore) return;
+    gContentStore->SetSetting(L"library_path", folder->wstring());
+    SetReceiveRoot(*folder);
+    gExpandedLibraryFolders.clear();
+    RefreshLibraryList();
+    PostStatus(L"原始目录已设置：" + folder->wstring());
+}
+
+void ShowFeatureSettingsMenu();
+
+void ShowSettingsMenu() {
+    HMENU menu = CreatePopupMenu();
+    bool autoUpdate = IsAutoUpdateEnabled();
+    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_ROOT, L"设置原始目录（用于收发文件）…");
+    AppendMenuW(menu, MF_STRING | (autoUpdate ? MF_CHECKED : 0), IDM_SETTINGS_AUTO_UPDATE,
+                L"自动检查 GitHub 最新版本");
+    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_CHECK_UPDATE, L"立即检查 GitHub 更新…");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_FEATURES, L"功能设置（补货与更新包）…");
+    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_ABOUT, L"软件介绍");
+    RECT rect{};
+    GetWindowRect(gSettingsButton, &rect);
+    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
+                                 rect.right, rect.bottom, 0, gWindow, nullptr);
+    DestroyMenu(menu);
+    if (command == IDM_SETTINGS_ROOT) {
+        ChooseLibraryRoot();
+        return;
+    }
+    if (command == IDM_SETTINGS_AUTO_UPDATE && gContentStore) {
+        bool next = !autoUpdate;
+        gContentStore->SetSetting(L"auto_update_enabled", next ? L"1" : L"0");
+        PostStatus(next ? L"已开启自动检查 GitHub 更新（每 6 小时检查一次）。"
+                        : L"已关闭自动检查 GitHub 更新。可随时手动检查。"
+        );
+        return;
+    }
+    if (command == IDM_SETTINGS_CHECK_UPDATE) {
+        CheckForUpdates(true);
+        return;
+    }
+    if (command == IDM_SETTINGS_FEATURES) {
+        ShowFeatureSettingsMenu();
+        return;
+    }
+    if (command == IDM_SETTINGS_ABOUT) {
+        MessageBoxW(gWindow,
+                    (L"文件收发中控 V" + std::wstring(APP_VERSION) + L"\n\n"
+                     L"这是一个通用文件库与设备收发工具。\n"
+                     L"你可以用它管理原始目录，向手机、电脑或其他在线设备发送文件和文件夹，"
+                     L"也可以接收对方发来的内容。\n\n"
+                     L"当前的“作品识别、自动补货、更新包投送”只是可选功能，不限制软件用途。\n"
+                     L"文件默认只在本机和已选择的设备之间传输；软件不会把文件内容上传到云端。\n\n"
+                     L"源码与版本发布：github.com/zwmopen/team-video-workflow").c_str(),
+                    L"软件介绍", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
 void ShowFeatureSettingsMenu() {
     HMENU menu = CreatePopupMenu();
     bool enabled = gContentStore && gContentStore->GetSetting(L"auto_restock_enabled") == L"1";
@@ -2981,17 +3235,17 @@ void ShowFeatureSettingsMenu() {
 
 void SendSelectedLibraryItem() {
     if (gUploadInProgress) {
-        MessageBoxW(gWindow, L"上一批素材还在传送。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"上一批内容还在传送。", L"文件库", MB_OK | MB_ICONINFORMATION);
         return;
     }
     auto source = SelectedLibraryItem();
     if (!source) {
-        MessageBoxW(gWindow, L"请先在左侧选择一个作品文件夹。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"请先在左侧选择一个文件或文件夹。", L"文件库", MB_OK | MB_ICONINFORMATION);
         return;
     }
     auto devices = GetSelectedDevices();
     if (devices.empty()) {
-        MessageBoxW(gWindow, L"请先在右侧选择至少一台在线设备。\n提示：可点选多台设备进行批量发送。", L"素材库", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(gWindow, L"请先在右侧选择至少一台在线设备。\n提示：可点选多台设备进行批量发送。", L"文件库", MB_OK | MB_ICONINFORMATION);
         return;
     }
     std::vector<std::filesystem::path> files{*source};
@@ -2999,7 +3253,7 @@ void SendSelectedLibraryItem() {
         std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
         return;
     }
-    std::wstring confirmMsg = L"将把素材发送到以下 " + std::to_wstring(devices.size()) + L" 台设备：\n\n";
+    std::wstring confirmMsg = L"将把选中的内容发送到以下 " + std::to_wstring(devices.size()) + L" 台设备：\n\n";
     for (size_t i = 0; i < devices.size() && i < 8; ++i) {
         confirmMsg += L"  • " + DisplayNameFor(devices[i]) + L"\n";
     }
@@ -3150,6 +3404,10 @@ void Layout(HWND window) {
     const int rightWidth = std::max(330, width - margin - rightX);
     const int actionTop = bottomTop - 88;
 
+    if (gSettingsButton) {
+        MoveWindow(gSettingsButton, width - margin - 88, 18, 88, 34, TRUE);
+    }
+
     MoveWindow(gLibraryTitle, margin, contentTop, leftWidth - 120, 30, TRUE);
     MoveWindow(gLibraryPathLabel, margin, contentTop + 32, leftWidth - 200, 24, TRUE);
     MoveWindow(gLibraryRefreshButton, margin + leftWidth - 78, contentTop + 22, 78, 34, TRUE);
@@ -3209,16 +3467,21 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            HWND title = CreateWindowW(L"STATIC", L"素材投送中控 V4.3.1", WS_CHILD | WS_VISIBLE,
+            HWND title = CreateWindowW(L"STATIC", (L"文件收发中控 V" + std::wstring(APP_VERSION)).c_str(), WS_CHILD | WS_VISIBLE,
                                        22, 18, 400, 34, window, nullptr, nullptr, nullptr);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            HWND tip = CreateWindowW(L"STATIC", L"左边选素材，右边选设备（可点选多台批量发送）；也可右键文件 → 发送到相册设备。",
-                                     WS_CHILD | WS_VISIBLE, 22, 54, 840, 26, window, nullptr, nullptr, nullptr);
+            HWND tip = CreateWindowW(L"STATIC", L"原始目录是通用收发文件根目录；左边选内容，右边选设备，也可右键文件 → 发送到设备。",
+                                     WS_CHILD | WS_VISIBLE, 22, 54, 900, 26, window, nullptr, nullptr, nullptr);
             SendMessageW(tip, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gLibraryTitle = CreateWindowW(L"STATIC", L"素材库", WS_CHILD | WS_VISIBLE,
+            gSettingsButton = CreateWindowW(L"BUTTON", L"设置",
+                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                0, 0, 88, 34, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS)), nullptr, nullptr);
+            SendMessageW(gSettingsButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            gLibraryTitle = CreateWindowW(L"STATIC", L"文件库", WS_CHILD | WS_VISIBLE,
                                            0, 0, 200, 30, window, nullptr, nullptr, nullptr);
             SendMessageW(gLibraryTitle, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置发送根目录", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
+            gLibraryPathLabel = CreateWindowW(L"STATIC", L"尚未设置原始目录（收发文件根目录）", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
                                                0, 0, 400, 24, window, nullptr, nullptr, nullptr);
             SendMessageW(gLibraryPathLabel, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gLibraryList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
@@ -3226,7 +3489,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 0, 0, 400, 240, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_LIST)), nullptr, nullptr);
             SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gLibraryChooseButton = CreateWindowW(L"BUTTON", L"设置发送根目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            gLibraryChooseButton = CreateWindowW(L"BUTTON", L"设置原始目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_CHOOSE)), nullptr, nullptr);
             gArchiveChooseButton = CreateWindowW(L"BUTTON", L"设置归档目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE_CHOOSE)), nullptr, nullptr);
@@ -3236,10 +3499,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NOHIDESEL,
                 0, 0, 110, 22, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_SEARCH)), nullptr, nullptr);
             SendMessageW(gLibrarySearchBox, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            SendMessageW(gLibrarySearchBox, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"搜索素材…"));
+            SendMessageW(gLibrarySearchBox, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"搜索文件…"));
             gArchiveButton = CreateWindowW(L"BUTTON", L"已使用并归档", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 122, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE)), nullptr, nullptr);
-            gLibrarySendButton = CreateWindowW(L"BUTTON", L"传送选中素材", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            gLibrarySendButton = CreateWindowW(L"BUTTON", L"发送选中内容", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 124, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_SEND)), nullptr, nullptr);
             for (HWND control : {gLibraryChooseButton, gArchiveChooseButton, gLibraryRefreshButton, gArchiveButton, gLibrarySendButton})
                 SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
@@ -3316,6 +3579,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                                HandleClipboardFromPeer);
             });
             SetTimer(window, 1, 2500, nullptr);
+            SetTimer(window, 4, 8000, nullptr);
             // Register the single root SendTo entry immediately.  It must be
             // available even before the first phone is discovered; the picker
             // will populate its live device list when the user invokes it.
@@ -3323,6 +3587,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         case WM_COMMAND:
+            if (LOWORD(wParam) == IDC_SETTINGS) {
+                ShowSettingsMenu();
+                return 0;
+            }
             if (LOWORD(wParam) == IDC_FEATURE_SETTINGS) {
                 ShowFeatureSettingsMenu();
                 return 0;
@@ -3351,13 +3619,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 return 0;
             }
             if (LOWORD(wParam) == IDC_LIBRARY_CHOOSE) {
-                auto folder = PickSingleFolder(window, L"选择发送和接收共用根目录");
-                if (folder && gContentStore) {
-                    gContentStore->SetSetting(L"library_path", folder->wstring());
-                    SetReceiveRoot(*folder);
-                    gExpandedLibraryFolders.clear();
-                    RefreshLibraryList();
-                }
+                ChooseLibraryRoot();
                 return 0;
             }
             if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE_CHOOSE) {
@@ -3395,7 +3657,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 for (int i = 0; i < count; ++i) {
                     SendMessageW(gDeviceList, LB_SETSEL, TRUE, i);
                 }
-                SetWindowTextW(gStatus, L"已全选设备，点击「传送选中素材」可批量发送。");
+                SetWindowTextW(gStatus, L"已全选设备，点击「发送选中内容」可批量发送。");
                 return 0;
             }
             if (LOWORD(wParam) == 105) {
@@ -3503,6 +3765,30 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             }
             return 0;
         }
+        case WM_UPDATE_RESULT: {
+            std::unique_ptr<UpdateCheckResult> result(
+                reinterpret_cast<UpdateCheckResult*>(lParam));
+            if (!result) return 0;
+            if (!result->success) {
+                PostStatus(result->message);
+                if (wParam) MessageBoxW(window, result->message.c_str(), L"检查更新失败", MB_OK | MB_ICONWARNING);
+                return 0;
+            }
+            PostStatus(result->message);
+            if (!wParam && !result->hasUpdate) return 0;
+            if (result->hasUpdate) {
+                int answer = MessageBoxW(
+                    window,
+                    (result->message + L"\n\n是否打开 GitHub 发布页面？").c_str(),
+                    L"发现新版本", MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON1);
+                if (answer == IDYES && !result->releaseUrl.empty()) {
+                    ShellExecuteW(window, L"open", result->releaseUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                }
+            } else if (wParam) {
+                MessageBoxW(window, result->message.c_str(), L"检查更新", MB_OK | MB_ICONINFORMATION);
+            }
+            return 0;
+        }
         case WM_PROGRESS_CHANGED:
             SendMessageW(gProgress, PBM_SETPOS, wParam, 0);
             ShowWindow(gProgress, lParam ? SW_SHOW : SW_HIDE);
@@ -3532,7 +3818,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         case WM_SYSCOMMAND:
             if (wParam == SC_MINIMIZE) {
                 ShowWindow(window, SW_HIDE);
-                ShowTrayBalloon(L"素材投送中控", L"程序已最小化到托盘，双击图标恢复。", NIIF_INFO);
+                ShowTrayBalloon(L"文件收发中控", L"程序已最小化到托盘，双击图标恢复。", NIIF_INFO);
                 return 0;
             }
             break;
@@ -3541,6 +3827,16 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 KillTimer(window, 2);
                 RefreshDeviceList();
                 SetWindowTextW(gStatus, L"设备列表已刷新。");
+                return 0;
+            }
+            if (wParam == 4) {
+                KillTimer(window, 4);
+                if (IsAutoUpdateEnabled()) CheckForUpdates(false);
+                SetTimer(window, 5, 6 * 60 * 60 * 1000, nullptr);
+                return 0;
+            }
+            if (wParam == 5) {
+                if (IsAutoUpdateEnabled()) CheckForUpdates(false);
                 return 0;
             }
             if (wParam == 3) {
@@ -3567,6 +3863,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         case WM_DESTROY:
             gRunning = false;
             KillTimer(window, 1);
+            KillTimer(window, 4);
+            KillTimer(window, 5);
             RemoveTrayIcon();
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
             if (gActiveProbeThread.joinable()) gActiveProbeThread.join();
@@ -3624,7 +3922,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             MessageBoxW(nullptr, L"目标设备可能已经离线，或中控正在传送另一批文件。请稍后重新选择。",
                         L"相册投送", MB_OK | MB_ICONINFORMATION);
         } else if (!launch.invocation) {
-            MessageBoxW(nullptr, L"素材投送中控已经打开。", L"素材投送", MB_OK | MB_ICONINFORMATION);
+            MessageBoxW(nullptr, L"文件收发中控已经打开。", L"文件收发", MB_OK | MB_ICONINFORMATION);
         }
         if (gSingleInstance) CloseHandle(gSingleInstance);
         return forwarded || !launch.invocation ? 0 : 3;
@@ -3661,7 +3959,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
 
-    HWND window = CreateWindowExW(0, WINDOW_CLASS, L"素材投送中控 V4.3.1",
+    HWND window = CreateWindowExW(0, WINDOW_CLASS, (L"文件收发中控 V" + std::wstring(APP_VERSION)).c_str(),
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,
                                    nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
