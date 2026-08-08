@@ -1,5 +1,14 @@
 # 文件收发中控 V4.3.2 维护交接
 
+## 2026-08-08 上帝视角审查
+
+- 三端最近一次 Actions run `31195207671` 中，Windows、Android、iOS 构建均成功；唯一失败项是 `remote-relay-check`。
+- 中继失败的直接原因是 `remote-relay` 依赖链中的 `wrangler 4.114.0 → miniflare → undici`：`npm audit --audit-level=high` 报告 3 个漏洞，其中 1 个 high，修复建议升级 Wrangler 至 `4.120.0` 或更高版本。中继发布前必须升级依赖并重跑审计、类型检查和 HTTP 烟测。
+- 本机远程中继目录当前没有安装 `node_modules`：协议语法检查和 10 项 Node 测试可通过，但 `npm run typecheck` 在本机因找不到 `tsc` 未执行成功；不能把本机结果描述为类型检查通过。
+- Android 0.6.16 已实际发布到 `zwmopen/gallery-updates` 的 `v0.6.16`，包含 APK 与 `SHA256SUMS.txt`；本交接文档前面的 2026-08-07 记录仍写着 v0.6.14，属于过期事实，后续维护应以 GitHub Release API 和实际资产为准。
+- iOS 中文“返回”按钮修复已在本机提交 `15bc8e5`，但当前 `main` 比 `origin/main` 超前 1 个提交，尚未推送，也没有新的 IPA 发布；现有 iPhone 仍不能视为已安装该修复。
+- 桌面上的 Windows V4.3.2 候选包存在且三端构建曾成功，但当前没有运行中的中控进程；正式交付前仍需重新启动桌面包做一次设置、设备发现、发送和接收回归。
+
 ## 2026-08-07 实机安装与 Wi-Fi 传输验收
 
 - Windows 最新候选包 `文件收发中控-Windows-V4.3.2.exe` 已放置到桌面并启动，窗口标题为 `文件收发中控 V4.3.2`；旧版 V4.1.1 已移入回收站，不作为日常运行版本。
