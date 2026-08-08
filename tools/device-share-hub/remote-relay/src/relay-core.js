@@ -25,7 +25,7 @@ export default {
       return problem(400, "invalid_workspace", "工作区身份无效");
     }
 
-    let response = await env.WORKSPACES.getByName(workspaceId).fetch(request);
+    let response = await forwardToWorkspace(env.WORKSPACES.getByName(workspaceId), request);
     response = await materializeRelayResponse(response, env);
     console.log(JSON.stringify({ level: "info", event: "relay_request", requestId,
       method: request.method, path: url.pathname, status: response.status,
@@ -33,6 +33,20 @@ export default {
     return response;
   },
 };
+
+async function forwardToWorkspace(workspace, request) {
+  const contentLength = Number(request.headers.get("Content-Length"));
+  if (!request.body || typeof FixedLengthStream === "undefined" || !Number.isSafeInteger(contentLength)) {
+    return workspace.fetch(request);
+  }
+  const { readable, writable } = new FixedLengthStream(contentLength);
+  const forwarded = new Request(request, { body: readable });
+  const [, response] = await Promise.all([
+    request.body.pipeTo(writable),
+    workspace.fetch(forwarded),
+  ]);
+  return response;
+}
 
 async function materializeRelayResponse(response, env) {
   const key = response.headers.get("X-Relay-R2-Key");
