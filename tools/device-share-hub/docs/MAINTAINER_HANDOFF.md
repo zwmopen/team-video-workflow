@@ -1,11 +1,13 @@
 # 文件收发中控 V4.3.4 维护交接
 
-## 2026-08-08 独立设置中心与发布前状态
+## 2026-08-08 独立设置中心与交付状态
 
 - Windows 源码已升级为 V4.3.4：右上角“设置”改为独立窗口，并统一收纳原始目录、归档目录、版本更新、更新包投送、自动补货阈值、开机自启、暗色模式、诊断日志与软件说明；主界面移除重复低频入口。更新检测遇到 GitHub API 限流时自动改用 Release 最新页跳转。
 - iOS 源码升级为 0.6.8/build 27，设置、回收站等二级页面的返回按钮统一为中文“返回”，应用标识和现有数据结构不变。
 - 远程中继已固定升级到 `wrangler 4.120.0` 与 `@cloudflare/workers-types 5.20260808.1`；本机 `npm audit` 为 0 漏洞，语法、类型、10 项测试和 Wrangler dry-run 均通过。升级后的 workerd 对请求流生命周期更严格，R2 上传已改用 `FixedLengthStream` 并等待输入、存储两端完成，避免响应返回后仍读取请求体。
-- 上述 Windows/iOS 新版本仍需本轮 GitHub Actions 编译、下载产物并做实体界面/安装验收；完成前不得描述为本机或手机已安装。
+- GitHub Actions run `31235217862` 已全绿：Windows MSVC/CTest、Android 测试/Release/Lint、iOS 真机 SDK 构建与包内版本校验、远程中继审计/类型/协议/HTTP 烟测全部通过。
+- 正式 Release 已发布：`device-share-hub-v4.3.4-2026.08.08`，包含 Windows V4.3.4、iPhone 0.6.8/build 27、Android 0.6.16 和中文说明。Windows SHA-256 `967AC115FB24A43BC284AC1E51E4C82A44D25E1E4A7542083DBABF6A11C916C9`；IPA SHA-256 `520AFD3AACE6A7352ABA59DA7C30E17D05F1B2980FE8E66D73C20438F953C7A9`。
+- 桌面旧 V4.3.2、V4.3.3 已移入回收站，当前只有 `文件收发中控-Windows-V4.3.4.exe`；已真实打开独立设置窗口，并在 GitHub API 限流状态下验证 Release 跳转兜底返回“当前已是最新版本”。iPhone 实体仍是 0.6.7/build 26，0.6.8 只证明构建与发布完成，未在没有用户签名授权时冒充已安装。
 
 ## 2026-08-08 上帝视角审查
 
