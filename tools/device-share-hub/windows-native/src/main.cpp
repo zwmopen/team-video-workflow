@@ -63,35 +63,35 @@ constexpr int IDC_TOGGLE_REMOTE = 207;
 constexpr int IDC_REFRESH_DEVICES = 106;
 constexpr int IDC_SEND_PICKER = 107;
 constexpr int IDC_LIBRARY_LIST = 301;
-constexpr int IDC_LIBRARY_CHOOSE = 302;
-constexpr int IDC_LIBRARY_ARCHIVE_CHOOSE = 303;
 constexpr int IDC_LIBRARY_SEND = 304;
 constexpr int IDC_LIBRARY_ARCHIVE = 305;
 constexpr int IDC_LIBRARY_REFRESH = 306;
 constexpr int IDC_LIBRARY_SEARCH = 307;
-constexpr int IDC_AUTOSTART = 308;
-constexpr int IDC_DARKMODE = 309;
 constexpr int IDC_SELECT_ALL = 310;
-constexpr int IDC_FEATURE_SETTINGS = 311;
-constexpr int IDM_AUTO_RESTOCK_TOGGLE = 312;
-constexpr int IDM_AUTO_RESTOCK_THRESHOLD = 313;
-constexpr int IDM_SEND_UPDATE_PACKAGE = 314;
 constexpr int IDC_SETTINGS = 315;
-constexpr int IDM_SETTINGS_ROOT = 316;
-constexpr int IDM_SETTINGS_AUTO_UPDATE = 317;
-constexpr int IDM_SETTINGS_CHECK_UPDATE = 318;
-constexpr int IDM_SETTINGS_FEATURES = 319;
-constexpr int IDM_SETTINGS_ABOUT = 320;
+constexpr int IDC_SETTINGS_ORIGINAL_ROOT = 401;
+constexpr int IDC_SETTINGS_ARCHIVE_ROOT = 402;
+constexpr int IDC_SETTINGS_AUTO_UPDATE = 403;
+constexpr int IDC_SETTINGS_CHECK_UPDATE = 404;
+constexpr int IDC_SETTINGS_SEND_UPDATE = 405;
+constexpr int IDC_SETTINGS_AUTO_RESTOCK = 406;
+constexpr int IDC_SETTINGS_THRESHOLD = 407;
+constexpr int IDC_SETTINGS_SAVE_THRESHOLD = 408;
+constexpr int IDC_SETTINGS_AUTOSTART = 409;
+constexpr int IDC_SETTINGS_DARK_MODE = 410;
+constexpr int IDC_SETTINGS_DIAGNOSTICS = 411;
+constexpr int IDC_SETTINGS_CLOSE = 412;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.2";
+constexpr wchar_t APP_VERSION[] = L"4.3.3";
 constexpr wchar_t GITHUB_RELEASE_HOST[] = L"api.github.com";
 constexpr wchar_t GITHUB_RELEASE_PATH[] = L"/repos/zwmopen/team-video-workflow/releases/latest";
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
+constexpr wchar_t SETTINGS_CLASS[] = L"ZwmDeviceShareHubSettings";
 
 struct Device {
     std::wstring id;
@@ -195,14 +195,18 @@ HWND gLibraryList = nullptr;
 HWND gLibraryPathLabel = nullptr;
 HWND gLibraryTitle = nullptr;
 HWND gLibrarySearchBox = nullptr;
-HWND gAutoStartCheck = nullptr;
 std::wstring gLibrarySearchText;
 HWND gDeviceTitle = nullptr;
-HWND gLibraryChooseButton = nullptr;
-HWND gArchiveChooseButton = nullptr;
 HWND gLibraryRefreshButton = nullptr;
-HWND gFeatureSettingsButton = nullptr;
 HWND gSettingsButton = nullptr;
+HWND gSettingsWindow = nullptr;
+HWND gSettingsOriginalPath = nullptr;
+HWND gSettingsArchivePath = nullptr;
+HWND gSettingsAutoUpdateCheck = nullptr;
+HWND gSettingsAutoRestockCheck = nullptr;
+HWND gSettingsThresholdEdit = nullptr;
+HWND gSettingsAutoStartCheck = nullptr;
+HWND gSettingsDarkModeCheck = nullptr;
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
@@ -258,7 +262,6 @@ const ThemeColors gDarkTheme = {
     RGB(40, 55, 48), RGB(60, 100, 80), RGB(130, 200, 160), RGB(200, 205, 212)
 };
 bool gDarkMode = false;
-HWND gDarkModeCheck = nullptr;
 HBRUSH gBgBrush = nullptr;
 HBRUSH gListBrush = nullptr;
 HBRUSH gEditBrush = nullptr;
@@ -447,7 +450,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.3", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -470,7 +473,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.2\r\n",
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.3\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -3128,13 +3131,8 @@ bool IsAutoUpdateEnabled() {
     return !gContentStore || gContentStore->GetSetting(L"auto_update_enabled") != L"0";
 }
 
-void ChooseLibraryRoot() {
-    MessageBoxW(gWindow,
-                L"原始目录是电脑端的收发文件根目录：\n"
-                L"电脑从这里选择要发送的文件和文件夹，手机或其他设备收到的内容也会落到这里。\n"
-                L"它不限定行业或文件类型，图片、文档、压缩包和普通文件都可以使用。",
-                L"原始目录说明", MB_OK | MB_ICONINFORMATION);
-    auto folder = PickSingleFolder(gWindow, L"选择原始目录（收发文件根目录）");
+void ChooseLibraryRoot(HWND owner) {
+    auto folder = PickSingleFolder(owner, L"选择原始目录（收发文件根目录）");
     if (!folder || !gContentStore) return;
     gContentStore->SetSetting(L"library_path", folder->wstring());
     SetReceiveRoot(*folder);
@@ -3143,94 +3141,252 @@ void ChooseLibraryRoot() {
     PostStatus(L"原始目录已设置：" + folder->wstring());
 }
 
-void ShowFeatureSettingsMenu();
-
-void ShowSettingsMenu() {
-    HMENU menu = CreatePopupMenu();
-    bool autoUpdate = IsAutoUpdateEnabled();
-    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_ROOT, L"设置原始目录（用于收发文件）…");
-    AppendMenuW(menu, MF_STRING | (autoUpdate ? MF_CHECKED : 0), IDM_SETTINGS_AUTO_UPDATE,
-                L"自动检查 GitHub 最新版本");
-    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_CHECK_UPDATE, L"立即检查 GitHub 更新…");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_FEATURES, L"功能设置（补货与更新包）…");
-    AppendMenuW(menu, MF_STRING, IDM_SETTINGS_ABOUT, L"软件介绍");
-    RECT rect{};
-    GetWindowRect(gSettingsButton, &rect);
-    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
-                                 rect.right, rect.bottom, 0, gWindow, nullptr);
-    DestroyMenu(menu);
-    if (command == IDM_SETTINGS_ROOT) {
-        ChooseLibraryRoot();
-        return;
-    }
-    if (command == IDM_SETTINGS_AUTO_UPDATE && gContentStore) {
-        bool next = !autoUpdate;
-        gContentStore->SetSetting(L"auto_update_enabled", next ? L"1" : L"0");
-        PostStatus(next ? L"已开启自动检查 GitHub 更新（每 6 小时检查一次）。"
-                        : L"已关闭自动检查 GitHub 更新。可随时手动检查。"
-        );
-        return;
-    }
-    if (command == IDM_SETTINGS_CHECK_UPDATE) {
-        CheckForUpdates(true);
-        return;
-    }
-    if (command == IDM_SETTINGS_FEATURES) {
-        ShowFeatureSettingsMenu();
-        return;
-    }
-    if (command == IDM_SETTINGS_ABOUT) {
-        MessageBoxW(gWindow,
-                    (L"文件收发中控 V" + std::wstring(APP_VERSION) + L"\n\n"
-                     L"这是一个通用文件库与设备收发工具。\n"
-                     L"你可以用它管理原始目录，向手机、电脑或其他在线设备发送文件和文件夹，"
-                     L"也可以接收对方发来的内容。\n\n"
-                     L"当前的“作品识别、自动补货、更新包投送”只是可选功能，不限制软件用途。\n"
-                     L"文件默认只在本机和已选择的设备之间传输；软件不会把文件内容上传到云端。\n\n"
-                     L"源码与版本发布：github.com/zwmopen/team-video-workflow").c_str(),
-                    L"软件介绍", MB_OK | MB_ICONINFORMATION);
-    }
+void ChooseArchiveRoot(HWND owner) {
+    auto folder = PickSingleFolder(owner, L"选择归档压缩包保存目录");
+    if (!folder || !gContentStore) return;
+    gContentStore->SetSetting(L"archive_path", folder->wstring());
+    PostStatus(L"归档目录已设置：" + folder->wstring());
 }
 
-void ShowFeatureSettingsMenu() {
-    HMENU menu = CreatePopupMenu();
-    bool enabled = gContentStore && gContentStore->GetSetting(L"auto_restock_enabled") == L"1";
-    AppendMenuW(menu, MF_STRING | (enabled ? MF_CHECKED : 0), IDM_AUTO_RESTOCK_TOGGLE,
-                L"自动补货（按作品数量）");
-    AppendMenuW(menu, MF_STRING, IDM_AUTO_RESTOCK_THRESHOLD,
-                (L"设置补货阈值（当前 " + std::to_wstring(AutoRestockThreshold()) + L"）").c_str());
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_SEND_UPDATE_PACKAGE, L"发送更新包到选中设备…");
-    RECT rect{};
-    GetWindowRect(gFeatureSettingsButton, &rect);
-    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
-                                 rect.right, rect.top, 0, gWindow, nullptr);
-    DestroyMenu(menu);
-    if (command == IDM_AUTO_RESTOCK_TOGGLE && gContentStore) {
-        bool next = !enabled;
-        gContentStore->SetSetting(L"auto_restock_enabled", next ? L"1" : L"0");
-        PostStatus(next ? L"已开启自动补货：设备低于阈值时会自动发送作品文件夹"
-                        : L"已关闭自动补货");
-        return;
-    }
-    if (command == IDM_AUTO_RESTOCK_THRESHOLD && gContentStore) {
-        auto answer = PromptForText(gWindow, L"自动补货阈值",
-                                    L"低于多少个作品时自动补货（1-500）",
-                                    std::to_wstring(AutoRestockThreshold()));
-        if (!answer) return;
-        try {
-            size_t consumed = 0;
-            int value = std::stoi(*answer, &consumed);
-            if (consumed != answer->size() || value < 1 || value > 500) throw std::invalid_argument("range");
-            gContentStore->SetSetting(L"auto_restock_threshold", std::to_wstring(value));
-            PostStatus(L"自动补货阈值已设为 " + std::to_wstring(value) + L" 个作品");
-        } catch (...) {
-            MessageBoxW(gWindow, L"请输入 1 到 500 之间的整数。", L"自动补货阈值", MB_OK | MB_ICONWARNING);
+void RefreshSettingsWindow() {
+    if (!gSettingsWindow || !IsWindow(gSettingsWindow)) return;
+    std::filesystem::path original = LibraryRoot();
+    std::filesystem::path archive;
+    if (gContentStore) archive = gContentStore->GetSetting(L"archive_path");
+    SetWindowTextW(gSettingsOriginalPath,
+                   original.empty() ? L"尚未设置" : original.c_str());
+    SetWindowTextW(gSettingsArchivePath,
+                   archive.empty() ? L"尚未设置" : archive.c_str());
+    SendMessageW(gSettingsAutoUpdateCheck, BM_SETCHECK,
+                 IsAutoUpdateEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+    bool restock = gContentStore && gContentStore->GetSetting(L"auto_restock_enabled") == L"1";
+    SendMessageW(gSettingsAutoRestockCheck, BM_SETCHECK, restock ? BST_CHECKED : BST_UNCHECKED, 0);
+    SetWindowTextW(gSettingsThresholdEdit, std::to_wstring(AutoRestockThreshold()).c_str());
+    SendMessageW(gSettingsAutoStartCheck, BM_SETCHECK,
+                 IsAutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(gSettingsDarkModeCheck, BM_SETCHECK,
+                 gDarkMode ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+HWND AddSettingsText(HWND parent, const wchar_t* text, int x, int y, int width, int height,
+                     DWORD style = SS_LEFT) {
+    HWND control = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE | style,
+                                 x, y, width, height, parent, nullptr, nullptr, nullptr);
+    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+    return control;
+}
+
+HWND AddSettingsButton(HWND parent, const wchar_t* text, int id, int x, int y, int width, int height) {
+    HWND control = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                 x, y, width, height, parent,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+    return control;
+}
+
+HWND AddSettingsGroup(HWND parent, const wchar_t* text, int x, int y, int width, int height) {
+    HWND control = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+                                 x, y, width, height, parent, nullptr, nullptr, nullptr);
+    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+    return control;
+}
+
+LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_CREATE: {
+            gSettingsWindow = window;
+            HWND title = AddSettingsText(window, L"设置", 24, 18, 420, 36);
+            SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
+            AddSettingsText(window, L"集中管理目录、更新、自动补货和软件偏好。日常收发操作仍在主界面完成。",
+                            24, 54, 690, 24);
+
+            AddSettingsGroup(window, L"目录", 20, 86, 704, 144);
+            AddSettingsText(window, L"原始目录", 40, 112, 90, 24);
+            gSettingsOriginalPath = AddSettingsText(window, L"尚未设置", 132, 112, 450, 24, SS_LEFT | SS_ENDELLIPSIS);
+            AddSettingsButton(window, L"更改…", IDC_SETTINGS_ORIGINAL_ROOT, 600, 104, 104, 34);
+            AddSettingsText(window, L"用于收发文件：电脑从这里选择内容，其他设备发来的内容也保存在这里。",
+                            132, 138, 548, 22);
+            AddSettingsText(window, L"归档目录", 40, 178, 90, 24);
+            gSettingsArchivePath = AddSettingsText(window, L"尚未设置", 132, 178, 450, 24, SS_LEFT | SS_ENDELLIPSIS);
+            AddSettingsButton(window, L"更改…", IDC_SETTINGS_ARCHIVE_ROOT, 600, 170, 104, 34);
+            AddSettingsText(window, L"已使用内容会压缩校验后保存到这里，原文件夹再移入 Windows 回收站。",
+                            132, 202, 548, 22);
+
+            AddSettingsGroup(window, L"版本更新", 20, 240, 704, 106);
+            gSettingsAutoUpdateCheck = CreateWindowW(L"BUTTON", L"自动检测 GitHub 最新版本（每 6 小时）",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 268, 330, 24, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTO_UPDATE)), nullptr, nullptr);
+            SendMessageW(gSettingsAutoUpdateCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsText(window, (L"当前版本：V" + std::wstring(APP_VERSION)).c_str(), 40, 302, 180, 24);
+            AddSettingsButton(window, L"立即检查更新", IDC_SETTINGS_CHECK_UPDATE, 374, 272, 150, 36);
+            AddSettingsButton(window, L"发送更新包…", IDC_SETTINGS_SEND_UPDATE, 540, 272, 164, 36);
+
+            AddSettingsGroup(window, L"自动补货", 20, 356, 704, 100);
+            gSettingsAutoRestockCheck = CreateWindowW(L"BUTTON", L"设备作品数低于阈值时自动发送一个作品文件夹",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 384, 410, 24, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTO_RESTOCK)), nullptr, nullptr);
+            SendMessageW(gSettingsAutoRestockCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsText(window, L"补货阈值", 462, 386, 76, 24);
+            gSettingsThresholdEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"7",
+                WS_CHILD | WS_VISIBLE | ES_NUMBER | ES_CENTER, 540, 380, 64, 30, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_THRESHOLD)), nullptr, nullptr);
+            SendMessageW(gSettingsThresholdEdit, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsButton(window, L"保存", IDC_SETTINGS_SAVE_THRESHOLD, 616, 378, 88, 34);
+            AddSettingsText(window, L"作品按“一个帖子文件 + 至少一张图片”的文件夹识别；阈值范围 1–500。",
+                            40, 420, 640, 22);
+
+            AddSettingsGroup(window, L"常规与软件", 20, 466, 704, 112);
+            gSettingsAutoStartCheck = CreateWindowW(L"BUTTON", L"开机自动启动",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 496, 160, 24, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTOSTART)), nullptr, nullptr);
+            gSettingsDarkModeCheck = CreateWindowW(L"BUTTON", L"暗色模式",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 214, 496, 130, 24, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_DARK_MODE)), nullptr, nullptr);
+            SendMessageW(gSettingsAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            SendMessageW(gSettingsDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 490, 164, 36);
+            AddSettingsText(window,
+                L"文件收发中控是一款通用文件库与多设备收发工具。文件默认只在本机与已选设备之间传输。",
+                40, 536, 650, 24);
+
+            AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 594, 120, 38);
+            RefreshSettingsWindow();
+            return 0;
         }
+        case WM_COMMAND: {
+            int id = LOWORD(wParam);
+            if (id == IDC_SETTINGS_ORIGINAL_ROOT) {
+                ChooseLibraryRoot(window);
+                RefreshSettingsWindow();
+                return 0;
+            }
+            if (id == IDC_SETTINGS_ARCHIVE_ROOT) {
+                ChooseArchiveRoot(window);
+                RefreshSettingsWindow();
+                return 0;
+            }
+            if (id == IDC_SETTINGS_AUTO_UPDATE && gContentStore) {
+                bool enabled = SendMessageW(gSettingsAutoUpdateCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                gContentStore->SetSetting(L"auto_update_enabled", enabled ? L"1" : L"0");
+                PostStatus(enabled ? L"已开启自动检查 GitHub 更新。" : L"已关闭自动检查 GitHub 更新。");
+                return 0;
+            }
+            if (id == IDC_SETTINGS_CHECK_UPDATE) { CheckForUpdates(true); return 0; }
+            if (id == IDC_SETTINGS_SEND_UPDATE) { SendUpdatePackage(); return 0; }
+            if (id == IDC_SETTINGS_AUTO_RESTOCK && gContentStore) {
+                bool enabled = SendMessageW(gSettingsAutoRestockCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                gContentStore->SetSetting(L"auto_restock_enabled", enabled ? L"1" : L"0");
+                PostStatus(enabled ? L"已开启自动补货。" : L"已关闭自动补货。");
+                return 0;
+            }
+            if (id == IDC_SETTINGS_SAVE_THRESHOLD && gContentStore) {
+                wchar_t buffer[32]{};
+                GetWindowTextW(gSettingsThresholdEdit, buffer, 32);
+                try {
+                    size_t consumed = 0;
+                    std::wstring text = buffer;
+                    int value = std::stoi(text, &consumed);
+                    if (consumed != text.size() || value < 1 || value > 500) throw std::invalid_argument("range");
+                    gContentStore->SetSetting(L"auto_restock_threshold", std::to_wstring(value));
+                    PostStatus(L"自动补货阈值已设为 " + std::to_wstring(value) + L" 个作品。");
+                } catch (...) {
+                    MessageBoxW(window, L"请输入 1 到 500 之间的整数。", L"自动补货阈值", MB_OK | MB_ICONWARNING);
+                    SetWindowTextW(gSettingsThresholdEdit, std::to_wstring(AutoRestockThreshold()).c_str());
+                }
+                return 0;
+            }
+            if (id == IDC_SETTINGS_AUTOSTART) {
+                bool enabled = SendMessageW(gSettingsAutoStartCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                SetAutoStart(enabled);
+                PostStatus(enabled ? L"已开启开机自启。" : L"已关闭开机自启。");
+                return 0;
+            }
+            if (id == IDC_SETTINGS_DARK_MODE) {
+                gDarkMode = SendMessageW(gSettingsDarkModeCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                if (gContentStore) gContentStore->SetSetting(L"dark_mode", gDarkMode ? L"1" : L"0");
+                UpdateBgBrush();
+                InvalidateRect(gWindow, nullptr, TRUE);
+                InvalidateRect(window, nullptr, TRUE);
+                PostStatus(gDarkMode ? L"已切换到暗色模式。" : L"已切换到亮色模式。");
+                return 0;
+            }
+            if (id == IDC_SETTINGS_DIAGNOSTICS) {
+                if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
+                WriteDiagnosticLog(L"log_opened", gLogPath.wstring());
+                ShellExecuteW(window, L"open", gLogPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_CLOSE) { DestroyWindow(window); return 0; }
+            break;
+        }
+        case WM_DRAWITEM:
+            if (reinterpret_cast<DRAWITEMSTRUCT*>(lParam)->CtlType == ODT_BUTTON) {
+                DrawActionButton(reinterpret_cast<DRAWITEMSTRUCT*>(lParam));
+                return TRUE;
+            }
+            break;
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+        case WM_CTLCOLORDLG: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            const auto& theme = CurrentTheme();
+            SetTextColor(dc, theme.statusText);
+            SetBkColor(dc, theme.windowBg);
+            if (!gBgBrush) UpdateBgBrush();
+            return reinterpret_cast<LRESULT>(gBgBrush);
+        }
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            const auto& theme = CurrentTheme();
+            SetTextColor(dc, theme.text);
+            SetBkColor(dc, theme.listBg);
+            if (!gEditBrush) UpdateBgBrush();
+            return reinterpret_cast<LRESULT>(gEditBrush);
+        }
+        case WM_ERASEBKGND: {
+            RECT client{};
+            GetClientRect(window, &client);
+            if (!gBgBrush) UpdateBgBrush();
+            FillRect(reinterpret_cast<HDC>(wParam), &client, gBgBrush);
+            return 1;
+        }
+        case WM_CLOSE:
+            DestroyWindow(window);
+            return 0;
+        case WM_DESTROY:
+            gSettingsWindow = nullptr;
+            gSettingsOriginalPath = nullptr;
+            gSettingsArchivePath = nullptr;
+            gSettingsAutoUpdateCheck = nullptr;
+            gSettingsAutoRestockCheck = nullptr;
+            gSettingsThresholdEdit = nullptr;
+            gSettingsAutoStartCheck = nullptr;
+            gSettingsDarkModeCheck = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+void ShowSettingsWindow() {
+    if (gSettingsWindow && IsWindow(gSettingsWindow)) {
+        ShowWindow(gSettingsWindow, SW_RESTORE);
+        SetForegroundWindow(gSettingsWindow);
+        RefreshSettingsWindow();
         return;
     }
-    if (command == IDM_SEND_UPDATE_PACKAGE) SendUpdatePackage();
+    RECT owner{};
+    GetWindowRect(gWindow, &owner);
+    constexpr int width = 760;
+    constexpr int height = 690;
+    int x = owner.left + std::max(0L, ((owner.right - owner.left) - width) / 2);
+    int y = owner.top + std::max(0L, ((owner.bottom - owner.top) - height) / 2);
+    gSettingsWindow = CreateWindowExW(WS_EX_DLGMODALFRAME, SETTINGS_CLASS,
+        (L"设置 · 文件收发中控 V" + std::wstring(APP_VERSION)).c_str(),
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        x, y, width, height, gWindow, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!gSettingsWindow) return;
+    ShowWindow(gSettingsWindow, SW_SHOW);
+    UpdateWindow(gSettingsWindow);
 }
 
 void SendSelectedLibraryItem() {
@@ -3402,7 +3558,7 @@ void Layout(HWND window) {
     const int leftWidth = std::max(380, available * 38 / 100);
     const int rightX = margin + leftWidth + gap;
     const int rightWidth = std::max(330, width - margin - rightX);
-    const int actionTop = bottomTop - 88;
+    const int actionTop = bottomTop - 44;
 
     if (gSettingsButton) {
         MoveWindow(gSettingsButton, width - margin - 88, 18, 88, 34, TRUE);
@@ -3419,11 +3575,8 @@ void Layout(HWND window) {
     MoveWindow(gLibraryList, margin, searchListTop, leftWidth, listHeight, TRUE);
     const int libraryButtonGap = 8;
     const int libraryButtonWidth = (leftWidth - libraryButtonGap) / 2;
-    MoveWindow(gLibraryChooseButton, margin, actionTop, libraryButtonWidth, 38, TRUE);
-    MoveWindow(gArchiveChooseButton, margin + libraryButtonWidth + libraryButtonGap, actionTop,
-               libraryButtonWidth, 38, TRUE);
-    MoveWindow(gArchiveButton, margin, actionTop + 44, libraryButtonWidth, 38, TRUE);
-    MoveWindow(gLibrarySendButton, margin + libraryButtonWidth + libraryButtonGap, actionTop + 44,
+    MoveWindow(gArchiveButton, margin, actionTop, libraryButtonWidth, 38, TRUE);
+    MoveWindow(gLibrarySendButton, margin + libraryButtonWidth + libraryButtonGap, actionTop,
                libraryButtonWidth, 38, TRUE);
 
     MoveWindow(gDeviceTitle, rightX, contentTop, rightWidth - 250, 30, TRUE);
@@ -3437,25 +3590,11 @@ void Layout(HWND window) {
 
     int buttonWidth = 92;
     int cancelWidth = 76;
-    int autoStartWidth = 100;
-    int darkModeWidth = 100;
-    int featureWidth = 108;
-    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth
-                               - autoStartWidth - darkModeWidth - featureWidth - 60);
+    int statusWidth = std::max(180, width - margin * 2 - buttonWidth - cancelWidth - 30);
     MoveWindow(gProgress, margin, height - 104, width - margin * 2, 18, TRUE);
     MoveWindow(gStatus, margin, height - 76, statusWidth, 46, TRUE);
     MoveWindow(gCancelButton, margin + statusWidth + 10, height - 72, cancelWidth, 38, TRUE);
     MoveWindow(gLogButton, margin + statusWidth + cancelWidth + 20, height - 72, buttonWidth, 38, TRUE);
-    if (gAutoStartCheck) {
-        MoveWindow(gAutoStartCheck, margin + statusWidth + cancelWidth + buttonWidth + 30, height - 68, autoStartWidth, 24, TRUE);
-    }
-    if (gDarkModeCheck) {
-        MoveWindow(gDarkModeCheck, margin + statusWidth + cancelWidth + buttonWidth + autoStartWidth + 40, height - 68, darkModeWidth, 24, TRUE);
-    }
-    if (gFeatureSettingsButton) {
-        MoveWindow(gFeatureSettingsButton, margin + statusWidth + cancelWidth + buttonWidth
-                   + autoStartWidth + darkModeWidth + 50, height - 72, featureWidth, 38, TRUE);
-    }
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -3489,10 +3628,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 0, 0, 400, 240, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_LIST)), nullptr, nullptr);
             SendMessageW(gLibraryList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            gLibraryChooseButton = CreateWindowW(L"BUTTON", L"设置原始目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_CHOOSE)), nullptr, nullptr);
-            gArchiveChooseButton = CreateWindowW(L"BUTTON", L"设置归档目录", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                0, 0, 116, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE_CHOOSE)), nullptr, nullptr);
             gLibraryRefreshButton = CreateWindowW(L"BUTTON", L"刷新", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 78, 34, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_REFRESH)), nullptr, nullptr);
             gLibrarySearchBox = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -3504,7 +3639,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 0, 0, 122, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_ARCHIVE)), nullptr, nullptr);
             gLibrarySendButton = CreateWindowW(L"BUTTON", L"发送选中内容", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                 0, 0, 124, 38, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIBRARY_SEND)), nullptr, nullptr);
-            for (HWND control : {gLibraryChooseButton, gArchiveChooseButton, gLibraryRefreshButton, gArchiveButton, gLibrarySendButton})
+            for (HWND control : {gLibraryRefreshButton, gArchiveButton, gLibrarySendButton})
                 SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             gDeviceTitle = CreateWindowW(L"STATIC", L"在线设备", WS_CHILD | WS_VISIBLE,
                                           0, 0, 200, 30, window, nullptr, nullptr, nullptr);
@@ -3546,22 +3681,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 18, 10, 384, 34, gShellProgressPopup, nullptr, nullptr, nullptr);
             SendMessageW(gShellProgressText, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             ShowWindow(gShellProgressPopup, SW_HIDE);
-            gAutoStartCheck = CreateWindowW(L"BUTTON", L"开机自启",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                0, 0, 120, 24, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_AUTOSTART)), nullptr, nullptr);
-            SendMessageW(gAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            SendMessageW(gAutoStartCheck, BM_SETCHECK, IsAutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
-            gDarkModeCheck = CreateWindowW(L"BUTTON", L"暗色模式",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                0, 0, 100, 24, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_DARKMODE)), nullptr, nullptr);
-            SendMessageW(gDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             if (gContentStore) gDarkMode = gContentStore->GetSetting(L"dark_mode") == L"1";
-            SendMessageW(gDarkModeCheck, BM_SETCHECK, gDarkMode ? BST_CHECKED : BST_UNCHECKED, 0);
-            gFeatureSettingsButton = CreateWindowW(L"BUTTON", L"功能设置",
-                WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                0, 0, 108, 38, window,
-                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_FEATURE_SETTINGS)), nullptr, nullptr);
-            SendMessageW(gFeatureSettingsButton, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             UpdateBgBrush();
             HWND selectAllBtn = CreateWindowW(L"BUTTON", L"全选设备",
                 WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
@@ -3588,11 +3708,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_SETTINGS) {
-                ShowSettingsMenu();
-                return 0;
-            }
-            if (LOWORD(wParam) == IDC_FEATURE_SETTINGS) {
-                ShowFeatureSettingsMenu();
+                ShowSettingsWindow();
                 return 0;
             }
             if (LOWORD(wParam) == IDC_REFRESH_DEVICES) {
@@ -3618,15 +3734,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 if (command == IDC_PICK_FOLDER) ChooseAndSend(true);
                 return 0;
             }
-            if (LOWORD(wParam) == IDC_LIBRARY_CHOOSE) {
-                ChooseLibraryRoot();
-                return 0;
-            }
-            if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE_CHOOSE) {
-                auto folder = PickSingleFolder(window, L"选择归档压缩包保存目录");
-                if (folder && gContentStore) gContentStore->SetSetting(L"archive_path", folder->wstring());
-                return 0;
-            }
             if (LOWORD(wParam) == IDC_LIBRARY_REFRESH) { RefreshLibraryList(); return 0; }
             if (LOWORD(wParam) == IDC_LIBRARY_SEND) { SendSelectedLibraryItem(); return 0; }
             if (LOWORD(wParam) == IDC_LIBRARY_ARCHIVE) { ArchiveSelectedLibraryItem(); return 0; }
@@ -3636,20 +3743,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 GetWindowTextW(gLibrarySearchBox, searchText, 256);
                 gLibrarySearchText = searchText;
                 RefreshLibraryList();
-                return 0;
-            }
-            if (LOWORD(wParam) == IDC_AUTOSTART) {
-                bool checked = SendMessageW(gAutoStartCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                SetAutoStart(checked);
-                SetWindowTextW(gStatus, checked ? L"已开启开机自启。" : L"已关闭开机自启。");
-                return 0;
-            }
-            if (LOWORD(wParam) == IDC_DARKMODE) {
-                gDarkMode = SendMessageW(gDarkModeCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                if (gContentStore) gContentStore->SetSetting(L"dark_mode", gDarkMode ? L"1" : L"0");
-                UpdateBgBrush();
-                InvalidateRect(window, nullptr, TRUE);
-                SetWindowTextW(gStatus, gDarkMode ? L"已切换到暗色模式。" : L"已切换到亮色模式。");
                 return 0;
             }
             if (LOWORD(wParam) == IDC_SELECT_ALL) {
@@ -3958,6 +4051,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.hbrBackground = CreateSolidBrush(RGB(245, 247, 249));
     windowClass.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&windowClass);
+
+    WNDCLASSEXW settingsClass{};
+    settingsClass.cbSize = sizeof(settingsClass);
+    settingsClass.lpfnWndProc = SettingsWindowProc;
+    settingsClass.hInstance = instance;
+    settingsClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    settingsClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_MAIN_ICON));
+    settingsClass.hIconSm = LoadIconW(instance, MAKEINTRESOURCEW(IDI_MAIN_ICON));
+    settingsClass.hbrBackground = CreateSolidBrush(RGB(245, 247, 249));
+    settingsClass.lpszClassName = SETTINGS_CLASS;
+    RegisterClassExW(&settingsClass);
 
     HWND window = CreateWindowExW(0, WINDOW_CLASS, (L"文件收发中控 V" + std::wstring(APP_VERSION)).c_str(),
                                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720,

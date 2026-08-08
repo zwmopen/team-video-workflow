@@ -81,7 +81,7 @@ jobs:
           "status=$status" >> $env:GITHUB_OUTPUT
           if ($status -eq 0) {
             New-Item -ItemType Directory -Force -Path tools/device-share-hub/windows-native/out | Out-Null
-            Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/文件收发中控-Windows-V4.3.2.exe"
+            Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/文件收发中控-Windows-V4.3.3.exe"
             Copy-Item "tools/device-share-hub/README.md" "tools/device-share-hub/windows-native/out/使用说明.md"
           }
           exit 0
@@ -229,12 +229,12 @@ jobs:
           rm -rf package
           mkdir -p package/Payload
           ditto "$app_path" "package/Payload/Album.app"
-          (cd package && /usr/bin/zip -qry ../album-iOS-v0.6.7-altstore.ipa Payload)
+          (cd package && /usr/bin/zip -qry ../album-iOS-v0.6.8-altstore.ipa Payload)
           python3 - <<'PY'
           import plistlib
           import zipfile
 
-          ipa = "album-iOS-v0.6.7-altstore.ipa"
+          ipa = "album-iOS-v0.6.8-altstore.ipa"
           with zipfile.ZipFile(ipa) as archive:
               names = archive.namelist()
               assert "Payload/Album.app/Album" in names, "iOS executable missing"
@@ -242,11 +242,11 @@ jobs:
               info = plistlib.loads(archive.read("Payload/Album.app/Info.plist"))
               assert info["CFBundleExecutable"] == "Album"
               assert info["CFBundleDisplayName"] == "相册"
-              assert info["CFBundleShortVersionString"] == "0.6.7"
-              assert info["CFBundleVersion"] == "26"
+              assert info["CFBundleShortVersionString"] == "0.6.8"
+              assert info["CFBundleVersion"] == "27"
           print("IPA structure verified")
           PY
-          shasum -a 256 album-iOS-v0.6.7-altstore.ipa > album-iOS-v0.6.7-altstore.ipa.sha256
+          shasum -a 256 album-iOS-v0.6.8-altstore.ipa > album-iOS-v0.6.8-altstore.ipa.sha256
       - name: Upload iOS build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -257,10 +257,10 @@ jobs:
         if: steps.ios_compile.outputs.status == '0'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: album-ios-altstore-v0.6.7
+          name: album-ios-altstore-v0.6.8
           path: |
-            tools/device-share-hub/ios/album-iOS-v0.6.7-altstore.ipa
-            tools/device-share-hub/ios/album-iOS-v0.6.7-altstore.ipa.sha256
+            tools/device-share-hub/ios/album-iOS-v0.6.8-altstore.ipa
+            tools/device-share-hub/ios/album-iOS-v0.6.8-altstore.ipa.sha256
       - name: Fail when iOS build failed
         if: steps.ios_compile.outputs.status != '0'
         run: exit 1
