@@ -449,13 +449,25 @@ export class WorkspaceRelayCore {
       return problem(400, "size_mismatch", "密文大小与传送清单不一致");
     }
     const key = objectKey(transfer.workspaceId, transferId, index);
-    await this.env.REMOTE_OBJECTS.put(key, request.body, {
+    const options = {
       customMetadata: {
         cipherSha256: expected.cipherSha256,
         senderDeviceId: session.deviceId,
         recipientDeviceId: transfer.recipientDeviceId,
       },
-    });
+    };
+    if (request.body && typeof FixedLengthStream !== "undefined") {
+      // Decouple the inbound request stream from the R2 write and wait for both
+      // sides. Newer workerd versions reject a request body that is still being
+      // consumed after the Durable Object has returned its response.
+      const { readable, writable } = new FixedLengthStream(contentLength);
+      await Promise.all([
+        request.body.pipeTo(writable),
+        this.env.REMOTE_OBJECTS.put(key, readable, options),
+      ]);
+    } else {
+      await this.env.REMOTE_OBJECTS.put(key, request.body, options);
+    }
     await this.ctx.storage.put(uploadKey(transferId, index), {
       cipherBytes: expected.cipherBytes,
       cipherSha256: expected.cipherSha256,
