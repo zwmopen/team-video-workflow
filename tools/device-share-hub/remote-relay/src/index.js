@@ -23,13 +23,30 @@ export default {
       return problem(400, "invalid_workspace", "工作区身份无效");
     }
 
-    const response = await env.WORKSPACES.getByName(workspaceId).fetch(request);
+    let response = await env.WORKSPACES.getByName(workspaceId).fetch(request);
+    response = await materializeRelayResponse(response, env);
     console.log(JSON.stringify({ level: "info", event: "relay_request", requestId,
       method: request.method, path: url.pathname, status: response.status,
       durationMs: Date.now() - startedAt }));
     return response;
   },
 };
+
+async function materializeRelayResponse(response, env) {
+  const key = response.headers.get("X-Relay-R2-Key");
+  if (!key) return response;
+  const object = await env.REMOTE_OBJECTS.get(key);
+  if (!object) return problem(410, "object_expired", "远程临时文件已过期");
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(object.size),
+      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") || "",
+      "Cache-Control": "private, no-store",
+    },
+  });
+}
 
 export class WorkspaceRelay extends DurableObject {
   /** @param {DurableObjectState} ctx @param {Env} env */

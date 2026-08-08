@@ -25,13 +25,30 @@ export default {
       return problem(400, "invalid_workspace", "工作区身份无效");
     }
 
-    const response = await env.WORKSPACES.getByName(workspaceId).fetch(request);
+    let response = await env.WORKSPACES.getByName(workspaceId).fetch(request);
+    response = await materializeRelayResponse(response, env);
     console.log(JSON.stringify({ level: "info", event: "relay_request", requestId,
       method: request.method, path: url.pathname, status: response.status,
       durationMs: Date.now() - startedAt }));
     return response;
   },
 };
+
+async function materializeRelayResponse(response, env) {
+  const key = response.headers.get("X-Relay-R2-Key");
+  if (!key) return response;
+  const object = await env.REMOTE_OBJECTS.get(key);
+  if (!object) return problem(410, "object_expired", "远程临时文件已过期");
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(object.size),
+      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") || "",
+      "Cache-Control": "private, no-store",
+    },
+  });
+}
 
 export class WorkspaceRelayCore {
   /** @param {DurableObjectState} ctx @param {Env} env */
@@ -525,16 +542,11 @@ export class WorkspaceRelayCore {
     }
     const expected = transfer.objects.find((item) => item.index === index);
     if (!expected) return problem(404, "object_missing", "文件不在传送清单中");
-    const object = await this.env.REMOTE_OBJECTS.get(
-      objectKey(transfer.workspaceId, transferId, index),
-    );
-    if (!object) return problem(410, "object_expired", "远程临时文件已过期");
-    return new Response(object.body, {
+    return new Response(null, {
+      status: 204,
       headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(object.size),
+        "X-Relay-R2-Key": objectKey(transfer.workspaceId, transferId, index),
         "X-Cipher-Sha256": expected.cipherSha256,
-        "Cache-Control": "private, no-store",
       },
     });
   }
