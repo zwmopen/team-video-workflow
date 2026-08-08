@@ -3204,12 +3204,12 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             AddSettingsText(window, L"原始目录", 40, 112, 90, 24);
             gSettingsOriginalPath = AddSettingsText(window, L"尚未设置", 132, 112, 450, 24, SS_LEFT | SS_ENDELLIPSIS);
             AddSettingsButton(window, L"更改…", IDC_SETTINGS_ORIGINAL_ROOT, 600, 104, 104, 34);
-            AddSettingsText(window, L"用于收发文件：电脑从这里选择内容，其他设备发来的内容也保存在这里。",
+            AddSettingsText(window, L"电脑从这里选择内容，其他设备发来的文件也保存在这里。",
                             132, 138, 548, 22);
             AddSettingsText(window, L"归档目录", 40, 178, 90, 24);
             gSettingsArchivePath = AddSettingsText(window, L"尚未设置", 132, 178, 450, 24, SS_LEFT | SS_ENDELLIPSIS);
             AddSettingsButton(window, L"更改…", IDC_SETTINGS_ARCHIVE_ROOT, 600, 170, 104, 34);
-            AddSettingsText(window, L"已使用内容会压缩校验后保存到这里，原文件夹再移入 Windows 回收站。",
+            AddSettingsText(window, L"完成压缩校验后保存在这里，原文件夹再移入回收站。",
                             132, 202, 548, 22);
 
             AddSettingsGroup(window, L"版本更新", 20, 240, 704, 106);
@@ -3246,7 +3246,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             SendMessageW(gSettingsDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 490, 164, 36);
             AddSettingsText(window,
-                L"文件收发中控是一款通用文件库与多设备收发工具。文件默认只在本机与已选设备之间传输。",
+                L"通用文件库与多设备收发工具；文件只在本机和已选设备间传输。",
                 40, 536, 650, 24);
 
             AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 594, 120, 38);

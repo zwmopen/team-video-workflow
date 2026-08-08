@@ -84,6 +84,7 @@ export class WorkspaceRelayCore {
         return this.listDevices(session);
       }
       if (method === "POST" && url.pathname === "/v1/presence") {
+        await discardRequestBody(request);
         return await this.heartbeat(session);
       }
       if (method === "GET" && url.pathname === "/v1/inbox") {
@@ -99,6 +100,7 @@ export class WorkspaceRelayCore {
         return await this.setRemoteAllowed(request, session, deviceMatch[1]);
       }
       if (deviceMatch && method === "POST" && deviceMatch[2] === "revoke") {
+        await discardRequestBody(request);
         return await this.revokeDevice(session, deviceMatch[1]);
       }
       if (method === "POST" && url.pathname === "/v1/transfers") {
@@ -118,12 +120,15 @@ export class WorkspaceRelayCore {
         return await this.getTransfer(session, transferMatch[1]);
       }
       if (transferMatch && method === "POST" && transferMatch[2] === "commit") {
+        await discardRequestBody(request);
         return await this.commitTransfer(session, transferMatch[1]);
       }
       if (transferMatch && method === "POST" && transferMatch[2] === "ack") {
+        await discardRequestBody(request);
         return await this.ackTransfer(session, transferMatch[1]);
       }
       if (transferMatch && method === "POST" && transferMatch[2] === "cancel") {
+        await discardRequestBody(request);
         return await this.cancelTransfer(session, transferMatch[1]);
       }
 
@@ -907,6 +912,10 @@ async function readJson(request) {
   } catch {
     return null;
   }
+}
+
+async function discardRequestBody(request) {
+  if (request.body && !request.body.locked) await request.body.cancel();
 }
 
 function json(value, status = 200) {
