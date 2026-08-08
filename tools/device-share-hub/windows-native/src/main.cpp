@@ -86,9 +86,11 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.3";
+constexpr wchar_t APP_VERSION[] = L"4.3.4";
 constexpr wchar_t GITHUB_RELEASE_HOST[] = L"api.github.com";
 constexpr wchar_t GITHUB_RELEASE_PATH[] = L"/repos/zwmopen/team-video-workflow/releases/latest";
+constexpr wchar_t GITHUB_WEB_HOST[] = L"github.com";
+constexpr wchar_t GITHUB_WEB_RELEASE_PATH[] = L"/zwmopen/team-video-workflow/releases/latest";
 constexpr wchar_t WINDOW_CLASS[] = L"ZwmDeviceShareHubWindow";
 constexpr wchar_t PROMPT_CLASS[] = L"ZwmDeviceShareHubPrompt";
 constexpr wchar_t SETTINGS_CLASS[] = L"ZwmDeviceShareHubSettings";
@@ -449,8 +451,57 @@ struct GitHubRelease {
     std::string url;
 };
 
+std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return std::nullopt;
+    WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
+    HINTERNET connection = WinHttpConnect(session, GITHUB_WEB_HOST, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET request = connection ? WinHttpOpenRequest(
+        connection, L"GET", GITHUB_WEB_RELEASE_PATH, nullptr, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+    bool sent = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                              WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
+    bool received = sent && WinHttpReceiveResponse(request, nullptr) != FALSE;
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    if (received) WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                      WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    DWORD urlBytes = 0;
+    if (received && status == 200) WinHttpQueryOption(request, WINHTTP_OPTION_URL, nullptr, &urlBytes);
+    std::wstring finalUrl;
+    if (urlBytes >= sizeof(wchar_t)) {
+        finalUrl.resize(urlBytes / sizeof(wchar_t));
+        if (WinHttpQueryOption(request, WINHTTP_OPTION_URL, finalUrl.data(), &urlBytes)) {
+            size_t terminator = finalUrl.find(L'\0');
+            if (terminator != std::wstring::npos) finalUrl.resize(terminator);
+        } else {
+            finalUrl.clear();
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    const std::wstring marker = L"/releases/tag/";
+    size_t markerAt = finalUrl.find(marker);
+    if (markerAt == std::wstring::npos) {
+        error = L"GitHub 最新版本页面暂时不可用。";
+        return std::nullopt;
+    }
+    std::wstring tag = finalUrl.substr(markerAt + marker.size());
+    size_t queryAt = tag.find_first_of(L"?#");
+    if (queryAt != std::wstring::npos) tag.resize(queryAt);
+    std::string tagUtf8 = WideToUtf8(tag);
+    if (VersionNumbers(tagUtf8).empty()) {
+        error = L"GitHub 最新版本标签无法识别。";
+        return std::nullopt;
+    }
+    std::string urlUtf8 = WideToUtf8(finalUrl);
+    return GitHubRelease{tagUtf8, tagUtf8, urlUtf8};
+}
+
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.3", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -473,7 +524,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.3\r\n",
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.4\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -497,8 +548,9 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
     WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
     if (!sent || !received || status != 200 || body.empty()) {
-        error = status == 403 ? L"GitHub 暂时限制了请求频率。" : L"GitHub 版本接口暂时不可用。";
-        return std::nullopt;
+        error = status == 403 ? L"GitHub 版本接口请求受限，正在改用发布页检查。"
+                              : L"GitHub 版本接口暂时不可用，正在改用发布页检查。";
+        return FetchLatestGitHubReleaseRedirect(error);
     }
     GitHubRelease release{
         JsonStringValue(body, "tag_name"),
@@ -506,8 +558,8 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         JsonStringValue(body, "html_url")
     };
     if (release.tag.empty() || release.url.empty() || VersionNumbers(release.tag).empty()) {
-        error = L"GitHub 返回的版本信息不完整。";
-        return std::nullopt;
+        error = L"GitHub 版本信息不完整，正在改用发布页检查。";
+        return FetchLatestGitHubReleaseRedirect(error);
     }
     return release;
 }
