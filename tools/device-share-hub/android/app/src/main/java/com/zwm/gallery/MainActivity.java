@@ -388,7 +388,7 @@ public final class MainActivity extends Activity {
                 }
                 List<WorkLibrary.WorkEntry> activeEntries = library.listActive();
                 List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : activeEntries;
-                OnlineService.publishWorkCount(this, activeEntries.size());
+                OnlineService.publishWorkInventory(this, activeEntries);
                 runOnUiThread(() -> {
                     renderWorks(entries);
                     finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + entries.size() + " 个");
@@ -1067,7 +1067,7 @@ public final class MainActivity extends Activity {
                             ExternalTrashManager.moveTrashedSources(
                                     getContentResolver(), null, legacy, library());
                     int activeCount = library().listActive().size();
-                    OnlineService.publishWorkCount(this, activeCount);
+                    OnlineService.publishWorkInventory(this, library().listActive());
                     DiagnosticLog.write(this, "tree_legacy_recovered",
                             "detected=" + fallback.detected + " imported=" + fallback.imported
                                     + " removed=" + reconciled.activeRemoved
@@ -1128,7 +1128,7 @@ public final class MainActivity extends Activity {
                 }
                 ExternalTrashManager.Result trashSync = syncExternalTrash(library());
                 int activeCount = library().listActive().size();
-                OnlineService.publishWorkCount(this, activeCount);
+                OnlineService.publishWorkInventory(this, library().listActive());
                 DiagnosticLog.write(this, "tree_import",
                         "detected=" + result.detected
                                 + " imported=" + result.imported

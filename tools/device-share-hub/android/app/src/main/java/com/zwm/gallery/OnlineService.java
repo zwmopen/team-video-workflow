@@ -95,6 +95,9 @@ public final class OnlineService extends Service {
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
     private static final String PREF_WORK_COUNT = "advertisedWorkCount";
+    private static final String PREF_WORK_COUNT_CONVERSION = "advertisedWorkCountConversion";
+    private static final String PREF_WORK_COUNT_TRAFFIC = "advertisedWorkCountTraffic";
+    private static final String PREF_WORK_COUNT_UNCATEGORIZED = "advertisedWorkCountUncategorized";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
     static final String PREF_OVERLAY_HIDDEN_UNTIL = "clipboardOverlayHiddenUntil";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
@@ -153,6 +156,16 @@ public final class OnlineService extends Service {
     static void publishWorkCount(Context context, int count) {
         context.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putInt(PREF_WORK_COUNT, Math.max(0, count)).apply();
+    }
+
+    static void publishWorkInventory(Context context, List<WorkLibrary.WorkEntry> entries) {
+        WorkInventoryCounts counts = WorkInventoryCounts.fromEntries(entries);
+        context.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(PREF_WORK_COUNT, counts.total)
+                .putInt(PREF_WORK_COUNT_CONVERSION, counts.conversion)
+                .putInt(PREF_WORK_COUNT_TRAFFIC, counts.traffic)
+                .putInt(PREF_WORK_COUNT_UNCATEGORIZED, counts.uncategorized)
+                .apply();
     }
 
     @Override
@@ -585,7 +598,7 @@ public final class OnlineService extends Service {
         }
         deleteRecursively(task.dir);
         DiagnosticLog.write(this, "task_committed", taskId + " files=" + deliveredFiles + " works=" + imported);
-        publishWorkCount(this, library.listActive().size());
+        publishWorkInventory(this, library.listActive());
         writeText(output, 200, "OK");
         onTaskReady(taskId, deliveredFiles, imported, autoShareWorkId,
                 Math.max(1, System.currentTimeMillis() - task.startedAtMs));
@@ -623,7 +636,17 @@ public final class OnlineService extends Service {
 
     private JSONObject deviceInfo() throws Exception {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        return new JSONObject()
+        JSONObject workCounts = null;
+        if (prefs.contains(PREF_WORK_COUNT_CONVERSION)
+                && prefs.contains(PREF_WORK_COUNT_TRAFFIC)
+                && prefs.contains(PREF_WORK_COUNT_UNCATEGORIZED)) {
+            workCounts = new JSONObject()
+                    .put("total", prefs.getInt(PREF_WORK_COUNT, -1))
+                    .put("conversion", prefs.getInt(PREF_WORK_COUNT_CONVERSION, 0))
+                    .put("traffic", prefs.getInt(PREF_WORK_COUNT_TRAFFIC, 0))
+                    .put("uncategorized", prefs.getInt(PREF_WORK_COUNT_UNCATEGORIZED, 0));
+        }
+        JSONObject info = new JSONObject()
                 .put("protocol", 2)
                 .put("deviceId", prefs.getString("deviceId", ""))
                 .put("name", prefs.getString("deviceName", Build.MANUFACTURER + " " + Build.MODEL))
@@ -638,6 +661,8 @@ public final class OnlineService extends Service {
                 .put("state", state)
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
+        if (workCounts != null) info.put("workCounts", workCounts);
+        return info;
     }
 
     private void queueRelayTask(IncomingTask task) throws Exception {
