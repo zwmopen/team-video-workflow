@@ -34,7 +34,7 @@ final class CleanupCoordinator {
         result.deleted = purged.deleted;
         result.failure = !external.succeeded() ? external.firstFailure()
                 : !purged.succeeded() ? purged.firstFailure() : "";
-        OnlineService.publishWorkCount(context, library.listActive().size());
+        OnlineService.publishWorkInventory(context, library.listActive());
         return result;
     }
 

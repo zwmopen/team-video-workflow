@@ -134,6 +134,16 @@ POST /v2/tasks/{taskId}/cancel
 `relayVersion`、`relayEnabled` 和 `screenshotReceiveEnabled`；扩展字段均为可选，
 旧客户端忽略未知字段仍可继续发现和直接传送。
 
+## 分类库存扩展
+
+Android 0.6.17 起，`GET /v2/info` 可选返回：
+
+```json
+{"workCount":15,"workCounts":{"total":15,"conversion":8,"traffic":7,"uncategorized":0}}
+```
+
+这些值仅是本机作品库的聚合数量，不包含作品名称、文案、图片或路径。按分类自动补货必须读取对应分类；字段缺失时分类库存为未知，不能用 `workCount` 总数代替。旧客户端可以忽略该扩展。
+
 ## 安全边界
 
 V2 局域网模式按产品要求不做配对和鉴权，只应在可信任的专用 Wi‑Fi 中使用。未来远程模式必须使用工作区身份、设备密钥与加密传输，不能把无鉴权的局域网端口直接暴露到公网。
