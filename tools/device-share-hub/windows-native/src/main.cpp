@@ -1254,7 +1254,7 @@ std::optional<MobileUpdateArtifact> FindCachedMobileUpdate() {
         auto version = MobileVersionFromFileName(entry.path());
         if (!version.has_value()) continue;
         if (!best.has_value()
-                || CompareVersions(VersionNumbers(WideToUtf8(*best->version)),
+                || CompareVersions(VersionNumbers(WideToUtf8(best->version)),
                                     VersionNumbers(WideToUtf8(*version))) < 0) {
             best = MobileUpdateArtifact{entry.path(), *version};
         }
