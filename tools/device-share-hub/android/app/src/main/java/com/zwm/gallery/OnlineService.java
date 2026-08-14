@@ -116,6 +116,7 @@ public final class OnlineService extends Service {
     private static final int MAX_FILES = 100;
     private static final long MAX_JSON_BYTES = 2L * 1024L * 1024L;
     private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
+    private static final long INCOMING_TASK_IDLE_TIMEOUT_MS = 5L * 60L * 1000L;
     private static final long PEER_TIMEOUT_MS = 15_000L;
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> SEEN_CLIPBOARD_MESSAGES =
@@ -266,6 +267,7 @@ public final class OnlineService extends Service {
 
     private void runCleanup() {
         try {
+            cleanupStaleIncomingTask();
             processRelayQueue();
             CleanupCoordinator.Result result = CleanupCoordinator.run(this);
             if (result.moved > 0 || result.deleted > 0 || result.cacheEntriesDeleted > 0) {
@@ -458,6 +460,7 @@ public final class OnlineService extends Service {
                 digest.update(buffer, 0, count);
                 remaining -= count;
                 received += count;
+                task.lastActivityAtMs = System.currentTimeMillis();
                 long now = System.currentTimeMillis();
                 if (now - lastNotice >= 700 || remaining == 0) {
                     lastNotice = now;
@@ -483,6 +486,7 @@ public final class OnlineService extends Service {
         synchronized (taskLock) {
             if (activeTask == null || !activeTask.id.equals(taskId)) throw new HttpError(409, "任务状态已变化");
             task.files.put(index, new ReceivedFile(originalName, storedName, mime, target.length(), actualSha, target));
+            task.lastActivityAtMs = System.currentTimeMillis();
         }
         long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
         DiagnosticLog.write(this, "file_received", originalName + " bytes=" + target.length() + " ms=" + elapsedMs);
@@ -531,6 +535,7 @@ public final class OnlineService extends Service {
             task = activeTask;
             if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
             if (task.files.size() != task.fileCount) throw new HttpError(409, "文件尚未全部上传");
+            task.lastActivityAtMs = System.currentTimeMillis();
         }
 
         String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -825,6 +830,43 @@ public final class OnlineService extends Service {
         } catch (Exception ignored) {
             return "unknown";
         }
+    }
+
+    /**
+     * A sender can disappear before it gets a chance to call /cancel. Do not
+     * leave the receiver permanently in "receiving" in that case. Only an
+     * incomplete task is eligible; once every file arrived, commit is allowed
+     * to finish its import without being interrupted by maintenance.
+     */
+    static boolean isIncomingTaskStale(long now, long lastActivityAtMs,
+                                       int receivedFiles, int expectedFiles) {
+        return expectedFiles > receivedFiles
+                && now >= lastActivityAtMs
+                && now - lastActivityAtMs >= INCOMING_TASK_IDLE_TIMEOUT_MS;
+    }
+
+    private void cleanupStaleIncomingTask() {
+        IncomingTask stale = null;
+        long now = System.currentTimeMillis();
+        synchronized (taskLock) {
+            if (activeTask != null && isIncomingTaskStale(
+                    now, activeTask.lastActivityAtMs,
+                    activeTask.files.size(), activeTask.fileCount)) {
+                stale = activeTask;
+                activeTask = null;
+                currentTaskId = "";
+                state = "online";
+            }
+        }
+        if (stale == null) return;
+        deleteRecursively(stale.dir);
+        cancelTransferProgressNotification();
+        String detail = stale.id + " idleMs="
+                + Math.max(0L, now - stale.lastActivityAtMs)
+                + " files=" + stale.files.size() + "/" + stale.fileCount;
+        DiagnosticLog.write(this, "task_expired", detail);
+        notifyStatus("上次传输已中断，临时文件已清理，可以重新发送");
+        OperationLog.add(this, "传输中断已清理", "已清理未完成任务 " + stale.id);
     }
 
     private long installedVersionCode() {
@@ -2055,6 +2097,7 @@ public final class OnlineService extends Service {
         final int fileCount;
         final File dir;
         final long startedAtMs;
+        volatile long lastActivityAtMs;
         final RelayTaskMetadata relay;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
 
@@ -2067,6 +2110,7 @@ public final class OnlineService extends Service {
             this.fileCount = fileCount;
             this.dir = dir;
             this.startedAtMs = startedAtMs;
+            this.lastActivityAtMs = startedAtMs;
             this.relay = relay;
         }
     }

@@ -304,12 +304,13 @@ uint64_t TotalBytes(const std::vector<std::filesystem::path>& items) {
 }
 
 void WritePortableFile(IPortableDeviceContent* content, const std::wstring& parent,
-                       const std::filesystem::path& source, uint64_t total, uint64_t& completed,
+                       const std::filesystem::path& source, const std::wstring& objectName,
+                       uint64_t total, uint64_t& completed,
                        std::atomic<bool>& cancel, const UsbProgressCallback& progress) {
     ComPtr<IPortableDeviceValues> values;
     Check(CoCreateInstance(CLSID_PortableDeviceValues, nullptr, CLSCTX_INPROC_SERVER,
                            IID_PPV_ARGS(values.put())), L"无法准备 USB 文件");
-    std::wstring name = source.filename().wstring();
+    std::wstring name = objectName.empty() ? source.filename().wstring() : objectName;
     values->SetStringValue(WPD_OBJECT_PARENT_ID, parent.c_str());
     values->SetStringValue(WPD_OBJECT_NAME, name.c_str());
     values->SetStringValue(WPD_OBJECT_ORIGINAL_FILE_NAME, name.c_str());
@@ -339,18 +340,45 @@ void WritePortableFile(IPortableDeviceContent* content, const std::wstring& pare
 void WritePortableItem(IPortableDeviceContent* content, IPortableDeviceProperties* properties,
                        const std::wstring& parent, const std::filesystem::path& source,
                        uint64_t total, uint64_t& completed, std::atomic<bool>& cancel,
-                       const UsbProgressCallback& progress) {
+                       const UsbProgressCallback& progress,
+                       const std::wstring& objectName = L"") {
     if (std::filesystem::is_regular_file(source)) {
-        WritePortableFile(content, parent, source, total, completed, cancel, progress);
+        WritePortableFile(content, parent, source, objectName, total, completed, cancel, progress);
         return;
     }
-    std::wstring folder = CreateFolder(content, parent, source.filename().wstring());
+    std::wstring folderName = objectName.empty() ? source.filename().wstring() : objectName;
+    std::wstring folder = CreateFolder(content, parent, folderName);
     std::vector<std::filesystem::path> children;
     for (const auto& child : std::filesystem::directory_iterator(source)) children.push_back(child.path());
     std::sort(children.begin(), children.end());
     for (const auto& child : children) {
         WritePortableItem(content, properties, folder, child, total, completed, cancel, progress);
     }
+}
+
+void RenamePortableObject(IPortableDeviceProperties* properties, const std::wstring& objectId,
+                          const std::wstring& name) {
+    ComPtr<IPortableDeviceValues> values;
+    Check(CoCreateInstance(CLSID_PortableDeviceValues, nullptr, CLSCTX_INPROC_SERVER,
+                           IID_PPV_ARGS(values.put())), L"无法准备 USB 文件改名");
+    values->SetStringValue(WPD_OBJECT_NAME, name.c_str());
+    values->SetStringValue(WPD_OBJECT_ORIGINAL_FILE_NAME, name.c_str());
+    Check(properties->SetValues(objectId.c_str(), values.get(), nullptr), L"无法完成 USB 文件改名");
+}
+
+void DeletePortableObject(IPortableDeviceContent* content, const std::wstring& objectId) {
+    ComPtr<IPortableDevicePropVariantCollection> ids;
+    Check(CoCreateInstance(CLSID_PortableDevicePropVariantCollection, nullptr,
+                           CLSCTX_INPROC_SERVER, IID_PPV_ARGS(ids.put())),
+          L"无法准备 USB 临时文件清理");
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    HRESULT initResult = InitPropVariantFromString(objectId.c_str(), &value);
+    Check(initResult, L"无法准备 USB 临时文件标识");
+    HRESULT addResult = ids->Add(&value);
+    PropVariantClear(&value);
+    Check(addResult, L"无法登记 USB 临时文件");
+    Check(content->Delete(WPD_DELETE_WITH_OBJECTS, ids.get(), nullptr), L"无法清理 USB 临时文件");
 }
 
 void SendPortable(const UsbPeer& peer, const std::vector<std::filesystem::path>& items,
@@ -376,8 +404,31 @@ void SendPortable(const UsbPeer& peer, const std::vector<std::filesystem::path>&
     uint64_t total = TotalBytes(items);
     uint64_t completed = 0;
     if (status) status(L"正在通过 USB 传给“" + peer.name + L"”…");
-    for (const auto& item : items) {
-        WritePortableItem(content.get(), properties.get(), lark, item, total, completed, cancel, progress);
+    std::vector<std::pair<std::wstring, std::wstring>> staged;
+    const std::wstring stagingPrefix = L".album-incoming-" + std::to_wstring(GetTickCount64());
+    try {
+        for (size_t index = 0; index < items.size(); ++index) {
+            const auto& item = items[index];
+            std::wstring temporaryName = stagingPrefix + L"-" + std::to_wstring(index);
+            staged.push_back({temporaryName, item.filename().wstring()});
+            WritePortableItem(content.get(), properties.get(), lark, item, total, completed,
+                              cancel, progress, temporaryName);
+        }
+        for (const auto& item : staged) {
+            std::wstring objectId = FindChild(content.get(), properties.get(), lark, item.first);
+            if (objectId.empty()) throw std::runtime_error("USB 临时文件提交前找不到");
+            RenamePortableObject(properties.get(), objectId, item.second);
+        }
+    } catch (...) {
+        for (const auto& item : staged) {
+            try {
+                std::wstring objectId = FindChild(content.get(), properties.get(), lark, item.first);
+                if (!objectId.empty()) DeletePortableObject(content.get(), objectId);
+            } catch (...) {
+                if (gLogger) gLogger(L"usb_staging_cleanup_failed", item.first);
+            }
+        }
+        throw;
     }
     if (progress) progress(total, total);
 }

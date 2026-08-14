@@ -2087,6 +2087,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     PostProgress(0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
     std::vector<std::filesystem::path> temporaryArchives;
+    bool lanTaskCreated = false;
     try {
         std::vector<TransferFingerprint> fingerprints;
         if (checkHistory) {
@@ -2124,8 +2125,8 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 return;
             } catch (const std::exception& usbError) {
                 WriteDiagnosticLog(L"usb_upload_failed", Utf8ToWide(usbError.what()));
-                if (device.ip.empty() || !device.wifiAllowed) throw;
-                PostStatus(L"USB 暂不可用，正在自动改用 Wi‑Fi…");
+                PostStatus(L"USB 传送未完成，已停止；为避免重复，不自动改用 Wi‑Fi。");
+                throw;
             }
         }
 
@@ -2150,6 +2151,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         json << "{\"taskId\":\"" << WideToUtf8(taskId) << "\",\"text\":\""
              << JsonEscape(caption) << "\",\"fileCount\":" << files.size() << "}";
         client.PostJson(L"/v2/tasks", json.str());
+        lanTaskCreated = true;
         uintmax_t completedBytes = 0;
         auto lastNotice = std::chrono::steady_clock::now() - std::chrono::seconds(1);
         auto uploadStart = std::chrono::steady_clock::now();
@@ -2186,12 +2188,14 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     } catch (const std::exception& error) {
         WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
         PostShellTransferNotice(L"传送失败：" + Utf8ToWide(error.what()), false);
-        try {
-            HttpClient cleanup(device.ip, device.port);
-            cleanup.PostEmpty(L"/v2/tasks/" + taskId + L"/cancel");
-            WriteDiagnosticLog(L"upload_cancel_sent", taskId);
-        } catch (...) {
-            WriteDiagnosticLog(L"upload_cancel_failed", taskId);
+        if (lanTaskCreated && !device.ip.empty() && device.wifiAllowed) {
+            try {
+                HttpClient cleanup(device.ip, device.port);
+                cleanup.PostEmpty(L"/v2/tasks/" + taskId + L"/cancel");
+                WriteDiagnosticLog(L"upload_cancel_sent", taskId);
+            } catch (...) {
+                WriteDiagnosticLog(L"upload_cancel_failed", taskId);
+            }
         }
         PostProgress(0, false);
         PostStatus(L"传送失败：" + Utf8ToWide(error.what()));
