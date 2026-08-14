@@ -365,9 +365,15 @@ jobs:
               --field content="$content" >/dev/null
           fi
 
-          published=$(curl --fail --silent --show-error --retry 3 \
-            "https://raw.githubusercontent.com/${repo}/main/latest.json?run=${GITHUB_RUN_ID}")
+          published_b64=$(gh api "repos/${repo}/contents/latest.json?ref=main" --jq '.content' | tr -d '\n')
+          published=$(printf '%s' "$published_b64" | base64 --decode)
           test "$(printf '%s' "$published" | jq -r '.version_name')" = "$version_name"
           test "$(printf '%s' "$published" | jq -r '.version_code')" = "$version_code"
           test "$(printf '%s' "$published" | jq -r '.sha256')" = "$sha256"
-          echo "Published Android ${version_name} (versionCode ${version_code}) to ${repo}."
+          raw_version=$(curl --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/${repo}/main/latest.json?run=${GITHUB_RUN_ID}" \
+            | jq -r '.version_name' || true)
+          if [ "$raw_version" != "$version_name" ]; then
+            echo "::warning::Contents API is current; raw.githubusercontent.com is still propagating (read ${raw_version:-unavailable})."
+          fi
+          echo "Published and API-verified Android ${version_name} (versionCode ${version_code}) to ${repo}."
