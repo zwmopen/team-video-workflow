@@ -405,6 +405,7 @@ void SendPortable(const UsbPeer& peer, const std::vector<std::filesystem::path>&
     uint64_t completed = 0;
     if (status) status(L"正在通过 USB 传给“" + peer.name + L"”…");
     std::vector<std::pair<std::wstring, std::wstring>> staged;
+    std::vector<std::pair<std::wstring, std::wstring>> committed;
     const std::wstring stagingPrefix = L".album-incoming-" + std::to_wstring(GetTickCount64());
     try {
         for (size_t index = 0; index < items.size(); ++index) {
@@ -415,9 +416,11 @@ void SendPortable(const UsbPeer& peer, const std::vector<std::filesystem::path>&
                               cancel, progress, temporaryName);
         }
         for (const auto& item : staged) {
+            if (cancel.load()) throw std::runtime_error("USB 传送已取消");
             std::wstring objectId = FindChild(content.get(), properties.get(), lark, item.first);
             if (objectId.empty()) throw std::runtime_error("USB 临时文件提交前找不到");
             RenamePortableObject(properties.get(), objectId, item.second);
+            committed.push_back({objectId, item.second});
         }
     } catch (...) {
         for (const auto& item : staged) {
@@ -426,6 +429,13 @@ void SendPortable(const UsbPeer& peer, const std::vector<std::filesystem::path>&
                 if (!objectId.empty()) DeletePortableObject(content.get(), objectId);
             } catch (...) {
                 if (gLogger) gLogger(L"usb_staging_cleanup_failed", item.first);
+            }
+        }
+        for (const auto& item : committed) {
+            try {
+                DeletePortableObject(content.get(), item.first);
+            } catch (...) {
+                if (gLogger) gLogger(L"usb_commit_rollback_failed", item.second);
             }
         }
         throw;
