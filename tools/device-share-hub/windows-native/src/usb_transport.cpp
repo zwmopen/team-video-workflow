@@ -378,7 +378,7 @@ void DeletePortableObject(IPortableDeviceContent* content, const std::wstring& o
     HRESULT addResult = ids->Add(&value);
     PropVariantClear(&value);
     Check(addResult, L"无法登记 USB 临时文件");
-    Check(content->Delete(WPD_DELETE_WITH_OBJECTS, ids.get(), nullptr), L"无法清理 USB 临时文件");
+    Check(content->Delete(PORTABLE_DEVICE_DELETE_WITH_RECURSION, ids.get(), nullptr), L"无法清理 USB 临时文件");
 }
 
 void SendPortable(const UsbPeer& peer, const std::vector<std::filesystem::path>& items,
