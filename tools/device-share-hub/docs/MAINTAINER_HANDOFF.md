@@ -1,5 +1,6 @@
 ## 2026-08-14 Windows 4.3.6 / Android 0.6.20 双通道更新候选
 
+- 新增桌面 `相册_USB一键安装.cmd`，实际逻辑唯一保存在 `scripts/install-usb-apk.ps1`：检查 USB 授权设备、读取 `com.zwm.gallery` 当前版本，只安装更高的本地 APK，并在安装后复读版本确认；没有设备、未授权、多设备或签名不一致时停止，不重复重试。
 - Android `versionCode=58` / `versionName=0.6.20` 在发现信标和 `/v2/info` 中上报 `appVersion`、`versionCode`、`workCount`、分类库存及 `apk-push-v1` 能力。
 - Windows 设备卡读取并显示手机版本、精准库存和泛库存；旧信标仍可发现，但不会被电脑盲目自动推送 APK。
 - Windows 从“设置 → 发送更新包”选择带版本号的 APK 后，保存到 `%LOCALAPPDATA%\\ZwmDeviceShareHub\\mobile-updates`；自动更新只使用其中版本最高的 APK。
