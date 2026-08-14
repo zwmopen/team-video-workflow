@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -31,10 +32,12 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -81,12 +84,17 @@ constexpr int IDC_SETTINGS_AUTOSTART = 409;
 constexpr int IDC_SETTINGS_DARK_MODE = 410;
 constexpr int IDC_SETTINGS_DIAGNOSTICS = 411;
 constexpr int IDC_SETTINGS_CLOSE = 412;
+constexpr int IDC_SETTINGS_AUTO_MOBILE_UPDATE = 413;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.4";
+constexpr wchar_t APP_VERSION[] = L"4.3.6";
+constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
+constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
+constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
+constexpr char MOBILE_UPDATE_APK_PREFIX[] = "https://github.com/zwmopen/gallery-updates/releases/download/";
 constexpr wchar_t GITHUB_RELEASE_HOST[] = L"api.github.com";
 constexpr wchar_t GITHUB_RELEASE_PATH[] = L"/repos/zwmopen/team-video-workflow/releases/latest";
 constexpr wchar_t GITHUB_WEB_HOST[] = L"github.com";
@@ -104,6 +112,12 @@ struct Device {
     std::wstring state;
     std::wstring taskId;
     int workCount = -1;
+    int conversionCount = -1;
+    int trafficCount = -1;
+    int uncategorizedCount = -1;
+    std::wstring appVersion;
+    long long appVersionCode = -1;
+    std::wstring updateCapability;
     bool usbReady = false;
     bool usbAllowed = true;
     bool wifiAllowed = true;
@@ -193,6 +207,12 @@ std::wstring gLastClipboardText;
 std::map<std::string, std::chrono::steady_clock::time_point> gSeenClipboardMessages;
 std::mutex gAutoRestockMutex;
 std::map<std::wstring, std::chrono::steady_clock::time_point> gAutoRestockCooldown;
+std::mutex gAutoMobileUpdateMutex;
+std::map<std::wstring, std::chrono::steady_clock::time_point> gAutoMobileUpdateCooldown;
+std::map<std::wstring, std::wstring> gAutoMobileUpdateLastSentVersion;
+std::atomic<bool> gAutoMobileUpdateInProgress{false};
+std::atomic<bool> gMobileUpdateCacheRefreshInProgress{false};
+std::atomic<bool> gMobileUpdateCacheFetchAttempted{false};
 HWND gLibraryList = nullptr;
 HWND gLibraryPathLabel = nullptr;
 HWND gLibraryTitle = nullptr;
@@ -205,6 +225,7 @@ HWND gSettingsWindow = nullptr;
 HWND gSettingsOriginalPath = nullptr;
 HWND gSettingsArchivePath = nullptr;
 HWND gSettingsAutoUpdateCheck = nullptr;
+HWND gSettingsMobileAutoUpdateCheck = nullptr;
 HWND gSettingsAutoRestockCheck = nullptr;
 HWND gSettingsThresholdEdit = nullptr;
 HWND gSettingsAutoStartCheck = nullptr;
@@ -452,7 +473,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return std::nullopt;
     WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
@@ -501,7 +522,7 @@ std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& erro
 }
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -524,7 +545,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.4\r\n",
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.6\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1179,6 +1200,68 @@ std::wstring Sha256File(const std::filesystem::path& path, std::function<void(in
     return out.str();
 }
 
+struct MobileUpdateArtifact {
+    std::filesystem::path path;
+    std::wstring version;
+};
+
+std::filesystem::path MobileUpdateCachePath() {
+    return DiagnosticLogPath().parent_path() / L"mobile-updates";
+}
+
+std::optional<std::wstring> MobileVersionFromFileName(const std::filesystem::path& path) {
+    std::wstring name = path.filename().wstring();
+    std::wsmatch match;
+    static const std::wregex pattern(LR"((\d+\.\d+(?:\.\d+)*))");
+    if (!std::regex_search(name, match, pattern) || match.size() < 2) return std::nullopt;
+    return match[1].str();
+}
+
+std::optional<MobileUpdateArtifact> CacheMobileUpdatePackage(const std::filesystem::path& source) {
+    std::wstring extension = source.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+    if (extension != L".apk") return std::nullopt;
+    auto version = MobileVersionFromFileName(source);
+    if (!version.has_value()) return std::nullopt;
+    try {
+        auto root = MobileUpdateCachePath();
+        std::filesystem::create_directories(root);
+        auto target = root / (L"mobile-update-" + *version + L".apk");
+        if (std::filesystem::absolute(source) != std::filesystem::absolute(target)) {
+            std::filesystem::copy_file(source, target,
+                std::filesystem::copy_options::overwrite_existing);
+        }
+        WriteDiagnosticLog(L"mobile_update_cached",
+            *version + L" bytes=" + std::to_wstring(std::filesystem::file_size(target))
+            + L" sha256=" + Sha256File(target));
+        return MobileUpdateArtifact{target, *version};
+    } catch (const std::exception& error) {
+        WriteDiagnosticLog(L"mobile_update_cache_failed", Utf8ToWide(error.what()));
+        return std::nullopt;
+    }
+}
+
+std::optional<MobileUpdateArtifact> FindCachedMobileUpdate() {
+    std::error_code error;
+    auto root = MobileUpdateCachePath();
+    if (!std::filesystem::is_directory(root, error)) return std::nullopt;
+    std::optional<MobileUpdateArtifact> best;
+    for (const auto& entry : std::filesystem::directory_iterator(root, error)) {
+        if (error || !entry.is_regular_file(error)) continue;
+        std::wstring extension = entry.path().extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+        if (extension != L".apk") continue;
+        auto version = MobileVersionFromFileName(entry.path());
+        if (!version.has_value()) continue;
+        if (!best.has_value()
+                || CompareVersions(VersionNumbers(WideToUtf8(*best->version)),
+                                    VersionNumbers(WideToUtf8(*version))) < 0) {
+            best = MobileUpdateArtifact{entry.path(), *version};
+        }
+    }
+    return best;
+}
+
 std::wstring HardwareFamily(const std::wstring& name, const std::wstring& model) {
     std::wstring value = name + L" " + model;
     std::transform(value.begin(), value.end(), value.begin(), towlower);
@@ -1647,6 +1730,264 @@ int JsonNumber(const std::string& json, const std::string& key, int fallback) {
     return std::atoi(json.c_str() + start + 1);
 }
 
+int JsonNestedNumber(const std::string& json, const std::string& parent,
+                     const std::string& key, int fallback) {
+    auto parentStart = json.find('"' + parent + '"');
+    if (parentStart == std::string::npos) return fallback;
+    auto objectStart = json.find('{', parentStart);
+    if (objectStart == std::string::npos) return fallback;
+    auto objectEnd = json.find('}', objectStart);
+    if (objectEnd == std::string::npos) return fallback;
+    return JsonNumber(json.substr(objectStart, objectEnd - objectStart + 1), key, fallback);
+}
+
+std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
+                                          size_t maxBytes, std::wstring& error) {
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) { error = LastNetworkError(L"无法建立手机更新索引连接"); return std::nullopt; }
+    WinHttpSetTimeouts(session, 5000, 5000, 15000, 30000);
+    HINTERNET connection = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET request = connection ? WinHttpOpenRequest(
+        connection, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+    if (!connection || !request) {
+        error = LastNetworkError(L"无法建立手机更新索引请求");
+        if (request) WinHttpCloseHandle(request);
+        if (connection) WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+    WinHttpAddRequestHeaders(request,
+                              L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.6\r\n",
+                              -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                   WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
+    bool received = sent && WinHttpReceiveResponse(request, nullptr) != FALSE;
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    if (received) WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                      WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                                      WINHTTP_NO_HEADER_INDEX);
+    std::string body;
+    bool tooLarge = false;
+    bool readFailed = false;
+    bool queryFailed = false;
+    if (received && status == 200) {
+        DWORD available = 0;
+        while (true) {
+            if (!WinHttpQueryDataAvailable(request, &available)) {
+                queryFailed = true;
+                break;
+            }
+            if (available == 0) break;
+            if (body.size() + available > maxBytes) { tooLarge = true; break; }
+            std::string chunk(available, '\0');
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), available, &read)) {
+                readFailed = true;
+                break;
+            }
+            body.append(chunk.data(), read);
+            if (read == 0) break;
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    if (!sent || !received || status != 200 || body.empty() || tooLarge || readFailed || queryFailed) {
+        error = tooLarge ? L"手机更新索引异常过大"
+                         : L"手机更新索引暂时不可用（HTTP " + std::to_wstring(status) + L"）";
+        return std::nullopt;
+    }
+    return body;
+}
+
+bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
+                       const std::filesystem::path& target, uintmax_t maxBytes,
+                       std::wstring& error) {
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) { error = LastNetworkError(L"无法建立手机 APK 下载连接"); return false; }
+    WinHttpSetTimeouts(session, 5000, 5000, 15000, 120000);
+    HINTERNET connection = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET request = connection ? WinHttpOpenRequest(
+        connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+    if (!connection || !request) {
+        error = LastNetworkError(L"无法建立手机 APK 下载请求");
+        if (request) WinHttpCloseHandle(request);
+        if (connection) WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return false;
+    }
+    WinHttpAddRequestHeaders(request,
+                              L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.6\r\n",
+                              -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                   WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
+    bool received = sent && WinHttpReceiveResponse(request, nullptr) != FALSE;
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    if (received) WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                      WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                                      WINHTTP_NO_HEADER_INDEX);
+    std::ofstream output(target, std::ios::binary | std::ios::trunc);
+    uintmax_t total = 0;
+    bool tooLarge = false;
+    bool readFailed = false;
+    bool queryFailed = false;
+    if (sent && received && status == 200 && output) {
+        DWORD available = 0;
+        while (true) {
+            if (!WinHttpQueryDataAvailable(request, &available)) {
+                queryFailed = true;
+                break;
+            }
+            if (available == 0) break;
+            DWORD toRead = std::min<DWORD>(available, 1024u * 1024u);
+            std::vector<char> chunk(toRead);
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), toRead, &read)) {
+                readFailed = true;
+                break;
+            }
+            if (total + read > maxBytes) { tooLarge = true; break; }
+            if (read > 0) output.write(chunk.data(), static_cast<std::streamsize>(read));
+            total += read;
+            if (read == 0) break;
+        }
+    }
+    output.close();
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    if (!sent || !received || status != 200 || !output.good() || total < 64 * 1024
+            || tooLarge || readFailed || queryFailed) {
+        error = tooLarge ? L"手机 APK 超出安全大小限制"
+                         : L"手机 APK 下载失败（HTTP " + std::to_wstring(status) + L"）";
+        std::error_code removeError;
+        std::filesystem::remove(target, removeError);
+        return false;
+    }
+    return true;
+}
+
+bool IsMobileAutoUpdateEnabled();
+bool SupportsMobileUpdate(const Device& device);
+
+std::optional<MobileUpdateArtifact> SyncPublicMobileUpdateCache(std::wstring& error) {
+    auto manifest = FetchHttpsText(MOBILE_UPDATE_MANIFEST_HOST, MOBILE_UPDATE_MANIFEST_PATH,
+                                   1024 * 1024, error);
+    if (!manifest) return std::nullopt;
+    std::string version = JsonValue(*manifest, "version_name");
+    std::string apkUrl = JsonValue(*manifest, "apk_url");
+    std::string expectedSha = JsonValue(*manifest, "sha256");
+    int manifestVersionCode = JsonNumber(*manifest, "version_code", -1);
+    if (version.empty() || VersionNumbers(version).empty() || manifestVersionCode < 1
+            || apkUrl.empty() || expectedSha.size() != 64) {
+        error = L"手机更新索引缺少完整的版本、APK 或 SHA-256 信息";
+        return std::nullopt;
+    }
+    for (char value : expectedSha) {
+        if (!std::isxdigit(static_cast<unsigned char>(value))) {
+            error = L"手机更新索引中的 SHA-256 格式不正确";
+            return std::nullopt;
+        }
+    }
+    if (apkUrl.rfind(MOBILE_UPDATE_APK_PREFIX, 0) != 0
+            || apkUrl.find_first_of("?#") != std::string::npos
+            || apkUrl.size() < 5
+            || apkUrl.substr(apkUrl.size() - 4) != ".apk") {
+        error = L"手机更新索引中的 APK 地址不在受信任仓库";
+        return std::nullopt;
+    }
+    std::string pathUtf8 = apkUrl.substr(std::string("https://github.com").size());
+    std::wstring versionWide = Utf8ToWide(version);
+    std::wstring targetVersion = versionWide;
+    while (!targetVersion.empty() && (targetVersion.front() == L'v' || targetVersion.front() == L'V'))
+        targetVersion.erase(targetVersion.begin());
+    static const std::wregex versionPattern(LR"(\d+\.\d+(?:\.\d+)*)");
+    if (!std::regex_match(targetVersion, versionPattern)) {
+        error = L"手机更新索引中的版本号格式不正确";
+        return std::nullopt;
+    }
+    auto candidateNumbers = VersionNumbers(version);
+    auto cached = FindCachedMobileUpdate();
+    if (cached && CompareVersions(VersionNumbers(WideToUtf8(cached->version)), candidateNumbers) >= 0) {
+        WriteDiagnosticLog(L"mobile_update_cache_kept",
+            L"existing=v" + cached->version + L" public=v" + targetVersion);
+        return cached;
+    }
+    try {
+        auto root = MobileUpdateCachePath();
+        std::filesystem::create_directories(root);
+        auto target = root / (L"mobile-update-" + targetVersion + L".apk");
+        if (std::filesystem::is_regular_file(target)
+                && _wcsicmp(Sha256File(target).c_str(), Utf8ToWide(expectedSha).c_str()) == 0) {
+            return MobileUpdateArtifact{target, targetVersion};
+        }
+        auto incoming = target;
+        incoming += L".incoming";
+        if (!DownloadHttpsFile(L"github.com", Utf8ToWide(pathUtf8), incoming,
+                               512ull * 1024ull * 1024ull, error)) return std::nullopt;
+        std::wstring actualSha = Sha256File(incoming);
+        if (_wcsicmp(actualSha.c_str(), Utf8ToWide(expectedSha).c_str()) != 0) {
+            std::error_code removeError;
+            std::filesystem::remove(incoming, removeError);
+            error = L"手机 APK SHA-256 校验失败";
+            return std::nullopt;
+        }
+        std::error_code replaceError;
+        std::filesystem::remove(target, replaceError);
+        std::filesystem::rename(incoming, target, replaceError);
+        if (replaceError) throw std::system_error(replaceError);
+        WriteDiagnosticLog(L"mobile_update_public_cached",
+            L"v" + targetVersion + L" bytes=" + std::to_wstring(std::filesystem::file_size(target))
+            + L" sha256=" + actualSha);
+        return MobileUpdateArtifact{target, targetVersion};
+    } catch (const std::exception& exception) {
+        error = Utf8ToWide(exception.what());
+        return std::nullopt;
+    }
+}
+
+void MaybeFetchMobileUpdateCacheForTarget() {
+    if (!IsMobileAutoUpdateEnabled()) return;
+    const auto now = std::chrono::steady_clock::now();
+    bool hasEligibleTarget = false;
+    for (const auto& device : gDisplayedDevices) {
+        bool liveWifi = !device.ip.empty() && device.wifiAllowed
+            && now - device.lastSeen <= std::chrono::seconds(35);
+        if (liveWifi && !device.appVersion.empty() && SupportsMobileUpdate(device)) {
+            hasEligibleTarget = true;
+            break;
+        }
+    }
+    if (!hasEligibleTarget) return;
+    bool fetchAlreadyAttempted = false;
+    if (!gMobileUpdateCacheFetchAttempted.compare_exchange_strong(fetchAlreadyAttempted, true)) return;
+    bool expected = false;
+    if (!gMobileUpdateCacheRefreshInProgress.compare_exchange_strong(expected, true)) return;
+    WriteDiagnosticLog(L"mobile_update_fallback_fetch_started",
+        L"trigger=online-capable-phone-without-local-candidate");
+    std::thread([] {
+        std::wstring error;
+        auto artifact = SyncPublicMobileUpdateCache(error);
+        if (artifact) {
+            WriteDiagnosticLog(L"mobile_update_fallback_cache_ready", L"version=v" + artifact->version);
+            PostStatus(L"检测到手机需要更新，电脑已按需取回 v" + artifact->version + L"，准备通过局域网发送");
+            gRefreshRequested = true;
+        } else {
+            WriteDiagnosticLog(L"mobile_update_fallback_fetch_failed", error);
+            std::wstring message = L"手机需要更新，但电脑按需取回公开安装包失败，将保留现有缓存，不重复发送。";
+            if (!error.empty()) message += L"原因：" + error;
+            PostStatus(message);
+        }
+        gMobileUpdateCacheRefreshInProgress = false;
+    }).detach();
+}
+
 std::wstring ReadWindowsClipboard() {
     if (!OpenClipboard(gWindow)) return {};
     HANDLE handle = GetClipboardData(CF_UNICODETEXT);
@@ -1994,6 +2335,87 @@ void SyncSendToMenu(const std::vector<Device>& devices,
     }
 }
 
+bool IsMobileAutoUpdateEnabled() {
+    return !gContentStore || gContentStore->GetSetting(L"auto_mobile_update_enabled") != L"0";
+}
+
+bool SupportsMobileUpdate(const Device& device) {
+    // New clients explicitly negotiate the capability. Android 0.6.16+ already
+    // had the same APK staging and signature-validation path, so its version code
+    // is a safe bootstrap fallback for the first capability-bearing upgrade.
+    return device.updateCapability == MOBILE_UPDATE_CAPABILITY || device.appVersionCode >= 54;
+}
+
+std::wstring MobileUpdateSentSettingKey(const std::wstring& deviceId) {
+    return L"auto_mobile_update_sent_" + deviceId;
+}
+
+void MaybeAutoMobileUpdate() {
+    if (!IsMobileAutoUpdateEnabled() || gUploadInProgress || gArchiveInProgress
+            || gAutoMobileUpdateInProgress) return;
+    auto artifact = FindCachedMobileUpdate();
+    if (!artifact.has_value()) {
+        MaybeFetchMobileUpdateCacheForTarget();
+        return;
+    }
+    auto candidateVersion = VersionNumbers(WideToUtf8(artifact->version));
+    if (candidateVersion.empty()) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    Device selected;
+    {
+        std::lock_guard<std::mutex> lock(gAutoMobileUpdateMutex);
+        for (auto it = gAutoMobileUpdateCooldown.begin(); it != gAutoMobileUpdateCooldown.end();) {
+            if (now - it->second > std::chrono::minutes(30)) it = gAutoMobileUpdateCooldown.erase(it);
+            else ++it;
+        }
+        for (const auto& device : gDisplayedDevices) {
+            bool liveWifi = !device.ip.empty() && device.wifiAllowed
+                && now - device.lastSeen <= std::chrono::seconds(35);
+            if (!liveWifi || device.appVersion.empty()
+                    || !SupportsMobileUpdate(device)) continue;
+            auto installedVersion = VersionNumbers(WideToUtf8(device.appVersion));
+            if (installedVersion.empty()) continue;
+            if (CompareVersions(installedVersion, candidateVersion) >= 0) {
+                gAutoMobileUpdateLastSentVersion.erase(device.id);
+                continue;
+            }
+            auto lastSent = gAutoMobileUpdateLastSentVersion.find(device.id);
+            if (lastSent != gAutoMobileUpdateLastSentVersion.end()
+                    && lastSent->second == artifact->version) continue;
+            if (gContentStore
+                    && gContentStore->GetSetting(MobileUpdateSentSettingKey(device.id))
+                        == artifact->version) continue;
+            auto cooldown = gAutoMobileUpdateCooldown.find(device.id);
+            if (cooldown != gAutoMobileUpdateCooldown.end()
+                    && now - cooldown->second < std::chrono::minutes(10)) continue;
+            selected = device;
+            gAutoMobileUpdateCooldown[device.id] = now;
+            gAutoMobileUpdateLastSentVersion[device.id] = artifact->version;
+            if (gContentStore) {
+                // Mark before starting the transfer: the fallback is at-most-once
+                // for a device/version, even if the desktop process is restarted
+                // after the APK has already reached the phone but before install.
+                gContentStore->SetSetting(MobileUpdateSentSettingKey(device.id), artifact->version);
+            }
+            break;
+        }
+    }
+    if (selected.id.empty()) return;
+
+    gAutoMobileUpdateInProgress = true;
+    WriteDiagnosticLog(L"auto_mobile_update_triggered",
+        DisplayNameFor(selected) + L" " + selected.appVersion + L" -> " + artifact->version);
+    PostStatus(L"发现“" + DisplayNameFor(selected) + L"”可更新：手机端 v"
+               + selected.appVersion + L" → v" + artifact->version + L"，正在发送更新包…");
+    std::thread([selected, artifact = *artifact] {
+        UploadToDevice(selected, {artifact.path}, L"", false, false);
+        WriteDiagnosticLog(L"auto_mobile_update_transfer_finished",
+            DisplayNameFor(selected) + L" target=v" + artifact.version);
+        gAutoMobileUpdateInProgress = false;
+    }).detach();
+}
+
 void RefreshDeviceList() {
     auto now = std::chrono::steady_clock::now();
     std::vector<Device> fresh;
@@ -2110,6 +2532,7 @@ void RefreshDeviceList() {
     if (!gUploadInProgress) SetWindowTextW(gStatus, summary.c_str());
     SyncSendToMenu(gDisplayedDevices, now);
     ProcessPendingShellSend();
+    MaybeAutoMobileUpdate();
     MaybeAutoRestock();
 }
 
@@ -2317,9 +2740,15 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     device.name = Utf8ToWide(JsonValue(body, "name"));
     device.model = Utf8ToWide(JsonValue(body, "model"));
     device.state = Utf8ToWide(JsonValue(body, "state"));
+    device.appVersion = Utf8ToWide(JsonValue(body, "appVersion"));
+    device.appVersionCode = std::max<long long>(-1, JsonNumber(body, "versionCode", -1));
+    device.updateCapability = Utf8ToWide(JsonValue(body, "updateCapability"));
     device.ip = host;
     device.port = static_cast<INTERNET_PORT>(std::clamp(JsonNumber(body, "port", 45833), 1, 65535));
     device.workCount = std::max(-1, JsonNumber(body, "workCount", -1));
+    device.conversionCount = std::max(-1, JsonNestedNumber(body, "workCounts", "conversion", -1));
+    device.trafficCount = std::max(-1, JsonNestedNumber(body, "workCounts", "traffic", -1));
+    device.uncategorizedCount = std::max(-1, JsonNestedNumber(body, "workCounts", "uncategorized", -1));
     device.lastSeen = std::chrono::steady_clock::now();
     if (device.id.empty() || device.name.empty()) return std::nullopt;
     return device;
@@ -2451,6 +2880,12 @@ void DiscoveryLoop() {
                         try { device.workCount = std::max(-1, std::stoi(parts[8])); }
                         catch (...) { device.workCount = -1; }
                     }
+                    if (parts.size() >= 10) device.appVersion = Utf8ToWide(Base64UrlDecode(parts[9]));
+                    if (parts.size() >= 11) {
+                        try { device.appVersionCode = std::max<long long>(-1, std::stoll(parts[10])); }
+                        catch (...) { device.appVersionCode = -1; }
+                    }
+                    if (parts.size() >= 12) device.updateCapability = Utf8ToWide(Base64UrlDecode(parts[11]));
                     device.ip = Utf8ToWide(ip);
                     bool newlyRegistered = false;
                     ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
@@ -2552,6 +2987,11 @@ void DrawDeviceItem(const DRAWITEMSTRUCT* item) {
 
     SetTextColor(dc, theme.subText);
     std::wstring sub = hasRemark ? (device.name + L"  ·  " + device.model) : device.model;
+    if (!device.appVersion.empty()) sub += L"  ·  手机端 v" + device.appVersion;
+    if (device.conversionCount >= 0 || device.trafficCount >= 0) {
+        sub += L"  ·  精准 " + (device.conversionCount >= 0 ? std::to_wstring(device.conversionCount) : L"未知")
+            + L" / 泛 " + (device.trafficCount >= 0 ? std::to_wstring(device.trafficCount) : L"未知");
+    }
     if (device.state == L"usb_pending" && !device.usbPeer.hint.empty()) {
         sub = device.usbPeer.hint;
     } else if (!device.usbPeer.id.empty() && !device.usbReady) {
@@ -3102,7 +3542,7 @@ int AutoRestockThreshold() {
 
 void MaybeAutoRestock() {
     if (!gContentStore || gContentStore->GetSetting(L"auto_restock_enabled") != L"1"
-            || gUploadInProgress || gArchiveInProgress) return;
+            || gUploadInProgress || gArchiveInProgress || gAutoMobileUpdateInProgress) return;
     auto source = PickAutoRestockSource();
     if (!source) return;
     const auto now = std::chrono::steady_clock::now();
@@ -3160,6 +3600,14 @@ void SendUpdatePackage() {
         MessageBoxW(gWindow, L"请选择 APK、EXE 或 ZIP 更新包。", L"发送更新包", MB_OK | MB_ICONWARNING);
         return;
     }
+    if (extension == L".apk") {
+        if (auto cached = CacheMobileUpdatePackage(files.front()); cached.has_value()) {
+            PostStatus(L"已把手机端 v" + cached->version + L" 保存到电脑更新缓存；本次继续发送到选中设备。" );
+        } else {
+            WriteDiagnosticLog(L"mobile_update_cache_skipped",
+                L"APK 文件名未包含可识别版本号：" + files.front().filename().wstring());
+        }
+    }
     if (devices.size() > 1 && MessageBoxW(
             gWindow, (L"将更新包发送到 " + std::to_wstring(devices.size())
                       + L" 台设备，是否继续？").c_str(), L"发送更新包",
@@ -3211,6 +3659,8 @@ void RefreshSettingsWindow() {
                    archive.empty() ? L"尚未设置" : archive.c_str());
     SendMessageW(gSettingsAutoUpdateCheck, BM_SETCHECK,
                  IsAutoUpdateEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(gSettingsMobileAutoUpdateCheck, BM_SETCHECK,
+                 IsMobileAutoUpdateEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     bool restock = gContentStore && gContentStore->GetSetting(L"auto_restock_enabled") == L"1";
     SendMessageW(gSettingsAutoRestockCheck, BM_SETCHECK, restock ? BST_CHECKED : BST_UNCHECKED, 0);
     SetWindowTextW(gSettingsThresholdEdit, std::to_wstring(AutoRestockThreshold()).c_str());
@@ -3270,6 +3720,11 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTO_UPDATE)), nullptr, nullptr);
             SendMessageW(gSettingsAutoUpdateCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsText(window, (L"当前版本：V" + std::wstring(APP_VERSION)).c_str(), 40, 302, 180, 24);
+            gSettingsMobileAutoUpdateCheck = CreateWindowW(
+                L"BUTTON", L"手机连接后自动推送电脑缓存的更新包",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 220, 302, 480, 24, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTO_MOBILE_UPDATE)), nullptr, nullptr);
+            SendMessageW(gSettingsMobileAutoUpdateCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsButton(window, L"立即检查更新", IDC_SETTINGS_CHECK_UPDATE, 374, 272, 150, 36);
             AddSettingsButton(window, L"发送更新包…", IDC_SETTINGS_SEND_UPDATE, 540, 272, 164, 36);
 
@@ -3321,6 +3776,13 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 bool enabled = SendMessageW(gSettingsAutoUpdateCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 gContentStore->SetSetting(L"auto_update_enabled", enabled ? L"1" : L"0");
                 PostStatus(enabled ? L"已开启自动检查 GitHub 更新。" : L"已关闭自动检查 GitHub 更新。");
+                return 0;
+            }
+            if (id == IDC_SETTINGS_AUTO_MOBILE_UPDATE && gContentStore) {
+                bool enabled = SendMessageW(gSettingsMobileAutoUpdateCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                gContentStore->SetSetting(L"auto_mobile_update_enabled", enabled ? L"1" : L"0");
+                PostStatus(enabled ? L"已开启手机连接后的自动更新包推送。"
+                                   : L"已关闭手机连接后的自动更新包推送。");
                 return 0;
             }
             if (id == IDC_SETTINGS_CHECK_UPDATE) { CheckForUpdates(true); return 0; }
@@ -3410,6 +3872,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             gSettingsOriginalPath = nullptr;
             gSettingsArchivePath = nullptr;
             gSettingsAutoUpdateCheck = nullptr;
+            gSettingsMobileAutoUpdateCheck = nullptr;
             gSettingsAutoRestockCheck = nullptr;
             gSettingsThresholdEdit = nullptr;
             gSettingsAutoStartCheck = nullptr;

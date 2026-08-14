@@ -80,6 +80,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 
 public final class OnlineService extends Service {
+    /** Optional discovery capability: the PC may send a signed APK over LAN V2. */
+    public static final String UPDATE_CAPABILITY = "apk-push-v1";
     public static final String ACTION_START = "com.zwm.gallery.START";
     public static final String ACTION_STOP = "com.zwm.gallery.STOP";
     public static final String ACTION_TASK_READY = "com.zwm.gallery.TASK_READY";
@@ -90,6 +92,8 @@ public final class OnlineService extends Service {
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
     public static final String ACTION_CLIPBOARD_CHANGED = "com.zwm.gallery.CLIPBOARD_CHANGED";
     public static final String ACTION_REFRESH_OVERLAY = "com.zwm.gallery.REFRESH_OVERLAY";
+    /** Ask the running receiver to publish its current inventory immediately. */
+    public static final String ACTION_REFRESH_STATUS = "com.zwm.gallery.REFRESH_STATUS";
     public static final String ACTION_REFRESH_SCREENSHOTS = "com.zwm.gallery.REFRESH_SCREENSHOTS";
 
     private static final String TAG = "DeviceShareService";
@@ -125,6 +129,7 @@ public final class OnlineService extends Service {
     private volatile String currentTaskId = "";
     private volatile ServerSocket serverSocket;
     private volatile DatagramSocket discoverySocket;
+    private volatile boolean beaconRequested;
     private boolean discoveryRecovering;
     private WindowManager overlayManager;
     private Button clipboardOverlay;
@@ -166,6 +171,27 @@ public final class OnlineService extends Service {
                 .putInt(PREF_WORK_COUNT_TRAFFIC, counts.traffic)
                 .putInt(PREF_WORK_COUNT_UNCATEGORIZED, counts.uncategorized)
                 .apply();
+        // The normal 2.5s beacon and the Windows polling loop remain as fallbacks.
+        // This makes a manual/app-triggered refresh visible to the PC immediately.
+        requestImmediateBeacon(context);
+    }
+
+    public static void requestImmediateBeacon(Context context) {
+        if (context == null) return;
+        Intent intent = new Intent(context, OnlineService.class)
+                .setAction(ACTION_REFRESH_STATUS);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (IllegalStateException | SecurityException error) {
+            // A background refresh may be restricted by the OS. The running service's
+            // regular beacon is still authoritative, so this is deliberately best effort.
+            DiagnosticLog.write(context, "status_beacon_request_deferred",
+                    error.getClass().getSimpleName());
+        }
     }
 
     @Override
@@ -214,6 +240,8 @@ public final class OnlineService extends Service {
         if (ACTION_REFRESH_OVERLAY.equals(action)) {
             refreshClipboardOverlay();
             refreshClipboardPanelContents();
+        } else if (ACTION_REFRESH_STATUS.equals(action)) {
+            beaconRequested = true;
         } else if (ACTION_REFRESH_SCREENSHOTS.equals(action)) {
             startScreenshotObserverIfAllowed();
         } else {
@@ -653,6 +681,8 @@ public final class OnlineService extends Service {
                 .put("model", Build.MANUFACTURER + " " + Build.MODEL)
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("appVersion", installedVersion())
+                .put("versionCode", installedVersionCode())
+                .put("updateCapability", UPDATE_CAPABILITY)
                 .put("relayVersion", 1)
                 .put("relayEnabled", true)
                 .put("screenshotReceiveEnabled",
@@ -797,6 +827,16 @@ public final class OnlineService extends Service {
         }
     }
 
+    private long installedVersionCode() {
+        try {
+            android.content.pm.PackageInfo info =
+                    getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+        } catch (Exception ignored) {
+            return -1L;
+        }
+    }
+
     private void discoveryLoop() {
         DiscoveryRecovery.run(
                 () -> running,
@@ -891,7 +931,8 @@ public final class OnlineService extends Service {
             byte[] buffer = new byte[2048];
             while (running) {
                 long now = System.currentTimeMillis();
-                if (now >= nextBeacon) {
+                if (beaconRequested || now >= nextBeacon) {
+                    beaconRequested = false;
                     sendBeacon(socket, null);
                     nextBeacon = now + 2500;
                 }
@@ -1741,7 +1782,10 @@ public final class OnlineService extends Service {
         String beacon = "ZWMDS2_HERE|2|" + info.getString("deviceId") + "|" + HTTP_PORT + "|"
                 + b64(info.getString("name")) + "|" + b64(info.getString("model")) + "|"
                 + b64(info.getString("state")) + "|" + info.optString("taskId", "") + "|"
-                + info.optInt("workCount", -1);
+                + info.optInt("workCount", -1) + "|"
+                + b64(info.optString("appVersion", "")) + "|"
+                + info.optLong("versionCode", -1L) + "|"
+                + b64(info.optString("updateCapability", ""));
         byte[] bytes = beacon.getBytes(StandardCharsets.UTF_8);
         if (directTarget != null) {
             socket.send(new DatagramPacket(bytes, bytes.length, directTarget));

@@ -126,7 +126,24 @@ final class UpdateChecker {
     }
 
     private static JSONObject fetchManifest() throws Exception {
-        HttpURLConnection connection = open(UpdateEndpoint.RELEASE_API);
+        try {
+            JSONObject manifest = fetchJson(UpdateEndpoint.RELEASE_MANIFEST);
+            if (!manifest.optString("apk_url", "").isEmpty()) return manifest;
+            throw new IllegalStateException("公开更新索引缺少 APK 地址");
+        } catch (Exception manifestError) {
+            // Keep the GitHub Release API as a compatibility fallback for an
+            // older or temporarily unavailable latest.json.
+            try {
+                return normalizeGitHubRelease(fetchJson(UpdateEndpoint.RELEASE_API));
+            } catch (Exception fallbackError) {
+                fallbackError.addSuppressed(manifestError);
+                throw fallbackError;
+            }
+        }
+    }
+
+    private static JSONObject fetchJson(String endpoint) throws Exception {
+        HttpURLConnection connection = open(endpoint);
         connection.setConnectTimeout(8000); connection.setReadTimeout(8000);
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("User-Agent", "zwm-gallery-android");
@@ -139,9 +156,7 @@ final class UpdateChecker {
             String line; while ((line = reader.readLine()) != null && body.length() < 1024 * 1024)
                 body.append(line);
         } finally { connection.disconnect(); }
-        JSONObject value = new JSONObject(body.toString());
-        if (!value.optString("apk_url", "").isEmpty()) return value;
-        return normalizeGitHubRelease(value);
+        return new JSONObject(body.toString());
     }
 
     private static JSONObject normalizeGitHubRelease(JSONObject release) throws Exception {

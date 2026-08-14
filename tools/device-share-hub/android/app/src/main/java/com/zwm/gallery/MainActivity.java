@@ -1203,8 +1203,34 @@ public final class MainActivity extends Activity {
         super.onResume();
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
-        startService(new Intent(this, OnlineService.class)
-                .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
+        refreshOnlineOverlaySafely();
+        // Let the PC refresh version and inventory information as soon as the app
+        // becomes visible; the receiver's regular beacon remains the fallback.
+        OnlineService.requestImmediateBeacon(this);
+    }
+
+    /**
+     * Android 10 can reject a plain background startService call during the
+     * resume transition.  The old implementation let that exception escape
+     * from onResume, which made a valid update package look like an install or
+     * parse failure because the app crashed immediately after installation.
+     * OnlineService already promotes itself to a foreground service for every
+     * command, so use the foreground-start API on Android O+ and keep the UI
+     * recoverable if the OS still defers the request.
+     */
+    private void refreshOnlineOverlaySafely() {
+        Intent intent = new Intent(this, OnlineService.class)
+                .setAction(OnlineService.ACTION_REFRESH_OVERLAY);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+        } catch (IllegalStateException | SecurityException error) {
+            DiagnosticLog.write(this, "overlay_refresh_deferred",
+                    error.getClass().getSimpleName() + ":" + String.valueOf(error.getMessage()));
+        }
     }
 
     private String treeName(Uri tree) {

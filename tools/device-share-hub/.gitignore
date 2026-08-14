@@ -1,6 +1,7 @@
 android/.gradle/
 android/local.properties
 android/**/build/
+android/out/
 windows-native/build/
 windows-native/out/
 .local-test/

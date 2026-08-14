@@ -1,3 +1,27 @@
+## 2026-08-14 Windows 4.3.6 / Android 0.6.20 双通道更新候选
+
+- Android `versionCode=58` / `versionName=0.6.20` 在发现信标和 `/v2/info` 中上报 `appVersion`、`versionCode`、`workCount`、分类库存及 `apk-push-v1` 能力。
+- Windows 设备卡读取并显示手机版本、精准库存和泛库存；旧信标仍可发现，但不会被电脑盲目自动推送 APK。
+- Windows 从“设置 → 发送更新包”选择带版本号的 APK 后，保存到 `%LOCALAPPDATA%\\ZwmDeviceShareHub\\mobile-updates`；自动更新只使用其中版本最高的 APK。
+- 源码推送后由 GitHub Actions 云端构建；构建通过后发布版本化 APK、SHA-256 和 `latest.json`。Windows 不做定时轮询，只在低版本手机在线且本地没有候选包时按需取回已发布 APK。
+- 手机上线且版本较低时，电脑只通过 Wi-Fi LAN V2 发送一个独立 APK 任务；手机仍执行 SHA-256、包名、版本码和签名校验，并由用户确认系统安装。电脑不会静默安装、不会改变作品账本。
+- GitHub 是手机首选更新通道，电脑缓存推送是 GitHub 检查失败时的备用通道。当前代码已完成，仍需 Windows 编译、Android 单测/Release/Lint，并用 VIVO 真实验收“打开 → 上报 → 电脑触发 → 手机安装 → 重新上线”。
+
+# 2026-08-13 Android 0.6.19 即时库存信标候选
+
+- `versionCode=57` / `versionName=0.6.19` 已完成 Debug/Release 构建、单测和 Lint。Release APK 仍是本地候选，不代表已发布或已安装到 VIVO。
+- `OnlineService.publishWorkInventory()` 在作品库刷新后请求一次即时状态信标；发现线程仍保持 2.5 秒周期信标，电脑端轮询与分类库存未知保护不变。这样手机刷新库存后无需等待下一轮广播。
+- 当前现场证据：VIVO 已在线但 `/v2/info` 仍返回 `workCounts=null`、`workCount=0`，因此工作台按规则记录 `inventory_unknown`，不会把总数当精准库存而误发。安装候选并重新打开接收端后，必须实读 `workCounts.conversion/traffic` 才能验收自动补货。
+- 验收顺序：先手动发送确认 VIVO 可达，再刷新手机作品库并确认分类库存，最后在低于阈值时观察自动补货；失败仍按 3 次暂停、重连再试。
+
+# 2026-08-13 Android 0.6.18 旧版 Android 启动兼容候选
+
+- 实机根因：Redmi Note 8（Android 10 / API 29）安装 0.6.17 时 `pm install -r -d` 返回 `Success`，包名、最低 API、版本签名均兼容；但首次启动在 `MainActivity.onResume()` 通过普通 `startService(ACTION_REFRESH_OVERLAY)` 启动 `OnlineService`，被 Android 10 的后台服务限制拒绝，抛出 `IllegalStateException`，表现为“更新后打不开/像解析失败”。
+- 修复：`MainActivity` 的浮层刷新改为 Android O+ 使用 `startForegroundService`，并捕获系统拒绝/安全异常写入诊断日志，避免启动异常使主界面崩溃。`OnlineService.onStartCommand()` 已在处理命令前调用 `startForeground()`，无需改传输协议或数据目录。
+- 候选版本：Android `0.6.18` / versionCode `56`，包名仍为 `com.zwm.gallery`，minSdk `26`、targetSdk `36`，签名链未变。
+- 验证：Android 单元测试、Release 构建、Release Lint 全部通过；在真实 Redmi Note 8（serial `8d90da66`）覆盖安装成功，版本实读 `0.6.18/code 56`，启动后进程保持运行且无 `AndroidRuntime`/`FATAL EXCEPTION`，原有应用数据未清理。
+- 当前状态：0.6.18 目前是本地实机验证候选，尚未替换公开 `gallery-updates` Release；发布前需将 APK、SHA256SUMS 和 `latest.json` 一起更新，并再次验证应用内下载→校验→系统安装链。
+
 # 文件收发中控 V4.3.4 维护交接
 
 ## 2026-08-10 Android 0.6.17 分类库存候选

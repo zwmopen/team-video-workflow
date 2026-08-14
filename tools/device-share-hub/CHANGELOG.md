@@ -1,5 +1,27 @@
 # 变更记录
 
+## Windows V4.3.6 / Android 0.6.20 双通道更新候选 - 2026-08-14
+
+- 手机启动和刷新作品库后，通过在线信标与 `/v2/info` 上报版本、版本码、总作品数、分类库存和更新能力。
+- Windows 设备卡显示手机版本及精准/泛库存；版本信息缺失时不自动推送更新包。
+- Windows 发送带版本号的 APK 后自动保存本地缓存；手机上线且版本较低时，自动复用现有 LAN V2 更新包投送链。
+- 源码推送后由 GitHub Actions 云端构建并生成版本化 Android APK、SHA-256 和 `latest.json`；Windows 不再定时轮询公开索引。
+- 仅在发现低版本手机在线且本地没有候选包时，Windows 按需取回已发布包作为 LAN V2 备用通道，电脑和手机使用同一版本。
+- GitHub 仍是手机的首选更新通道，电脑局域网推送是 GitHub 不可用时的备用通道；手机端校验和用户确认安装边界不变。
+- 本轮仍是源码候选，未宣称 Android 0.6.20 已发布或已完成 VIVO 真机升级验收。
+
+## Android 0.6.19 immediate inventory beacon candidate - 2026-08-13
+
+- After the phone refreshes its local library, the receiver requests one immediate status beacon; the regular beacon and Windows polling remain as fallbacks.
+- Category-inventory-unknown protection, approval, threshold, retry, and de-duplication rules are unchanged.
+- Source candidate only; not a public release. Complete Android tests, Release/Lint, and real-device verification before publishing.
+
+## Android 0.6.18 旧版 Android 启动兼容候选 - 2026-08-13
+
+- 修复 Android 10 在主界面恢复时拒绝普通后台 `startService`，导致 0.6.17 安装成功后立即崩溃、被误判为 APK 解析/安装失败的问题。
+- 浮层刷新在 Android O+ 改走 `startForegroundService`，并将系统拒绝记录到诊断日志；不改包名、签名、作品数据或传输协议。
+- 真实 Redmi Note 8（Android 10 / API 29）已覆盖安装并启动验证通过；0.6.18 尚未发布到公开更新通道。
+
 ## Windows V4.3.4 更新检测兜底 - 2026-08-08
 
 - 实机手动检查遇到 GitHub 公共 API 限流后，自动改用公开 Release 最新页跳转读取版本标签，不再直接报错结束。

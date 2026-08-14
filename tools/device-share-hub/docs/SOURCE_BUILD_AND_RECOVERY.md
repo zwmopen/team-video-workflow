@@ -14,20 +14,36 @@
 
 ## 云端构建
 
-构建账号按 `zwmopen` 主账号 → `rpgzwm` 第一备用 → `idmzwm-sys` 第二备用切换。主仓库是唯一源码真源；只有对应账号额度确实需要用于本次构建时，才把当次主仓库提交同步到备用私有仓库。备用仓库不承担日常镜像、额外备份或文档同步，不能单独开发或形成产品分叉；用户明确指定的其他用途除外。
+构建账号按 `zwmopen` 主账号 → `rpgzwm` 第一备用 → `idmzwm-sys` 第二备用切换。三套账号都只是构建额度和发布授权的备用，不形成三份源码真源；主仓库仍是 `zwmopen/team-video-workflow`。
 
-推送涉及 `tools/device-share-hub/**` 的提交后，GitHub Actions 自动执行：
+推送涉及 `tools/device-share-hub/**` 的提交后，GitHub Actions 自动执行。main 推送只有在 Windows、Android、iPhone 三个构建任务都成功后，才会进入 Android 公共发布任务：
 
 - Windows 11/10 x64：Visual Studio 2022 + CMake，生成原生便携 EXE；
 - Android：JDK 17 + Gradle 9.4.1 + Android SDK 36，运行单元测试、Lint 并生成 APK；
 - iPhone：macOS 15 + Xcode + XcodeGen，编译测试目标、真机 SDK 包并生成未预签名 IPA；
+- Android 额外生成版本化 APK、`SHA256SUMS.txt` 和 `android-release-metadata.json`；
+- 使用 `GALLERY_UPDATES_TOKEN` 更新 `zwmopen/gallery-updates` Release 和 `latest.json`；
 - 仓库质量与密钥扫描。
+
+因此“源码推送”和“安装包发布”是同一条流水线：源码提交进入 main，云端构建验证，验证成功后发布同一份 APK。没有版本号/版本码变化的源码提交不会凭空产生可升级版本；正式升级必须递增 Android `versionCode`。
 
 CI 生成的 IPA 不含 Apple ID、证书、设备 UDID 或密码，安装时由 Sideloadly/AltStore 使用用户自己的免费 Apple ID 重新签名。
 
 ## 本地构建入口
 
-当前 Windows 电脑已经具备 Java 22、Android SDK 36、build-tools 35/36、ADB、Gradle 9.4.1 和现有 Android 签名文件；Android 可直接本机构建，不需要再安装模拟器或重复下载 SDK。C 盘空间紧张时不安装完整 Visual Studio，Windows 与 iPhone 优先使用云端构建，临时工具链必须放在 D 盘并在验收后清理。
+本机使用统一预检脚本，不把“缓存目录里有旧产物”当成构建成功。当前电脑已确认有 Java 22 和 Gradle 9.4.1，但 Android SDK、CMake/MSVC 等条件可能缺失；缺失时脚本会明确停止，正式构建直接使用 GitHub Actions，不需要在本机补装完整工具链。
+
+```powershell
+cd D:\AICode\AI\repos\team-video-workflow
+powershell -ExecutionPolicy Bypass -File .\tools\device-share-hub\scripts\build-local.ps1
+```
+
+只检查单个平台：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\device-share-hub\scripts\build-local.ps1 -AndroidOnly
+powershell -ExecutionPolicy Bypass -File .\tools\device-share-hub\scripts\build-local.ps1 -WindowsOnly
+```
 
 ### Windows
 

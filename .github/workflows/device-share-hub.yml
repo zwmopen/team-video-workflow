@@ -81,7 +81,9 @@ jobs:
           "status=$status" >> $env:GITHUB_OUTPUT
           if ($status -eq 0) {
             New-Item -ItemType Directory -Force -Path tools/device-share-hub/windows-native/out | Out-Null
-            Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/文件收发中控-Windows-V4.3.4.exe"
+            $version = (Select-String -Path tools/device-share-hub/windows-native/src/main.cpp -Pattern 'APP_VERSION\[\]\s*=\s*L"([^"]+)"').Matches.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($version)) { throw "Windows APP_VERSION not found" }
+            Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/文件收发中控-Windows-V$version.exe"
             Copy-Item "tools/device-share-hub/README.md" "tools/device-share-hub/windows-native/out/使用说明.md"
           }
           exit 0
@@ -144,6 +146,28 @@ jobs:
               echo "Release APK must not be debuggable" >> /tmp/device-share-android-build.log
               build_status=1
             fi
+            if [ "$build_status" -eq 0 ]; then
+              metadata="app/build/outputs/apk/release/output-metadata.json"
+              version_name=$(jq -r '.elements[0].versionName' "$metadata")
+              version_code=$(jq -r '.elements[0].versionCode' "$metadata")
+              if [ -z "$version_name" ] || [ "$version_name" = "null" ] || [ -z "$version_code" ] || [ "$version_code" = "null" ]; then
+                echo "Android output metadata does not contain versionName/versionCode" >> /tmp/device-share-android-build.log
+                build_status=1
+              else
+                mkdir -p out
+                apk_name="album-Android-v${version_name}.apk"
+                cp "$apk" "out/$apk_name"
+                sha256=$(sha256sum "out/$apk_name" | awk '{print $1}')
+                printf '%s  %s\n' "$sha256" "$apk_name" > out/SHA256SUMS.txt
+                jq -n \
+                  --arg version_name "$version_name" \
+                  --argjson version_code "$version_code" \
+                  --arg file_name "$apk_name" \
+                  --arg sha256 "$sha256" \
+                  '{schema: 1, version_name: $version_name, version_code: $version_code, file_name: $file_name, sha256: $sha256}' \
+                  > out/android-release-metadata.json
+              fi
+            fi
           fi
           echo "status=$build_status" >> "$GITHUB_OUTPUT"
           tail -n 180 /tmp/device-share-android-build.log
@@ -159,7 +183,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: device-share-hub-android-release
-          path: tools/device-share-hub/android/app/build/outputs/apk/release/app-release.apk
+          path: tools/device-share-hub/android/out/
       - name: Fail when Android build failed
         if: steps.android_compile.outputs.status != '0'
         run: exit 1
@@ -264,3 +288,86 @@ jobs:
       - name: Fail when iOS build failed
         if: steps.ios_compile.outputs.status != '0'
         run: exit 1
+
+  publish-gallery-updates:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [windows-portable, android-build, ios-altstore-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Android release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: device-share-hub-android-release
+          path: release/android
+      - name: Download Windows portable bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: device-share-hub-windows-portable
+          path: release/windows
+      - name: Download iOS AltStore bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: album-ios-altstore-v0.6.8
+          path: release/ios
+      - name: Publish one verified Android version to gallery-updates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GALLERY_UPDATES_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Missing GALLERY_UPDATES_TOKEN. Add a repo-scoped token with write access to zwmopen/gallery-updates."
+            exit 1
+          fi
+
+          metadata="release/android/android-release-metadata.json"
+          apk_name=$(jq -r '.file_name' "$metadata")
+          version_name=$(jq -r '.version_name' "$metadata")
+          version_code=$(jq -r '.version_code' "$metadata")
+          sha256=$(jq -r '.sha256' "$metadata")
+          apk="release/android/$apk_name"
+          sums="release/android/SHA256SUMS.txt"
+          test -f "$apk"
+          test -f "$sums"
+          test "$(sha256sum "$apk" | awk '{print $1}')" = "$sha256"
+
+          repo="zwmopen/gallery-updates"
+          tag="v${version_name}"
+          apk_url="https://github.com/${repo}/releases/download/${tag}/${apk_name}"
+          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$repo" --title "Android ${version_name}" \
+              --notes "Published from zwmopen/team-video-workflow commit ${GITHUB_SHA}. Android versionCode=${version_code}."
+          fi
+          gh release upload "$tag" --repo "$repo" "$apk" "$sums" --clobber
+
+          current_json=$(curl --fail --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
+          updated_json=$(printf '%s' "$current_json" | jq \
+            --arg version_name "$version_name" \
+            --argjson version_code "$version_code" \
+            --arg sha256 "$sha256" \
+            --arg apk_url "$apk_url" \
+            --arg tag_name "$tag" \
+            --arg html_url "https://github.com/${repo}/releases/tag/${tag}" \
+            '.version_name=$version_name | .version_code=$version_code | .sha256=$sha256 | .apk_url=$apk_url | .tag_name=$tag_name | .html_url=$html_url')
+          content=$(printf '%s' "$updated_json" | base64 -w0)
+          latest_sha=$(gh api "repos/${repo}/contents/latest.json" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$latest_sha" ]; then
+            gh api --method PUT "repos/${repo}/contents/latest.json" \
+              --field message="release: publish Android ${version_name}" \
+              --field branch=main \
+              --field content="$content" \
+              --field sha="$latest_sha" >/dev/null
+          else
+            gh api --method PUT "repos/${repo}/contents/latest.json" \
+              --field message="release: publish Android ${version_name}" \
+              --field branch=main \
+              --field content="$content" >/dev/null
+          fi
+
+          published=$(curl --fail --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/${repo}/main/latest.json?run=${GITHUB_RUN_ID}")
+          test "$(printf '%s' "$published" | jq -r '.version_name')" = "$version_name"
+          test "$(printf '%s' "$published" | jq -r '.version_code')" = "$version_code"
+          test "$(printf '%s' "$published" | jq -r '.sha256')" = "$sha256"
+          echo "Published Android ${version_name} (versionCode ${version_code}) to ${repo}."
