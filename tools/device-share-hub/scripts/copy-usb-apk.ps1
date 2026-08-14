@@ -7,7 +7,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $packageName = 'com.zwm.gallery'
-$packageDisplayName = '相册'
 $cacheRoot = Join-Path $env:LOCALAPPDATA 'ZwmDeviceShareHub\mobile-updates'
 $projectApkRoot = 'D:\AICode\AI\repos\team-video-workflow\tools\device-share-hub\android\out'
 
@@ -97,6 +96,22 @@ function Get-InstalledVersion {
     }
 }
 
+function Get-RemoteSha256 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Adb,
+        [Parameter(Mandatory = $true)][string]$Serial,
+        [Parameter(Mandatory = $true)][string]$RemotePath
+    )
+
+    $lines = @(& $Adb -s $Serial shell sha256sum $RemotePath 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    foreach ($line in $lines) {
+        $match = [regex]::Match([string]$line, '(?i)\b[0-9a-f]{64}\b')
+        if ($match.Success) { return $match.Value.ToLowerInvariant() }
+    }
+    return $null
+}
+
 function Get-VersionValue {
     param([Parameter(Mandatory = $true)][string]$Value)
     try { return [version]$Value }
@@ -134,7 +149,7 @@ function Format-DeviceLabel {
     return "$model [$($Device.Serial)]"
 }
 
-Write-Host '相册 USB 一键安装' -ForegroundColor Cyan
+Write-Host '相册 USB 一键复制' -ForegroundColor Cyan
 Write-Host '正在寻找本地最新 APK…'
 
 $adb = Find-Adb
@@ -148,7 +163,7 @@ if (-not $apk) {
 }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $apk.Path).Hash.ToLowerInvariant()
-Write-Host "安装包：$($apk.Name)"
+Write-Host "本地文件：$($apk.Name)"
 Write-Host "版本：$($apk.VersionName)；大小：$([math]::Round($apk.Length / 1MB, 2)) MB"
 Write-Host "SHA-256：$hash"
 
@@ -168,18 +183,12 @@ if ($authorized.Count -eq 0) {
     Stop-WithMessage '没有已授权且在线的 USB 手机。请解锁手机并允许 USB 调试。'
 }
 
-$targetVersion = Get-VersionValue $apk.VersionName
 $checks = @()
 foreach ($device in $authorized) {
     $installed = Get-InstalledVersion -Adb $adb -Serial $device.Serial
-    $needsUpdate = -not $installed.Installed
-    if ($installed.Installed) {
-        $needsUpdate = (Get-VersionValue $installed.VersionName) -lt $targetVersion
-    }
     $checks += [pscustomobject]@{
         Device = $device
         Installed = $installed
-        NeedsUpdate = $needsUpdate
     }
 }
 
@@ -188,51 +197,78 @@ foreach ($check in $checks) {
     $installedText = if ($check.Installed.Installed) {
         "$($check.Installed.VersionName) / code $($check.Installed.VersionCode)"
     } else { '未安装相册' }
-    $actionText = if ($check.NeedsUpdate) { '需要安装' } else { '已是同版或更新版，跳过' }
-    Write-Host "  - $(Format-DeviceLabel $check.Device)：$installedText → $actionText"
-}
-
-$eligible = @($checks | Where-Object { $_.NeedsUpdate })
-if ($eligible.Count -eq 0) {
-    Write-Host '没有需要更新的 USB 手机，本次没有执行安装。' -ForegroundColor Green
-    exit 0
+    Write-Host "  - $(Format-DeviceLabel $check.Device)：$installedText"
 }
 
 $selected = $null
-if ($eligible.Count -eq 1) {
-    $selected = $eligible[0]
+if ($checks.Count -eq 1) {
+    $selected = $checks[0]
 } else {
-    Write-Host '有多台 USB 手机需要更新，请输入编号；不会默认群发。' -ForegroundColor Yellow
-    for ($index = 0; $index -lt $eligible.Count; $index++) {
-        Write-Host "  [$($index + 1)] $(Format-DeviceLabel $eligible[$index].Device)"
+    Write-Host '发现多台 USB 手机，请输入编号；不会默认群发。' -ForegroundColor Yellow
+    for ($index = 0; $index -lt $checks.Count; $index++) {
+        Write-Host "  [$($index + 1)] $(Format-DeviceLabel $checks[$index].Device)"
     }
     $choice = Read-Host '选择编号'
     $choiceNumber = 0
-    if ((-not [int]::TryParse($choice, [ref]$choiceNumber)) -or $choiceNumber -lt 1 -or $choiceNumber -gt $eligible.Count) {
-        Stop-WithMessage '编号无效，已取消安装。'
+    if ((-not [int]::TryParse($choice, [ref]$choiceNumber)) -or $choiceNumber -lt 1 -or $choiceNumber -gt $checks.Count) {
+        Stop-WithMessage '编号无效，已取消复制。'
     }
-    $selected = $eligible[$choiceNumber - 1]
+    $selected = $checks[$choiceNumber - 1]
 }
 
 Write-Host "目标：$(Format-DeviceLabel $selected.Device)"
+$remoteDirectory = '/sdcard/Download'
+$remoteName = "album-Android-v$($apk.VersionName).apk"
+$remotePath = "$remoteDirectory/$remoteName"
+$remoteTempPath = "$remotePath.incoming"
+Write-Host "手机目标：$remotePath"
 if ($CheckOnly) {
-    Write-Host '检查模式：未执行安装。' -ForegroundColor Yellow
+    Write-Host '检查模式：未执行复制。' -ForegroundColor Yellow
     exit 0
 }
 
-Write-Host '正在通过 USB 安装，手机屏幕保持解锁…'
-$installOutput = @(& $adb -s $selected.Device.Serial install -r $apk.Path 2>&1)
-$installExitCode = $LASTEXITCODE
-foreach ($line in $installOutput) { Write-Host ([string]$line) }
-if ($installExitCode -ne 0) {
-    Stop-WithMessage 'ADB 安装失败。常见原因是手机未授权、签名不一致，或手机上的应用版本更高。'
+Write-Host '正在准备手机 Download 文件夹…'
+& $adb -s $selected.Device.Serial shell mkdir -p $remoteDirectory *> $null
+if ($LASTEXITCODE -ne 0) {
+    Stop-WithMessage '无法访问手机的 Download 文件夹。请确认手机已解锁并允许 USB 调试。'
 }
 
-$after = Get-InstalledVersion -Adb $adb -Serial $selected.Device.Serial
-if (-not $after.Installed -or (Get-VersionValue $after.VersionName) -lt $targetVersion) {
-    Stop-WithMessage 'ADB 返回安装成功，但重新读取手机版本未达到目标；已停止，不重复重试。'
+$remoteHash = Get-RemoteSha256 -Adb $adb -Serial $selected.Device.Serial -RemotePath $remotePath
+if ($remoteHash -eq $hash) {
+    Write-Host '手机已有相同文件，跳过复制，避免重复传输。' -ForegroundColor Green
+    Write-Host "文件位置：$remotePath"
+    Write-Host '未安装应用，未修改应用版本和数据。'
+    exit 0
 }
 
-Write-Host "安装完成：$($after.VersionName) / code $($after.VersionCode)" -ForegroundColor Green
-Write-Host '手机原有作品和应用数据未由脚本清除。'
+Write-Host '正在复制到手机 Download 文件夹…'
+& $adb -s $selected.Device.Serial shell rm -f $remoteTempPath *> $null
+$pushOutput = @(& $adb -s $selected.Device.Serial push $apk.Path $remoteTempPath 2>&1)
+$pushExitCode = $LASTEXITCODE
+foreach ($line in $pushOutput) { Write-Host ([string]$line) }
+if ($pushExitCode -ne 0) {
+    Stop-WithMessage '复制失败。临时文件不会被当作完整安装包使用。'
+}
+
+$tempHash = Get-RemoteSha256 -Adb $adb -Serial $selected.Device.Serial -RemotePath $remoteTempPath
+if ($tempHash -ne $hash) {
+    & $adb -s $selected.Device.Serial shell rm -f $remoteTempPath *> $null
+    Stop-WithMessage '复制后校验失败，已删除手机上的临时文件，没有留下不完整文件。'
+}
+
+& $adb -s $selected.Device.Serial shell mv -f $remoteTempPath $remotePath *> $null
+if ($LASTEXITCODE -ne 0) {
+    & $adb -s $selected.Device.Serial shell rm -f $remoteTempPath *> $null
+    Stop-WithMessage '复制完成但改名失败，已清理临时文件。'
+}
+
+$finalHash = Get-RemoteSha256 -Adb $adb -Serial $selected.Device.Serial -RemotePath $remotePath
+if ($finalHash -ne $hash) {
+    Stop-WithMessage '手机最终文件校验失败；没有继续重试，请先检查数据线和手机存储。'
+}
+
+Write-Host "复制完成：$remotePath" -ForegroundColor Green
+Write-Host "本机 SHA-256：$hash"
+Write-Host "手机 SHA-256：$finalHash"
+Write-Host '未安装应用，未修改应用版本和数据。'
 
