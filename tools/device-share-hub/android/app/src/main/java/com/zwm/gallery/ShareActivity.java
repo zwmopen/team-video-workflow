@@ -30,6 +30,7 @@ import java.util.concurrent.Executors;
 public final class ShareActivity extends Activity {
     public static final String EXTRA_WORK_ID = "workId";
     public static final String EXTRA_IMAGE_NAMES = "imageNames";
+    public static final String EXTRA_PLATFORM = "platform";
     private static final int REQUEST_SHARE = 501;
     private static final String ACTION_TARGET_CHOSEN = "com.zwm.gallery.SHARE_TARGET_CHOSEN";
     private static final long CHOSEN_CALLBACK_GRACE_MS = 1_200L;
@@ -39,6 +40,7 @@ public final class ShareActivity extends Activity {
 
     private WorkLibrary library;
     private String workId;
+    private String platform;
     private boolean launched;
     private boolean waitingForDeferredTarget;
     private boolean shareFlowFinished;
@@ -68,6 +70,8 @@ public final class ShareActivity extends Activity {
         try {
             workId = getIntent().getStringExtra(EXTRA_WORK_ID);
             if (workId == null || workId.isEmpty()) throw new IllegalStateException("没有指定作品");
+            platform = getIntent().getStringExtra(EXTRA_PLATFORM);
+            if (platform == null || platform.isEmpty()) platform = "legacy";
             library = new WorkLibrary(new java.io.File(getFilesDir(), "work-library"));
             IntentFilter chosenFilter = new IntentFilter(ACTION_TARGET_CHOSEN);
             if (Build.VERSION.SDK_INT >= 33) {
@@ -78,12 +82,6 @@ public final class ShareActivity extends Activity {
             chosenReceiverRegistered = true;
             WorkLibrary.WorkEntry work = library.getActive(workId);
             if (work == null) throw new IllegalStateException("作品不存在或已进入回收站");
-            if (savedInstanceState == null) {
-                work = library.markShareAttempt(workId, System.currentTimeMillis());
-                DiagnosticLog.write(this, "share_tap_recorded",
-                        workId + " count=" + work.shareCount);
-                sendBroadcast(new Intent(OnlineService.ACTION_TASK_READY).setPackage(getPackageName()));
-            }
             DiagnosticLog.write(this, "share_activity_open", workId);
             setContentView(ScreenInsets.protect(preparingView()));
             prepareShare(work);
@@ -99,13 +97,21 @@ public final class ShareActivity extends Activity {
         launched = true;
         worker.execute(() -> {
             try {
+                PlatformCopyParser.Platform selectedPlatform = platformFor(platform);
+                PlatformCopyParser.Result parsed = PlatformCopyParser.parse(work.text, selectedPlatform);
+                if (parsed.status == PlatformCopyParser.Status.MISSING) {
+                    throw new IllegalStateException("当前作品未找到" + selectedPlatform.displayName + "文案");
+                }
+                if (parsed.status == PlatformCopyParser.Status.UNREADABLE) {
+                    throw new IllegalStateException("文案读取失败");
+                }
                 ArrayList<String> requested = getIntent().getStringArrayListExtra(EXTRA_IMAGE_NAMES);
                 GalleryShareBridge.PreparedShare prepared = requested == null || requested.isEmpty()
                         ? GalleryShareBridge.prepare(this, work)
                         : GalleryShareBridge.prepare(this, work, requested);
                 runOnUiThread(() -> {
                     try {
-                        launchShare(work, prepared);
+                        launchShare(work, prepared, parsed.text, selectedPlatform);
                     } catch (Exception error) {
                         DiagnosticLog.write(this, "share_launch_failed", error.getMessage());
                         Toast.makeText(this, "无法打开分享：" + error.getMessage(), Toast.LENGTH_LONG).show();
@@ -122,18 +128,19 @@ public final class ShareActivity extends Activity {
         });
     }
 
-    private void launchShare(WorkLibrary.WorkEntry work, GalleryShareBridge.PreparedShare prepared) {
+    private void launchShare(WorkLibrary.WorkEntry work, GalleryShareBridge.PreparedShare prepared,
+                             String copyText, PlatformCopyParser.Platform selectedPlatform) throws Exception {
         ArrayList<Uri> uris = prepared.uris;
         if (uris.isEmpty()) throw new IllegalStateException("作品中没有图片");
 
         ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-        clipboard.setPrimaryClip(ClipData.newPlainText("作品文案", work.text));
+        clipboard.setPrimaryClip(ClipData.newPlainText("作品文案", copyText));
         Toast.makeText(this, "文案复制成功", Toast.LENGTH_SHORT).show();
 
         Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
         send.setType("image/*");
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        if (!work.text.trim().isEmpty()) send.putExtra(Intent.EXTRA_TEXT, work.text);
+        if (!copyText.trim().isEmpty()) send.putExtra(Intent.EXTRA_TEXT, copyText);
         if (uris.size() == 1) send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
         else send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
         ClipData clipData = ClipData.newUri(getContentResolver(), "作品图片", uris.get(0));
@@ -156,6 +163,12 @@ public final class ShareActivity extends Activity {
 
         DiagnosticLog.write(this, "share_sheet_launch", workId + " images=" + uris.size()
                 + " strategy=" + prepared.strategy);
+        long deleteAfterMs = CleanupSettings.read(this).deleteAfterMs();
+        WorkLibrary.WorkEntry updated = library.markPlatformShareAttempt(
+                workId, platform, System.currentTimeMillis(), deleteAfterMs);
+        DiagnosticLog.write(this, "share_tap_recorded",
+                workId + " platform=" + platform + " count=" + updated.shareCount);
+        sendBroadcast(new Intent(OnlineService.ACTION_TASK_READY).setPackage(getPackageName()));
         if (!prepared.warning.isEmpty()) Toast.makeText(this, prepared.warning, Toast.LENGTH_LONG).show();
         startService(new Intent(this, OnlineService.class)
                 .setAction(OnlineService.ACTION_SHARE_OPENED)
@@ -170,6 +183,12 @@ public final class ShareActivity extends Activity {
         chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         chooser.setClipData(clipData);
         startActivityForResult(chooser, REQUEST_SHARE);
+    }
+
+    private static PlatformCopyParser.Platform platformFor(String value) {
+        return "douyin".equalsIgnoreCase(value)
+                ? PlatformCopyParser.Platform.DOUYIN
+                : PlatformCopyParser.Platform.XHS;
     }
 
     private LinearLayout preparingView() {

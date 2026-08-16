@@ -25,6 +25,7 @@ import java.util.Set;
 /** Persistent, app-private queue of works and its recoverable trash. */
 public final class WorkLibrary {
     private static final String META_FILE = "meta.properties";
+    private static final String HISTORY_DIR = "history";
     private static final String SOURCE_MISSING_SINCE = "sourceMissingSinceMs";
     private static final long SOURCE_MISSING_CONFIRM_MS = 2_000L;
     private static final Object MIGRATION_LOCK = new Object();
@@ -33,16 +34,19 @@ public final class WorkLibrary {
     private final File root;
     private final File activeRoot;
     private final File trashRoot;
+    private final File historyRoot;
     private final int reconciledDuplicates;
 
     public WorkLibrary(File root) throws IOException {
         this.root = root.getCanonicalFile();
         this.activeRoot = new File(this.root, "active").getCanonicalFile();
         this.trashRoot = new File(this.root, "trash").getCanonicalFile();
+        this.historyRoot = new File(this.root, HISTORY_DIR).getCanonicalFile();
         int merged;
         synchronized (MIGRATION_LOCK) {
             ensureDirectory(activeRoot);
             ensureDirectory(trashRoot);
+            ensureDirectory(historyRoot);
             merged = collapseLegacyDuplicates(activeRoot)
                     + collapseLegacyDuplicates(trashRoot)
                     + collapseDuplicatesAcrossActiveAndTrash()
@@ -124,6 +128,15 @@ public final class WorkLibrary {
             meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
             meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
             meta.setProperty("category", normalizeCategory(category));
+            Properties history = loadHistory(id);
+            copyIfPresent(meta, history, "used");
+            copyIfPresent(meta, history, "xhsShareCount");
+            copyIfPresent(meta, history, "douyinShareCount");
+            copyIfPresent(meta, history, "shareCount");
+            copyIfPresent(meta, history, "sharedDate");
+            copyIfPresent(meta, history, "firstSharedAtMs");
+            copyIfPresent(meta, history, "firstUsedAtMs");
+            copyIfPresent(meta, history, "deleteScheduledAtMs");
             meta.setProperty("contentSignature", signature(valueOrEmpty(text), contentHashes));
             meta.setProperty("image.count", Integer.toString(storedImages.size()));
             for (int index = 0; index < storedImages.size(); index++) {
@@ -238,6 +251,7 @@ public final class WorkLibrary {
         WorkEntry entry = requireEntry(activeRoot, id);
         Properties meta = loadMeta(entry.directory);
         meta.setProperty("sharedDate", sharedDate.toString());
+        meta.setProperty("used", "true");
         int count = parseCount(meta.getProperty("shareCount", "0"));
         meta.setProperty("shareCount", Integer.toString(count + 1));
         saveMeta(entry.directory, meta);
@@ -245,16 +259,39 @@ public final class WorkLibrary {
 
     /** Records the user's tap immediately. Chooser callbacks never control this counter. */
     public synchronized WorkEntry markShareAttempt(String id, long nowMs) throws IOException {
+        return markPlatformShareAttempt(id, "legacy", nowMs, 3_600_000L);
+    }
+
+    /** Records one platform button tap; the work lifecycle remains shared by both platforms. */
+    public synchronized WorkEntry markPlatformShareAttempt(
+            String id, String platform, long nowMs, long deleteAfterMs) throws IOException {
         WorkEntry entry = requireEntry(activeRoot, id);
         Properties meta = loadMeta(entry.directory);
         meta.setProperty("sharedDate", Instant.ofEpochMilli(nowMs).atZone(BEIJING).toLocalDate().toString());
+        meta.setProperty("used", "true");
         if (parseLong(meta.getProperty("firstSharedAtMs", "0")) <= 0) {
             meta.setProperty("firstSharedAtMs", Long.toString(nowMs));
         }
+        if (parseLong(meta.getProperty("firstUsedAtMs", "0")) <= 0) {
+            meta.setProperty("firstUsedAtMs", Long.toString(nowMs));
+        }
+        if (parseLong(meta.getProperty("deleteScheduledAtMs", "0")) <= 0
+                && deleteAfterMs >= 0) {
+            meta.setProperty("deleteScheduledAtMs", Long.toString(nowMs + deleteAfterMs));
+        }
         int count = parseCount(meta.getProperty("shareCount", "0"));
         meta.setProperty("shareCount", Integer.toString(count + 1));
+        if ("xhs".equals(platform)) {
+            int xhs = parseCount(meta.getProperty("xhsShareCount", "0"));
+            meta.setProperty("xhsShareCount", Integer.toString(xhs + 1));
+        } else if ("douyin".equals(platform)) {
+            int douyin = parseCount(meta.getProperty("douyinShareCount", "0"));
+            meta.setProperty("douyinShareCount", Integer.toString(douyin + 1));
+        }
         saveMeta(entry.directory, meta);
-        return readEntry(entry.directory);
+        WorkEntry updated = readEntry(entry.directory);
+        saveHistory(updated);
+        return updated;
     }
 
     /**
@@ -339,6 +376,7 @@ public final class WorkLibrary {
         for (WorkEntry entry : list(trashRoot)) {
             if (RetentionPolicy.shouldPurge(entry.trashedDate, today)
                     && entry.sourceDocumentId.isEmpty() && entry.sourceRelativePath.isEmpty()) {
+                saveHistory(entry);
                 deleteTree(entry.directory);
             }
         }
@@ -444,12 +482,29 @@ public final class WorkLibrary {
 
     public synchronized void deleteTrash(String id) throws IOException {
         WorkEntry entry = requireEntry(trashRoot, id);
+        saveHistory(entry);
         deleteTree(entry.directory);
     }
 
     public synchronized void deleteActive(String id) throws IOException {
         WorkEntry entry = requireEntry(activeRoot, id);
+        if (entry.used) saveHistory(entry);
         deleteTree(entry.directory);
+    }
+
+    /** Returns retained metadata after the local work files have been purged. */
+    public synchronized HistoryEntry getHistory(String id) throws IOException {
+        validateId(id);
+        Properties history = loadHistory(id);
+        if (history.isEmpty()) return null;
+        return new HistoryEntry(id,
+                Boolean.parseBoolean(history.getProperty("used", "false")),
+                parseCount(history.getProperty("shareCount", "0")),
+                parseCount(history.getProperty("xhsShareCount", "0")),
+                parseCount(history.getProperty("douyinShareCount", "0")),
+                parseLong(history.getProperty("firstUsedAtMs",
+                        history.getProperty("firstSharedAtMs", "0"))),
+                parseLong(history.getProperty("deleteScheduledAtMs", "0")));
     }
 
     /**
@@ -683,12 +738,22 @@ public final class WorkLibrary {
         Properties meta = loadMeta(retained.directory);
         int combinedCount = Math.min(10000, retained.shareCount + duplicate.shareCount);
         meta.setProperty("shareCount", Integer.toString(combinedCount));
+        meta.setProperty("xhsShareCount", Integer.toString(Math.min(10000,
+                retained.xhsShareCount + duplicate.xhsShareCount)));
+        meta.setProperty("douyinShareCount", Integer.toString(Math.min(10000,
+                retained.douyinShareCount + duplicate.douyinShareCount)));
+        meta.setProperty("used", Boolean.toString(retained.used || duplicate.used));
         LocalDate shared = later(retained.sharedDate, duplicate.sharedDate);
         if (shared != null) meta.setProperty("sharedDate", shared.toString());
         LocalDate trashed = later(retained.trashedDate, duplicate.trashedDate);
         if (trashed != null) meta.setProperty("trashedDate", trashed.toString());
         long firstShared = earlierPositive(retained.firstSharedAtMs, duplicate.firstSharedAtMs);
         if (firstShared > 0) meta.setProperty("firstSharedAtMs", Long.toString(firstShared));
+        long firstUsed = earlierPositive(retained.firstUsedAtMs, duplicate.firstUsedAtMs);
+        if (firstUsed > 0) meta.setProperty("firstUsedAtMs", Long.toString(firstUsed));
+        long deleteScheduled = earlierPositive(retained.deleteScheduledAtMs,
+                duplicate.deleteScheduledAtMs);
+        if (deleteScheduled > 0) meta.setProperty("deleteScheduledAtMs", Long.toString(deleteScheduled));
         long trashedAt = later(retained.trashedAtMs, duplicate.trashedAtMs);
         if (trashedAt > 0) meta.setProperty("trashedAtMs", Long.toString(trashedAt));
         if (meta.getProperty("sourceRelativePath", "").isEmpty()) {
@@ -704,6 +769,12 @@ public final class WorkLibrary {
     private static void copyIfEmpty(Properties target, String key, String value) {
         if (target.getProperty(key, "").isEmpty() && value != null && !value.isEmpty()) {
             target.setProperty(key, value);
+        }
+    }
+
+    private static void copyIfPresent(Properties target, Properties source, String key) {
+        if (source != null && source.containsKey(key)) {
+            target.setProperty(key, source.getProperty(key, ""));
         }
     }
 
@@ -804,7 +875,14 @@ public final class WorkLibrary {
                 parseDate(meta.getProperty("sharedDate")),
                 parseDate(meta.getProperty("trashedDate")),
                 parseCount(meta.getProperty("shareCount", "0")),
+                parseCount(meta.getProperty("xhsShareCount", "0")),
+                parseCount(meta.getProperty("douyinShareCount", "0")),
+                Boolean.parseBoolean(meta.getProperty("used", "false"))
+                        || parseCount(meta.getProperty("shareCount", "0")) > 0,
                 parseLong(meta.getProperty("firstSharedAtMs", "0")),
+                parseLong(meta.getProperty("firstUsedAtMs",
+                        meta.getProperty("firstSharedAtMs", "0"))),
+                parseLong(meta.getProperty("deleteScheduledAtMs", "0")),
                 parseLong(meta.getProperty("trashedAtMs", "0")),
                 meta.getProperty("sourceDocumentId", ""),
                 meta.getProperty("sourceParentDocumentId", ""),
@@ -822,6 +900,33 @@ public final class WorkLibrary {
             meta.load(input);
         }
         return meta;
+    }
+
+    private Properties loadHistory(String id) throws IOException {
+        validateId(id);
+        File file = child(historyRoot, id + ".properties");
+        if (!file.isFile()) return new Properties();
+        Properties history = new Properties();
+        try (InputStream input = new FileInputStream(file)) { history.load(input); }
+        return history;
+    }
+
+    private void saveHistory(WorkEntry entry) throws IOException {
+        if (!entry.used && entry.shareCount <= 0) return;
+        Properties history = new Properties();
+        history.setProperty("used", Boolean.toString(entry.used));
+        history.setProperty("shareCount", Integer.toString(entry.shareCount));
+        history.setProperty("xhsShareCount", Integer.toString(entry.xhsShareCount));
+        history.setProperty("douyinShareCount", Integer.toString(entry.douyinShareCount));
+        history.setProperty("firstSharedAtMs", Long.toString(entry.firstSharedAtMs));
+        history.setProperty("firstUsedAtMs", Long.toString(entry.firstUsedAtMs));
+        history.setProperty("deleteScheduledAtMs", Long.toString(entry.deleteScheduledAtMs));
+        File next = child(historyRoot, entry.id + ".properties.next");
+        try (OutputStream output = new FileOutputStream(next)) {
+            history.store(output, "retained album work history");
+        }
+        Files.move(next.toPath(), child(historyRoot, entry.id + ".properties").toPath(),
+                StandardCopyOption.REPLACE_EXISTING);
     }
 
     private static void saveMeta(File directory, Properties meta) throws IOException {
@@ -931,7 +1036,12 @@ public final class WorkLibrary {
         public final LocalDate sharedDate;
         public final LocalDate trashedDate;
         public final int shareCount;
+        public final int xhsShareCount;
+        public final int douyinShareCount;
+        public final boolean used;
         public final long firstSharedAtMs;
+        public final long firstUsedAtMs;
+        public final long deleteScheduledAtMs;
         public final long trashedAtMs;
         public final String sourceDocumentId;
         public final String sourceParentDocumentId;
@@ -943,7 +1053,9 @@ public final class WorkLibrary {
 
         private WorkEntry(String id, String name, String text, String warning,
                           List<String> images, LocalDate sharedDate, LocalDate trashedDate,
-                          int shareCount, long firstSharedAtMs, long trashedAtMs,
+                           int shareCount, int xhsShareCount, int douyinShareCount, boolean used,
+                           long firstSharedAtMs, long firstUsedAtMs, long deleteScheduledAtMs,
+                           long trashedAtMs,
                           String sourceDocumentId, String sourceParentDocumentId,
                           String sourceRelativePath, String trashDocumentId, String externalTrashName,
                           String category,
@@ -956,7 +1068,12 @@ public final class WorkLibrary {
             this.sharedDate = sharedDate;
             this.trashedDate = trashedDate;
             this.shareCount = shareCount;
+            this.xhsShareCount = xhsShareCount;
+            this.douyinShareCount = douyinShareCount;
+            this.used = used;
             this.firstSharedAtMs = firstSharedAtMs;
+            this.firstUsedAtMs = firstUsedAtMs;
+            this.deleteScheduledAtMs = deleteScheduledAtMs;
             this.trashedAtMs = trashedAtMs;
             this.sourceDocumentId = sourceDocumentId;
             this.sourceParentDocumentId = sourceParentDocumentId;
@@ -965,6 +1082,28 @@ public final class WorkLibrary {
             this.externalTrashName = externalTrashName;
             this.category = category;
             this.directory = directory;
+        }
+    }
+
+    public static final class HistoryEntry {
+        public final String id;
+        public final boolean used;
+        public final int shareCount;
+        public final int xhsShareCount;
+        public final int douyinShareCount;
+        public final long firstUsedAtMs;
+        public final long deleteScheduledAtMs;
+
+        private HistoryEntry(String id, boolean used, int shareCount,
+                             int xhsShareCount, int douyinShareCount,
+                             long firstUsedAtMs, long deleteScheduledAtMs) {
+            this.id = id;
+            this.used = used;
+            this.shareCount = shareCount;
+            this.xhsShareCount = xhsShareCount;
+            this.douyinShareCount = douyinShareCount;
+            this.firstUsedAtMs = firstUsedAtMs;
+            this.deleteScheduledAtMs = deleteScheduledAtMs;
         }
     }
 }

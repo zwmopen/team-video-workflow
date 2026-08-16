@@ -172,7 +172,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         emptyStack.isHidden = hasFiltered || (!noFolder && library.scanSummary == nil)
         collectionView.isHidden = !hasFiltered
         if noFolder {
-            emptyDetail.text = "只需选择一次。点击作品后会复制 TXT 文案，并把全部图片交给系统分享。"
+            emptyDetail.text = "只需选择一次。点击作品卡片上的平台按钮，会复制对应文案并把全部图片交给系统分享。"
         } else if selectedCategory != WorkCategory.all && !library.works.isEmpty {
             emptyDetail.text = "当前分类没有作品。切回“全部”可查看所有内容。"
         } else {
@@ -206,7 +206,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
         let work = filteredWorks[indexPath.item]
         cell.configure(work)
-        cell.onShare = { [weak self, weak cell] in self?.share(work, source: cell) }
+        cell.onShare = { [weak self, weak cell] platform in self?.share(work, platform: platform, source: cell) }
         return cell
     }
 
@@ -215,9 +215,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
     }
 
-    private func share(_ work: WorkItem, source: UIView?) {
+    private func share(_ work: WorkItem, platform: CopyPlatform, source: UIView?) {
         do {
-            let controller = UIActivityViewController(activityItems: try library.prepareShare(work),
+            let controller = UIActivityViewController(activityItems: try library.prepareShare(
+                work, images: work.imageURLs, platform: platform),
                                                       applicationActivities: nil)
             controller.popoverPresentationController?.sourceView = source
             present(controller, animated: true)
@@ -383,8 +384,9 @@ private final class WorkCell: UICollectionViewCell {
     private let count = UILabel()
     private let name = UILabel()
     private let detail = UILabel()
-    private let shareButton = UIButton(type: .system)
-    var onShare: (() -> Void)?
+    private let xhsButton = UIButton(type: .system)
+    private let douyinButton = UIButton(type: .system)
+    var onShare: ((CopyPlatform) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -399,14 +401,13 @@ private final class WorkCell: UICollectionViewCell {
         detail.textColor = AppColors.secondaryText
         let top = UIStackView(arrangedSubviews: [icon, count])
         top.axis = .horizontal
-        shareButton.setTitle("复制并分享", for: .normal)
-        shareButton.titleLabel?.font = .boldSystemFont(ofSize: 14)
-        shareButton.backgroundColor = tintColor
-        shareButton.setTitleColor(.white, for: .normal)
-        shareButton.layer.cornerRadius = 12
-        shareButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
-        let stack = UIStackView(arrangedSubviews: [top, name, detail, shareButton])
+        configurePlatformButton(xhsButton, title: "小红书 0", platform: .xhs)
+        configurePlatformButton(douyinButton, title: "抖音 0", platform: .douyin)
+        let platformRow = UIStackView(arrangedSubviews: [xhsButton, douyinButton])
+        platformRow.axis = .horizontal
+        platformRow.spacing = 6
+        platformRow.distribution = .fillEqually
+        let stack = UIStackView(arrangedSubviews: [top, name, detail, platformRow])
         stack.axis = .vertical
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -423,19 +424,34 @@ private final class WorkCell: UICollectionViewCell {
 
     override func prepareForReuse() { super.prepareForReuse(); onShare = nil }
 
-    @objc private func shareTapped() { onShare?() }
+    private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .boldSystemFont(ofSize: 13)
+        button.backgroundColor = tintColor
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 12
+        button.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        button.accessibilityLabel = platform.displayName
+        button.addTarget(self,
+                         action: platform == .xhs ? #selector(xhsTapped) : #selector(douyinTapped),
+                         for: .touchUpInside)
+    }
+
+    @objc private func xhsTapped() { onShare?(.xhs) }
+    @objc private func douyinTapped() { onShare?(.douyin) }
 
     func configure(_ work: WorkItem) {
-        let shared = work.shareCount > 0
+        let shared = work.used
         icon.text = shared ? "✓" : "▣"
         icon.textColor = shared ? AppColors.secondaryText : tintColor
         count.text = shared ? "×\(work.shareCount)  ·  \(work.imageURLs.count) 图" : "\(work.imageURLs.count) 图"
         name.text = work.name
-        detail.text = shared ? "已打开分享 \(work.shareCount) 次" : "点一下复制并分享"
+        detail.text = shared ? "小红书 \(work.xhsShareCount) · 抖音 \(work.douyinShareCount)" : "选择平台后复制文案并分享图片"
         contentView.backgroundColor = shared ? AppColors.sharedBackground : AppColors.secondaryBackground
         contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor
         name.textColor = shared ? AppColors.secondaryText : AppColors.text
-        detail.text = shared ? "已打开分享 \(work.shareCount) 次" : "点白色卡片查看内容"
-        shareButton.setTitle(shared ? "再次分享" : "复制并分享", for: .normal)
+        detail.text = shared ? "首次使用后按清理设置自动回收" : "点白色卡片查看内容"
+        xhsButton.setTitle("小红书 \(work.xhsShareCount)", for: .normal)
+        douyinButton.setTitle("抖音 \(work.douyinShareCount)", for: .normal)
     }
 }

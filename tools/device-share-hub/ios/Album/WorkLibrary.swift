@@ -230,26 +230,42 @@ final class WorkLibrary {
     }
 
     func prepareShare(_ work: WorkItem) throws -> [Any] {
-        return try prepareShare(work, images: work.imageURLs)
+        return try prepareShare(work, images: work.imageURLs, platform: .xhs)
     }
 
     func prepareShare(_ work: WorkItem, images: [URL]) throws -> [Any] {
+        return try prepareShare(work, images: images, platform: .xhs)
+    }
+
+    func prepareShare(_ work: WorkItem, images: [URL], platform: CopyPlatform) throws -> [Any] {
         let text: String
         do { text = try String(contentsOf: work.textURL, encoding: .utf8) }
-        catch { throw LibraryError.noText(work.name) }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw LibraryError.emptyText
+        catch { throw LibraryError.unreadableCopy }
+        let parsed = PlatformCopyParser.parse(text, platform: platform)
+        switch parsed.status {
+        case .missing: throw LibraryError.missingPlatformCopy(platform.displayName)
+        case .unreadable: throw LibraryError.unreadableCopy
+        case .ok: break
         }
         let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
         let selected = images.map { $0.standardizedFileURL }.filter { allowed.contains($0) }
         guard !selected.isEmpty else { throw LibraryError.noImages(work.name) }
 
-        var record = state.works[work.key] ?? WorkState()
+        var record = state.works[work.key] ?? state.history[work.key] ?? WorkState()
+        state.history.removeValue(forKey: work.key)
         record.shareCount += 1
+        record.used = true
+        if platform == .xhs { record.xhsShareCount += 1 }
+        if platform == .douyin { record.douyinShareCount += 1 }
         let now = Date()
         record.lastShareDate = Self.dayFormatter.string(from: now)
         if record.firstSharedAtMs == nil {
             record.firstSharedAtMs = now.timeIntervalSince1970 * 1000
+        }
+        if record.firstUsedAtMs == nil { record.firstUsedAtMs = record.firstSharedAtMs }
+        if record.deleteScheduledAtMs == nil {
+            record.deleteScheduledAtMs = (record.firstUsedAtMs ?? now.timeIntervalSince1970 * 1000)
+                + Double(CleanupPreferences.deleteHours) * 3_600_000
         }
         record.trashedDate = nil
         record.trashedAtMs = nil
@@ -259,7 +275,7 @@ final class WorkLibrary {
         do { try saveState(to: root) }
         catch { throw LibraryError.stateWriteFailed }
 
-        UIPasteboard.general.string = text
+        UIPasteboard.general.string = parsed.text
         message = "文案已复制 · 第 \(record.shareCount) 次打开分享"
         works = (try? scanner.scan(root: root, state: state).works) ?? works
         notify()
@@ -468,11 +484,17 @@ final class WorkLibrary {
             if record.firstSharedAtMs == nil, let text = legacyText {
                 record.firstSharedAtMs = CleanupPolicy.legacyAnchor(dateText: text, now: now)
             }
+            if record.firstUsedAtMs == nil { record.firstUsedAtMs = record.firstSharedAtMs }
+            if record.deleteScheduledAtMs == nil, let first = record.firstUsedAtMs {
+                record.deleteScheduledAtMs = first + Double(CleanupPreferences.deleteHours) * 3_600_000
+            }
             if record.trashedDate != nil, record.trashedAtMs == nil {
                 record.trashedAtMs = CleanupPolicy.legacyAnchor(
                     dateText: record.trashedDate!, now: now)
             }
             if record.firstSharedAtMs != original.firstSharedAtMs ||
+                record.firstUsedAtMs != original.firstUsedAtMs ||
+                record.deleteScheduledAtMs != original.deleteScheduledAtMs ||
                 record.trashedAtMs != original.trashedAtMs {
                 state.works[key] = record
                 changed = true
@@ -500,8 +522,8 @@ final class WorkLibrary {
                 changed = true
             }
         }
-        if state.schemaVersion != 3 {
-            state.schemaVersion = 3
+        if state.schemaVersion != 4 {
+            state.schemaVersion = 4
             changed = true
         }
         if changed { try saveState(to: root) }
@@ -536,11 +558,14 @@ final class WorkLibrary {
         }
         for (key, record) in Array(state.works) {
             guard record.trashedDate != nil || record.trashFolderName != nil,
-                  CleanupPolicy.isDue(anchorMilliseconds: record.firstSharedAtMs ?? record.trashedAtMs,
-                                      hours: CleanupPreferences.deleteHours, now: now) else { continue }
+                  CleanupPolicy.isDue(anchorMilliseconds: record.deleteScheduledAtMs
+                        ?? record.firstSharedAtMs ?? record.trashedAtMs,
+                        hours: record.deleteScheduledAtMs == nil ? CleanupPreferences.deleteHours : 0,
+                        now: now) else { continue }
             let folder = trashURL.appendingPathComponent(record.trashFolderName ??
                 URL(fileURLWithPath: key).lastPathComponent, isDirectory: true)
             if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+            state.history[key] = record
             state.works.removeValue(forKey: key)
             try saveState(to: root)
         }

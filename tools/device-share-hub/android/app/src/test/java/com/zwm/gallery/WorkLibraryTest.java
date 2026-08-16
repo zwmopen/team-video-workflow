@@ -136,6 +136,47 @@ public final class WorkLibraryTest {
     }
 
     @Test
+    public void platformCountsShareOneUsedLifecycleAndKeepFirstTimer() throws Exception {
+        File source = temporary.newFolder("platform-count-source");
+        File root = temporary.newFolder("platform-count-library");
+        WorkLibrary library = new WorkLibrary(root);
+        library.importWork("platform", "平台计数", "文案", Arrays.asList(write(source, "1.jpg", "one")), "");
+        long first = 10_000L;
+
+        library.markPlatformShareAttempt("platform", "xhs", first, 3_600_000L);
+        library.markPlatformShareAttempt("platform", "douyin", first + 5_000L, 3_600_000L);
+
+        WorkLibrary.WorkEntry entry = library.getActive("platform");
+        assertTrue(entry.used);
+        assertEquals(1, entry.xhsShareCount);
+        assertEquals(1, entry.douyinShareCount);
+        assertEquals(first, entry.firstUsedAtMs);
+        assertEquals(first + 3_600_000L, entry.deleteScheduledAtMs);
+
+        WorkLibrary reopened = new WorkLibrary(root);
+        entry = reopened.getActive("platform");
+        assertEquals(2, entry.shareCount);
+        assertEquals(first, entry.firstUsedAtMs);
+    }
+
+    @Test
+    public void purgedWorkRetainsHistoryAndRepushSeedsPlatformCounts() throws Exception {
+        File source = temporary.newFolder("history-source");
+        File root = temporary.newFolder("history-library");
+        WorkLibrary library = new WorkLibrary(root);
+        library.importWork("repeat", "重复作品", "文案", Arrays.asList(write(source, "1.jpg", "one")), "");
+        library.markPlatformShareAttempt("repeat", "douyin", 10_000L, 1_000L);
+        library.moveToTrash("repeat", 11_000L);
+        library.deleteTrash("repeat");
+
+        assertTrue(library.listActive().isEmpty());
+        assertEquals(1, library.getHistory("repeat").douyinShareCount);
+        library.importWork("repeat", "重复作品", "新文案", Arrays.asList(write(source, "2.jpg", "two")), "");
+        assertEquals(1, library.getActive("repeat").douyinShareCount);
+        assertTrue(library.getActive("repeat").used);
+    }
+
+    @Test
     public void reopeningForAnAppUpgradePreservesCountsAndTrash() throws Exception {
         File source = temporary.newFolder("upgrade-source");
         File root = temporary.newFolder("upgrade-library");
