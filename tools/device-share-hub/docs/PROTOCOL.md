@@ -82,6 +82,27 @@ X-File-Sha256: ...
 <raw bytes>
 ```
 
+大文件支持断点续传。支持续传的发送端在创建任务时附带稳定的 `taskId`、
+`resume: true`、`transferKey` 和文件清单；接收端会把未完成内容保留在任务目录中，
+失败后不得把它当成已取消任务删除。发送端可查询：
+
+```http
+GET /v2/tasks/{taskId}
+```
+
+返回每个文件的 `receivedBytes`、`size` 和 `complete`。继续上传时，`PUT` 使用：
+
+```http
+X-File-Offset: 104857600
+X-File-Length: 734003200
+Content-Length: 629145600
+```
+
+`X-File-Offset` 必须等于接收端当前临时文件长度，`X-File-Length` 是完整文件长度，
+`Content-Length` 是本次剩余字节数。接收端会对“已有字节 + 本次字节”一起做 SHA-256
+校验，只有完整校验通过后才允许 `commit`。明确调用 `POST /cancel` 才会删除未完成
+任务；旧接收端没有状态查询接口时，发送端自动退回从头传输的兼容模式。
+
 ### 3. 提交任务
 
 ```http

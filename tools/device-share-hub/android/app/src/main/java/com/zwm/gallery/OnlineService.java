@@ -116,7 +116,9 @@ public final class OnlineService extends Service {
     private static final int MAX_FILES = 100;
     private static final long MAX_JSON_BYTES = 2L * 1024L * 1024L;
     private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L;
-    private static final long INCOMING_TASK_IDLE_TIMEOUT_MS = 5L * 60L * 1000L;
+    /** Keep an interrupted large-file task long enough for a retry to resume it. */
+    private static final long INCOMING_TASK_IDLE_TIMEOUT_MS = 30L * 60L * 1000L;
+    private static final String TASK_MANIFEST_NAME = "task.json";
     private static final long PEER_TIMEOUT_MS = 15_000L;
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> SEEN_CLIPBOARD_MESSAGES =
@@ -351,6 +353,11 @@ public final class OnlineService extends Service {
                     return;
                 }
                 String[] parts = request.path.split("/");
+                if (parts.length == 4 && "GET".equals(request.method)
+                        && "v2".equals(parts[1]) && "tasks".equals(parts[2])) {
+                    taskStatus(parts[3], output);
+                    return;
+                }
                 if (parts.length == 6 && "PUT".equals(request.method) && "v2".equals(parts[1]) && "tasks".equals(parts[2]) && "files".equals(parts[4])) {
                     uploadFile(parts[3], parts[5], request, input, output);
                     return;
@@ -392,6 +399,9 @@ public final class OnlineService extends Service {
         JSONObject body = new JSONObject(new String(readExact(input, request.contentLength), StandardCharsets.UTF_8));
         String taskId = body.optString("taskId", "").trim();
         int fileCount = body.optInt("fileCount", 0);
+        boolean resumable = body.optBoolean("resume", false);
+        String transferKey = body.optString("transferKey", "").trim();
+        Map<Integer, IncomingFileSpec> specs = parseFileSpecs(body, fileCount);
         RelayTaskMetadata relay = RelayTaskMetadata.fromJson(body);
         if (!taskId.matches("[A-Za-z0-9._-]{6,100}")) throw new HttpError(400, "taskId 无效");
         if (fileCount < 1 || fileCount > MAX_FILES) throw new HttpError(400, "文件数量无效");
@@ -408,21 +418,240 @@ public final class OnlineService extends Service {
                 throw new HttpError(403, "主设备已关闭截图接收");
             }
         }
+        JSONObject resumed = null;
         synchronized (taskLock) {
-            if (activeTask != null) throw new HttpError(409, "正在接收另一批素材，请稍后重试");
-            File taskDir = new File(new File(getCacheDir(), "share"), taskId);
-            deleteRecursively(taskDir);
-            if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
-            activeTask = new IncomingTask(
-                    taskId, body.optString("text", ""), body.optBoolean("autoShare", false),
-                    fileCount, taskDir, System.currentTimeMillis(), relay);
-            currentTaskId = taskId;
-            state = "receiving";
+            if (activeTask != null) {
+                if (resumable && activeTask.matches(taskId, transferKey, fileCount, specs)) {
+                    resumed = taskStatusJson(activeTask);
+                } else {
+                    throw new HttpError(409, "正在接收另一批素材，请稍后重试");
+                }
+            } else {
+                File taskDir = new File(new File(getCacheDir(), "share"), taskId);
+                if (resumable) {
+                    IncomingTask restored = restoreIncomingTask(taskDir);
+                    if (restored != null && restored.matches(taskId, transferKey, fileCount, specs)) {
+                        activeTask = restored;
+                        currentTaskId = taskId;
+                        state = "receiving";
+                        resumed = taskStatusJson(restored);
+                    }
+                }
+                if (resumed == null) {
+                    deleteRecursively(taskDir);
+                    if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
+                    activeTask = new IncomingTask(
+                            taskId, body.optString("text", ""), body.optBoolean("autoShare", false),
+                            fileCount, taskDir, System.currentTimeMillis(), relay,
+                            transferKey, specs);
+                    persistTaskManifest(activeTask);
+                    currentTaskId = taskId;
+                    state = "receiving";
+                }
+            }
+        }
+        if (resumed != null) {
+            DiagnosticLog.write(this, "task_resume", taskId);
+            notifyStatus("发现未完成传输，等待电脑从断点继续…");
+            writeJson(output, 200, resumed);
+            return;
         }
         DiagnosticLog.write(this, "task_created", taskId + " files=" + fileCount);
         notifyStatus("正在接收 " + fileCount + " 个文件…");
         notifyTransferProgress(0, "正在接收文件，共 " + fileCount + " 个文件");
-        writeText(output, 201, "OK");
+        writeJson(output, 201, taskStatusJson(activeTask));
+    }
+
+    private void taskStatus(String taskId, OutputStream output) throws Exception {
+        IncomingTask task;
+        synchronized (taskLock) {
+            task = activeTask;
+            if (task == null || !task.id.equals(taskId)) {
+                task = restoreIncomingTask(new File(new File(getCacheDir(), "share"), taskId));
+                if (task != null) {
+                    activeTask = task;
+                    currentTaskId = task.id;
+                    state = "receiving";
+                }
+            }
+        }
+        if (task == null) throw new HttpError(404, "任务不存在");
+        writeJson(output, 200, taskStatusJson(task));
+    }
+
+    private static Map<Integer, IncomingFileSpec> parseFileSpecs(JSONObject body, int fileCount)
+            throws Exception {
+        Map<Integer, IncomingFileSpec> specs = new HashMap<>();
+        JSONArray records = body.optJSONArray("files");
+        if (records == null) return specs;
+        for (int position = 0; position < records.length(); position++) {
+            JSONObject record = records.optJSONObject(position);
+            if (record == null) throw new HttpError(400, "断点文件信息无效");
+            int index = record.optInt("index", position);
+            long size = record.optLong("size", -1L);
+            String name = safeName(record.optString("name", "file-" + (index + 1)));
+            if (index < 0 || index >= fileCount || size < 0 || size > MAX_FILE_BYTES) {
+                throw new HttpError(400, "断点文件信息无效");
+            }
+            specs.put(index, new IncomingFileSpec(
+                    index, name, record.optString("mime", "application/octet-stream"),
+                    size, record.optString("sha256", "").trim(),
+                    String.format(Locale.US, "%03d-%s", index, name)));
+        }
+        return specs;
+    }
+
+    private IncomingTask restoreIncomingTask(File taskDir) {
+        File manifestFile = new File(taskDir, TASK_MANIFEST_NAME);
+        if (!manifestFile.isFile()) return null;
+        try (FileInputStream input = new FileInputStream(manifestFile)) {
+            JSONObject manifest = new JSONObject(new String(
+                    readExact(input, manifestFile.length()), StandardCharsets.UTF_8));
+            int fileCount = manifest.optInt("fileCount", 0);
+            if (fileCount < 1 || fileCount > MAX_FILES) return null;
+            Map<Integer, IncomingFileSpec> specs = parseFileSpecs(manifest, fileCount);
+            RelayTaskMetadata relay = RelayTaskMetadata.fromJson(manifest);
+            IncomingTask task = new IncomingTask(
+                    manifest.optString("taskId", taskDir.getName()),
+                    manifest.optString("text", ""), manifest.optBoolean("autoShare", false),
+                    fileCount, taskDir, manifest.optLong("startedAtMs", System.currentTimeMillis()),
+                    relay, manifest.optString("transferKey", ""), specs);
+            task.lastActivityAtMs = manifest.optLong("lastActivityAtMs", task.startedAtMs);
+            JSONArray records = manifest.optJSONArray("files");
+            if (records != null) {
+                for (int position = 0; position < records.length(); position++) {
+                    JSONObject record = records.optJSONObject(position);
+                    if (record == null || !record.optBoolean("complete", false)) continue;
+                    int index = record.optInt("index", position);
+                    IncomingFileSpec spec = task.specs.get(index);
+                    File file = new File(taskDir, record.optString(
+                            "stored", spec == null ? "" : spec.storedName));
+                    if (spec == null || !file.isFile() || file.length() != spec.size) continue;
+                    task.files.put(index, new ReceivedFile(
+                            spec.name, spec.storedName, spec.mime, file.length(),
+                            record.optString("completedSha256", spec.sha256), file));
+                }
+            }
+            return task;
+        } catch (Exception error) {
+            Log.w(TAG, "cannot restore incoming task", error);
+            return null;
+        }
+    }
+
+    private JSONObject taskStatusJson(IncomingTask task) throws Exception {
+        JSONObject result = new JSONObject()
+                .put("taskId", task.id)
+                .put("state", "receiving")
+                .put("transferKey", task.transferKey)
+                .put("fileCount", task.fileCount)
+                .put("lastActivityAtMs", task.lastActivityAtMs);
+        JSONArray records = new JSONArray();
+        if (!task.specs.isEmpty()) {
+            for (int index = 0; index < task.fileCount; index++) {
+                IncomingFileSpec spec = task.specs.get(index);
+                if (spec == null) continue;
+                ReceivedFile received = task.files.get(index);
+                File partial = new File(task.dir, spec.storedName + ".receiving");
+                long receivedBytes = received != null ? received.size
+                        : (partial.isFile() ? partial.length() : 0L);
+                records.put(new JSONObject()
+                        .put("index", index)
+                        .put("name", spec.name)
+                        .put("size", spec.size)
+                        .put("receivedBytes", receivedBytes)
+                        .put("complete", received != null)
+                        .put("sha256", spec.sha256));
+            }
+        } else {
+            for (Map.Entry<Integer, ReceivedFile> entry : task.files.entrySet()) {
+                ReceivedFile received = entry.getValue();
+                records.put(new JSONObject()
+                        .put("index", entry.getKey())
+                        .put("name", received.name)
+                        .put("size", received.size)
+                        .put("receivedBytes", received.size)
+                        .put("complete", true)
+                        .put("sha256", received.sha256));
+            }
+        }
+        result.put("files", records);
+        return result;
+    }
+
+    private void persistTaskManifest(IncomingTask task) {
+        try {
+            JSONObject manifest = new JSONObject()
+                    .put("version", 1)
+                    .put("taskId", task.id)
+                    .put("text", task.text)
+                    .put("autoShare", task.autoShare)
+                    .put("fileCount", task.fileCount)
+                    .put("startedAtMs", task.startedAtMs)
+                    .put("lastActivityAtMs", task.lastActivityAtMs)
+                    .put("transferKey", task.transferKey);
+            if (task.relay != null) {
+                manifest.put("messageId", task.relay.messageId)
+                        .put("originId", task.relay.originId)
+                        .put("destinationId", task.relay.destinationId)
+                        .put("previousHopId", task.relay.previousHopId)
+                        .put("contentKind", task.relay.contentKind)
+                        .put("expiresAt", task.relay.expiresAt)
+                        .put("hopLimit", task.relay.hopLimit);
+            }
+            JSONArray records = new JSONArray();
+            for (int index = 0; index < task.fileCount; index++) {
+                IncomingFileSpec spec = task.specs.get(index);
+                if (spec == null) continue;
+                ReceivedFile received = task.files.get(index);
+                File partial = new File(task.dir, spec.storedName + ".receiving");
+                records.put(new JSONObject()
+                        .put("index", index)
+                        .put("name", spec.name)
+                        .put("mime", spec.mime)
+                        .put("size", spec.size)
+                        .put("sha256", spec.sha256)
+                        .put("stored", spec.storedName)
+                        .put("receivedBytes", received != null ? received.size
+                                : (partial.isFile() ? partial.length() : 0L))
+                        .put("complete", received != null)
+                        .put("completedSha256", received == null ? "" : received.sha256));
+            }
+            manifest.put("files", records);
+            File temporary = new File(task.dir, TASK_MANIFEST_NAME + ".tmp");
+            try (FileOutputStream output = new FileOutputStream(temporary, false)) {
+                output.write(manifest.toString().getBytes(StandardCharsets.UTF_8));
+                output.flush();
+                output.getFD().sync();
+            }
+            File target = new File(task.dir, TASK_MANIFEST_NAME);
+            if (target.exists() && !target.delete()) return;
+            if (!temporary.renameTo(target)) Log.w(TAG, "cannot replace task manifest");
+        } catch (Exception error) {
+            Log.w(TAG, "cannot persist task manifest", error);
+        }
+    }
+
+    private static long parseHeaderLong(String value, long fallback, String header)
+            throws HttpError {
+        if (value == null || value.trim().isEmpty()) return fallback;
+        try {
+            long result = Long.parseLong(value.trim());
+            if (result < 0) throw new NumberFormatException("negative");
+            return result;
+        } catch (NumberFormatException error) {
+            throw new HttpError(400, header + " 无效");
+        }
+    }
+
+    private static void updateDigest(MessageDigest digest, File file) throws Exception {
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            byte[] buffer = new byte[128 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (count > 0) digest.update(buffer, 0, count);
+            }
+        }
     }
 
     private void uploadFile(String taskId, String indexText, HttpRequest request, InputStream input, OutputStream output) throws Exception {
@@ -430,27 +659,49 @@ public final class OnlineService extends Service {
         try { index = Integer.parseInt(indexText); } catch (NumberFormatException error) { throw new HttpError(400, "文件序号无效"); }
         if (request.contentLength < 0 || request.contentLength > MAX_FILE_BYTES) throw new HttpError(413, "文件过大");
         IncomingTask task;
+        IncomingFileSpec spec;
         synchronized (taskLock) {
             task = activeTask;
             if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
             if (index < 0 || index >= task.fileCount) throw new HttpError(400, "文件序号越界");
             if (task.files.containsKey(index)) throw new HttpError(409, "文件已经上传");
+            spec = task.specs.get(index);
         }
 
         String encodedName = request.headers.getOrDefault("x-file-name", "file-" + (index + 1));
         String originalName = safeName(URLDecoder.decode(encodedName, StandardCharsets.UTF_8.name()));
         String mime = request.headers.getOrDefault("x-file-mime", "application/octet-stream");
         String expectedSha = request.headers.getOrDefault("x-file-sha256", "").trim();
+        long offset = parseHeaderLong(request.headers.get("x-file-offset"), 0L, "X-File-Offset");
+        long totalLength = parseHeaderLong(request.headers.get("x-file-length"),
+                request.contentLength + offset, "X-File-Length");
+        if (totalLength < 0 || totalLength > MAX_FILE_BYTES) throw new HttpError(413, "文件过大");
+        if (!isValidResumeRange(offset, totalLength, request.contentLength)) {
+            throw new HttpError(409, "断点位置与本次上传长度不匹配");
+        }
+        if (spec != null) {
+            if (spec.size != totalLength || (!spec.sha256.isEmpty() && !spec.sha256.equalsIgnoreCase(expectedSha))) {
+                throw new HttpError(409, "断点任务的文件信息不匹配");
+            }
+            if (!spec.name.equals(originalName)) throw new HttpError(409, "断点任务的文件名不匹配");
+        }
         String storedName = String.format(Locale.US, "%03d-%s", index, originalName);
         File temp = new File(task.dir, storedName + ".receiving");
         File target = new File(task.dir, storedName);
+        if (offset > 0) {
+            if (!temp.isFile() || temp.length() != offset) {
+                throw new HttpError(409, "手机端临时文件与断点不匹配");
+            }
+        }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long remaining = request.contentLength;
-        long received = 0;
+        long received = offset;
         long lastNotice = 0;
         long startMs = System.currentTimeMillis();
-        DiagnosticLog.write(this, "file_receiving", taskId + " #" + (index + 1) + "/" + task.fileCount + " " + originalName + " bytes=" + request.contentLength);
-        try (FileOutputStream fileOutput = new FileOutputStream(temp, false)) {
+        if (offset > 0) updateDigest(digest, temp);
+        DiagnosticLog.write(this, "file_receiving", taskId + " #" + (index + 1) + "/" + task.fileCount
+                + " " + originalName + " bytes=" + request.contentLength + " offset=" + offset);
+        try (FileOutputStream fileOutput = new FileOutputStream(temp, offset > 0)) {
             byte[] buffer = new byte[128 * 1024];
             while (remaining > 0) {
                 int count = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
@@ -464,7 +715,7 @@ public final class OnlineService extends Service {
                 long now = System.currentTimeMillis();
                 if (now - lastNotice >= 700 || remaining == 0) {
                     lastNotice = now;
-                    int filePercent = request.contentLength <= 0 ? 0 : (int) Math.min(100, (received * 100) / request.contentLength);
+                    int filePercent = totalLength <= 0 ? 0 : (int) Math.min(100, (received * 100) / totalLength);
                     int overall = Math.min(100, (index * 100 + filePercent) / task.fileCount);
                     String progress = "正在传送文件 " + overall + "%（"
                             + (index + 1) + "/" + task.fileCount + "）";
@@ -474,6 +725,11 @@ public final class OnlineService extends Service {
             }
             fileOutput.flush();
             fileOutput.getFD().sync();
+        } catch (Exception error) {
+            task.lastActivityAtMs = System.currentTimeMillis();
+            persistTaskManifest(task);
+            DiagnosticLog.write(this, "file_partial", originalName + " bytes=" + temp.length());
+            throw error;
         }
         String actualSha = hex(digest.digest());
         if (!expectedSha.isEmpty() && !expectedSha.equalsIgnoreCase(actualSha)) {
@@ -487,9 +743,11 @@ public final class OnlineService extends Service {
             if (activeTask == null || !activeTask.id.equals(taskId)) throw new HttpError(409, "任务状态已变化");
             task.files.put(index, new ReceivedFile(originalName, storedName, mime, target.length(), actualSha, target));
             task.lastActivityAtMs = System.currentTimeMillis();
+            persistTaskManifest(task);
         }
         long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
-        DiagnosticLog.write(this, "file_received", originalName + " bytes=" + target.length() + " ms=" + elapsedMs);
+        DiagnosticLog.write(this, "file_received", originalName + " bytes=" + target.length()
+                + " ms=" + elapsedMs + " resumedFrom=" + offset);
         notifyStatus("已接收 " + task.files.size() + "/" + task.fileCount + " 个文件");
         writeText(output, 200, "OK");
     }
@@ -843,6 +1101,11 @@ public final class OnlineService extends Service {
         return expectedFiles > receivedFiles
                 && now >= lastActivityAtMs
                 && now - lastActivityAtMs >= INCOMING_TASK_IDLE_TIMEOUT_MS;
+    }
+
+    static boolean isValidResumeRange(long offset, long totalLength, long contentLength) {
+        return offset >= 0 && totalLength >= 0 && contentLength >= 0
+                && offset <= totalLength && contentLength == totalLength - offset;
     }
 
     private void cleanupStaleIncomingTask() {
@@ -2099,11 +2362,14 @@ public final class OnlineService extends Service {
         final long startedAtMs;
         volatile long lastActivityAtMs;
         final RelayTaskMetadata relay;
+        final String transferKey;
+        final Map<Integer, IncomingFileSpec> specs;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
 
         IncomingTask(
                 String id, String text, boolean autoShare, int fileCount,
-                File dir, long startedAtMs, RelayTaskMetadata relay) {
+                File dir, long startedAtMs, RelayTaskMetadata relay,
+                String transferKey, Map<Integer, IncomingFileSpec> specs) {
             this.id = id;
             this.text = text;
             this.autoShare = autoShare;
@@ -2112,6 +2378,47 @@ public final class OnlineService extends Service {
             this.startedAtMs = startedAtMs;
             this.lastActivityAtMs = startedAtMs;
             this.relay = relay;
+            this.transferKey = transferKey == null ? "" : transferKey;
+            this.specs = specs == null ? new HashMap<>() : new HashMap<>(specs);
+        }
+
+        boolean matches(String taskId, String key, int count,
+                        Map<Integer, IncomingFileSpec> expected) {
+            if (!id.equals(taskId) || fileCount != count) return false;
+            if (key != null && !key.isEmpty() && !transferKey.isEmpty()
+                    && !transferKey.equals(key)) return false;
+            if (expected == null || expected.isEmpty()) return true;
+            if (specs.size() != expected.size()) return false;
+            for (Map.Entry<Integer, IncomingFileSpec> entry : expected.entrySet()) {
+                IncomingFileSpec actual = specs.get(entry.getKey());
+                if (actual == null || !actual.samePayload(entry.getValue())) return false;
+            }
+            return true;
+        }
+    }
+
+    private static final class IncomingFileSpec {
+        final int index;
+        final String name;
+        final String mime;
+        final long size;
+        final String sha256;
+        final String storedName;
+
+        IncomingFileSpec(int index, String name, String mime, long size,
+                         String sha256, String storedName) {
+            this.index = index;
+            this.name = name;
+            this.mime = mime == null || mime.isEmpty() ? "application/octet-stream" : mime;
+            this.size = size;
+            this.sha256 = sha256 == null ? "" : sha256;
+            this.storedName = storedName;
+        }
+
+        boolean samePayload(IncomingFileSpec other) {
+            return other != null && index == other.index && size == other.size
+                    && name.equals(other.name)
+                    && (sha256.isEmpty() || other.sha256.isEmpty() || sha256.equalsIgnoreCase(other.sha256));
         }
     }
 
