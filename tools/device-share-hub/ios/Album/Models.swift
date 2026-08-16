@@ -71,7 +71,7 @@ struct WorkState: Codable {
         trashedAtMs = try container.decodeIfPresent(Double.self, forKey: .trashedAtMs)
         originalRelativePath = try container.decodeIfPresent(String.self, forKey: .originalRelativePath)
         trashFolderName = try container.decodeIfPresent(String.self, forKey: .trashFolderName)
-        used = try container.decodeIfPresent(Bool.self, forKey: .used) ?? shareCount > 0
+        used = (try container.decodeIfPresent(Bool.self, forKey: .used)) ?? (shareCount > 0)
         if firstUsedAtMs == nil { firstUsedAtMs = firstSharedAtMs }
     }
 }
