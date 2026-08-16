@@ -376,6 +376,7 @@ public final class WorkLibrary {
         for (WorkEntry entry : list(trashRoot)) {
             if (RetentionPolicy.shouldPurge(entry.trashedDate, today)
                     && entry.sourceDocumentId.isEmpty() && entry.sourceRelativePath.isEmpty()) {
+                saveHistory(entry);
                 deleteTree(entry.directory);
             }
         }
