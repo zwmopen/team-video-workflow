@@ -35,6 +35,10 @@ enum PlatformCopyParser {
         }
 
         guard let start = value.range(of: platform.startMarker) else {
+            let other: CopyPlatform = platform == .xhs ? .douyin : .xhs
+            if !value.contains(other.startMarker) && !value.contains(other.endMarker) {
+                return PlatformCopyResult(status: .unreadable, text: "")
+            }
             return PlatformCopyResult(status: .missing, text: "")
         }
         let afterStart = start.upperBound
