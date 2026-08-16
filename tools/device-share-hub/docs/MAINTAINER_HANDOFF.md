@@ -533,3 +533,9 @@
 5. 把三端包发布到 `gallery-updates`，再更新 `latest.json`；
 6. 通过公开 raw 地址确认线上版本，而不是只看本地提交；
 7. 推送主源码和备用副本，确认工作区干净。
+## 2026-08-16 Android 0.6.22 / iPhone 0.6.9 平台文案分发候选
+
+- 作品卡片沿用原图片分享链路，按钮拆为“小红书 / 抖音”；两端分别持久化平台点击次数，统一维护 `used`、`firstUsedAt` 与固定 `deleteScheduledAt`。
+- `PlatformCopyParser` 只按 `COPY_FORMAT:2` 机器标记选择段落；旧 TXT 无版本标记时两个平台都回退全文。缺段或损坏只提示，不记账、不清理图片。
+- Android 状态位于作品 `meta.properties`，清理后保留到 `work-library/history/<workId>.properties`；iPhone 状态位于根目录 `_相册状态.json` 的 `history`，相同 workId 重推时恢复计数。
+- 已新增 Android JUnit 与 iOS XCTest 的解析器、旧格式、缺段和损坏文本回归；本机 Windows 无 Android SDK/Xcode，必须以 Actions 的 Android 单测/Release/Lint 和 iOS 测试/真机构建为最终编译证据。
