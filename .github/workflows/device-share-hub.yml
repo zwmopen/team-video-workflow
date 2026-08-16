@@ -365,8 +365,21 @@ jobs:
               --field content="$content" >/dev/null
           fi
 
-          published_b64=$(gh api "repos/${repo}/contents/latest.json?ref=main" --jq '.content' | tr -d '\n')
-          published=$(printf '%s' "$published_b64" | base64 --decode)
+          published=""
+          for attempt in $(seq 1 10); do
+            published_b64=$(gh api "repos/${repo}/contents/latest.json?ref=main" --jq '.content' 2>/dev/null | tr -d '\n' || true)
+            if [ -n "$published_b64" ]; then
+              published=$(printf '%s' "$published_b64" | base64 --decode 2>/dev/null || true)
+            fi
+            if [ "$(printf '%s' "$published" | jq -r '.version_name' 2>/dev/null || true)" = "$version_name" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.version_code' 2>/dev/null || true)" = "$version_code" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.sha256' 2>/dev/null || true)" = "$sha256" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 10 ]; then
+              sleep 2
+            fi
+          done
           test "$(printf '%s' "$published" | jq -r '.version_name')" = "$version_name"
           test "$(printf '%s' "$published" | jq -r '.version_code')" = "$version_code"
           test "$(printf '%s' "$published" | jq -r '.sha256')" = "$sha256"
