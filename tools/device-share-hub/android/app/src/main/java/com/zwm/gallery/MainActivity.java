@@ -307,7 +307,7 @@ public final class MainActivity extends Activity {
         statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
         root.addView(statusText, margins(0, dp(18), 0, dp(8)));
 
-        footerNote = text("点击“复制并分享”会立即记一次。默认 1 小时后进入回收站并从文件管理中彻底删除；时间可在设置中修改。", 12, false);
+        footerNote = text("点击平台按钮会复制对应文案并打开图片分享。首次使用后按现有清理设置自动回收；两个平台共用一个作品生命周期。", 12, false);
         footerNote.setTextColor(Color.GRAY);
         root.addView(footerNote, margins(0, dp(12), 0, 0));
 
@@ -524,7 +524,7 @@ public final class MainActivity extends Activity {
             card.setBackground(roundWithStroke(
                     Color.rgb(250, 230, 226), 16, Color.rgb(209, 126, 116)));
             card.setElevation(dp(2));
-        } else if (!showingTrash && work.sharedDate != null) {
+        } else if (!showingTrash && work.used) {
             card.setBackground(roundWithStroke(
                     Color.rgb(231, 231, 228), 16, Color.rgb(211, 211, 207)));
             card.setElevation(0);
@@ -545,8 +545,8 @@ public final class MainActivity extends Activity {
         nameRow.addView(checkBox, new LinearLayout.LayoutParams(dp(42), dp(42)));
         card.addView(nameRow);
         String detail = work.images.size() + " 张图片";
-        if (work.shareCount > 0) {
-            detail += "\n✓ 已分享 " + work.shareCount + " 次";
+        if (work.used) {
+            detail += "\n✓ 小红书 " + work.xhsShareCount + " · 抖音 " + work.douyinShareCount;
             detail += "\n" + deleteCountdown(work);
         }
         else if (work.trashedDate != null) detail += "\n等待自动清理";
@@ -556,13 +556,11 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, 0, 1);
         metaParams.setMargins(0, dp(3), 0, dp(6));
         card.addView(meta, metaParams);
-        String actionText = selecting ? (selected ? "已选择" : "选择")
-                : showingTrash ? "恢复" : (work.sharedDate == null ? "复制并分享" : "再次分享");
-        Button action = smallButton(actionText, !showingTrash && work.sharedDate == null && !selecting);
+        String actionText = selecting ? (selected ? "已选择" : "选择") : "恢复";
+        Button action = smallButton(actionText, false);
         action.setOnClickListener(v -> {
             if (!selectedWorkIds.isEmpty() && !showingTrash) toggleWorkSelection(work.id);
             else if (showingTrash) restore(work.id);
-            else openShare(work);
         });
         View.OnLongClickListener select = v -> {
             if (showingTrash) return false;
@@ -584,7 +582,24 @@ public final class MainActivity extends Activity {
         name.setOnLongClickListener(select);
         meta.setOnLongClickListener(select);
         action.setOnLongClickListener(select);
-        card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
+        if (selecting || showingTrash) {
+            card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
+        } else {
+            LinearLayout platformRow = new LinearLayout(this);
+            platformRow.setOrientation(LinearLayout.HORIZONTAL);
+            platformRow.setGravity(Gravity.CENTER_VERTICAL);
+            Button xhs = smallButton("小红书 " + work.xhsShareCount, work.xhsShareCount == 0);
+            Button douyin = smallButton("抖音 " + work.douyinShareCount, work.douyinShareCount == 0);
+            xhs.setContentDescription("小红书，已点击 " + work.xhsShareCount + " 次");
+            douyin.setContentDescription("抖音，已点击 " + work.douyinShareCount + " 次");
+            xhs.setOnClickListener(v -> openShare(work, "xhs"));
+            douyin.setOnClickListener(v -> openShare(work, "douyin"));
+            platformRow.addView(xhs, new LinearLayout.LayoutParams(0, dp(44), 1));
+            LinearLayout.LayoutParams douyinParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+            douyinParams.setMargins(dp(6), 0, 0, 0);
+            platformRow.addView(douyin, douyinParams);
+            card.addView(platformRow);
+        }
         return card;
     }
 
@@ -715,20 +730,10 @@ public final class MainActivity extends Activity {
                 : hours + " 小时 " + rest + " 分钟后自动删除";
     }
 
-    private void openShare(WorkLibrary.WorkEntry work) {
-        if (work.shareCount <= 0) {
-            startActivity(new Intent(this, ShareActivity.class)
-                    .putExtra(ShareActivity.EXTRA_WORK_ID, work.id));
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("这个作品已分享 " + work.shareCount + " 次")
-                .setMessage("如果是发到另一个平台，可以继续；如果刚刚已经操作过，建议取消，避免重复发布。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("继续分享", (dialog, which) ->
-                        startActivity(new Intent(this, ShareActivity.class)
-                                .putExtra(ShareActivity.EXTRA_WORK_ID, work.id)))
-                .show();
+    private void openShare(WorkLibrary.WorkEntry work, String platform) {
+        startActivity(new Intent(this, ShareActivity.class)
+                .putExtra(ShareActivity.EXTRA_WORK_ID, work.id)
+                .putExtra(ShareActivity.EXTRA_PLATFORM, platform));
     }
 
     private void toggleWorkSelection(String id) {
