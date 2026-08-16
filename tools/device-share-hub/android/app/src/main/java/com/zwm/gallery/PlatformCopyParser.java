@@ -37,6 +37,11 @@ final class PlatformCopyParser {
                     || text.contains("<<<" + marker + "_END>>>")) {
                 return new Result(Status.UNREADABLE, "");
             }
+            String other = platform == Platform.XHS ? "DOUYIN" : "XHS";
+            if (!text.contains("<<<" + other + "_START>>>")
+                    && !text.contains("<<<" + other + "_END>>>")) {
+                return new Result(Status.UNREADABLE, "");
+            }
             // A well-formed other-platform section is not a fallback for this platform.
             return new Result(Status.MISSING, "");
         }
