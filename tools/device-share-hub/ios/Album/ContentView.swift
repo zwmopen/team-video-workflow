@@ -404,9 +404,10 @@ private final class WorkCell: UICollectionViewCell {
         configurePlatformButton(xhsButton, title: "小红书 0", platform: .xhs)
         configurePlatformButton(douyinButton, title: "抖音 0", platform: .douyin)
         let platformRow = UIStackView(arrangedSubviews: [xhsButton, douyinButton])
-        platformRow.axis = .horizontal
-        platformRow.spacing = 6
-        platformRow.distribution = .fillEqually
+        platformRow.axis = .vertical
+        platformRow.spacing = 8
+        platformRow.alignment = .fill
+        platformRow.distribution = .fill
         let stack = UIStackView(arrangedSubviews: [top, name, detail, platformRow])
         stack.axis = .vertical
         stack.spacing = 10
