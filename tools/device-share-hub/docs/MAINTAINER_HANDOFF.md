@@ -539,3 +539,8 @@
 - `PlatformCopyParser` 只按 `COPY_FORMAT:2` 机器标记选择段落；旧 TXT 无版本标记时两个平台都回退全文。缺段或损坏只提示，不记账、不清理图片。
 - Android 状态位于作品 `meta.properties`，清理后保留到 `work-library/history/<workId>.properties`；iPhone 状态位于根目录 `_相册状态.json` 的 `history`，相同 workId 重推时恢复计数。
 - 已新增 Android JUnit 与 iOS XCTest 的解析器、旧格式、缺段和损坏文本回归；本机 Windows 无 Android SDK/Xcode，必须以 Actions 的 Android 单测/Release/Lint 和 iOS 测试/真机构建为最终编译证据。
+## 2026-08-17 Android 0.6.23 / iPhone 0.6.10 平台按钮布局候选
+
+- 作品列表的平台按钮改为纵向整行布局，Android 与 iPhone 都不再把“小红书”和“抖音”挤在同一行。
+- 只改布局，不改变平台解析、计数、used 状态、清理计时和图片分享链路。
+- 需要通过 CI 构建并在至少一台 Android、一台 iPhone 上复核按钮可读性。

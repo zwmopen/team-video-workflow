@@ -586,17 +586,17 @@ public final class MainActivity extends Activity {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             LinearLayout platformRow = new LinearLayout(this);
-            platformRow.setOrientation(LinearLayout.HORIZONTAL);
-            platformRow.setGravity(Gravity.CENTER_VERTICAL);
+            platformRow.setOrientation(LinearLayout.VERTICAL);
+            platformRow.setGravity(Gravity.CENTER_HORIZONTAL);
             Button xhs = smallButton("小红书 " + work.xhsShareCount, work.xhsShareCount == 0);
             Button douyin = smallButton("抖音 " + work.douyinShareCount, work.douyinShareCount == 0);
             xhs.setContentDescription("小红书，已点击 " + work.xhsShareCount + " 次");
             douyin.setContentDescription("抖音，已点击 " + work.douyinShareCount + " 次");
             xhs.setOnClickListener(v -> openShare(work, "xhs"));
             douyin.setOnClickListener(v -> openShare(work, "douyin"));
-            platformRow.addView(xhs, new LinearLayout.LayoutParams(0, dp(44), 1));
-            LinearLayout.LayoutParams douyinParams = new LinearLayout.LayoutParams(0, dp(44), 1);
-            douyinParams.setMargins(dp(6), 0, 0, 0);
+            platformRow.addView(xhs, new LinearLayout.LayoutParams(-1, dp(44)));
+            LinearLayout.LayoutParams douyinParams = new LinearLayout.LayoutParams(-1, dp(44));
+            douyinParams.setMargins(0, dp(8), 0, 0);
             platformRow.addView(douyin, douyinParams);
             card.addView(platformRow);
         }
