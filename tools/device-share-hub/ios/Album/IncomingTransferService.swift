@@ -202,13 +202,6 @@ final class IncomingTransferService {
     private func handle(_ request: HTTPRequest) -> HTTPResponse {
         do {
             if request.method == "GET" && request.path == "/v2/info" { return infoResponse() }
-            if request.method == "POST" && request.path == "/v2/clipboard" {
-                guard let body = request.bodyData else {
-                    return HTTPResponse(status: 400, message: "剪切板数据为空")
-                }
-                try ClipboardBridge.shared.receive(body)
-                return HTTPResponse(status: 200, object: ["ok": true])
-            }
             if request.method == "POST" && request.path == "/v2/tasks" { return try createTask(request) }
             let pieces = request.path.split(separator: "/").map(String.init)
             if request.method == "PUT", pieces.count == 5, pieces[0] == "v2", pieces[1] == "tasks",
@@ -388,7 +381,7 @@ final class IncomingTransferService {
         try data.write(to: task.directory.appendingPathComponent("relay.json"),
                        options: .atomic)
         try FileManager.default.moveItem(at: task.directory, to: destination)
-        updateStatus("截图已进入中转队列")
+        updateStatus("文件已进入中转队列")
     }
 
     private func processRelayQueue() {
@@ -441,9 +434,9 @@ final class IncomingTransferService {
                     switch result {
                     case .success:
                         try? FileManager.default.removeItem(at: directory)
-                        self?.updateStatus("截图中转完成")
+                        self?.updateStatus("文件中转完成")
                     case .failure(let error):
-                        self?.updateStatus("截图等待继续中转：\(error.localizedDescription)",
+                        self?.updateStatus("文件等待继续中转：\(error.localizedDescription)",
                                            isError: true)
                     }
                 }

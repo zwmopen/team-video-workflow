@@ -1,3 +1,10 @@
+## 2026-08-18 Android 0.6.24 / iPhone 0.6.11 隐私与三按钮预览候选
+
+- 两端删除自动截图采集、截图中转和自动读取/同步系统剪切板；iOS 同时删除 `ClipboardBridge`、`/v2/clipboard`、剪切板设置开关和相关前后台生命周期调用。用户主动复制文案/诊断信息仍保留。
+- Android 作品卡片改为“预览 / 发抖音 / 发小红书”一行三按钮，大图增加上一张/下一张；iPhone 使用同样的三按钮，图片预览支持左右滑动。
+- 版本：Android `versionCode=62` / `versionName=0.6.24`；iPhone `0.6.11/build 30`。本地 Windows 不执行 Android Gradle/Xcode 构建，必须以 GitHub Actions 为云端构建证据。
+- 真实手机安装、厂商安全扫描和点更新后的系统安装仍是独立验收项；构建或公开链接不能替代手机已安装/已运行证据。
+
 ## 2026-08-18 iPhone 0.6.10 移除截图链
 
 - iOS 已删除 `ScreenshotMonitor`、截图设置入口、截图接收开关和前台截图轮询。

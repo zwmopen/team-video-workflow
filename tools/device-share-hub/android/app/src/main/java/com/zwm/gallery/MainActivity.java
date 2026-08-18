@@ -570,8 +570,7 @@ public final class MainActivity extends Activity {
         checkBox.setOnClickListener(v -> toggleWorkSelection(work.id));
         View.OnClickListener openOrSelect = v -> {
             if (!selectedWorkIds.isEmpty()) toggleWorkSelection(work.id);
-            else if (!showingTrash) startActivity(new Intent(this, WorkDetailActivity.class)
-                    .putExtra(WorkDetailActivity.EXTRA_WORK_ID, work.id));
+            else if (!showingTrash) openPreview(work);
         };
         card.setOnClickListener(openOrSelect);
         nameRow.setOnClickListener(openOrSelect);
@@ -585,18 +584,20 @@ public final class MainActivity extends Activity {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             LinearLayout platformRow = new LinearLayout(this);
-            platformRow.setOrientation(LinearLayout.VERTICAL);
+            platformRow.setOrientation(LinearLayout.HORIZONTAL);
             platformRow.setGravity(Gravity.CENTER_HORIZONTAL);
-            Button xhs = smallButton("小红书 " + work.xhsShareCount, work.xhsShareCount == 0);
-            Button douyin = smallButton("抖音 " + work.douyinShareCount, work.douyinShareCount == 0);
-            xhs.setContentDescription("小红书，已点击 " + work.xhsShareCount + " 次");
-            douyin.setContentDescription("抖音，已点击 " + work.douyinShareCount + " 次");
-            xhs.setOnClickListener(v -> openShare(work, "xhs"));
+            Button preview = compactButton("预览", false);
+            Button douyin = compactButton("发抖音", work.douyinShareCount == 0);
+            Button xhs = compactButton("发小红书", work.xhsShareCount == 0);
+            preview.setContentDescription("预览作品，可在大图中查看下一张");
+            douyin.setContentDescription("发抖音，已点击 " + work.douyinShareCount + " 次");
+            xhs.setContentDescription("发小红书，已点击 " + work.xhsShareCount + " 次");
+            preview.setOnClickListener(v -> openPreview(work));
             douyin.setOnClickListener(v -> openShare(work, "douyin"));
-            platformRow.addView(xhs, new LinearLayout.LayoutParams(-1, dp(44)));
-            LinearLayout.LayoutParams douyinParams = new LinearLayout.LayoutParams(-1, dp(44));
-            douyinParams.setMargins(0, dp(8), 0, 0);
-            platformRow.addView(douyin, douyinParams);
+            xhs.setOnClickListener(v -> openShare(work, "xhs"));
+            platformRow.addView(preview, compactButtonParams(false));
+            platformRow.addView(douyin, compactButtonParams(true));
+            platformRow.addView(xhs, compactButtonParams(true));
             card.addView(platformRow);
         }
         return card;
@@ -715,6 +716,11 @@ public final class MainActivity extends Activity {
         startActivity(new Intent(this, ShareActivity.class)
                 .putExtra(ShareActivity.EXTRA_WORK_ID, work.id)
                 .putExtra(ShareActivity.EXTRA_PLATFORM, platform));
+    }
+
+    private void openPreview(WorkLibrary.WorkEntry work) {
+        startActivity(new Intent(this, WorkDetailActivity.class)
+                .putExtra(WorkDetailActivity.EXTRA_WORK_ID, work.id));
     }
 
     private void toggleWorkSelection(String id) {
@@ -1382,6 +1388,23 @@ public final class MainActivity extends Activity {
         button.setBackground(round(primary ? Color.rgb(15, 155, 99) : Color.rgb(232, 234, 233), 14));
         button.setPadding(dp(13), 0, dp(13), 0);
         return button;
+    }
+
+    private Button compactButton(String label, boolean primary) {
+        Button button = smallButton(label, primary);
+        button.setTextSize(11.5f);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setPadding(dp(2), 0, dp(2), 0);
+        button.setGravity(Gravity.CENTER);
+        button.setMaxLines(1);
+        return button;
+    }
+
+    private LinearLayout.LayoutParams compactButtonParams(boolean withLeftMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
+        if (withLeftMargin) params.setMargins(dp(4), 0, 0, 0);
+        return params;
     }
 
     private ImageButton iconButton(int imageResource, String description) {

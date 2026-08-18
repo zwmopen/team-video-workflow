@@ -17,24 +17,23 @@ final class SettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
+    override func numberOfSections(in tableView: UITableView) -> Int { return 5 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, 2, 2, 2, 1, 5][section]
+        return [3, 2, 2, 2, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return ["设备", "作品文件夹", "自动整理", "提醒", "剪切板", "软件"][section]
+        return ["设备", "作品文件夹", "自动整理", "提醒", "软件"][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         if section == 1 { return "当前文件夹就是作品与普通文件的唯一真实来源。" }
-        if section == 4 { return "iPhone 只会在相册位于前台时读取剪切板；不会自动读取系统截图，也不会显示跨应用悬浮球。" }
-        if section == 5 { return "素材与记录只保存在所选文件夹，不上传服务器，也不修改图片拍摄信息。" }
+        if section == 4 { return "素材与记录只保存在所选文件夹，不上传服务器，也不自动读取截图或系统剪切板。" }
         return nil
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let usesSubtitle = indexPath.section == 3 || indexPath.section == 4 || indexPath.section == 5
+        let usesSubtitle = indexPath.section == 3 || indexPath.section == 4
         let cell = UITableViewCell(style: usesSubtitle ? .subtitle : .value1, reuseIdentifier: nil)
         cell.textLabel?.numberOfLines = 0
         cell.detailTextLabel?.numberOfLines = 0
@@ -84,23 +83,16 @@ final class SettingsViewController: UITableViewController {
             toggle.addTarget(self, action: #selector(vibrationSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
         case (4, 0):
-            cell.textLabel?.text = "共享剪切板"
-            cell.detailTextLabel?.text = "进入相册时读取最新内容，并同步到同组在线设备"
-            let toggle = UISwitch()
-            toggle.isOn = UserDefaults.standard.object(forKey: "album.clipboardSyncEnabled") as? Bool ?? true
-            toggle.addTarget(self, action: #selector(clipboardSwitchChanged(_:)), for: .valueChanged)
-            cell.accessoryView = toggle
-        case (5, 0):
             cell.textLabel?.text = "名称"
             cell.detailTextLabel?.text = "相册"
-        case (5, 1):
+        case (4, 1):
             cell.textLabel?.text = "版本"
             cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.3"
-        case (5, 2):
+        case (4, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
-        case (5, 3):
+        case (4, 3):
             cell.textLabel?.text = "软件说明"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
@@ -132,11 +124,11 @@ final class SettingsViewController: UITableViewController {
             }
         } else if indexPath.section == 2 {
             showCleanupChoices(editingMove: indexPath.row == 0)
-        } else if indexPath.section == 5 && indexPath.row == 2 {
+        } else if indexPath.section == 4 && indexPath.row == 2 {
             AlbumUpdateChecker.check(from: self)
-        } else if indexPath.section == 5 && indexPath.row == 3 {
+        } else if indexPath.section == 4 && indexPath.row == 3 {
             showAbout()
-        } else if indexPath.section == 5 && indexPath.row == 4 {
+        } else if indexPath.section == 4 && indexPath.row == 4 {
             library.copyDiagnostics()
             let alert = UIAlertController(title: nil, message: "诊断信息已复制", preferredStyle: .alert)
             present(alert, animated: true)
@@ -161,14 +153,8 @@ final class SettingsViewController: UITableViewController {
         if sender.isOn { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
     }
 
-    @objc private func clipboardSwitchChanged(_ sender: UISwitch) {
-        UserDefaults.standard.set(sender.isOn, forKey: "album.clipboardSyncEnabled")
-        if sender.isOn { ClipboardBridge.shared.start() }
-        else { ClipboardBridge.shared.stop() }
-    }
-
     private func showAbout() {
-        let message = "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n核心场景\n从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可继续传送、预览和分享。\n\n作品工作流\n点一次“复制并分享”会立即记录一次，文案进入剪切板，图片交给系统分享面板。默认 1 小时后进入回收站并彻底删除，时间可自行调整。\n\n跨设备传送\nWindows、Android 和 iPhone 在同一 Wi-Fi 下自动发现，传送过程显示进度并核对完整性。\n\n共享剪切板\n同组在线设备同步最新剪切内容。\n\n系统分享\n其他应用可从系统分享面板选择“相册”并发送给在线设备。普通文件按真实文件夹存放。\n\n设计思路\n内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站保存在本机；坚果云只属于电脑端。"
+        let message = "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n核心场景\n从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可继续传送、预览和分享。\n\n作品工作流\n点一次“复制并分享”会立即记录一次，文案只在这次主动操作中交给系统剪切板，图片交给系统分享面板。默认 1 小时后进入回收站并彻底删除，时间可自行调整。\n\n跨设备传送\nWindows、Android 和 iPhone 在同一 Wi-Fi 下自动发现，传送过程显示进度并核对完整性。\n\n系统分享\n其他应用可从系统分享面板选择“相册”并发送给在线设备。普通文件按真实文件夹存放。\n\n设计思路\n内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站保存在本机；坚果云只属于电脑端。"
         let alert = UIAlertController(title: "相册 · 作品与文件中控", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
         present(alert, animated: true)

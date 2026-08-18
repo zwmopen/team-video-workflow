@@ -25,9 +25,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationDidBecomeActive(_ application: UIApplication) {
         application.isIdleTimerDisabled = true
         if !Self.isRunningTests { incomingTransfer.start() }
-        if UserDefaults.standard.object(forKey: "album.clipboardSyncEnabled") as? Bool ?? true {
-            ClipboardBridge.shared.start()
-        }
         library.refresh(showConfirmation: false)
         cleanupTimer?.invalidate()
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -38,7 +35,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationDidEnterBackground(_ application: UIApplication) {
         application.isIdleTimerDisabled = false
         if !Self.isRunningTests { incomingTransfer.stop() }
-        ClipboardBridge.shared.stop()
         cleanupTimer?.invalidate()
         cleanupTimer = nil
     }

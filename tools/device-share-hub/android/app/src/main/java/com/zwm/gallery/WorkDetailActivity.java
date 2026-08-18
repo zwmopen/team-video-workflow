@@ -277,11 +277,54 @@ public final class WorkDetailActivity extends Activity {
     }
 
     private void showLargeImage(String name) {
+        int initialIndex = Math.max(0, work.images.indexOf(name));
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setBackgroundColor(Color.BLACK);
+        container.setMinimumHeight(dp(420));
+
+        TextView counter = text("", 13, true);
+        counter.setGravity(Gravity.CENTER);
+        counter.setTextColor(Color.WHITE);
+        container.addView(counter, new LinearLayout.LayoutParams(-1, dp(34)));
+
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setBackgroundColor(Color.BLACK);
-        image.setImageBitmap(loadThumbnail(new File(work.directory, name), 1800));
-        new AlertDialog.Builder(this).setView(image).setPositiveButton("关闭", null).show();
+        container.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setPadding(dp(12), dp(10), dp(12), dp(4));
+        Button previous = button("上一张", Color.rgb(65, 65, 65), Color.WHITE);
+        Button next = button("下一张", Color.rgb(38, 145, 94), Color.WHITE);
+        previous.setTextSize(13);
+        next.setTextSize(13);
+        controls.addView(previous, new LinearLayout.LayoutParams(0, dp(42), 1));
+        LinearLayout.LayoutParams nextParams = new LinearLayout.LayoutParams(0, dp(42), 1);
+        nextParams.setMargins(dp(8), 0, 0, 0);
+        controls.addView(next, nextParams);
+        container.addView(controls);
+
+        final int[] currentIndex = {initialIndex};
+        Runnable render = () -> {
+            if (work.images.isEmpty()) return;
+            String currentName = work.images.get(currentIndex[0]);
+            counter.setText((currentIndex[0] + 1) + " / " + work.images.size());
+            image.setImageBitmap(loadThumbnail(new File(work.directory, currentName), 1800));
+            previous.setEnabled(currentIndex[0] > 0);
+            next.setEnabled(currentIndex[0] < work.images.size() - 1);
+            previous.setAlpha(previous.isEnabled() ? 1f : 0.45f);
+            next.setAlpha(next.isEnabled() ? 1f : 0.45f);
+        };
+        previous.setOnClickListener(v -> {
+            if (currentIndex[0] > 0) { currentIndex[0]--; render.run(); }
+        });
+        next.setOnClickListener(v -> {
+            if (currentIndex[0] + 1 < work.images.size()) { currentIndex[0]++; render.run(); }
+        });
+        new AlertDialog.Builder(this).setTitle("预览").setView(container).setPositiveButton("关闭", null).show();
+        render.run();
     }
 
     private void shareSelected() {

@@ -207,6 +207,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let work = filteredWorks[indexPath.item]
         cell.configure(work)
         cell.onShare = { [weak self, weak cell] platform in self?.share(work, platform: platform, source: cell) }
+        cell.onPreview = { [weak self] in
+            guard let self = self else { return }
+            self.navigationController?.pushViewController(
+                WorkDetailViewController(library: self.library, work: work), animated: true)
+        }
         return cell
     }
 
@@ -384,9 +389,11 @@ private final class WorkCell: UICollectionViewCell {
     private let count = UILabel()
     private let name = UILabel()
     private let detail = UILabel()
+    private let previewButton = UIButton(type: .system)
     private let xhsButton = UIButton(type: .system)
     private let douyinButton = UIButton(type: .system)
     var onShare: ((CopyPlatform) -> Void)?
+    var onPreview: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -401,13 +408,14 @@ private final class WorkCell: UICollectionViewCell {
         detail.textColor = AppColors.secondaryText
         let top = UIStackView(arrangedSubviews: [icon, count])
         top.axis = .horizontal
-        configurePlatformButton(xhsButton, title: "小红书 0", platform: .xhs)
-        configurePlatformButton(douyinButton, title: "抖音 0", platform: .douyin)
-        let platformRow = UIStackView(arrangedSubviews: [xhsButton, douyinButton])
-        platformRow.axis = .vertical
-        platformRow.spacing = 8
+        configurePreviewButton()
+        configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
+        configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
+        let platformRow = UIStackView(arrangedSubviews: [previewButton, douyinButton, xhsButton])
+        platformRow.axis = .horizontal
+        platformRow.spacing = 6
         platformRow.alignment = .fill
-        platformRow.distribution = .fill
+        platformRow.distribution = .fillEqually
         let stack = UIStackView(arrangedSubviews: [top, name, detail, platformRow])
         stack.axis = .vertical
         stack.spacing = 10
@@ -423,21 +431,35 @@ private final class WorkCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func prepareForReuse() { super.prepareForReuse(); onShare = nil }
+    override func prepareForReuse() { super.prepareForReuse(); onShare = nil; onPreview = nil }
+
+    private func configurePreviewButton() {
+        previewButton.setTitle("预览", for: .normal)
+        previewButton.titleLabel?.font = .boldSystemFont(ofSize: 12)
+        previewButton.backgroundColor = .white
+        previewButton.setTitleColor(AppColors.text, for: .normal)
+        previewButton.layer.cornerRadius = 10
+        previewButton.layer.borderWidth = 1
+        previewButton.layer.borderColor = AppColors.separator.cgColor
+        previewButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        previewButton.accessibilityLabel = "预览作品，可左右查看下一张"
+        previewButton.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
+    }
 
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
         button.setTitle(title, for: .normal)
-        button.titleLabel?.font = .boldSystemFont(ofSize: 13)
+        button.titleLabel?.font = .boldSystemFont(ofSize: 12)
         button.backgroundColor = tintColor
         button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 12
-        button.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        button.accessibilityLabel = platform.displayName
+        button.layer.cornerRadius = 10
+        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
         button.addTarget(self,
                          action: platform == .xhs ? #selector(xhsTapped) : #selector(douyinTapped),
                          for: .touchUpInside)
     }
 
+    @objc private func previewTapped() { onPreview?() }
     @objc private func xhsTapped() { onShare?(.xhs) }
     @objc private func douyinTapped() { onShare?(.douyin) }
 
@@ -452,7 +474,7 @@ private final class WorkCell: UICollectionViewCell {
         contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor
         name.textColor = shared ? AppColors.secondaryText : AppColors.text
         detail.text = shared ? "首次使用后按清理设置自动回收" : "点白色卡片查看内容"
-        xhsButton.setTitle("小红书 \(work.xhsShareCount)", for: .normal)
-        douyinButton.setTitle("抖音 \(work.douyinShareCount)", for: .normal)
+        xhsButton.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
+        douyinButton.accessibilityValue = "已点击 \(work.douyinShareCount) 次"
     }
 }
