@@ -8,6 +8,9 @@ public final class UpdateEndpointTest {
     @Test
     public void usesPublicUpdateRepository() {
         assertEquals(
+                "https://github.com/zwmopen/gallery-updates/releases",
+                UpdateEndpoint.RELEASE_PAGE);
+        assertEquals(
                 "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json",
                 UpdateEndpoint.RELEASE_MANIFEST);
         assertEquals(

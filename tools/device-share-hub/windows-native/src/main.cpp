@@ -3525,22 +3525,30 @@ std::optional<std::filesystem::path> PickAutoRestockSource() {
     std::filesystem::path root = LibraryRoot();
     if (root.empty() || !std::filesystem::is_directory(root)) return std::nullopt;
     std::error_code error;
+    // The automatic path is intentionally precise-only. A泛流量 folder must
+    // never be silently substituted when a device is short of精准流量作品.
     for (const auto& entry : std::filesystem::directory_iterator(
             root, std::filesystem::directory_options::skip_permission_denied, error)) {
         if (error) { error.clear(); continue; }
-        if (entry.is_directory(error) && IsWorkFolder(entry.path())) return entry.path();
+        if (!entry.is_directory(error)) { error.clear(); continue; }
+        std::wstring name = entry.path().filename().wstring();
+        bool precise = name.find(L"[转]") != std::wstring::npos
+                || name.find(L"【转】") != std::wstring::npos;
+        if (precise && IsWorkFolder(entry.path())) return entry.path();
         error.clear();
     }
     return std::nullopt;
 }
 
 int AutoRestockThreshold() {
-    if (!gContentStore) return 7;
+    if (!gContentStore) return 5;
     try {
-        int value = std::stoi(gContentStore->GetSetting(L"auto_restock_threshold"));
+        std::wstring stored = gContentStore->GetSetting(L"auto_restock_threshold");
+        if (stored.empty()) return 5;
+        int value = std::stoi(stored);
         return std::clamp(value, 1, 500);
     } catch (...) {
-        return 7;
+        return 5;
     }
 }
 
@@ -3563,7 +3571,10 @@ void MaybeAutoRestock() {
                     && now - device.lastSeen <= std::chrono::seconds(35);
             bool liveUsb = device.usbReady && device.usbAllowed;
             if (!liveWifi && !liveUsb) continue;
-            if (device.workCount < 0 || device.workCount >= threshold) continue;
+            // Automatic restock uses one shared semantic across Android, iPhone,
+            // and the PC inventory: only the precise/conversion count qualifies.
+            // Missing category data is unknown and must never fall back to total.
+            if (device.conversionCount < 0 || device.conversionCount >= threshold) continue;
             auto cooldown = gAutoRestockCooldown.find(device.id);
             if (cooldown != gAutoRestockCooldown.end()
                     && now - cooldown->second < std::chrono::minutes(2)) continue;
@@ -3575,7 +3586,7 @@ void MaybeAutoRestock() {
     if (selected.id.empty()) return;
     auto folder = *source;
     WriteDiagnosticLog(L"auto_restock_started", DisplayNameFor(selected)
-                       + L" workCount=" + std::to_wstring(selected.workCount)
+                       + L" preciseCount=" + std::to_wstring(selected.conversionCount)
                        + L" threshold=" + std::to_wstring(threshold)
                        + L" source=" + folder.wstring());
     PostStatus(L"自动补货：正在把“" + folder.filename().wstring()
@@ -3738,12 +3749,12 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTO_RESTOCK)), nullptr, nullptr);
             SendMessageW(gSettingsAutoRestockCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsText(window, L"补货阈值", 462, 386, 76, 24);
-            gSettingsThresholdEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"7",
+            gSettingsThresholdEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"5",
                 WS_CHILD | WS_VISIBLE | ES_NUMBER | ES_CENTER, 540, 380, 64, 30, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_THRESHOLD)), nullptr, nullptr);
             SendMessageW(gSettingsThresholdEdit, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsButton(window, L"保存", IDC_SETTINGS_SAVE_THRESHOLD, 616, 378, 88, 34);
-            AddSettingsText(window, L"作品按“一个帖子文件 + 至少一张图片”的文件夹识别；阈值范围 1–500。",
+            AddSettingsText(window, L"自动补货只按精准流量类库存判断；默认低于 5 个，阈值范围 1–500。",
                             40, 420, 640, 22);
 
             AddSettingsGroup(window, L"常规与软件", 20, 466, 704, 112);
@@ -3806,7 +3817,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                     int value = std::stoi(text, &consumed);
                     if (consumed != text.size() || value < 1 || value > 500) throw std::invalid_argument("range");
                     gContentStore->SetSetting(L"auto_restock_threshold", std::to_wstring(value));
-                    PostStatus(L"自动补货阈值已设为 " + std::to_wstring(value) + L" 个作品。");
+                    PostStatus(L"精准流量自动补货阈值已设为 " + std::to_wstring(value) + L" 个。");
                 } catch (...) {
                     MessageBoxW(window, L"请输入 1 到 500 之间的整数。", L"自动补货阈值", MB_OK | MB_ICONWARNING);
                     SetWindowTextW(gSettingsThresholdEdit, std::to_wstring(AutoRestockThreshold()).c_str());

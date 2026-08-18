@@ -190,6 +190,8 @@ jobs:
 
   ios-altstore-build:
     runs-on: macos-15
+    outputs:
+      artifact_name: ${{ steps.ios_package.outputs.artifact_name }}
     defaults:
       run:
         working-directory: tools/device-share-hub/ios
@@ -245,20 +247,32 @@ jobs:
           tail -n 180 "$RUNNER_TEMP/device-share-ios-build.log"
           exit 0
       - name: Package AltStore IPA
+        id: ios_package
         if: steps.ios_compile.outputs.status == '0'
         shell: bash
         run: |
           app_path="build/Build/Products/Release-iphoneos/Album.app"
           test -d "$app_path"
+          marketing_version=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'")
+          build_version=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'")
+          if [ -z "$marketing_version" ] || [ -z "$build_version" ]; then
+            echo "Unable to read iOS marketing/build version from project.yml" >&2
+            exit 1
+          fi
+          ipa_name="album-iOS-v${marketing_version}-altstore.ipa"
+          artifact_name="album-ios-altstore-v${marketing_version}"
           rm -rf package
           mkdir -p package/Payload
           ditto "$app_path" "package/Payload/Album.app"
-          (cd package && /usr/bin/zip -qry ../album-iOS-v0.6.10-altstore.ipa Payload)
-          python3 - <<'PY'
+          (cd package && /usr/bin/zip -qry "../$ipa_name" Payload)
+          IPA_NAME="$ipa_name" MARKETING_VERSION="$marketing_version" BUILD_VERSION="$build_version" python3 - <<'PY'
           import plistlib
           import zipfile
+          import os
 
-          ipa = "album-iOS-v0.6.10-altstore.ipa"
+          ipa = os.environ["IPA_NAME"]
+          expected_version = os.environ["MARKETING_VERSION"]
+          expected_build = os.environ["BUILD_VERSION"]
           with zipfile.ZipFile(ipa) as archive:
               names = archive.namelist()
               assert "Payload/Album.app/Album" in names, "iOS executable missing"
@@ -266,11 +280,13 @@ jobs:
               info = plistlib.loads(archive.read("Payload/Album.app/Info.plist"))
               assert info["CFBundleExecutable"] == "Album"
               assert info["CFBundleDisplayName"] == "相册"
-              assert info["CFBundleShortVersionString"] == "0.6.10"
-              assert info["CFBundleVersion"] == "29"
+              assert info["CFBundleShortVersionString"] == expected_version
+              assert info["CFBundleVersion"] == expected_build
           print("IPA structure verified")
           PY
-          shasum -a 256 album-iOS-v0.6.10-altstore.ipa > album-iOS-v0.6.10-altstore.ipa.sha256
+          shasum -a 256 "$ipa_name" > "${ipa_name}.sha256"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "ipa_name=$ipa_name" >> "$GITHUB_OUTPUT"
       - name: Upload iOS build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -281,10 +297,10 @@ jobs:
         if: steps.ios_compile.outputs.status == '0'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: album-ios-altstore-v0.6.10
+          name: ${{ steps.ios_package.outputs.artifact_name }}
           path: |
-            tools/device-share-hub/ios/album-iOS-v0.6.10-altstore.ipa
-            tools/device-share-hub/ios/album-iOS-v0.6.10-altstore.ipa.sha256
+            tools/device-share-hub/ios/album-iOS-v*-altstore.ipa
+            tools/device-share-hub/ios/album-iOS-v*-altstore.ipa.sha256
       - name: Fail when iOS build failed
         if: steps.ios_compile.outputs.status != '0'
         run: exit 1
@@ -307,7 +323,7 @@ jobs:
       - name: Download iOS AltStore bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: album-ios-altstore-v0.6.10
+          name: ${{ needs.ios-altstore-build.outputs.artifact_name }}
           path: release/ios
       - name: Publish one verified Android version to gallery-updates
         shell: bash

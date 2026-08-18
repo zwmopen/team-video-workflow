@@ -1,7 +1,5 @@
 package com.zwm.gallery;
 
-import android.Manifest;
-import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -10,34 +8,12 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.Context;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.pm.PackageManager;
-import android.database.ContentObserver;
-import android.database.Cursor;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
-import android.provider.MediaStore;
-import android.net.Uri;
 import android.util.Log;
-import android.view.Gravity;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -90,11 +66,8 @@ public final class OnlineService extends Service {
     public static final String ACTION_PEERS_CHANGED = "com.zwm.gallery.PEERS_CHANGED";
     public static final String ACTION_SHARE_OPENED = "com.zwm.gallery.SHARE_OPENED";
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
-    public static final String ACTION_CLIPBOARD_CHANGED = "com.zwm.gallery.CLIPBOARD_CHANGED";
-    public static final String ACTION_REFRESH_OVERLAY = "com.zwm.gallery.REFRESH_OVERLAY";
     /** Ask the running receiver to publish its current inventory immediately. */
     public static final String ACTION_REFRESH_STATUS = "com.zwm.gallery.REFRESH_STATUS";
-    public static final String ACTION_REFRESH_SCREENSHOTS = "com.zwm.gallery.REFRESH_SCREENSHOTS";
 
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
@@ -103,11 +76,9 @@ public final class OnlineService extends Service {
     private static final String PREF_WORK_COUNT_TRAFFIC = "advertisedWorkCountTraffic";
     private static final String PREF_WORK_COUNT_UNCATEGORIZED = "advertisedWorkCountUncategorized";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
-    static final String PREF_OVERLAY_HIDDEN_UNTIL = "clipboardOverlayHiddenUntil";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
-    public static final String SCREENSHOT_CHANNEL_ID = "device_share_screenshots_v1";
     private static final int FOREGROUND_NOTIFICATION_ID = 3401;
     private static final int TASK_NOTIFICATION_ID = 3402;
     private static final int TRANSFER_PROGRESS_NOTIFICATION_ID = 3403;
@@ -121,8 +92,6 @@ public final class OnlineService extends Service {
     private static final String TASK_MANIFEST_NAME = "task.json";
     private static final long PEER_TIMEOUT_MS = 15_000L;
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, Long> SEEN_CLIPBOARD_MESSAGES =
-            new ConcurrentHashMap<>();
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
@@ -134,22 +103,6 @@ public final class OnlineService extends Service {
     private volatile DatagramSocket discoverySocket;
     private volatile boolean beaconRequested;
     private boolean discoveryRecovering;
-    private WindowManager overlayManager;
-    private Button clipboardOverlay;
-    private WindowManager.LayoutParams clipboardOverlayParams;
-    private View clipboardPanel;
-    private WindowManager.LayoutParams clipboardPanelParams;
-    private LinearLayout clipboardHistoryContainer;
-    private LinearLayout clipboardPhraseContainer;
-    private TextView clipboardPanelStatus;
-    private Button clipboardLatestToggle;
-    private boolean clipboardLatestExpanded;
-    private String clipboardLatestRenderedText = "";
-    private final Handler overlayPauseHandler = new Handler(Looper.getMainLooper());
-    private final Runnable restoreClipboardOverlay = this::refreshClipboardOverlay;
-    private ContentObserver screenshotObserver;
-    private long lastScreenshotDate;
-    private long lastScreenshotId;
     private final Object taskLock = new Object();
     private IncomingTask activeTask;
 
@@ -201,12 +154,6 @@ public final class OnlineService extends Service {
     public void onCreate() {
         super.onCreate();
         ensureIdentity();
-        try {
-            ClipboardDefaults.ensure(new SharedClipboardStore(
-                    new File(getFilesDir(), "shared-clipboard")));
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "clipboard_defaults_failed", compact(error.getMessage()));
-        }
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
@@ -240,17 +187,7 @@ public final class OnlineService extends Service {
             serviceExecutor.execute(this::discoveryLoop);
         }
         notifyStatus("局域网接收已开启，等待电脑自动发现");
-        if (ACTION_REFRESH_OVERLAY.equals(action)) {
-            refreshClipboardOverlay();
-            refreshClipboardPanelContents();
-        } else if (ACTION_REFRESH_STATUS.equals(action)) {
-            beaconRequested = true;
-        } else if (ACTION_REFRESH_SCREENSHOTS.equals(action)) {
-            startScreenshotObserverIfAllowed();
-        } else {
-            refreshClipboardOverlay();
-            startScreenshotObserverIfAllowed();
-        }
+        if (ACTION_REFRESH_STATUS.equals(action)) beaconRequested = true;
         return START_STICKY;
     }
 
@@ -261,16 +198,12 @@ public final class OnlineService extends Service {
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();
         cleanupExecutor.shutdownNow();
-        overlayPauseHandler.removeCallbacksAndMessages(null);
-        stopScreenshotObserver();
-        removeClipboardOverlay();
         super.onDestroy();
     }
 
     private void runCleanup() {
         try {
             cleanupStaleIncomingTask();
-            processRelayQueue();
             CleanupCoordinator.Result result = CleanupCoordinator.run(this);
             if (result.moved > 0 || result.deleted > 0 || result.cacheEntriesDeleted > 0) {
                 DiagnosticLog.write(this, "scheduled_cleanup",
@@ -344,10 +277,6 @@ public final class OnlineService extends Service {
                     writeJson(output, 200, deviceInfo());
                     return;
                 }
-                if ("POST".equals(request.method) && "/v2/clipboard".equals(request.path)) {
-                    syncClipboard(request, input, output, client.getInetAddress());
-                    return;
-                }
                 if ("POST".equals(request.method) && "/v2/tasks".equals(request.path)) {
                     createTask(request, input, output);
                     return;
@@ -402,22 +331,8 @@ public final class OnlineService extends Service {
         boolean resumable = body.optBoolean("resume", false);
         String transferKey = body.optString("transferKey", "").trim();
         Map<Integer, IncomingFileSpec> specs = parseFileSpecs(body, fileCount);
-        RelayTaskMetadata relay = RelayTaskMetadata.fromJson(body);
         if (!taskId.matches("[A-Za-z0-9._-]{6,100}")) throw new HttpError(400, "taskId 无效");
         if (fileCount < 1 || fileCount > MAX_FILES) throw new HttpError(400, "文件数量无效");
-        String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString("deviceId", "");
-        if (relay != null) {
-            if (relay.expiresAt <= System.currentTimeMillis()) {
-                throw new HttpError(410, "中转任务已经过期");
-            }
-            if ("screenshot".equals(relay.contentKind)
-                    && ownId.equals(relay.destinationId)
-                    && !getSharedPreferences(PREFS, MODE_PRIVATE)
-                    .getBoolean("screenshotReceiveEnabled", true)) {
-                throw new HttpError(403, "主设备已关闭截图接收");
-            }
-        }
         JSONObject resumed = null;
         synchronized (taskLock) {
             if (activeTask != null) {
@@ -442,8 +357,7 @@ public final class OnlineService extends Service {
                     if (!taskDir.mkdirs() && !taskDir.isDirectory()) throw new HttpError(500, "无法创建缓存目录");
                     activeTask = new IncomingTask(
                             taskId, body.optString("text", ""), body.optBoolean("autoShare", false),
-                            fileCount, taskDir, System.currentTimeMillis(), relay,
-                            transferKey, specs);
+                            fileCount, taskDir, System.currentTimeMillis(), transferKey, specs);
                     persistTaskManifest(activeTask);
                     currentTaskId = taskId;
                     state = "receiving";
@@ -510,12 +424,11 @@ public final class OnlineService extends Service {
             int fileCount = manifest.optInt("fileCount", 0);
             if (fileCount < 1 || fileCount > MAX_FILES) return null;
             Map<Integer, IncomingFileSpec> specs = parseFileSpecs(manifest, fileCount);
-            RelayTaskMetadata relay = RelayTaskMetadata.fromJson(manifest);
             IncomingTask task = new IncomingTask(
                     manifest.optString("taskId", taskDir.getName()),
                     manifest.optString("text", ""), manifest.optBoolean("autoShare", false),
                     fileCount, taskDir, manifest.optLong("startedAtMs", System.currentTimeMillis()),
-                    relay, manifest.optString("transferKey", ""), specs);
+                    manifest.optString("transferKey", ""), specs);
             task.lastActivityAtMs = manifest.optLong("lastActivityAtMs", task.startedAtMs);
             JSONArray records = manifest.optJSONArray("files");
             if (records != null) {
@@ -590,15 +503,6 @@ public final class OnlineService extends Service {
                     .put("startedAtMs", task.startedAtMs)
                     .put("lastActivityAtMs", task.lastActivityAtMs)
                     .put("transferKey", task.transferKey);
-            if (task.relay != null) {
-                manifest.put("messageId", task.relay.messageId)
-                        .put("originId", task.relay.originId)
-                        .put("destinationId", task.relay.destinationId)
-                        .put("previousHopId", task.relay.previousHopId)
-                        .put("contentKind", task.relay.contentKind)
-                        .put("expiresAt", task.relay.expiresAt)
-                        .put("hopLimit", task.relay.hopLimit);
-            }
             JSONArray records = new JSONArray();
             for (int index = 0; index < task.fileCount; index++) {
                 IncomingFileSpec spec = task.specs.get(index);
@@ -796,23 +700,6 @@ public final class OnlineService extends Service {
             task.lastActivityAtMs = System.currentTimeMillis();
         }
 
-        String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString("deviceId", "");
-        if (task.relay != null && !ownId.equals(task.relay.destinationId)) {
-            queueRelayTask(task);
-            synchronized (taskLock) {
-                if (activeTask != task) throw new HttpError(409, "任务状态已变化");
-                activeTask = null;
-                currentTaskId = "";
-                state = "online";
-            }
-            writeJson(output, 202, new JSONObject()
-                    .put("relayStatus", "queued")
-                    .put("messageId", task.relay.messageId));
-            requestExecutor.execute(this::processRelayQueue);
-            return;
-        }
-
         WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
         int imported = 0;
         int deliveredFiles = 0;
@@ -946,134 +833,12 @@ public final class OnlineService extends Service {
                 .put("appVersion", installedVersion())
                 .put("versionCode", installedVersionCode())
                 .put("updateCapability", UPDATE_CAPABILITY)
-                .put("relayVersion", 1)
-                .put("relayEnabled", true)
-                .put("screenshotReceiveEnabled",
-                        prefs.getBoolean("screenshotReceiveEnabled", true))
                 .put("port", HTTP_PORT)
                 .put("state", state)
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
         if (workCounts != null) info.put("workCounts", workCounts);
         return info;
-    }
-
-    private void queueRelayTask(IncomingTask task) throws Exception {
-        File root = new File(getCacheDir(), "relay-queue");
-        if (!root.isDirectory() && !root.mkdirs()) {
-            throw new HttpError(500, "无法创建中转缓存");
-        }
-        File destination = new File(root, task.relay.messageId);
-        deleteRecursively(destination);
-        JSONObject manifest = new JSONObject()
-                .put("text", task.text)
-                .put("messageId", task.relay.messageId)
-                .put("originId", task.relay.originId)
-                .put("destinationId", task.relay.destinationId)
-                .put("previousHopId", task.relay.previousHopId)
-                .put("contentKind", task.relay.contentKind)
-                .put("expiresAt", task.relay.expiresAt)
-                .put("hopLimit", task.relay.hopLimit);
-        JSONArray files = new JSONArray();
-        for (int index = 0; index < task.fileCount; index++) {
-            ReceivedFile file = task.files.get(index);
-            if (file == null) throw new HttpError(409, "中转文件不完整");
-            files.put(new JSONObject()
-                    .put("stored", file.storedName)
-                    .put("name", file.name));
-        }
-        manifest.put("files", files);
-        try (FileOutputStream output = new FileOutputStream(
-                new File(task.dir, "relay.json"), false)) {
-            output.write(manifest.toString().getBytes(StandardCharsets.UTF_8));
-            output.flush();
-            output.getFD().sync();
-        }
-        if (!task.dir.renameTo(destination)) {
-            throw new HttpError(500, "无法保存中转任务");
-        }
-        DiagnosticLog.write(this, "relay_queued",
-                task.relay.messageId + " to=" + task.relay.destinationId);
-        OperationLog.add(this, "截图等待中转", task.relay.destinationId);
-    }
-
-    private void processRelayQueue() {
-        File root = new File(getCacheDir(), "relay-queue");
-        File[] queued = root.listFiles(File::isDirectory);
-        if (queued == null) return;
-        for (File directory : queued) {
-            try {
-                processRelayDirectory(directory);
-            } catch (Exception error) {
-                DiagnosticLog.write(this, "relay_retry_waiting",
-                        directory.getName() + " " + compact(error.getMessage()));
-            }
-        }
-    }
-
-    private void processRelayDirectory(File directory) throws Exception {
-        File manifestFile = new File(directory, "relay.json");
-        if (!manifestFile.isFile()) {
-            deleteRecursively(directory);
-            return;
-        }
-        byte[] bytes;
-        try (FileInputStream input = new FileInputStream(manifestFile)) {
-            bytes = readExact(input, manifestFile.length());
-        }
-        JSONObject manifest = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-        RelayTaskMetadata relay = new RelayTaskMetadata(
-                manifest.optString("messageId", directory.getName()),
-                manifest.optString("originId", ""),
-                manifest.optString("destinationId", ""),
-                manifest.optString("previousHopId", ""),
-                manifest.optString("contentKind", "file"),
-                manifest.optLong("expiresAt", 0),
-                manifest.optInt("hopLimit", 0));
-        if (System.currentTimeMillis() >= relay.expiresAt || relay.hopLimit <= 0) {
-            deleteRecursively(directory);
-            OperationLog.add(this, "中转已过期", relay.destinationId);
-            DiagnosticLog.write(this, "relay_expired", relay.messageId);
-            return;
-        }
-        PeerDevice next = null;
-        for (PeerDevice peer : peers()) {
-            if (peer.id.equals(relay.destinationId)) {
-                next = peer;
-                break;
-            }
-        }
-        if (next == null) {
-            for (PeerDevice peer : peers()) {
-                if (!peer.id.equals(relay.previousHopId)
-                        && !peer.id.equals(relay.originId)) {
-                    next = peer;
-                    break;
-                }
-            }
-        }
-        if (next == null) throw new IllegalStateException("暂时没有下一跳设备");
-        JSONArray records = manifest.getJSONArray("files");
-        ArrayList<File> files = new ArrayList<>();
-        ArrayList<String> names = new ArrayList<>();
-        for (int index = 0; index < records.length(); index++) {
-            JSONObject record = records.getJSONObject(index);
-            File file = new File(directory, record.getString("stored"));
-            if (!file.isFile()) throw new IllegalStateException("中转缓存文件缺失");
-            files.add(file);
-            names.add(record.optString("name", file.getName()));
-        }
-        String currentId = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString("deviceId", "");
-        RelayTaskMetadata forwarded = relay.forwardedBy(currentId);
-        PeerDevice finalNext = next;
-        new TransferClient(getContentResolver(), getCacheDir()).sendLocalFiles(
-                finalNext, files, names, manifest.optString("text", ""), forwarded,
-                (percent, text) -> notifyStatus("正在中转截图 " + percent + "%"));
-        deleteRecursively(directory);
-        OperationLog.add(this, "中转发送完成", finalNext.name);
-        DiagnosticLog.write(this, "relay_delivered",
-                relay.messageId + " via=" + finalNext.id);
     }
 
     private static boolean isZip(ReceivedFile file) {
@@ -1148,76 +913,6 @@ public final class OnlineService extends Service {
                 this::runDiscoverySession,
                 this::handleDiscoveryFailure,
                 Thread::sleep);
-    }
-
-    private void syncClipboard(
-            HttpRequest request, InputStream input, OutputStream output, InetAddress sourceAddress)
-            throws Exception {
-        if (request.contentLength < 0 || request.contentLength > 1024L * 1024L) {
-            throw new HttpError(413, "剪切板同步数据过大");
-        }
-        ClipboardSyncPayload.Decoded payload =
-                ClipboardSyncPayload.decode(readExact(input, request.contentLength));
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        Set<String> registered = preferences.getStringSet(
-                PREF_REGISTERED_PEERS, Collections.emptySet());
-        PeerDevice peer = PEERS.get(payload.senderId);
-        String sourceIp = sourceAddress == null ? "" : sourceAddress.getHostAddress();
-        if (!registered.contains(payload.senderId)
-                || peer == null || !peer.ip.equals(sourceIp)) {
-            throw new HttpError(403, "发送设备尚未登记");
-        }
-        long now = System.currentTimeMillis();
-        SEEN_CLIPBOARD_MESSAGES.entrySet().removeIf(
-                entry -> entry.getValue() < now - TimeUnit.HOURS.toMillis(1));
-        boolean firstSeen = SEEN_CLIPBOARD_MESSAGES.putIfAbsent(
-                payload.messageId, now) == null;
-        SharedClipboardStore store = new SharedClipboardStore(
-                new File(getFilesDir(), "shared-clipboard"));
-        int changed = store.merge(payload.items);
-        int pruned = store.retainNewestClipboardOnly();
-        if (changed > 0 || pruned > 0) {
-            writeNewestClipboardToSystem(store);
-            sendBroadcast(new Intent(ACTION_CLIPBOARD_CHANGED).setPackage(getPackageName()));
-            new Handler(Looper.getMainLooper()).post(this::refreshClipboardPanelContents);
-            DiagnosticLog.write(this, "clipboard_received",
-                    "peer=" + payload.senderId + " changed=" + changed + " pruned=" + pruned);
-        }
-        writeJson(output, 200, new JSONObject().put("changed", changed));
-        if (firstSeen && payload.hopLimit > 0) {
-            requestExecutor.execute(() -> forwardClipboard(payload));
-        }
-    }
-
-    private void writeNewestClipboardToSystem(SharedClipboardStore store) {
-        try {
-            SharedClipboardStore.Item newest = store.newestClipboard();
-            if (newest == null || newest.deleted || newest.text.trim().isEmpty()) return;
-            ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            if (manager != null) {
-                manager.setPrimaryClip(ClipData.newPlainText("共享剪切板", newest.text));
-            }
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "clipboard_system_write_failed",
-                    compact(error.getMessage()));
-        }
-    }
-
-    private void forwardClipboard(ClipboardSyncPayload.Decoded payload) {
-        String ownId = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString("deviceId", "");
-        for (PeerDevice candidate : peers()) {
-            if (candidate.id.equals(payload.senderId)
-                    || candidate.id.equals(payload.originId)) continue;
-            try {
-                new TransferClient(getContentResolver(), getCacheDir()).syncClipboard(
-                        candidate, ownId, payload.originId, payload.messageId,
-                        payload.hopLimit - 1, payload.items);
-            } catch (Exception error) {
-                DiagnosticLog.write(this, "clipboard_relay_skipped",
-                        candidate.name + " " + compact(error.getMessage()));
-            }
-        }
     }
 
     private void runDiscoverySession() throws Exception {
@@ -1309,758 +1004,10 @@ public final class OnlineService extends Service {
                 sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));
                 DiagnosticLog.write(this, reappeared ? "peer_reappeared" : "peer_found",
                         peer.name + " " + peer.ip);
-                if (!id.startsWith("windows-") && !"Windows PC".equals(peer.model)) {
-                    requestExecutor.execute(() -> pushClipboardToPeer(peer));
-                }
             }
         } catch (Exception error) {
             DiagnosticLog.write(this, "peer_packet_invalid", compact(error.getMessage()));
         }
-    }
-
-    private void pushClipboardToPeer(PeerDevice peer) {
-        try {
-            SharedClipboardStore store = new SharedClipboardStore(
-                    new File(getFilesDir(), "shared-clipboard"));
-            List<SharedClipboardStore.Item> items = store.syncSnapshot();
-            if (items.isEmpty()) return;
-            String senderId = getSharedPreferences(PREFS, MODE_PRIVATE)
-                    .getString("deviceId", "");
-            new TransferClient(getContentResolver(), getCacheDir())
-                    .syncClipboard(peer, senderId, items);
-            DiagnosticLog.write(this, "clipboard_peer_synced", peer.name);
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "clipboard_peer_sync_skipped",
-                    peer.name + " " + compact(error.getMessage()));
-        }
-    }
-
-    private void refreshClipboardOverlay() {
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        boolean enabled = preferences.getBoolean("clipboardOverlayEnabled", true);
-        long now = System.currentTimeMillis();
-        long hiddenUntil = preferences.getLong(PREF_OVERLAY_HIDDEN_UNTIL, 0L);
-        overlayPauseHandler.removeCallbacks(restoreClipboardOverlay);
-        if (enabled && OverlayPausePolicy.isTemporarilyHidden(hiddenUntil, now)) {
-            removeClipboardOverlay();
-            overlayPauseHandler.postDelayed(restoreClipboardOverlay,
-                    Math.min(hiddenUntil - now, OverlayPausePolicy.ONE_DAY_MS));
-            return;
-        }
-        if (hiddenUntil != 0L) {
-            preferences.edit().remove(PREF_OVERLAY_HIDDEN_UNTIL).apply();
-        }
-        if (!enabled || !Settings.canDrawOverlays(this)) {
-            removeClipboardOverlay();
-            return;
-        }
-        if (clipboardOverlay != null) return;
-        overlayManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-        if (overlayManager == null) return;
-        try {
-            ClipboardDefaults.ensure(new SharedClipboardStore(
-                    new File(getFilesDir(), "shared-clipboard")));
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "clipboard_defaults_failed", compact(error.getMessage()));
-        }
-        OverlayButton button = new OverlayButton(this);
-        button.setText("剪");
-        button.setTextSize(15);
-        button.setTextColor(Color.WHITE);
-        button.setAllCaps(false);
-        button.setPadding(0, 0, 0, 0);
-        button.setContentDescription("打开共享剪切板");
-        GradientDrawable background = new GradientDrawable();
-        background.setShape(GradientDrawable.OVAL);
-        background.setColor(Color.rgb(54, 105, 72));
-        background.setStroke(dp(1), Color.argb(100, 255, 255, 255));
-        button.setBackground(background);
-        button.setElevation(dp(6));
-        button.setOnClickListener(v -> toggleClipboardPanel());
-        clipboardOverlayParams = new WindowManager.LayoutParams(
-                dp(52), dp(52),
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
-        clipboardOverlayParams.gravity = Gravity.START | Gravity.TOP;
-        clipboardOverlayParams.x = clamp(
-                preferences.getInt("clipboardOverlayX", screenWidth() - dp(64)),
-                0, Math.max(0, screenWidth() - dp(52)));
-        clipboardOverlayParams.y = clamp(
-                preferences.getInt("clipboardOverlayYV2", screenHeight() / 4),
-                0, Math.max(0, screenHeight() - dp(52)));
-        button.setOnTouchListener(new android.view.View.OnTouchListener() {
-            float startRawX;
-            float startRawY;
-            int startX;
-            int startY;
-            boolean moved;
-            boolean holdTriggered;
-            final Runnable holdAction = () -> {
-                if (moved || clipboardOverlay != button) return;
-                holdTriggered = true;
-                showOverlayPauseChoices();
-            };
-            @Override public boolean onTouch(android.view.View view, MotionEvent event) {
-                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    startRawX = event.getRawX();
-                    startRawY = event.getRawY();
-                    startX = clipboardOverlayParams.x;
-                    startY = clipboardOverlayParams.y;
-                    moved = false;
-                    holdTriggered = false;
-                    view.postDelayed(holdAction, 5_000L);
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                    int deltaX = Math.round(event.getRawX() - startRawX);
-                    int deltaY = Math.round(event.getRawY() - startRawY);
-                    if (Math.abs(deltaX) > dp(4) || Math.abs(deltaY) > dp(4)) {
-                        moved = true;
-                        view.removeCallbacks(holdAction);
-                    }
-                    clipboardOverlayParams.x = clamp(startX + deltaX,
-                            0, Math.max(0, screenWidth() - dp(52)));
-                    clipboardOverlayParams.y = clamp(startY + deltaY,
-                            0, Math.max(0, screenHeight() - dp(52)));
-                    try { overlayManager.updateViewLayout(button, clipboardOverlayParams); }
-                    catch (Exception ignored) { }
-                    return moved;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_UP && moved) {
-                    view.removeCallbacks(holdAction);
-                    preferences.edit()
-                            .putInt("clipboardOverlayX", clipboardOverlayParams.x)
-                            .putInt("clipboardOverlayYV2", clipboardOverlayParams.y)
-                            .apply();
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                    view.removeCallbacks(holdAction);
-                    if (holdTriggered) return true;
-                    view.performClick();
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                    view.removeCallbacks(holdAction);
-                    return true;
-                }
-                return true;
-            }
-        });
-        try {
-            overlayManager.addView(button, clipboardOverlayParams);
-            clipboardOverlay = button;
-            DiagnosticLog.write(this, "clipboard_overlay_shown", "enabled");
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "clipboard_overlay_failed", compact(error.getMessage()));
-        }
-    }
-
-    private void removeClipboardOverlay() {
-        removeClipboardPanel();
-        if (overlayManager != null && clipboardOverlay != null) {
-            try { overlayManager.removeView(clipboardOverlay); }
-            catch (Exception ignored) { }
-        }
-        clipboardOverlay = null;
-        clipboardOverlayParams = null;
-    }
-
-    private void showOverlayPauseChoices() {
-        if (!Settings.canDrawOverlays(this)) return;
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("关闭悬浮球多久？")
-                .setMessage("临时关闭到期会自动恢复；永久关闭后可在相册设置中重新开启。")
-                .setItems(new String[]{"1 分钟", "30 分钟", "永久关闭"},
-                        (whichDialog, which) -> {
-                            if (which == 2) pauseClipboardOverlayPermanently();
-                            else {
-                                long[] durations = {
-                                        OverlayPausePolicy.ONE_MINUTE_MS,
-                                        OverlayPausePolicy.THIRTY_MINUTES_MS};
-                                pauseClipboardOverlayFor(durations[which]);
-                            }
-                        })
-                .setNegativeButton("取消", null)
-                .create();
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
-        }
-        try { dialog.show(); }
-        catch (Exception error) {
-            DiagnosticLog.write(this, "clipboard_overlay_pause_dialog_failed",
-                    compact(error.getMessage()));
-        }
-    }
-
-    private void pauseClipboardOverlayFor(long durationMs) {
-        long until = OverlayPausePolicy.hiddenUntil(System.currentTimeMillis(), durationMs);
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putLong(PREF_OVERLAY_HIDDEN_UNTIL, until)
-                .apply();
-        removeClipboardOverlay();
-        overlayPauseHandler.removeCallbacks(restoreClipboardOverlay);
-        overlayPauseHandler.postDelayed(restoreClipboardOverlay,
-                Math.min(durationMs, OverlayPausePolicy.ONE_DAY_MS));
-    }
-
-    private void pauseClipboardOverlayPermanently() {
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean("clipboardOverlayEnabled", false)
-                .remove(PREF_OVERLAY_HIDDEN_UNTIL)
-                .apply();
-        overlayPauseHandler.removeCallbacks(restoreClipboardOverlay);
-        removeClipboardOverlay();
-    }
-
-    private void toggleClipboardPanel() {
-        if (clipboardPanel == null) showClipboardPanel();
-        else removeClipboardPanel();
-    }
-
-    private void showClipboardPanel() {
-        if (overlayManager == null || clipboardPanel != null) return;
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        int minimumWidth = dp(250);
-        int minimumHeight = dp(280);
-        int maximumWidth = Math.max(minimumWidth, screenWidth() - dp(16));
-        int maximumHeight = Math.max(minimumHeight, screenHeight() - dp(32));
-        int defaultWidth = clamp(screenWidth() / 2, minimumWidth, maximumWidth);
-        int defaultHeight = clamp(screenHeight() / 2, minimumHeight, maximumHeight);
-        int width = clamp(preferences.getInt("clipboardPanelWidth",
-                defaultWidth), minimumWidth, maximumWidth);
-        int height = clamp(preferences.getInt("clipboardPanelHeight",
-                defaultHeight), minimumHeight, maximumHeight);
-
-        FrameLayout shell = new FrameLayout(this);
-        GradientDrawable panelBackground = new GradientDrawable();
-        panelBackground.setColor(Color.rgb(246, 244, 240));
-        panelBackground.setCornerRadius(dp(18));
-        panelBackground.setStroke(dp(2), Color.rgb(74, 112, 90));
-        shell.setBackground(panelBackground);
-        shell.setElevation(dp(12));
-
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(12), dp(10), dp(12), dp(16));
-        shell.addView(body, new FrameLayout.LayoutParams(-1, -1));
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(4), 0, 0, dp(8));
-        TextView title = overlayText("共享剪切板", 16, true);
-        header.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
-        Button add = overlayButton("＋");
-        add.setContentDescription("新增固定常用语");
-        add.setOnClickListener(v -> {
-            removeClipboardPanel();
-            startActivity(new Intent(this, ClipboardActivity.class)
-                    .putExtra(ClipboardActivity.EXTRA_ADD_PHRASE, true)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        });
-        header.addView(add, new LinearLayout.LayoutParams(dp(42), dp(40)));
-        Button close = overlayButton("×");
-        close.setContentDescription("关闭共享剪切板");
-        close.setOnClickListener(v -> removeClipboardPanel());
-        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(dp(42), dp(40));
-        closeParams.setMargins(dp(5), 0, 0, 0);
-        header.addView(close, closeParams);
-        body.addView(header, new LinearLayout.LayoutParams(-1, dp(48)));
-
-        LinearLayout latestHeader = new LinearLayout(this);
-        latestHeader.setOrientation(LinearLayout.HORIZONTAL);
-        latestHeader.setGravity(Gravity.CENTER_VERTICAL);
-        TextView latestHeading = overlayText("最新剪切", 13, true);
-        latestHeading.setPadding(dp(2), dp(2), dp(2), dp(5));
-        latestHeader.addView(latestHeading, new LinearLayout.LayoutParams(0, dp(36), 1));
-        clipboardLatestToggle = overlayButton("展开");
-        clipboardLatestToggle.setContentDescription("展开或收起最新剪切内容");
-        clipboardLatestToggle.setVisibility(View.GONE);
-        clipboardLatestToggle.setOnClickListener(v -> {
-            clipboardLatestExpanded = !clipboardLatestExpanded;
-            refreshClipboardPanelContents();
-        });
-        latestHeader.addView(clipboardLatestToggle,
-                new LinearLayout.LayoutParams(dp(58), dp(34)));
-        body.addView(latestHeader, new LinearLayout.LayoutParams(-1, dp(38)));
-
-        LinearLayout scrollingContent = new LinearLayout(this);
-        scrollingContent.setOrientation(LinearLayout.VERTICAL);
-        clipboardHistoryContainer = new LinearLayout(this);
-        clipboardHistoryContainer.setOrientation(LinearLayout.VERTICAL);
-        scrollingContent.addView(clipboardHistoryContainer,
-                new LinearLayout.LayoutParams(-1, -2));
-
-        TextView phraseHeading = overlayText("固定常用语", 13, true);
-        phraseHeading.setPadding(dp(2), dp(8), dp(2), dp(5));
-        scrollingContent.addView(phraseHeading, new LinearLayout.LayoutParams(-1, dp(40)));
-        clipboardPhraseContainer = new LinearLayout(this);
-        clipboardPhraseContainer.setOrientation(LinearLayout.VERTICAL);
-        scrollingContent.addView(clipboardPhraseContainer,
-                new LinearLayout.LayoutParams(-1, -2));
-        ScrollView contentScroll = new ScrollView(this);
-        contentScroll.setFillViewport(true);
-        contentScroll.addView(scrollingContent,
-                new ScrollView.LayoutParams(-1, -2));
-        body.addView(contentScroll, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        clipboardPanelStatus = overlayText("点击一条即可复制", 11, false);
-        clipboardPanelStatus.setGravity(Gravity.CENTER);
-        clipboardPanelStatus.setTextColor(Color.rgb(72, 105, 84));
-        body.addView(clipboardPanelStatus, new LinearLayout.LayoutParams(-1, dp(32)));
-
-        TextView resize = overlayText("↘", 24, true);
-        resize.setGravity(Gravity.CENTER);
-        resize.setTextColor(Color.rgb(54, 105, 72));
-        resize.setContentDescription("拖动调整剪切板窗口大小");
-        FrameLayout.LayoutParams resizeParams = new FrameLayout.LayoutParams(dp(42), dp(42),
-                Gravity.END | Gravity.BOTTOM);
-        shell.addView(resize, resizeParams);
-
-        clipboardPanelParams = new WindowManager.LayoutParams(width, height,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
-        clipboardPanelParams.gravity = Gravity.START | Gravity.TOP;
-        clipboardPanelParams.x = clamp(preferences.getInt("clipboardPanelX",
-                Math.max(0, (screenWidth() - width) / 2)),
-                0, Math.max(0, screenWidth() - width));
-        clipboardPanelParams.y = clamp(preferences.getInt("clipboardPanelY",
-                dp(8)), 0, Math.max(0, screenHeight() - height));
-        shell.setOnTouchListener((view, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
-                removeClipboardPanel();
-                return true;
-            }
-            return false;
-        });
-
-        header.setOnTouchListener(new View.OnTouchListener() {
-            float rawX;
-            float rawY;
-            int startX;
-            int startY;
-            @Override public boolean onTouch(View view, MotionEvent event) {
-                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    rawX = event.getRawX();
-                    rawY = event.getRawY();
-                    startX = clipboardPanelParams.x;
-                    startY = clipboardPanelParams.y;
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                    clipboardPanelParams.x = clamp(startX + Math.round(event.getRawX() - rawX),
-                            0, Math.max(0, screenWidth() - clipboardPanelParams.width));
-                    clipboardPanelParams.y = clamp(startY + Math.round(event.getRawY() - rawY),
-                            0, Math.max(0, screenHeight() - clipboardPanelParams.height));
-                    updateClipboardPanelLayout();
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                    saveClipboardPanelBounds();
-                    return true;
-                }
-                return true;
-            }
-        });
-        resize.setOnTouchListener(new View.OnTouchListener() {
-            float rawX;
-            float rawY;
-            int startWidth;
-            int startHeight;
-            @Override public boolean onTouch(View view, MotionEvent event) {
-                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    rawX = event.getRawX();
-                    rawY = event.getRawY();
-                    startWidth = clipboardPanelParams.width;
-                    startHeight = clipboardPanelParams.height;
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                    clipboardPanelParams.width = clamp(
-                            startWidth + Math.round(event.getRawX() - rawX),
-                            minimumWidth, Math.max(minimumWidth,
-                                    screenWidth() - clipboardPanelParams.x));
-                    clipboardPanelParams.height = clamp(
-                            startHeight + Math.round(event.getRawY() - rawY),
-                            minimumHeight, Math.max(minimumHeight,
-                                    screenHeight() - clipboardPanelParams.y));
-                    updateClipboardPanelLayout();
-                    return true;
-                }
-                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                    saveClipboardPanelBounds();
-                    return true;
-                }
-                return true;
-            }
-        });
-        try {
-            overlayManager.addView(shell, clipboardPanelParams);
-            clipboardPanel = shell;
-            // Android 10+ only exposes another app's clipboard to the currently focused app.
-            // Let the focusable overlay settle before reading after the user's explicit tap.
-            shell.postDelayed(() -> {
-                if (clipboardPanel == shell) captureCurrentClipboardAndSync();
-            }, 180L);
-            DiagnosticLog.write(this, "clipboard_panel_shown", "floating_resizable");
-        } catch (Exception error) {
-            clipboardPanelParams = null;
-            clipboardHistoryContainer = null;
-            clipboardPhraseContainer = null;
-            clipboardPanelStatus = null;
-            clipboardLatestToggle = null;
-            clipboardLatestExpanded = false;
-            clipboardLatestRenderedText = "";
-            DiagnosticLog.write(this, "clipboard_panel_failed", compact(error.getMessage()));
-        }
-    }
-
-    private void refreshClipboardPanelContents() {
-        if (clipboardPanel == null || clipboardHistoryContainer == null
-                || clipboardPhraseContainer == null) return;
-        requestExecutor.execute(() -> {
-            try {
-                SharedClipboardStore store = new SharedClipboardStore(
-                        new File(getFilesDir(), "shared-clipboard"));
-                ClipboardDefaults.ensure(store);
-                List<SharedClipboardStore.Item> history =
-                        store.visible(SharedClipboardStore.KIND_CLIPBOARD);
-                List<SharedClipboardStore.Item> phrases =
-                        store.visible(SharedClipboardStore.KIND_PHRASE);
-                new Handler(Looper.getMainLooper()).post(() ->
-                        renderClipboardPanel(history, phrases));
-            } catch (Exception error) {
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    if (clipboardPanelStatus != null) {
-                        clipboardPanelStatus.setText("读取失败：" + compact(error.getMessage()));
-                    }
-                });
-            }
-        });
-    }
-
-    private void captureCurrentClipboardAndSync() {
-        ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        ClipData clip = manager == null ? null : manager.getPrimaryClip();
-        CharSequence value = clip == null || clip.getItemCount() == 0
-                ? null : clip.getItemAt(0).coerceToText(this);
-        String text = value == null ? "" : value.toString().trim();
-        captureClipboardTextAndSync(text);
-    }
-
-    private void captureClipboardTextAndSync(String text) {
-        requestExecutor.execute(() -> {
-            try {
-                SharedClipboardStore store = new SharedClipboardStore(
-                        new File(getFilesDir(), "shared-clipboard"));
-                ClipboardDefaults.ensure(store);
-                if (!text.isEmpty()) {
-                    SharedClipboardStore.Item newest = store.newestClipboard();
-                    if (newest == null || !text.equals(newest.text)) {
-                        store.add(getSharedPreferences(PREFS, MODE_PRIVATE)
-                                        .getString("deviceId", "device"),
-                                SharedClipboardStore.KIND_CLIPBOARD,
-                                text, store.nextTimestamp(System.currentTimeMillis()));
-                    }
-                    store.retainNewestClipboardOnly();
-                    List<SharedClipboardStore.Item> snapshot = store.syncSnapshot();
-                    int synced = 0;
-                    for (PeerDevice peer : peers()) {
-                        if (peer.id.startsWith("windows-") || "Windows PC".equals(peer.model)) {
-                            continue;
-                        }
-                        try {
-                            new TransferClient(getContentResolver(), getCacheDir())
-                                    .syncClipboard(peer,
-                                            getSharedPreferences(PREFS, MODE_PRIVATE)
-                                                    .getString("deviceId", ""),
-                                            snapshot);
-                            synced++;
-                        } catch (Exception error) {
-                            DiagnosticLog.write(this, "clipboard_sync_failed",
-                                    peer.name + " " + compact(error.getMessage()));
-                        }
-                    }
-                    int finalSynced = synced;
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        refreshClipboardPanelContents();
-                        if (clipboardPanelStatus != null) {
-                            clipboardPanelStatus.setText(finalSynced == 0
-                                    ? "最新剪切已保存 · 暂无其他在线手机"
-                                    : "最新剪切已同步到 " + finalSynced + " 台在线手机");
-                        }
-                    });
-                } else {
-                    new Handler(Looper.getMainLooper()).post(
-                            this::refreshClipboardPanelContents);
-                }
-            } catch (Exception error) {
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    if (clipboardPanelStatus != null) {
-                        clipboardPanelStatus.setText("同步失败：" + compact(error.getMessage()));
-                    }
-                });
-            }
-        });
-    }
-
-    private void renderClipboardPanel(List<SharedClipboardStore.Item> history,
-                                      List<SharedClipboardStore.Item> phrases) {
-        if (clipboardHistoryContainer == null || clipboardPhraseContainer == null) return;
-        clipboardHistoryContainer.removeAllViews();
-        clipboardPhraseContainer.removeAllViews();
-        String latestText = history.isEmpty() ? "" : history.get(0).text;
-        if (!latestText.equals(clipboardLatestRenderedText)) {
-            clipboardLatestRenderedText = latestText;
-            clipboardLatestExpanded = false;
-        }
-        boolean collapsible = ClipboardDisplayPolicy.shouldCollapse(latestText);
-        if (clipboardLatestToggle != null) {
-            clipboardLatestToggle.setVisibility(collapsible ? View.VISIBLE : View.GONE);
-            clipboardLatestToggle.setText(clipboardLatestExpanded ? "收起" : "展开");
-        }
-        if (history.isEmpty()) addOverlayEmpty(clipboardHistoryContainer, "暂无记录");
-        else {
-            Button latest = overlayItem(latestText);
-            latest.setMaxLines(clipboardLatestExpanded ? Integer.MAX_VALUE
-                    : ClipboardDisplayPolicy.COLLAPSED_LINES);
-            latest.setEllipsize(clipboardLatestExpanded
-                    ? null : android.text.TextUtils.TruncateAt.END);
-            clipboardHistoryContainer.addView(latest, overlayItemParams());
-        }
-        if (phrases.isEmpty()) addOverlayEmpty(clipboardPhraseContainer, "暂无常用语");
-        else for (SharedClipboardStore.Item item : phrases) {
-            clipboardPhraseContainer.addView(overlayItem(item.text), overlayItemParams());
-        }
-        if (clipboardPanelStatus != null) {
-            clipboardPanelStatus.setText("最新剪切 " + (history.isEmpty() ? 0 : 1)
-                    + " 条 · 固定常用语 " + phrases.size() + " 条 · 点击复制");
-        }
-    }
-
-    private Button overlayItem(String value) {
-        Button button = new Button(this);
-        button.setAllCaps(false);
-        button.setText(value);
-        button.setTextSize(12);
-        button.setTextColor(Color.rgb(38, 40, 37));
-        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        button.setPadding(dp(8), dp(6), dp(8), dp(6));
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.WHITE);
-        background.setCornerRadius(dp(10));
-        background.setStroke(dp(1), Color.rgb(220, 218, 212));
-        button.setBackground(background);
-        button.setOnClickListener(v -> copyOverlayText(value));
-        return button;
-    }
-
-    private LinearLayout.LayoutParams overlayItemParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(6));
-        return params;
-    }
-
-    private void addOverlayEmpty(LinearLayout target, String value) {
-        TextView empty = overlayText(value, 12, false);
-        empty.setGravity(Gravity.CENTER);
-        empty.setTextColor(Color.GRAY);
-        target.addView(empty, new LinearLayout.LayoutParams(-1, dp(72)));
-    }
-
-    private void copyOverlayText(String value) {
-        ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        if (manager != null) manager.setPrimaryClip(
-                ClipData.newPlainText("共享剪切板", value));
-        if (clipboardPanelStatus != null) clipboardPanelStatus.setText("已复制，正在同步…");
-        captureClipboardTextAndSync(value == null ? "" : value.trim());
-    }
-
-    private TextView overlayText(String value, int size, boolean bold) {
-        TextView view = new TextView(this);
-        view.setText(value);
-        view.setTextSize(size);
-        view.setTextColor(Color.rgb(35, 35, 33));
-        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        return view;
-    }
-
-    private Button overlayButton(String value) {
-        Button button = new Button(this);
-        button.setText(value);
-        button.setAllCaps(false);
-        button.setTextSize(12);
-        button.setPadding(0, 0, 0, 0);
-        button.setTextColor(Color.rgb(45, 55, 48));
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.rgb(232, 235, 229));
-        background.setCornerRadius(dp(10));
-        button.setBackground(background);
-        return button;
-    }
-
-    private void updateClipboardPanelLayout() {
-        if (overlayManager == null || clipboardPanel == null || clipboardPanelParams == null) return;
-        try { overlayManager.updateViewLayout(clipboardPanel, clipboardPanelParams); }
-        catch (Exception ignored) { }
-    }
-
-    private void saveClipboardPanelBounds() {
-        if (clipboardPanelParams == null) return;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putInt("clipboardPanelX", clipboardPanelParams.x)
-                .putInt("clipboardPanelY", clipboardPanelParams.y)
-                .putInt("clipboardPanelWidth", clipboardPanelParams.width)
-                .putInt("clipboardPanelHeight", clipboardPanelParams.height)
-                .apply();
-    }
-
-    private void removeClipboardPanel() {
-        if (overlayManager != null && clipboardPanel != null) {
-            try { overlayManager.removeView(clipboardPanel); }
-            catch (Exception ignored) { }
-        }
-        clipboardPanel = null;
-        clipboardPanelParams = null;
-        clipboardHistoryContainer = null;
-        clipboardPhraseContainer = null;
-        clipboardPanelStatus = null;
-        clipboardLatestToggle = null;
-        clipboardLatestExpanded = false;
-        clipboardLatestRenderedText = "";
-    }
-
-    private int screenWidth() {
-        return getResources().getDisplayMetrics().widthPixels;
-    }
-
-    private int screenHeight() {
-        return getResources().getDisplayMetrics().heightPixels;
-    }
-
-    private static int clamp(int value, int minimum, int maximum) {
-        return Math.max(minimum, Math.min(Math.max(minimum, maximum), value));
-    }
-
-    private void startScreenshotObserverIfAllowed() {
-        stopScreenshotObserver();
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (!preferences.getBoolean("screenshotSyncEnabled", false)
-                || !hasScreenshotPermission()) {
-            return;
-        }
-        ScreenshotRow latest = queryLatestImage();
-        lastScreenshotDate = latest == null
-                ? System.currentTimeMillis() / 1000L : latest.dateAdded;
-        lastScreenshotId = latest == null ? 0 : latest.id;
-        screenshotObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
-            @Override public void onChange(boolean selfChange, Uri uri) {
-                requestExecutor.execute(() -> detectLatestScreenshot(uri));
-            }
-            @Override public void onChange(boolean selfChange) {
-                requestExecutor.execute(() -> detectLatestScreenshot(null));
-            }
-        };
-        getContentResolver().registerContentObserver(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, screenshotObserver);
-        DiagnosticLog.write(this, "screenshot_observer_started",
-                preferences.getString("screenshotTargetPeerId", ""));
-    }
-
-    private void stopScreenshotObserver() {
-        if (screenshotObserver == null) return;
-        try { getContentResolver().unregisterContentObserver(screenshotObserver); }
-        catch (Exception ignored) { }
-        screenshotObserver = null;
-    }
-
-    private boolean hasScreenshotPermission() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES)
-                    == PackageManager.PERMISSION_GRANTED;
-        }
-        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
-                == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private void detectLatestScreenshot(Uri changedUri) {
-        ScreenshotRow row = queryLatestImage();
-        if (row == null
-                || row.dateAdded < lastScreenshotDate
-                || (row.dateAdded == lastScreenshotDate && row.id <= lastScreenshotId)) {
-            return;
-        }
-        lastScreenshotDate = row.dateAdded;
-        lastScreenshotId = row.id;
-        if (!ScreenshotDetector.isScreenshot(row.name, row.relativePath)) return;
-        showScreenshotPrompt(row.uri);
-    }
-
-    private ScreenshotRow queryLatestImage() {
-        String[] projection = Build.VERSION.SDK_INT >= 29
-                ? new String[]{
-                        MediaStore.Images.Media._ID,
-                        MediaStore.Images.Media.DISPLAY_NAME,
-                        MediaStore.Images.Media.RELATIVE_PATH,
-                        MediaStore.Images.Media.DATE_ADDED}
-                : new String[]{
-                        MediaStore.Images.Media._ID,
-                        MediaStore.Images.Media.DISPLAY_NAME,
-                        MediaStore.Images.Media.DATA,
-                        MediaStore.Images.Media.DATE_ADDED};
-        try (Cursor cursor = getContentResolver().query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
-                null, null, MediaStore.Images.Media.DATE_ADDED + " DESC")) {
-            if (cursor == null || !cursor.moveToFirst()) return null;
-            long id = cursor.getLong(0);
-            return new ScreenshotRow(id,
-                    Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                            Long.toString(id)),
-                    cursor.getString(1), cursor.getString(2), cursor.getLong(3));
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "screenshot_query_failed", compact(error.getMessage()));
-            return null;
-        }
-    }
-
-    private void showScreenshotPrompt(Uri uri) {
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        String peerId = preferences.getString("screenshotTargetPeerId", "");
-        String peerName = preferences.getString("screenshotTargetPeerName", "主设备");
-        boolean autoSend = preferences.getBoolean("screenshotAutoSendEnabled", true);
-        if (peerId.isEmpty() || !autoSend) {
-            preferences.edit().putString("pendingScreenshotUri", uri.toString()).apply();
-            PendingIntent open = PendingIntent.getActivity(
-                    this, 43, new Intent(this, ClipboardActivity.class)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            Notification pending = new Notification.Builder(this, SCREENSHOT_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_menu_camera)
-                    .setContentTitle("发现一张新截图")
-                    .setContentText("打开相册选择要发送到的设备")
-                    .setContentIntent(open)
-                    .setAutoCancel(true)
-                    .build();
-            getSystemService(NotificationManager.class)
-                    .notify(ScreenshotSendReceiver.NOTIFICATION_ID, pending);
-            return;
-        }
-        Intent send = new Intent(this, ScreenshotSendReceiver.class)
-                .setAction(ScreenshotSendReceiver.ACTION_SEND)
-                .putExtra(ScreenshotSendReceiver.EXTRA_URI, uri.toString())
-                .putExtra(ScreenshotSendReceiver.EXTRA_PEER_ID, peerId);
-        sendBroadcast(send);
-        DiagnosticLog.write(this, "screenshot_auto_send", peerName);
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void ensureIdentity() {
@@ -2245,15 +1192,13 @@ public final class OnlineService extends Service {
         silentAlerts.setSound(null, null);
         silentAlerts.enableVibration(false);
 
-        NotificationChannel screenshots = new NotificationChannel(
-                SCREENSHOT_CHANNEL_ID, "截图发送提醒", NotificationManager.IMPORTANCE_DEFAULT);
-        screenshots.setDescription("截图后询问是否发送到主设备");
-
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.createNotificationChannel(foreground);
         manager.createNotificationChannel(alerts);
         manager.createNotificationChannel(silentAlerts);
-        manager.createNotificationChannel(screenshots);
+        // Remove the channel left behind by pre-0.6.23 installs; no new screenshot
+        // notifications are created by this build.
+        manager.deleteNotificationChannel("device_share_screenshots_v1");
     }
 
     private void notifyTransferEvent(String title, String text, int notificationId, String autoShareWorkId) {
@@ -2361,15 +1306,14 @@ public final class OnlineService extends Service {
         final File dir;
         final long startedAtMs;
         volatile long lastActivityAtMs;
-        final RelayTaskMetadata relay;
         final String transferKey;
         final Map<Integer, IncomingFileSpec> specs;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
 
         IncomingTask(
                 String id, String text, boolean autoShare, int fileCount,
-                File dir, long startedAtMs, RelayTaskMetadata relay,
-                String transferKey, Map<Integer, IncomingFileSpec> specs) {
+                File dir, long startedAtMs, String transferKey,
+                Map<Integer, IncomingFileSpec> specs) {
             this.id = id;
             this.text = text;
             this.autoShare = autoShare;
@@ -2377,7 +1321,6 @@ public final class OnlineService extends Service {
             this.dir = dir;
             this.startedAtMs = startedAtMs;
             this.lastActivityAtMs = startedAtMs;
-            this.relay = relay;
             this.transferKey = transferKey == null ? "" : transferKey;
             this.specs = specs == null ? new HashMap<>() : new HashMap<>(specs);
         }
@@ -2419,32 +1362,6 @@ public final class OnlineService extends Service {
             return other != null && index == other.index && size == other.size
                     && name.equals(other.name)
                     && (sha256.isEmpty() || other.sha256.isEmpty() || sha256.equalsIgnoreCase(other.sha256));
-        }
-    }
-
-    private static final class ScreenshotRow {
-        final long id;
-        final Uri uri;
-        final String name;
-        final String relativePath;
-        final long dateAdded;
-
-        ScreenshotRow(long id, Uri uri, String name, String relativePath, long dateAdded) {
-            this.id = id;
-            this.uri = uri;
-            this.name = name;
-            this.relativePath = relativePath;
-            this.dateAdded = dateAdded;
-        }
-    }
-
-    private static final class OverlayButton extends Button {
-        OverlayButton(Context context) {
-            super(context);
-        }
-
-        @Override public boolean performClick() {
-            return super.performClick();
         }
     }
 

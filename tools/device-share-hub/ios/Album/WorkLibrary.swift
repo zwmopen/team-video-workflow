@@ -8,6 +8,9 @@ struct ManagedFolderChoice {
 
 final class WorkLibrary {
     static let advertisedWorkCountKey = "album.advertisedWorkCount.v1"
+    static let advertisedWorkConversionCountKey = "album.advertisedWorkConversionCount.v1"
+    static let advertisedWorkTrafficCountKey = "album.advertisedWorkTrafficCount.v1"
+    static let advertisedWorkUncategorizedCountKey = "album.advertisedWorkUncategorizedCount.v1"
     private(set) var works: [WorkItem] = []
     private(set) var trash: [TrashItem] = []
     private(set) var folderName: String?
@@ -44,6 +47,23 @@ final class WorkLibrary {
 
     var receivingRootURL: URL? { return rootURL }
     var advertisedWorkCount: Int { UserDefaults.standard.integer(forKey: Self.advertisedWorkCountKey) }
+    var advertisedWorkCounts: [String: Int]? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.advertisedWorkConversionCountKey) != nil,
+              defaults.object(forKey: Self.advertisedWorkTrafficCountKey) != nil,
+              defaults.object(forKey: Self.advertisedWorkUncategorizedCountKey) != nil else {
+            return nil
+        }
+        let conversion = defaults.integer(forKey: Self.advertisedWorkConversionCountKey)
+        let traffic = defaults.integer(forKey: Self.advertisedWorkTrafficCountKey)
+        let uncategorized = defaults.integer(forKey: Self.advertisedWorkUncategorizedCountKey)
+        return [
+            "total": conversion + traffic + uncategorized,
+            "conversion": conversion,
+            "traffic": traffic,
+            "uncategorized": uncategorized
+        ]
+    }
 
     deinit {
         if hasSecurityScope { rootURL?.stopAccessingSecurityScopedResource() }
@@ -625,6 +645,12 @@ final class WorkLibrary {
 
     private func notify() {
         UserDefaults.standard.set(works.count, forKey: Self.advertisedWorkCountKey)
+        UserDefaults.standard.set(works.filter { $0.category == WorkCategory.conversion }.count,
+                                  forKey: Self.advertisedWorkConversionCountKey)
+        UserDefaults.standard.set(works.filter { $0.category == WorkCategory.traffic }.count,
+                                  forKey: Self.advertisedWorkTrafficCountKey)
+        UserDefaults.standard.set(works.filter { $0.category == WorkCategory.uncategorized }.count,
+                                  forKey: Self.advertisedWorkUncategorizedCountKey)
         onChange?()
     }
 

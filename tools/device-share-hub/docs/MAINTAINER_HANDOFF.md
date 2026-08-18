@@ -1,3 +1,24 @@
+## 2026-08-18 Android 0.6.23 剪切板/截图模块移除候选
+
+- 根因：旧版 `OnlineService` 在设备发现/服务启动时维护悬浮剪切板，读取并写回系统剪切板，并通过 `MediaStore` 观察截图；Manifest 同时声明 `SYSTEM_ALERT_WINDOW`，这正是用户看到隐私或风险提示的可疑行为链。
+- 修复：删除 `ClipboardActivity`、剪切板存储/同步、中继元数据、截图检测/接收器、悬浮窗 UI 与设置入口；`OnlineService` 不再执行自动剪切板读写、截图观察或截图中转，`/v2/clipboard` 返回 404；普通文件传输、作品导入、更新包接收和设备发现保留。
+- 权限：移除 `SYSTEM_ALERT_WINDOW`；`READ_MEDIA_IMAGES` 等媒体权限仍用于正常的作品/文件选择与导入，不能据此宣称应用完全零媒体权限。
+- 版本：Android `versionCode=61` / `versionName=0.6.23`，本地构建候选，未发布、未安装。
+- 验收：先跑 `:app:testDebugUnitTest :app:assembleRelease :app:lintRelease`，再检查 Release Manifest/权限和真实设备安全扫描；重点确认没有悬浮窗权限、没有自动剪切板访问、没有截图通知/接收器。
+
+## 2026-08-18 iPhone 0.6.9 分类库存统一候选
+
+- 现场发现：苹果12在线且总作品数 16，但 `/v2/info.workCounts` 为空，电脑无法判断精准流量库存。
+- 修复：iPhone 在作品扫描完成后持久化 `total/conversion/traffic/uncategorized`，`/v2/info` 上报 `workCounts`；版本升至 0.6.9/build 28。
+- Windows 自动补货只使用 `conversion` 精准流量字段，字段缺失保持未知并跳过自动发送；精准来源目录只接受 `[转]`/`【转】` 标记。
+- 本地 Windows 无 Xcode，未完成 iOS 编译或真机覆盖安装；需云端构建后让苹果12重新安装并刷新作品库，再实读 `workCounts`。
+
+## 2026-08-17 Android 0.6.22 手动下载入口候选
+
+- Android `versionCode=60` / `versionName=0.6.22`：设置 → 软件说明底部增加可点击的公开安装包发布页。
+- 点击入口只使用系统浏览器打开 `https://github.com/zwmopen/gallery-updates/releases`，用户自行选择 APK 下载；不静默安装、不改变应用内校验和安装流程。
+- 发布页地址复用 `UpdateEndpoint.RELEASE_PAGE`，与应用内更新检查使用同一公开仓库；本机已通过 `:app:testDebugUnitTest`、`:app:assembleRelease` 和 `:app:lintRelease`，尚未发布或安装到真机。
+
 ## 2026-08-14 Android 0.6.21 大文件断点续传候选
 
 - Android `versionCode=59` / `versionName=0.6.21`：接收端新增可恢复任务清单、`GET /v2/tasks/{taskId}` 和按 `X-File-Offset` 追加上传。
@@ -533,14 +554,3 @@
 5. 把三端包发布到 `gallery-updates`，再更新 `latest.json`；
 6. 通过公开 raw 地址确认线上版本，而不是只看本地提交；
 7. 推送主源码和备用副本，确认工作区干净。
-## 2026-08-16 Android 0.6.22 / iPhone 0.6.9 平台文案分发候选
-
-- 作品卡片沿用原图片分享链路，按钮拆为“小红书 / 抖音”；两端分别持久化平台点击次数，统一维护 `used`、`firstUsedAt` 与固定 `deleteScheduledAt`。
-- `PlatformCopyParser` 只按 `COPY_FORMAT:2` 机器标记选择段落；旧 TXT 无版本标记时两个平台都回退全文。缺段或损坏只提示，不记账、不清理图片。
-- Android 状态位于作品 `meta.properties`，清理后保留到 `work-library/history/<workId>.properties`；iPhone 状态位于根目录 `_相册状态.json` 的 `history`，相同 workId 重推时恢复计数。
-- 已新增 Android JUnit 与 iOS XCTest 的解析器、旧格式、缺段和损坏文本回归；本机 Windows 无 Android SDK/Xcode，必须以 Actions 的 Android 单测/Release/Lint 和 iOS 测试/真机构建为最终编译证据。
-## 2026-08-17 Android 0.6.23 / iPhone 0.6.10 平台按钮布局候选
-
-- 作品列表的平台按钮改为纵向整行布局，Android 与 iPhone 都不再把“小红书”和“抖音”挤在同一行。
-- 只改布局，不改变平台解析、计数、used 状态、清理计时和图片分享链路。
-- 需要通过 CI 构建并在至少一台 Android、一台 iPhone 上复核按钮可读性。

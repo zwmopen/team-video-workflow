@@ -3,6 +3,7 @@ package com.zwm.gallery;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -21,7 +22,6 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.content.pm.PackageManager;
 import android.provider.DocumentsContract;
-import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -29,25 +29,19 @@ import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
 
 public final class SettingsActivity extends Activity {
     private static final String PREFS = "device_share";
     private static final int REQUEST_TREE = 71;
     private static final int REQUEST_NOTIFICATIONS = 72;
-    private static final int REQUEST_SCREENSHOTS = 73;
     private EditText deviceName;
     private TextView pathText;
     private SettingSwitchRow soundSwitch;
     private TextView moveAfterText;
     private TextView deleteAfterText;
-    private TextView mainDeviceText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,53 +104,6 @@ public final class SettingsActivity extends Activity {
             if (enabled) vibrateOnce();
         });
         root.addView(vibrationSwitch, settingMargins(dp(20)));
-
-        root.addView(label("剪切板与截图"));
-        SettingSwitchRow overlaySwitch = settingSwitch(
-                "悬浮剪切板",
-                "在其他应用上方显示“贴”按钮；默认开启，可随时关闭",
-                getSharedPreferences(PREFS, MODE_PRIVATE)
-                        .getBoolean("clipboardOverlayEnabled", true));
-        overlaySwitch.setOnCheckedChangeListener((button, enabled) ->
-                changeClipboardOverlay(enabled));
-        root.addView(overlaySwitch, settingMargins(dp(10)));
-        SettingSwitchRow screenshotSwitch = settingSwitch(
-                "自动识别新截图",
-                "识别系统相册里的新截图；关闭后不读取也不发送",
-                getSharedPreferences(PREFS, MODE_PRIVATE)
-                        .getBoolean("screenshotSyncEnabled", false));
-        screenshotSwitch.setOnCheckedChangeListener((button, enabled) ->
-                changeScreenshotSync(enabled));
-        root.addView(screenshotSwitch, settingMargins(dp(20)));
-        SettingSwitchRow screenshotAutoSwitch = settingSwitch(
-                "自动发送到主设备",
-                "已设置主设备时直接发送；关闭后进入相册再逐张选择",
-                getSharedPreferences(PREFS, MODE_PRIVATE)
-                        .getBoolean("screenshotAutoSendEnabled", true));
-        screenshotAutoSwitch.setOnCheckedChangeListener((button, enabled) -> {
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putBoolean("screenshotAutoSendEnabled", enabled).apply();
-            startService(new Intent(this, OnlineService.class)
-                    .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
-            if (enabled && getSharedPreferences(PREFS, MODE_PRIVATE)
-                    .getString("screenshotTargetPeerId", "").isEmpty()) {
-                showMainDevicePicker();
-            }
-        });
-        root.addView(screenshotAutoSwitch, settingMargins(dp(10)));
-        LinearLayout mainDeviceRow = choiceRow("截图主设备", currentMainDeviceLabel());
-        mainDeviceText = (TextView) mainDeviceRow.getChildAt(1);
-        mainDeviceRow.setOnClickListener(v -> showMainDevicePicker());
-        root.addView(mainDeviceRow, settingMargins(dp(10)));
-        SettingSwitchRow screenshotReceiveSwitch = settingSwitch(
-                "允许作为主设备接收",
-                "关闭后拒绝其他设备自动发送的截图，普通文件传送不受影响",
-                getSharedPreferences(PREFS, MODE_PRIVATE)
-                        .getBoolean("screenshotReceiveEnabled", true));
-        screenshotReceiveSwitch.setOnCheckedChangeListener((button, enabled) ->
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                        .putBoolean("screenshotReceiveEnabled", enabled).apply());
-        root.addView(screenshotReceiveSwitch, settingMargins(dp(20)));
 
         root.addView(label("软件"));
         SettingSwitchRow autoUpdateSwitch = settingSwitch(
@@ -222,71 +169,6 @@ public final class SettingsActivity extends Activity {
         dialog.show();
     }
 
-    private void showMainDevicePicker() {
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        Set<String> registered = preferences.getStringSet(
-                "registeredPeers", Collections.emptySet());
-        String ownId = preferences.getString("deviceId", "");
-        List<PeerDevice> available = new ArrayList<>();
-        for (PeerDevice peer : OnlineService.peers()) {
-            if (!peer.id.equals(ownId) && registered.contains(peer.id)) available.add(peer);
-        }
-        String currentId = preferences.getString("screenshotTargetPeerId", "");
-        ArrayList<String> labels = new ArrayList<>();
-        labels.add("不选择主设备");
-        int checked = currentId.isEmpty() ? 0 : -1;
-        for (int index = 0; index < available.size(); index++) {
-            PeerDevice peer = available.get(index);
-            String suffix = peer.model.isEmpty() || peer.model.equals(peer.name)
-                    ? "在线" : peer.model + " · 在线";
-            labels.add(peer.name + "\n" + suffix);
-            if (peer.id.equals(currentId)) checked = index + 1;
-        }
-        if (available.isEmpty()) {
-            labels.add("当前没有其他在线可信设备");
-        }
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("选择截图主设备")
-                .setSingleChoiceItems(labels.toArray(new String[0]), checked, null)
-                .setNegativeButton("取消", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getListView().setOnItemClickListener(
-                (parent, view, position, id) -> {
-                    if (available.isEmpty() && position == 1) return;
-                    SharedPreferences.Editor editor = preferences.edit();
-                    if (position == 0) {
-                        editor.remove("screenshotTargetPeerId")
-                                .remove("screenshotTargetPeerName").apply();
-                    } else {
-                        PeerDevice peer = available.get(position - 1);
-                        editor.putString("screenshotTargetPeerId", peer.id)
-                                .putString("screenshotTargetPeerName", peer.name).apply();
-                    }
-                    mainDeviceText.setText(currentMainDeviceLabel());
-                    startService(new Intent(this, OnlineService.class)
-                            .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
-                    dialog.dismiss();
-                    toast(position == 0 ? "已取消主设备" : "主设备已保存");
-                }));
-        dialog.show();
-    }
-
-    private String currentMainDeviceLabel() {
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        String id = preferences.getString("screenshotTargetPeerId", "");
-        if (id.isEmpty()) return "未选择  ›";
-        String name = preferences.getString("screenshotTargetPeerName", "主设备");
-        boolean online = false;
-        for (PeerDevice peer : OnlineService.peers()) {
-            if (peer.id.equals(id)) {
-                name = peer.name;
-                online = true;
-                break;
-            }
-        }
-        return name + (online ? " · 在线  ›" : " · 离线  ›");
-    }
-
     private void showCustomCleanupHours(boolean editingMove, int currentHours) {
         EditText input = numberField(Integer.toString(currentHours));
         input.setSelectAllOnFocus(true);
@@ -336,7 +218,7 @@ public final class SettingsActivity extends Activity {
         super.onResume();
         UpdateChecker.reportDownloadProblem(this);
         startService(new Intent(this, OnlineService.class)
-                .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
+                .setAction(OnlineService.ACTION_REFRESH_STATUS));
     }
 
     private void changeSoundNotifications(boolean enabled) {
@@ -356,70 +238,11 @@ public final class SettingsActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_SCREENSHOTS) {
-            boolean granted = grantResults.length > 0;
-            for (int result : grantResults) {
-                granted &= result == PackageManager.PERMISSION_GRANTED;
-            }
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putBoolean("screenshotSyncEnabled", granted).apply();
-            startService(new Intent(this, OnlineService.class)
-                    .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
-            toast(granted ? "截图提醒已开启" : "需要允许读取图片才能识别新截图");
-            return;
-        }
         if (requestCode != REQUEST_NOTIFICATIONS) return;
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("soundNotificationsEnabled", granted).apply();
         soundSwitch.setChecked(granted);
         toast(granted ? "声音通知已打开" : "系统没有允许通知");
-    }
-
-    private void changeClipboardOverlay(boolean enabled) {
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean("clipboardOverlayEnabled", enabled)
-                .remove(OnlineService.PREF_OVERLAY_HIDDEN_UNTIL)
-                .apply();
-        if (enabled && !Settings.canDrawOverlays(this)) {
-            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())));
-        } else {
-            startService(new Intent(this, OnlineService.class)
-                    .setAction(OnlineService.ACTION_REFRESH_OVERLAY));
-        }
-    }
-
-    private void changeScreenshotSync(boolean enabled) {
-        if (!enabled) {
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putBoolean("screenshotSyncEnabled", false).apply();
-            startService(new Intent(this, OnlineService.class)
-                    .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
-            return;
-        }
-        String target = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString("screenshotTargetPeerId", "");
-        String permission = Build.VERSION.SDK_INT >= 33
-                ? Manifest.permission.READ_MEDIA_IMAGES
-                : Manifest.permission.READ_EXTERNAL_STORAGE;
-        boolean needsImages = checkSelfPermission(permission)
-                != PackageManager.PERMISSION_GRANTED;
-        boolean needsNotifications = Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED;
-        if (needsImages || needsNotifications) {
-            requestPermissions(Build.VERSION.SDK_INT >= 33
-                            ? new String[]{Manifest.permission.READ_MEDIA_IMAGES,
-                                    Manifest.permission.POST_NOTIFICATIONS}
-                            : new String[]{permission},
-                    REQUEST_SCREENSHOTS);
-            return;
-        }
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean("screenshotSyncEnabled", true).apply();
-        startService(new Intent(this, OnlineService.class)
-                .setAction(OnlineService.ACTION_REFRESH_SCREENSHOTS));
-        toast("截图提醒已开启");
     }
 
     private void vibrateOnce() {
@@ -461,23 +284,62 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showAbout() {
+        String description =
+                "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n"
+                + "核心场景\n"
+                + "从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可以继续传送、预览和分享。\n\n"
+                + "作品工作流\n"
+                + "点一次“复制并分享”，应用会立即记录一次，文案自动进入剪贴板，作品图片交给系统分享面板。再次分享会先提醒，避免误发同一个作品。默认 1 小时后进入回收站并从文件管理中彻底删除，时间可在设置中调整。\n\n"
+                + "跨设备传送\n"
+                + "电脑、Android 和 iPhone 在同一 Wi‑Fi 下自动发现。选择设备和文件即可传送，过程带有进度、完整性校验和结果提示。\n\n"
+                + "隐私与权限\n"
+                + "应用不再读取系统剪切板、不再监测系统截图、不再使用悬浮窗权限；只在你主动选择文件并点击传送，或主动点击复制分享时访问对应内容。\n\n"
+                + "系统分享\n"
+                + "其他应用的分享面板里可以选择“相册”，再选择在线设备。普通文件按真实文件夹存放，只有图片和文字一起直接分享时才进入分享准备。\n\n"
+                + "设计思路\n"
+                + "内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站都保存在本机；覆盖升级会延续现有数据。坚果云只属于电脑端，不进入手机版。";
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), 0, dp(24), 0);
+
+        TextView copy = text(description, 14, false);
+        copy.setTextColor(Color.rgb(70, 70, 67));
+        copy.setLineSpacing(dp(2), 1f);
+        content.addView(copy, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView download = text(
+                "手动下载最新版安装包\n" + UpdateEndpoint.RELEASE_PAGE, 14, true);
+        download.setTextColor(Color.rgb(0, 122, 255));
+        download.setPaintFlags(download.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
+        download.setContentDescription("打开发布页手动下载最新版安装包");
+        download.setClickable(true);
+        download.setFocusable(true);
+        download.setOnClickListener(v -> openReleasePage());
+        LinearLayout.LayoutParams downloadParams = new LinearLayout.LayoutParams(-1, -2);
+        downloadParams.setMargins(0, dp(20), 0, dp(8));
+        content.addView(download, downloadParams);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
         new AlertDialog.Builder(this)
                 .setTitle("相册 · 作品与文件中控")
-                .setMessage(
-                        "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n"
-                        + "核心场景\n"
-                        + "从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可以继续传送、预览和分享。\n\n"
-                        + "作品工作流\n"
-                        + "点一次“复制并分享”，应用会立即记录一次，文案自动进入剪贴板，作品图片交给系统分享面板。再次分享会先提醒，避免误发同一个作品。默认 1 小时后进入回收站并从文件管理中彻底删除，时间可在设置中调整。\n\n"
-                        + "跨设备传送\n"
-                        + "电脑、Android 和 iPhone 在同一 Wi‑Fi 下自动发现。选择设备和文件即可传送，过程带有进度、完整性校验和结果提示。\n\n"
-                        + "共享剪切板与截图\n"
-                        + "左侧是剪切板记录，右侧是常用语；同组在线手机会同步新增、修改和删除。允许悬浮窗后可在其他应用点“贴”快速打开；还可指定截图接收设备，截图后由系统通知询问是否发送。\n\n"
-                        + "系统分享\n"
-                        + "其他应用的分享面板里可以选择“相册”，再选择在线设备。普通文件按真实文件夹存放，只有图片和文字一起直接分享时才进入分享准备。\n\n"
-                        + "设计思路\n"
-                        + "内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站都保存在本机；覆盖升级会延续现有数据。坚果云只属于电脑端，不进入手机版。")
+                .setView(scroll)
                 .setPositiveButton("知道了", null).show();
+    }
+
+    private void openReleasePage() {
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(UpdateEndpoint.RELEASE_PAGE));
+        if (intent.resolveActivity(getPackageManager()) == null) {
+            toast("没有可用的浏览器，无法打开发布页");
+            return;
+        }
+        try {
+            startActivity(intent);
+            DiagnosticLog.write(this, "manual_download_page_opened", UpdateEndpoint.RELEASE_PAGE);
+        } catch (ActivityNotFoundException error) {
+            toast("没有可用的浏览器，无法打开发布页");
+        }
     }
 
     private void copyDiagnostics() {

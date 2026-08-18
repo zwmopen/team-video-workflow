@@ -242,7 +242,7 @@ final class IncomingTransferService {
     }
 
     private func infoResponse() -> HTTPResponse {
-        return HTTPResponse(status: 200, object: [
+        var info: [String: Any] = [
             "protocol": 2,
             "deviceId": DeviceIdentity.id,
             "name": DeviceIdentity.name,
@@ -255,7 +255,15 @@ final class IncomingTransferService {
             "state": "online",
             "workCount": library.advertisedWorkCount,
             "taskId": ""
-        ])
+        ]
+        if let counts = library.advertisedWorkCounts {
+            // Keep the legacy total and the category aggregate from the same
+            // scan. This prevents the PC from seeing a stale total beside
+            // fresh precise/traffic counts during the upgrade window.
+            info["workCount"] = counts["total"] ?? library.advertisedWorkCount
+            info["workCounts"] = counts
+        }
+        return HTTPResponse(status: 200, object: info)
     }
 
     private func createTask(_ request: HTTPRequest) throws -> HTTPResponse {

@@ -7,7 +7,6 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -42,11 +41,6 @@
             android:name=".UpdateInstallActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:theme="@style/AppTheme" />
-
-        <activity
-            android:name=".ClipboardActivity"
-            android:exported="false"
             android:theme="@style/AppTheme" />
 
         <activity
@@ -98,10 +92,6 @@
             android:name=".AppUpdateService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-
-        <receiver
-            android:name=".ScreenshotSendReceiver"
-            android:exported="false" />
 
         <receiver
             android:name=".UpdateDownloadReceiver"

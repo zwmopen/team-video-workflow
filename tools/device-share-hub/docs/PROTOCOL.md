@@ -113,6 +113,8 @@ POST /v2/tasks/{taskId}/commit
 
 ## 共享剪切板同步
 
+> Android 0.6.23 起已移除该能力：新版 Android 不再读取/写回系统剪切板、不再提供悬浮窗或截图中转，也不再接受 `/v2/clipboard`。以下协议仅保留给仍支持它的旧版/其他端兼容说明。
+
 同一可信 Wi-Fi 下已互相发现并登记的 Android 设备可发送：
 
 ```http
@@ -141,7 +143,7 @@ Content-Type: application/json
 这仍是可信局域网便利机制，不等同于远程模式的密码学身份认证。
 
 新版实时剪切只保留最新一条，使用 `messageId + originId` 在一小时窗口内去重；
-需要中转时逐跳减少 `hopLimit`。Android 可把收到的最新值写入系统剪切板，iPhone
+需要中转时逐跳减少 `hopLimit`。旧版 Android 可把收到的最新值写入系统剪切板，iPhone
 仅在前台读写，Windows 使用桌面剪切板；固定常用语仍按条目 ID 同步增删改。
 
 ### 4. 取消失败任务
@@ -159,13 +161,13 @@ POST /v2/tasks/{taskId}/cancel
 - `ready`：兼容旧版客户端的保留状态；V3 正常提交后直接回到 `online`。
 - `sharing`：兼容旧版客户端的保留状态；V3 分享操作不阻塞继续接收。
 
-`GET /v2/info` 在手机端同时返回 `workCount`。新版还可返回
+`GET /v2/info` 在手机端同时返回 `workCount`。旧版还可能返回
 `relayVersion`、`relayEnabled` 和 `screenshotReceiveEnabled`；扩展字段均为可选，
-旧客户端忽略未知字段仍可继续发现和直接传送。
+Android 0.6.23 不再上报这些已移除的能力，旧客户端忽略未知字段仍可继续发现和直接传送。
 
 ## 分类库存扩展
 
-Android 0.6.17 起，`GET /v2/info` 可选返回：
+Android 0.6.17、iPhone 0.6.9 起，`GET /v2/info` 可选返回：
 
 ```json
 {"workCount":15,"workCounts":{"total":15,"conversion":8,"traffic":7,"uncategorized":0}}

@@ -127,7 +127,6 @@ public final class MainActivity extends Activity {
         worker.execute(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
         getWindow().getDecorView().post(() -> {
             showInitialFolderPromptIfNeeded();
-            maybeOfferClipboardOverlay();
         });
     }
 
@@ -700,24 +699,6 @@ public final class MainActivity extends Activity {
         }, 520);
     }
 
-    private void maybeOfferClipboardOverlay() {
-        SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (!preferences.getBoolean("clipboardOverlayEnabled", true)
-                || preferences.getBoolean("clipboardOverlayPermissionAsked", false)
-                || Settings.canDrawOverlays(this)) {
-            return;
-        }
-        preferences.edit().putBoolean("clipboardOverlayPermissionAsked", true).apply();
-        new AlertDialog.Builder(this)
-                .setTitle("开启悬浮剪切板？")
-                .setMessage("开启后，在其他应用中也能点“剪”打开共享剪切板。可随时在设置中关闭。")
-                .setNegativeButton("暂不", null)
-                .setPositiveButton("去开启", (dialog, which) ->
-                        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + getPackageName()))))
-                .show();
-    }
-
     private String deleteCountdown(WorkLibrary.WorkEntry work) {
         long remaining = CleanupSettings.read(this).deleteAfterMs()
                 - Math.max(0, System.currentTimeMillis() - work.firstSharedAtMs);
@@ -1208,7 +1189,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
-        refreshOnlineOverlaySafely();
+        refreshOnlineServiceSafely();
         // Let the PC refresh version and inventory information as soon as the app
         // becomes visible; the receiver's regular beacon remains the fallback.
         OnlineService.requestImmediateBeacon(this);
@@ -1223,9 +1204,9 @@ public final class MainActivity extends Activity {
      * command, so use the foreground-start API on Android O+ and keep the UI
      * recoverable if the OS still defers the request.
      */
-    private void refreshOnlineOverlaySafely() {
+    private void refreshOnlineServiceSafely() {
         Intent intent = new Intent(this, OnlineService.class)
-                .setAction(OnlineService.ACTION_REFRESH_OVERLAY);
+                .setAction(OnlineService.ACTION_REFRESH_STATUS);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent);
@@ -1233,7 +1214,7 @@ public final class MainActivity extends Activity {
                 startService(intent);
             }
         } catch (IllegalStateException | SecurityException error) {
-            DiagnosticLog.write(this, "overlay_refresh_deferred",
+            DiagnosticLog.write(this, "status_refresh_deferred",
                     error.getClass().getSimpleName() + ":" + String.valueOf(error.getMessage()));
         }
     }
