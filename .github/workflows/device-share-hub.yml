@@ -89,13 +89,13 @@ jobs:
           exit 0
       - name: Upload Windows build log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-share-hub-windows-build-log
           path: ${{ runner.temp }}/device-share-windows-build.log
       - name: Upload Windows portable panel
         if: steps.windows_compile.outputs.status == '0'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-share-hub-windows-portable
           path: tools/device-share-hub/windows-native/out/
@@ -174,13 +174,13 @@ jobs:
           exit 0
       - name: Upload Android build log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-share-hub-android-build-log
           path: /tmp/device-share-android-build.log
       - name: Upload signed release APK
         if: steps.android_compile.outputs.status == '0'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-share-hub-android-release
           path: tools/device-share-hub/android/out/
@@ -289,13 +289,13 @@ jobs:
           echo "ipa_name=$ipa_name" >> "$GITHUB_OUTPUT"
       - name: Upload iOS build log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-share-hub-ios-build-log
           path: ${{ runner.temp }}/device-share-ios-build.log
       - name: Upload AltStore IPA
         if: steps.ios_compile.outputs.status == '0'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.ios_package.outputs.artifact_name }}
           path: |
