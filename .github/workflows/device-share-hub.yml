@@ -253,8 +253,8 @@ jobs:
         run: |
           app_path="build/Build/Products/Release-iphoneos/Album.app"
           test -d "$app_path"
-          marketing_version=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'")
-          build_version=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'")
+          marketing_version=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
+          build_version=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
           if [ -z "$marketing_version" ] || [ -z "$build_version" ]; then
             echo "Unable to read iOS marketing/build version from project.yml" >&2
             exit 1
