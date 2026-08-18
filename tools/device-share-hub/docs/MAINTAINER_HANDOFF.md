@@ -1,3 +1,9 @@
+## 2026-08-18 iPhone 0.6.10 移除截图链
+
+- iOS 已删除 `ScreenshotMonitor`、截图设置入口、截图接收开关和前台截图轮询。
+- `project.yml` 不再声明 `NSPhotoLibraryUsageDescription`；普通文件、图片导入、系统分享和局域网传送保持不变。
+- 版本升至 0.6.10/build 29；需以 GitHub Actions 的 iOS IPA 结构、版本和 SHA-256 校验为准。
+
 ## 2026-08-18 Android 0.6.23 剪切板/截图模块移除候选
 
 - 根因：旧版 `OnlineService` 在设备发现/服务启动时维护悬浮剪切板，读取并写回系统剪切板，并通过 `MediaStore` 观察截图；Manifest 同时声明 `SYSTEM_ALERT_WINDOW`，这正是用户看到隐私或风险提示的可疑行为链。

@@ -29,13 +29,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             ClipboardBridge.shared.start()
         }
         library.refresh(showConfirmation: false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            ScreenshotMonitor.check(from: self?.topViewController())
-        }
         cleanupTimer?.invalidate()
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.library.refresh(showConfirmation: false)
-            ScreenshotMonitor.check(from: self?.topViewController())
         }
     }
 
@@ -51,12 +47,4 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 
-    private func topViewController() -> UIViewController? {
-        var current = window?.rootViewController
-        while true {
-            if let presented = current?.presentedViewController { current = presented; continue }
-            if let navigation = current as? UINavigationController { current = navigation.visibleViewController; continue }
-            return current
-        }
-    }
 }

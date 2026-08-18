@@ -19,7 +19,9 @@ struct RelayTaskInfo: Codable {
         destinationId = (object["destinationId"] as? String).flatMap(Self.safe) ?? ""
         previousHopId = (object["previousHopId"] as? String).flatMap(Self.safe)
             ?? ((object["senderId"] as? String).flatMap(Self.safe) ?? "")
-        contentKind = object["contentKind"] as? String == "screenshot" ? "screenshot" : "file"
+        // Screenshot-specific routing was removed; legacy screenshot tasks
+        // remain ordinary file transfers for compatibility.
+        contentKind = "file"
         let suppliedMs = object["expiresAt"] as? TimeInterval ?? 0
         let supplied = suppliedMs / 1000
         expiresAt = min(suppliedMs <= 0 ? now + Self.lifetime : supplied,

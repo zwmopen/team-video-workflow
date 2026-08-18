@@ -281,11 +281,6 @@ final class IncomingTransferService {
         try? FileManager.default.removeItem(at: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let relay = RelayTaskInfo(object: object)
-        if relay.isRelay, relay.destinationId == DeviceIdentity.id,
-           relay.contentKind == "screenshot",
-           UserDefaults.standard.object(forKey: "album.screenshotReceiveEnabled") as? Bool == false {
-            throw TransferServiceError.forbidden("主设备已关闭截图接收")
-        }
         tasks[taskID] = IncomingTask(id: taskID, expectedCount: fileCount,
                                      directory: directory, relay: relay.isRelay ? relay : nil)
         updateStatus("正在接收 \(fileCount) 个项目…")
