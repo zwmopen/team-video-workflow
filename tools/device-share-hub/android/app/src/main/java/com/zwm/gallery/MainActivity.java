@@ -509,7 +509,9 @@ public final class MainActivity extends Activity {
     }
 
     private void addGridCard(LinearLayout row, WorkLibrary.WorkEntry work, boolean right) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(174), 1);
+        boolean compactActions = selectedWorkIds.isEmpty() && !showingTrash;
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, dp(compactActions ? 258 : 174), 1);
         params.setMargins(right ? dp(5) : 0, 0, right ? 0 : dp(5), 0);
         row.addView(workCard(work), params);
     }
@@ -584,8 +586,8 @@ public final class MainActivity extends Activity {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             LinearLayout platformRow = new LinearLayout(this);
-            platformRow.setOrientation(LinearLayout.HORIZONTAL);
-            platformRow.setGravity(Gravity.CENTER_HORIZONTAL);
+            platformRow.setOrientation(LinearLayout.VERTICAL);
+            platformRow.setGravity(Gravity.START);
             Button preview = compactButton("预览", false);
             Button douyin = compactButton("发抖音", work.douyinShareCount == 0);
             Button xhs = compactButton("发小红书", work.xhsShareCount == 0);
@@ -1395,15 +1397,20 @@ public final class MainActivity extends Activity {
         button.setTextSize(11.5f);
         button.setMinHeight(0);
         button.setMinimumHeight(0);
-        button.setPadding(dp(2), 0, dp(2), 0);
+        button.setPadding(dp(12), 0, dp(12), 0);
         button.setGravity(Gravity.CENTER);
         button.setMaxLines(1);
+        if ("预览".equals(label)) {
+            button.setTextColor(Color.rgb(57, 61, 59));
+            button.setBackground(roundWithStroke(
+                    Color.WHITE, 12, Color.rgb(207, 214, 210)));
+        }
         return button;
     }
 
-    private LinearLayout.LayoutParams compactButtonParams(boolean withLeftMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
-        if (withLeftMargin) params.setMargins(dp(4), 0, 0, 0);
+    private LinearLayout.LayoutParams compactButtonParams(boolean withTopMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
+        if (withTopMargin) params.setMargins(0, dp(5), 0, 0);
         return params;
     }
 

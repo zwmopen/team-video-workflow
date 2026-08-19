@@ -233,7 +233,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor((collectionView.bounds.width - 44) / 2)
-        return CGSize(width: width, height: 176)
+        return CGSize(width: width, height: 258)
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
@@ -412,10 +412,10 @@ private final class WorkCell: UICollectionViewCell {
         configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
         configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
         let platformRow = UIStackView(arrangedSubviews: [previewButton, douyinButton, xhsButton])
-        platformRow.axis = .horizontal
+        platformRow.axis = .vertical
         platformRow.spacing = 6
-        platformRow.alignment = .fill
-        platformRow.distribution = .fillEqually
+        platformRow.alignment = .leading
+        platformRow.distribution = .fill
         let stack = UIStackView(arrangedSubviews: [top, name, detail, platformRow])
         stack.axis = .vertical
         stack.spacing = 10
@@ -441,6 +441,7 @@ private final class WorkCell: UICollectionViewCell {
         previewButton.layer.cornerRadius = 10
         previewButton.layer.borderWidth = 1
         previewButton.layer.borderColor = AppColors.separator.cgColor
+        previewButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         previewButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
         previewButton.accessibilityLabel = "预览作品，可左右查看下一张"
         previewButton.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
@@ -452,6 +453,7 @@ private final class WorkCell: UICollectionViewCell {
         button.backgroundColor = tintColor
         button.setTitleColor(.white, for: .normal)
         button.layer.cornerRadius = 10
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         button.heightAnchor.constraint(equalToConstant: 36).isActive = true
         button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
         button.addTarget(self,
