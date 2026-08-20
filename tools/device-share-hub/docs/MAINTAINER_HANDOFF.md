@@ -2,6 +2,7 @@
 
 - 作品卡片的抖音和小红书按钮采用“已点击即灰、仍可点击”的平台独立状态；预览按钮保持不变。Android 点击后先做本地即时反馈，回到主界面再从 `WorkLibrary` 持久化次数重绘；iOS 点击时即时反馈，`WorkLibrary.prepareShare` 失败时由页面重绘回滚。
 - 版本：Android `versionCode=64` / `versionName=0.6.26`；iPhone `0.6.13/build 32`。Windows 本地不执行 Android Gradle/Xcode 构建，必须以 GitHub Actions 的 Android/iOS 产物、Release 和 `latest.json` 为云端交付证据。
+- 发布工作流必须把 Android APK、iOS IPA 及各自 SHA-256 一起上传到同一版本 Release，并同时更新 `latest.json` 的顶层 Android 字段和 `.ios` 对象；不能只看到 Android 发布成功就结束。
 - 真实手机安装、再次点击灰色按钮、两个平台分别计数、厂商安全扫描和应用内更新仍是独立验收项；云端构建成功不能替代真机已安装/已运行证据。
 
 ## 2026-08-19 Android 0.6.25 / iPhone 0.6.12 按钮层级优化候选

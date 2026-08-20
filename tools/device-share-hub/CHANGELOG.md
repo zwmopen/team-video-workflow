@@ -4,6 +4,7 @@
 
 - 点击“发抖音”或“发小红书”后，对应按钮立即变为灰色；灰色只表示该平台已经点击过，按钮仍可再次点击。
 - Android 从分享页返回作品列表时重新读取已保存的分享次数；iOS 按抖音/小红书各自的点击次数恢复按钮状态，分享准备失败时回滚即时状态。
+- 修正云端发布步骤，同时上传 Android APK 与 iOS IPA，并同步 `latest.json` 的两端版本，确保苹果端也能检测到本次更新。
 - Android `versionCode=64` / `versionName=0.6.26`；iPhone `0.6.13/build 32`。云端 Actions、Release、`latest.json` 与真实手机安装仍分别核验。
 
 ## Android 0.6.25 / iPhone 0.6.12 按钮层级优化 - 2026-08-19

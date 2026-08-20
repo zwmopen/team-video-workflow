@@ -310,6 +310,8 @@ jobs:
     needs: [windows-portable, android-build, ios-altstore-build]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Download Android release bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -325,7 +327,7 @@ jobs:
         with:
           name: ${{ needs.ios-altstore-build.outputs.artifact_name }}
           path: release/ios
-      - name: Publish one verified Android version to gallery-updates
+      - name: Publish verified Android and iOS versions to gallery-updates
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GALLERY_UPDATES_TOKEN }}
@@ -347,14 +349,32 @@ jobs:
           test -f "$sums"
           test "$(sha256sum "$apk" | awk '{print $1}')" = "$sha256"
 
+          ios_ipa=$(find release/ios -maxdepth 1 -type f -name 'album-iOS-v*-altstore.ipa' -print -quit)
+          test -n "$ios_ipa"
+          ios_ipa_name=$(basename "$ios_ipa")
+          ios_sums="${ios_ipa}.sha256"
+          test -f "$ios_sums"
+          ios_version_name=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' \
+            tools/device-share-hub/ios/project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
+          ios_build=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' \
+            tools/device-share-hub/ios/project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
+          test -n "$ios_version_name"
+          test -n "$ios_build"
+          test "$ios_ipa_name" = "album-iOS-v${ios_version_name}-altstore.ipa"
+          ios_sha256=$(awk '{print $1}' "$ios_sums")
+          test "$(sha256sum "$ios_ipa" | awk '{print $1}')" = "$ios_sha256"
+
           repo="zwmopen/gallery-updates"
           tag="v${version_name}"
           apk_url="https://github.com/${repo}/releases/download/${tag}/${apk_name}"
+          ios_ipa_url="https://github.com/${repo}/releases/download/${tag}/${ios_ipa_name}"
+          release_url="https://github.com/${repo}/releases/tag/${tag}"
           if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$repo" --title "Android ${version_name}" \
-              --notes "Published from zwmopen/team-video-workflow commit ${GITHUB_SHA}. Android versionCode=${version_code}."
+            gh release create "$tag" --repo "$repo" \
+              --title "Android ${version_name} / iPhone ${ios_version_name}" \
+              --notes "Published from zwmopen/team-video-workflow commit ${GITHUB_SHA}. Android versionCode=${version_code}; iPhone build=${ios_build}."
           fi
-          gh release upload "$tag" --repo "$repo" "$apk" "$sums" --clobber
+          gh release upload "$tag" --repo "$repo" "$apk" "$sums" "$ios_ipa" "$ios_sums" --clobber
 
           current_json=$(curl --fail --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
@@ -364,8 +384,21 @@ jobs:
             --arg sha256 "$sha256" \
             --arg apk_url "$apk_url" \
             --arg tag_name "$tag" \
-            --arg html_url "https://github.com/${repo}/releases/tag/${tag}" \
-            '.version_name=$version_name | .version_code=$version_code | .sha256=$sha256 | .apk_url=$apk_url | .tag_name=$tag_name | .html_url=$html_url')
+            --arg html_url "$release_url" \
+            --arg ios_version_name "$ios_version_name" \
+            --argjson ios_build "$ios_build" \
+            --arg ios_sha256 "$ios_sha256" \
+            --arg ios_ipa_url "$ios_ipa_url" \
+            --arg ios_ipa_name "$ios_ipa_name" \
+            --arg ios_release_url "$release_url" \
+            '.version_name=$version_name
+             | .version_code=$version_code
+             | .sha256=$sha256
+             | .apk_url=$apk_url
+             | .tag_name=$tag_name
+             | .html_url=$html_url
+             | .ios={version_name:$ios_version_name, build:$ios_build, sha256:$ios_sha256,
+                    ipa_url:$ios_ipa_url, ipa_file_name:$ios_ipa_name, release_url:$ios_release_url}')
           content=$(printf '%s' "$updated_json" | base64 -w0)
           latest_sha=$(gh api "repos/${repo}/contents/latest.json" --jq '.sha' 2>/dev/null || true)
           if [ -n "$latest_sha" ]; then
@@ -389,7 +422,10 @@ jobs:
             fi
             if [ "$(printf '%s' "$published" | jq -r '.version_name' 2>/dev/null || true)" = "$version_name" ] \
               && [ "$(printf '%s' "$published" | jq -r '.version_code' 2>/dev/null || true)" = "$version_code" ] \
-              && [ "$(printf '%s' "$published" | jq -r '.sha256' 2>/dev/null || true)" = "$sha256" ]; then
+              && [ "$(printf '%s' "$published" | jq -r '.sha256' 2>/dev/null || true)" = "$sha256" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.ios.version_name' 2>/dev/null || true)" = "$ios_version_name" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.ios.build' 2>/dev/null || true)" = "$ios_build" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.ios.sha256' 2>/dev/null || true)" = "$ios_sha256" ]; then
               break
             fi
             if [ "$attempt" -lt 10 ]; then
@@ -399,10 +435,13 @@ jobs:
           test "$(printf '%s' "$published" | jq -r '.version_name')" = "$version_name"
           test "$(printf '%s' "$published" | jq -r '.version_code')" = "$version_code"
           test "$(printf '%s' "$published" | jq -r '.sha256')" = "$sha256"
+          test "$(printf '%s' "$published" | jq -r '.ios.version_name')" = "$ios_version_name"
+          test "$(printf '%s' "$published" | jq -r '.ios.build')" = "$ios_build"
+          test "$(printf '%s' "$published" | jq -r '.ios.sha256')" = "$ios_sha256"
           raw_version=$(curl --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json?run=${GITHUB_RUN_ID}" \
             | jq -r '.version_name' || true)
           if [ "$raw_version" != "$version_name" ]; then
             echo "::warning::Contents API is current; raw.githubusercontent.com is still propagating (read ${raw_version:-unavailable})."
           fi
-          echo "Published and API-verified Android ${version_name} (versionCode ${version_code}) to ${repo}."
+          echo "Published and API-verified Android ${version_name} (versionCode ${version_code}) and iPhone ${ios_version_name} (build ${ios_build}) to ${repo}."
