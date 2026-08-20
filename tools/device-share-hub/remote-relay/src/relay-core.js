@@ -489,7 +489,9 @@ export class WorkspaceRelayCore {
       return problem(400, "size_mismatch", "密文大小与传送清单不一致");
     }
     const key = objectKey(transfer.workspaceId, transferId, index);
-    const previous = await this.ctx.storage.get(uploadKey(transferId, index));
+    const previous = /** @type {{cipherBytes: number, cipherSha256: string} | undefined} */ (
+      await this.ctx.storage.get(uploadKey(transferId, index))
+    );
     if (
       previous &&
       previous.cipherBytes === expected.cipherBytes &&
