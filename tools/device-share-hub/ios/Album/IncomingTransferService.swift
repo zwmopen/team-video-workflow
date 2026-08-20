@@ -45,6 +45,13 @@ final class IncomingTransferService {
     private func startOnQueue() {
         guard !isRunning else { return }
         do {
+            do {
+                try RemoteIdentity.ensure()
+                UserDefaults.standard.removeObject(forKey: "album.remoteIdentityError.v1")
+            } catch {
+                // Remote identity is additive groundwork; never block the existing LAN receiver.
+                UserDefaults.standard.set(error.localizedDescription, forKey: "album.remoteIdentityError.v1")
+            }
             let tcpParameters = NWParameters.tcp
             tcpParameters.allowLocalEndpointReuse = true
             let udpParameters = NWParameters.udp

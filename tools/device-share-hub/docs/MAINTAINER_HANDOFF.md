@@ -604,5 +604,6 @@
 - 当前正式基线仍为 Android 0.6.29 / iPhone 0.6.16；本阶段先增强 `remote-relay`，不把未完成的远程客户端混进手机正式包。
 - `GET /v1/transfers/{id}`、`GET /v1/inbox`、`GET /v1/outbox` 现在返回 `uploaded`、`uploadedAt`、`uploadedObjectCount`、`uploadedCipherBytes`、`nextObjectIndex`，供客户端从已有任务恢复。
 - 同一任务对象再次上传时，中继会核对 R2 现存对象大小和 `cipherSha256`，一致则返回 `reused=true`，避免断线重试产生重复写入。
+- Android 与 iOS 接收服务启动时会在系统密钥存储生成远程签名/密钥协商用 P-256 密钥；私钥不进入日志、发现广播或网络请求。
 - 验证：remote-relay 11 项协议测试通过、Node 语法检查通过、`git diff --check` 通过；本机 `tsc` 不在 PATH，类型检查仍以 CI 为准。
 - 下一步唯一动作：实现三端设备凭证与远程会话客户端，先接入在线心跳/任务收件箱，再接密文上传下载；不得直接把 V2 局域网 HTTP 暴露到公网。

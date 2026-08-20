@@ -154,6 +154,11 @@ public final class OnlineService extends Service {
     public void onCreate() {
         super.onCreate();
         ensureIdentity();
+        try {
+            RemoteIdentity.ensure(this);
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "remote_identity_unavailable", error.getClass().getSimpleName());
+        }
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
