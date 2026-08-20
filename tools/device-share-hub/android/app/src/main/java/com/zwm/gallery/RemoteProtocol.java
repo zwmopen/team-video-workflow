@@ -41,7 +41,10 @@ final class RemoteProtocol {
             }
             return result.append(']').toString();
         }
-        if (value instanceof String || value instanceof Boolean || value instanceof Number) {
+        if (value instanceof String) {
+            return JSONObject.quote((String) value);
+        }
+        if (value instanceof Boolean || value instanceof Number) {
             if (value instanceof Double && !Double.isFinite((Double) value)) {
                 throw new JSONException("non-finite canonical JSON number");
             }
