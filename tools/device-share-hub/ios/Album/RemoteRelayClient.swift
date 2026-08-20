@@ -72,8 +72,12 @@ final class RemoteRelayClient {
         var value = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         while value.hasSuffix("/") { value.removeLast() }
         guard let url = URL(string: value),
-              url.scheme?.lowercased() == "https",
-              let host = url.host, !host.isEmpty else {
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.path.isEmpty || components.path == "/" else {
             throw RemoteRelayError.httpsRequired
         }
         return value

@@ -63,7 +63,10 @@ final class RemoteRelayClient {
         }
         try {
             URL url = new URL(value);
-            if (!"https".equalsIgnoreCase(url.getProtocol()) || url.getHost().isEmpty()) {
+            if (!"https".equalsIgnoreCase(url.getProtocol()) || url.getHost().isEmpty()
+                    || url.getUserInfo() != null || url.getQuery() != null || url.getRef() != null
+                    || (url.getPath() != null && !url.getPath().isEmpty()
+                    && !"/".equals(url.getPath()))) {
                 throw new IOException("远程服务地址无效");
             }
         } catch (IOException error) {

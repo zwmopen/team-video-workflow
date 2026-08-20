@@ -5,6 +5,9 @@ final class RemoteRelayPresence {
     private let queue = DispatchQueue(label: "com.zwm.album.remote-presence")
     private var timer: DispatchSourceTimer?
     private var session: RemoteRelayClient.Session?
+    private var profileKey = ""
+    private var retryAfter: TimeInterval = 0
+    private var failureDelay: TimeInterval = 0
 
     func start() {
         queue.async { [weak self] in
@@ -28,8 +31,21 @@ final class RemoteRelayPresence {
     private func tick() {
         guard let profile = RemoteRelayProfile.load() else {
             session = nil
+            profileKey = ""
+            retryAfter = 0
+            failureDelay = 0
             return
         }
+        let nextProfileKey = "\(profile.endpoint)\n\(profile.certificateSignature)\n"
+            + (profile.certificate["deviceId"] as? String ?? "")
+        if nextProfileKey != profileKey {
+            profileKey = nextProfileKey
+            session = nil
+            retryAfter = 0
+            failureDelay = 0
+        }
+        let now = Date().timeIntervalSince1970
+        if now < retryAfter { return }
         do {
             var current = session
             if current == nil || current!.expired
@@ -43,8 +59,12 @@ final class RemoteRelayPresence {
                 session = current
             }
             if let current = current { try RemoteRelayClient.heartbeat(current) }
+            retryAfter = 0
+            failureDelay = 0
         } catch {
             session = nil
+            failureDelay = min(5 * 60, failureDelay <= 0 ? 10 : failureDelay * 2)
+            retryAfter = now + failureDelay
         }
     }
 }

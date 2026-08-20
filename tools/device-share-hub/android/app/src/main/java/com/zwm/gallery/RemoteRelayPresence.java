@@ -12,6 +12,9 @@ final class RemoteRelayPresence {
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private volatile RemoteRelayClient.Session session;
     private volatile boolean started;
+    private String profileKey = "";
+    private long retryAfterMs;
+    private long failureDelayMs;
 
     RemoteRelayPresence(Context context) {
         this.context = context.getApplicationContext();
@@ -34,8 +37,21 @@ final class RemoteRelayPresence {
         RemoteRelayProfile.Profile profile = RemoteRelayProfile.load(context);
         if (profile == null) {
             session = null;
+            profileKey = "";
+            retryAfterMs = 0;
+            failureDelayMs = 0;
             return;
         }
+        String nextProfileKey = profile.endpoint + "\n" + profile.certificateSignature
+                + "\n" + profile.certificate.optString("deviceId", "");
+        if (!nextProfileKey.equals(profileKey)) {
+            profileKey = nextProfileKey;
+            session = null;
+            retryAfterMs = 0;
+            failureDelayMs = 0;
+        }
+        long now = System.currentTimeMillis();
+        if (now < retryAfterMs) return;
         try {
             RemoteRelayClient.Session current = session;
             if (current == null || current.expired(System.currentTimeMillis())
@@ -46,8 +62,13 @@ final class RemoteRelayPresence {
                 session = current;
             }
             RemoteRelayClient.heartbeat(current);
+            retryAfterMs = 0;
+            failureDelayMs = 0;
         } catch (Exception error) {
             session = null;
+            long delay = failureDelayMs <= 0 ? 10_000L : Math.min(5 * 60_000L, failureDelayMs * 2);
+            failureDelayMs = delay;
+            retryAfterMs = now + delay;
             DiagnosticLog.write(context, "remote_presence_failed", error.getClass().getSimpleName());
         }
     }

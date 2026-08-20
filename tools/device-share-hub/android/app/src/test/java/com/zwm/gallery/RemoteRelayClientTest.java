@@ -16,6 +16,8 @@ public final class RemoteRelayClientTest {
         assertRejected("");
         assertRejected("http://relay.example");
         assertRejected("relay.example");
+        assertRejected("https://relay.example/v1");
+        assertRejected("https://relay.example?workspace=one");
     }
 
     private void assertRejected(String endpoint) {

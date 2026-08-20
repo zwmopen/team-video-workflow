@@ -34,12 +34,12 @@ struct RemoteRelayProfile {
               let endpoint = profile["endpoint"] as? String,
               let certificate = profile["certificate"] as? [String: Any],
               let signature = profile["certificateSignature"] as? String,
-              (try? RemoteRelayClient.normalizeEndpoint(endpoint)) != nil,
+              let normalizedEndpoint = try? RemoteRelayClient.normalizeEndpoint(endpoint),
               (try? validate(certificate: certificate)) != nil,
               !signature.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        return Stored(endpoint: endpoint, certificate: certificate,
+        return Stored(endpoint: normalizedEndpoint, certificate: certificate,
                       certificateSignature: signature)
     }
 

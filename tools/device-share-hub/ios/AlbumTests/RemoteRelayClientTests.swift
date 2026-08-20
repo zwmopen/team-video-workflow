@@ -10,7 +10,8 @@ final class RemoteRelayClientTests: XCTestCase {
     }
 
     func testLocalHTTPAndEmptyEndpointsAreRejected() {
-        for endpoint in ["", "http://relay.example", "relay.example"] {
+        for endpoint in ["", "http://relay.example", "relay.example",
+                         "https://relay.example/v1", "https://relay.example?workspace=one"] {
             XCTAssertThrowsError(try RemoteRelayClient.normalizeEndpoint(endpoint))
         }
     }
