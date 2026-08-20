@@ -17,8 +17,8 @@ enum WorkCategory {
     /// 所有可选分类，用于筛选栏。
     static let filters: [(id: String, label: String)] = [
         (all, "全部"),
-        (conversion, "精准流量帖"),
-        (traffic, "泛流量帖"),
+        (conversion, "精准流量"),
+        (traffic, "泛流量"),
         (uncategorized, "未分类")
     ]
 }
