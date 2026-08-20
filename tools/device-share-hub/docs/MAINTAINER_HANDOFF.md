@@ -4,6 +4,12 @@
 - iPhone 检查到新版本时，提示直接打开 AltStore 的 My Apps 更新，或复制 AltStore 更新源；不再只提示连接电脑。
 - Android `versionCode=67` / `versionName=0.6.29`；iPhone `0.6.16/build 35`。
 
+## 2026-08-21 高级远程传送：移动端中继会话客户端（开发中）
+
+- Android `RemoteRelayClient` 与 iOS `RemoteRelayClient` 已镜像接入中继控制面：`POST /v1/challenges`、`POST /v1/sessions`、`POST /v1/presence`、`GET /v1/inbox`、`GET /v1/transfers/{id}`。
+- 登录签名由本机系统安全存储中的 P-256 私钥完成；客户端只接受 HTTPS，不把 Bearer 会话令牌写日志。收件箱为空时返回空集合，任务 ID 做字符白名单校验，响应体限制为 2 MiB。
+- 这一提交仍是协议客户端层，不代表已接入作品库收发、已部署 Cloudflare、已完成跨网络实传或已发布手机包；下一步接入设备凭证保存/撤销状态和加密对象收发，再做云端三端构建与真实网络验收。
+
 ## 2026-08-20 Android 0.6.28 / iPhone 0.6.15 AltStore 自动更新源
 
 - 云端发布流水线新增 `gallery-updates/altstore.json`，首个版本放在 `versions[0]`，后续每次发布 IPA 都会自动更新该源。
