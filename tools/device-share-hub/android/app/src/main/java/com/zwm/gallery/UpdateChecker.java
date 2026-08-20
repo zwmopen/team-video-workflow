@@ -27,9 +27,11 @@ final class UpdateChecker {
     static final String PREF_READY_FILE_NAME = "readyUpdateFileName";
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
     static final String PREF_DOWNLOAD_ERROR = "updateDownloadError";
+    static final String PREF_LAST_CHECK_ATTEMPT = "lastUpdateCheckAttempt";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
     static final String RESULT_DOWNLOAD_FAILED = "download_failed";
     static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
+    private static final long RESUME_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
 
     private UpdateChecker() {}
 
@@ -52,7 +54,23 @@ final class UpdateChecker {
         }
         if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
         if (!readyVersion.isEmpty() && isNewer(readyVersion, current)) return;
+        markCheckAttempted(activity);
         check(activity, false);
+    }
+
+    static void checkOnResume(Activity activity) {
+        android.content.SharedPreferences prefs =
+                activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
+        if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
+        String current = currentVersion(activity);
+        String readyVersion = prefs.getString(PREF_READY_DOWNLOAD_VERSION, "");
+        if (!readyVersion.isEmpty() && isNewer(readyVersion, current)) return;
+        String pendingVersion = prefs.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
+        if (!pendingVersion.isEmpty() && isNewer(pendingVersion, current)) return;
+        long lastAttempt = prefs.getLong(PREF_LAST_CHECK_ATTEMPT, 0L);
+        if (lastAttempt > 0L && System.currentTimeMillis() - lastAttempt < RESUME_CHECK_INTERVAL_MS) return;
+        markCheckAttempted(activity);
+        check(activity, true);
     }
 
     static void check(Activity activity, boolean silent) {
@@ -282,6 +300,11 @@ final class UpdateChecker {
     private static void markChecked(Activity activity) {
         activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE).edit()
                 .putLong("lastUpdateCheck", System.currentTimeMillis()).apply();
+    }
+
+    private static void markCheckAttempted(Activity activity) {
+        activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE).edit()
+                .putLong(PREF_LAST_CHECK_ATTEMPT, System.currentTimeMillis()).apply();
     }
 
     private static void toast(Activity activity, String value) {

@@ -1,5 +1,11 @@
 # 变更记录
 
+## Android 0.6.29 / iPhone 0.6.16 更新闭环优化 - 2026-08-20
+
+- Android 从后台回到前台且超过 6 小时未检查时，会静默检查并准备更新，不重复打扰用户。
+- iPhone 检查到新版本时，可直接打开 AltStore，或复制更新源；不再把 AltStore 用户引导回旧的“连接电脑”提示。
+- Android `0.6.29` / versionCode `67`；iPhone `0.6.16` / build `35`。
+
 ## Android 0.6.28 / iPhone 0.6.15 AltStore 自动更新源 - 2026-08-20
 
 - iPhone AltStore 更新源已接入云端发布流水线：首次添加 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json` 后，后续 IPA 发布会自动进入 AltStore 更新列表。Android `0.6.28` / versionCode `66`；iPhone `0.6.15` / build `34`。

@@ -1,3 +1,9 @@
+## 2026-08-20 Android 0.6.29 / iPhone 0.6.16 更新闭环优化
+
+- Android 从后台回到前台且超过 6 小时未检查时，会静默检查并准备更新；启动检查、下载断点、SHA-256 校验和系统安装确认保持不变。
+- iPhone 检查到新版本时，提示直接打开 AltStore 的 My Apps 更新，或复制 AltStore 更新源；不再只提示连接电脑。
+- Android `versionCode=67` / `versionName=0.6.29`；iPhone `0.6.16/build 35`。
+
 ## 2026-08-20 Android 0.6.28 / iPhone 0.6.15 AltStore 自动更新源
 
 - 云端发布流水线新增 `gallery-updates/altstore.json`，首个版本放在 `versions[0]`，后续每次发布 IPA 都会自动更新该源。

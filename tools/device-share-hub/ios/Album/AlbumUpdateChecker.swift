@@ -3,6 +3,8 @@ import UIKit
 
 enum AlbumUpdateChecker {
     private static let endpoint = URL(string: "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest.json")!
+    private static let altStoreSource = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json"
+    private static let altStoreURL = URL(string: "altstore-classic://")!
 
     static func check(from controller: UIViewController) {
         let waiting = UIAlertController(title: nil, message: "正在检查新版本…", preferredStyle: .alert)
@@ -29,11 +31,29 @@ enum AlbumUpdateChecker {
                         show(controller, title: "已经是最新版本", message: "当前版本 \(current)")
                         return
                     }
-                    show(controller, title: "发现新版本 \(candidate)",
-                         message: "iPhone 不允许侧载 App 自己替换安装包。请连接电脑后由侧载工具覆盖更新；这里不会跳转网页，也不会删除作品文件。")
+                    showUpdate(controller, candidate: candidate, current: current)
                 }
             }
         }.resume()
+    }
+
+    private static func showUpdate(_ controller: UIViewController, candidate: String, current: String) {
+        let alert = UIAlertController(
+            title: "发现新版本 \(candidate)",
+            message: "当前版本 \(current)。新版本已进入 AltStore 更新源，请在 AltStore 的 My Apps 中点“更新”。这里不会删除作品文件。",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "打开 AltStore", style: .default) { _ in
+            UIApplication.shared.open(altStoreURL)
+        })
+        alert.addAction(UIAlertAction(title: "复制更新源", style: .default) { _ in
+            UIPasteboard.general.string = altStoreSource
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                show(controller, title: "更新源已复制", message: "打开 AltStore → Sources → + 粘贴即可。")
+            }
+        })
+        alert.addAction(UIAlertAction(title: "稍后", style: .cancel))
+        controller.present(alert, animated: true)
     }
 
     private static func isNewer(_ candidate: String, than current: String) -> Bool {
