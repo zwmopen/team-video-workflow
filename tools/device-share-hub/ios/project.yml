@@ -30,8 +30,8 @@ targets:
       properties:
         CFBundleDisplayName: 相册
         CFBundleName: Album
-        CFBundleShortVersionString: "0.6.14"
-        CFBundleVersion: "33"
+        CFBundleShortVersionString: "0.6.15"
+        CFBundleVersion: "34"
         NSLocalNetworkUsageDescription: 用于让同一 Wi-Fi 的素材投送中控自动发现这台 iPhone，并把文件直接传入所选作品文件夹。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
