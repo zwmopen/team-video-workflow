@@ -96,6 +96,7 @@ public final class OnlineService extends Service {
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
+    private RemoteRelayPresence remotePresence;
     private volatile boolean running;
     private volatile String state = "online";
     private volatile String currentTaskId = "";
@@ -159,6 +160,8 @@ public final class OnlineService extends Service {
         } catch (Exception error) {
             DiagnosticLog.write(this, "remote_identity_unavailable", error.getClass().getSimpleName());
         }
+        remotePresence = new RemoteRelayPresence(getApplicationContext());
+        remotePresence.start();
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
@@ -199,6 +202,7 @@ public final class OnlineService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        if (remotePresence != null) remotePresence.stop();
         closeSockets();
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();

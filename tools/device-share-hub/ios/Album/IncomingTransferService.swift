@@ -12,6 +12,7 @@ final class IncomingTransferService {
     private var tcpListener: NWListener?
     private var udpListener: NWListener?
     private var beaconTimer: DispatchSourceTimer?
+    private let remotePresence = RemoteRelayPresence()
     private var tasks: [String: IncomingTask] = [:]
     private var activeRelayIds = Set<String>()
     private var isRunning = false
@@ -38,6 +39,7 @@ final class IncomingTransferService {
             self.udpReady = false
             self.tasks.values.forEach { $0.cleanup() }
             self.tasks.removeAll()
+            self.remotePresence.stop()
             self.updateStatus("局域网接收已暂停")
         }
     }
@@ -73,6 +75,7 @@ final class IncomingTransferService {
             tcpListener = tcp
             udpListener = udp
             isRunning = true
+            remotePresence.start()
             startBeaconTimer()
             updateStatus("正在开启局域网接收…")
         } catch {
