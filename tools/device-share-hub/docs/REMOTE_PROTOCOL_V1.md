@@ -1,6 +1,6 @@
 # 远程传送协议 V1
 
-状态：服务端基础已实现、本地协议测试通过；三端客户端与正式云端尚未接入。
+状态：服务端基础已实现，本地协议测试通过；远程任务状态查询与对象级幂等重试已接入，三端客户端与正式云端尚未接入。
 
 ## 目标与边界
 
@@ -106,6 +106,13 @@ HKDF `info` 必须包含协议版本、工作区、发送设备、接收设备�
 | `GET /v1/transfers/{id}/objects/{index}` | 接收端下载密文 |
 | `POST /v1/transfers/{id}/ack` | 接收成功并删除云端密文 |
 | `POST /v1/transfers/{id}/cancel` | 取消并删除云端密文 |
+
+### 断点与重试语义
+
+- `GET /v1/transfers/{id}`、`GET /v1/inbox` 和 `GET /v1/outbox` 会在不暴露文件名或明文的前提下，为每个对象返回 `uploaded`、`uploadedAt`，以及任务级 `uploadedObjectCount`、`uploadedCipherBytes`、`nextObjectIndex`。
+- 发送端重启或网络中断后，应先读取任务状态，再从 `nextObjectIndex` 或首个 `uploaded=false` 的对象继续；不能直接创建第二个任务。
+- 对同一任务、同一对象、同一密文哈希重复 `PUT` 时，中继会校验 R2 中现存密文的字节数和哈希元数据并返回 `reused=true`，不会重复写入对象。
+- 对象级幂等不等于整文件字节级续传；大对象的分片续传留在后续客户端接入阶段，当前 V1 仍以一个加密对象为最小提交单位。
 
 ## 当前限制
 

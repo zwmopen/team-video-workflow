@@ -384,7 +384,68 @@ test("sender outbox and recipient inbox expose committed transfers", async () =>
     }),
   );
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).transfers.map((item) => item.transferId), [transferId]);
+  const outbox = await response.json();
+  assert.deepEqual(outbox.transfers.map((item) => item.transferId), [transferId]);
+  assert.equal(outbox.transfers[0].uploadedObjectCount, 1);
+  assert.equal(outbox.transfers[0].uploadedCipherBytes, ciphertext.byteLength);
+  assert.equal(outbox.transfers[0].nextObjectIndex, null);
+});
+
+test("transfer status exposes the next object and repeated upload is idempotent", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const first = crypto.getRandomValues(new Uint8Array(16));
+  const second = crypto.getRandomValues(new Uint8Array(16));
+  const digest = async (value) => Buffer.from(await crypto.subtle.digest("SHA-256", value)).toString("hex");
+  let response = await state.relay.fetch(
+    await jsonRequest(
+      "/v1/transfers",
+      {
+        recipientDeviceId: state.memberCertificate.deviceId,
+        encryptedKeyPackage: { algorithm: "P256-HKDF-SHA256-A256GCM", value: "opaque" },
+        objects: [
+          { index: 0, cipherBytes: first.byteLength, cipherSha256: await digest(first) },
+          { index: 1, cipherBytes: second.byteLength, cipherSha256: await digest(second) },
+        ],
+      },
+      adminToken,
+    ),
+  );
+  const transferId = (await response.json()).transferId;
+  const upload = async (index, value) => state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/${index}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Length": String(value.byteLength),
+      },
+      body: value,
+      duplex: "half",
+    }),
+  );
+
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  let snapshot = (await response.json()).transfer;
+  assert.equal(snapshot.uploadedObjectCount, 0);
+  assert.equal(snapshot.nextObjectIndex, 0);
+
+  assert.equal((await upload(0, first)).status, 200);
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  snapshot = (await response.json()).transfer;
+  assert.equal(snapshot.uploadedObjectCount, 1);
+  assert.equal(snapshot.nextObjectIndex, 1);
+  const retry = await upload(0, first);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).reused, true);
+  assert.equal(state.bucket.values.size, 1);
 });
 
 test("ciphertext is deleted after recipient acknowledgement", async () => {

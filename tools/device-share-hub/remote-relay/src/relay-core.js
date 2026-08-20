@@ -373,7 +373,11 @@ export class WorkspaceRelayCore {
       if (matches) selected.push(transfer);
     }
     selected.sort((left, right) => right.createdAt - left.createdAt);
-    return json({ transfers: selected.slice(0, 100), serverTime: Date.now() });
+    const visible = [];
+    for (const transfer of selected.slice(0, 100)) {
+      visible.push(await this.transferSnapshot(transfer));
+    }
+    return json({ transfers: visible, serverTime: Date.now() });
   }
 
   async setRemoteAllowed(request, session, deviceId) {
@@ -485,6 +489,21 @@ export class WorkspaceRelayCore {
       return problem(400, "size_mismatch", "密文大小与传送清单不一致");
     }
     const key = objectKey(transfer.workspaceId, transferId, index);
+    const previous = await this.ctx.storage.get(uploadKey(transferId, index));
+    if (
+      previous &&
+      previous.cipherBytes === expected.cipherBytes &&
+      previous.cipherSha256 === expected.cipherSha256
+    ) {
+      const existing = await this.env.REMOTE_OBJECTS.head(key);
+      if (
+        existing &&
+        existing.size === expected.cipherBytes &&
+        existing.customMetadata?.cipherSha256 === expected.cipherSha256
+      ) {
+        return json({ ok: true, index, reused: true });
+      }
+    }
     const options = {
       customMetadata: {
         cipherSha256: expected.cipherSha256,
@@ -547,7 +566,7 @@ export class WorkspaceRelayCore {
     if (!transfer || !canAccessTransfer(session, transfer)) {
       return problem(404, "transfer_missing", "远程传送任务不存在");
     }
-    return json({ transfer });
+    return json({ transfer: await this.transferSnapshot(transfer) });
   }
 
   async downloadObject(session, transferId, index) {
@@ -721,6 +740,26 @@ export class WorkspaceRelayCore {
     for (let index = 0; index < keys.length; index += 128) {
       await this.ctx.storage.delete(keys.slice(index, index + 128));
     }
+  }
+
+  async transferSnapshot(transfer) {
+    const uploaded = await this.listStored(`upload:${transfer.transferId}:`);
+    const objects = transfer.objects.map((item) => {
+      const stored = uploaded.get(uploadKey(transfer.transferId, item.index));
+      return {
+        ...item,
+        uploaded: Boolean(stored),
+        uploadedAt: stored?.uploadedAt || null,
+      };
+    });
+    const uploadedObjects = objects.filter((item) => item.uploaded);
+    return {
+      ...transfer,
+      objects,
+      uploadedObjectCount: uploadedObjects.length,
+      uploadedCipherBytes: uploadedObjects.reduce((sum, item) => sum + item.cipherBytes, 0),
+      nextObjectIndex: objects.find((item) => !item.uploaded)?.index ?? null,
+    };
   }
 
   async scheduleCleanup(expiresAt) {
