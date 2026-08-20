@@ -42,6 +42,14 @@ IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；实体检查�
 4. 把 IPA 保存到 iPhone“文件”，在 AltStore 的 `My Apps` 页点 `+` 并选择 IPA。
 5. 打开“相册”。iOS 13 及以上只选择一次固定作品总文件夹；iOS 12 直接使用应用内固定文件夹。
 
+### AltStore 自动发现更新
+
+首次在 AltStore 的 Sources 中添加以下地址：
+
+`https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json`
+
+之后每次云端发布新的 iPhone IPA，AltStore 会从该源自动发现新版本；AltServer 在同一 Wi-Fi 下负责侧载和免费证书刷新。更新安装仍需在 AltStore 中确认一次，iOS 不允许应用静默替换自身。
+
 遇到问题时，在“设置 → 复制诊断信息”取得版本、iOS、授权状态、作品数量和最近错误；诊断内容不包含文案、图片内容或完整文件路径。
 
 AltServer 只负责侧载和免费证书刷新；应用本身不需要管理员、越狱、设备管理、ADB、手动 IP 或配对码。

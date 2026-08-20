@@ -1,3 +1,10 @@
+## 2026-08-20 Android 0.6.28 / iPhone 0.6.15 AltStore 自动更新源
+
+- 云端发布流水线新增 `gallery-updates/altstore.json`，首个版本放在 `versions[0]`，后续每次发布 IPA 都会自动更新该源。
+- 用户首次在 AltStore 添加 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json`；之后 AltStore 自动发现新版本，AltServer 负责同一 Wi-Fi 下的侧载和免费证书刷新。
+- 更新仍需 AltStore 的一次确认，iOS 不允许相册 App 静默替换自身；云端构建、公开源、Release 和真实手机安装仍分别核验。
+- 版本：Android `versionCode=66` / `versionName=0.6.28`；iPhone `0.6.15/build 34`。
+
 ## 2026-08-20 Android 0.6.27 / iPhone 0.6.14 分类名称统一
 
 - Android 顶部分类按钮和 iOS 顶部筛选统一使用“精准流量”和“泛流量”。电脑端自动补货的精准库存口径已经使用同名语义。

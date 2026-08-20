@@ -1,5 +1,9 @@
 # 变更记录
 
+## Android 0.6.28 / iPhone 0.6.15 AltStore 自动更新源 - 2026-08-20
+
+- iPhone AltStore 更新源已接入云端发布流水线：首次添加 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json` 后，后续 IPA 发布会自动进入 AltStore 更新列表。Android `0.6.28` / versionCode `66`；iPhone `0.6.15` / build `34`。
+
 ## Android 0.6.27 / iPhone 0.6.14 分类名称统一 - 2026-08-20
 
 - 手机端顶部分类按钮统一显示“精准流量”和“泛流量”；电脑端自动补货继续使用同一精准流量口径。

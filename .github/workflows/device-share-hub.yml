@@ -158,7 +158,7 @@ jobs:
                 apk_name="album-Android-v${version_name}.apk"
                 cp "$apk" "out/$apk_name"
                 sha256=$(sha256sum "out/$apk_name" | awk '{print $1}')
-                printf '%s  %s\n' "$sha256" "$apk_name" > out/SHA256SUMS.txt
+                printf '%s  %s\r\n' "$sha256" "$apk_name" > out/SHA256SUMS.txt
                 jq -n \
                   --arg version_name "$version_name" \
                   --argjson version_code "$version_code" \
@@ -253,8 +253,8 @@ jobs:
         run: |
           app_path="build/Build/Products/Release-iphoneos/Album.app"
           test -d "$app_path"
-          marketing_version=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
-          build_version=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
+          marketing_version=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r\n' | xargs)
+          build_version=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r\n' | xargs)
           if [ -z "$marketing_version" ] || [ -z "$build_version" ]; then
             echo "Unable to read iOS marketing/build version from project.yml" >&2
             exit 1
@@ -355,9 +355,9 @@ jobs:
           ios_sums="${ios_ipa}.sha256"
           test -f "$ios_sums"
           ios_version_name=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' \
-            tools/device-share-hub/ios/project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
+            tools/device-share-hub/ios/project.yml | tr -d '"' | tr -d "'" | tr -d '\r\n' | xargs)
           ios_build=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' \
-            tools/device-share-hub/ios/project.yml | tr -d '"' | tr -d "'" | tr -d '\r' | xargs)
+            tools/device-share-hub/ios/project.yml | tr -d '"' | tr -d "'" | tr -d '\r\n' | xargs)
           test -n "$ios_version_name"
           test -n "$ios_build"
           test "$ios_ipa_name" = "album-iOS-v${ios_version_name}-altstore.ipa"
@@ -369,6 +369,10 @@ jobs:
           apk_url="https://github.com/${repo}/releases/download/${tag}/${apk_name}"
           ios_ipa_url="https://github.com/${repo}/releases/download/${tag}/${ios_ipa_name}"
           release_url="https://github.com/${repo}/releases/tag/${tag}"
+          source_file="altstore.json"
+          source_url="https://raw.githubusercontent.com/${repo}/main/${source_file}"
+          source_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ios_ipa_size=$(stat -c%s "$ios_ipa")
           if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$repo" \
               --title "Android ${version_name} / iPhone ${ios_version_name}" \
@@ -414,9 +418,33 @@ jobs:
               --field content="$content" >/dev/null
           fi
 
+          current_source=$(curl --fail --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/${repo}/main/${source_file}" || printf '{}')
+          updated_source=$(printf '%s' "$current_source" | python3 tools/device-share-hub/scripts/build-altstore-source.py \
+            --version "$ios_version_name" \
+            --build-version "$ios_build" \
+            --date "$source_date" \
+            --download-url "$ios_ipa_url" \
+            --size "$ios_ipa_size" \
+            --sha256 "$ios_sha256")
+          source_content=$(printf '%s' "$updated_source" | base64 -w0)
+          source_sha=$(gh api "repos/${repo}/contents/${source_file}" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$source_sha" ]; then
+            gh api --method PUT "repos/${repo}/contents/${source_file}" \
+              --field message="release: update AltStore source for iPhone ${ios_version_name}" \
+              --field branch=main \
+              --field content="$source_content" \
+              --field sha="$source_sha" >/dev/null
+          else
+            gh api --method PUT "repos/${repo}/contents/${source_file}" \
+              --field message="release: add AltStore source for iPhone ${ios_version_name}" \
+              --field branch=main \
+              --field content="$source_content" >/dev/null
+          fi
+
           published=""
           for attempt in $(seq 1 10); do
-            published_b64=$(gh api "repos/${repo}/contents/latest.json?ref=main" --jq '.content' 2>/dev/null | tr -d '\n' || true)
+            published_b64=$(gh api "repos/${repo}/contents/latest.json?ref=main" --jq '.content' 2>/dev/null | tr -d '\r\n' || true)
             if [ -n "$published_b64" ]; then
               published=$(printf '%s' "$published_b64" | base64 --decode 2>/dev/null || true)
             fi
@@ -438,6 +466,24 @@ jobs:
           test "$(printf '%s' "$published" | jq -r '.ios.version_name')" = "$ios_version_name"
           test "$(printf '%s' "$published" | jq -r '.ios.build')" = "$ios_build"
           test "$(printf '%s' "$published" | jq -r '.ios.sha256')" = "$ios_sha256"
+          source_published=""
+          for attempt in $(seq 1 10); do
+            source_b64=$(gh api "repos/${repo}/contents/${source_file}?ref=main" --jq '.content' 2>/dev/null | tr -d '\r\n' || true)
+            if [ -n "$source_b64" ]; then
+              source_published=$(printf '%s' "$source_b64" | base64 --decode 2>/dev/null || true)
+            fi
+            if [ "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].version' 2>/dev/null || true)" = "$ios_version_name" ] \
+              && [ "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].buildVersion' 2>/dev/null || true)" = "$ios_build" ] \
+              && [ "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].downloadURL' 2>/dev/null || true)" = "$ios_ipa_url" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 10 ]; then
+              sleep 2
+            fi
+          done
+          test "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].version')" = "$ios_version_name"
+          test "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].buildVersion')" = "$ios_build"
+          test "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].downloadURL')" = "$ios_ipa_url"
           raw_version=$(curl --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json?run=${GITHUB_RUN_ID}" \
             | jq -r '.version_name' || true)
@@ -445,3 +491,4 @@ jobs:
             echo "::warning::Contents API is current; raw.githubusercontent.com is still propagating (read ${raw_version:-unavailable})."
           fi
           echo "Published and API-verified Android ${version_name} (versionCode ${version_code}) and iPhone ${ios_version_name} (build ${ios_build}) to ${repo}."
+          echo "AltStore source: ${source_url}"
