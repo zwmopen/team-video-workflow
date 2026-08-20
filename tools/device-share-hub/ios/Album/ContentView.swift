@@ -189,7 +189,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 : library.works.filter { $0.category == filter.id }.count
             let compactLabel: String
             switch filter.id {
-            case WorkCategory.conversion: compactLabel = "转化"
+            case WorkCategory.conversion: compactLabel = "精准流量"
             case WorkCategory.traffic: compactLabel = "泛流量"
             default: compactLabel = filter.label
             }

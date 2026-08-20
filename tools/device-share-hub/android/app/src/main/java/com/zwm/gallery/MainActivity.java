@@ -278,7 +278,7 @@ public final class MainActivity extends Activity {
         categoryBar.setOrientation(LinearLayout.HORIZONTAL);
         categoryBar.setGravity(Gravity.CENTER_VERTICAL);
         addCategoryButton("全部", WorkCategory.ALL);
-        addCategoryButton("转化", WorkCategory.CONVERSION);
+        addCategoryButton("精准流量", WorkCategory.CONVERSION);
         addCategoryButton("泛流量", WorkCategory.TRAFFIC);
         addCategoryButton("未分类", WorkCategory.UNCATEGORIZED);
         categoryIndicator = new View(this);

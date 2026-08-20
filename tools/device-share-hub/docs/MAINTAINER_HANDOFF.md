@@ -1,3 +1,9 @@
+## 2026-08-20 Android 0.6.27 / iPhone 0.6.14 分类名称统一
+
+- Android 顶部分类按钮和 iOS 顶部筛选统一使用“精准流量”；iOS 完整筛选标题为“精准流量帖”。电脑端自动补货的精准库存口径已经使用同名语义。
+- 只改显示文案：内部 `conversion`/`traffic` 字段、`[转]`/`【转】`/`[泛]`/`【泛】` 识别、作品库存上报和自动补货逻辑不变。
+- 版本：Android `versionCode=65` / `versionName=0.6.27`；iPhone `0.6.14/build 33`。云端构建、Release、`latest.json` 和真实手机安装仍分别核验。
+
 ## 2026-08-20 Android 0.6.26 / iPhone 0.6.13 平台按钮即时状态
 
 - 作品卡片的抖音和小红书按钮采用“已点击即灰、仍可点击”的平台独立状态；预览按钮保持不变。Android 点击后先做本地即时反馈，回到主界面再从 `WorkLibrary` 持久化次数重绘；iOS 点击时即时反馈，`WorkLibrary.prepareShare` 失败时由页面重绘回滚。
