@@ -595,8 +595,14 @@ public final class MainActivity extends Activity {
             douyin.setContentDescription("发抖音，已点击 " + work.douyinShareCount + " 次");
             xhs.setContentDescription("发小红书，已点击 " + work.xhsShareCount + " 次");
             preview.setOnClickListener(v -> openPreview(work));
-            douyin.setOnClickListener(v -> openShare(work, "douyin"));
-            xhs.setOnClickListener(v -> openShare(work, "xhs"));
+            douyin.setOnClickListener(v -> {
+                markPlatformButtonClicked(douyin, "发抖音", work.douyinShareCount);
+                openShare(work, "douyin");
+            });
+            xhs.setOnClickListener(v -> {
+                markPlatformButtonClicked(xhs, "发小红书", work.xhsShareCount);
+                openShare(work, "xhs");
+            });
             platformRow.addView(preview, compactButtonParams(false));
             platformRow.addView(douyin, compactButtonParams(true));
             platformRow.addView(xhs, compactButtonParams(true));
@@ -1198,6 +1204,7 @@ public final class MainActivity extends Activity {
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
         refreshOnlineServiceSafely();
+        if (isVisible && !fileMode) refreshWorks();
         // Let the PC refresh version and inventory information as soon as the app
         // becomes visible; the receiver's regular beacon remains the fallback.
         OnlineService.requestImmediateBeacon(this);
@@ -1406,6 +1413,14 @@ public final class MainActivity extends Activity {
                     Color.WHITE, 12, Color.rgb(207, 214, 210)));
         }
         return button;
+    }
+
+    private void markPlatformButtonClicked(Button button, String label, int previousCount) {
+        button.setTextColor(Color.rgb(47, 48, 46));
+        button.setBackground(round(Color.rgb(232, 234, 233), 14));
+        button.setContentDescription(label + "，已点击 " + Math.max(1, previousCount + 1) + " 次");
+        // A gray button is an informational state, not a disabled state. It remains clickable.
+        button.setEnabled(true);
     }
 
     private LinearLayout.LayoutParams compactButtonParams(boolean withTopMargin) {

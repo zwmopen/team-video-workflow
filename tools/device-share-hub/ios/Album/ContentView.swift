@@ -227,7 +227,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                                                       applicationActivities: nil)
             controller.popoverPresentationController?.sourceView = source
             present(controller, animated: true)
-        } catch { showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription) }
+        } catch {
+            // The cell applies an optimistic gray state on tap. Re-render if preparing
+            // the share failed so the button reflects the persisted count again.
+            render()
+            showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
@@ -450,20 +455,39 @@ private final class WorkCell: UICollectionViewCell {
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = .boldSystemFont(ofSize: 12)
-        button.backgroundColor = tintColor
-        button.setTitleColor(.white, for: .normal)
         button.layer.cornerRadius = 10
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         button.heightAnchor.constraint(equalToConstant: 36).isActive = true
         button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
+        applyPlatformButtonState(button, clicked: false)
         button.addTarget(self,
                          action: platform == .xhs ? #selector(xhsTapped) : #selector(douyinTapped),
                          for: .touchUpInside)
     }
 
+    private func applyPlatformButtonState(_ button: UIButton, clicked: Bool) {
+        button.backgroundColor = clicked ? AppColors.sharedBackground : tintColor
+        button.setTitleColor(clicked ? AppColors.secondaryText : .white, for: .normal)
+        button.layer.borderWidth = clicked ? 1 : 0
+        button.layer.borderColor = clicked ? AppColors.separator.cgColor : UIColor.clear.cgColor
+    }
+
+    private func markPlatformButtonClicked(_ platform: CopyPlatform) {
+        switch platform {
+        case .xhs: applyPlatformButtonState(xhsButton, clicked: true)
+        case .douyin: applyPlatformButtonState(douyinButton, clicked: true)
+        }
+    }
+
     @objc private func previewTapped() { onPreview?() }
-    @objc private func xhsTapped() { onShare?(.xhs) }
-    @objc private func douyinTapped() { onShare?(.douyin) }
+    @objc private func xhsTapped() {
+        markPlatformButtonClicked(.xhs)
+        onShare?(.xhs)
+    }
+    @objc private func douyinTapped() {
+        markPlatformButtonClicked(.douyin)
+        onShare?(.douyin)
+    }
 
     func configure(_ work: WorkItem) {
         let shared = work.used
@@ -476,6 +500,8 @@ private final class WorkCell: UICollectionViewCell {
         contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor
         name.textColor = shared ? AppColors.secondaryText : AppColors.text
         detail.text = shared ? "首次使用后按清理设置自动回收" : "点白色卡片查看内容"
+        applyPlatformButtonState(xhsButton, clicked: work.xhsShareCount > 0)
+        applyPlatformButtonState(douyinButton, clicked: work.douyinShareCount > 0)
         xhsButton.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
         douyinButton.accessibilityValue = "已点击 \(work.douyinShareCount) 次"
     }

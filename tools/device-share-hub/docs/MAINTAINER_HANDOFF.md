@@ -1,3 +1,9 @@
+## 2026-08-20 Android 0.6.26 / iPhone 0.6.13 平台按钮即时状态
+
+- 作品卡片的抖音和小红书按钮采用“已点击即灰、仍可点击”的平台独立状态；预览按钮保持不变。Android 点击后先做本地即时反馈，回到主界面再从 `WorkLibrary` 持久化次数重绘；iOS 点击时即时反馈，`WorkLibrary.prepareShare` 失败时由页面重绘回滚。
+- 版本：Android `versionCode=64` / `versionName=0.6.26`；iPhone `0.6.13/build 32`。Windows 本地不执行 Android Gradle/Xcode 构建，必须以 GitHub Actions 的 Android/iOS 产物、Release 和 `latest.json` 为云端交付证据。
+- 真实手机安装、再次点击灰色按钮、两个平台分别计数、厂商安全扫描和应用内更新仍是独立验收项；云端构建成功不能替代真机已安装/已运行证据。
+
 ## 2026-08-19 Android 0.6.25 / iPhone 0.6.12 按钮层级优化候选
 
 - 两端作品卡片的“预览 / 发抖音 / 发小红书”改为左对齐的纵向紧凑按钮，按文案自适应宽度；预览为描边样式，平台入口为主按钮。预览、分享、计数和隐私边界逻辑不变。
