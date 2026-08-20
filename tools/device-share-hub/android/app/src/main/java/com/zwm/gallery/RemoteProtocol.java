@@ -58,9 +58,9 @@ final class RemoteProtocol {
     }
 
     static String base64Url(byte[] value) {
-        return android.util.Base64.encodeToString(value,
-                android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING
-                        | android.util.Base64.URL_SAFE);
+        // java.util.Base64 is available from minSdk 26 and also keeps JVM unit
+        // tests independent from Android's unmocked platform stubs.
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value);
     }
 
     static JSONObject publicJwk(ECPublicKey key) throws JSONException {

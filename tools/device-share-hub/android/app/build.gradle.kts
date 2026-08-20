@@ -45,4 +45,6 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // Android's platform org.json methods are not executable in local JVM tests.
+    testImplementation("org.json:json:20240303")
 }
