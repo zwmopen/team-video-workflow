@@ -77,14 +77,14 @@ final class RemoteRelayClient {
               expectedSha256.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil else {
             throw RemoteRelayError.invalidTask
         }
-        guard let url = URL(string: "(session.endpoint)/v1/transfers/(transferId)/objects/(index)") else {
+        guard let url = URL(string: "\(session.endpoint)/v1/transfers/\(transferId)/objects/\(index)") else {
             throw RemoteRelayError.invalidURL
         }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
                                  timeoutInterval: objectTimeout)
         request.httpMethod = "GET"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer (session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
         let parent = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let temporary = destination.appendingPathExtension("part")
@@ -104,7 +104,7 @@ final class RemoteRelayClient {
         semaphore.wait()
         if let error = responseError { throw error }
         guard (200..<300).contains(responseStatus), let source = downloadedURL else {
-            throw RemoteRelayError.remote("远程文件下载失败 (responseStatus)")
+            throw RemoteRelayError.remote("远程文件下载失败 \(responseStatus)")
         }
         do {
             let values = try source.resourceValues(forKeys: [.fileSizeKey])
@@ -127,7 +127,7 @@ final class RemoteRelayClient {
 
     static func ack(_ session: Session, transferId: String) throws {
         guard isSafeId(transferId) else { throw RemoteRelayError.invalidTransferId }
-        _ = try requestJSON(url: "(session.endpoint)/v1/transfers/(transferId)/ack",
+        _ = try requestJSON(url: "\(session.endpoint)/v1/transfers/\(transferId)/ack",
                             method: "POST", token: session.token, body: [:])
     }
 

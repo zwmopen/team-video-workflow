@@ -162,7 +162,7 @@ final class IncomingTransferService {
             if let first = remoteInboxTasks.first { remoteInboxTasks.remove(first) }
         }
         if fresh > 0 {
-            updateStatus("远程作品已接收 (fresh) 个，正在写入作品库")
+            updateStatus("远程作品已接收 \(fresh) 个，正在写入作品库")
         }
     }
 
@@ -179,7 +179,7 @@ final class IncomingTransferService {
             var receivedCount = 0
             if !wasRemoteImported(task.transferId) {
                 for object in task.objects {
-                    let target = transferDirectory.appendingPathComponent("(object.index).download")
+                    let target = transferDirectory.appendingPathComponent("\(object.index).download")
                     try RemoteRelayClient.downloadObject(session, transferId: task.transferId,
                                                          index: object.index, destination: target,
                                                          expectedBytes: object.bytes,
@@ -208,10 +208,10 @@ final class IncomingTransferService {
         } catch {
             remoteInboxTasks.remove(task.transferId)
             try? FileManager.default.removeItem(at: transferDirectory)
-            updateStatus("远程作品接收失败，未发送 ACK：(error.localizedDescription)", isError: true)
+            updateStatus("远程作品接收失败，未发送 ACK：\(error.localizedDescription)", isError: true)
             TransferNotifications.shared.show("远程接收失败",
                                               body: error.localizedDescription,
-                                              id: "remote-failed-(task.transferId)")
+                                              id: "remote-failed-\(task.transferId)")
         }
         remoteProcessingTasks.remove(task.transferId)
     }
