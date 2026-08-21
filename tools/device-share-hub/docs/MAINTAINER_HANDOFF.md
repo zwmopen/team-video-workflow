@@ -14,7 +14,7 @@
 
 ## 2026-08-21 高级远程传送：普通公开作品中继链路
 
-- Android `0.6.32` / versionCode `70` 与 iPhone `0.6.19` / build `38` 已把中继收件箱接到真实文件处理：下载对象 → SHA-256/大小校验 → 写入现有作品库 → 最后 ACK。
+- Android `0.6.33` / versionCode `71` 与 iPhone `0.6.20` / build `39` 已把中继收件箱接到真实文件处理：下载对象 → SHA-256/大小校验 → 写入现有作品库 → 最后 ACK。
 - 本阶段按用户要求不做应用层端到端加密；文件是公开作品，远程服务只保存 HTTPS 传来的普通 ZIP 临时对象，ACK、取消或过期后删除。旧加密对象字段仍保留兼容读取。
 - 桌面端新增 `remote-relay/scripts/send-public-work.mjs`：输入作品文件夹或 ZIP、接收手机设备 ID 和已建立的 Bearer 会话，即可创建任务、上传、提交。目录使用普通 ZIP，作品名里的 `[转]`/`[泛]` 会保留给手机端分类识别。
 - Android `OnlineService` 与 iOS `IncomingTransferService` 都在写库成功后才 ACK；失败时移除本地“已处理”占位，保留中继任务等待下一轮重试。已确认导入的任务会持久化去重，避免 ACK 失败导致重复作品。
