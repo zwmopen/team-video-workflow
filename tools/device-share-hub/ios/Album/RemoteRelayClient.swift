@@ -26,7 +26,8 @@ final class RemoteRelayClient {
         }
         let challenge = try requestJSON(url: "\(base)/v1/challenges", method: "POST",
                                         token: nil,
-                                        body: ["workspaceId": workspaceId, "deviceId": deviceId])
+                                        body: ["workspaceId": workspaceId, "deviceId": deviceId],
+                                        workspaceId: workspaceId)
         guard let challengeId = challenge["challengeId"] as? String else {
             throw RemoteRelayError.invalidResponse
         }
@@ -37,23 +38,24 @@ final class RemoteRelayClient {
             "challengeSignature": try RemoteIdentity.sign(challenge)
         ]
         let response = try requestJSON(url: "\(base)/v1/sessions", method: "POST",
-                                       token: nil, body: body)
+                                       token: nil, body: body, workspaceId: workspaceId)
         guard let token = response["token"] as? String, !token.isEmpty else {
             throw RemoteRelayError.invalidResponse
         }
         return Session(endpoint: base, token: token,
                        expiresAt: response["expiresAt"] as? TimeInterval ?? 0,
-                       deviceId: deviceId)
+                       workspaceId: workspaceId, deviceId: deviceId)
     }
 
     static func heartbeat(_ session: Session) throws {
         _ = try requestJSON(url: "\(session.endpoint)/v1/presence", method: "POST",
-                            token: session.token, body: [:])
+                            token: session.token, body: [:], workspaceId: session.workspaceId)
     }
 
     static func inbox(_ session: Session) throws -> [[String: Any]] {
         let response = try requestJSON(url: "\(session.endpoint)/v1/inbox", method: "GET",
-                                       token: session.token, body: nil)
+                                       token: session.token, body: nil,
+                                       workspaceId: session.workspaceId)
         return response["transfers"] as? [[String: Any]] ?? []
     }
 
@@ -61,7 +63,7 @@ final class RemoteRelayClient {
         guard isSafeId(transferId) else { throw RemoteRelayError.invalidTransferId }
         let response = try requestJSON(
             url: "\(session.endpoint)/v1/transfers/\(transferId)", method: "GET",
-            token: session.token, body: nil
+            token: session.token, body: nil, workspaceId: session.workspaceId
         )
         guard let transfer = response["transfer"] as? [String: Any] else {
             throw RemoteRelayError.invalidResponse
@@ -85,6 +87,7 @@ final class RemoteRelayClient {
         request.httpMethod = "GET"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(session.workspaceId, forHTTPHeaderField: "X-Workspace-Id")
         let parent = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let temporary = destination.appendingPathExtension("part")
@@ -128,7 +131,8 @@ final class RemoteRelayClient {
     static func ack(_ session: Session, transferId: String) throws {
         guard isSafeId(transferId) else { throw RemoteRelayError.invalidTransferId }
         _ = try requestJSON(url: "\(session.endpoint)/v1/transfers/\(transferId)/ack",
-                            method: "POST", token: session.token, body: [:])
+                            method: "POST", token: session.token, body: [:],
+                            workspaceId: session.workspaceId)
     }
 
     static func normalizeEndpoint(_ endpoint: String) throws -> String {
@@ -147,7 +151,7 @@ final class RemoteRelayClient {
     }
 
     private static func requestJSON(url: String, method: String, token: String?,
-                                   body: [String: Any]?) throws -> [String: Any] {
+                                   body: [String: Any]?, workspaceId: String? = nil) throws -> [String: Any] {
         guard let requestURL = URL(string: url) else { throw RemoteRelayError.invalidURL }
         var request = URLRequest(url: requestURL,
                                  cachePolicy: .reloadIgnoringLocalCacheData,
@@ -156,6 +160,9 @@ final class RemoteRelayClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token = token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let workspaceId = workspaceId, !workspaceId.isEmpty {
+            request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id")
         }
         if let body = body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
@@ -202,6 +209,7 @@ final class RemoteRelayClient {
         let endpoint: String
         let token: String
         let expiresAt: TimeInterval
+        let workspaceId: String
         let deviceId: String
 
         var expired: Bool {

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/index.js && node --check src/relay-core.js && node --check test/protocol.test.js && node --check scripts/http-smoke.js && node --check scripts/send-public-work.mjs",
+    "check": "node --check src/index.js && node --check src/relay-core.js && node --check test/protocol.test.js && node --check scripts/http-smoke.js && node --check scripts/send-public-work.mjs && node --check scripts/cloudflare-e2e.mjs",
     "typecheck": "tsc -p jsconfig.json",
     "test": "node --test",
     "test:http": "node scripts/http-smoke.js",

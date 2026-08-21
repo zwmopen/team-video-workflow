@@ -310,6 +310,9 @@ final class IncomingTransferService {
     private func handle(_ request: HTTPRequest) -> HTTPResponse {
         do {
             if request.method == "GET" && request.path == "/v2/info" { return infoResponse() }
+            if request.method == "POST" && request.path == "/v2/relay-profile" {
+                return try saveRelayProfile(request)
+            }
             if request.method == "POST" && request.path == "/v2/tasks" { return try createTask(request) }
             let pieces = request.path.split(separator: "/").map(String.init)
             if request.method == "PUT", pieces.count == 5, pieces[0] == "v2", pieces[1] == "tasks",
@@ -357,6 +360,21 @@ final class IncomingTransferService {
             "workCount": library.advertisedWorkCount,
             "taskId": ""
         ]
+        if let keys = try? RemoteIdentity.publicKeys(),
+           let signing = keys["signingPublicKey"] as? [String: Any],
+           let agreement = keys["agreementPublicKey"] as? [String: Any],
+           let signingX = signing["x"] as? String,
+           let signingY = signing["y"] as? String,
+           let agreementX = agreement["x"] as? String,
+           let agreementY = agreement["y"] as? String {
+            // Only public JWK coordinates are exposed to the trusted LAN
+            // enrollment request; private keys remain in Keychain.
+            info["relaySigningX"] = signingX
+            info["relaySigningY"] = signingY
+            info["relayAgreementX"] = agreementX
+            info["relayAgreementY"] = agreementY
+            info["relayEnabled"] = true
+        }
         if let counts = library.advertisedWorkCounts {
             // Keep the legacy total and the category aggregate from the same
             // scan. This prevents the PC from seeing a stale total beside
@@ -365,6 +383,25 @@ final class IncomingTransferService {
             info["workCounts"] = counts
         }
         return HTTPResponse(status: 200, object: info)
+    }
+
+    private func saveRelayProfile(_ request: HTTPRequest) throws -> HTTPResponse {
+        guard let body = request.bodyData,
+              let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let endpoint = object["endpoint"] as? String,
+              let certificate = object["certificate"] as? [String: Any],
+              let signature = object["certificateSignature"] as? String,
+              !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !signature.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TransferServiceError.badRequest("远程登记资料不完整")
+        }
+        guard (certificate["deviceId"] as? String) == DeviceIdentity.id else {
+            throw TransferServiceError.forbidden("远程登记资料不是发给本机的")
+        }
+        try RemoteRelayProfile.save(endpoint: endpoint, certificate: certificate,
+                                    certificateSignature: signature)
+        updateStatus("远程传送已开启，等待电脑连接")
+        return HTTPResponse(status: 200, object: ["ok": true])
     }
 
     private func createTask(_ request: HTTPRequest) throws -> HTTPResponse {

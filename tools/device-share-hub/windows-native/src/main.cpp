@@ -15,6 +15,7 @@
 #include "usb_transport.h"
 #include "content_store.h"
 #include "send_to_integration.h"
+#include "remote_relay.h"
 
 #include <algorithm>
 #include <atomic>
@@ -90,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.6";
+constexpr wchar_t APP_VERSION[] = L"4.3.7";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -123,6 +124,10 @@ struct Device {
     bool wifiAllowed = true;
     bool remoteAllowed = true;
     bool remoteConnected = false;
+    std::string relaySigningX;
+    std::string relaySigningY;
+    std::string relayAgreementX;
+    std::string relayAgreementY;
     UsbPeer usbPeer;
     std::chrono::steady_clock::time_point lastSeen;
     std::chrono::steady_clock::time_point lastSentTime;
@@ -194,6 +199,7 @@ std::thread gDiscoveryThread;
 std::thread gReceiverThread;
 std::thread gUsbDiscoveryThread;
 std::thread gActiveProbeThread;
+std::thread gRelayThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
@@ -202,6 +208,8 @@ std::filesystem::path gContentDatabasePath;
 std::filesystem::path gChannelPreferencePath;
 std::unique_ptr<ContentStore> gContentStore;
 std::map<std::wstring, UsbPeer> gUsbPeers;
+std::mutex gRelayProvisionMutex;
+std::set<std::wstring> gRelayProfilesSent;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
 std::wstring gLastClipboardText;
 std::map<std::string, std::chrono::steady_clock::time_point> gSeenClipboardMessages;
@@ -1658,6 +1666,80 @@ private:
     }
 };
 
+bool ProvisionRelayDevice(const Device& device) {
+    if (device.ip.empty() || device.relaySigningX.empty() || device.relaySigningY.empty()
+            || device.relayAgreementX.empty() || device.relayAgreementY.empty()) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(gRelayProvisionMutex);
+        if (gRelayProfilesSent.count(device.id)) return true;
+    }
+    remote_relay::EnrollmentInfo enrollment{
+        WideToUtf8(device.id), WideToUtf8(device.name), device.relaySigningX, device.relaySigningY,
+        device.relayAgreementX, device.relayAgreementY};
+    std::string profile;
+    std::string error;
+    if (!remote_relay::BuildMobileProfile(DiagnosticLogPath().parent_path(), enrollment, profile, error)) {
+        WriteDiagnosticLog(L"remote_profile_build_failed", device.name + L" " + Utf8ToWide(error));
+        return false;
+    }
+    try {
+        HttpClient(device.ip, device.port).PostJson(L"/v2/relay-profile", profile);
+        {
+            std::lock_guard<std::mutex> lock(gRelayProvisionMutex);
+            gRelayProfilesSent.insert(device.id);
+        }
+        WriteDiagnosticLog(L"remote_profile_sent", device.name);
+        PostStatus(device.name + L" 已开启远程传送");
+        return true;
+    } catch (const std::exception& exception) {
+        WriteDiagnosticLog(L"remote_profile_send_failed", device.name + L" " + Utf8ToWide(exception.what()));
+        return false;
+    }
+}
+
+void RelayLoop() {
+    while (gRunning) {
+        std::vector<remote_relay::RelayDevice> devices;
+        std::string error;
+        if (remote_relay::ListDevices(DiagnosticLogPath().parent_path(), devices, error)) {
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lock(gDeviceMutex);
+            for (const auto& relay : devices) {
+                if (relay.deviceId.rfind("windows-", 0) == 0) continue;
+                std::wstring id = Utf8ToWide(relay.deviceId);
+                auto found = gDevices.find(id);
+                if (found == gDevices.end()) {
+                    Device device;
+                    device.id = id;
+                    device.name = Utf8ToWide(relay.name.empty() ? relay.deviceId : relay.name);
+                    device.model = L"远程设备";
+                    device.state = relay.online ? L"online" : L"offline";
+                    device.remoteConnected = relay.online;
+                    device.remoteAllowed = relay.remoteAllowed;
+                    device.lastSeen = now;
+                    gDevices.emplace(id, std::move(device));
+                } else {
+                    found->second.remoteConnected = relay.online;
+                    found->second.remoteAllowed = relay.remoteAllowed;
+                    if (!relay.name.empty()) found->second.name = Utf8ToWide(relay.name);
+                    if (relay.online) {
+                        found->second.state = L"online";
+                        found->second.lastSeen = now;
+                    }
+                }
+            }
+            if (gWindow) PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
+        } else if (!error.empty()) {
+            WriteDiagnosticLog(L"remote_presence_poll_failed", Utf8ToWide(error));
+        }
+        for (int tick = 0; tick < 100 && gRunning; ++tick) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+}
+
 bool RelayIncomingToNext(const RelayIncomingTask& task, std::wstring& failure) {
     Device next;
     bool found = false;
@@ -2130,6 +2212,43 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             }
         }
 
+        if ((device.ip.empty() || !device.wifiAllowed)
+                && device.remoteAllowed && device.remoteConnected) {
+            for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
+                auto& input = files[inputIndex];
+                if (std::filesystem::is_directory(input)) {
+                    input = CreateFolderZip(input, taskId + L"-remote-" + std::to_wstring(inputIndex));
+                    temporaryArchives.push_back(input);
+                }
+            }
+            PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”…");
+            std::string transferId;
+            std::string relayError;
+            bool sent = remote_relay::SendPlainTransfer(
+                DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                [&](uintmax_t done, uintmax_t total) {
+                    if (gCancelRequested) throw std::runtime_error("传送已取消");
+                    int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                    PostProgress(percent, true);
+                    PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”："
+                               + std::to_wstring(percent) + L"%");
+                }, transferId, relayError);
+            if (!sent) throw std::runtime_error(relayError.empty() ? "远程中继发送失败" : relayError);
+            RecordSuccessfulTransfers(device, fingerprints, L"远程中继");
+            WriteDiagnosticLog(L"remote_relay_upload_committed", device.name
+                               + L" transfer=" + Utf8ToWide(transferId));
+            PostShellTransferNotice(L"已提交到远程中继，手机收到后会自动写入作品库。", true);
+            PostProgress(100, true);
+            PostStatus(L"已通过远程中继发送到 “" + device.name + L"”，等待手机确认");
+            gUploadInProgress = false;
+            gShellTransferActive = false;
+            gCancelRequested = false;
+            for (const auto& archive : temporaryArchives) {
+                std::error_code ignored;
+                std::filesystem::remove(archive, ignored);
+            }
+            return;
+        }
         if (device.ip.empty() || !device.wifiAllowed) {
             throw std::runtime_error("这台设备当前没有打开可用的传送方式，请右键设备检查 USB、WiFi 或远程传送");
         }
@@ -2747,6 +2866,10 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     device.appVersion = Utf8ToWide(JsonValue(body, "appVersion"));
     device.appVersionCode = std::max<long long>(-1, JsonNumber(body, "versionCode", -1));
     device.updateCapability = Utf8ToWide(JsonValue(body, "updateCapability"));
+    device.relaySigningX = JsonValue(body, "relaySigningX");
+    device.relaySigningY = JsonValue(body, "relaySigningY");
+    device.relayAgreementX = JsonValue(body, "relayAgreementX");
+    device.relayAgreementY = JsonValue(body, "relayAgreementY");
     device.ip = host;
     device.port = static_cast<INTERNET_PORT>(std::clamp(JsonNumber(body, "port", 45833), 1, 65535));
     device.workCount = std::max(-1, JsonNumber(body, "workCount", -1));
@@ -2791,6 +2914,7 @@ void ActiveProbeLoop() {
             }
             for (auto& worker : workers) worker.join();
             for (Device& device : found) {
+                ProvisionRelayDevice(device);
                 bool newlyRegistered = false;
                 ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
                 device.usbAllowed = channels.usb;
@@ -4222,6 +4346,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
             gActiveProbeThread = std::thread(ActiveProbeLoop);
+            gRelayThread = std::thread(RelayLoop);
             gUsbDiscoveryThread = std::thread(UsbDiscoveryLoop);
             gReceiverThread = std::thread([] {
                 RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog,
@@ -4491,6 +4616,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             RemoveTrayIcon();
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
             if (gActiveProbeThread.joinable()) gActiveProbeThread.join();
+            if (gRelayThread.joinable()) gRelayThread.join();
             if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
             if (gReceiverThread.joinable()) gReceiverThread.join();
             // Keep the root SendTo shortcut persistent so Explorer can start

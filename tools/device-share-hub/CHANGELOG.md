@@ -1,5 +1,13 @@
 # 变更记录
 
+## Beta：Windows V4.3.7 / Android 0.6.34 / iPhone 0.6.21 - 2026-08-21
+
+- 补齐混合传输实际链路：Windows 首次发现手机时读取手机公钥，自动签发成员凭证并通过现有局域网下发；手机保存后每 10 秒登录 Cloudflare 中继并上报在线状态。
+- Windows 原生面板新增远程中继发送兜底和远程设备在线轮询；USB/Wi-Fi 不可用时，自动创建普通公开任务、上传 R2、提交，手机写入作品库后 ACK 清理。
+- 修复 Worker 路由要求工作区身份但移动端后续请求未带 `X-Workspace-Id` 的断链问题；Android/iOS 的心跳、收件箱、任务查询、对象下载和 ACK 全部补齐工作区头。
+- 新增真实部署烟测 `remote-relay/scripts/cloudflare-e2e.mjs`，已实测健康检查、设备会话、在线心跳、R2 上传、提交、下载 SHA-256、ACK 与 R2 删除。
+- Windows 原生面板 `4.3.7`；Android `versionName=0.6.34` / `versionCode=72`；iPhone `0.6.21` / build `40`。
+
 ## Beta：Android 0.6.33 / iPhone 0.6.20 - 2026-08-21
 
 - 远程中继新增 `mode: plain` 普通公开作品传送：电脑上传普通 ZIP，手机按对象字节数与 SHA-256 校验后写入现有作品库，成功后才发送 ACK；失败不会 ACK，云端临时对象会继续保留等待重试或过期清理。
@@ -14,7 +22,7 @@
 - Worker `zwm-device-share-relay` 已部署，Durable Object 使用 `WorkspaceRelay`，R2 暂存桶为 `zwm-device-share-relay`。
 - Wrangler 实读部署版本 `7da4be21-632d-4e74-9a75-4f6d413f8e0a`，部署占比 100%。
 - 当前账号没有活动 Zone，暂使用 `workers.dev` 公网地址；本机网络对该域名的 DNS/连接异常只影响本机烟测，不改变 Cloudflare 部署状态。
-- 混合传输当前是“局域网/USB 直传优先 + HTTPS 中继兜底”；WebRTC/QUIC 打洞和 Windows 原生中继按钮仍是后续开发项。
+- 混合传输当前是“局域网/USB 直传优先 + HTTPS 中继兜底”；WebRTC/QUIC 打洞仍是后续优化项，中继兜底已经接入 Windows 原生面板。
 
 ## Beta：Android 0.6.31 / iPhone 0.6.18 - 2026-08-21
 

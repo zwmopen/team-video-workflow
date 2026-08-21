@@ -398,6 +398,10 @@ public final class OnlineService extends Service {
                     writeJson(output, 200, deviceInfo());
                     return;
                 }
+                if ("POST".equals(request.method) && "/v2/relay-profile".equals(request.path)) {
+                    saveRelayProfile(request, input, output);
+                    return;
+                }
                 if ("POST".equals(request.method) && "/v2/tasks".equals(request.path)) {
                     createTask(request, input, output);
                     return;
@@ -958,8 +962,42 @@ public final class OnlineService extends Service {
                 .put("state", state)
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
+        JSONObject relayKeys = RemoteIdentity.publicKeys(this);
+        JSONObject signingKey = relayKeys.getJSONObject("signingPublicKey");
+        JSONObject agreementKey = relayKeys.getJSONObject("agreementPublicKey");
+        // Flatten the public JWK coordinates for the Windows native client. No
+        // private key material ever leaves Android Keystore.
+        info.put("relaySigningX", signingKey.getString("x"))
+                .put("relaySigningY", signingKey.getString("y"))
+                .put("relayAgreementX", agreementKey.getString("x"))
+                .put("relayAgreementY", agreementKey.getString("y"))
+                .put("relayEnabled", true);
         if (workCounts != null) info.put("workCounts", workCounts);
         return info;
+    }
+
+    private void saveRelayProfile(HttpRequest request, InputStream input,
+                                  OutputStream output) throws Exception {
+        if (request.contentLength < 0 || request.contentLength > MAX_JSON_BYTES) {
+            throw new HttpError(413, "远程登记资料过大");
+        }
+        JSONObject body = new JSONObject(new String(
+                readExact(input, request.contentLength), StandardCharsets.UTF_8));
+        String endpoint = body.optString("endpoint", "").trim();
+        JSONObject certificate = body.optJSONObject("certificate");
+        String signature = body.optString("certificateSignature", "").trim();
+        if (endpoint.isEmpty() || certificate == null || signature.isEmpty()) {
+            throw new HttpError(400, "远程登记资料不完整");
+        }
+        String expectedDeviceId = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString("deviceId", "");
+        if (!expectedDeviceId.equals(certificate.optString("deviceId", ""))) {
+            throw new HttpError(403, "远程登记资料不是发给本机的");
+        }
+        RemoteRelayProfile.save(this, endpoint, certificate, signature);
+        DiagnosticLog.write(this, "remote_profile_saved", "endpoint=" + endpoint);
+        notifyStatus("远程传送已开启，等待电脑连接");
+        writeJson(output, 200, new JSONObject().put("ok", true));
     }
 
     private static boolean isZip(ReceivedFile file) {

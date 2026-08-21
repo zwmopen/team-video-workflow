@@ -33,30 +33,32 @@ final class RemoteRelayClient {
         String workspaceId = certificate.getString("workspaceId");
         String deviceId = certificate.getString("deviceId");
         JSONObject challenge = requestJson(base + "/v1/challenges", "POST", null,
-                new JSONObject().put("workspaceId", workspaceId).put("deviceId", deviceId));
+                new JSONObject().put("workspaceId", workspaceId).put("deviceId", deviceId), workspaceId);
         JSONObject body = new JSONObject()
                 .put("certificate", certificate)
                 .put("certificateSignature", certificateSignature)
                 .put("challengeId", challenge.getString("challengeId"))
                 .put("challengeSignature", RemoteIdentity.sign(context, challenge));
-        JSONObject response = requestJson(base + "/v1/sessions", "POST", null, body);
+        JSONObject response = requestJson(base + "/v1/sessions", "POST", null, body, workspaceId);
         return new Session(base, response.getString("token"),
-                response.optLong("expiresAt", 0L), deviceId);
+                response.optLong("expiresAt", 0L), workspaceId, deviceId);
     }
 
     static void heartbeat(Session session) throws Exception {
-        requestJson(session.endpoint + "/v1/presence", "POST", session.token, new JSONObject());
+        requestJson(session.endpoint + "/v1/presence", "POST", session.token,
+                new JSONObject(), session.workspaceId);
     }
 
     static JSONArray inbox(Session session) throws Exception {
-        JSONArray transfers = requestJson(session.endpoint + "/v1/inbox", "GET", session.token, null)
+        JSONArray transfers = requestJson(session.endpoint + "/v1/inbox", "GET", session.token, null,
+                        session.workspaceId)
                 .optJSONArray("transfers");
         return transfers == null ? new JSONArray() : transfers;
     }
 
     static JSONObject transfer(Session session, String transferId) throws Exception {
         return requestJson(session.endpoint + "/v1/transfers/" + safeId(transferId), "GET",
-                session.token, null).getJSONObject("transfer");
+                session.token, null, session.workspaceId).getJSONObject("transfer");
     }
 
     /** Streams one ordinary public object to a temporary file and verifies it before rename. */
@@ -74,6 +76,7 @@ final class RemoteRelayClient {
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Accept", "application/octet-stream");
         connection.setRequestProperty("Authorization", "Bearer " + session.token);
+        connection.setRequestProperty("X-Workspace-Id", session.workspaceId);
         File parent = destination.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
             connection.disconnect();
@@ -125,7 +128,7 @@ final class RemoteRelayClient {
 
     static void ack(Session session, String transferId) throws Exception {
         requestJson(session.endpoint + "/v1/transfers/" + safeId(transferId) + "/ack",
-                "POST", session.token, new JSONObject());
+                "POST", session.token, new JSONObject(), session.workspaceId);
     }
 
     static String normalizeEndpoint(String endpoint) throws IOException {
@@ -150,7 +153,7 @@ final class RemoteRelayClient {
     }
 
     private static JSONObject requestJson(String url, String method, String token,
-                                          JSONObject body) throws Exception {
+                                          JSONObject body, String workspaceId) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
@@ -158,6 +161,9 @@ final class RemoteRelayClient {
         connection.setRequestProperty("Accept", "application/json");
         if (token != null && !token.isEmpty()) {
             connection.setRequestProperty("Authorization", "Bearer " + token);
+        }
+        if (workspaceId != null && !workspaceId.isEmpty()) {
+            connection.setRequestProperty("X-Workspace-Id", workspaceId);
         }
         if (body != null) {
             byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
@@ -213,12 +219,14 @@ final class RemoteRelayClient {
         final String endpoint;
         final String token;
         final long expiresAt;
+        final String workspaceId;
         final String deviceId;
 
-        Session(String endpoint, String token, long expiresAt, String deviceId) {
+        Session(String endpoint, String token, long expiresAt, String workspaceId, String deviceId) {
             this.endpoint = endpoint;
             this.token = token;
             this.expiresAt = expiresAt;
+            this.workspaceId = workspaceId;
             this.deviceId = deviceId;
         }
 

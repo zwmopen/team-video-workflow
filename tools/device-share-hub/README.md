@@ -1,8 +1,8 @@
-# 文件收发中控 V4.3.6 / Android 0.6.33 / iPhone 0.6.20（Beta）
+# 文件收发中控 V4.3.7 / Android 0.6.34 / iPhone 0.6.21（Beta）
 
 ## 当前 Beta 测试包
 
-这是高级远程传送第一阶段的可安装 Beta。现有 USB、局域网 Wi-Fi、作品列表、分类库存和隐私边界保持不变；远程中继目前已进入控制面、任务收件箱校验和续传基础，尚未承诺真实跨网络传输已完成。安装后请优先验证日常作品收发、更新检查和设备在线状态。
+这是高级远程传送第一阶段的可安装 Beta。现有 USB、局域网 Wi-Fi、作品列表、分类库存和隐私边界保持不变；Cloudflare 中继的电脑登记、手机收件、R2 上传下载、作品库写入和 ACK 已接通，WebRTC/QUIC P2P 仍未实现。安装后请优先验证日常作品收发、更新检查和设备在线状态。
 
 本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务；相同任务在本次进程内只记录一次。密文下载、端到端解密、原子落盘和接收 ACK 仍未接入，因此不会显示可用的“远程”传送通道。
 
@@ -148,7 +148,7 @@
 - 远程中继服务已部署到 Cloudflare：`https://zwm-device-share-relay.zwmrpg.workers.dev`，使用 Durable Object `WorkspaceRelay` 保存设备、会话、任务和 ACK 状态，R2 `zwm-device-share-relay` 暂存对象。
 - 当前仍保留公开作品的普通 ZIP 模式；链路强制 HTTPS，接收 ACK、取消或过期后删除 R2 临时对象，不做应用层端到端加密。
 - 混合传输策略是：同 Wi-Fi/USB 优先走现有 V2 直传；不同网络使用 HTTPS 中继兜底。WebRTC/QUIC 打洞尚未实现，不能把当前版本描述成已经完成 P2P 自动切换。
-- Android/iPhone 已有中继收件和 ACK 客户端，但只有写入已签发的 `RemoteRelayProfile` 后才会连接；Windows 原生面板的身份登记和中继发送按钮仍未接入，当前桌面发送入口是 `remote-relay/scripts/send-public-work.mjs`。
+- Android/iPhone 已有中继收件和 ACK 客户端；Windows 原生面板会在可信局域网首次发现手机时自动下发 `RemoteRelayProfile`，无 USB/Wi-Fi 时自动发送到 Cloudflare 中继。WebRTC/QUIC 直连仍未实现。
 - 当前账号没有活动 Cloudflare Zone，暂时使用 `workers.dev` 地址；真实 Android/iPhone 异地网络收发仍需安装 Beta、完成设备登记后实测。
 
 ## Android 0.6.3 长剪切折叠与完整滚动
