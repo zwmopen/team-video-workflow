@@ -12,14 +12,23 @@ final class IncomingTransferService {
     private var tcpListener: NWListener?
     private var udpListener: NWListener?
     private var beaconTimer: DispatchSourceTimer?
-    private let remotePresence = RemoteRelayPresence()
+    private let remotePresence: RemoteRelayPresence
     private var tasks: [String: IncomingTask] = [:]
     private var activeRelayIds = Set<String>()
+    private var remoteInboxTasks = Set<String>()
     private var isRunning = false
     private var tcpReady = false
     private var udpReady = false
 
-    init(library: WorkLibrary) { self.library = library }
+    init(library: WorkLibrary) {
+        self.library = library
+        let presence = RemoteRelayPresence()
+        self.remotePresence = presence
+        presence.onInbox = { [weak self] tasks in
+            guard let self = self else { return }
+            self.queue.async { [weak self] in self?.handleRemoteInbox(tasks) }
+        }
+    }
 
     func start() {
         queue.async { [weak self] in self?.startOnQueue() }
@@ -135,6 +144,22 @@ final class IncomingTransferService {
         }
         timer.resume()
         beaconTimer = timer
+    }
+
+    private func handleRemoteInbox(_ tasks: [RemoteRelayTask]) {
+        guard isRunning else { return }
+        var fresh = 0
+        for task in tasks {
+            if remoteInboxTasks.insert(task.transferId).inserted {
+                fresh += 1
+            }
+        }
+        while remoteInboxTasks.count > 256 {
+            if let first = remoteInboxTasks.first { remoteInboxTasks.remove(first) }
+        }
+        if fresh > 0 {
+            updateStatus("远程收件箱发现 (fresh) 个任务，等待加密接收链路")
+        }
     }
 
     private func broadcastBeacon() {

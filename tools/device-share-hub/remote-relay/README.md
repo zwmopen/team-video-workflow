@@ -18,7 +18,7 @@
 
 当前还不能标记为正式可用：
 
-- Windows、Android、iPhone 客户端尚未接入本协议；
+- Android、iPhone 已接入身份、会话、心跳和收件箱元数据校验；Windows 发送端和移动端密文对象下载/解密尚未接入；
 - Cloudflare Worker、Durable Object 和 R2 尚未部署；
 - 尚未完成手机流量与异地 WiFi 的实体跨网络传送；
 - P2P 直连尚未实现，本阶段只有加密中继服务基础。
