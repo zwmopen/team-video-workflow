@@ -3,6 +3,7 @@
 - 当前开发交付版本：Windows `4.3.7`、Android `0.6.34` / versionCode `72`、iPhone `0.6.21` / build `40`。
 - 已补齐：Windows 发现手机后自动下发远程成员凭证；Android/iOS 保存凭证、带工作区头登录中继、心跳、下载、写库和 ACK；Windows 无 USB/Wi-Fi 时自动走 Cloudflare 中继。
 - 已用实际 Worker 烟测跑通：健康检查 → 注册工作区 → 管理端/接收端会话 → 在线心跳 → 创建任务 → R2 上传 → 提交 → 收件箱 → 下载 SHA-256 → ACK → R2 删除。
+- Beta 安装包：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.34-beta.1>；对应源码提交 `7c72f43`，GitHub Actions `32469716023`。
 
 - Worker 已部署：`https://zwm-device-share-relay.zwmrpg.workers.dev`。
 - 资源已实读：Worker `zwm-device-share-relay`、Durable Object `WorkspaceRelay`、R2 `zwm-device-share-relay`；部署版本 `7da4be21-632d-4e74-9a75-4f6d413f8e0a`，100% 生效。
@@ -16,14 +17,14 @@
 - iPhone 检查到新版本时，提示直接打开 AltStore 的 My Apps 更新，或复制 AltStore 更新源；不再只提示连接电脑。
 - Android `versionCode=67` / `versionName=0.6.29`；iPhone `0.6.16/build 35`。
 
-## 2026-08-21 高级远程传送：普通公开作品中继链路
+## 2026-08-21 高级远程传送：普通公开作品中继链路（历史开发记录）
 
 - Android `0.6.33` / versionCode `71` 与 iPhone `0.6.20` / build `39` 已把中继收件箱接到真实文件处理：下载对象 → SHA-256/大小校验 → 写入现有作品库 → 最后 ACK。
 - 本阶段按用户要求不做应用层端到端加密；文件是公开作品，远程服务只保存 HTTPS 传来的普通 ZIP 临时对象，ACK、取消或过期后删除。旧加密对象字段仍保留兼容读取。
 - 桌面端新增 `remote-relay/scripts/send-public-work.mjs`：输入作品文件夹或 ZIP、接收手机设备 ID 和已建立的 Bearer 会话，即可创建任务、上传、提交。目录使用普通 ZIP，作品名里的 `[转]`/`[泛]` 会保留给手机端分类识别。
 - Android `OnlineService` 与 iOS `IncomingTransferService` 都在写库成功后才 ACK；失败时移除本地“已处理”占位，保留中继任务等待下一轮重试。已确认导入的任务会持久化去重，避免 ACK 失败导致重复作品。
 - `remote-relay/test/protocol.test.js` 新增普通公开作品完整协议测试：创建、上传、提交、收件箱、对象下载标记、ACK 删除；旧加密兼容测试继续保留。
-- 当前尚未完成：Cloudflare 正式部署、Windows 原生面板按钮化、真实 Android/iPhone 安装和异地网络实传。不能把本地 Worker/协议测试当作真机跨网证据。
+- 当时尚未完成 Cloudflare 正式部署、Windows 原生面板接入和真实 Android/iPhone 安装；现已由顶部当前真相和 Beta 版本接续。实体手机安装与异地网络业务实传仍需单独验收，不能把协议测试当作真机跨网证据。
 
 ## 2026-08-21 高级远程传送：移动端中继会话客户端（历史开发记录）
 
