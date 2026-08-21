@@ -2,13 +2,20 @@ package com.zwm.gallery;
 
 import android.content.Context;
 
+import org.json.JSONArray;
+
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /** Re-authenticates and publishes relay presence only after a profile was enrolled. */
 final class RemoteRelayPresence {
+    interface Listener {
+        void onInbox(RemoteRelayClient.Session session, JSONArray transfers);
+    }
+
     private final Context context;
+    private final Listener listener;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private volatile RemoteRelayClient.Session session;
     private volatile boolean started;
@@ -16,8 +23,9 @@ final class RemoteRelayPresence {
     private long retryAfterMs;
     private long failureDelayMs;
 
-    RemoteRelayPresence(Context context) {
+    RemoteRelayPresence(Context context, Listener listener) {
         this.context = context.getApplicationContext();
+        this.listener = listener;
     }
 
     void start() {
@@ -62,6 +70,15 @@ final class RemoteRelayPresence {
                 session = current;
             }
             RemoteRelayClient.heartbeat(current);
+            JSONArray transfers = RemoteRelayClient.inbox(current);
+            if (listener != null) {
+                try {
+                    listener.onInbox(current, transfers);
+                } catch (RuntimeException error) {
+                    DiagnosticLog.write(context, "remote_inbox_listener_failed",
+                            error.getClass().getSimpleName());
+                }
+            }
             retryAfterMs = 0;
             failureDelayMs = 0;
         } catch (Exception error) {

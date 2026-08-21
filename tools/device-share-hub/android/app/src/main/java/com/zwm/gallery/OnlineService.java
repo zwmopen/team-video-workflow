@@ -97,6 +97,7 @@ public final class OnlineService extends Service {
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private RemoteRelayPresence remotePresence;
+    private final Set<String> remoteInboxTasks = Collections.synchronizedSet(new HashSet<>());
     private volatile boolean running;
     private volatile String state = "online";
     private volatile String currentTaskId = "";
@@ -160,7 +161,7 @@ public final class OnlineService extends Service {
         } catch (Exception error) {
             DiagnosticLog.write(this, "remote_identity_unavailable", error.getClass().getSimpleName());
         }
-        remotePresence = new RemoteRelayPresence(getApplicationContext());
+        remotePresence = new RemoteRelayPresence(getApplicationContext(), this::handleRemoteInbox);
         remotePresence.start();
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
@@ -197,6 +198,41 @@ public final class OnlineService extends Service {
         notifyStatus("局域网接收已开启，等待电脑自动发现");
         if (ACTION_REFRESH_STATUS.equals(action)) beaconRequested = true;
         return START_STICKY;
+    }
+
+    private void handleRemoteInbox(RemoteRelayClient.Session session, JSONArray transfers) {
+        if (session == null || transfers == null) return;
+        int ready = 0;
+        int fresh = 0;
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < transfers.length(); i++) {
+            JSONObject object = transfers.optJSONObject(i);
+            try {
+                RemoteRelayTask task = RemoteRelayTask.parse(object, session.deviceId, now);
+                if (task.expired(now)) continue;
+                ready++;
+                if (remoteInboxTasks.add(task.transferId)) {
+                    fresh++;
+                    DiagnosticLog.write(this, "remote_task_ready",
+                            "objects=" + task.objectCount + " cipherBytes=" + task.totalCipherBytes);
+                }
+            } catch (Exception error) {
+                DiagnosticLog.write(this, "remote_task_ignored",
+                        error.getClass().getSimpleName());
+            }
+        }
+        if (remoteInboxTasks.size() > 256) {
+            synchronized (remoteInboxTasks) {
+                while (remoteInboxTasks.size() > 192) {
+                    String first = remoteInboxTasks.iterator().next();
+                    remoteInboxTasks.remove(first);
+                }
+            }
+        }
+        if (ready > 0 && fresh > 0) {
+            DiagnosticLog.write(this, "remote_inbox_ready",
+                    "ready=" + ready + " fresh=" + fresh);
+        }
     }
 
     @Override

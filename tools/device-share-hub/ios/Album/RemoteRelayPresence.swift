@@ -2,6 +2,7 @@ import Foundation
 
 /// Re-authenticates and publishes relay presence only after a profile was enrolled.
 final class RemoteRelayPresence {
+    var onInbox: (([RemoteRelayTask]) -> Void)?
     private let queue = DispatchQueue(label: "com.zwm.album.remote-presence")
     private var timer: DispatchSourceTimer?
     private var session: RemoteRelayClient.Session?
@@ -58,7 +59,18 @@ final class RemoteRelayPresence {
                 )
                 session = current
             }
-            if let current = current { try RemoteRelayClient.heartbeat(current) }
+            if let current = current {
+                try RemoteRelayClient.heartbeat(current)
+                let rawTransfers = try RemoteRelayClient.inbox(current)
+                let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+                let tasks = rawTransfers.compactMap { object -> RemoteRelayTask? in
+                    guard let task = try? RemoteRelayTask.parse(
+                        object, expectedRecipientId: current.deviceId, nowMs: nowMs
+                    ), !task.expired(at: nowMs) else { return nil }
+                    return task
+                }
+                onInbox?(tasks)
+            }
             retryAfter = 0
             failureDelay = 0
         } catch {

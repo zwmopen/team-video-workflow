@@ -153,6 +153,7 @@ enum RemoteRelayError: LocalizedError {
     case invalidCertificate
     case invalidResponse
     case invalidTransferId
+    case invalidTask
     case responseTooLarge
     case remote(String)
 
@@ -163,6 +164,7 @@ enum RemoteRelayError: LocalizedError {
         case .invalidCertificate: return "远程设备凭证不完整。"
         case .invalidResponse: return "远程服务响应格式无效。"
         case .invalidTransferId: return "远程任务标识无效。"
+        case .invalidTask: return "远程任务内容无效。"
         case .responseTooLarge: return "远程服务响应过大。"
         case .remote(let detail): return detail
         }
