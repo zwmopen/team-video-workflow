@@ -4,12 +4,13 @@ import Foundation
 final class RemoteRelayClient {
     private static let connectTimeout: TimeInterval = 8
     private static let readTimeout: TimeInterval = 20
+    private static let objectTimeout: TimeInterval = 30 * 60
     private static let maxResponseBytes = 2 * 1024 * 1024
 
     private static let urlSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = readTimeout
-        configuration.timeoutIntervalForResource = readTimeout
+        configuration.timeoutIntervalForResource = objectTimeout
         configuration.waitsForConnectivity = false
         return URLSession(configuration: configuration)
     }()
@@ -66,6 +67,68 @@ final class RemoteRelayClient {
             throw RemoteRelayError.invalidResponse
         }
         return transfer
+    }
+
+    /// Streams one ordinary public object to disk, verifies it, then atomically moves it.
+    static func downloadObject(_ session: Session, transferId: String, index: Int,
+                               destination: URL, expectedBytes: Int64,
+                               expectedSha256: String) throws {
+        guard isSafeId(transferId), index >= 0, expectedBytes > 0,
+              expectedSha256.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil else {
+            throw RemoteRelayError.invalidTask
+        }
+        guard let url = URL(string: "(session.endpoint)/v1/transfers/(transferId)/objects/(index)") else {
+            throw RemoteRelayError.invalidURL
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
+                                 timeoutInterval: objectTimeout)
+        request.httpMethod = "GET"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer (session.token)", forHTTPHeaderField: "Authorization")
+        let parent = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let temporary = destination.appendingPathExtension("part")
+        try? FileManager.default.removeItem(at: temporary)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var downloadedURL: URL?
+        var responseStatus = 0
+        var responseError: Error?
+        let task = urlSession.downloadTask(with: request) { url, response, error in
+            downloadedURL = url
+            responseStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+            responseError = error
+            semaphore.signal()
+        }
+        task.resume()
+        semaphore.wait()
+        if let error = responseError { throw error }
+        guard (200..<300).contains(responseStatus), let source = downloadedURL else {
+            throw RemoteRelayError.remote("远程文件下载失败 (responseStatus)")
+        }
+        do {
+            let values = try source.resourceValues(forKeys: [.fileSizeKey])
+            guard let size = values.fileSize, Int64(size) == expectedBytes else {
+                throw RemoteRelayError.remote("远程文件大小校验失败")
+            }
+            let actual = try SHA256.fileHex(source)
+            guard actual.caseInsensitiveCompare(expectedSha256) == .orderedSame else {
+                throw RemoteRelayError.remote("远程文件 SHA-256 校验失败")
+            }
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: source, to: temporary)
+            try FileManager.default.moveItem(at: temporary, to: destination)
+        } catch {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
+    }
+
+    static func ack(_ session: Session, transferId: String) throws {
+        guard isSafeId(transferId) else { throw RemoteRelayError.invalidTransferId }
+        _ = try requestJSON(url: "(session.endpoint)/v1/transfers/(transferId)/ack",
+                            method: "POST", token: session.token, body: [:])
     }
 
     static func normalizeEndpoint(_ endpoint: String) throws -> String {

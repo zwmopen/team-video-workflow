@@ -16,6 +16,7 @@ final class IncomingTransferService {
     private var tasks: [String: IncomingTask] = [:]
     private var activeRelayIds = Set<String>()
     private var remoteInboxTasks = Set<String>()
+    private var remoteProcessingTasks = Set<String>()
     private var isRunning = false
     private var tcpReady = false
     private var udpReady = false
@@ -24,9 +25,9 @@ final class IncomingTransferService {
         self.library = library
         let presence = RemoteRelayPresence()
         self.remotePresence = presence
-        presence.onInbox = { [weak self] tasks in
+        presence.onInbox = { [weak self] session, tasks in
             guard let self = self else { return }
-            self.queue.async { [weak self] in self?.handleRemoteInbox(tasks) }
+            self.queue.async { [weak self] in self?.handleRemoteInbox(session, tasks: tasks) }
         }
     }
 
@@ -146,20 +147,92 @@ final class IncomingTransferService {
         beaconTimer = timer
     }
 
-    private func handleRemoteInbox(_ tasks: [RemoteRelayTask]) {
+    private func handleRemoteInbox(_ session: RemoteRelayClient.Session,
+                                   tasks: [RemoteRelayTask]) {
         guard isRunning else { return }
         var fresh = 0
         for task in tasks {
-            if remoteInboxTasks.insert(task.transferId).inserted {
+            if remoteInboxTasks.insert(task.transferId).inserted,
+               remoteProcessingTasks.insert(task.transferId).inserted {
                 fresh += 1
+                processRemoteTask(session, task: task)
             }
         }
         while remoteInboxTasks.count > 256 {
             if let first = remoteInboxTasks.first { remoteInboxTasks.remove(first) }
         }
         if fresh > 0 {
-            updateStatus("远程收件箱发现 (fresh) 个任务，等待加密接收链路")
+            updateStatus("远程作品已接收 (fresh) 个，正在写入作品库")
         }
+    }
+
+    private func processRemoteTask(_ session: RemoteRelayClient.Session,
+                                   task: RemoteRelayTask) {
+        let transferDirectory = remoteRoot.appendingPathComponent(task.transferId, isDirectory: true)
+        do {
+            guard task.mode == "plain" else { throw RemoteRelayError.invalidTask }
+            guard let root = library.receivingRootURL else {
+                throw TransferServiceError.conflict("作品文件夹不可用，请在设置里重新选择")
+            }
+            try FileManager.default.createDirectory(at: transferDirectory,
+                                                    withIntermediateDirectories: true)
+            var receivedCount = 0
+            if !wasRemoteImported(task.transferId) {
+                for object in task.objects {
+                    let target = transferDirectory.appendingPathComponent("(object.index).download")
+                    try RemoteRelayClient.downloadObject(session, transferId: task.transferId,
+                                                         index: object.index, destination: target,
+                                                         expectedBytes: object.bytes,
+                                                         expectedSha256: object.sha256)
+                    if object.name.lowercased().hasPrefix("album-folder-")
+                        && object.name.lowercased().hasSuffix(".zip") {
+                        receivedCount += try StoredZipExtractor.extract(target, to: root)
+                    } else {
+                        let destination = StoredZipExtractor.uniqueDestination(for: object.name, under: root)
+                        try FileManager.default.moveItem(at: target, to: destination)
+                        receivedCount += 1
+                    }
+                }
+                guard receivedCount > 0 else { throw RemoteRelayError.invalidTask }
+                markRemoteImported(task.transferId)
+                DispatchQueue.main.async { [weak library] in
+                    library?.finishIncomingTransfer(itemCount: receivedCount)
+                }
+            }
+            // The ACK is intentionally last; a failed download or library write
+            // keeps the relay object for the next poll.
+            try RemoteRelayClient.ack(session, transferId: task.transferId)
+            remoteInboxTasks.remove(task.transferId)
+            try? FileManager.default.removeItem(at: transferDirectory)
+            updateStatus("远程作品已写入作品库，ACK 已完成")
+        } catch {
+            remoteInboxTasks.remove(task.transferId)
+            try? FileManager.default.removeItem(at: transferDirectory)
+            updateStatus("远程作品接收失败，未发送 ACK：(error.localizedDescription)", isError: true)
+            TransferNotifications.shared.show("远程接收失败",
+                                              body: error.localizedDescription,
+                                              id: "remote-failed-(task.transferId)")
+        }
+        remoteProcessingTasks.remove(task.transferId)
+    }
+
+    private var remoteRoot: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let root = base.appendingPathComponent("RemoteRelay", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func wasRemoteImported(_ transferId: String) -> Bool {
+        Set(UserDefaults.standard.stringArray(forKey: "album.remoteImportedTransfers.v1") ?? [])
+            .contains(transferId)
+    }
+
+    private func markRemoteImported(_ transferId: String) {
+        var values = UserDefaults.standard.stringArray(forKey: "album.remoteImportedTransfers.v1") ?? []
+        if !values.contains(transferId) { values.append(transferId) }
+        if values.count > 256 { values.removeFirst(values.count - 256) }
+        UserDefaults.standard.set(values, forKey: "album.remoteImportedTransfers.v1")
     }
 
     private func broadcastBeacon() {

@@ -391,6 +391,77 @@ test("sender outbox and recipient inbox expose committed transfers", async () =>
   assert.equal(outbox.transfers[0].nextObjectIndex, null);
 });
 
+test("plain public work completes upload, download and acknowledgement without a key package", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const workPackage = new TextEncoder().encode("public-work-package");
+  const sha256 = Buffer.from(await crypto.subtle.digest("SHA-256", workPackage)).toString("hex");
+  let response = await state.relay.fetch(
+    await jsonRequest(
+      "/v1/transfers",
+      {
+        mode: "plain",
+        recipientDeviceId: state.memberCertificate.deviceId,
+        objects: [{
+          index: 0,
+          bytes: workPackage.byteLength,
+          sha256,
+          name: "album-folder-作品集[泛].zip",
+          mime: "application/zip",
+        }],
+      },
+      adminToken,
+    ),
+  );
+  assert.equal(response.status, 201);
+  const transferId = (await response.json()).transferId;
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/0`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Length": String(workPackage.byteLength),
+      },
+      body: workPackage,
+      duplex: "half",
+    }),
+  );
+  assert.equal(response.status, 200);
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/transfers/${transferId}/commit`, {}, adminToken),
+  );
+  assert.equal(response.status, 200);
+
+  response = await state.relay.fetch(
+    new Request("https://relay.test/v1/inbox", {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  const inbox = await response.json();
+  assert.equal(inbox.transfers[0].mode, "plain");
+  assert.equal(inbox.transfers[0].objects[0].name, "album-folder-作品集[泛].zip");
+  assert.equal(inbox.transfers[0].objects[0].bytes, workPackage.byteLength);
+
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/0`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  // Durable Object returns a private R2 materialization marker; the outer
+  // Worker turns it into the 200-byte download response.
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("X-Object-Sha256"), sha256);
+  const stored = await state.bucket.get(`${state.memberCertificate.workspaceId}/${transferId}/000000.cipher`);
+  assert.deepEqual(stored.body, workPackage);
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/transfers/${transferId}/ack`, {}, state.token),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).objectsDeleted, true);
+  assert.equal(state.bucket.values.size, 0);
+});
+
 test("transfer status exposes the next object and repeated upload is idempotent", async () => {
   const state = await bootstrap();
   const adminToken = await createAdminSession(state);

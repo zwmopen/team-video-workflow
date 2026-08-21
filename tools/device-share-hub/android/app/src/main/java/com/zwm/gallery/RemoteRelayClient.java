@@ -7,17 +7,22 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Locale;
 
 /** HTTPS control-plane client for relay login, presence and remote task inbox polling. */
 final class RemoteRelayClient {
     private static final int CONNECT_TIMEOUT_MS = 8_000;
     private static final int READ_TIMEOUT_MS = 20_000;
+    private static final int OBJECT_READ_TIMEOUT_MS = 120_000;
     private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
     private RemoteRelayClient() { }
@@ -52,6 +57,75 @@ final class RemoteRelayClient {
     static JSONObject transfer(Session session, String transferId) throws Exception {
         return requestJson(session.endpoint + "/v1/transfers/" + safeId(transferId), "GET",
                 session.token, null).getJSONObject("transfer");
+    }
+
+    /** Streams one ordinary public object to a temporary file and verifies it before rename. */
+    static void downloadObject(Session session, String transferId, int index, File destination,
+                               long expectedBytes, String expectedSha256) throws Exception {
+        if (index < 0 || expectedBytes <= 0L || expectedSha256 == null
+                || !expectedSha256.matches("[0-9a-fA-F]{64}")) {
+            throw new IOException("远程对象校验参数无效");
+        }
+        String path = session.endpoint + "/v1/transfers/" + safeId(transferId)
+                + "/objects/" + index;
+        HttpURLConnection connection = (HttpURLConnection) new URL(path).openConnection();
+        connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        connection.setReadTimeout(OBJECT_READ_TIMEOUT_MS);
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Accept", "application/octet-stream");
+        connection.setRequestProperty("Authorization", "Bearer " + session.token);
+        File parent = destination.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
+            connection.disconnect();
+            throw new IOException("无法创建远程接收缓存目录");
+        }
+        File temporary = new File(destination.getPath() + ".part");
+        if (temporary.exists() && !temporary.delete()) {
+            connection.disconnect();
+            throw new IOException("无法清理未完成的远程文件");
+        }
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        long received = 0L;
+        boolean moved = false;
+        try {
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                InputStream error = connection.getErrorStream();
+                String detail = error == null ? "" : new String(readLimited(error), StandardCharsets.UTF_8);
+                throw new IOException(detail.trim().isEmpty()
+                        ? "远程文件下载失败 " + status : detail.trim());
+            }
+            try (InputStream input = new java.io.BufferedInputStream(connection.getInputStream());
+                 FileOutputStream output = new FileOutputStream(temporary)) {
+                byte[] buffer = new byte[128 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    if (count == 0) continue;
+                    received += count;
+                    if (received > expectedBytes) throw new IOException("远程文件大小超出声明");
+                    digest.update(buffer, 0, count);
+                    output.write(buffer, 0, count);
+                }
+                output.getFD().sync();
+            }
+            String actual = hex(digest.digest());
+            if (received != expectedBytes || !actual.equalsIgnoreCase(expectedSha256)) {
+                throw new IOException("远程文件 SHA-256 校验失败");
+            }
+            if (destination.exists() && !destination.delete()) {
+                throw new IOException("无法替换旧的远程文件");
+            }
+            if (!temporary.renameTo(destination)) throw new IOException("无法保存远程文件");
+            moved = true;
+        } finally {
+            connection.disconnect();
+            if (!moved && temporary.exists()) temporary.delete();
+        }
+    }
+
+    static void ack(Session session, String transferId) throws Exception {
+        requestJson(session.endpoint + "/v1/transfers/" + safeId(transferId) + "/ack",
+                "POST", session.token, new JSONObject());
     }
 
     static String normalizeEndpoint(String endpoint) throws IOException {
@@ -120,6 +194,12 @@ final class RemoteRelayClient {
             }
             return output.toByteArray();
         }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder result = new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) result.append(String.format(Locale.US, "%02x", value & 0xff));
+        return result.toString();
     }
 
     private static String safeId(String value) throws IOException {

@@ -1,9 +1,6 @@
 import Foundation
 
-/// Validated, metadata-only view of a relay inbox task.
-///
-/// File names and paths deliberately stay outside this boundary. Encrypted
-/// object download/decryption will consume the task in a later phase.
+/// Validated view of a relay inbox task. Plain mode carries public file metadata.
 struct RemoteRelayTask {
     static let maxObjects = 1_000
 
@@ -11,7 +8,11 @@ struct RemoteRelayTask {
     let senderDeviceId: String
     let recipientDeviceId: String
     let status: String
+    let mode: String
     let objectCount: Int
+    let totalBytes: Int64
+    let objects: [ObjectInfo]
+    /// Legacy name retained while old encrypted tasks are still accepted.
     let totalCipherBytes: Int64
     let expiresAt: Int64
 
@@ -27,29 +28,44 @@ struct RemoteRelayTask {
               !objects.isEmpty, objects.count <= maxObjects else {
             throw RemoteRelayError.invalidTask
         }
+        let mode = object["mode"] as? String ?? "encrypted"
+        guard mode == "plain" || mode == "encrypted" else {
+            throw RemoteRelayError.invalidTask
+        }
 
         var indexes = Set<Int>()
-        var totalCipherBytes: Int64 = 0
+        var parsedObjects: [ObjectInfo] = []
+        var totalBytes: Int64 = 0
         for item in objects {
             guard let index = int(item["index"]), index >= 0,
                   indexes.insert(index).inserted,
-                  let cipherBytes = int64(item["cipherBytes"]), cipherBytes > 0,
-                  let hash = item["cipherSha256"] as? String,
+                  let bytes = int64(mode == "plain" ? (item["bytes"] ?? item["objectBytes"]) : item["cipherBytes"]),
+                  bytes > 0,
+                  let hash = (mode == "plain" ? (item["sha256"] ?? item["objectSha256"]) : item["cipherSha256"]) as? String,
                   hash.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil,
-                  Int64.max - totalCipherBytes >= cipherBytes else {
+                  Int64.max - totalBytes >= bytes else {
                 throw RemoteRelayError.invalidTask
             }
-            totalCipherBytes += cipherBytes
+            let name = item["name"] as? String ?? ""
+            guard mode != "plain" || safeName(name) else { throw RemoteRelayError.invalidTask }
+            let mime = item["mime"] as? String ?? "application/octet-stream"
+            totalBytes += bytes
+            parsedObjects.append(ObjectInfo(index: index, bytes: bytes,
+                                            sha256: hash.lowercased(), name: name, mime: mime))
         }
-        if let declared = int64(object["totalCipherBytes"]), declared != totalCipherBytes {
+        let declaredKey = mode == "plain" ? "totalBytes" : "totalCipherBytes"
+        if let declared = int64(object[declaredKey]), declared != totalBytes {
             throw RemoteRelayError.invalidTask
         }
         return RemoteRelayTask(transferId: transferId,
                                senderDeviceId: senderDeviceId,
                                recipientDeviceId: recipientDeviceId,
                                status: status,
-                               objectCount: objects.count,
-                               totalCipherBytes: totalCipherBytes,
+                               mode: mode,
+                               objectCount: parsedObjects.count,
+                               totalBytes: totalBytes,
+                               objects: parsedObjects,
+                               totalCipherBytes: totalBytes,
                                expiresAt: expiresAt)
     }
 
@@ -62,6 +78,19 @@ struct RemoteRelayTask {
             return nil
         }
         return value
+    }
+
+    private static func safeName(_ value: String) -> Bool {
+        !value.isEmpty && value.count <= 240 && value != "." && value != ".."
+            && !value.contains("/") && !value.contains("\\") && !value.contains("\0")
+    }
+
+    struct ObjectInfo {
+        let index: Int
+        let bytes: Int64
+        let sha256: String
+        let name: String
+        let mime: String
     }
 
     private static func int(_ value: Any?) -> Int? {

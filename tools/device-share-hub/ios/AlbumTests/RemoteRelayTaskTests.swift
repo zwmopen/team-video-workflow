@@ -45,6 +45,22 @@ final class RemoteRelayTaskTests: XCTestCase {
         ))
     }
 
+    func testParsesPlainPublicObjectMetadata() throws {
+        var task = makeTask()
+        task["mode"] = "plain"
+        task["totalBytes"] = 12
+        task.removeValue(forKey: "totalCipherBytes")
+        task["objects"] = [
+            ["index": 0, "bytes": 12,
+             "sha256": String(repeating: "a", count: 64),
+             "name": "album-folder-作品集[泛].zip", "mime": "application/zip"]
+        ]
+        let parsed = try RemoteRelayTask.parse(task, expectedRecipientId: "device_phone_1", nowMs: 1_000)
+        XCTAssertEqual(parsed.mode, "plain")
+        XCTAssertEqual(parsed.objects.first?.name, "album-folder-作品集[泛].zip")
+        XCTAssertEqual(parsed.objects.first?.bytes, 12)
+    }
+
     private func makeTask(sender: String = "device_sender_1",
                           recipient: String = "device_phone_1",
                           status: String = "ready") -> [String: Any] {

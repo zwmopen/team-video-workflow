@@ -42,6 +42,26 @@ public final class RemoteRelayTaskTest {
         assertRejected(task, "device_phone_1");
     }
 
+    @Test public void parsesPlainPublicObjectMetadata() throws Exception {
+        JSONObject task = new JSONObject()
+                .put("transferId", "transfer_plain_1")
+                .put("senderDeviceId", "device_sender_1")
+                .put("recipientDeviceId", "device_phone_1")
+                .put("status", "ready")
+                .put("mode", "plain")
+                .put("expiresAt", 2_000L)
+                .put("totalBytes", 12L)
+                .put("objects", new JSONArray().put(new JSONObject()
+                        .put("index", 0).put("bytes", 12L)
+                        .put("sha256", "a".repeat(64))
+                        .put("name", "album-folder-作品集[泛].zip")
+                        .put("mime", "application/zip")));
+        RemoteRelayTask parsed = RemoteRelayTask.parse(task, "device_phone_1", 1_000L);
+        assertEquals("plain", parsed.mode);
+        assertEquals("album-folder-作品集[泛].zip", parsed.objects.get(0).name);
+        assertEquals(12L, parsed.objects.get(0).bytes);
+    }
+
     private static JSONObject task(String id, String sender, String recipient) throws Exception {
         return new JSONObject()
                 .put("transferId", id)

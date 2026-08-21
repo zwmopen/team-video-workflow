@@ -76,6 +76,7 @@ public final class OnlineService extends Service {
     private static final String PREF_WORK_COUNT_TRAFFIC = "advertisedWorkCountTraffic";
     private static final String PREF_WORK_COUNT_UNCATEGORIZED = "advertisedWorkCountUncategorized";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
+    private static final String PREF_REMOTE_IMPORTED = "remoteImportedTransfers";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
@@ -98,6 +99,7 @@ public final class OnlineService extends Service {
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private RemoteRelayPresence remotePresence;
     private final Set<String> remoteInboxTasks = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> remoteProcessingTasks = Collections.synchronizedSet(new HashSet<>());
     private volatile boolean running;
     private volatile String state = "online";
     private volatile String currentTaskId = "";
@@ -211,10 +213,13 @@ public final class OnlineService extends Service {
                 RemoteRelayTask task = RemoteRelayTask.parse(object, session.deviceId, now);
                 if (task.expired(now)) continue;
                 ready++;
-                if (remoteInboxTasks.add(task.transferId)) {
+                if (remoteInboxTasks.add(task.transferId)
+                        && remoteProcessingTasks.add(task.transferId)) {
                     fresh++;
                     DiagnosticLog.write(this, "remote_task_ready",
-                            "objects=" + task.objectCount + " cipherBytes=" + task.totalCipherBytes);
+                            "mode=" + task.mode + " objects=" + task.objectCount
+                                    + " bytes=" + task.totalBytes);
+                    requestExecutor.execute(() -> processRemoteTask(session, task));
                 }
             } catch (Exception error) {
                 DiagnosticLog.write(this, "remote_task_ignored",
@@ -233,6 +238,76 @@ public final class OnlineService extends Service {
             DiagnosticLog.write(this, "remote_inbox_ready",
                     "ready=" + ready + " fresh=" + fresh);
         }
+    }
+
+    private void processRemoteTask(RemoteRelayClient.Session session, RemoteRelayTask task) {
+        File transferDirectory = new File(getCacheDir(), "remote-relay/" + task.transferId);
+        try {
+            if (!"plain".equals(task.mode)) {
+                throw new IOException("当前版本只接收普通公开作品包");
+            }
+            WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+            int imported = 0;
+            int delivered = 0;
+            if (!transferDirectory.isDirectory() && !transferDirectory.mkdirs()
+                    && !transferDirectory.isDirectory()) {
+                throw new IOException("无法创建远程接收缓存");
+            }
+            for (RemoteRelayTask.ObjectInfo object : task.objects) {
+                File target = new File(transferDirectory, object.index + ".download");
+                RemoteRelayClient.downloadObject(session, task.transferId, object.index, target,
+                        object.bytes, object.sha256);
+                if (object.name.toLowerCase(Locale.US).startsWith("album-folder-")
+                        && object.name.toLowerCase(Locale.US).endsWith(".zip")) {
+                    imported += WorkArchiveImporter.importZip(target, library,
+                            "remote-" + task.transferId);
+                } else if (WorkRules.isSupportedImage(object.name)) {
+                    ArrayList<File> images = new ArrayList<>();
+                    images.add(target);
+                    library.importWork("remote-" + task.transferId + "-" + object.index,
+                            "远程传入的作品", "", images, "", "", "", object.name);
+                    imported++;
+                } else {
+                    throw new IOException("远程对象不是可导入的作品文件");
+                }
+                delivered++;
+            }
+            if (imported <= 0 && !wasRemoteImported(task.transferId)) {
+                throw new IOException("远程作品包为空");
+            }
+            markRemoteImported(task.transferId);
+            publishWorkInventory(this, library.listActive());
+            // ACK is deliberately last: download, hash verification and library
+            // commit must all finish before the relay deletes its object.
+            RemoteRelayClient.ack(session, task.transferId);
+            deleteRecursively(transferDirectory);
+            DiagnosticLog.write(this, "remote_task_completed",
+                    "transferId=" + task.transferId + " files=" + delivered
+                            + " works=" + imported);
+            notifyStatus("远程作品已接收，已写入作品库");
+        } catch (Exception error) {
+            remoteInboxTasks.remove(task.transferId);
+            DiagnosticLog.write(this, "remote_task_failed",
+                    "transferId=" + task.transferId + " error=" + error.getClass().getSimpleName());
+            notifyStatus("远程作品接收失败，未发送 ACK：" + error.getMessage());
+        } finally {
+            remoteProcessingTasks.remove(task.transferId);
+            if (!remoteInboxTasks.contains(task.transferId)) deleteRecursively(transferDirectory);
+        }
+    }
+
+    private boolean wasRemoteImported(String transferId) {
+        return getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getStringSet(PREF_REMOTE_IMPORTED, Collections.emptySet()).contains(transferId);
+    }
+
+    private void markRemoteImported(String transferId) {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        Set<String> values = new HashSet<>(prefs.getStringSet(PREF_REMOTE_IMPORTED,
+                Collections.emptySet()));
+        values.add(transferId);
+        while (values.size() > 256) values.remove(values.iterator().next());
+        prefs.edit().putStringSet(PREF_REMOTE_IMPORTED, values).apply();
     }
 
     @Override

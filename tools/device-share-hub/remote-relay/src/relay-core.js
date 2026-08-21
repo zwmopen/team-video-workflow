@@ -58,7 +58,11 @@ async function materializeRelayResponse(response, env) {
     headers: {
       "Content-Type": "application/octet-stream",
       "Content-Length": String(object.size),
-      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") || "",
+      "X-Object-Sha256": response.headers.get("X-Object-Sha256") ||
+        response.headers.get("X-Cipher-Sha256") || "",
+      // Keep the old header for already-built clients during the migration.
+      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") ||
+        response.headers.get("X-Object-Sha256") || "",
       "Cache-Control": "private, no-store",
     },
   });
@@ -434,15 +438,16 @@ export class WorkspaceRelayCore {
     if (!recipient || recipient.revokedAt || recipient.channels?.remote === false) {
       return problem(409, "recipient_unavailable", "接收设备未登记、已撤销或关闭了远程传送");
     }
-    const objects = normalizeObjects(body?.objects);
+    const mode = body?.mode === "plain" ? "plain" : "encrypted";
+    const objects = normalizeObjects(body?.objects, mode);
     if (!objects) {
       return problem(400, "invalid_objects", "文件清单无效或超过远程传送限制");
     }
-    if (
+    if (mode === "encrypted" && (
       !body?.encryptedKeyPackage ||
       typeof body.encryptedKeyPackage !== "object" ||
       canonicalize(body.encryptedKeyPackage).length > 16_384
-    ) {
+    )) {
       return problem(400, "missing_key_package", "缺少接收设备专用的密钥包");
     }
 
@@ -455,9 +460,13 @@ export class WorkspaceRelayCore {
       workspaceId: session.workspaceId,
       senderDeviceId: session.deviceId,
       recipientDeviceId: recipient.certificate.deviceId,
-      encryptedKeyPackage: body.encryptedKeyPackage,
+      mode,
+      encryptedKeyPackage: mode === "encrypted" ? body.encryptedKeyPackage : null,
       objects,
-      totalCipherBytes: objects.reduce((sum, item) => sum + item.cipherBytes, 0),
+      totalBytes: objects.reduce((sum, item) => sum + objectBytes(item), 0),
+      totalCipherBytes: mode === "encrypted"
+        ? objects.reduce((sum, item) => sum + item.cipherBytes, 0)
+        : undefined,
       status: "uploading",
       createdAt: now,
       expiresAt: Math.min(requestedExpiry, now + MAX_TRANSFER_TTL_MS),
@@ -485,30 +494,30 @@ export class WorkspaceRelayCore {
     const expected = transfer.objects.find((item) => item.index === index);
     if (!expected) return problem(404, "object_missing", "文件不在传送清单中");
     const contentLength = Number(request.headers.get("Content-Length"));
-    if (!Number.isSafeInteger(contentLength) || contentLength !== expected.cipherBytes) {
-      return problem(400, "size_mismatch", "密文大小与传送清单不一致");
+    if (!Number.isSafeInteger(contentLength) || contentLength !== objectBytes(expected)) {
+      return problem(400, "size_mismatch", "对象大小与传送清单不一致");
     }
     const key = objectKey(transfer.workspaceId, transferId, index);
-    const previous = /** @type {{cipherBytes: number, cipherSha256: string} | undefined} */ (
+    const previous = /** @type {{bytes: number, sha256: string} | undefined} */ (
       await this.ctx.storage.get(uploadKey(transferId, index))
     );
     if (
       previous &&
-      previous.cipherBytes === expected.cipherBytes &&
-      previous.cipherSha256 === expected.cipherSha256
+      previous.bytes === objectBytes(expected) &&
+      previous.sha256 === objectSha256(expected)
     ) {
       const existing = await this.env.REMOTE_OBJECTS.head(key);
       if (
         existing &&
-        existing.size === expected.cipherBytes &&
-        existing.customMetadata?.cipherSha256 === expected.cipherSha256
+        existing.size === objectBytes(expected) &&
+        existing.customMetadata?.objectSha256 === objectSha256(expected)
       ) {
         return json({ ok: true, index, reused: true });
       }
     }
     const options = {
       customMetadata: {
-        cipherSha256: expected.cipherSha256,
+        objectSha256: objectSha256(expected),
         senderDeviceId: session.deviceId,
         recipientDeviceId: transfer.recipientDeviceId,
       },
@@ -526,8 +535,8 @@ export class WorkspaceRelayCore {
       await this.env.REMOTE_OBJECTS.put(key, request.body, options);
     }
     await this.ctx.storage.put(uploadKey(transferId, index), {
-      cipherBytes: expected.cipherBytes,
-      cipherSha256: expected.cipherSha256,
+      bytes: objectBytes(expected),
+      sha256: objectSha256(expected),
       uploadedAt: Date.now(),
     });
     return json({ ok: true, index });
@@ -543,8 +552,8 @@ export class WorkspaceRelayCore {
       const stored = uploaded.get(uploadKey(transferId, expected.index));
       if (
         !stored ||
-        stored.cipherBytes !== expected.cipherBytes ||
-        stored.cipherSha256 !== expected.cipherSha256
+        stored.bytes !== objectBytes(expected) ||
+        stored.sha256 !== objectSha256(expected)
       ) {
         return problem(409, "upload_incomplete", `第 ${expected.index + 1} 个文件尚未完整上传`);
       }
@@ -557,7 +566,8 @@ export class WorkspaceRelayCore {
       transferId,
       senderDeviceId: transfer.senderDeviceId,
       objectCount: transfer.objects.length,
-      totalCipherBytes: transfer.totalCipherBytes,
+      totalBytes: transfer.totalBytes,
+      ...(transfer.totalCipherBytes === undefined ? {} : { totalCipherBytes: transfer.totalCipherBytes }),
       expiresAt: transfer.expiresAt,
     });
     return json({ ok: true, status: transfer.status });
@@ -586,7 +596,8 @@ export class WorkspaceRelayCore {
       status: 204,
       headers: {
         "X-Relay-R2-Key": objectKey(transfer.workspaceId, transferId, index),
-        "X-Cipher-Sha256": expected.cipherSha256,
+        "X-Object-Sha256": objectSha256(expected),
+        ...(transfer.mode === "encrypted" ? { "X-Cipher-Sha256": expected.cipherSha256 } : {}),
       },
     });
   }
@@ -605,7 +616,7 @@ export class WorkspaceRelayCore {
       transferId,
       recipientDeviceId: transfer.recipientDeviceId,
     });
-    return json({ ok: true, status: transfer.status, ciphertextDeleted: true });
+    return json({ ok: true, status: transfer.status, objectsDeleted: true, ciphertextDeleted: true });
   }
 
   async cancelTransfer(session, transferId) {
@@ -759,7 +770,8 @@ export class WorkspaceRelayCore {
       ...transfer,
       objects,
       uploadedObjectCount: uploadedObjects.length,
-      uploadedCipherBytes: uploadedObjects.reduce((sum, item) => sum + item.cipherBytes, 0),
+      uploadedBytes: uploadedObjects.reduce((sum, item) => sum + objectBytes(item), 0),
+      uploadedCipherBytes: uploadedObjects.reduce((sum, item) => sum + objectBytes(item), 0),
       nextObjectIndex: objects.find((item) => !item.uploaded)?.index ?? null,
     };
   }
@@ -847,32 +859,64 @@ function validPublicJwk(value) {
   );
 }
 
-function normalizeObjects(value) {
+function normalizeObjects(value, mode = "encrypted") {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_OBJECTS) return null;
   const indexes = new Set();
   let total = 0;
   const result = [];
   for (const raw of value) {
     const index = Number(raw?.index);
-    const cipherBytes = Number(raw?.cipherBytes);
-    const cipherSha256 = String(raw?.cipherSha256 || "").toLowerCase();
+    const bytes = Number(mode === "plain" ? raw?.bytes ?? raw?.objectBytes : raw?.cipherBytes);
+    const sha256 = String(mode === "plain" ? raw?.sha256 ?? raw?.objectSha256 : raw?.cipherSha256 || "").toLowerCase();
     if (
       !Number.isSafeInteger(index) ||
       index < 0 ||
       indexes.has(index) ||
-      !Number.isSafeInteger(cipherBytes) ||
-      cipherBytes < 16 ||
-      !/^[a-f0-9]{64}$/.test(cipherSha256)
+      !Number.isSafeInteger(bytes) ||
+      bytes < 1 ||
+      !/^[a-f0-9]{64}$/.test(sha256)
     ) {
       return null;
     }
     indexes.add(index);
-    total += cipherBytes;
+    total += bytes;
     if (total > MAX_TRANSFER_BYTES) return null;
-    result.push({ index, cipherBytes, cipherSha256 });
+    if (mode === "plain") {
+      const name = safeObjectName(raw?.name);
+      const mime = safeMime(raw?.mime);
+      if (!name) return null;
+      result.push({ index, bytes, sha256, name, mime });
+    } else {
+      result.push({ index, cipherBytes: bytes, cipherSha256: sha256 });
+    }
   }
   result.sort((a, b) => a.index - b.index);
   return result;
+}
+
+function objectBytes(value) {
+  return Number(value?.bytes ?? value?.cipherBytes ?? 0);
+}
+
+function objectSha256(value) {
+  return String(value?.sha256 ?? value?.cipherSha256 ?? "");
+}
+
+function safeObjectName(value) {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name || name === "." || name === ".." || name.length > 240 ||
+      name.includes("/") || name.includes("\\") || name.includes("\0") ||
+      /^[A-Za-z]:/.test(name)) return null;
+  return name;
+}
+
+function safeMime(value) {
+  if (typeof value !== "string" || !value.trim()) return "application/octet-stream";
+  const mime = value.trim();
+  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(mime)
+    ? mime.slice(0, 120)
+    : "application/octet-stream";
 }
 
 async function verifyEs256(publicJwk, data, signature) {
