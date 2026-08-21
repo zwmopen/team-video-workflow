@@ -1,3 +1,11 @@
+# 2026-08-21 Cloudflare 中继部署与混合传输当前真相
+
+- Worker 已部署：`https://zwm-device-share-relay.zwmrpg.workers.dev`。
+- 资源已实读：Worker `zwm-device-share-relay`、Durable Object `WorkspaceRelay`、R2 `zwm-device-share-relay`；部署版本 `7da4be21-632d-4e74-9a75-4f6d413f8e0a`，100% 生效。
+- 当前 Cloudflare 账号没有活动 Zone，所以暂时不能绑定自定义域名；本机网络对 `workers.dev` 域名存在 DNS/连接异常，不能用本机失败的健康请求否定部署证据。
+- 传输策略：同 Wi-Fi/USB 仍走现有直传；远程中继作为不同网络的 HTTPS 兜底。WebRTC/QUIC 打洞尚未实现，Windows 原生面板也还没有中继身份登记/发送按钮。
+- 移动端只有在写入已签发的 `RemoteRelayProfile` 后才会连接中继；当前手机端未提供完整的登记资料导入流程，不能把部署完成说成手机已经自动收件。
+
 ## 2026-08-20 Android 0.6.29 / iPhone 0.6.16 更新闭环优化
 
 - Android 从后台回到前台且超过 6 小时未检查时，会静默检查并准备更新；启动检查、下载断点、SHA-256 校验和系统安装确认保持不变。

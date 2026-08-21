@@ -6,7 +6,15 @@
 - Android 与 iPhone 都已接入远程对象流式下载、临时文件校验、作品库导入和 ACK；重复轮询与 ACK 失败恢复不会重复导入已确认的任务。
 - 新增桌面发送脚本 `remote-relay/scripts/send-public-work.mjs`，支持作品文件夹自动打包或直接发送 ZIP。文件内容不做应用层加密；链路仍要求 HTTPS，认证凭证不写入仓库。
 - Android `versionName=0.6.32` / `versionCode=70`；iPhone `0.6.19` / build `38`。
-- 本地中继协议测试已覆盖“创建 → 上传 → 提交 → 收件箱 → 下载对象 → ACK 删除”；正式 Cloudflare 部署、真实手机安装与异地网络实传仍需单独验收。
+- 本地中继协议测试已覆盖“创建 → 上传 → 提交 → 收件箱 → 下载对象 → ACK 删除”。Cloudflare Worker、Durable Object 和 R2 已部署到 `zwm-device-share-relay.zwmrpg.workers.dev`；真实手机安装与异地网络实传仍需单独验收。
+- Android 长按多选改为只更新已渲染列表，不再触发完整扫描；iOS 图片多选只刷新受影响的图片格，避免长按选择出现卡顿。
+
+## Cloudflare 中继正式部署 - 2026-08-21
+
+- Worker `zwm-device-share-relay` 已部署，Durable Object 使用 `WorkspaceRelay`，R2 暂存桶为 `zwm-device-share-relay`。
+- Wrangler 实读部署版本 `7da4be21-632d-4e74-9a75-4f6d413f8e0a`，部署占比 100%。
+- 当前账号没有活动 Zone，暂使用 `workers.dev` 公网地址；本机网络对该域名的 DNS/连接异常只影响本机烟测，不改变 Cloudflare 部署状态。
+- 混合传输当前是“局域网/USB 直传优先 + HTTPS 中继兜底”；WebRTC/QUIC 打洞和 Windows 原生中继按钮仍是后续开发项。
 
 ## Beta：Android 0.6.31 / iPhone 0.6.18 - 2026-08-21
 

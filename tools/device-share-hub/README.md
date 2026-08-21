@@ -145,10 +145,11 @@
 
 ## 远程传送开发状态
 
-- 加密中继服务基础已经进入同一源码仓库，包含设备组身份、设备签名登录、真实在线连接、密文传送、撤销和自动过期清理。
-- 云端不保存文件名、用户路径、明文或明文密钥；接收成功、取消或过期都会删除临时密文。
-- 当前尚未部署正式服务。Android/iPhone 已接入身份、会话、心跳和收件箱元数据校验；Windows 远程发送、密文对象下载/解密/原子落盘和真实跨网闭环仍未接入，因此这不是用户可用的远程传送版本，界面仍不会显示“远程”在线。
-- 后续按“CI/Linux 服务集成 → 三端系统密钥与成员凭证 → 加密上传/下载 → 手机流量异网实测”的顺序继续。
+- 远程中继服务已部署到 Cloudflare：`https://zwm-device-share-relay.zwmrpg.workers.dev`，使用 Durable Object `WorkspaceRelay` 保存设备、会话、任务和 ACK 状态，R2 `zwm-device-share-relay` 暂存对象。
+- 当前仍保留公开作品的普通 ZIP 模式；链路强制 HTTPS，接收 ACK、取消或过期后删除 R2 临时对象，不做应用层端到端加密。
+- 混合传输策略是：同 Wi-Fi/USB 优先走现有 V2 直传；不同网络使用 HTTPS 中继兜底。WebRTC/QUIC 打洞尚未实现，不能把当前版本描述成已经完成 P2P 自动切换。
+- Android/iPhone 已有中继收件和 ACK 客户端，但只有写入已签发的 `RemoteRelayProfile` 后才会连接；Windows 原生面板的身份登记和中继发送按钮仍未接入，当前桌面发送入口是 `remote-relay/scripts/send-public-work.mjs`。
+- 当前账号没有活动 Cloudflare Zone，暂时使用 `workers.dev` 地址；真实 Android/iPhone 异地网络收发仍需安装 Beta、完成设备登记后实测。
 
 ## Android 0.6.3 长剪切折叠与完整滚动
 

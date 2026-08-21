@@ -28,9 +28,28 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 当前仍需要单独验收：
 
 - Windows 原生图形面板尚未把该脚本按钮化；可先用脚本验证桌面发送链路，USB/WiFi V2 不受影响；
-- Cloudflare Worker、Durable Object 和 R2 尚未部署；
 - 尚未完成手机流量与异地 WiFi 的实体跨网络传送；
 - P2P 直连尚未实现；本阶段远程传送使用 HTTPS 普通公开文件中继。
+
+## Cloudflare 正式部署
+
+2026-08-21 已部署到 Cloudflare 账号，当前正式 Worker 地址为：
+
+`https://zwm-device-share-relay.zwmrpg.workers.dev`
+
+- Worker：`zwm-device-share-relay`
+- Durable Object：`WorkspaceRelay`
+- R2：`zwm-device-share-relay`
+- 部署版本：`7da4be21-632d-4e74-9a75-4f6d413f8e0a`
+
+当前账号没有可绑定的活动 Cloudflare Zone，因此暂时使用 `workers.dev` 地址，没有自定义域名。部署记录和 R2 资源已由 Wrangler 实读确认；本机当前网络对该 `workers.dev` 域名存在 DNS/连接异常，不能把本机健康检查失败误判为 Worker 未部署。
+
+## 混合传输边界
+
+- 同一 Wi-Fi 或 USB 网络：继续优先使用现有 V2 直传，不经过 Cloudflare。
+- 不同网络：当前可用的兜底链路是 HTTPS 中继；手机在已登记远程资料后每 10 秒心跳并接收任务。
+- WebRTC/QUIC 打洞尚未写入客户端，不能宣称已经具备跨网 P2P 自动切换。
+- Windows 原生面板尚未接入中继身份登记和发送按钮；当前桌面中继发送入口仍是 `send-public-work.mjs`，需要已有 Bearer 会话。
 
 ## 本地检查
 

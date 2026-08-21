@@ -126,7 +126,10 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     }
     private func toggle(_ url: URL) {
         if selected.contains(url) { selected.remove(url) } else { selected.insert(url) }
-        render()
+        renderActions()
+        if let index = work.imageURLs.firstIndex(of: url) {
+            collection.reloadItems(at: [IndexPath(item: index + 1, section: 0)])
+        }
     }
 
     private func loadAttachments() -> [URL] {
