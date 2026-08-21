@@ -27,7 +27,7 @@ public final class RemoteRelayTaskTest {
         JSONObject duplicate = task("transfer_123456", "device_sender_1", "device_phone_1");
         duplicate.put("objects", new JSONArray()
                 .put(object(0, 12L, "a".repeat(64)))
-                .put(object(0, 12L, "b".repeat(64)));
+                .put(object(0, 12L, "b".repeat(64))));
         duplicate.put("totalCipherBytes", 24L);
         assertRejected(duplicate, "device_phone_1");
 
