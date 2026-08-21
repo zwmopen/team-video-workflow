@@ -1,4 +1,4 @@
-# 文件收发中控 V4.3.6 / Android 0.6.31 / iPhone 0.6.18（Beta）
+# 文件收发中控 V4.3.6 / Android 0.6.33 / iPhone 0.6.20（Beta）
 
 ## 当前 Beta 测试包
 
