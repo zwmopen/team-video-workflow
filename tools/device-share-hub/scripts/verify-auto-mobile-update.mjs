@@ -37,6 +37,15 @@ if (beaconStart < 0 || !source.slice(beaconStart, beaconStart + 700).includes("c
   throw new Error("Windows discovery must parse optional precise inventory beacon fields");
 }
 
+const relayStart = source.indexOf("void RelayLoop()");
+const relayEnd = source.indexOf("bool RelayIncomingToNext", relayStart);
+if (relayStart < 0 || relayEnd < 0) throw new Error("RelayLoop function boundary missing");
+const relayLoop = source.slice(relayStart, relayEnd);
+if (!relayLoop.includes("if (relay.conversionCount >= 0)")
+    || !relayLoop.includes("if (!relay.appVersion.empty())")) {
+  throw new Error("remote inventory must not erase a more complete local inventory when fields are missing");
+}
+
 if (!storeSource.includes("INSERT OR IGNORE INTO settings")
     || !storeSource.includes("('auto_restock_enabled', '1')")
     || !storeSource.includes("('auto_restock_threshold', '5')")) {

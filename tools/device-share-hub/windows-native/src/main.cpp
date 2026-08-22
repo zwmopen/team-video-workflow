@@ -91,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.21";
+constexpr wchar_t APP_VERSION[] = L"4.3.22";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -1739,13 +1739,13 @@ void RelayLoop() {
                 } else {
                     found->second.remoteConnected = relay.online;
                     found->second.remoteAllowed = relay.remoteAllowed;
-                    found->second.workCount = relay.workCount;
-                    found->second.conversionCount = relay.conversionCount;
-                    found->second.trafficCount = relay.trafficCount;
-                    found->second.uncategorizedCount = relay.uncategorizedCount;
-                    found->second.appVersion = Utf8ToWide(relay.appVersion);
-                    found->second.appVersionCode = relay.appVersionCode;
-                    found->second.updateCapability = Utf8ToWide(relay.updateCapability);
+                    if (relay.workCount >= 0) found->second.workCount = relay.workCount;
+                    if (relay.conversionCount >= 0) found->second.conversionCount = relay.conversionCount;
+                    if (relay.trafficCount >= 0) found->second.trafficCount = relay.trafficCount;
+                    if (relay.uncategorizedCount >= 0) found->second.uncategorizedCount = relay.uncategorizedCount;
+                    if (!relay.appVersion.empty()) found->second.appVersion = Utf8ToWide(relay.appVersion);
+                    if (relay.appVersionCode >= 0) found->second.appVersionCode = relay.appVersionCode;
+                    if (!relay.updateCapability.empty()) found->second.updateCapability = Utf8ToWide(relay.updateCapability);
                     if (!relay.name.empty()) found->second.name = Utf8ToWide(relay.name);
                     if (relay.online) {
                         found->second.state = L"online";
