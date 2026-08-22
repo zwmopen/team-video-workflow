@@ -66,10 +66,10 @@ jobs:
         id: windows_compile
         shell: pwsh
         run: |
-          vcpkg install libdatachannel:x64-windows --recurse
+          vcpkg install libdatachannel:x64-windows-static --recurse
           if ($LASTEXITCODE -ne 0) { throw "libdatachannel vcpkg dependency installation failed" }
           $log = "$env:RUNNER_TEMP/device-share-windows-build.log"
-          cmake -S tools/device-share-hub/windows-native -B tools/device-share-hub/windows-native/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows *>&1 | Tee-Object -FilePath $log
+          cmake -S tools/device-share-hub/windows-native -B tools/device-share-hub/windows-native/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static *>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
             "status=1" >> $env:GITHUB_OUTPUT
             exit 0
