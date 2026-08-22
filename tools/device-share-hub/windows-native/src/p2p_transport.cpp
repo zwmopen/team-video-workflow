@@ -157,13 +157,15 @@ bool Send(const std::string& transferId,
         bool acknowledged = false;
         std::string failureReason;
         std::set<std::string> appliedSignals;
-        peer->onLocalDescription([&](rtc::Description description) {
+        peer->onLocalDescription([&, closing](rtc::Description description) {
+            if (closing->load(std::memory_order_acquire)) return;
             std::ostringstream data;
             data << "{\"type\":\"" << description.typeString()
                  << "\",\"sdp\":" << JsonString(description.generateSdp()) << '}';
             sendSignal(description.typeString(), data.str());
         });
-        peer->onLocalCandidate([&](rtc::Candidate candidate) {
+        peer->onLocalCandidate([&, closing](rtc::Candidate candidate) {
+            if (closing->load(std::memory_order_acquire)) return;
             std::ostringstream data;
             data << "{\"candidate\":" << JsonString(candidate.candidate())
                  << ",\"mid\":" << JsonString(candidate.mid()) << '}';

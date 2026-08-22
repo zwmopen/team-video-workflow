@@ -153,6 +153,7 @@ int main() {
     std::string responderError;
     bool stopRelay = false;
     uint64_t signalSequence = 0;
+    std::shared_ptr<rtc::DataChannel> responderChannel;
 
     rtc::Preload();
     rtc::Configuration configuration;
@@ -176,6 +177,7 @@ int main() {
         condition.notify_all();
     });
     responder->onDataChannel([&](std::shared_ptr<rtc::DataChannel> channel) {
+        responderChannel = channel;
         const std::weak_ptr<rtc::DataChannel> weakChannel = channel;
         channel->onMessage([&, weakChannel](rtc::message_variant message) {
             if (std::holds_alternative<rtc::binary>(message)) {
@@ -269,6 +271,7 @@ int main() {
         condition.notify_all();
     }
     relay.join();
+    responderChannel.reset();
     responder->close();
     responder.reset();
     std::filesystem::remove_all(root);
