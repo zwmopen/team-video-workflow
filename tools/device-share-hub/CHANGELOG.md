@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.22 / Android 0.6.46 / iPhone 0.6.33 - 远程库存合并边界修复（已发布）
+
+- 修复同一台手机同时被局域网和远程中继发现时，缺失的远程库存字段覆盖本地完整库存的问题；远程字段只有在实际携带值时才合并，精准自动补货不再因心跳缺字段偶发漏发。
+- Device Share Hub run `32587368303` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.2>。
+- Windows SHA-256：`8888a99131fb7174a5d5730f5cf2a9cbcec1c9d570b9d920d76dbe9a58ac5da1`；Android/iPhone 沿用 Beta1 已核对的 SHA-256；稳定 `latest.json` 和 AltStore Beta 源不变，实体手机验收仍待连接。
+
 ## Beta：Windows V4.3.21 / Android 0.6.46 / iPhone 0.6.33 - 远程库存心跳与自动补货闭环（已发布）
 
 - 修复远程中继只上报在线状态、不上报手机精准库存的问题；Android/iPhone 每 10 秒心跳同步总数、精准/泛/未分类库存和版本信息，Durable Object 校验后提供给 Windows。

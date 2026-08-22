@@ -1,5 +1,11 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 远程库存合并边界修复（Beta 0.6.46-beta.2 已发布）
+
+- Windows 已提升到 V4.3.22；远程心跳缺字段不再覆盖局域网发现的完整库存、版本和更新能力。Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52 保持不变。
+- Device Share Hub run `32587368303` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.2>。
+- 新桌面包已同步到 `C:\Users\z\Desktop\device-share-hub-Windows-V4.3.22-relay-beta.exe`；稳定索引和 AltStore Beta 源不变。真机仍需验证远程 P2P/HTTPS、落库、ACK 和精准阈值补货。
+
 ## 2026-08-23 远程库存心跳与自动补货闭环（Beta 已发布）
 
 - 当前源码目标版本为 Windows V4.3.21、Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52。
