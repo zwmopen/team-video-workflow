@@ -40,9 +40,9 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 - Worker：`zwm-device-share-relay`
 - Durable Object：`WorkspaceRelay`
 - R2：`zwm-device-share-relay`
-- 部署版本：`7da4be21-632d-4e74-9a75-4f6d413f8e0a`
+- 部署版本：`b4fc48b0-9b3b-4e73-b828-d51abe59ba4c`
 
-当前账号没有可绑定的活动 Cloudflare Zone，因此暂时使用 `workers.dev` 地址，没有自定义域名。部署记录和 R2 资源已由 Wrangler 实读确认；本机当前网络对该 `workers.dev` 域名存在 DNS/连接异常，不能把本机健康检查失败误判为 Worker 未部署。
+当前账号没有可绑定的活动 Cloudflare Zone，因此暂时使用 `workers.dev` 地址，没有自定义域名。部署记录和 R2 资源已由 Wrangler 实读确认；本机部分 Node.js 直连路径会受系统代理影响，但 PowerShell 健康检查和 GitHub Ubuntu 线上 E2E 均已通过。
 
 GitHub Actions `Device Share Hub` run `32567213054` 的 `remote-relay-live-e2e` job `97017519595` 已从 Ubuntu runner 真实跑通正式 Worker 的 14 个阶段：health、登记、双端会话、presence、P2P 信令、R2 上传/下载、SHA-256、ACK 和对象删除。
 
