@@ -362,7 +362,21 @@ export class WorkspaceRelayCore {
     const presence = await this.listStored("presence:");
     const now = Date.now();
     const devices = [];
-    for (const value of members.values()) {
+    for (const [memberKey, value] of members.entries()) {
+      // A legacy or interrupted enrollment must not take down the whole
+      // presence list. Keep the malformed record for later repair, but let
+      // valid devices continue to appear and receive work.
+      if (!value?.certificate ||
+          typeof value.certificate.deviceId !== "string" ||
+          !value.certificate.signingPublicKey ||
+          !value.certificate.agreementPublicKey) {
+        console.error(JSON.stringify({
+          level: "warn",
+          event: "invalid_member_skipped",
+          memberKey,
+        }));
+        continue;
+      }
       const presenceState = presence.get(`presence:${value.certificate.deviceId}`) || {};
       const inventory = presenceState.inventory || {};
       const device = {

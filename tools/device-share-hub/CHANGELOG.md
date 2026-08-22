@@ -1,5 +1,13 @@
 # 变更记录
 
+## Beta：Windows V4.3.26 / Android 0.6.50 / iPhone 0.6.37 - HTTPS 代理与远程设备列表容错（已发布）
+
+- Windows 远程中继新增可选 `ZWM_DEVICE_SHARE_RELAY_PROXY` 环境变量和 `%LOCALAPPDATA%\ZwmDeviceShareHub\relay-proxy.txt` 配置；只通过 HTTPS CONNECT 代理访问 Cloudflare，不降级到明文 HTTP。修复远程模块 User-Agent 仍写 V4.3.22 的版本不一致。
+- 修复 Worker `/v1/devices` 遇到历史损坏成员记录时整页返回 500；现在记录告警并跳过损坏项，其他有效设备仍能继续在线和自动分发。
+- 三端版本同步为 Android 0.6.50/versionCode 88、iPhone 0.6.37/build 56、Windows V4.3.26；Device Share Hub run `32596690436` 的三端构建、remote-relay check 和线上 Worker E2E 全部通过。Worker 最新部署版本为 `fb0ba8fb-6f15-46f3-b31d-00cbeba36c59`。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.50-beta.1>；Android SHA-256：`f007889e30526059438df53d816e5a6d8f348b01371e1da74958a96fe3f19b64`；iPhone IPA SHA-256：`6cfaa0f7e7db5bf544cdbf172f663d06e9f6c0b06b1ffe59dae9568615dfe2e0`；Windows SHA-256：`b7319e0b72d049ea641fca5f944401b6c7fbdc2b8a104efb84128dfccd8c646`。
+- Beta `latest-beta.json` 与 AltStore Beta 源已同步并复核；稳定 `latest.json` 保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。三端包已同步到 `C:\Users\z\Desktop`，桌面中控当前运行 V4.3.26、TCP 45833/UDP 45834。真实手机 USB/Wi-Fi/P2P/HTTPS、落库、ACK 和自动补货仍待现场设备验收。
+
 ## Beta：Windows V4.3.25 / Android 0.6.49 / iPhone 0.6.36 - P2P 信令会话清理修复（已发布）
 
 - 修复 Android/iPhone P2P 传输完成、失败或取消后只关闭 WebRTC PeerConnection、未释放 Cloudflare 信令会话的问题；现在会关闭信令会话，避免下一轮在线轮询重复接收旧会话并重新协商。
