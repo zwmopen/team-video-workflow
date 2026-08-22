@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.18 / Android 0.6.45 / iPhone 0.6.32 - 2026-08-22
+
+- 修复 Windows 手机自动更新在传输开始前就写入“已发送”状态、失败后永久不重试的问题；现在只在传输成功后写入已送达记录，失败会记录可重试状态。
+- Android/iPhone 在线信标新增向后兼容的精准、泛、未分类库存尾字段；Windows 可在 /v2/info 暂时不可用时继续按精准流量判断自动补货。
+- 新增自动更新重试和库存信标源级回归门禁；本轮版本包与云端 Beta 发布待 GitHub Actions 完成后回填哈希和链接。
+
 ## Beta：Windows V4.3.17 / Android 0.6.44 / iPhone 0.6.31 - 2026-08-22
 
 - 修复 P2P 已写入作品库但 ACK 丢失后，Windows 回退 HTTPS 中继造成 Android 重复入库的问题；已导入的 transfer 现在只补发 ACK，不会再次下载或创建作品。

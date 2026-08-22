@@ -364,7 +364,16 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         let name = Data(DeviceIdentity.name.utf8).base64URL
         let model = Data(DeviceIdentity.model.utf8).base64URL
         let state = Data("online".utf8).base64URL
-        return Data("ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)||\(library.advertisedWorkCount)".utf8)
+        var beacon = "ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)||\(library.advertisedWorkCount)"
+        if let counts = library.advertisedWorkCounts {
+            // Optional tail fields preserve the old beacon format while
+            // exposing the same precise/traffic inventory available at
+            // /v2/info to the Windows restock decision.
+            beacon += "|\(counts[WorkCategory.conversion] ?? -1)"
+            beacon += "|\(counts[WorkCategory.traffic] ?? -1)"
+            beacon += "|\(counts[WorkCategory.uncategorized] ?? -1)"
+        }
+        return Data(beacon.utf8)
     }
 
     private func acceptHTTP(_ connection: NWConnection) {

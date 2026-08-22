@@ -2,6 +2,18 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-057 自动手机更新失败后永久抑制重试（Windows 4.3.17）
+
+- 现象：Windows 自动更新在传输开始前就把 auto_mobile_update_sent_<deviceId> 写入持久化设置；如果手机离线、HTTP 接收器超时或传输失败，下一次上线仍会被这个版本记录拦截，无法再次推送。
+- 根因：把“尝试发送”当成了“已送达”，且失败路径没有清除持久化标记；现场旧版 Android 设备广播在线但接收端口无响应时会触发这一风险。
+- 修复：UploadToDevice 返回明确成功值；自动更新仅在成功返回后写入 auto_mobile_update_delivered_<deviceId>。失败只清除本次内存占位并记录 auto_mobile_update_failed_retryable，保留下一轮重试。
+- 同轮增强：Android/iPhone 在线信标追加可选精准、泛、未分类库存字段；Windows 解析尾字段，/v2/info 短时不可用时仍可区分“未知”与“精准为 0”，不把总数冒充精准库存。
+- 证据：源级回归脚本 tools/device-share-hub/scripts/verify-auto-mobile-update.mjs 通过；云端三端构建和实体设备回归待本轮 Beta 完成后补记。
+- 回归要求：
+  1. 更新传输失败后，同一设备/版本下一次上线仍可再次触发；成功传输后才抑制重复推送。
+  2. Android/iPhone 旧版不带尾字段时，Windows 保持未知，不回退到总作品数；新版带尾字段时精准库存按 conversion 读取。
+  3. 普通作品传送、P2P/HTTPS 中继、更新包校验和用户确认安装流程不受影响。
+
 ## DSH-056 P2P ACK 丢失后的中继回退重复入库（Android 0.6.44 / iPhone 0.6.31）
 
 - 现象：P2P 已经把作品写入手机作品库，但 ACK 在回电脑途中丢失时，Windows 会按设计切换到 HTTPS 中继；Android 原来的中继收件路径没有先检查持久化的 `remoteImportedTransfers`，会再次下载并写入同一批作品。

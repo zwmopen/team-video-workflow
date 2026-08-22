@@ -1302,6 +1302,15 @@ public final class OnlineService extends Service {
                 + b64(info.optString("appVersion", "")) + "|"
                 + info.optLong("versionCode", -1L) + "|"
                 + b64(info.optString("updateCapability", ""));
+        JSONObject counts = info.optJSONObject("workCounts");
+        if (counts != null) {
+            // Optional tail fields keep older receivers compatible while
+            // allowing Windows to decide precise-flow restock from the
+            // lightweight beacon when /v2/info is temporarily unavailable.
+            beacon += "|" + counts.optInt("conversion", -1)
+                    + "|" + counts.optInt("traffic", -1)
+                    + "|" + counts.optInt("uncategorized", -1);
+        }
         byte[] bytes = beacon.getBytes(StandardCharsets.UTF_8);
         if (directTarget != null) {
             socket.send(new DatagramPacket(bytes, bytes.length, directTarget));

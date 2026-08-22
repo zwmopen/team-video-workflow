@@ -91,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.17";
+constexpr wchar_t APP_VERSION[] = L"4.3.18";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -481,7 +481,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.17", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.18", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return std::nullopt;
     WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
@@ -530,7 +530,7 @@ std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& erro
 }
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.17", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.18", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -553,7 +553,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.17\r\n",
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.18\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1825,7 +1825,7 @@ int JsonNestedNumber(const std::string& json, const std::string& parent,
 
 std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
                                           size_t maxBytes, std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.17", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.18", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机更新索引连接"); return std::nullopt; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 30000);
@@ -1841,7 +1841,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.17\r\n",
+                L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.18\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1888,7 +1888,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
 bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
                        const std::filesystem::path& target, uintmax_t maxBytes,
                        std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.17", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.18", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机 APK 下载连接"); return false; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 120000);
@@ -1904,7 +1904,7 @@ bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
         return false;
     }
     WinHttpAddRequestHeaders(request,
-                L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.17\r\n",
+                L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.18\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -2160,12 +2160,13 @@ void SyncWindowsClipboard() {
     BroadcastClipboardText(text, messageId, WindowsDeviceId(), 4, {});
 }
 
-void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
+bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
                     bool checkHistory, bool /*notifyCompletion*/) {
     std::wstring taskId = NewTaskId();
     gUploadInProgress = true;
     gShellTransferActive = true;
     gCancelRequested = false;
+    bool transferSucceeded = false;
     PostProgress(0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
     std::vector<std::filesystem::path> temporaryArchives;
@@ -2183,7 +2184,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             gUploadInProgress = false;
             gShellTransferActive = false;
             gCancelRequested = false;
-            return;
+            return false;
         }
 
         if (device.usbReady && device.usbAllowed) {
@@ -2204,7 +2205,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 PostStatus(L"已通过 USB 传送到“" + device.name + L"”");
                 gUploadInProgress = false;
                 gCancelRequested = false;
-                return;
+                return true;
             } catch (const std::exception& usbError) {
                 WriteDiagnosticLog(L"usb_upload_failed", Utf8ToWide(usbError.what()));
                 PostStatus(L"USB 传送未完成，已停止；为避免重复，不自动改用 Wi‑Fi。");
@@ -2245,7 +2246,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                     std::error_code ignored;
                     std::filesystem::remove(archive, ignored);
                 }
-                return;
+                return true;
             }
             WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
             PostStatus(L"P2P 直传未成功，自动切换远程中继…");
@@ -2272,7 +2273,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 std::error_code ignored;
                 std::filesystem::remove(archive, ignored);
             }
-            return;
+            return true;
         }
         if (device.ip.empty() || !device.wifiAllowed) {
             throw std::runtime_error("这台设备当前没有打开可用的传送方式，请右键设备检查 USB、WiFi 或远程传送");
@@ -2325,6 +2326,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         }
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
         RecordSuccessfulTransfers(device, fingerprints, L"Wi-Fi");
+        transferSucceeded = true;
         WriteDiagnosticLog(L"upload_commit", taskId);
         PostShellTransferNotice(L"已传送到“" + device.name + L"”的接收文件夹。", true);
         PostProgress(100, true);
@@ -2353,6 +2355,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     }
     std::error_code ignored;
     std::filesystem::remove(std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"), ignored);
+    return transferSucceeded;
 }
 
 // Shell SendTo is a background entry point. Keep discovery and receiving
@@ -2494,8 +2497,8 @@ bool SupportsMobileUpdate(const Device& device) {
     return device.updateCapability == MOBILE_UPDATE_CAPABILITY || device.appVersionCode >= 54;
 }
 
-std::wstring MobileUpdateSentSettingKey(const std::wstring& deviceId) {
-    return L"auto_mobile_update_sent_" + deviceId;
+std::wstring MobileUpdateDeliveredSettingKey(const std::wstring& deviceId) {
+    return L"auto_mobile_update_delivered_" + deviceId;
 }
 
 void MaybeAutoMobileUpdate() {
@@ -2532,7 +2535,7 @@ void MaybeAutoMobileUpdate() {
             if (lastSent != gAutoMobileUpdateLastSentVersion.end()
                     && lastSent->second == artifact->version) continue;
             if (gContentStore
-                    && gContentStore->GetSetting(MobileUpdateSentSettingKey(device.id))
+                    && gContentStore->GetSetting(MobileUpdateDeliveredSettingKey(device.id))
                         == artifact->version) continue;
             auto cooldown = gAutoMobileUpdateCooldown.find(device.id);
             if (cooldown != gAutoMobileUpdateCooldown.end()
@@ -2540,12 +2543,6 @@ void MaybeAutoMobileUpdate() {
             selected = device;
             gAutoMobileUpdateCooldown[device.id] = now;
             gAutoMobileUpdateLastSentVersion[device.id] = artifact->version;
-            if (gContentStore) {
-                // Mark before starting the transfer: the fallback is at-most-once
-                // for a device/version, even if the desktop process is restarted
-                // after the APK has already reached the phone but before install.
-                gContentStore->SetSetting(MobileUpdateSentSettingKey(device.id), artifact->version);
-            }
             break;
         }
     }
@@ -2557,9 +2554,27 @@ void MaybeAutoMobileUpdate() {
     PostStatus(L"发现“" + DisplayNameFor(selected) + L"”可更新：手机端 v"
                + selected.appVersion + L" → v" + artifact->version + L"，正在发送更新包…");
     std::thread([selected, artifact = *artifact] {
-        UploadToDevice(selected, {artifact.path}, L"", false, false);
-        WriteDiagnosticLog(L"auto_mobile_update_transfer_finished",
-            DisplayNameFor(selected) + L" target=v" + artifact.version);
+        bool succeeded = UploadToDevice(selected, {artifact.path}, L"", false, false);
+        if (succeeded) {
+            if (gContentStore) {
+                gContentStore->SetSetting(
+                    MobileUpdateDeliveredSettingKey(selected.id), artifact.version);
+            }
+            WriteDiagnosticLog(L"auto_mobile_update_succeeded",
+                DisplayNameFor(selected) + L" target=v" + artifact.version);
+        } else {
+            // Keep a failed attempt retryable. The in-memory mark suppresses
+            // duplicates during this attempt; durable state is written only
+            // after the package has actually been sent successfully.
+            std::lock_guard<std::mutex> lock(gAutoMobileUpdateMutex);
+            auto sent = gAutoMobileUpdateLastSentVersion.find(selected.id);
+            if (sent != gAutoMobileUpdateLastSentVersion.end()
+                    && sent->second == artifact.version) {
+                gAutoMobileUpdateLastSentVersion.erase(sent);
+            }
+            WriteDiagnosticLog(L"auto_mobile_update_failed_retryable",
+                DisplayNameFor(selected) + L" target=v" + artifact.version);
+        }
         gAutoMobileUpdateInProgress = false;
     }).detach();
 }
@@ -3039,6 +3054,14 @@ void DiscoveryLoop() {
                         catch (...) { device.appVersionCode = -1; }
                     }
                     if (parts.size() >= 12) device.updateCapability = Utf8ToWide(Base64UrlDecode(parts[11]));
+                    if (parts.size() >= 15) {
+                        try { device.conversionCount = std::max(-1, std::stoi(parts[12])); }
+                        catch (...) { device.conversionCount = -1; }
+                        try { device.trafficCount = std::max(-1, std::stoi(parts[13])); }
+                        catch (...) { device.trafficCount = -1; }
+                        try { device.uncategorizedCount = std::max(-1, std::stoi(parts[14])); }
+                        catch (...) { device.uncategorizedCount = -1; }
+                    }
                     device.ip = Utf8ToWide(ip);
                     bool newlyRegistered = false;
                     ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
