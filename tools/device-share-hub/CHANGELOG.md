@@ -3,8 +3,9 @@
 ## Beta：Windows V4.3.15 / Android 0.6.42 / iPhone 0.6.29 - 2026-08-22
 
 - 修复 Android P2P ICE 候选入队与远端 Description 回调同时发生时的竞态；候选入队和排空现在由同一把锁保护，避免候选丢失后不必要地回退中继。
-- 三端版本同步提升为 Windows 4.3.15、Android versionCode 80 / versionName 0.6.42、iPhone 0.6.29/build 48；本轮需以新的 GitHub Actions 云构建、Beta Release、AltStore 源和真机验收为交付边界。
-- 云端构建和真实 Android/iPhone/Windows 设备验收尚未完成；未使用本地 Android Gradle、Xcode 或 Windows 构建替代证据。
+- 三端版本同步提升为 Windows 4.3.15、Android versionCode 80 / versionName 0.6.42、iPhone 0.6.29/build 48；GitHub Actions Device Share Hub run 32565416952、Repository quality run 32565417059、Secret scan run 32565416950 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1>，AltStore Beta 源已更新；Android SHA-256：B53D470F0D30115CA493BF162F9E196F6277962B9E4EF00E712B6FA6DCBC6955；iPhone IPA SHA-256：716730F02C949338BB923FD28485F053D4856897D4795088EAE35496AE362017；Windows SHA-256：DD9E256A4A6B41C2084719E2B82CF5FB09858351827DD2BB3798DAD3D1A8784C。
+- 三端云构建包已同步到 C:\Users\z\Desktop；稳定 latest.json 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。真实 Android/iPhone/Windows 设备验收仍待连接，未使用本地 Android Gradle、Xcode 或 Windows 构建替代证据。
 
 ## Beta：Windows V4.3.14 / Android 0.6.41 / iPhone 0.6.28 - 2026-08-22
 

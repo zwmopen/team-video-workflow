@@ -3,8 +3,8 @@
 ## 0.6.29 - 2026-08-22
 
 - 与 Android 0.6.42、Windows 4.3.15 同步发布；Android 修复 P2P ICE 候选在远端 SDP 设置回调期间丢失的竞态，三端继续保持 P2P 优先、HTTPS 中继兜底。
-- 版本升级为 0.6.29/build 48；云端 Device Share Hub 构建、Repository quality、Secret scan 和 Beta 发布证据待本轮完成后回填。
-- AltStore Beta 源与 IPA SHA-256 待云端产物发布后同步；实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
+- 版本升级为 0.6.29/build 48；GitHub Actions Device Share Hub run 32565416952、Repository quality run 32565417059、Secret scan run 32565416950 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1>；IPA SHA-256 为 `716730f02c949338bb923fd28485f053d4856897d4795088eae35496ae362017`，AltStore Beta 源已同步；实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
 
 ## 0.6.28 - 2026-08-22
 

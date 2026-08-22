@@ -1,10 +1,10 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 Android P2P ICE 候选竞态修复与 Beta 0.6.42（云构建待完成）
+## 2026-08-22 Android P2P ICE 候选竞态修复与 Beta 0.6.42（Beta 已发布，真机验收待完成）
 
 - 当前源码版本已同步为 Windows 4.3.15、Android 0.6.42 / versionCode 80、iPhone 0.6.29 / build 48。
 - Android P2P 的 ICE 候选入队和远端 Description 回调现在通过 iceLock 原子排空，修复候选在并发窗口中丢失导致直连失败的风险；此前的跨线程状态可见性修复保持不变。
-- 需要重新走 GitHub Actions 三端云构建、remote-relay、secret scan、quality、Beta Release 和 AltStore Beta 源同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
+- GitHub Actions Device Share Hub run 32565416952 的 Android、iOS、Windows、remote-relay 全部通过；Repository quality run 32565417059、Secret scan run 32565416950 也已通过。Beta 发布页为 https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1，AltStore Beta 源已同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
 - 当前没有连接实体 Android/iPhone/Windows，真机权限、安全扫描、P2P 成功和 HTTPS 中继回退验收仍未完成。
 
 ## 2026-08-22 Android P2P 共享状态可见性修复与 Beta 0.6.41

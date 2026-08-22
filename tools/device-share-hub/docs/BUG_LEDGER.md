@@ -7,7 +7,7 @@
 - 现象：信令轮询收到 ICE 候选时，如果远端 Description 成功回调正在排空待处理队列，候选可能在排空之后才写入旧队列；该候选不再被提交给 PeerConnection，直连可能失败并回退 HTTPS 中继。
 - 根因：poller 与 WebRTC 回调线程分别读写 ArrayList pendingIce，remoteDescriptionSet 的判断和队列排空不是一个原子操作。
 - 修复：增加 iceLock；远端 Description 成功时在锁内设置状态、复制并清空队列；新候选在锁内判断状态，未就绪则入队，就绪则在锁外立即提交。
-- 证据：源码并发审计；需以同一提交的 Android 云构建、P2P/中继协议回归和真实设备跨网操作补齐最终证据。
+- 证据：源码并发审计；Android 云构建与同一提交的 iOS/Windows/remote-relay run 32565416952 已通过，真实设备跨网操作仍待补齐。
 - 回归要求：
   1. Description 成功前后并发到达的 ICE 候选都必须最终提交一次。
   2. P2P 连接失败、取消、ACK 成功和 DataChannel 关闭不重复回调或留下活动引擎。
