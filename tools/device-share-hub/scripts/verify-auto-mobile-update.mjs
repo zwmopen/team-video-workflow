@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(here, "../windows-native/src/main.cpp");
+const storePath = path.resolve(here, "../windows-native/src/content_store.cpp");
 const source = fs.readFileSync(sourcePath, "utf8");
+const storeSource = fs.readFileSync(storePath, "utf8");
 
 const uploadStart = source.indexOf("bool UploadToDevice(");
 const uploadEnd = source.indexOf("// Shell SendTo is a background entry point", uploadStart);
@@ -33,6 +35,12 @@ if (update.includes("MobileUpdateSentSettingKey")) {
 const beaconStart = source.indexOf('if (parts.size() >= 15)');
 if (beaconStart < 0 || !source.slice(beaconStart, beaconStart + 700).includes("conversionCount")) {
   throw new Error("Windows discovery must parse optional precise inventory beacon fields");
+}
+
+if (!storeSource.includes("INSERT OR IGNORE INTO settings")
+    || !storeSource.includes("('auto_restock_enabled', '1')")
+    || !storeSource.includes("('auto_restock_threshold', '5')")) {
+  throw new Error("fresh content databases must default to enabled precise restock at threshold 5");
 }
 
 console.log("Automatic mobile update retry and inventory beacon checks passed.");

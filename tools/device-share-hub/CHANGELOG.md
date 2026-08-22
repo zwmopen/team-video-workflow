@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.19 / Android 0.6.45 / iPhone 0.6.32 - 自动分发默认配置修复
+
+- 新建或升级 Windows 内容数据库时，自动手机更新、精准流量自动补货和阈值 5 会自动写入默认值；用户明确关闭或修改阈值后不会被覆盖。
+- 当前电脑数据库已同步为 `auto_mobile_update_enabled=1`、`auto_restock_enabled=1`、`auto_restock_threshold=5`，原数据库备份保存在临时目录；手机上线后会直接进入自动分发验收。
+- 版本包与云端 Beta 发布待本轮 GitHub Actions 完成后回填；稳定 `latest.json` 和 Android/iOS 稳定版本不变。
+
 ## Beta：Windows V4.3.18 / Android 0.6.45 / iPhone 0.6.32 - 2026-08-22
 
 - 修复 Windows 手机自动更新在传输开始前就写入“已发送”状态、失败后永久不重试的问题；现在只在传输成功后写入已送达记录，失败会记录可重试状态。
