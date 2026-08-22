@@ -27,7 +27,7 @@ namespace {
 
 constexpr char kEndpoint[] = "https://zwm-device-share-relay.zwmrpg.workers.dev";
 constexpr wchar_t kHost[] = L"zwm-device-share-relay.zwmrpg.workers.dev";
-constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.22";
+constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.26";
 constexpr size_t kMaxResponseBytes = 2 * 1024 * 1024;
 constexpr uint64_t kMaxTransferBytes = 20ull * 1024ull * 1024ull * 1024ull;
 
@@ -438,9 +438,13 @@ std::string NewP2PTransferId() {
 
 class RelayHttp {
 public:
-    RelayHttp() {
-        session_ = WinHttpOpen(kUserAgent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                               WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    explicit RelayHttp(const std::filesystem::path& stateDirectory) {
+        const std::wstring proxy = RelayProxy(stateDirectory);
+        session_ = proxy.empty()
+            ? WinHttpOpen(kUserAgent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)
+            : WinHttpOpen(kUserAgent, WINHTTP_ACCESS_TYPE_NAMED_PROXY,
+                          proxy.c_str(), WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session_) throw std::runtime_error("无法连接 Cloudflare 中继");
         WinHttpSetTimeouts(session_, 8000, 8000, 20000, 1800000);
         connection_ = WinHttpConnect(session_, kHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -504,6 +508,30 @@ private:
     HINTERNET session_ = nullptr;
     HINTERNET connection_ = nullptr;
     std::string workspaceId_;
+
+    static std::wstring RelayProxy(const std::filesystem::path& stateDirectory) {
+        // Keep HTTPS mandatory; this is only an optional local HTTP CONNECT
+        // proxy for networks where direct workers.dev TLS is unreachable.
+        DWORD environmentSize = GetEnvironmentVariableW(L"ZWM_DEVICE_SHARE_RELAY_PROXY",
+                                                         nullptr, 0);
+        if (environmentSize > 1 && environmentSize < 4096) {
+            std::wstring environment(environmentSize, L'\0');
+            GetEnvironmentVariableW(L"ZWM_DEVICE_SHARE_RELAY_PROXY",
+                                    environment.data(), environmentSize);
+            environment.resize(wcslen(environment.c_str()));
+            if (!environment.empty()) return environment;
+        }
+
+        std::ifstream input(stateDirectory / "relay-proxy.txt");
+        std::string configured;
+        if (!std::getline(input, configured)) return {};
+        const auto first = configured.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return {};
+        const auto last = configured.find_last_not_of(" \t\r\n");
+        configured = configured.substr(first, last - first + 1);
+        if (configured.empty()) return {};
+        return ToWide(configured);
+    }
 
     static std::wstring ToWide(const std::string& value) {
         if (value.empty()) return {};
@@ -614,7 +642,7 @@ bool BuildMobileProfile(const std::filesystem::path& stateDirectory,
         }
         auto identity = LoadOrCreateIdentity(stateDirectory);
         const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
-        RelayHttp http;
+        RelayHttp http(stateDirectory);
         http.SetWorkspace(identity.workspaceId);
         (void)RegisterAndSession(http, identity, adminCertificate);
         const auto memberCertificate = MemberCertificate(identity, device);
@@ -643,7 +671,7 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
         if (files.empty()) throw std::runtime_error("没有可传送的远程作品");
         auto identity = LoadOrCreateIdentity(stateDirectory);
         const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
-        http = std::make_unique<RelayHttp>();
+        http = std::make_unique<RelayHttp>(stateDirectory);
         http->SetWorkspace(identity.workspaceId);
         token = RegisterAndSession(*http, identity, adminCertificate);
         std::string objects = "[";
@@ -706,7 +734,7 @@ bool TryP2PTransfer(const std::filesystem::path& stateDirectory,
         if (files.empty()) throw std::runtime_error("没有可传送的 P2P 作品");
         auto identity = LoadOrCreateIdentity(stateDirectory);
         const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
-        RelayHttp http;
+        RelayHttp http(stateDirectory);
         http.SetWorkspace(identity.workspaceId);
         const auto token = RegisterAndSession(http, identity, adminCertificate);
         const std::string created = http.Json(L"POST", L"/v1/p2p/sessions",
@@ -790,7 +818,7 @@ bool ListDevices(const std::filesystem::path& stateDirectory,
         devices.clear();
         auto identity = LoadOrCreateIdentity(stateDirectory);
         const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
-        RelayHttp http;
+        RelayHttp http(stateDirectory);
         http.SetWorkspace(identity.workspaceId);
         const auto token = RegisterAndSession(http, identity, adminCertificate);
         const auto response = http.Json(L"GET", L"/v1/devices", "", token);
