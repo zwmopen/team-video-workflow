@@ -1,5 +1,13 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-22 Windows 中继失败清理与 Beta 0.6.43（Beta 已发布，真机验收待完成）
+
+- 当前源码版本已同步为 Windows 4.3.16、Android 0.6.43 / versionCode 81、iPhone 0.6.30 / build 49。
+- Windows 远程中继在上传、提交、进度或哈希失败后，现在会立即取消本次 transfer，清理 R2 临时对象和收件箱任务，并重置失败的 transferId，避免孤立任务等待 TTL 或下一轮误重试。
+- Device Share Hub run `32571763937`、Repository quality run `32571763918`、Secret scan run `32571763916` 均通过；其后的文档收口 run `32572517530` 的 Android、iOS、Windows、remote-relay 和正式 Worker E2E job 也全部通过。
+- Beta 发布页为 https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1；AltStore Beta 源已指向 iPhone 0.6.30/build 49。三端新包已同步到 `C:\Users\z\Desktop`；稳定 `latest.json` 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。
+- 当前没有连接实体 Android/iPhone/Windows；真机权限、安全扫描、P2P 成功、HTTPS 自动回退和文件实际落库验收仍未完成，不能用云端构建替代这些证据。
+
 ## 2026-08-22 Android P2P ICE 候选竞态修复与 Beta 0.6.42（Beta 已发布，真机验收待完成）
 
 - 当前源码版本已同步为 Windows 4.3.15、Android 0.6.42 / versionCode 80、iPhone 0.6.29 / build 48。
