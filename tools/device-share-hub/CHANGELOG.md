@@ -1,5 +1,12 @@
 # 变更记录
 
+## Beta：Windows V4.3.28 / Android 0.6.52 / iPhone 0.6.39 - 远程更新包与混合传输闭环
+
+- 安卓 APK 更新包现在明确标记为 android-update；Cloudflare 中继、Windows 原生 P2P 和安卓接收端统一传递并校验该类型，只有 APK 完成签名/版本校验并写入更新缓存后才发送 ACK。
+- Beta Windows 不再读取稳定版 latest.json，自动移动端更新改读 latest-beta.json；APK 不再走只复制文件的 USB 分支，避免误报“更新已送达”。
+- iOS 明确拒绝安卓更新包，不会把 APK 当成普通作品导入；普通作品仍保持 USB、同 Wi-Fi、P2P 优先、HTTPS 中继兜底。
+- 本轮需由 GitHub Actions 云端构建并发布三端 Beta；实体 Android/iPhone 的安装、P2P、HTTPS 回退和自动补货仍需现场验收。
+
 ## Beta：Windows V4.3.27 / Android 0.6.51 / iPhone 0.6.38 - 原生 P2P 数据面验收
 
 - Windows 原生 libdatachannel 新增双 PeerConnection loopback：实际发送 256 KiB+137 字节二进制分片，接收端校验帧顺序和完整字节后回 ACK；云端 CTest 已通过并报告 100% tests passed。

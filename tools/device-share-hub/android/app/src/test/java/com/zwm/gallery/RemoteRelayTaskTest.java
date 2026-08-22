@@ -62,6 +62,26 @@ public final class RemoteRelayTaskTest {
         assertEquals(12L, parsed.objects.get(0).bytes);
     }
 
+    @Test public void parsesAndroidUpdateMetadataOnlyForOneApk() throws Exception {
+        JSONObject update = new JSONObject()
+                .put("transferId", "transfer_update_1")
+                .put("senderDeviceId", "device_sender_1")
+                .put("recipientDeviceId", "device_phone_1")
+                .put("status", "ready")
+                .put("mode", "plain")
+                .put("contentKind", "android-update")
+                .put("expiresAt", 2_000L)
+                .put("totalBytes", 12L)
+                .put("objects", new JSONArray().put(new JSONObject()
+                        .put("index", 0).put("bytes", 12L)
+                        .put("sha256", "a".repeat(64))
+                        .put("name", "album-Android-v0.6.52.apk")
+                        .put("mime", "application/vnd.android.package-archive")));
+        RemoteRelayTask parsed = RemoteRelayTask.parse(update, "device_phone_1", 1_000L);
+        assertEquals("android-update", parsed.contentKind);
+        assertEquals("album-Android-v0.6.52.apk", parsed.objects.get(0).name);
+    }
+
     private static JSONObject task(String id, String sender, String recipient) throws Exception {
         return new JSONObject()
                 .put("transferId", id)

@@ -58,11 +58,11 @@ if (!upload.includes("const bool liveWifi = IsLiveWifiDevice(device")
     || !upload.includes("if (!liveWifi)")) {
   throw new Error("stale Wi-Fi addresses must not block P2P/HTTPS remote fallback");
 }
-if (!source.includes("DeviceShareHub/4.3.26") || source.includes("DeviceShareHub/4.3.25")) {
+if (!source.includes("DeviceShareHub/4.3.28") || source.includes("DeviceShareHub/4.3.27")) {
   throw new Error("Windows network User-Agent must match the current desktop version");
 }
-if (!relaySource.includes("DeviceShareHub/4.3.26")
-    || relaySource.includes("DeviceShareHub/4.3.25")
+if (!relaySource.includes("DeviceShareHub/4.3.28")
+    || relaySource.includes("DeviceShareHub/4.3.27")
     || !relaySource.includes("relay-proxy.txt")
     || !relaySource.includes("WINHTTP_ACCESS_TYPE_NAMED_PROXY")) {
   throw new Error("Cloudflare relay must use the current User-Agent and optional HTTPS proxy configuration");

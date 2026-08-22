@@ -246,7 +246,7 @@ int main() {
     item.sha256 = "loopback-test-hash";
     std::string error;
     const bool sent = p2p_transport::Send(
-        "loopback-transfer", "windows-loopback", "mobile-loopback", {item},
+        "loopback-transfer", "windows-loopback", "mobile-loopback", "work", {item},
         [&](const std::string& type, const std::string& data) {
             std::lock_guard<std::mutex> lock(mutex);
             toResponder.push_back({type, data});

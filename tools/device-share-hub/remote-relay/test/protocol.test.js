@@ -520,6 +520,7 @@ test("plain public work completes upload, download and acknowledgement without a
   );
   const inbox = await response.json();
   assert.equal(inbox.transfers[0].mode, "plain");
+  assert.equal(inbox.transfers[0].contentKind, "work");
   assert.equal(inbox.transfers[0].objects[0].name, "album-folder-作品集[泛].zip");
   assert.equal(inbox.transfers[0].objects[0].bytes, workPackage.byteLength);
 
@@ -541,6 +542,31 @@ test("plain public work completes upload, download and acknowledgement without a
   assert.equal(response.status, 200);
   assert.equal((await response.json()).objectsDeleted, true);
   assert.equal(state.bucket.values.size, 0);
+});
+
+test("android update transfers require one public APK object", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const response = await state.relay.fetch(
+    await jsonRequest(
+      "/v1/transfers",
+      {
+        mode: "plain",
+        contentKind: "android-update",
+        recipientDeviceId: state.memberCertificate.deviceId,
+        objects: [{
+          index: 0,
+          bytes: 12,
+          sha256: "a".repeat(64),
+          name: "not-an-apk.jpg",
+          mime: "image/jpeg",
+        }],
+      },
+      adminToken,
+    ),
+  );
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "invalid_update_payload");
 });
 
 test("transfer status exposes the next object and repeated upload is idempotent", async () => {

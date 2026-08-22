@@ -9,6 +9,7 @@ struct RemoteRelayTask {
     let recipientDeviceId: String
     let status: String
     let mode: String
+    let contentKind: String
     let objectCount: Int
     let totalBytes: Int64
     let objects: [ObjectInfo]
@@ -30,6 +31,13 @@ struct RemoteRelayTask {
         }
         let mode = object["mode"] as? String ?? "encrypted"
         guard mode == "plain" || mode == "encrypted" else {
+            throw RemoteRelayError.invalidTask
+        }
+        let contentKind = object["contentKind"] as? String ?? "work"
+        guard contentKind == "work" else {
+            // iOS can receive works, but it does not silently install mobile
+            // update packages. Keep the task visible for a compatible Android
+            // device instead of treating an APK as a work file.
             throw RemoteRelayError.invalidTask
         }
 
@@ -62,6 +70,7 @@ struct RemoteRelayTask {
                                recipientDeviceId: recipientDeviceId,
                                status: status,
                                mode: mode,
+                               contentKind: contentKind,
                                objectCount: parsedObjects.count,
                                totalBytes: totalBytes,
                                objects: parsedObjects,

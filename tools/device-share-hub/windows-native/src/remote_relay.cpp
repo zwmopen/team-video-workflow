@@ -27,7 +27,7 @@ namespace {
 
 constexpr char kEndpoint[] = "https://zwm-device-share-relay.zwmrpg.workers.dev";
 constexpr wchar_t kHost[] = L"zwm-device-share-relay.zwmrpg.workers.dev";
-constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.26";
+constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.28";
 constexpr size_t kMaxResponseBytes = 2 * 1024 * 1024;
 constexpr uint64_t kMaxTransferBytes = 20ull * 1024ull * 1024ull * 1024ull;
 
@@ -660,6 +660,7 @@ bool BuildMobileProfile(const std::filesystem::path& stateDirectory,
 bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
                        const std::string& recipientDeviceId,
                        const std::vector<std::filesystem::path>& files,
+                       const std::string& contentKind,
                        const ProgressCallback& progress,
                        std::string& transferId,
                        std::string& error) {
@@ -692,7 +693,8 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
         objects += "]";
         std::string created = http->Json(L"POST", L"/v1/transfers",
             "{\"mode\":\"plain\",\"recipientDeviceId\":\""
-            + JsonEscape(recipientDeviceId) + "\",\"objects\":" + objects + "}", token);
+            + JsonEscape(recipientDeviceId) + "\",\"contentKind\":\""
+            + JsonEscape(contentKind) + "\",\"objects\":" + objects + "}", token);
         activeTransferId = JsonValue(created, "transferId");
         transferId = activeTransferId;
         auto paths = JsonPaths(created);
@@ -727,6 +729,7 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
 bool TryP2PTransfer(const std::filesystem::path& stateDirectory,
                     const std::string& recipientDeviceId,
                     const std::vector<std::filesystem::path>& files,
+                    const std::string& contentKind,
                     const ProgressCallback& progress,
                     std::string& transferId,
                     std::string& error) {
@@ -739,6 +742,7 @@ bool TryP2PTransfer(const std::filesystem::path& stateDirectory,
         const auto token = RegisterAndSession(http, identity, adminCertificate);
         const std::string created = http.Json(L"POST", L"/v1/p2p/sessions",
             "{\"recipientDeviceId\":\"" + JsonEscape(recipientDeviceId)
+            + "\",\"contentKind\":\"" + JsonEscape(contentKind)
             + "\",\"protocol\":\"webrtc-datachannel-v1\"}", token);
         const auto sessionId = JsonValue(created, "sessionId");
         if (sessionId.empty()) throw std::runtime_error("中继没有返回 P2P 会话");
@@ -792,7 +796,7 @@ bool TryP2PTransfer(const std::filesystem::path& stateDirectory,
             };
             std::string p2pError;
             const bool sent = p2p_transport::Send(
-                transferId, "windows-admin", recipientDeviceId, items, sendSignal, pollSignals,
+                transferId, "windows-admin", recipientDeviceId, contentKind, items, sendSignal, pollSignals,
                 [&](uintmax_t done, uintmax_t total) { if (progress) progress(done, total); }, p2pError);
             closeSession();
             if (!sent) {
