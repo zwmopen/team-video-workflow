@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-065 移动端 P2P 完成后未释放 Cloudflare 信令会话（Android 0.6.49 / iPhone 0.6.36，已修复并发布 Beta）
+
+- 现象：移动端 P2P 成功导入并发送 ACK，或失败/取消关闭 PeerConnection 后，认证的 Cloudflare 信令会话仍可能保持；下一轮在线轮询可能再次看到同一会话，造成无意义的重复协商或旧任务重接收。
+- 根因：Android/iOS 的统一 `shutdown` 只停止 WebRTC/文件队列，没有同时关闭 `P2PTransport` 信令会话；成功路径和异常路径的资源边界不完整。
+- 修复：Android `P2PTransferEngine.shutdown` 与 iOS `P2PTransferEngine.shutdown` 增加 `transport.close()`，让成功、失败、取消都释放信令会话；新增静态不变量断言，版本同步为 Android 0.6.49/versionCode 87、iPhone 0.6.36/build 55、Windows V4.3.25。
+- 证据：本地 `verify-p2p-invariants.mjs`、`verify-auto-mobile-update.mjs`、`verify-removed-surfaces.mjs`、13 项远程协议测试和 `git diff --check` 通过；Device Share Hub run `32594831524` 的三端构建、remote-relay check 和线上 Worker E2E 全部成功；Beta `v0.6.49-beta.1` 已发布。
+- 回归要求：
+  1. P2P 成功写库并 ACK 后，信令会话、PeerConnection、临时缓存和活动引擎都释放，下一轮轮询不重复接收同一会话。
+  2. P2P 失败、取消和 20 秒超时都关闭信令会话，并且 Windows 仍只创建一次 HTTPS 回退任务。
+  3. Android/iPhone 真实设备跨网传送小作品，确认 DataChannel 成功不创建中继任务；制造直连失败时只创建一个 HTTPS 中继任务，落库后返回 ACK。
+
 ## DSH-064 iOS P2P ICE 候选在 SDP 回调边界丢失（iPhone 0.6.35，已修复并发布 Beta）
 
 - 现象：iPhone 的信令轮询和 WebRTC 回调可能同时处理 ICE 候选；候选恰好在远端 SDP 回调排空队列的窗口到达时，可能既没有入队也没有立即提交，P2P 偶发建连失败并转入 HTTPS 中继。
