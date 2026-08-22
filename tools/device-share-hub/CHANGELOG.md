@@ -1,5 +1,10 @@
 # 变更记录
 
+## Beta：Windows V4.3.16 / Android 0.6.43 / iPhone 0.6.30 - 2026-08-22
+
+- 修复 Windows 远程中继任务在上传/提交失败后没有立即取消的问题；失败时清理 R2 临时对象和收件箱任务，避免孤立任务等待 TTL。
+- 三端版本递增为 Windows 4.3.16、Android versionCode 81 / versionName 0.6.43、iPhone 0.6.30/build 49；云端构建和三端产物哈希待本次 run 完成后补入。
+
 ## Beta：Windows V4.3.15 / Android 0.6.42 / iPhone 0.6.29 - 2026-08-22
 
 - 修复 Android P2P ICE 候选入队与远端 Description 回调同时发生时的竞态；候选入队和排空现在由同一把锁保护，避免候选丢失后不必要地回退中继。
