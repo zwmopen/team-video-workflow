@@ -1,6 +1,6 @@
-# 文件收发中控 V4.3.24 / Android 0.6.48 / iPhone 0.6.35（Beta）
+# 文件收发中控 V4.3.25 / Android 0.6.49 / iPhone 0.6.36（Beta）
 
-> Beta `v0.6.48-beta.1` 已发布。本轮修复 iOS P2P ICE 候选竞态并统一 iOS 版本元数据，保留 USB/Wi-Fi/P2P/HTTPS 混合传输链路。
+> Beta `v0.6.49-beta.1` 已发布。本轮修复移动端 P2P 完成后的 Cloudflare 信令会话清理，保留 USB/Wi-Fi/P2P/HTTPS 混合传输链路。
 
 ## 更新通道
 
@@ -8,11 +8,13 @@
 - Android 测试版会读取 `latest-beta.json`；iPhone 测试版会复制 `altstore-beta.json`，然后在 AltStore 的 My Apps 中更新。
 - 稳定版索引不会被 Beta 覆盖；iOS 仍需要 AltStore/AltServer 完成签名安装。
 
-本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.48-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
+本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.49-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
 
-本轮包：`album-Android-v0.6.48.apk`、`album-iOS-v0.6.35-altstore.ipa`、`device-share-hub-Windows-V4.3.24-relay-beta.exe`。
+本轮包：`album-Android-v0.6.49.apk`、`album-iOS-v0.6.36-altstore.ipa`、`device-share-hub-Windows-V4.3.25-relay-beta.exe`。
 
-Device Share Hub 云端 run `32593184579` 的三端构建、P2P/ACK 静态门禁、Cloudflare 中继检查和线上 Worker E2E 全部通过；稳定更新索引不变。真实手机传输、落库、ACK 和自动补货仍需设备在线后验收。
+Device Share Hub 云端 run `32594831524` 的三端构建、P2P/ACK 静态门禁、Cloudflare 中继检查和线上 Worker E2E 全部通过；稳定更新索引不变。真实手机传输、落库、ACK 和自动补货仍需设备在线后验收。
+
+本轮修复：Android/iPhone 在 P2P 成功 ACK、失败或取消后会同时关闭 WebRTC 与 Cloudflare 信令会话，避免旧会话被下一轮在线轮询重复接收。此修复已通过源码门禁和云端构建；实体手机跨网 DataChannel、HTTPS 回退与自动补货仍需现场确认。
 
 ## 本轮开发：混合通道状态合并
 
