@@ -47,9 +47,9 @@ final class RemoteRelayClient {
                        workspaceId: workspaceId, deviceId: deviceId)
     }
 
-    static func heartbeat(_ session: Session) throws {
+    static func heartbeat(_ session: Session, inventory: [String: Any] = [:]) throws {
         _ = try requestJSON(url: "\(session.endpoint)/v1/presence", method: "POST",
-                            token: session.token, body: [:], workspaceId: session.workspaceId)
+                            token: session.token, body: inventory, workspaceId: session.workspaceId)
     }
 
     static func inbox(_ session: Session) throws -> [[String: Any]] {

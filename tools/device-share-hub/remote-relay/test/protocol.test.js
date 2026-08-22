@@ -330,7 +330,13 @@ test("admin can disable remote access and invalidate existing device sessions", 
 test("heartbeat makes a device visible as online without a websocket", async () => {
   const state = await bootstrap();
   let response = await state.relay.fetch(
-    await jsonRequest("/v1/presence", {}, state.token),
+    await jsonRequest("/v1/presence", {
+      workCount: 4,
+      workCounts: { total: 4, conversion: 4, traffic: 0, uncategorized: 0 },
+      appVersion: "0.6.46",
+      versionCode: 84,
+      updateCapability: "apk-push-v1",
+    }, state.token),
   );
   assert.equal(response.status, 200);
 
@@ -345,6 +351,17 @@ test("heartbeat makes a device visible as online without a websocket", async () 
     devices.find((device) => device.deviceId === state.memberCertificate.deviceId)?.online,
     true,
   );
+  const device = devices.find((item) => item.deviceId === state.memberCertificate.deviceId);
+  assert.deepEqual(device.workCounts, {
+    total: 4,
+    conversion: 4,
+    traffic: 0,
+    uncategorized: 0,
+  });
+  assert.equal(device.workCount, 4);
+  assert.equal(device.appVersion, "0.6.46");
+  assert.equal(device.versionCode, 84);
+  assert.equal(device.updateCapability, "apk-push-v1");
 });
 
 test("P2P signaling is authorized, ordered, and separate from relay file bytes", async () => {

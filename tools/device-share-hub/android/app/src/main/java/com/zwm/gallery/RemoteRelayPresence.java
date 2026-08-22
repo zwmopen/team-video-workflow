@@ -3,6 +3,7 @@ package com.zwm.gallery;
 import android.content.Context;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -10,6 +11,10 @@ import java.util.concurrent.TimeUnit;
 
 /** Re-authenticates and publishes relay presence only after a profile was enrolled. */
 final class RemoteRelayPresence {
+    interface InventoryProvider {
+        JSONObject currentInventory();
+    }
+
     interface Listener {
         void onInbox(RemoteRelayClient.Session session, JSONArray transfers);
 
@@ -18,6 +23,7 @@ final class RemoteRelayPresence {
 
     private final Context context;
     private final Listener listener;
+    private final InventoryProvider inventoryProvider;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private volatile RemoteRelayClient.Session session;
     private volatile boolean started;
@@ -26,8 +32,13 @@ final class RemoteRelayPresence {
     private long failureDelayMs;
 
     RemoteRelayPresence(Context context, Listener listener) {
+        this(context, listener, JSONObject::new);
+    }
+
+    RemoteRelayPresence(Context context, Listener listener, InventoryProvider inventoryProvider) {
         this.context = context.getApplicationContext();
         this.listener = listener;
+        this.inventoryProvider = inventoryProvider == null ? JSONObject::new : inventoryProvider;
     }
 
     void start() {
@@ -71,7 +82,7 @@ final class RemoteRelayPresence {
                         profile.certificate, profile.certificateSignature);
                 session = current;
             }
-            RemoteRelayClient.heartbeat(current);
+            RemoteRelayClient.heartbeat(current, inventoryProvider.currentInventory());
             JSONArray transfers = RemoteRelayClient.inbox(current);
             JSONArray p2pSessions = RemoteRelayClient.p2pSessions(current);
             if (listener != null) {

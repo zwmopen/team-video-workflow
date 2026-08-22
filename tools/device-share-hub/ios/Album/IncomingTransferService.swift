@@ -34,6 +34,19 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             guard let self = self else { return }
             self.queue.async { [weak self] in self?.handleRemoteP2PSessions(session, sessions: sessions) }
         }
+        presence.inventoryProvider = { [weak self] in self?.remoteInventory() ?? [:] }
+    }
+
+    private func remoteInventory() -> [String: Any] {
+        var inventory: [String: Any] = [
+            "workCount": library.advertisedWorkCount,
+            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "versionCode": Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-1") ?? -1
+        ]
+        if let counts = library.advertisedWorkCounts {
+            inventory["workCounts"] = counts
+        }
+        return inventory
     }
 
     func start() {

@@ -27,7 +27,7 @@ namespace {
 
 constexpr char kEndpoint[] = "https://zwm-device-share-relay.zwmrpg.workers.dev";
 constexpr wchar_t kHost[] = L"zwm-device-share-relay.zwmrpg.workers.dev";
-constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.16";
+constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.21";
 constexpr size_t kMaxResponseBytes = 2 * 1024 * 1024;
 constexpr uint64_t kMaxTransferBytes = 20ull * 1024ull * 1024ull * 1024ull;
 
@@ -824,6 +824,16 @@ bool ListDevices(const std::filesystem::path& stateDirectory,
             device.name = JsonValue(item, "name");
             device.online = item.find("\"online\":true") != std::string::npos;
             device.remoteAllowed = item.find("\"remoteAllowed\":true") != std::string::npos;
+            device.workCount = static_cast<int>(JsonNumber(item, "workCount", -1));
+            device.appVersion = JsonValue(item, "appVersion");
+            device.appVersionCode = JsonNumber(item, "versionCode", -1);
+            device.updateCapability = JsonValue(item, "updateCapability");
+            const std::string workCounts = JsonObjectField(item, "workCounts");
+            if (!workCounts.empty()) {
+                device.conversionCount = static_cast<int>(JsonNumber(workCounts, "conversion", -1));
+                device.trafficCount = static_cast<int>(JsonNumber(workCounts, "traffic", -1));
+                device.uncategorizedCount = static_cast<int>(JsonNumber(workCounts, "uncategorized", -1));
+            }
             if (!device.deviceId.empty() && seen.insert(device.deviceId).second) {
                 devices.push_back(std::move(device));
             }

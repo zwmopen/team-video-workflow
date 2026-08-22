@@ -22,6 +22,13 @@ struct RelayDevice {
     std::string name;
     bool online = false;
     bool remoteAllowed = false;
+    int workCount = -1;
+    int conversionCount = -1;
+    int trafficCount = -1;
+    int uncategorizedCount = -1;
+    std::string appVersion;
+    int64_t appVersionCode = -1;
+    std::string updateCapability;
 };
 
 using ProgressCallback = std::function<void(uintmax_t sent, uintmax_t total)>;

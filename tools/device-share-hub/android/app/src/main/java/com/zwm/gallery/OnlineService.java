@@ -172,7 +172,7 @@ public final class OnlineService extends Service {
             @Override public void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) {
                 OnlineService.this.onP2PSessions(session, sessions);
             }
-        });
+        }, this::remoteInventory);
         remotePresence.start();
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
@@ -1169,6 +1169,30 @@ public final class OnlineService extends Service {
         } catch (Exception ignored) {
             return -1L;
         }
+    }
+
+    private JSONObject remoteInventory() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        JSONObject inventory = new JSONObject();
+        try {
+            inventory.put("workCount", prefs.getInt(PREF_WORK_COUNT, -1));
+            inventory.put("appVersion", installedVersion());
+            inventory.put("versionCode", installedVersionCode());
+            inventory.put("updateCapability", UPDATE_CAPABILITY);
+            if (prefs.contains(PREF_WORK_COUNT_CONVERSION)
+                    && prefs.contains(PREF_WORK_COUNT_TRAFFIC)
+                    && prefs.contains(PREF_WORK_COUNT_UNCATEGORIZED)) {
+                inventory.put("workCounts", new JSONObject()
+                        .put("total", prefs.getInt(PREF_WORK_COUNT, -1))
+                        .put("conversion", prefs.getInt(PREF_WORK_COUNT_CONVERSION, -1))
+                        .put("traffic", prefs.getInt(PREF_WORK_COUNT_TRAFFIC, -1))
+                        .put("uncategorized", prefs.getInt(PREF_WORK_COUNT_UNCATEGORIZED, -1)));
+            }
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "remote_inventory_build_failed",
+                    error.getClass().getSimpleName());
+        }
+        return inventory;
     }
 
     private void discoveryLoop() {

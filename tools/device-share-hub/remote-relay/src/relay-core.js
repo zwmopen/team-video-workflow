@@ -105,8 +105,7 @@ export class WorkspaceRelayCore {
         return this.listDevices(session);
       }
       if (method === "POST" && url.pathname === "/v1/presence") {
-        await discardRequestBody(request);
-        return await this.heartbeat(session);
+        return await this.heartbeat(session, await readJson(request));
       }
       if (method === "GET" && url.pathname === "/v1/inbox") {
         return await this.listTransfers(session, true);
@@ -364,28 +363,49 @@ export class WorkspaceRelayCore {
     const now = Date.now();
     const devices = [];
     for (const value of members.values()) {
-      devices.push({
+      const presenceState = presence.get(`presence:${value.certificate.deviceId}`) || {};
+      const inventory = presenceState.inventory || {};
+      const device = {
         deviceId: value.certificate.deviceId,
         name: value.certificate.deviceName || "",
         role: value.certificate.role,
         online: socketOnline.has(value.certificate.deviceId) ||
-          Number(presence.get(`presence:${value.certificate.deviceId}`)?.seenAt || 0) >= now - 20_000,
+          Number(presenceState.seenAt || 0) >= now - 20_000,
         revoked: Boolean(value.revokedAt),
         remoteAllowed: value.channels?.remote !== false,
         signingPublicKey: value.certificate.signingPublicKey,
         agreementPublicKey: value.certificate.agreementPublicKey,
         certificate: value.certificate,
         certificateSignature: value.certificateSignature,
-      });
+      };
+      if (Number.isSafeInteger(inventory.workCount) && inventory.workCount >= 0) {
+        device.workCount = inventory.workCount;
+      }
+      if (inventory.workCounts && typeof inventory.workCounts === "object") {
+        device.workCounts = inventory.workCounts;
+      }
+      if (typeof inventory.appVersion === "string" && inventory.appVersion.length <= 64) {
+        device.appVersion = inventory.appVersion;
+      }
+      if (Number.isSafeInteger(inventory.versionCode) && inventory.versionCode >= 0) {
+        device.versionCode = inventory.versionCode;
+      }
+      if (typeof inventory.updateCapability === "string" && inventory.updateCapability.length <= 64) {
+        device.updateCapability = inventory.updateCapability;
+      }
+      devices.push(device);
     }
     return json({ viewerDeviceId: session.deviceId, devices });
   }
 
-  async heartbeat(session) {
+  async heartbeat(session, body = {}) {
     const seenAt = Date.now();
-    await this.ctx.storage.put(`presence:${session.deviceId}`, { seenAt });
+    const inventory = normalizeInventory(body);
+    const presence = { seenAt };
+    if (inventory) presence.inventory = inventory;
+    await this.ctx.storage.put(`presence:${session.deviceId}`, presence);
     await this.scheduleCleanup(seenAt + 60_000);
-    return json({ ok: true, deviceId: session.deviceId, seenAt });
+    return json({ ok: true, deviceId: session.deviceId, seenAt, inventory: inventory || null });
   }
 
   async createP2PSession(request, session) {
@@ -1220,6 +1240,28 @@ async function readJson(request) {
   } catch {
     return null;
   }
+}
+
+function normalizeInventory(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const nonNegativeCount = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000;
+  const inventory = {};
+  if (nonNegativeCount(body.workCount)) inventory.workCount = body.workCount;
+  if (typeof body.appVersion === "string" && body.appVersion.length <= 64) {
+    inventory.appVersion = body.appVersion;
+  }
+  if (nonNegativeCount(body.versionCode)) inventory.versionCode = body.versionCode;
+  if (typeof body.updateCapability === "string" && body.updateCapability.length <= 64) {
+    inventory.updateCapability = body.updateCapability;
+  }
+  if (body.workCounts && typeof body.workCounts === "object" && !Array.isArray(body.workCounts)) {
+    const workCounts = {};
+    for (const key of ["total", "conversion", "traffic", "uncategorized"]) {
+      if (nonNegativeCount(body.workCounts[key])) workCounts[key] = body.workCounts[key];
+    }
+    if (Object.keys(workCounts).length > 0) inventory.workCounts = workCounts;
+  }
+  return Object.keys(inventory).length > 0 ? inventory : null;
 }
 
 async function discardRequestBody(request) {

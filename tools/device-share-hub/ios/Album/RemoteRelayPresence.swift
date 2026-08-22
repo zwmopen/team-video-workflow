@@ -4,6 +4,7 @@ import Foundation
 final class RemoteRelayPresence {
     var onInbox: ((RemoteRelayClient.Session, [RemoteRelayTask]) -> Void)?
     var onP2PSessions: ((RemoteRelayClient.Session, [[String: Any]]) -> Void)?
+    var inventoryProvider: (() -> [String: Any])?
     private let queue = DispatchQueue(label: "com.zwm.album.remote-presence")
     private var timer: DispatchSourceTimer?
     private var session: RemoteRelayClient.Session?
@@ -61,7 +62,7 @@ final class RemoteRelayPresence {
                 session = current
             }
             if let current = current {
-                try RemoteRelayClient.heartbeat(current)
+                try RemoteRelayClient.heartbeat(current, inventory: inventoryProvider?() ?? [:])
                 let rawTransfers = try RemoteRelayClient.inbox(current)
                 let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
                 let tasks = rawTransfers.compactMap { object -> RemoteRelayTask? in

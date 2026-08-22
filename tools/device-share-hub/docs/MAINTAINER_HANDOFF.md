@@ -1,5 +1,11 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 远程库存心跳与自动补货闭环（云构建中）
+
+- 当前源码目标版本为 Windows V4.3.21、Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52。
+- Android/iPhone 远程心跳现在携带分类库存；Cloudflare Durable Object 做计数校验并在 `/v1/devices` 返回库存与版本能力；Windows 合并后统一使用 USB/Wi-Fi/远程可用判断。
+- 本轮协议测试、自动更新/库存静态门禁已通过；云端三端构建、远程 Worker 部署、Beta 发布和桌面安装包同步尚未完成。稳定索引不改；真机仍需验证远程 P2P/HTTPS、作品落库、ACK 和精准阈值补货。
+
 ## 2026-08-23 自动补货递归发现修复（Beta Windows V4.3.20，已发布）
 
 - 现场复核发现精准作品存放在 `成品库\\微信公众号\\作品集_xxx[转]` 子目录，而旧实现只扫描 `library_path` 第一层，导致自动补货找不到精准源。

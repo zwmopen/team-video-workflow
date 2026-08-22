@@ -91,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.20";
+constexpr wchar_t APP_VERSION[] = L"4.3.21";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -826,6 +826,15 @@ std::wstring DisplayNameFor(const Device& device) {
     auto found = gDeviceRemarks.find(device.id);
     if (found != gDeviceRemarks.end() && !found->second.empty()) return found->second;
     return device.name;
+}
+
+bool IsLiveTransferDevice(const Device& device,
+                          std::chrono::steady_clock::time_point now) {
+    bool liveWifi = !device.ip.empty() && device.wifiAllowed
+        && now - device.lastSeen <= std::chrono::seconds(35);
+    bool liveUsb = device.usbReady && device.usbAllowed;
+    bool liveRemote = device.remoteAllowed && device.remoteConnected;
+    return liveWifi || liveUsb || liveRemote;
 }
 
 struct PromptState {
@@ -1718,11 +1727,25 @@ void RelayLoop() {
                     device.state = relay.online ? L"online" : L"offline";
                     device.remoteConnected = relay.online;
                     device.remoteAllowed = relay.remoteAllowed;
+                    device.workCount = relay.workCount;
+                    device.conversionCount = relay.conversionCount;
+                    device.trafficCount = relay.trafficCount;
+                    device.uncategorizedCount = relay.uncategorizedCount;
+                    device.appVersion = Utf8ToWide(relay.appVersion);
+                    device.appVersionCode = relay.appVersionCode;
+                    device.updateCapability = Utf8ToWide(relay.updateCapability);
                     device.lastSeen = now;
                     gDevices.emplace(id, std::move(device));
                 } else {
                     found->second.remoteConnected = relay.online;
                     found->second.remoteAllowed = relay.remoteAllowed;
+                    found->second.workCount = relay.workCount;
+                    found->second.conversionCount = relay.conversionCount;
+                    found->second.trafficCount = relay.trafficCount;
+                    found->second.uncategorizedCount = relay.uncategorizedCount;
+                    found->second.appVersion = Utf8ToWide(relay.appVersion);
+                    found->second.appVersionCode = relay.appVersionCode;
+                    found->second.updateCapability = Utf8ToWide(relay.updateCapability);
                     if (!relay.name.empty()) found->second.name = Utf8ToWide(relay.name);
                     if (relay.online) {
                         found->second.state = L"online";
@@ -2039,9 +2062,8 @@ void MaybeFetchMobileUpdateCacheForTarget() {
     const auto now = std::chrono::steady_clock::now();
     bool hasEligibleTarget = false;
     for (const auto& device : gDisplayedDevices) {
-        bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(35);
-        if (liveWifi && !device.appVersion.empty() && SupportsMobileUpdate(device)) {
+        if (IsLiveTransferDevice(device, now)
+                && !device.appVersion.empty() && SupportsMobileUpdate(device)) {
             hasEligibleTarget = true;
             break;
         }
@@ -2385,10 +2407,7 @@ void ProcessPendingShellSend() {
     if (gPendingShellSend->invocation.deviceId.empty()) {
         std::vector<Device> online;
         for (const Device& device : gDisplayedDevices) {
-            bool liveWifi = !device.ip.empty() && device.wifiAllowed
-                && now - device.lastSeen <= std::chrono::seconds(35);
-            bool liveUsb = device.usbReady && device.usbAllowed;
-            if (liveWifi || liveUsb) online.push_back(device);
+            if (IsLiveTransferDevice(device, now)) online.push_back(device);
         }
         if (online.empty()) {
             gActiveProbeRequested = true;
@@ -2431,11 +2450,8 @@ void ProcessPendingShellSend() {
         WriteDiagnosticLog(L"send_to_picker_selected", selectedDevice.name);
     }
     auto found = std::find_if(gDisplayedDevices.begin(), gDisplayedDevices.end(), [now](const Device& device) {
-        bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(35);
-        bool liveUsb = device.usbReady && device.usbAllowed;
         return gPendingShellSend && device.id == gPendingShellSend->invocation.deviceId
-            && (liveWifi || liveUsb);
+            && IsLiveTransferDevice(device, now);
     });
     if (found == gDisplayedDevices.end()) {
         if (now - gPendingShellSend->queuedAt > std::chrono::seconds(8)) {
@@ -2463,10 +2479,7 @@ void SyncSendToMenu(const std::vector<Device>& devices,
     std::vector<send_to::DeviceEntry> online;
     std::wstring signature;
     for (const Device& device : devices) {
-        bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(35);
-        bool liveUsb = device.usbReady && device.usbAllowed;
-        if (!liveWifi && !liveUsb) continue;
+        if (!IsLiveTransferDevice(device, now)) continue;
         std::wstring display = DisplayNameFor(device);
         online.push_back({device.id, display});
         signature += device.id + L"\x1f" + display + L"\x1e";
@@ -2521,9 +2534,7 @@ void MaybeAutoMobileUpdate() {
             else ++it;
         }
         for (const auto& device : gDisplayedDevices) {
-            bool liveWifi = !device.ip.empty() && device.wifiAllowed
-                && now - device.lastSeen <= std::chrono::seconds(35);
-            if (!liveWifi || device.appVersion.empty()
+            if (!IsLiveTransferDevice(device, now) || device.appVersion.empty()
                     || !SupportsMobileUpdate(device)) continue;
             auto installedVersion = VersionNumbers(WideToUtf8(device.appVersion));
             if (installedVersion.empty()) continue;
@@ -3743,10 +3754,7 @@ void MaybeAutoRestock() {
             else ++it;
         }
         for (const Device& device : gDisplayedDevices) {
-            bool liveWifi = !device.ip.empty() && device.wifiAllowed
-                    && now - device.lastSeen <= std::chrono::seconds(35);
-            bool liveUsb = device.usbReady && device.usbAllowed;
-            if (!liveWifi && !liveUsb) continue;
+            if (!IsLiveTransferDevice(device, now)) continue;
             // Automatic restock uses one shared semantic across Android, iPhone,
             // and the PC inventory: only the precise/conversion count qualifies.
             // Missing category data is unknown and must never fall back to total.

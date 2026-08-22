@@ -45,8 +45,12 @@ final class RemoteRelayClient {
     }
 
     static void heartbeat(Session session) throws Exception {
+        heartbeat(session, new JSONObject());
+    }
+
+    static void heartbeat(Session session, JSONObject inventory) throws Exception {
         requestJson(session.endpoint + "/v1/presence", "POST", session.token,
-                new JSONObject(), session.workspaceId);
+                inventory == null ? new JSONObject() : inventory, session.workspaceId);
     }
 
     static JSONArray inbox(Session session) throws Exception {
