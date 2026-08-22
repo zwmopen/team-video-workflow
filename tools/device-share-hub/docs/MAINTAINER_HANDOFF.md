@@ -1,12 +1,13 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 自动更新重试与分类库存信标修复（Beta 0.6.45/0.6.32/V4.3.18，待云端发布）
+## 2026-08-22 自动更新重试与分类库存信标修复（Beta 0.6.45/0.6.32/V4.3.18，已发布）
 
 - 现场发现旧 Android 0.6.29/versionCode 67 曾广播 receiving，但 /v2/info 接收端口无响应；这证明“设备出现在列表”不能等同于 HTTP 接收器可用，也暴露了自动更新失败后的持久化抑制风险。
 - Windows 自动手机更新现在把“发送中”与“已送达”分开：只有 UploadToDevice 成功返回后才写 auto_mobile_update_delivered_<deviceId>；失败路径清除内存占位并保留下一轮推送资格。
 - Android/iPhone 在线信标追加可选 conversion|traffic|uncategorized 尾字段；Windows 解析后优先使用分类字段，旧客户端没有尾字段时继续保持未知，不使用总数替代精准流量。
 - 新增 scripts/verify-auto-mobile-update.mjs，Windows 云构建前检查返回值、成功后持久化和失败重试分支；本轮版本号已提升为 Android 0.6.45/versionCode 83、iPhone 0.6.32/build 51、Windows 4.3.18。
-- 本轮 Beta 尚未完成云端构建、发布资产、更新索引和真机回归；稳定 latest.json 不应在 Beta 验收前改动。
+- Device Share Hub run `32579462284` 的 Android、iOS、Windows、remote-relay check 和已部署 Worker live E2E 均通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.1>。三端包已同步到 `C:\Users\z\Desktop`，哈希已写入 CHANGELOG；AltStore Beta 源提交为 `a0591f1401365e4ae252882083ea9eda51082f8e`。
+- 稳定 `latest.json` 保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。Beta 发布不等于实体设备验收：当前仍需 Android、iPhone、Windows 实机验证安装、在线心跳、USB/Wi-Fi/P2P 成功、HTTPS 中继回退、作品落库、ACK 和精准低于 5 的自动补货。
 
 ## 2026-08-22 P2P ACK 丢失后的重复入库修复（Beta 0.6.44/0.6.31/V4.3.17 已发布）
 

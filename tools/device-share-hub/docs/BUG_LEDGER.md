@@ -8,7 +8,7 @@
 - 根因：把“尝试发送”当成了“已送达”，且失败路径没有清除持久化标记；现场旧版 Android 设备广播在线但接收端口无响应时会触发这一风险。
 - 修复：UploadToDevice 返回明确成功值；自动更新仅在成功返回后写入 auto_mobile_update_delivered_<deviceId>。失败只清除本次内存占位并记录 auto_mobile_update_failed_retryable，保留下一轮重试。
 - 同轮增强：Android/iPhone 在线信标追加可选精准、泛、未分类库存字段；Windows 解析尾字段，/v2/info 短时不可用时仍可区分“未知”与“精准为 0”，不把总数冒充精准库存。
-- 证据：源级回归脚本 tools/device-share-hub/scripts/verify-auto-mobile-update.mjs 通过；云端三端构建和实体设备回归待本轮 Beta 完成后补记。
+- 证据：源级回归脚本 tools/device-share-hub/scripts/verify-auto-mobile-update.mjs 通过；Device Share Hub run `32579462284` 的 Android、iOS、Windows、remote-relay check 和已部署 Worker live E2E 全部通过；Beta `v0.6.45-beta.1` 已发布并完成三包哈希核对。实体设备回归仍待现场执行。
 - 回归要求：
   1. 更新传输失败后，同一设备/版本下一次上线仍可再次触发；成功传输后才抑制重复推送。
   2. Android/iPhone 旧版不带尾字段时，Windows 保持未知，不回退到总作品数；新版带尾字段时精准库存按 conversion 读取。

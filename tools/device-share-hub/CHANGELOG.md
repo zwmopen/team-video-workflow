@@ -4,7 +4,9 @@
 
 - 修复 Windows 手机自动更新在传输开始前就写入“已发送”状态、失败后永久不重试的问题；现在只在传输成功后写入已送达记录，失败会记录可重试状态。
 - Android/iPhone 在线信标新增向后兼容的精准、泛、未分类库存尾字段；Windows 可在 /v2/info 暂时不可用时继续按精准流量判断自动补货。
-- 新增自动更新重试和库存信标源级回归门禁；本轮版本包与云端 Beta 发布待 GitHub Actions 完成后回填哈希和链接。
+- 新增自动更新重试和库存信标源级回归门禁；Device Share Hub run `32579462284` 的 Android、iOS、Windows、remote-relay check 和 live E2E 均通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.1>；Android SHA-256：`220ea5a469e37ee051840ecbe541705f9267888a3d8c55c6e14aaecc90102aa0`；iPhone IPA SHA-256：`21106f8ca543bfcb940dd15fa7fada8735e3a075a5364b5026acf9833ee569f8`；Windows SHA-256：`d2d02e0e1cf313cf8e42efd3aa4cd58a8a2af437e8f56eee39b8606081b74e35`。
+- 三端云端包已同步到 `C:\Users\z\Desktop`；AltStore Beta 源已更新为 iOS 0.6.32/build 51，源提交 `a0591f1401365e4ae252882083ea9eda51082f8e`。稳定 `latest.json` 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35；实体手机回归仍待连接。
 
 ## Beta：Windows V4.3.17 / Android 0.6.44 / iPhone 0.6.31 - 2026-08-22
 
