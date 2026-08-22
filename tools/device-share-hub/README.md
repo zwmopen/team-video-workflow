@@ -158,9 +158,9 @@
 
 - 远程中继服务已部署到 Cloudflare：`https://zwm-device-share-relay.zwmrpg.workers.dev`，使用 Durable Object `WorkspaceRelay` 保存设备、会话、任务和 ACK 状态，R2 `zwm-device-share-relay` 暂存对象。
 - 当前仍保留公开作品的普通 ZIP 模式；链路强制 HTTPS，接收 ACK、取消或过期后删除 R2 临时对象，不做应用层端到端加密。
-- 混合传输策略是：同 Wi-Fi/USB 优先走现有 V2 直传；不同网络使用 HTTPS 中继兜底。Cloudflare 已提供受设备证书保护的 WebRTC DataChannel offer/answer/ICE 信令会话，但当前客户端尚未接入原生 WebRTC 数据面，不能把当前版本描述成已经完成 P2P 自动切换。
-- Android/iPhone 已有中继收件和 ACK 客户端，并具备直连信令客户端接口；Windows 原生面板会在可信局域网首次发现手机时自动下发 `RemoteRelayProfile`，无 USB/Wi-Fi 时自动发送到 Cloudflare 中继。下一步是引入三端原生 DataChannel 实现，并以中继作为失败兜底。
-- 当前账号没有活动 Cloudflare Zone，暂时使用 `workers.dev` 地址；真实 Android/iPhone 异地网络收发仍需安装 Beta、完成设备登记后实测。
+- 混合传输策略是：同 Wi-Fi/USB 优先走现有 V2 直传；跨网络先尝试原生 WebRTC DataChannel P2P，建连、传输或校验失败时自动回退 HTTPS 中继。Cloudflare 负责设备会话与 SDP/ICE 信令；P2P 文件字节不经过 R2，回退时才暂存普通公开 ZIP。
+- Android/iPhone 已接入中继收件、作品库写入、SHA-256 校验和 ACK，也已接入原生 WebRTC 收件数据面；Windows 原生面板使用 libdatachannel 发起 P2P，并在失败时自动走 Cloudflare 中继。Windows 会在可信局域网首次发现手机时下发 RemoteRelayProfile。
+- 当前使用 workers.dev 地址，不依赖 Cloudflare Zone；协议测试、云端构建和 Worker 本地集成测试已通过，但真实 Android/iPhone 异地网络收发仍需安装 Beta、完成设备登记后实测。
 
 ## Android 0.6.3 长剪切折叠与完整滚动
 
