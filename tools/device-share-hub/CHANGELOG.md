@@ -34,7 +34,7 @@
 ## Cloudflare 中继正式部署 - 2026-08-21
 
 - Worker `zwm-device-share-relay` 已部署，Durable Object 使用 `WorkspaceRelay`，R2 暂存桶为 `zwm-device-share-relay`。
-- Wrangler 实读部署版本 `7da4be21-632d-4e74-9a75-4f6d413f8e0a`，部署占比 100%。
+- Wrangler 实读部署版本已更新为 `b4fc48b0-9b3b-4e73-b828-d51abe59ba4c`，部署占比 100%；本机直连烟测受 DNS/连接异常影响，真实手机安装与异地网络实传仍需单独验收。
 - 当前账号没有活动 Zone，暂使用 `workers.dev` 公网地址；本机网络对该域名的 DNS/连接异常只影响本机烟测，不改变 Cloudflare 部署状态。
 - 混合传输当前是“局域网/USB 直传优先 + HTTPS 中继兜底”；WebRTC/QUIC 打洞仍是后续优化项，中继兜底已经接入 Windows 原生面板。
 
