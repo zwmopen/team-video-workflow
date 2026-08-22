@@ -2,12 +2,12 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
-## DSH-064 iOS P2P ICE 候选在 SDP 回调边界丢失（iPhone 0.6.35，待本轮 Beta 发布）
+## DSH-064 iOS P2P ICE 候选在 SDP 回调边界丢失（iPhone 0.6.35，已修复并发布 Beta）
 
 - 现象：iPhone 的信令轮询和 WebRTC 回调可能同时处理 ICE 候选；候选恰好在远端 SDP 回调排空队列的窗口到达时，可能既没有入队也没有立即提交，P2P 偶发建连失败并转入 HTTPS 中继。
 - 根因：`pendingCandidates` 与 `remoteDescriptionSet` 没有共享同步边界；此前 Android 已有 `iceLock`，iOS 仍直接读写。
 - 修复：iOS 使用 `NSLock` 将“标记远端 SDP 已就绪、复制并清空待处理候选”和“新候选入队/立即提交”串行化；提交候选放在解锁后执行，避免锁内调用 WebRTC。
-- 证据：本地 P2P 不变量脚本、自动更新/库存脚本、隐私表面检查和 13 项中继协议测试通过；云端三端构建与实体 iPhone P2P 验收待本轮 Beta run。
+- 证据：本地 P2P 不变量脚本、自动更新/库存脚本、隐私表面检查和 13 项中继协议测试通过；云端 run `32593184579` 的三端构建、remote-relay check 和线上 Worker E2E 全部成功；Beta `v0.6.48-beta.1` 已发布。实体 iPhone P2P 验收仍待连接。
 - 回归要求：
   1. SDP 成功前后并发到达的 ICE 候选每个都最终提交一次。
   2. P2P 成功 ACK、失败关闭、HTTPS 回退和重复 transferId 去重不受锁影响。

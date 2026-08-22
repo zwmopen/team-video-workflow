@@ -1,5 +1,13 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 iOS P2P ICE 修复与 Beta 0.6.48 发布
+
+- Android 0.6.48/versionCode 86、iPhone 0.6.35/build 54、Windows V4.3.24；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.48-beta.1>。
+- 修复 iOS `pendingCandidates`/`remoteDescriptionSet` 的并发竞态；新增 P2P ICE、ACK、会话回收、HTTPS 回退和库写入顺序不变量门禁。
+- Device Share Hub run `32593184579` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部成功；Beta 索引与 AltStore Beta 源已复核为 Android 0.6.48/versionCode 86、iPhone 0.6.35/build 54。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.48.apk`、`album-iOS-v0.6.35-altstore.ipa`、`device-share-hub-Windows-V4.3.24-relay-beta.exe`；桌面中控已重启并监听 UDP 45834/TCP 45833。
+- 稳定 `latest.json` 保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。当前仍缺真实手机在线条件，USB/Wi-Fi/P2P/HTTPS/ACK/自动补货属于待现场验收，不把云端 E2E 当真机证据。
+
 ## 2026-08-23 可选测试版更新通道（Beta 0.6.47/0.6.34 已发布）
 
 - Android 0.6.47/versionCode 85、iPhone 0.6.34/build 53，Windows 继续为 V4.3.23；设置中默认稳定版，可手动切到测试版。

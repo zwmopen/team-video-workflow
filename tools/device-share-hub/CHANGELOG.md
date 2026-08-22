@@ -1,5 +1,13 @@
 # 变更记录
 
+## Beta：Windows V4.3.24 / Android 0.6.48 / iPhone 0.6.35 - iOS P2P ICE 与版本元数据修复（已发布）
+
+- 修复 iOS P2P 信令轮询与 WebRTC 回调并发读写 ICE 候选队列的竞态；新增 P2P ICE、ACK 延迟刷新、会话回收、HTTPS 回退和库写入顺序静态门禁。
+- 统一 iOS `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` 与 `Info.plist`：0.6.35/build 54；Android 为 0.6.48/versionCode 86；Windows 为 V4.3.24。
+- Device Share Hub run `32593184579` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.48-beta.1>。
+- Android SHA-256：`501f1bed085a1b37b13deb89a2bc5879b07a01c1ec42c6108a59bb49ce53d15d`；iPhone IPA SHA-256：`2ad5da8a18d7b62565812d6d9c81cdb164f204605354a4686c8db2244e06921b`；Windows SHA-256：`7f622d23ce8c66dfd80df4445549bbc758bae155ef99309d4d9d65bb71cd1776`。
+- Beta `latest-beta.json` 和 AltStore Beta 源已同步；稳定 `latest.json` 保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。真实手机 USB/Wi-Fi/P2P/HTTPS、落库、ACK 和自动补货仍待连接验收。
+
 ## Beta：Windows V4.3.23 / Android 0.6.47 / iPhone 0.6.34 - 可选测试版更新通道（已发布）
 
 - Android 和 iPhone 设置新增“更新通道”：默认稳定版，切换到测试版后分别读取 `latest-beta.json` 和 `altstore-beta.json`，不会把 Beta 包推给稳定用户。

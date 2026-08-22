@@ -1,6 +1,6 @@
-# 文件收发中控 V4.3.23 / Android 0.6.47 / iPhone 0.6.34（Beta）
+# 文件收发中控 V4.3.24 / Android 0.6.48 / iPhone 0.6.35（Beta）
 
-> Beta `v0.6.47-beta.1` 已发布。本轮新增稳定版/测试版更新通道，并保留混合传输修复。
+> Beta `v0.6.48-beta.1` 已发布。本轮修复 iOS P2P ICE 候选竞态并统一 iOS 版本元数据，保留 USB/Wi-Fi/P2P/HTTPS 混合传输链路。
 
 ## 更新通道
 
@@ -8,7 +8,11 @@
 - Android 测试版会读取 `latest-beta.json`；iPhone 测试版会复制 `altstore-beta.json`，然后在 AltStore 的 My Apps 中更新。
 - 稳定版索引不会被 Beta 覆盖；iOS 仍需要 AltStore/AltServer 完成签名安装。
 
-本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.47-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
+本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.48-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
+
+本轮包：`album-Android-v0.6.48.apk`、`album-iOS-v0.6.35-altstore.ipa`、`device-share-hub-Windows-V4.3.24-relay-beta.exe`。
+
+Device Share Hub 云端 run `32593184579` 的三端构建、P2P/ACK 静态门禁、Cloudflare 中继检查和线上 Worker E2E 全部通过；稳定更新索引不变。真实手机传输、落库、ACK 和自动补货仍需设备在线后验收。
 
 ## 本轮开发：混合通道状态合并
 
