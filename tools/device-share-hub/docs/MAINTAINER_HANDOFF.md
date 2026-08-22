@@ -1,9 +1,9 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-23 自动补货递归发现修复（Beta Windows V4.3.20，待云端构建）
+## 2026-08-23 自动补货递归发现修复（Beta Windows V4.3.20，已发布）
 
 - 现场复核发现精准作品存放在 `成品库\\微信公众号\\作品集_xxx[转]` 子目录，而旧实现只扫描 `library_path` 第一层，导致自动补货找不到精准源。
-- `PickAutoRestockSource` 已改为递归扫描并继续严格匹配 `[转]` / `【转】` 与图文作品结构；当前待云端构建、Beta patch 发布和实体手机验收，稳定索引不改。
+- `PickAutoRestockSource` 已改为递归扫描并继续严格匹配 `[转]` / `【转】` 与图文作品结构；run `32583765953` 全部通过，Beta patch 为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.3>。实体手机验收仍待连接，稳定索引不改。
 
 ## 2026-08-22 自动分发默认配置修复（Beta Windows V4.3.19，已发布）
 

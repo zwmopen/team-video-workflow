@@ -1,9 +1,11 @@
 # 变更记录
 
-## Beta：Windows V4.3.20 / Android 0.6.45 / iPhone 0.6.32 - 自动补货递归发现修复（待云端构建）
+## Beta：Windows V4.3.20 / Android 0.6.45 / iPhone 0.6.32 - 自动补货递归发现修复（已发布）
 
 - 修复自动补货只扫描作品库第一层的问题；现在会递归发现实际生产目录下的 `作品集_xxx[转]` / `作品集_xxx【转】` 精准作品文件夹，仍不会拿泛流量目录替代精准库存。
-- 新增源级回归门禁，要求自动补货使用递归扫描并保留精准标签判断；稳定 `latest.json` 不改，实体手机验收仍待设备上线。
+- 新增源级回归门禁，要求自动补货使用递归扫描并保留精准标签判断；Device Share Hub run `32583765953` 的 Windows、Android、iOS、remote-relay check 和 live E2E 全部通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.3>；Android SHA-256：`e19f189b276a239059a5d884f5dd12129d61ef174cc848bd489922ed0ca05784`；iPhone IPA SHA-256：`302e9bd46d9dfd5fe558adec096891224681a97315465ed4cae167addc89bb04`；Windows SHA-256：`69305cec244bb37f928bba13cf86868cceb120a56fa191bf4693ff752ba2ef50`。
+- 三端包已同步到 `C:\Users\z\Desktop`；稳定 `latest.json` 和 AltStore Beta 的 iOS 语义版本不变，真实手机验收仍待连接。
 
 ## Beta：Windows V4.3.19 / Android 0.6.45 / iPhone 0.6.32 - 自动分发默认配置修复（已发布）
 
