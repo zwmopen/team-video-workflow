@@ -6,7 +6,7 @@
 - 本轮修复：成功 ACK 发送后的 DataChannel 刷新窗口、iPhone P2P 缓存清理、Windows 背压停滞 20 秒回退；上一 Beta `v0.6.35-beta.1` 仍作为可回退安装包保留。
 - 又修复 Windows P2P 会话在文件校验、信令或发送异常后未统一关闭的问题；现在 P2P 失败再回退 HTTPS 中继不会留下开放控制面会话。
 - 又修复 Android/iOS P2P 接收失败后未关闭控制面会话的问题；关闭请求异步执行，不阻塞 WebRTC 失败回调。
-- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.37-beta.1>；三端代码构建 run `32553627094`（代码头 `8cb79e56571037fa93971259b91c6e4d4c2af445`），PR #24 当前头为文档收口提交 `a3f20d8a5ad2a4bc63895a9a0d87956abafea08a`，其复跑 run `32554402935` 已通过。
+- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.37-beta.1>；三端代码构建 run `32553627094`（代码头 `8cb79e56571037fa93971259b91c6e4d4c2af445`），PR #24 的整体验证 run `32554981304` 已通过。
 - Android SHA-256：`f13132b8311f333b07aba44d8527e644a16c474838f696f81d5a30721e2dc011`；iPhone IPA SHA-256：`44d768c2f401ba25e926bbec4b769094d4695a9732359fcfc986fd806bcdeb`；Windows SHA-256：`9eeefaf815fc841bfcf616029ece0c654e6278ba94a974690515a46186d71bf2`。
 - 桌面同步包：`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.10-relay-beta.exe`；Android/iOS 包也已同步到桌面。
 - iPhone Beta 更新源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>；稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，未把 Beta 误推入稳定自动更新。
