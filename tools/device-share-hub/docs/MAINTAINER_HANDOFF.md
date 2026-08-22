@@ -1,5 +1,12 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-22 Android P2P 共享状态可见性修复与 Beta 0.6.41（云构建待完成）
+
+- 当前源码版本已同步为 Windows `4.3.14`、Android `0.6.41` / versionCode `79`、iPhone `0.6.28` / build `47`。
+- Android P2P 的 WebRTC 回调、信令轮询、文件处理队列和超时任务共享状态现在使用 `volatile`，修复跨线程读到旧状态导致误超时或重复清理的风险。
+- 需要重新走 GitHub Actions 三端云构建、remote-relay、secret scan、quality、Beta Release 和 AltStore Beta 源同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
+- 当前没有连接实体 Android/iPhone/Windows，真机权限、安全扫描、P2P 成功和 HTTPS 中继回退验收仍未完成。
+
 ## 2026-08-22 Android 媒体权限残留修复与 Beta 0.6.40
 
 - 当前源码版本已同步为 Windows `4.3.13`、Android `0.6.40` / versionCode `78`、iPhone `0.6.27` / build `46`。

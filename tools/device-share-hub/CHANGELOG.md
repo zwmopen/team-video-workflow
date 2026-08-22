@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.14 / Android 0.6.41 / iPhone 0.6.28 - 2026-08-22
+
+- 修复 Android P2P 引擎跨 WebRTC 回调、信令轮询、文件队列和超时线程读取状态时的可见性问题；`peer`、`channel`、`finished` 和远端描述状态现在使用 `volatile`，避免活连接被误判为超时或结束后继续清理。
+- 三端版本同步提升为 Windows `4.3.14`、Android `versionCode=79` / `versionName=0.6.41`、iPhone `0.6.28/build 47`；本轮需继续以 GitHub Actions 三端云构建、Beta Release、AltStore 源和真机验收为交付边界。
+- 真实 Android/iPhone/Windows 设备当前仍未连接；协议测试和云构建不能替代真机安全扫描、P2P 成功与 HTTPS 中继回退验收。
+
 ## Beta：Windows V4.3.13 / Android 0.6.40 / iPhone 0.6.27 - 2026-08-22
 
 - 清除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；手机端没有自动截图采集、截图观察器或悬浮窗功能，不再为这条旧链路声明相册读取权限。

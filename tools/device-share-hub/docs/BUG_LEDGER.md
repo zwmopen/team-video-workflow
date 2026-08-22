@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-053 Android P2P 共享状态缺少跨线程可见性（Android 0.6.41）
+
+- 现象：P2P 引擎同时由 WebRTC 回调、信令轮询、文件处理队列和连接超时任务访问；在 Java 内存模型下，某个线程可能看不到最新的 `channel`/`finished` 状态，出现活连接误触发超时、已结束连接继续处理或重复清理。
+- 根因：这些字段是普通非 `volatile` 引用/布尔值，跨线程读写没有明确的 happens-before 关系。
+- 修复：将 `peer`、`channel`、`finished` 和 `remoteDescriptionSet` 声明为 `volatile`；保持已有失败回退、ACK 刷新和活动 map 清理逻辑不变。
+- 证据：本地源码审计与远程中继测试；需以同一提交的 Android/iOS/Windows 云构建和真实设备 P2P/回退操作补齐最终证据。
+- 回归要求：
+  1. 正常 P2P 建连后，20 秒超时任务不会因读取旧 `channel` 状态误触发。
+  2. 失败、取消、ACK 成功和 DataChannel 关闭并发发生时，不重复调用监听器或留下活动引擎。
+  3. HTTPS 中继回退、局域网/USB 传送、作品库写入和重复 `transferId` 去重不受影响。
+
 ## DSH-052 Android Manifest 残留媒体读取权限（Android 0.6.40）
 
 - 现象：自动截图采集、截图观察器、悬浮窗和自动剪切板链路已经删除，但 Manifest 仍声明 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`，与当前隐私边界不一致，可能继续触发厂商权限/风险提示。

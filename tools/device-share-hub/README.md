@@ -1,4 +1,4 @@
-# 文件收发中控 V4.3.13 / Android 0.6.40 / iPhone 0.6.27（Beta）
+# 文件收发中控 V4.3.14 / Android 0.6.41 / iPhone 0.6.28（Beta）
 
 ## 当前 Beta 测试包
 
@@ -6,14 +6,15 @@
 
 本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱和 P2P 会话，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务。P2P 文件会先写入缓存，完成 SHA-256 校验并写入作品库后才 ACK；Cloudflare 只转发 SDP/ICE，不保存 P2P 文件字节。本阶段不做应用层端到端加密，也没有实体跨网设备验收，因此 Beta 不能替代真机验收。
 
-## 0.6.40 / 0.6.27 / V4.3.13 本轮修复
+## 0.6.41 / 0.6.28 / V4.3.14 本轮修复
 
+- Android P2P 引擎的 WebRTC/轮询/文件队列共享状态增加跨线程可见性保证，降低活连接误超时和结束后重复清理风险。
 - 清除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；自动截图采集、截图观察器、悬浮窗和自动剪切板链路均不再存在。
 - Android 10 的隐藏作品兼容导入仍只使用用户主动选择的 SAF 文件夹和旧兼容通道，不把该权限当作系统相册扫描权限。
 - Android/iOS P2P 收件端建连超过 20 秒会主动失败，Windows 随后自动切 HTTPS 中继；不会把“信令建立但没有文件”记作成功。
 - Android WebRTC 回调只负责复制数据帧，文件写入和 SHA-256 校验交给串行队列，避免大文件阻塞 WebRTC 回调线程。
 - Android P2P 引擎启动瞬间失败时不会再被缓存为处理中；取消已结束引擎也不会抛出清理异常，下一轮可以继续重试。
-- 本次 Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1>；iPhone Beta 源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>，当前指向 0.6.27/build 46。
+- 本次 Beta 发布页和 iPhone Beta 源将在本轮云构建完成后更新；源地址仍为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
 - 云端构建通过不等于实体设备业务通过；需要 Android、iPhone、Windows 实机各安装后再验收同 Wi-Fi、跨网络 P2P 和中继回退。
 
 ## 历史：手机端 0.6.27 / 0.6.14 分类口径、平台按钮状态与隐私边界

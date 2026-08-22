@@ -103,15 +103,18 @@ final class P2PTransferEngine {
     private final Map<Integer, RandomAccessFile> openFiles = new HashMap<>();
     private final Map<Integer, Long> receivedBytes = new HashMap<>();
     private final List<IceCandidate> pendingIce = new ArrayList<>();
-    private PeerConnection peer;
-    private DataChannel channel;
+    // These fields are observed from WebRTC callbacks, the signal poller and
+    // the serial file queue. Volatile prevents stale state from turning a
+    // live channel into a false timeout or allowing cleanup after finish.
+    private volatile PeerConnection peer;
+    private volatile DataChannel channel;
     private File transferDirectory;
     private List<ObjectInfo> objects;
     private String transferId;
     private String senderDeviceId;
     private String recipientDeviceId;
-    private boolean finished;
-    private boolean remoteDescriptionSet;
+    private volatile boolean finished;
+    private volatile boolean remoteDescriptionSet;
 
     private P2PTransferEngine(Context context, JSONObject p2p,
                               SignalTransport transport, Listener listener) {
