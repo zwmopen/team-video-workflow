@@ -2,9 +2,12 @@
 
 ## Beta：Windows V4.3.14 / Android 0.6.41 / iPhone 0.6.28 - 2026-08-22
 
-- 修复 Android P2P 引擎跨 WebRTC 回调、信令轮询、文件队列和超时线程读取状态时的可见性问题；`peer`、`channel`、`finished` 和远端描述状态现在使用 `volatile`，避免活连接被误判为超时或结束后继续清理。
-- 三端版本同步提升为 Windows `4.3.14`、Android `versionCode=79` / `versionName=0.6.41`、iPhone `0.6.28/build 47`；本轮需继续以 GitHub Actions 三端云构建、Beta Release、AltStore 源和真机验收为交付边界。
-- 真实 Android/iPhone/Windows 设备当前仍未连接；协议测试和云构建不能替代真机安全扫描、P2P 成功与 HTTPS 中继回退验收。
+- 修复 Android P2P 引擎跨 WebRTC 回调、信令轮询、文件队列和超时线程读取状态时的可见性问题；peer、channel、finished 和远端描述状态现在使用 volatile，避免活连接被误判为超时或结束后继续清理。
+- GitHub Actions Device Share Hub run 32562005856 已通过；Repository quality run 32562005857、Secret scan run 32562005864 已通过，remote-relay 测试 13/13 通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1>，已包含 Android 0.6.41、iPhone 0.6.28 和 Windows 4.3.14 三端资产；AltStore Beta 源内容提交为 e58a7b76cb0ecb96b7de05e519f89acf6fc27b41。
+- Android SHA-256：e9bd39eb83b1bdc516c4824fdb4a451cdad97dc31d741d16fc0a9f8de9989cb5；iPhone IPA SHA-256：b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed；Windows SHA-256：a65a325f248e397cba5eacc8057ebffe03227c8cdb3296720353d9d9c11b5bd0。
+- 三端云构建包已同步到 C:\Users\z\Desktop；稳定 latest.json 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35，没有把 Beta 推入稳定通道。
+- 真实 Android/iPhone/Windows 设备当前仍未连接；云构建、协议测试和发布资产不能替代真机安全扫描、P2P 成功与 HTTPS 中继回退验收。
 
 ## Beta：Windows V4.3.13 / Android 0.6.40 / iPhone 0.6.27 - 2026-08-22
 

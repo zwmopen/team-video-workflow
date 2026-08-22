@@ -1,10 +1,12 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 Android P2P 共享状态可见性修复与 Beta 0.6.41（云构建待完成）
+## 2026-08-22 Android P2P 共享状态可见性修复与 Beta 0.6.41
 
-- 当前源码版本已同步为 Windows `4.3.14`、Android `0.6.41` / versionCode `79`、iPhone `0.6.28` / build `47`。
-- Android P2P 的 WebRTC 回调、信令轮询、文件处理队列和超时任务共享状态现在使用 `volatile`，修复跨线程读到旧状态导致误超时或重复清理的风险。
-- 需要重新走 GitHub Actions 三端云构建、remote-relay、secret scan、quality、Beta Release 和 AltStore Beta 源同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
+- 当前源码版本已同步为 Windows 4.3.14、Android 0.6.41 / versionCode 79、iPhone 0.6.28 / build 47。
+- Android P2P 的 WebRTC 回调、信令轮询、文件处理队列和超时任务共享状态现在使用 volatile，修复跨线程读到旧状态导致误超时或重复清理的风险。
+- GitHub Actions Device Share Hub run 32562005856 已通过，Repository quality run 32562005857、Secret scan run 32562005864 已通过；remote-relay 13/13 通过。没有使用本地 Android Gradle/Xcode/Windows 构建替代证据。
+- Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1>；Android SHA-256 e9bd39eb83b1bdc516c4824fdb4a451cdad97dc31d741d16fc0a9f8de9989cb5，iPhone IPA SHA-256 b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed，Windows SHA-256 a65a325f248e397cba5eacc8057ebffe03227c8cdb3296720353d9d9c11b5bd0。
+- 桌面包路径：C:\Users\z\Desktop\album-Android-v0.6.41.apk、C:\Users\z\Desktop\album-iOS-v0.6.28-altstore.ipa、C:\Users\z\Desktop\device-share-hub-Windows-V4.3.14-relay-beta.exe；AltStore Beta 源内容提交 e58a7b76cb0ecb96b7de05e519f89acf6fc27b41。稳定 latest.json 未改动。
 - 当前没有连接实体 Android/iPhone/Windows，真机权限、安全扫描、P2P 成功和 HTTPS 中继回退验收仍未完成。
 
 ## 2026-08-22 Android 媒体权限残留修复与 Beta 0.6.40

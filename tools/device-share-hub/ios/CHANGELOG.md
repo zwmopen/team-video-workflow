@@ -3,7 +3,8 @@
 ## 0.6.28 - 2026-08-22
 
 - 与 Android 0.6.41、Windows 4.3.14 同步发布；本轮修复 Android P2P 共享状态跨线程可见性，iOS 继续保持既有串行文件处理和失败回退边界。
-- 版本升级为 0.6.28/build 47；需以本轮 GitHub Actions 云构建、Beta 发布页和 AltStore Beta 源为准。
+- 版本升级为 0.6.28/build 47；GitHub Actions Device Share Hub run 32562005856、remote-relay 13/13、Repository quality run 32562005857、Secret scan run 32562005864 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1>；IPA SHA-256 为 b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed，AltStore Beta 源内容提交为 e58a7b76cb0ecb96b7de05e519f89acf6fc27b41。
 - 实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
 
 ## 0.6.27 - 2026-08-22

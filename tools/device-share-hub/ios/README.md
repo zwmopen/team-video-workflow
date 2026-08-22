@@ -12,7 +12,7 @@
 
 当前 Beta 发布页：
 
-`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1`
+`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1`
 
 每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载与工程版本对应的 `album-ios-altstore-v<版本>` artifact，解压得到：
 
@@ -21,7 +21,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-本次 Beta IPA 的 SHA-256 为 `98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`；实体检查仍需在真实 iPhone 上完成。
+本次 Beta IPA 的 SHA-256 为 `b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed`；实体检查仍需在真实 iPhone 上完成。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
@@ -56,7 +56,7 @@ Beta 测试包使用独立更新源：
 
 `https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json`
 
-稳定源不会自动显示 Beta；添加 Beta 源后，AltStore 会发现已发布的 0.6.26/build 45。更新仍需在 AltStore 中确认一次。
+稳定源不会自动显示 Beta；添加 Beta 源后，AltStore 会发现已发布的 0.6.28/build 47。更新仍需在 AltStore 中确认一次。
 
 之后每次云端发布新的 iPhone IPA，AltStore 会从该源自动发现新版本；AltServer 在同一 Wi-Fi 下负责侧载和免费证书刷新。更新安装仍需在 AltStore 中确认一次，iOS 不允许应用静默替换自身。
 
