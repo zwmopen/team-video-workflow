@@ -9,7 +9,6 @@ const storePath = path.resolve(here, "../windows-native/src/content_store.cpp");
 const source = fs.readFileSync(sourcePath, "utf8");
 const relaySource = fs.readFileSync(relaySourcePath, "utf8");
 const storeSource = fs.readFileSync(storePath, "utf8");
-
 const uploadStart = source.indexOf("bool UploadToDevice(");
 const uploadEnd = source.indexOf("// Shell SendTo is a background entry point", uploadStart);
 if (uploadStart < 0 || uploadEnd < 0) throw new Error("UploadToDevice function boundary missing");
