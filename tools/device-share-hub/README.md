@@ -9,8 +9,9 @@
 ## 0.6.44 / 0.6.31 / V4.3.17 本轮修复
 
 - Android 修复 P2P 成功但 ACK 丢失后回退 HTTPS 中继造成的重复入库：已导入任务只补 ACK，不会再次下载或写入作品库；成功 ACK 后清理收件占位。iOS 同步释放重复 P2P 会话。
-- 三端版本同步提升为 Windows 4.3.17、Android versionCode 82 / versionName 0.6.44、iPhone 0.6.31/build 50；本轮以新提交的云端构建和 Worker E2E 为最终交付证据。
-- 新 Beta 发布页和 AltStore Beta 源将在本轮云构建完成后同步；源地址为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
+- 三端版本同步提升为 Windows 4.3.17、Android versionCode 82 / versionName 0.6.44、iPhone 0.6.31/build 50；Device Share Hub run `32575362864`、Repository quality `32575362946`、Secret scan `32575362919` 和线上 Worker E2E job `97036844830` 均通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；AltStore Beta 源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>，源提交 `f46cca7fd98504ea4c195e89a75a6697a80d197a`。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.44.apk`、`album-iOS-v0.6.31-altstore.ipa`、`device-share-hub-Windows-V4.3.17-relay-beta.exe`；SHA-256 见 `SHA256SUMS-v0.6.44-beta.1.txt`。
 - 稳定更新索引仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35；真实手机权限、安装、P2P、HTTPS 回退和文件落库仍待设备连接。
 
 ## 历史：0.6.42 / 0.6.29 / V4.3.15 本轮修复

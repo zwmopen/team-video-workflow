@@ -3,7 +3,8 @@
 ## 0.6.31 - 2026-08-22
 
 - 与 Android 0.6.44、Windows 4.3.17 同步发布；重复 P2P 完成路径现在释放活动引擎，继续保持写入作品库后 ACK、HTTPS 中继兜底和 transferId 去重。
-- 版本升级为 0.6.31/build 50；本轮云构建、Beta 发布页和 AltStore Beta 源待完成后补录。
+- 版本升级为 0.6.31/build 50；Device Share Hub run `32575362864` 的 iOS job 通过，IPA SHA-256 为 `1db6768df098beb2c8924d5b7fb0b923d81ff53678b840bc297787fe1cd25c92`。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；AltStore Beta 源已同步为 iOS 0.6.31/build 50，源提交 `f46cca7fd98504ea4c195e89a75a6697a80d197a`。
 
 ## 0.6.30 - 2026-08-22
 

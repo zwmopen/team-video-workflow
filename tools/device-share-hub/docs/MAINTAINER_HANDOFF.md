@@ -1,10 +1,12 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 P2P ACK 丢失后的重复入库修复（Beta 0.6.44/0.6.31/V4.3.17 云构建待完成）
+## 2026-08-22 P2P ACK 丢失后的重复入库修复（Beta 0.6.44/0.6.31/V4.3.17 已发布）
 
 - 已修复 Android 的真实幂等性缺口：P2P 已写库但 ACK 丢失、Windows 转 HTTPS 中继重试时，Android 现在只补发 ACK，不会再次下载或写入作品库。
 - 成功 ACK 后 Android 会移除远程收件内存占位；重复 P2P 完成路径会释放活动引擎并清理缓存。iOS 原有的中继去重逻辑保持，并补齐重复 P2P 路径的活动引擎释放。
-- 本地已通过隐私检查、remote-relay check/typecheck、13/13 协议测试和源码不变量检查；版本已提升为 Android 0.6.44/versionCode 82、iPhone 0.6.31/build 50、Windows V4.3.17，待新提交的 GitHub Actions 完成后补录最终 run 和 Beta 包信息。
+- 本地已通过隐私检查、remote-relay check/typecheck、13/13 协议测试和源码不变量检查；Device Share Hub run `32575362864`、Repository quality `32575362946`、Secret scan `32575362919` 和线上 Worker E2E job `97036844830` 全部通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；Android SHA-256 `0fe499cf1040d12c28ba9ef8c5aa8e7f2d214475d6de7c88e985f27d4430381d`，iPhone IPA SHA-256 `1db6768df098beb2c8924d5b7fb0b923d81ff53678b840bc297787fe1cd25c92`，Windows SHA-256 `f89106a50bd4d73295a098e803382648680c3fbd90d642d70499a0c736a4af52`。
+- 三端包已同步到 `C:\Users\z\Desktop`；AltStore Beta 源内容提交为 `f46cca7fd98504ea4c195e89a75a6697a80d197a`，稳定 `latest.json` 未改动。
 
 ## 2026-08-22 Windows 中继失败清理与 Beta 0.6.43（Beta 已发布，真机验收待完成）
 
