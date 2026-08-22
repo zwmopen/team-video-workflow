@@ -1,4 +1,4 @@
-# 文件收发中控 V4.3.15 / Android 0.6.42 / iPhone 0.6.29（Beta）
+# 文件收发中控 V4.3.16 / Android 0.6.43 / iPhone 0.6.30（Beta）
 
 ## 当前 Beta 测试包
 
@@ -6,7 +6,14 @@
 
 本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱和 P2P 会话，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务。P2P 文件会先写入缓存，完成 SHA-256 校验并写入作品库后才 ACK；Cloudflare 只转发 SDP/ICE，不保存 P2P 文件字节。本阶段不做应用层端到端加密，也没有实体跨网设备验收，因此 Beta 不能替代真机验收。
 
-## 0.6.42 / 0.6.29 / V4.3.15 本轮修复
+## 0.6.43 / 0.6.30 / V4.3.16 本轮修复
+
+- Windows 远程中继在上传、提交、进度或哈希失败后立即取消本次 transfer，清理 R2 临时对象和收件箱任务，避免孤立任务等待 TTL。
+- 三端版本同步提升为 Windows 4.3.16、Android versionCode 81 / versionName 0.6.43、iPhone 0.6.30/build 49；云端构建、质量检查、密钥扫描和 Worker E2E 均通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1>；iPhone Beta 源已更新为 0.6.30/build 49，源地址为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
+- 稳定更新索引仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35；真实手机权限、安装、P2P、HTTPS 回退和文件落库仍待设备连接。
+
+## 历史：0.6.42 / 0.6.29 / V4.3.15 本轮修复
 
 - Android P2P ICE 候选入队和远端 Description 回调使用同一把锁保护，避免候选在排空窗口中丢失，降低不必要的 P2P 失败和中继回退。
 - Android P2P 引擎的 WebRTC/轮询/文件队列共享状态增加跨线程可见性保证，降低活连接误超时和结束后重复清理风险。
