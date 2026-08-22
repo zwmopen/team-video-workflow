@@ -1,5 +1,12 @@
 # iOS 变更记录
 
+## 0.6.30 - 2026-08-22
+
+- 与 Android 0.6.43、Windows 4.3.16 同步发布；iOS 保持 P2P 优先、HTTPS 中继兜底、写入作品库后 ACK 的收件语义。
+- 版本升级为 0.6.30/build 49；Device Share Hub run 32571763937、Repository quality run 32571763918、Secret scan run 32571763916 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1>；IPA SHA-256 为 `5e8de6ef4fa435d19b361b889b791b9b8ded80989af4e6a7ca08dd15587214e5`，AltStore Beta 源已同步。
+- 实体 iPhone 权限列表、安装、P2P、HTTPS 回退和文件落库验收仍待连接真实设备。
+
 ## 0.6.29 - 2026-08-22
 
 - 与 Android 0.6.42、Windows 4.3.15 同步发布；Android 修复 P2P ICE 候选在远端 SDP 设置回调期间丢失的竞态，三端继续保持 P2P 优先、HTTPS 中继兜底。
