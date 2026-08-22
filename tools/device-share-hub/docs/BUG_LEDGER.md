@@ -7,7 +7,7 @@
 - 现象：Android/iOS P2P 接收失败时会清理本地引擎，但 Cloudflare 控制面会话仍保持开放，直到 2 分钟 TTL 才回收；发送端虽然会回退 HTTPS，中间会留下脏会话。
 - 根因：移动端 `SignalTransport` 只有快照和发信令接口，失败回调没有 `/close` 动作；同步关闭还可能阻塞 WebRTC 失败处理线程。
 - 修复：Android/iOS 为 `SignalTransport` 增加异步 `close`；P2P 失败路径立即排队关闭对应会话，保留本地清理和 HTTPS 回退，不阻塞失败回调。
-- 证据：本地 `git diff --check` 通过；Android/iOS/Windows 云端编译与实体手机业务回归待同一提交重新构建后补齐。
+- 证据：GitHub Actions run `32553627094` 的 Android、iOS、Windows、remote-relay、质量检查和安全检查全部通过；Beta 发布页为 `v0.6.37-beta.1`。实体手机业务回归仍未完成。
 - 回归要求：
   1. Android/iOS 在 manifest、数据帧、校验或作品库写入失败后，控制面会话进入 `closed`，不能只等 TTL。
   2. 关闭请求不得阻塞 WebRTC 失败回调；HTTPS 回退仍只创建一个任务。

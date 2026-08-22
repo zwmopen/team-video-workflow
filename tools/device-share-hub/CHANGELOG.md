@@ -1,10 +1,12 @@
 # 变更记录
 
-## Beta 候选：Windows V4.3.10 / Android 0.6.37 / iPhone 0.6.24 - 2026-08-22
+## Beta：Windows V4.3.10 / Android 0.6.37 / iPhone 0.6.24 - 2026-08-22
 
 - 修复 Android/iOS P2P 接收端失败后只清本地引擎、没有立即关闭 Cloudflare 信令会话的问题；现在失败会异步关闭控制面会话，不阻塞 WebRTC 失败回调，避免等 2 分钟 TTL 才回收并让 HTTPS 回退更干净。
 - 版本号已提升为 Windows `4.3.10`、Android `versionCode=75` / `versionName=0.6.37`、iPhone `0.6.24/build 43`。
-- 本候选尚未生成新的安装包；上一版可安装 Beta 仍是 Windows `4.3.9` / Android `0.6.36` / iPhone `0.6.23`，待 GitHub Actions 恢复可达后重新云构建。
+- GitHub Actions run `32553627094` 已完成 Android、iOS、Windows、remote-relay、质量检查和安全检查；三端安装包已上传到 Beta 发布页 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.37-beta.1>。
+- Android SHA-256：`f13132b8311f333b07aba44d8527e644a16c474838f696f81d5a30721e2dc011`；iPhone IPA SHA-256：`44d768c2f401ba25e926bbec4b769094d4695a9732359fcfc986fd806bcdeb`；Windows SHA-256：`9eeefaf815fc841bfcf616029ece0c654e6278ba94a974690515a46186d71bf2`。
+- 桌面包已同步到 `C:\Users\z\Desktop`；真实 Android/iPhone/Windows 设备互传验收仍待连接设备，不把云构建当作真机业务通过。
 
 ## Beta：Windows V4.3.9 / Android 0.6.36 / iPhone 0.6.23 - 2026-08-22
 

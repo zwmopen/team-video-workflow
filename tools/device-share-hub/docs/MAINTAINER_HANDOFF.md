@@ -1,18 +1,19 @@
 # 2026-08-21 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 WebRTC DataChannel 数据面 Beta 候选
+## 2026-08-22 WebRTC DataChannel 数据面 Beta
 
-- 当前开发源码候选：Windows `4.3.10`、Android `0.6.37` / versionCode `75`、iPhone `0.6.24` / build `43`；上一版已云构建可安装包仍是 Windows `4.3.9`、Android `0.6.36`、iPhone `0.6.23`。
+- 当前已发布 Beta：Windows `4.3.10`、Android `0.6.37` / versionCode `75`、iPhone `0.6.24` / build `43`。
 - 本轮修复：成功 ACK 发送后的 DataChannel 刷新窗口、iPhone P2P 缓存清理、Windows 背压停滞 20 秒回退；上一 Beta `v0.6.35-beta.1` 仍作为可回退安装包保留。
 - 又修复 Windows P2P 会话在文件校验、信令或发送异常后未统一关闭的问题；现在 P2P 失败再回退 HTTPS 中继不会留下开放控制面会话。
 - 又修复 Android/iOS P2P 接收失败后未关闭控制面会话的问题；关闭请求异步执行，不阻塞 WebRTC 失败回调。
-- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.36-beta.1>；三端复跑云端构建 run `32551407594`，PR #24 的远端提交 `ddaf1366954682b5d27fcd7ae19420ac3893c1dc`。
-- Beta Windows 资产已用该次云构建刷新，SHA-256：`544a823df94ce0232e98a96e5cc4a1b1ad7398508ff3dcf049ab93b6b12df169`；桌面同步包为 `C:\Users\z\Desktop\device-share-hub-Windows-V4.3.9-relay-beta.exe`。
+- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.37-beta.1>；三端云构建 run `32553627094`，PR #24 当前提交 `8cb79e56571037fa93971259b91c6e4d4c2af445`。
+- Android SHA-256：`f13132b8311f333b07aba44d8527e644a16c474838f696f81d5a30721e2dc011`；iPhone IPA SHA-256：`44d768c2f401ba25e926bbec4b769094d4695a9732359fcfc986fd806bcdeb`；Windows SHA-256：`9eeefaf815fc841bfcf616029ece0c654e6278ba94a974690515a46186d71bf2`。
+- 桌面同步包：`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.10-relay-beta.exe`；Android/iOS 包也已同步到桌面。
 - iPhone Beta 更新源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>；稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，未把 Beta 误推入稳定自动更新。
 - 已接入真实数据面：Windows 使用 libdatachannel 发起 `album-transfer-v1`，Android/iOS 使用 WebRTC 接收；Cloudflare 只承担短时 SDP/ICE 信令，文件字节不上传 R2。
 - P2P 失败条件（20 秒建连超时、ICE/DataChannel 失败、manifest/大小/SHA-256/作品库写入失败）统一回退现有 HTTPS 中继；中继仍是跨网络必达兜底。
 - P2P 收件端只有在文件完整校验并写入现有作品库后才 ACK，并用 `transferId` 去重，避免 ACK 丢失后的中继回退造成重复作品。
-- 本阶段已通过本地协议检查和远程 Worker 13 项测试；本候选尚未重新生成安装包，必须以同一提交的 GitHub Actions 云端构建为编译证据。没有实体 Android/iPhone 跨网络设备，暂不宣称真实 P2P 业务已验收。
+- 本阶段已通过本地协议检查、远程 Worker 13 项测试和 run `32553627094` 三端云构建；Beta 已发布。没有实体 Android/iPhone/Windows 跨网络设备，暂不宣称真实 P2P 业务已验收。
 
 ### 上一版普通 HTTPS 中继基线（历史证据）
 
