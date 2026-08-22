@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-056 P2P ACK 丢失后的中继回退重复入库（Android 0.6.43 / iPhone 0.6.30）
+
+- 现象：P2P 已经把作品写入手机作品库，但 ACK 在回电脑途中丢失时，Windows 会按设计切换到 HTTPS 中继；Android 原来的中继收件路径没有先检查持久化的 `remoteImportedTransfers`，会再次下载并写入同一批作品。
+- 根因：Android 只有 P2P 导入路径检查 `wasRemoteImported`，普通中继路径只在导入后写入标记，没有把“已导入、只补 ACK”作为重试分支。
+- 修复：Android 在中继下载前检查持久化 transfer 标记；已导入任务只调用 ACK、清理临时缓存和内存占位，不再创建作品。成功 ACK 后同步移除 `remoteInboxTasks`；Android/iOS 的重复 P2P 完成路径也会释放活动引擎/缓存。
+- 证据：本地隐私回归、remote-relay check/typecheck、13 项协议测试和源码不变量检查通过；修复后的 Android/iOS 云构建与真实手机回退实传仍待新提交完成。
+- 回归要求：
+  1. P2P 导入成功但 ACK 丢失后，HTTPS 回退最多补 ACK 一次，作品库不增加重复作品。
+  2. 普通中继首次接收仍按“下载 → 校验 → 写库 → ACK”顺序执行，任何失败都保留重试机会且不提前 ACK。
+  3. Android/iOS 重复 transferId 不留下活动 P2P 引擎、临时缓存或永久收件占位。
+
 ## DSH-055 Windows 中继失败后遗留未完成任务（Windows 4.3.16）
 
 - 现象：Windows 已创建远程中继任务后，如果上传、提交、进度读取或本地文件哈希阶段失败，原实现直接返回失败，R2 临时对象和收件箱任务要等 TTL 才清理；同一个失败 `transferId` 也可能继续干扰后续重试。

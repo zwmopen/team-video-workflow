@@ -1,5 +1,11 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-22 P2P ACK 丢失后的重复入库修复（云构建待完成）
+
+- 已修复 Android 的真实幂等性缺口：P2P 已写库但 ACK 丢失、Windows 转 HTTPS 中继重试时，Android 现在只补发 ACK，不会再次下载或写入作品库。
+- 成功 ACK 后 Android 会移除远程收件内存占位；重复 P2P 完成路径会释放活动引擎并清理缓存。iOS 原有的中继去重逻辑保持，并补齐重复 P2P 路径的活动引擎释放。
+- 本地已通过隐私检查、remote-relay check/typecheck、13/13 协议测试和源码不变量检查；待 GitHub Actions 对新提交完成 Android/iOS/Windows/Worker E2E 后，补录最终 run 和新 Beta 包信息。
+
 ## 2026-08-22 Windows 中继失败清理与 Beta 0.6.43（Beta 已发布，真机验收待完成）
 
 - 当前源码版本已同步为 Windows 4.3.16、Android 0.6.43 / versionCode 81、iPhone 0.6.30 / build 49。

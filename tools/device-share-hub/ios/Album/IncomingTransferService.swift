@@ -244,6 +244,10 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         var success = false
         try queue.sync {
             if wasRemoteImported(transfer.transferId) {
+                // A previous import may have completed before the sender saw
+                // its ACK. Let the engine ACK the duplicate, but do not leave
+                // the finished session pinned in the active-engine map.
+                p2pEngines = p2pEngines.filter { $0.value !== engine }
                 success = true
                 return
             }

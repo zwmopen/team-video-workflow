@@ -292,7 +292,12 @@ public final class OnlineService extends Service {
     }
 
     private boolean importP2PTransfer(P2PTransferEngine.Transfer transfer) throws Exception {
-        if (wasRemoteImported(transfer.transferId)) return true;
+        if (wasRemoteImported(transfer.transferId)) {
+            // The import already committed, but a previous ACK may have been
+            // lost. Remove any retry cache before acknowledging the duplicate.
+            deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
+            return true;
+        }
         WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
         int imported = 0;
         for (int i = 0; i < transfer.objects.size(); i++) {
@@ -322,6 +327,19 @@ public final class OnlineService extends Service {
         try {
             if (!"plain".equals(task.mode)) {
                 throw new IOException("当前版本只接收普通公开作品包");
+            }
+            // A P2P delivery can finish importing before its ACK reaches the
+            // sender. The sender then retries through the relay. In that case
+            // the durable marker is authoritative: only repair the missing
+            // relay ACK and never import the same work a second time.
+            if (!shouldImportRemoteTask(wasRemoteImported(task.transferId))) {
+                RemoteRelayClient.ack(session, task.transferId);
+                remoteInboxTasks.remove(task.transferId);
+                deleteRecursively(transferDirectory);
+                DiagnosticLog.write(this, "remote_task_ack_repaired",
+                        "transferId=" + task.transferId + " already_imported=true");
+                notifyStatus("远程作品已接收，已补发 ACK");
+                return;
             }
             WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
             int imported = 0;
@@ -357,6 +375,7 @@ public final class OnlineService extends Service {
             // ACK is deliberately last: download, hash verification and library
             // commit must all finish before the relay deletes its object.
             RemoteRelayClient.ack(session, task.transferId);
+            remoteInboxTasks.remove(task.transferId);
             deleteRecursively(transferDirectory);
             DiagnosticLog.write(this, "remote_task_completed",
                     "transferId=" + task.transferId + " files=" + delivered
@@ -1108,6 +1127,14 @@ public final class OnlineService extends Service {
     static boolean isValidResumeRange(long offset, long totalLength, long contentLength) {
         return offset >= 0 && totalLength >= 0 && contentLength >= 0
                 && offset <= totalLength && contentLength == totalLength - offset;
+    }
+
+    /**
+     * P2P may have imported a transfer before its ACK reached the sender.
+     * A relay retry must repair the ACK only, never import the works again.
+     */
+    static boolean shouldImportRemoteTask(boolean alreadyImported) {
+        return !alreadyImported;
     }
 
     private void cleanupStaleIncomingTask() {
