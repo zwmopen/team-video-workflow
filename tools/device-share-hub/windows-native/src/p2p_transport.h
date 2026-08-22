@@ -29,6 +29,7 @@ using ProgressCallback = std::function<void(uintmax_t sent, uintmax_t total)>;
 bool Send(const std::string& transferId,
           const std::string& senderDeviceId,
           const std::string& recipientDeviceId,
+          const std::string& contentKind,
           const std::vector<FileItem>& files,
           const SendSignal& sendSignal,
           const PollSignals& pollSignals,

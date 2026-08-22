@@ -190,7 +190,9 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
                                    task: RemoteRelayTask) {
         let transferDirectory = remoteRoot.appendingPathComponent(task.transferId, isDirectory: true)
         do {
-            guard task.mode == "plain" else { throw RemoteRelayError.invalidTask }
+            guard task.mode == "plain", task.contentKind == "work" else {
+                throw RemoteRelayError.invalidTask
+            }
             guard let root = library.receivingRootURL else {
                 throw TransferServiceError.conflict("作品文件夹不可用，请在设置里重新选择")
             }
@@ -256,6 +258,9 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
                    didComplete transfer: P2PTransferEngine.Transfer) throws -> Bool {
         var success = false
         try queue.sync {
+            guard transfer.contentKind == "work" else {
+                throw RemoteRelayError.invalidTask
+            }
             if wasRemoteImported(transfer.transferId) {
                 // A previous import may have completed before the sender saw
                 // its ACK. Let the engine ACK the duplicate, but do not leave

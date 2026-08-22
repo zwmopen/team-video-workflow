@@ -28,6 +28,7 @@ final class P2PTransferEngine: NSObject {
         let transferId: String
         let senderDeviceId: String
         let recipientDeviceId: String
+        let contentKind: String
         let objects: [ObjectInfo]
         let files: [URL]
     }
@@ -67,6 +68,7 @@ final class P2PTransferEngine: NSObject {
     private var transferId = ""
     private var senderDeviceId = ""
     private var recipientDeviceId = ""
+    private var contentKind = "work"
     private var finished = false
     private var remoteDescriptionSet = false
 
@@ -206,6 +208,11 @@ final class P2PTransferEngine: NSObject {
               recipientDeviceId == (session["responderDeviceId"] as? String),
               let raw = message["objects"] as? [[String: Any]], !raw.isEmpty,
               raw.count <= 1_000 else { throw RemoteRelayError.invalidTask }
+        contentKind = message["contentKind"] as? String ?? "work"
+        guard contentKind == "work",
+              (session["contentKind"] as? String ?? "work") == contentKind else {
+            throw RemoteRelayError.invalidTask
+        }
         var indexes = Set<Int>()
         var total: Int64 = 0
         objects = try raw.map { item in
@@ -267,7 +274,8 @@ final class P2PTransferEngine: NSObject {
             return file
         }
         let transfer = Transfer(transferId: transferId, senderDeviceId: senderDeviceId,
-                                recipientDeviceId: recipientDeviceId, objects: objects, files: files)
+                                recipientDeviceId: recipientDeviceId, contentKind: contentKind,
+                                objects: objects, files: files)
         guard try delegate?.p2pEngine(self, didComplete: transfer) == true else {
             throw RemoteRelayError.invalidTask
         }

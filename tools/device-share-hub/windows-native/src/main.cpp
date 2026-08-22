@@ -91,10 +91,10 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.27";
+constexpr wchar_t APP_VERSION[] = L"4.3.28";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
-constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
+constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest-beta.json";
 constexpr char MOBILE_UPDATE_APK_PREFIX[] = "https://github.com/zwmopen/gallery-updates/releases/download/";
 constexpr wchar_t GITHUB_RELEASE_HOST[] = L"api.github.com";
 constexpr wchar_t GITHUB_RELEASE_PATH[] = L"/repos/zwmopen/team-video-workflow/releases/latest";
@@ -484,7 +484,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
-HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.28", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return std::nullopt;
     WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
@@ -533,7 +533,7 @@ HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AU
 }
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.28", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -556,7 +556,7 @@ HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AU
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
+L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.28\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1892,7 +1892,7 @@ int JsonNestedNumber(const std::string& json, const std::string& parent,
 
 std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
                                           size_t maxBytes, std::wstring& error) {
-HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.28", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机更新索引连接"); return std::nullopt; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 30000);
@@ -1908,7 +1908,7 @@ HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AU
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
+L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.28\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1955,7 +1955,7 @@ L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
 bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
                        const std::filesystem::path& target, uintmax_t maxBytes,
                        std::wstring& error) {
-HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.28", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机 APK 下载连接"); return false; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 120000);
@@ -1971,7 +1971,7 @@ HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AU
         return false;
     }
     WinHttpAddRequestHeaders(request,
-L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
+L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.28\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -2227,7 +2227,7 @@ void SyncWindowsClipboard() {
 }
 
 bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
-                    bool checkHistory, bool /*notifyCompletion*/) {
+                    bool checkHistory, bool /*notifyCompletion*/, bool androidUpdate) {
     std::wstring taskId = NewTaskId();
     gUploadInProgress = true;
     gShellTransferActive = true;
@@ -2253,7 +2253,10 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             return false;
         }
 
-        if (device.usbReady && device.usbAllowed) {
+        // USB currently places files in the shared Lark folder but does not
+        // invoke Android's validated update staging flow. Never report an APK
+        // update as delivered through USB; use Wi-Fi/P2P/relay instead.
+        if (device.usbReady && device.usbAllowed && !androidUpdate) {
             try {
                 WriteDiagnosticLog(L"usb_upload_start",
                         device.name + L" items=" + std::to_wstring(files.size()));
@@ -2294,6 +2297,7 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             std::string p2pError;
             if (remote_relay::TryP2PTransfer(
                     DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                    androidUpdate ? "android-update" : "work",
                     [&](uintmax_t done, uintmax_t total) {
                         if (gCancelRequested) throw std::runtime_error("传送已取消");
                         int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
@@ -2318,6 +2322,7 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             PostStatus(L"P2P 直传未成功，自动切换远程中继…");
             bool sent = remote_relay::SendPlainTransfer(
                 DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                androidUpdate ? "android-update" : "work",
                 [&](uintmax_t done, uintmax_t total) {
                     if (gCancelRequested) throw std::runtime_error("传送已取消");
                     int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
@@ -2515,7 +2520,7 @@ void ProcessPendingShellSend() {
     gShellTransferActive = true;
     ShowShellProgress(L"正在发送到“" + device.name + L"”…", 0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
-    std::thread(UploadToDevice, device, std::move(paths), std::wstring(), false, true).detach();
+    std::thread(UploadToDevice, device, std::move(paths), std::wstring(), false, true, false).detach();
 }
 
 void SyncSendToMenu(const std::vector<Device>& devices,
@@ -2609,7 +2614,7 @@ void MaybeAutoMobileUpdate() {
     PostStatus(L"发现“" + DisplayNameFor(selected) + L"”可更新：手机端 v"
                + selected.appVersion + L" → v" + artifact->version + L"，正在发送更新包…");
     std::thread([selected, artifact = *artifact] {
-        bool succeeded = UploadToDevice(selected, {artifact.path}, L"", false, false);
+        bool succeeded = UploadToDevice(selected, {artifact.path}, L"", false, false, true);
         if (succeeded) {
             if (gContentStore) {
                 gContentStore->SetSetting(
@@ -3436,7 +3441,7 @@ void HandleDrop(HDROP drop) {
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
-    std::thread(UploadToDevice, device, std::move(files), std::wstring(), true, false).detach();
+    std::thread(UploadToDevice, device, std::move(files), std::wstring(), true, false, false).detach();
 }
 
 void DrawActionButton(const DRAWITEMSTRUCT* item) {
@@ -3822,7 +3827,7 @@ void MaybeAutoRestock() {
     PostStatus(L"自动补货：正在把“" + folder.filename().wstring()
                + L"”发送到“" + DisplayNameFor(selected) + L"”");
     std::thread([selected, folder] {
-        UploadToDevice(selected, {folder}, std::wstring(), true, false);
+        UploadToDevice(selected, {folder}, std::wstring(), true, false, false);
         WriteDiagnosticLog(L"auto_restock_finished", DisplayNameFor(selected));
     }).detach();
 }
@@ -3859,12 +3864,13 @@ void SendUpdatePackage() {
             MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) != IDOK) return;
     gQueueTotal = devices.size();
     gQueueIndex = 0;
-    std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
+    const bool androidUpdate = extension == L".apk";
+    std::thread([devices = std::move(devices), files = std::move(files), androidUpdate]() mutable {
         for (size_t index = 0; index < devices.size(); ++index) {
             gQueueIndex = index + 1;
             PostStatus(L"发送更新包：" + std::to_wstring(index + 1) + L"/"
                        + std::to_wstring(devices.size()) + L" → " + DisplayNameFor(devices[index]));
-            UploadToDevice(devices[index], files, L"", false, false);
+            UploadToDevice(devices[index], files, L"", false, false, androidUpdate);
         }
         gQueueTotal = 0;
         gQueueIndex = 0;
@@ -4166,7 +4172,7 @@ void SendSelectedLibraryItem() {
     }
     std::vector<std::filesystem::path> files{*source};
     if (devices.size() == 1) {
-        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
+        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false, false).detach();
         return;
     }
     std::wstring confirmMsg = L"将把选中的内容发送到以下 " + std::to_wstring(devices.size()) + L" 台设备：\n\n";
@@ -4183,7 +4189,7 @@ void SendSelectedLibraryItem() {
             gQueueIndex = i + 1;
             PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
                        + L"：正在发送到“" + devices[i].name + L"”…");
-            UploadToDevice(devices[i], files, std::wstring(), true, false);
+            UploadToDevice(devices[i], files, std::wstring(), true, false, false);
         }
         gQueueTotal = 0;
         gQueueIndex = 0;
@@ -4285,7 +4291,7 @@ void ChooseAndSend(bool folder) {
     if (devices.empty()) { MessageBoxW(gWindow, L"请先选择至少一台在线设备。\n提示：可点选多台设备进行批量发送。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
     auto files = PickPaths(folder); if (files.empty()) return;
     if (devices.size() == 1) {
-        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false).detach();
+        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false, false).detach();
         return;
     }
     std::wstring confirmMsg = L"将把选中的文件发送到 " + std::to_wstring(devices.size()) + L" 台设备，确认？";
@@ -4297,7 +4303,7 @@ void ChooseAndSend(bool folder) {
             gQueueIndex = i + 1;
             PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
                        + L"：正在发送到“" + devices[i].name + L"”…");
-            UploadToDevice(devices[i], files, std::wstring(), true, false);
+            UploadToDevice(devices[i], files, std::wstring(), true, false, false);
         }
         gQueueTotal = 0;
         gQueueIndex = 0;

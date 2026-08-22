@@ -81,14 +81,16 @@ final class P2PTransferEngine {
         final String transferId;
         final String senderDeviceId;
         final String recipientDeviceId;
+        final String contentKind;
         final List<ObjectInfo> objects;
         final List<File> files;
 
         Transfer(String transferId, String senderDeviceId, String recipientDeviceId,
-                 List<ObjectInfo> objects, List<File> files) {
+                 String contentKind, List<ObjectInfo> objects, List<File> files) {
             this.transferId = transferId;
             this.senderDeviceId = senderDeviceId;
             this.recipientDeviceId = recipientDeviceId;
+            this.contentKind = contentKind;
             this.objects = objects;
             this.files = files;
         }
@@ -117,6 +119,7 @@ final class P2PTransferEngine {
     private String transferId;
     private String senderDeviceId;
     private String recipientDeviceId;
+    private String contentKind;
     private volatile boolean finished;
     private volatile boolean remoteDescriptionSet;
 
@@ -323,6 +326,14 @@ final class P2PTransferEngine {
         if (!senderDeviceId.equals(expectedSender) || !recipientDeviceId.equals(expectedRecipient)) {
             throw new IOException("P2P 设备身份不匹配");
         }
+        String contentKind = message.optString("contentKind", "work");
+        if (!"work".equals(contentKind) && !"android-update".equals(contentKind)) {
+            throw new IOException("P2P 内容类型无效");
+        }
+        String expectedContentKind = p2p.optString("contentKind", "work");
+        if (!contentKind.equals(expectedContentKind)) {
+            throw new IOException("P2P 内容类型与会话不一致");
+        }
         JSONArray raw = message.optJSONArray("objects");
         if (raw == null || raw.length() == 0 || raw.length() > 1_000) throw new IOException("P2P 文件清单无效");
         objects = new ArrayList<>();
@@ -346,6 +357,12 @@ final class P2PTransferEngine {
             receivedBytes.put(index, 0L);
         }
         if (message.optLong("totalBytes", total) != total) throw new IOException("P2P 总大小不一致");
+        if ("android-update".equals(contentKind)
+                && (objects.size() != 1
+                || !objects.get(0).name.toLowerCase(Locale.US).endsWith(".apk"))) {
+            throw new IOException("安卓更新任务必须是单个 APK");
+        }
+        this.contentKind = contentKind;
     }
 
     private void handleBinary(ByteBuffer source) throws Exception {
@@ -386,7 +403,7 @@ final class P2PTransferEngine {
             total += file.length();
         }
         if (listener != null && !listener.onCompleted(new Transfer(transferId, senderDeviceId,
-                recipientDeviceId, objects, files))) {
+                recipientDeviceId, contentKind, objects, files))) {
             throw new IOException("P2P 作品写入失败");
         }
         if (channel == null || !channel.send(new DataChannel.Buffer(ByteBuffer.wrap(

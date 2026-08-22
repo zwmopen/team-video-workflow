@@ -298,6 +298,17 @@ public final class OnlineService extends Service {
             deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
             return true;
         }
+        if ("android-update".equals(transfer.contentKind)) {
+            if (transfer.objects.size() != 1 || transfer.files.size() != 1
+                    || !transfer.objects.get(0).name.toLowerCase(Locale.US).endsWith(".apk")) {
+                throw new IOException("安卓更新任务必须是单个 APK");
+            }
+            stageIncomingUpdatePackage(transfer.files.get(0));
+            markRemoteImported(transfer.transferId);
+            deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
+            notifyStatus("P2P 更新包已校验，等待系统安装");
+            return true;
+        }
         WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
         int imported = 0;
         for (int i = 0; i < transfer.objects.size(); i++) {
@@ -342,6 +353,30 @@ public final class OnlineService extends Service {
                 return;
             }
             WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+            if ("android-update".equals(task.contentKind)) {
+                if (task.objects.size() != 1
+                        || !task.objects.get(0).name.toLowerCase(Locale.US).endsWith(".apk")) {
+                    throw new IOException("安卓更新任务必须是单个 APK");
+                }
+                RemoteRelayTask.ObjectInfo object = task.objects.get(0);
+                if (!transferDirectory.isDirectory() && !transferDirectory.mkdirs()
+                        && !transferDirectory.isDirectory()) {
+                    throw new IOException("无法创建远程更新缓存");
+                }
+                File target = new File(transferDirectory, object.index + ".apk");
+                RemoteRelayClient.downloadObject(session, task.transferId, object.index, target,
+                        object.bytes, object.sha256);
+                stageIncomingUpdatePackage(target);
+                long stagedBytes = target.length();
+                markRemoteImported(task.transferId);
+                RemoteRelayClient.ack(session, task.transferId);
+                remoteInboxTasks.remove(task.transferId);
+                deleteRecursively(transferDirectory);
+                DiagnosticLog.write(this, "remote_update_completed",
+                        "transferId=" + task.transferId + " bytes=" + stagedBytes);
+                notifyStatus("远程更新包已校验，等待系统安装");
+                return;
+            }
             int imported = 0;
             int delivered = 0;
             if (!transferDirectory.isDirectory() && !transferDirectory.mkdirs()
@@ -884,15 +919,19 @@ public final class OnlineService extends Service {
     }
 
     private int stageIncomingUpdatePackage(ReceivedFile source) throws Exception {
-        String version = UpdatePackageValidator.archiveVersionName(this, source.file);
-        UpdatePackageValidator.validate(this, source.file, version);
+        return stageIncomingUpdatePackage(source.file);
+    }
+
+    private int stageIncomingUpdatePackage(File source) throws Exception {
+        String version = UpdatePackageValidator.archiveVersionName(this, source);
+        UpdatePackageValidator.validate(this, source, version);
         File root = new File(getFilesDir(), "updates");
         if (!root.isDirectory() && !root.mkdirs()) throw new HttpError(500, "无法创建更新缓存目录");
         String fileName = UpdateChecker.updateFileName(version);
         File target = new File(root, fileName);
         File temp = new File(root, fileName + ".incoming");
         if (temp.isFile() && !temp.delete()) throw new HttpError(500, "无法清理未完成的更新包");
-        try (InputStream input = new BufferedInputStream(new FileInputStream(source.file));
+        try (InputStream input = new BufferedInputStream(new FileInputStream(source));
              FileOutputStream raw = new FileOutputStream(temp);
              BufferedOutputStream output = new BufferedOutputStream(raw)) {
             byte[] buffer = new byte[128 * 1024];

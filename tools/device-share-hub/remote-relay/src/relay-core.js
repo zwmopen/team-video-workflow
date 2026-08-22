@@ -426,11 +426,15 @@ export class WorkspaceRelayCore {
     const body = await readJson(request);
     const recipientDeviceId = body?.recipientDeviceId;
     const protocol = body?.protocol || "webrtc-datachannel-v1";
+    const contentKind = body?.contentKind || "work";
     if (!validId(recipientDeviceId) || recipientDeviceId === session.deviceId) {
       return problem(400, "invalid_peer", "直连目标设备无效");
     }
     if (protocol !== "webrtc-datachannel-v1") {
       return problem(400, "unsupported_p2p_protocol", "直连协议版本不受支持");
+    }
+    if (!["work", "android-update"].includes(contentKind)) {
+      return problem(400, "invalid_content_kind", "直连内容类型无效");
     }
     const recipient = await this.getStored(`member:${recipientDeviceId}`);
     if (!recipient || recipient.revokedAt || recipient.channels?.remote === false) {
@@ -447,6 +451,9 @@ export class WorkspaceRelayCore {
           !["uploading", "ready"].includes(transfer.status)) {
         return problem(409, "transfer_unavailable", "直连任务不存在或已停止");
       }
+      if ((transfer.contentKind || "work") !== contentKind) {
+        return problem(409, "content_kind_mismatch", "直连内容类型与任务不一致");
+      }
     }
     const now = Date.now();
     const p2p = {
@@ -456,6 +463,7 @@ export class WorkspaceRelayCore {
       initiatorDeviceId: session.deviceId,
       responderDeviceId: recipientDeviceId,
       transferId,
+      contentKind,
       protocol,
       state: "offer-pending",
       signals: [],
@@ -469,6 +477,7 @@ export class WorkspaceRelayCore {
       sessionId: p2p.sessionId,
       initiatorDeviceId: p2p.initiatorDeviceId,
       transferId,
+      contentKind,
       protocol,
       expiresAt: p2p.expiresAt,
     });
@@ -559,7 +568,8 @@ export class WorkspaceRelayCore {
       workspaceId: p2p.workspaceId,
       initiatorDeviceId: p2p.initiatorDeviceId,
       responderDeviceId: p2p.responderDeviceId,
-      transferId: p2p.transferId,
+    transferId: p2p.transferId,
+      contentKind: p2p.contentKind || "work",
       protocol: p2p.protocol,
       state: p2p.state,
       createdAt: p2p.createdAt,
@@ -643,9 +653,19 @@ export class WorkspaceRelayCore {
       return problem(409, "recipient_unavailable", "接收设备未登记、已撤销或关闭了远程传送");
     }
     const mode = body?.mode === "plain" ? "plain" : "encrypted";
+    const contentKind = body?.contentKind || "work";
+    if (!["work", "android-update"].includes(contentKind)) {
+      return problem(400, "invalid_content_kind", "传送内容类型无效");
+    }
     const objects = normalizeObjects(body?.objects, mode);
     if (!objects) {
       return problem(400, "invalid_objects", "文件清单无效或超过远程传送限制");
+    }
+    if (contentKind === "android-update" && (
+      mode !== "plain" || objects.length !== 1 ||
+      !String(objects[0].name || "").toLowerCase().endsWith(".apk")
+    )) {
+      return problem(400, "invalid_update_payload", "安卓更新必须是单个公开 APK 文件");
     }
     if (mode === "encrypted" && (
       !body?.encryptedKeyPackage ||
@@ -665,6 +685,7 @@ export class WorkspaceRelayCore {
       senderDeviceId: session.deviceId,
       recipientDeviceId: recipient.certificate.deviceId,
       mode,
+      contentKind,
       encryptedKeyPackage: mode === "encrypted" ? body.encryptedKeyPackage : null,
       objects,
       totalBytes: objects.reduce((sum, item) => sum + objectBytes(item), 0),

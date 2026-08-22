@@ -1,5 +1,11 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 远程更新包闭环候选
+
+- 候选版本：Android 0.6.52/versionCode 90、iPhone 0.6.39/build 58、Windows V4.3.28；APK 更新包已区分 android-update，安卓只有校验并写入更新缓存后才 ACK。
+- Beta Windows 自动移动端更新索引改为 latest-beta.json；APK 自动更新跳过当前仅复制文件的 USB 分支，走同 Wi-Fi、P2P 或 HTTPS 中继。
+- 云端构建、发布索引和真实手机安装/P2P/中继/自动补发仍待本轮流水线及现场设备验收。
+
 ## 2026-08-23 Windows 原生 P2P 数据面验收候选
 
 - 候选版本：Android 0.6.51/versionCode 89、iPhone 0.6.38/build 57、Windows V4.3.27；提交 `95e8e3f` 后的云端 run `32601626368` 已通过 Android、iOS、Windows 原生 CTest、remote-relay check 和线上 Worker E2E。

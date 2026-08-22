@@ -69,13 +69,15 @@ std::string JsonField(const std::string& json, const std::string& key) {
 std::string Manifest(const std::string& transferId,
                      const std::string& senderDeviceId,
                      const std::string& recipientDeviceId,
+                     const std::string& contentKind,
                      const std::vector<FileItem>& files) {
     uint64_t total = 0;
     std::ostringstream output;
     output << "{\"v\":1,\"kind\":\"manifest\",\"transferId\":"
            << JsonString(transferId) << ",\"senderDeviceId\":"
            << JsonString(senderDeviceId) << ",\"recipientDeviceId\":"
-           << JsonString(recipientDeviceId) << ",\"objects\":[";
+           << JsonString(recipientDeviceId) << ",\"contentKind\":"
+           << JsonString(contentKind) << ",\"objects\":[";
     for (size_t i = 0; i < files.size(); ++i) {
         const auto& file = files[i];
         if (i) output << ',';
@@ -124,6 +126,7 @@ void ApplySignal(const std::shared_ptr<rtc::PeerConnection>& peer, const Signal&
 bool Send(const std::string& transferId,
           const std::string& senderDeviceId,
           const std::string& recipientDeviceId,
+          const std::string& contentKind,
           const std::vector<FileItem>& files,
           const SendSignal& sendSignal,
           const PollSignals& pollSignals,
@@ -222,7 +225,7 @@ bool Send(const std::string& transferId,
             std::lock_guard<std::mutex> lock(mutex);
             if (!opened) throw std::runtime_error(failureReason.empty() ? "P2P 建连超时" : failureReason);
         }
-        channel->send(Manifest(transferId, senderDeviceId, recipientDeviceId, files));
+        channel->send(Manifest(transferId, senderDeviceId, recipientDeviceId, contentKind, files));
         uintmax_t sentTotal = 0;
         uintmax_t totalBytes = 0;
         for (const auto& file : files) totalBytes += file.bytes;

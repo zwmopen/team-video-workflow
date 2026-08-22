@@ -16,6 +16,7 @@ final class RemoteRelayTask {
     final String recipientDeviceId;
     final String status;
     final String mode;
+    final String contentKind;
     final int objectCount;
     final long totalBytes;
     final java.util.List<ObjectInfo> objects;
@@ -25,13 +26,15 @@ final class RemoteRelayTask {
 
     private RemoteRelayTask(String transferId, String senderDeviceId,
                             String recipientDeviceId, String status,
-                            String mode, java.util.List<ObjectInfo> objects,
+                            String mode, String contentKind,
+                            java.util.List<ObjectInfo> objects,
                             long totalBytes, long expiresAt) {
         this.transferId = transferId;
         this.senderDeviceId = senderDeviceId;
         this.recipientDeviceId = recipientDeviceId;
         this.status = status;
         this.mode = mode;
+        this.contentKind = contentKind;
         this.objects = java.util.Collections.unmodifiableList(objects);
         this.objectCount = objects.size();
         this.totalBytes = totalBytes;
@@ -53,6 +56,10 @@ final class RemoteRelayTask {
         String mode = object.optString("mode", "encrypted").trim();
         if (!"plain".equals(mode) && !"encrypted".equals(mode)) {
             throw new IOException("远程任务传输模式无效");
+        }
+        String contentKind = object.optString("contentKind", "work").trim();
+        if (!"work".equals(contentKind) && !"android-update".equals(contentKind)) {
+            throw new IOException("远程任务内容类型无效");
         }
         long expiresAt = object.optLong("expiresAt", 0L);
         if (expiresAt <= 0L) throw new IOException("远程任务有效期无效");
@@ -92,8 +99,13 @@ final class RemoteRelayTask {
                 ? object.optLong("totalBytes", totalBytes)
                 : object.optLong("totalCipherBytes", totalBytes);
         if (declaredBytes != totalBytes) throw new IOException("远程任务总大小不一致");
+        if ("android-update".equals(contentKind)
+                && (!"plain".equals(mode) || parsedObjects.size() != 1
+                || !parsedObjects.get(0).name.toLowerCase(java.util.Locale.US).endsWith(".apk"))) {
+            throw new IOException("安卓更新任务必须是单个 APK");
+        }
         return new RemoteRelayTask(transferId, senderDeviceId, recipientDeviceId,
-                status, mode, parsedObjects, totalBytes, expiresAt);
+                status, mode, contentKind, parsedObjects, totalBytes, expiresAt);
     }
 
     boolean expired(long nowMs) {
