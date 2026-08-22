@@ -1,5 +1,12 @@
 # 变更记录
 
+## Beta：Windows V4.3.25 / Android 0.6.49 / iPhone 0.6.36 - P2P 信令会话清理修复（已发布）
+
+- 修复 Android/iPhone P2P 传输完成、失败或取消后只关闭 WebRTC PeerConnection、未释放 Cloudflare 信令会话的问题；现在会关闭信令会话，避免下一轮在线轮询重复接收旧会话并重新协商。
+- 三端版本同步为 Android 0.6.49/versionCode 87、iPhone 0.6.36/build 55、Windows V4.3.25；Device Share Hub run `32594831524` 的 Android、iOS、Windows、remote-relay check 和线上 Worker E2E 全部通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.49-beta.1>；Android SHA-256：`06fdbfa2ce1a55eccd00b958fe1723fbab4c798c74d39b3d0c7cd30959e0b515`；iPhone IPA SHA-256：`4687f0fa1163c428e06610ce10fc8edcb367530274288f6c9467b7f76e24edca`；Windows SHA-256：`50c3693612ccdf256d52f04b23bf9ae71a5aa3207b402e083128199a8e3724f0`。
+- Beta `latest-beta.json` 与 AltStore Beta 源已同步并以 Raw URL 复核；稳定 `latest.json` 保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。三端包已同步到 `C:\Users\z\Desktop`，桌面中控当前运行 V4.3.25、TCP 45833/UDP 45834。真实手机 USB/Wi-Fi/P2P/HTTPS、落库、ACK 和自动补货仍待现场设备验收。
+
 ## Beta：Windows V4.3.24 / Android 0.6.48 / iPhone 0.6.35 - iOS P2P ICE 与版本元数据修复（已发布）
 
 - 修复 iOS P2P 信令轮询与 WebRTC 回调并发读写 ICE 候选队列的竞态；新增 P2P ICE、ACK 延迟刷新、会话回收、HTTPS 回退和库写入顺序静态门禁。
