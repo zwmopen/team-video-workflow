@@ -52,6 +52,7 @@ final class P2PTransferEngine {
     interface SignalTransport {
         JSONObject snapshot() throws Exception;
         void send(String type, JSONObject data) throws Exception;
+        void close() throws Exception;
     }
 
     interface Listener {
@@ -372,6 +373,7 @@ final class P2PTransferEngine {
             try { channel.send(new DataChannel.Buffer(ByteBuffer.wrap(
                     "{\"v\":1,\"kind\":\"ack\",\"ok\":false}".getBytes(StandardCharsets.UTF_8)), false)); } catch (Exception ignored) { }
         }
+        try { transport.close(); } catch (Exception ignored) { }
         if (listener != null) listener.onFailed(message == null || message.isEmpty() ? "P2P 传输失败" : message);
         shutdown(true);
     }

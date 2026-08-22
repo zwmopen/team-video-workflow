@@ -897,6 +897,14 @@ private final class P2PSignalTransport: P2PTransferEngine.SignalTransport {
         try RemoteRelayClient.sendP2PSignal(session, sessionId: sessionId,
                                             type: type, data: data)
     }
+
+    func close() {
+        let session = self.session
+        let sessionId = self.sessionId
+        DispatchQueue.global(qos: .utility).async {
+            try? RemoteRelayClient.closeP2PSession(session, sessionId: sessionId)
+        }
+    }
 }
 
 enum TransferServiceError: LocalizedError {

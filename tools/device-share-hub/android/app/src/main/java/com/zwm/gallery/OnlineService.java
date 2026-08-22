@@ -265,6 +265,12 @@ public final class OnlineService extends Service {
                 @Override public void send(String type, JSONObject data) throws Exception {
                     RemoteRelayClient.sendP2PSignal(session, id, type, data);
                 }
+                @Override public void close() {
+                    requestExecutor.execute(() -> {
+                        try { RemoteRelayClient.closeP2PSession(session, id); }
+                        catch (Exception ignored) { }
+                    });
+                }
             };
             P2PTransferEngine engine = P2PTransferEngine.accept(this, p2p, transport,
                     new P2PTransferEngine.Listener() {

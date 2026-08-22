@@ -34,6 +34,7 @@ final class P2PTransferEngine: NSObject {
     protocol SignalTransport: AnyObject {
         func snapshot() throws -> [String: Any]
         func send(type: String, data: [String: Any]) throws
+        func close() throws
     }
 
     protocol Delegate: AnyObject {
@@ -273,6 +274,7 @@ final class P2PTransferEngine: NSObject {
     private func fail(_ message: String) {
         guard !finished else { return }
         finished = true
+        try? transport.close()
         delegate?.p2pEngine(self, didFail: message)
         shutdown(removeFiles: true)
     }

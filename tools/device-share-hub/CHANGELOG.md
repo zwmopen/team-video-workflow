@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta 候选：Windows V4.3.10 / Android 0.6.37 / iPhone 0.6.24 - 2026-08-22
+
+- 修复 Android/iOS P2P 接收端失败后只清本地引擎、没有立即关闭 Cloudflare 信令会话的问题；现在失败会异步关闭控制面会话，不阻塞 WebRTC 失败回调，避免等 2 分钟 TTL 才回收并让 HTTPS 回退更干净。
+- 版本号已提升为 Windows `4.3.10`、Android `versionCode=75` / `versionName=0.6.37`、iPhone `0.6.24/build 43`。
+- 本候选尚未生成新的安装包；上一版可安装 Beta 仍是 Windows `4.3.9` / Android `0.6.36` / iPhone `0.6.23`，待 GitHub Actions 恢复可达后重新云构建。
+
 ## Beta：Windows V4.3.9 / Android 0.6.36 / iPhone 0.6.23 - 2026-08-22
 
 - 修复 P2P 成功 ACK 刚写入发送队列就关闭 DataChannel 的尾部竞态；移动端等待短暂刷新窗口后再关闭，避免电脑误判失败并重复走 HTTPS 中继。

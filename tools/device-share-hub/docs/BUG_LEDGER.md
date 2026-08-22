@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-049 移动端 P2P 失败未及时关闭信令会话（Android 0.6.37 / iPhone 0.6.24）
+
+- 现象：Android/iOS P2P 接收失败时会清理本地引擎，但 Cloudflare 控制面会话仍保持开放，直到 2 分钟 TTL 才回收；发送端虽然会回退 HTTPS，中间会留下脏会话。
+- 根因：移动端 `SignalTransport` 只有快照和发信令接口，失败回调没有 `/close` 动作；同步关闭还可能阻塞 WebRTC 失败处理线程。
+- 修复：Android/iOS 为 `SignalTransport` 增加异步 `close`；P2P 失败路径立即排队关闭对应会话，保留本地清理和 HTTPS 回退，不阻塞失败回调。
+- 证据：本地 `git diff --check` 通过；Android/iOS/Windows 云端编译与实体手机业务回归待同一提交重新构建后补齐。
+- 回归要求：
+  1. Android/iOS 在 manifest、数据帧、校验或作品库写入失败后，控制面会话进入 `closed`，不能只等 TTL。
+  2. 关闭请求不得阻塞 WebRTC 失败回调；HTTPS 回退仍只创建一个任务。
+  3. 成功 ACK、局域网/USB 传送和正常慢速 P2P 不受影响。
+
 ## DSH-048 P2P 异常回退留下开放信令会话（Windows 4.3.9）
 
 - 现象：Windows 已创建 P2P 会话后，如果文件校验、信令或 DataChannel 发送路径抛出异常，外层回退逻辑会继续创建 HTTPS 中继任务，但原 P2P 会话只能等 2 分钟 TTL 才清理。
