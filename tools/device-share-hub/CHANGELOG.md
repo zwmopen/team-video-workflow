@@ -1,11 +1,13 @@
 # 变更记录
 
-## Beta：Windows V4.3.23 / Android 0.6.46 / iPhone 0.6.33 - 混合通道状态合并修复（云端构建中）
+## Beta：Windows V4.3.23 / Android 0.6.46 / iPhone 0.6.33 - 混合通道状态合并修复（已发布）
 
 - 修复同一台手机同时被局域网探测和 Cloudflare 中继发现时，局域网记录会覆盖远程在线状态、凭证和库存的问题。
 - 为 Wi‑Fi 路由保存独立的最近观察时间；远程心跳不再把旧 IP 伪装成当前 Wi‑Fi 路由，远程设备会正确进入 P2P 优先、HTTPS 中继兜底路径。
 - 发送前只把 35 秒内真实观察到的 Wi‑Fi 当作直连；旧地址失效时不再卡在错误 Wi‑Fi 路径。新增源码回归门禁，并同步更新 Windows 网络 User-Agent。
-- Android/iPhone 继续使用已验证的 0.6.46/0.6.33 包；需以云端构建、Beta3 发布和真实手机传输验收为最终证据。
+- Device Share Hub run `32589239907` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.3>。
+- Windows SHA-256：`3a560cb55968173324b80c545ab7315e79f8625e3e1227dc339972ba70ff7b51`；Android SHA-256：`4278644080854a55380f4ad5c160935270fd7d04d316f925cccb58168745b955`；iPhone IPA SHA-256：`3d011d2331b70b6a3f023f1045814a41253202c71c0df36cac24012bd9efc5ba`。
+- 三端包已同步到 `C:\Users\z\Desktop`；稳定 `latest.json` 和 AltStore Beta 源不切换，真实手机 USB/Wi-Fi/P2P/HTTPS、落库、ACK 和自动补货仍待连接验收。
 
 ## Beta：Windows V4.3.22 / Android 0.6.46 / iPhone 0.6.33 - 远程库存合并边界修复（已发布）
 

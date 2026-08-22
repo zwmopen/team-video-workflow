@@ -1,13 +1,15 @@
 # 文件收发中控 V4.3.23 / Android 0.6.46 / iPhone 0.6.33（Beta）
 
-> Beta `v0.6.46-beta.3` 正在云端构建。本轮修复局域网探测覆盖远程状态、旧 Wi‑Fi 地址阻断远程回退的边界问题。
+> Beta `v0.6.46-beta.3` 已发布。本轮修复局域网探测覆盖远程状态、旧 Wi‑Fi 地址阻断远程回退的边界问题。
 
 ## 本轮开发：混合通道状态合并
 
 - Windows 为 Wi‑Fi 观察单独保存时间戳；远程中继心跳不会把旧 IP 误判为当前局域网直连。
 - UDP/主动探测与远程中继记录采用合并策略，保留远程凭证、在线状态和完整库存；同一台手机不会在两种发现来源之间丢失通道。
 - 发送时优先 USB，其次仅使用仍在 35 秒内被局域网观察到的 Wi‑Fi；Wi‑Fi 地址失效时可以继续进入 P2P/HTTPS 远程路径。
-- Windows 网络 User-Agent 与 V4.3.23 对齐；Android/iPhone 包沿用已验证的 0.6.46/0.6.33，本轮不改变手机权限和数据格式。
+- Windows 网络 User-Agent 与 V4.3.23 对齐；Android/iPhone 包重新完成云端 Release 构建，本轮不改变手机权限和数据格式。
+- 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.3>；本轮云端 run `32589239907` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过。
+- 桌面包：`C:\Users\z\Desktop\album-Android-v0.6.46.apk`、`C:\Users\z\Desktop\album-iOS-v0.6.33-altstore.ipa`、`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.23-relay-beta.exe`。
 
 ## 本轮开发：远程库存心跳
 

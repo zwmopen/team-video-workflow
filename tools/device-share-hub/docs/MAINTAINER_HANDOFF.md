@@ -1,10 +1,11 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-23 混合通道状态合并修复（Beta3 云端构建中）
+## 2026-08-23 混合通道状态合并修复（Beta3 已发布）
 
 - Windows 源码目标版本提升为 V4.3.23；Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52 保持不变。
 - 新增独立 Wi‑Fi 最近观察时间，并合并局域网探测与远程中继设备记录，避免旧 IP 遮蔽远程 P2P/HTTPS 回退，也避免远程凭证和库存被 LAN 探测清掉。
-- 待完成：云端三端构建、Windows Beta3 桌面包同步和真机 USB/Wi‑Fi/P2P/HTTPS/ACK/自动补货验收；稳定更新索引不改。
+- run `32589239907` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta `v0.6.46-beta.3` 已发布，桌面包已同步到 `C:\Users\z\Desktop`，稳定更新索引不改。
+- 待完成：真机 USB/Wi‑Fi/P2P/HTTPS/ACK/自动补货验收；当前桌面端已重启到 V4.3.23，但日志仍需手机在线后取得设备证据。
 
 ## 2026-08-23 远程库存合并边界修复（Beta 0.6.46-beta.2 已发布）
 
