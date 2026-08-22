@@ -2,7 +2,7 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
-## DSH-056 P2P ACK 丢失后的中继回退重复入库（Android 0.6.43 / iPhone 0.6.30）
+## DSH-056 P2P ACK 丢失后的中继回退重复入库（Android 0.6.44 / iPhone 0.6.31）
 
 - 现象：P2P 已经把作品写入手机作品库，但 ACK 在回电脑途中丢失时，Windows 会按设计切换到 HTTPS 中继；Android 原来的中继收件路径没有先检查持久化的 `remoteImportedTransfers`，会再次下载并写入同一批作品。
 - 根因：Android 只有 P2P 导入路径检查 `wasRemoteImported`，普通中继路径只在导入后写入标记，没有把“已导入、只补 ACK”作为重试分支。

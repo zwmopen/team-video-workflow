@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.17 / Android 0.6.44 / iPhone 0.6.31 - 2026-08-22
+
+- 修复 P2P 已写入作品库但 ACK 丢失后，Windows 回退 HTTPS 中继造成 Android 重复入库的问题；已导入的 transfer 现在只补发 ACK，不会再次下载或创建作品。
+- Android 成功 ACK 后清除远程收件占位并清理重试缓存；iOS 重复 P2P 完成路径释放活动引擎。
+- 版本递增为 Windows 4.3.17、Android versionCode 82 / versionName 0.6.44、iPhone 0.6.31/build 50；本轮云构建、Beta 资产和 AltStore 源待完成后补录。
+
 ## Beta：Windows V4.3.16 / Android 0.6.43 / iPhone 0.6.30 - 2026-08-22
 
 - 修复 Windows 远程中继任务在上传/提交失败后没有立即取消的问题；失败时清理 R2 临时对象和收件箱任务，避免孤立任务等待 TTL。

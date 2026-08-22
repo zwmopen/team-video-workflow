@@ -1,5 +1,10 @@
 # iOS 变更记录
 
+## 0.6.31 - 2026-08-22
+
+- 与 Android 0.6.44、Windows 4.3.17 同步发布；重复 P2P 完成路径现在释放活动引擎，继续保持写入作品库后 ACK、HTTPS 中继兜底和 transferId 去重。
+- 版本升级为 0.6.31/build 50；本轮云构建、Beta 发布页和 AltStore Beta 源待完成后补录。
+
 ## 0.6.30 - 2026-08-22
 
 - 与 Android 0.6.43、Windows 4.3.16 同步发布；iOS 保持 P2P 优先、HTTPS 中继兜底、写入作品库后 ACK 的收件语义。

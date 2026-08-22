@@ -1,6 +1,6 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.6.30 / build 49（Beta）
+版本：0.6.31 / build 50（Beta）
 
 状态：Beta 测试版本；云端构建已通过，当前轮次真机记录见维护交接
 
