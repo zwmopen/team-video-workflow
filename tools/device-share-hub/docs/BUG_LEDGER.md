@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-055 Windows 中继失败后遗留未完成任务（Windows 4.3.16）
+
+- 现象：Windows 已创建远程中继任务后，如果上传、提交、进度读取或本地文件哈希阶段失败，原实现直接返回失败，R2 临时对象和收件箱任务要等 TTL 才清理；同一个失败 `transferId` 也可能继续干扰后续重试。
+- 根因：`SendPlainTransfer` 的异常路径没有统一回收已创建的 transfer；正常提交失败与本地异常没有共享取消闭包。
+- 修复：记录当前活动 `transferId`，所有上传/提交/进度/哈希异常先 best-effort 调用 `/cancel`，随后清空输出 ID；`RelayHttp` 构造异常也保持在捕获范围内，避免把失败任务留在云端。
+- 证据：Device Share Hub run `32571763937` 的 Windows、Android、iOS、remote-relay 和正式 Worker E2E 全部通过；Beta `v0.6.43-beta.1` 已发布。真实设备断网/中断回归仍待现场执行。
+- 回归要求：
+  1. 任务创建后任一上传、提交、进度或哈希失败都发送一次取消，并清理 R2/收件箱状态。
+  2. 失败返回不保留可误用的 `transferId`，下一次重试可以创建独立任务。
+  3. 正常 P2P 成功、P2P 回退 HTTPS、局域网/USB 传送和成功 ACK 不受取消清理影响。
+
 ## DSH-054 Android P2P ICE 候选在 SDP 回调竞态中丢失（Android 0.6.42）
 
 - 现象：信令轮询收到 ICE 候选时，如果远端 Description 成功回调正在排空待处理队列，候选可能在排空之后才写入旧队列；该候选不再被提交给 PeerConnection，直连可能失败并回退 HTTPS 中继。
