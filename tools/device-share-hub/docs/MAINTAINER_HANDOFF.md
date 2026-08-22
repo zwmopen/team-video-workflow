@@ -1,5 +1,13 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 P2P 信令会话清理修复（Beta 0.6.49 已发布）
+
+- 当前发布版本：Android 0.6.49/versionCode 87、iPhone 0.6.36/build 55、Windows V4.3.25；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.49-beta.1>。
+- 根因与修复：移动端 P2P 完成 ACK 后此前只关闭 WebRTC PeerConnection，Cloudflare 信令会话仍可能留存；Android/iOS 现在在统一 shutdown 中调用 `transport.close()`，成功、失败、取消都释放信令会话。
+- Device Share Hub run `32594831524` 的 Android、iOS、Windows、remote-relay check 和线上 Worker E2E 全部成功；Beta `latest-beta.json`/AltStore Beta 源已复核到 0.6.49/0.6.36，稳定索引仍为 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.49.apk`、`album-iOS-v0.6.36-altstore.ipa`、`device-share-hub-Windows-V4.3.25-relay-beta.exe`；桌面中控当前为该 V4.3.25 路径，PID 14728，TCP 45833、UDP 45834 均由它监听。
+- 仍未完成的证据：没有连接实体 Android/iPhone；USB、同 Wi-Fi、跨网 P2P DataChannel、P2P 失败后 HTTPS 回退、手机作品库落库/ACK、精准低于 5 自动补货和手机点击更新仍需现场设备验收。不能用云端 E2E 代替这些证据。
+
 ## 2026-08-23 iOS P2P ICE 修复与 Beta 0.6.48 发布
 
 - Android 0.6.48/versionCode 86、iPhone 0.6.35/build 54、Windows V4.3.24；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.48-beta.1>。
