@@ -45,6 +45,7 @@ final class P2PTransferEngine {
     private static final int CHUNK_HEADER = 20;
     private static final int MAX_CHUNK = 48 * 1024;
     private static final long MAX_BYTES = 20L * 1024L * 1024L * 1024L;
+    private static final long CONNECT_TIMEOUT_MS = 20_000L;
     private static final long ACK_FLUSH_DELAY_MS = 500L;
     private static final Object FACTORY_LOCK = new Object();
     private static PeerConnectionFactory factory;
@@ -157,6 +158,11 @@ final class P2PTransferEngine {
             peer = factory(context).createPeerConnection(configuration, new Observer());
             if (peer == null) throw new IOException("无法创建 P2P 连接");
             executor.scheduleWithFixedDelay(this::pollSignals, 0, 100, TimeUnit.MILLISECONDS);
+            executor.schedule(() -> {
+                if (finished || channel == null || channel.state() != DataChannel.State.OPEN) {
+                    if (!finished) fail("P2P 建连超时");
+                }
+            }, CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (Exception error) {
             fail(error.getMessage());
         }
@@ -245,10 +251,25 @@ final class P2PTransferEngine {
                 if (channel.state() == DataChannel.State.CLOSED && !finished) fail("P2P 数据通道已关闭");
             }
             @Override public void onMessage(DataChannel.Buffer buffer) {
+                // WebRTC owns the callback buffer and the callback thread. Copy
+                // first, then do file I/O and SHA-256 work on our serial queue;
+                // otherwise a large P2P object can stall ICE/DataChannel events.
+                ByteBuffer source = buffer.data.slice();
+                byte[] payload = new byte[source.remaining()];
+                source.get(payload);
+                boolean binary = buffer.binary;
                 try {
-                    if (buffer.binary) handleBinary(buffer.data);
-                    else handleText(readBuffer(buffer.data));
-                } catch (Exception error) { fail(error.getMessage()); }
+                    executor.execute(() -> {
+                        if (finished) return;
+                        try {
+                            ByteBuffer copy = ByteBuffer.wrap(payload);
+                            if (binary) handleBinary(copy);
+                            else handleText(readBuffer(copy));
+                        } catch (Exception error) { fail(error.getMessage()); }
+                    });
+                } catch (RuntimeException ignored) {
+                    if (!finished) fail("P2P 数据处理队列已停止");
+                }
             }
         });
     }

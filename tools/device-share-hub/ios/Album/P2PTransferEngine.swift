@@ -13,6 +13,7 @@ final class P2PTransferEngine: NSObject {
     private static let label = "album-transfer-v1"
     private static let maxChunk = 48 * 1024
     private static let maxBytes: Int64 = 20 * 1024 * 1024 * 1024
+    private static let connectTimeout: DispatchTimeInterval = .seconds(20)
     private static let ackFlushDelay: DispatchTimeInterval = .milliseconds(500)
 
     struct ObjectInfo {
@@ -100,6 +101,11 @@ final class P2PTransferEngine: NSObject {
         timer?.schedule(deadline: .now(), repeating: .milliseconds(100), leeway: .milliseconds(20))
         timer?.setEventHandler { [weak self] in self?.pollSignals() }
         timer?.resume()
+        queue.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self] in
+            guard let self = self, !self.finished,
+                  self.dataChannel?.readyState != .open else { return }
+            self.fail("P2P 建连超时")
+        }
     }
 
     private func pollSignals() {
