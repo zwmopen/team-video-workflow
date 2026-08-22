@@ -1,5 +1,11 @@
 # iOS 变更记录
 
+## 0.6.26 - 2026-08-22
+
+- 与 Android 0.6.39、Windows 4.3.12 同步发布；iOS 原有 P2P 收件端的 20 秒建连超时、失败会话关闭和 HTTPS 中继回退保持不变。
+- 版本升级为 0.6.26/build 45；GitHub Actions run `32558264352` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>。
+- IPA SHA-256 为 `189cd17b4904dd97b8fa750559fcb6eeabb018a3274c1367967c2534339b8506`；实体 iPhone 跨网验收仍待完成。
+
 ## 0.6.25 - 2026-08-22
 
 - P2P 接收端增加 20 秒建连超时；发送端没有建立 DataChannel 时及时结束本次直连，让 Windows 自动回退 HTTPS 中继。

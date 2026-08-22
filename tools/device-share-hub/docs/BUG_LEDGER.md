@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-051 Android P2P 启动失败会残留活动引擎（Android 0.6.39）
+
+- 现象：Android 创建 P2P PeerConnection 失败时，`accept()` 仍返回已经结束的引擎，`OnlineService` 将它放进 `p2pEngines`；同一会话后续轮询会被“已存在”条件跳过，无法重试。
+- 根因：Android `accept()` 与 iOS 已有的“启动后若 finished 则返回 nil”保护不一致；取消路径也可能在执行队列已关闭后再次提交任务。
+- 修复：Android `accept()` 在启动同步失败时返回 `null`，调用方不缓存空引擎；取消提交增加已关闭队列保护，失败会话由下一轮收件轮询重新接管。
+- 证据：GitHub Actions run `32558264352` 的 Android、iOS、Windows、remote-relay 全部通过；安全扫描 run `32558264343`、质量检查 run `32558264394` 通过；Beta 发布页为 `v0.6.39-beta.1`。实体手机业务回归仍未完成。
+- 回归要求：
+  1. 模拟 PeerConnection 创建失败时，Android 不把已结束引擎放入 `p2pEngines`，下一次轮询可以再次尝试同一会话。
+  2. 停止接收服务、P2P 失败和 ACK 后延迟关闭都不得因重复 `cancel` 抛异常。
+  3. 正常 P2P、20 秒建连超时、HTTPS 中继回退、局域网/USB 传送和重复 `transferId` 去重保持不变。
+
 ## DSH-050 移动端 P2P 收件建连等待无界与 WebRTC 回调阻塞（Android 0.6.38 / iPhone 0.6.25）
 
 - 现象：发送端创建会话后没有真正建立 DataChannel 时，Android/iOS 收件端可能长期等待；Android 直接在 WebRTC 数据回调里执行文件写入和 SHA-256 校验，大文件可能阻塞回调线程。

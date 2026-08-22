@@ -1,4 +1,4 @@
-# 文件收发中控 V4.3.11 / Android 0.6.38 / iPhone 0.6.25（Beta）
+# 文件收发中控 V4.3.12 / Android 0.6.39 / iPhone 0.6.26（Beta）
 
 ## 当前 Beta 测试包
 
@@ -6,11 +6,12 @@
 
 本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱和 P2P 会话，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务。P2P 文件会先写入缓存，完成 SHA-256 校验并写入作品库后才 ACK；Cloudflare 只转发 SDP/ICE，不保存 P2P 文件字节。本阶段不做应用层端到端加密，也没有实体跨网设备验收，因此 Beta 不能替代真机验收。
 
-## 0.6.38 / 0.6.25 / V4.3.11 本轮修复
+## 0.6.39 / 0.6.26 / V4.3.12 本轮修复
 
 - Android/iOS P2P 收件端建连超过 20 秒会主动失败，Windows 随后自动切 HTTPS 中继；不会把“信令建立但没有文件”记作成功。
 - Android WebRTC 回调只负责复制数据帧，文件写入和 SHA-256 校验交给串行队列，避免大文件阻塞 WebRTC 回调线程。
-- 本次 Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.38-beta.1>；iPhone Beta 源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
+- Android P2P 引擎启动瞬间失败时不会再被缓存为处理中；取消已结束引擎也不会抛出清理异常，下一轮可以继续重试。
+- 本次 Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>；iPhone Beta 源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
 - 云端构建通过不等于实体设备业务通过；需要 Android、iPhone、Windows 实机各安装后再验收同 Wi-Fi、跨网络 P2P 和中继回退。
 
 ## 历史：手机端 0.6.27 / 0.6.14 分类口径、平台按钮状态与隐私边界

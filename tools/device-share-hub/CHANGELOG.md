@@ -1,5 +1,15 @@
 # 变更记录
 
+## Beta：Windows V4.3.12 / Android 0.6.39 / iPhone 0.6.26 - 2026-08-22
+
+- 修复 Android P2P 引擎在 PeerConnection 创建瞬间失败后仍被放进活动 map 的问题；现在启动即失败会被丢弃，下一轮收件轮询可以正常重试，不会卡成“已处理中”。
+- Android 取消已结束的 P2P 引擎时安全忽略重复清理，不再因为已关闭的执行队列抛出异常；iOS 原有的启动失败保护保持一致。
+- 版本号已提升为 Windows `4.3.12`、Android `versionCode=77` / `versionName=0.6.39`、iPhone `0.6.26/build 45`。
+- GitHub Actions run `32558264352` 已完成 Android、iOS、Windows 和 remote-relay 检查；安全扫描 run `32558264343`、质量检查 run `32558264394` 通过。Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>。
+- Android SHA-256：`ff6153918f9c8ac7793e9ce7a0c1284ed20e63243a94c8780d106a41e0bd3f23`；iPhone IPA SHA-256：`189cd17b4904dd97b8fa750559fcb6eeabb018a3274c1367967c2534339b8506`；Windows SHA-256：`ea87a27b79198e091a09e927c0a3369bc919bfd3846ac38210bd284a4d28bb13`。
+- 桌面包已同步到 `C:\Users\z\Desktop`；Beta iOS 更新源已更新为 0.6.26/build 45。稳定 `latest.json` 保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，没有把 Beta 推入稳定通道。
+- 真实 Android/iPhone/Windows 设备互传验收仍待连接设备，不把云构建、协议测试或 Release 发布当作真机业务通过。
+
 ## Beta：Windows V4.3.11 / Android 0.6.38 / iPhone 0.6.25 - 2026-08-22
 
 - 修复 Android/iOS P2P 收件端在发送端没有建立 DataChannel 时可能长期等待的问题；现在建连超过 20 秒会主动失败并进入 HTTPS 中继回退。
