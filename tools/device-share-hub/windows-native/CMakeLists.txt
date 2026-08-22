@@ -37,6 +37,8 @@ endif()
 if(MSVC)
   set_property(TARGET DeviceShareHub PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set_property(TARGET p2p_transport_tests PROPERTY
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   target_compile_options(DeviceShareHub PRIVATE /W4 /permissive- /utf-8 /EHsc)
   target_compile_options(send_to_integration_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
   target_compile_options(p2p_transport_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
