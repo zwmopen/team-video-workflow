@@ -91,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.23";
+constexpr wchar_t APP_VERSION[] = L"4.3.24";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -484,7 +484,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.24", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return std::nullopt;
     WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
@@ -533,7 +533,7 @@ std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& erro
 }
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.24", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -556,7 +556,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.23\r\n",
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.24\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1892,7 +1892,7 @@ int JsonNestedNumber(const std::string& json, const std::string& parent,
 
 std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
                                           size_t maxBytes, std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.24", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机更新索引连接"); return std::nullopt; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 30000);
@@ -1908,7 +1908,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.23\r\n",
+                L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.24\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1955,7 +1955,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
 bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
                        const std::filesystem::path& target, uintmax_t maxBytes,
                        std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.24", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机 APK 下载连接"); return false; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 120000);
@@ -1971,7 +1971,7 @@ bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
         return false;
     }
     WinHttpAddRequestHeaders(request,
-                L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.23\r\n",
+                L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.24\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;

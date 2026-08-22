@@ -55,6 +55,10 @@ final class P2PTransferEngine: NSObject {
     private var dataChannel: RTCDataChannel?
     private var timer: DispatchSourceTimer?
     private var appliedSignals = Set<String>()
+    // WebRTC callbacks and the relay poller do not share the same queue. Keep
+    // the candidate handoff atomic so a candidate cannot arrive between
+    // draining the queue and marking the remote description as ready.
+    private let iceLock = NSLock()
     private var pendingCandidates = [RTCIceCandidate]()
     private var transferDirectory: URL?
     private var fileHandles: [Int: FileHandle] = [:]
@@ -137,9 +141,13 @@ final class P2PTransferEngine: NSObject {
             if error != nil {
                 self.fail("P2P offer 无法应用")
             } else {
+                var queued: [RTCIceCandidate] = []
+                self.iceLock.lock()
                 self.remoteDescriptionSet = true
-                self.pendingCandidates.forEach { self.peer.add($0) }
+                queued = self.pendingCandidates
                 self.pendingCandidates.removeAll()
+                self.iceLock.unlock()
+                queued.forEach { self.peer.add($0) }
                 self.createAnswer()
             }
         }
@@ -171,8 +179,15 @@ final class P2PTransferEngine: NSObject {
         let value = RTCIceCandidate(sdp: candidate,
                                     sdpMLineIndex: Int32(int(data["mLineIndex"]) ?? 0),
                                     sdpMid: mid)
-        if remoteDescriptionSet { peer.add(value) }
-        else { pendingCandidates.append(value) }
+        var addImmediately = false
+        iceLock.lock()
+        if remoteDescriptionSet {
+            addImmediately = true
+        } else {
+            pendingCandidates.append(value)
+        }
+        iceLock.unlock()
+        if addImmediately { peer.add(value) }
     }
 
     private func handleText(_ data: Data) throws {

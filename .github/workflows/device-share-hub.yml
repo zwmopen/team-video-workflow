@@ -84,6 +84,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Verify mobile update retry and inventory beacon rules
         run: node tools/device-share-hub/scripts/verify-auto-mobile-update.mjs
+      - name: Verify P2P ICE and ACK invariants
+        run: node tools/device-share-hub/scripts/verify-p2p-invariants.mjs
       - name: Build native Windows panel
         id: windows_compile
         shell: pwsh
