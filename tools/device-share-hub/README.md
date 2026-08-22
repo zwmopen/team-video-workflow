@@ -14,7 +14,7 @@
 
 这是高级远程传送第一阶段的可安装 Beta。现有 USB、局域网 Wi-Fi、作品列表、分类库存和隐私边界保持不变；Cloudflare 中继的电脑登记、手机收件、R2 上传下载、作品库写入和 ACK 已接通，Windows/Android/iPhone 已接入真实 WebRTC DataChannel 数据面。P2P 失败时自动回退 HTTPS 中继；安装后请优先验证日常作品收发、更新检查和设备在线状态。
 
-本轮云端发布已完成：Device Share Hub run `32579462284` 的三端构建、远程中继检查和已部署 Worker live E2E 均通过。安装包发布在 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.1>，iOS Beta 更新源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。稳定更新索引仍未切换到 Beta；iOS 安装/更新仍需 AltStore/AltServer 完成签名，真实手机跨网传输和自动补货仍需实机验收。
+本轮云端发布已完成：Device Share Hub run `32581609531` 的 Windows、Android、iOS、远程中继检查和已部署 Worker live E2E 均通过。安装包发布在 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.2>，iOS Beta 更新源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。稳定更新索引仍未切换到 Beta；iOS 安装/更新仍需 AltStore/AltServer 完成签名，真实手机跨网传输和自动补货仍需实机验收。
 
 本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱和 P2P 会话，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务。P2P 文件会先写入缓存，完成 SHA-256 校验并写入作品库后才 ACK；Cloudflare 只转发 SDP/ICE，不保存 P2P 文件字节。本阶段不做应用层端到端加密，也没有实体跨网设备验收，因此 Beta 不能替代真机验收。
 

@@ -1,10 +1,11 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 自动分发默认配置修复（Beta Windows V4.3.19，待云端发布）
+## 2026-08-22 自动分发默认配置修复（Beta Windows V4.3.19，已发布）
 
 - 复核当前电脑数据库发现自动补货开关没有记录，导致自动分发逻辑实际被关闭；已将当前数据库设置为自动手机更新开启、自动补货开启、精准阈值 5，并把原库备份到临时目录。
 - 源码新增 ContentStore 默认迁移：只对缺失设置写默认值，不覆盖用户明确关闭或自定义阈值；Windows 版本提升到 V4.3.19，手机版本保持已发布的 Android 0.6.45/iOS 0.6.32。
-- 本轮待云端构建、Beta patch 发布和手机上线后的真实自动补货/USB/Wi-Fi/P2P/中继回归；稳定索引不改。
+- Device Share Hub run `32581609531` 的 Windows、Android、iOS、remote-relay check 和 live E2E 全部通过；Beta patch 为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.2>，AltStore Beta 源提交为 `83de151d181976cb72e7389790acfaa12cb2eec5`。
+- 当前待手机上线后的真实自动补货/USB/Wi-Fi/P2P/HTTPS 中继回归；稳定索引不改。
 
 ## 2026-08-22 自动更新重试与分类库存信标修复（Beta 0.6.45/0.6.32/V4.3.18，已发布）
 

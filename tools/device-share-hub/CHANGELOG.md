@@ -1,10 +1,12 @@
 # 变更记录
 
-## Beta：Windows V4.3.19 / Android 0.6.45 / iPhone 0.6.32 - 自动分发默认配置修复
+## Beta：Windows V4.3.19 / Android 0.6.45 / iPhone 0.6.32 - 自动分发默认配置修复（已发布）
 
 - 新建或升级 Windows 内容数据库时，自动手机更新、精准流量自动补货和阈值 5 会自动写入默认值；用户明确关闭或修改阈值后不会被覆盖。
 - 当前电脑数据库已同步为 `auto_mobile_update_enabled=1`、`auto_restock_enabled=1`、`auto_restock_threshold=5`，原数据库备份保存在临时目录；手机上线后会直接进入自动分发验收。
-- 版本包与云端 Beta 发布待本轮 GitHub Actions 完成后回填；稳定 `latest.json` 和 Android/iOS 稳定版本不变。
+- Device Share Hub run `32581609531` 的 Windows、Android、iOS、remote-relay check 和 live E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.2>。
+- Android SHA-256：`4e91dff5c7e926e8ba668c2322542d45584055345c6471c76ae09deb1ca06d2b`；iPhone IPA SHA-256：`19e1ab04cc83ac0f0df573c03c52dd6167a267d776af3408013f0b75cd01a52d`；Windows SHA-256：`bc570acacda62b490a3f73503d72fa3808e7e64d7111f19f20b7a00a2118c2f9`。
+- 三端包已同步到 `C:\Users\z\Desktop`；AltStore Beta 源已指向 Beta 0.6.45 的 iOS 包，源提交 `83de151d181976cb72e7389790acfaa12cb2eec5`。稳定 `latest.json` 和 Android/iOS 稳定版本不变；实体手机回归仍待连接。
 
 ## Beta：Windows V4.3.18 / Android 0.6.45 / iPhone 0.6.32 - 2026-08-22
 
