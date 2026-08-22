@@ -1,5 +1,11 @@
 # iOS 变更记录
 
+## 0.6.25 - 2026-08-22
+
+- P2P 接收端增加 20 秒建连超时；发送端没有建立 DataChannel 时及时结束本次直连，让 Windows 自动回退 HTTPS 中继。
+- 版本升级为 0.6.25/build 44；GitHub Actions run `32556181728` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.38-beta.1>。
+- IPA SHA-256 为 `14920197a1811a144be995be9eb8f082245a0cd1d54df0a7f0799aa76b5f12e2`；实体 iPhone 跨网验收仍待完成。
+
 ## 0.6.24 - 2026-08-22
 
 - P2P 接收失败时异步关闭对应 Cloudflare 信令会话，避免控制面会话残留到 TTL 后才清理，也不阻塞 WebRTC 失败回调。

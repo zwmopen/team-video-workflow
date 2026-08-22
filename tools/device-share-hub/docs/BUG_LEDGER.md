@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-050 移动端 P2P 收件建连等待无界与 WebRTC 回调阻塞（Android 0.6.38 / iPhone 0.6.25）
+
+- 现象：发送端创建会话后没有真正建立 DataChannel 时，Android/iOS 收件端可能长期等待；Android 直接在 WebRTC 数据回调里执行文件写入和 SHA-256 校验，大文件可能阻塞回调线程。
+- 根因：移动端收件端缺少独立的建连超时；Android 没有把 WebRTC 回调收到的 ByteBuffer 与后续文件 I/O 解耦。
+- 修复：两端增加 20 秒建连超时，超时关闭 P2P 并回退 HTTPS 中继；Android 立即复制 WebRTC 所有权的数据帧，再交给串行队列执行写入、大小校验、SHA-256 和作品库导入。
+- 证据：GitHub Actions run `32556181728` 的 Android、iOS、Windows、remote-relay 全部通过；安全扫描 run `32556181727`、质量检查 run `32556181732` 通过；Beta 发布页为 `v0.6.38-beta.1`。实体手机业务回归仍未完成。
+- 回归要求：
+  1. 发送端不发起 DataChannel 时，Android/iOS 最迟 20 秒结束 P2P，并由 Windows 只创建一个 HTTPS 中继任务。
+  2. 大文件连续分片传输时，WebRTC 回调线程不执行阻塞文件 I/O；manifest、大小、SHA-256、作品库写入和 ACK 顺序保持不变。
+  3. 正常慢速 P2P、局域网/USB 传送、重复 `transferId` 去重和失败会话关闭不受影响。
+
 ## DSH-049 移动端 P2P 失败未及时关闭信令会话（Android 0.6.37 / iPhone 0.6.24）
 
 - 现象：Android/iOS P2P 接收失败时会清理本地引擎，但 Cloudflare 控制面会话仍保持开放，直到 2 分钟 TTL 才回收；发送端虽然会回退 HTTPS，中间会留下脏会话。

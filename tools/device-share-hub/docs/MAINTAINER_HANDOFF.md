@@ -1,19 +1,17 @@
-# 2026-08-21 Cloudflare 中继与混合传输当前真相
+# 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-22 WebRTC DataChannel 数据面 Beta
+## 2026-08-22 P2P 收件生命周期修复与 Beta 0.6.38
 
-- 当前已发布 Beta：Windows `4.3.10`、Android `0.6.37` / versionCode `75`、iPhone `0.6.24` / build `43`。
-- 本轮修复：成功 ACK 发送后的 DataChannel 刷新窗口、iPhone P2P 缓存清理、Windows 背压停滞 20 秒回退；上一 Beta `v0.6.35-beta.1` 仍作为可回退安装包保留。
-- 又修复 Windows P2P 会话在文件校验、信令或发送异常后未统一关闭的问题；现在 P2P 失败再回退 HTTPS 中继不会留下开放控制面会话。
-- 又修复 Android/iOS P2P 接收失败后未关闭控制面会话的问题；关闭请求异步执行，不阻塞 WebRTC 失败回调。
-- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.37-beta.1>；三端代码构建 run `32553627094`（代码头 `8cb79e56571037fa93971259b91c6e4d4c2af445`），PR #24 的整体验证 run `32554981304` 已通过。
-- Android SHA-256：`f13132b8311f333b07aba44d8527e644a16c474838f696f81d5a30721e2dc011`；iPhone IPA SHA-256：`44d768c2f401ba25e926bbec4b769094d4695a9732359fcfc986fd806bcdeb`；Windows SHA-256：`9eeefaf815fc841bfcf616029ece0c654e6278ba94a974690515a46186d71bf2`。
-- 桌面同步包：`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.10-relay-beta.exe`；Android/iOS 包也已同步到桌面。
-- iPhone Beta 更新源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>；稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，未把 Beta 误推入稳定自动更新。
+- 当前已发布 Beta：Windows `4.3.11`、Android `0.6.38` / versionCode `76`、iPhone `0.6.25` / build `44`。
+- 本轮修复移动端 P2P 收件端无界等待：Android/iOS 建连超过 20 秒主动失败并回退 HTTPS 中继；Android 把文件写入和 SHA-256 校验移出 WebRTC 回调线程。
+- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.38-beta.1>；三端代码构建 run `32556181728`（PR #24 代码头 `0c710ebf51eb639db7c921e62440e862850d6e35`），安全扫描 run `32556181727`、质量检查 run `32556181732` 已通过。
+- Android SHA-256：`9558e76b1fac6ae5bea98219a86645f594d783e6e324f3a07cc141fe09f7a368`；iPhone IPA SHA-256：`14920197a1811a144be995be9eb8f082245a0cd1d54df0a7f0799aa76b5f12e2`；Windows SHA-256：`22353fd7631fe32730205e00646ae5f91546789a749e0471c4e0489ec0c2876e`。
+- 桌面同步包：`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.11-relay-beta.exe`；Android：`C:\Users\z\Desktop\album-Android-v0.6.38.apk`；iOS：`C:\Users\z\Desktop\album-iOS-v0.6.25-altstore.ipa`。
+- iPhone Beta 更新源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>，当前指向 0.6.25/build 44；稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，未把 Beta 推入稳定自动更新。
 - 已接入真实数据面：Windows 使用 libdatachannel 发起 `album-transfer-v1`，Android/iOS 使用 WebRTC 接收；Cloudflare 只承担短时 SDP/ICE 信令，文件字节不上传 R2。
 - P2P 失败条件（20 秒建连超时、ICE/DataChannel 失败、manifest/大小/SHA-256/作品库写入失败）统一回退现有 HTTPS 中继；中继仍是跨网络必达兜底。
 - P2P 收件端只有在文件完整校验并写入现有作品库后才 ACK，并用 `transferId` 去重，避免 ACK 丢失后的中继回退造成重复作品。
-- 本阶段已通过本地协议检查、远程 Worker 13 项测试和 run `32553627094` 三端云构建；Beta 已发布。没有实体 Android/iPhone/Windows 跨网络设备，暂不宣称真实 P2P 业务已验收。
+- 本阶段已通过本地协议检查、远程 Worker 13 项测试和 run `32556181728` 三端云构建；Beta 已发布。没有实体 Android/iPhone/Windows 跨网络设备，暂不宣称真实 P2P 业务已验收。
 
 ### 上一版普通 HTTPS 中继基线（历史证据）
 

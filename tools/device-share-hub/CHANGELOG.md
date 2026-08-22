@@ -1,5 +1,15 @@
 # 变更记录
 
+## Beta：Windows V4.3.11 / Android 0.6.38 / iPhone 0.6.25 - 2026-08-22
+
+- 修复 Android/iOS P2P 收件端在发送端没有建立 DataChannel 时可能长期等待的问题；现在建连超过 20 秒会主动失败并进入 HTTPS 中继回退。
+- Android 不再在 WebRTC 回调线程执行文件写入和 SHA-256 校验，先复制数据帧，再交给串行传输队列处理，降低大文件传送卡死和回调阻塞风险。
+- 版本号已提升为 Windows `4.3.11`、Android `versionCode=76` / `versionName=0.6.38`、iPhone `0.6.25/build 44`。
+- GitHub Actions run `32556181728` 已完成 Android、iOS、Windows 和 remote-relay 检查；安全扫描 run `32556181727`、质量检查 run `32556181732` 通过。Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.38-beta.1>。
+- Android SHA-256：`9558e76b1fac6ae5bea98219a86645f594d783e6e324f3a07cc141fe09f7a368`；iPhone IPA SHA-256：`14920197a1811a144be995be9eb8f082245a0cd1d54df0a7f0799aa76b5f12e2`；Windows SHA-256：`22353fd7631fe32730205e00646ae5f91546789a749e0471c4e0489ec0c2876e`。
+- 桌面包已同步到 `C:\Users\z\Desktop`；Beta iOS 更新源已更新为 0.6.25/build 44。稳定 `latest.json` 保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，没有把 Beta 推入稳定通道。
+- 真实 Android/iPhone/Windows 设备互传验收仍待连接设备，不把云构建、协议测试或 Release 发布当作真机业务通过。
+
 ## Beta：Windows V4.3.10 / Android 0.6.37 / iPhone 0.6.24 - 2026-08-22
 
 - 修复 Android/iOS P2P 接收端失败后只清本地引擎、没有立即关闭 Cloudflare 信令会话的问题；现在失败会异步关闭控制面会话，不阻塞 WebRTC 失败回调，避免等 2 分钟 TTL 才回收并让 HTTPS 回退更干净。
