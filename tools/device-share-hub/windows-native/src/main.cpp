@@ -91,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.22";
+constexpr wchar_t APP_VERSION[] = L"4.3.23";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -130,6 +130,9 @@ struct Device {
     std::string relayAgreementY;
     UsbPeer usbPeer;
     std::chrono::steady_clock::time_point lastSeen;
+    // Keep the last LAN observation separate from relay polling. A remote
+    // heartbeat must not make a stale Wi-Fi address look like a live route.
+    std::chrono::steady_clock::time_point wifiLastSeen;
     std::chrono::steady_clock::time_point lastSentTime;
 };
 
@@ -481,7 +484,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.20", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return std::nullopt;
     WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
@@ -530,7 +533,7 @@ std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& erro
 }
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.20", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -553,7 +556,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.20\r\n",
+                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.23\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -828,13 +831,54 @@ std::wstring DisplayNameFor(const Device& device) {
     return device.name;
 }
 
+bool IsLiveWifiDevice(const Device& device,
+                      std::chrono::steady_clock::time_point now) {
+    auto wifiSeen = device.wifiLastSeen;
+    // Compatibility for an in-memory device created before the channel
+    // timestamp was introduced. New LAN discovery always fills wifiLastSeen.
+    if (wifiSeen == std::chrono::steady_clock::time_point{} && !device.ip.empty()) {
+        wifiSeen = device.lastSeen;
+    }
+    return !device.ip.empty() && device.wifiAllowed
+        && wifiSeen != std::chrono::steady_clock::time_point{}
+        && now - wifiSeen <= std::chrono::seconds(35);
+}
+
 bool IsLiveTransferDevice(const Device& device,
                           std::chrono::steady_clock::time_point now) {
-    bool liveWifi = !device.ip.empty() && device.wifiAllowed
-        && now - device.lastSeen <= std::chrono::seconds(35);
+    bool liveWifi = IsLiveWifiDevice(device, now);
     bool liveUsb = device.usbReady && device.usbAllowed;
     bool liveRemote = device.remoteAllowed && device.remoteConnected;
     return liveWifi || liveUsb || liveRemote;
+}
+
+// LAN discovery is a second observation source for the same phone. Merge it
+// into the existing record instead of replacing relay state, credentials or a
+// more complete remote inventory snapshot.
+void MergeLocalDeviceLocked(Device device) {
+    auto found = gDevices.find(device.id);
+    if (found == gDevices.end()) {
+        gDevices.emplace(device.id, std::move(device));
+        return;
+    }
+
+    const Device& previous = found->second;
+    if (device.workCount < 0) device.workCount = previous.workCount;
+    if (device.conversionCount < 0) device.conversionCount = previous.conversionCount;
+    if (device.trafficCount < 0) device.trafficCount = previous.trafficCount;
+    if (device.uncategorizedCount < 0) device.uncategorizedCount = previous.uncategorizedCount;
+    if (device.appVersion.empty()) device.appVersion = previous.appVersion;
+    if (device.appVersionCode < 0) device.appVersionCode = previous.appVersionCode;
+    if (device.updateCapability.empty()) device.updateCapability = previous.updateCapability;
+
+    device.remoteConnected = previous.remoteConnected;
+    device.remoteAllowed = device.remoteAllowed && previous.remoteAllowed;
+    if (device.relaySigningX.empty()) device.relaySigningX = previous.relaySigningX;
+    if (device.relaySigningY.empty()) device.relaySigningY = previous.relaySigningY;
+    if (device.relayAgreementX.empty()) device.relayAgreementX = previous.relayAgreementX;
+    if (device.relayAgreementY.empty()) device.relayAgreementY = previous.relayAgreementY;
+    device.lastSeen = std::max(device.lastSeen, previous.lastSeen);
+    found->second = std::move(device);
 }
 
 struct PromptState {
@@ -1848,7 +1892,7 @@ int JsonNestedNumber(const std::string& json, const std::string& parent,
 
 std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
                                           size_t maxBytes, std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.20", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机更新索引连接"); return std::nullopt; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 30000);
@@ -1864,7 +1908,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.20\r\n",
+                L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.23\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1911,7 +1955,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
 bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
                        const std::filesystem::path& target, uintmax_t maxBytes,
                        std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.20", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机 APK 下载连接"); return false; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 120000);
@@ -1927,7 +1971,7 @@ bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
         return false;
     }
     WinHttpAddRequestHeaders(request,
-                L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.20\r\n",
+                L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.23\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -2235,8 +2279,8 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             }
         }
 
-        if ((device.ip.empty() || !device.wifiAllowed)
-                && device.remoteAllowed && device.remoteConnected) {
+        const bool liveWifi = IsLiveWifiDevice(device, std::chrono::steady_clock::now());
+        if (!liveWifi && device.remoteAllowed && device.remoteConnected) {
             for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
                 auto& input = files[inputIndex];
                 if (std::filesystem::is_directory(input)) {
@@ -2297,7 +2341,7 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             }
             return true;
         }
-        if (device.ip.empty() || !device.wifiAllowed) {
+        if (!liveWifi) {
             throw std::runtime_error("这台设备当前没有打开可用的传送方式，请右键设备检查 USB、WiFi 或远程传送");
         }
 
@@ -2928,6 +2972,7 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     device.trafficCount = std::max(-1, JsonNestedNumber(body, "workCounts", "traffic", -1));
     device.uncategorizedCount = std::max(-1, JsonNestedNumber(body, "workCounts", "uncategorized", -1));
     device.lastSeen = std::chrono::steady_clock::now();
+    device.wifiLastSeen = device.lastSeen;
     if (device.id.empty() || device.name.empty()) return std::nullopt;
     return device;
 }
@@ -2973,7 +3018,7 @@ void ActiveProbeLoop() {
                 device.remoteAllowed = channels.remote;
                 std::lock_guard<std::mutex> lock(gDeviceMutex);
                 bool isNew = gDevices.find(device.id) == gDevices.end();
-                gDevices[device.id] = device;
+                MergeLocalDeviceLocked(std::move(device));
                 if (isNew) WriteDiagnosticLog(L"device_found_active", device.name);
             }
             if (!found.empty() && gWindow) PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
@@ -3081,10 +3126,11 @@ void DiscoveryLoop() {
                     device.remoteAllowed = channels.remote;
                     if (newlyRegistered) PostStatus(device.name + L" 已自动登记，传送权限已开启");
                     device.lastSeen = std::chrono::steady_clock::now();
+                    device.wifiLastSeen = device.lastSeen;
                     if (!device.id.empty() && WideToUtf8(device.id) != WindowsDeviceId()) {
                         std::lock_guard<std::mutex> lock(gDeviceMutex);
                         bool isNew = gDevices.find(device.id) == gDevices.end();
-                        gDevices[device.id] = device;
+                        MergeLocalDeviceLocked(std::move(device));
                         if (isNew) WriteDiagnosticLog(L"device_found", device.name + L" ip=" + device.ip + L" state=" + device.state);
                         PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
                     }

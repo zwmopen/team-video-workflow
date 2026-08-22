@@ -46,6 +46,21 @@ if (!relayLoop.includes("if (relay.conversionCount >= 0)")
   throw new Error("remote inventory must not erase a more complete local inventory when fields are missing");
 }
 
+if (!source.includes("std::chrono::steady_clock::time_point wifiLastSeen")
+    || !source.includes("bool IsLiveWifiDevice(const Device& device")
+    || !source.includes("device.wifiLastSeen = device.lastSeen")
+    || (source.match(/MergeLocalDeviceLocked\(std::move\(device\)\)/g) || []).length < 2) {
+  throw new Error("LAN discovery must preserve a separate Wi-Fi timestamp and merge with relay state");
+}
+if (!upload.includes("const bool liveWifi = IsLiveWifiDevice(device")
+    || !upload.includes("if (!liveWifi && device.remoteAllowed && device.remoteConnected)")
+    || !upload.includes("if (!liveWifi)")) {
+  throw new Error("stale Wi-Fi addresses must not block P2P/HTTPS remote fallback");
+}
+if (source.includes("DeviceShareHub/4.3.20")) {
+  throw new Error("Windows network User-Agent must match the current desktop version");
+}
+
 if (!storeSource.includes("INSERT OR IGNORE INTO settings")
     || !storeSource.includes("('auto_restock_enabled', '1')")
     || !storeSource.includes("('auto_restock_threshold', '5')")) {
