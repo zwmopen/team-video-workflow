@@ -294,6 +294,13 @@ test("a self-signed replacement admin cannot create a session", async () => {
 test("admin can disable remote access and invalidate existing device sessions", async () => {
   const state = await bootstrap();
   const adminToken = await createAdminSession(state);
+  let p2pResponse = await state.relay.fetch(
+    await jsonRequest("/v1/p2p/sessions", {
+      recipientDeviceId: state.memberCertificate.deviceId,
+    }, adminToken),
+  );
+  assert.equal(p2pResponse.status, 201);
+  const p2pSessionId = (await p2pResponse.json()).p2p.sessionId;
   let response = await state.relay.fetch(
     await jsonRequest(
       `/v1/devices/${state.memberCertificate.deviceId}/remote`,
@@ -311,12 +318,25 @@ test("admin can disable remote access and invalidate existing device sessions", 
   );
   assert.equal(response.status, 401);
   assert.equal((await response.json()).code, "unauthorized");
+  p2pResponse = await state.relay.fetch(
+    new Request(`https://relay.test/v1/p2p/sessions/${p2pSessionId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  assert.equal(p2pResponse.status, 200);
+  assert.equal((await p2pResponse.json()).p2p.state, "failed");
 });
 
 test("heartbeat makes a device visible as online without a websocket", async () => {
   const state = await bootstrap();
   let response = await state.relay.fetch(
-    await jsonRequest("/v1/presence", {}, state.token),
+    await jsonRequest("/v1/presence", {
+      workCount: 4,
+      workCounts: { total: 4, conversion: 4, traffic: 0, uncategorized: 0 },
+      appVersion: "0.6.46",
+      versionCode: 84,
+      updateCapability: "apk-push-v1",
+    }, state.token),
   );
   assert.equal(response.status, 200);
 
@@ -331,6 +351,67 @@ test("heartbeat makes a device visible as online without a websocket", async () 
     devices.find((device) => device.deviceId === state.memberCertificate.deviceId)?.online,
     true,
   );
+  const device = devices.find((item) => item.deviceId === state.memberCertificate.deviceId);
+  assert.deepEqual(device.workCounts, {
+    total: 4,
+    conversion: 4,
+    traffic: 0,
+    uncategorized: 0,
+  });
+  assert.equal(device.workCount, 4);
+  assert.equal(device.appVersion, "0.6.46");
+  assert.equal(device.versionCode, 84);
+  assert.equal(device.updateCapability, "apk-push-v1");
+});
+
+test("P2P signaling is authorized, ordered, and separate from relay file bytes", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  let response = await state.relay.fetch(
+    await jsonRequest("/v1/p2p/sessions", {
+      recipientDeviceId: state.memberCertificate.deviceId,
+      protocol: "webrtc-datachannel-v1",
+    }, adminToken),
+  );
+  assert.equal(response.status, 201);
+  const p2p = (await response.json()).p2p;
+  assert.equal(p2p.protocol, "webrtc-datachannel-v1");
+  assert.equal(p2p.state, "offer-pending");
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/p2p/sessions/${p2p.sessionId}/signals`, {
+      type: "offer",
+      data: { type: "offer", sdp: "v=0\r\n..." },
+    }, adminToken),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state, "offer-sent");
+
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/p2p/sessions/${p2p.sessionId}`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  assert.equal(response.status, 200);
+  const memberView = (await response.json()).p2p;
+  assert.equal(memberView.signals.length, 1);
+  assert.equal(memberView.signals[0].fromDeviceId, state.adminCertificate.deviceId);
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/p2p/sessions/${p2p.sessionId}/signals`, {
+      type: "answer",
+      data: { type: "answer", sdp: "v=0\r\n..." },
+    }, state.token),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state, "answer-sent");
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/p2p/sessions/${p2p.sessionId}/close`, {}, state.token),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state, "closed");
+  assert.equal(state.bucket.values.size, 0);
 });
 
 test("sender outbox and recipient inbox expose committed transfers", async () => {
@@ -384,7 +465,139 @@ test("sender outbox and recipient inbox expose committed transfers", async () =>
     }),
   );
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).transfers.map((item) => item.transferId), [transferId]);
+  const outbox = await response.json();
+  assert.deepEqual(outbox.transfers.map((item) => item.transferId), [transferId]);
+  assert.equal(outbox.transfers[0].uploadedObjectCount, 1);
+  assert.equal(outbox.transfers[0].uploadedCipherBytes, ciphertext.byteLength);
+  assert.equal(outbox.transfers[0].nextObjectIndex, null);
+});
+
+test("plain public work completes upload, download and acknowledgement without a key package", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const workPackage = new TextEncoder().encode("public-work-package");
+  const sha256 = Buffer.from(await crypto.subtle.digest("SHA-256", workPackage)).toString("hex");
+  let response = await state.relay.fetch(
+    await jsonRequest(
+      "/v1/transfers",
+      {
+        mode: "plain",
+        recipientDeviceId: state.memberCertificate.deviceId,
+        objects: [{
+          index: 0,
+          bytes: workPackage.byteLength,
+          sha256,
+          name: "album-folder-作品集[泛].zip",
+          mime: "application/zip",
+        }],
+      },
+      adminToken,
+    ),
+  );
+  assert.equal(response.status, 201);
+  const transferId = (await response.json()).transferId;
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/0`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Length": String(workPackage.byteLength),
+      },
+      body: workPackage,
+      duplex: "half",
+    }),
+  );
+  assert.equal(response.status, 200);
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/transfers/${transferId}/commit`, {}, adminToken),
+  );
+  assert.equal(response.status, 200);
+
+  response = await state.relay.fetch(
+    new Request("https://relay.test/v1/inbox", {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  const inbox = await response.json();
+  assert.equal(inbox.transfers[0].mode, "plain");
+  assert.equal(inbox.transfers[0].objects[0].name, "album-folder-作品集[泛].zip");
+  assert.equal(inbox.transfers[0].objects[0].bytes, workPackage.byteLength);
+
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/0`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  // Durable Object returns a private R2 materialization marker; the outer
+  // Worker turns it into the 200-byte download response.
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("X-Object-Sha256"), sha256);
+  const stored = await state.bucket.get(`${state.memberCertificate.workspaceId}/${transferId}/000000.cipher`);
+  assert.deepEqual(stored.body, workPackage);
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/transfers/${transferId}/ack`, {}, state.token),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).objectsDeleted, true);
+  assert.equal(state.bucket.values.size, 0);
+});
+
+test("transfer status exposes the next object and repeated upload is idempotent", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const first = crypto.getRandomValues(new Uint8Array(16));
+  const second = crypto.getRandomValues(new Uint8Array(16));
+  const digest = async (value) => Buffer.from(await crypto.subtle.digest("SHA-256", value)).toString("hex");
+  let response = await state.relay.fetch(
+    await jsonRequest(
+      "/v1/transfers",
+      {
+        recipientDeviceId: state.memberCertificate.deviceId,
+        encryptedKeyPackage: { algorithm: "P256-HKDF-SHA256-A256GCM", value: "opaque" },
+        objects: [
+          { index: 0, cipherBytes: first.byteLength, cipherSha256: await digest(first) },
+          { index: 1, cipherBytes: second.byteLength, cipherSha256: await digest(second) },
+        ],
+      },
+      adminToken,
+    ),
+  );
+  const transferId = (await response.json()).transferId;
+  const upload = async (index, value) => state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}/objects/${index}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Length": String(value.byteLength),
+      },
+      body: value,
+      duplex: "half",
+    }),
+  );
+
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  let snapshot = (await response.json()).transfer;
+  assert.equal(snapshot.uploadedObjectCount, 0);
+  assert.equal(snapshot.nextObjectIndex, 0);
+
+  assert.equal((await upload(0, first)).status, 200);
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/transfers/${transferId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  snapshot = (await response.json()).transfer;
+  assert.equal(snapshot.uploadedObjectCount, 1);
+  assert.equal(snapshot.nextObjectIndex, 1);
+  const retry = await upload(0, first);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).reused, true);
+  assert.equal(state.bucket.values.size, 1);
 });
 
 test("ciphertext is deleted after recipient acknowledgement", async () => {

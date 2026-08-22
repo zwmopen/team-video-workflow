@@ -29,9 +29,11 @@
 
 CI 生成的 IPA 不含 Apple ID、证书、设备 UDID 或密码，安装时由 Sideloadly/AltStore 使用用户自己的免费 Apple ID 重新签名。
 
-## 本地构建入口
+## 本地职责边界
 
-本机使用统一预检脚本，不把“缓存目录里有旧产物”当成构建成功。当前电脑已确认有 Java 22 和 Gradle 9.4.1，但 Android SDK、CMake/MSVC 等条件可能缺失；缺失时脚本会明确停止，正式构建直接使用 GitHub Actions，不需要在本机补装完整工具链。
+当前 Windows 机器没有 Android Gradle Wrapper，也没有可作为本项目构建依据的本地 Gradle。以后 Android、iOS、Windows 安装包一律以 GitHub Actions 云端构建为准；本机只做源码修改、Node/协议测试、包体版本与权限检查、哈希核对和真机安装诊断，不再尝试用本地 Gradle 生成 Android 安装包。
+
+下面的 `build-local.ps1` 和平台命令只保留作历史环境参考，不是当前交付入口。不要因为缓存目录里存在旧产物就判定本地构建可用。
 
 ```powershell
 cd D:\AICode\AI\repos\team-video-workflow
@@ -52,7 +54,7 @@ cmake -S tools/device-share-hub/windows-native -B tools/device-share-hub/windows
 cmake --build tools/device-share-hub/windows-native/build --config Release
 ```
 
-### Android
+### Android（历史参考，不作为当前构建流程）
 
 在 `tools/device-share-hub/android` 使用 JDK 17 和 Gradle 9.4.1：
 

@@ -79,6 +79,8 @@ public final class MainActivity extends Activity {
     private final ArrayDeque<String> filePath = new ArrayDeque<>();
     private boolean initialFolderPromptShown;
     private final LinkedHashSet<String> selectedWorkIds = new LinkedHashSet<>();
+    /** Last complete list rendered on the UI; selection changes must not rescan the library. */
+    private List<WorkLibrary.WorkEntry> renderedWorks = new ArrayList<>();
     private String selectedCategory = WorkCategory.ALL;
     private LinearLayout categoryBar;
     private FrameLayout categorySelector;
@@ -460,7 +462,12 @@ public final class MainActivity extends Activity {
     }
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
+        renderWorks(entries, true);
+    }
+
+    private void renderWorks(List<WorkLibrary.WorkEntry> entries, boolean animate) {
         if (fileMode) return;
+        renderedWorks = new ArrayList<>(entries);
         if (!showingTrash) updateCategoryCounts(entries);
         if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
             ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
@@ -469,6 +476,8 @@ public final class MainActivity extends Activity {
             }
             entries = filtered;
         }
+        LayoutTransition transition = worksContainer.getLayoutTransition();
+        if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();
         LinkedHashSet<String> visibleIds = new LinkedHashSet<>();
         for (WorkLibrary.WorkEntry entry : entries) {
@@ -491,6 +500,7 @@ public final class MainActivity extends Activity {
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
             empty.setBackground(round(Color.WHITE, 18));
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            if (!animate) worksContainer.setLayoutTransition(transition);
             return;
         }
         for (int index = 0; index < entries.size(); index += 2) {
@@ -506,6 +516,7 @@ public final class MainActivity extends Activity {
             }
             worksContainer.addView(row, margins(0, 0, 0, dp(10)));
         }
+        if (!animate) worksContainer.setLayoutTransition(transition);
     }
 
     private void addGridCard(LinearLayout row, WorkLibrary.WorkEntry work, boolean right) {
@@ -735,7 +746,10 @@ public final class MainActivity extends Activity {
         if (selectedWorkIds.contains(id)) selectedWorkIds.remove(id);
         else selectedWorkIds.add(id);
         quickTrashButton.setVisibility(selectedWorkIds.isEmpty() ? View.GONE : View.VISIBLE);
-        refreshWorks();
+        // Long-press selection is a local UI state change. Re-running the full
+        // scanner here made one tap perform storage I/O and caused visible jank.
+        if (!renderedWorks.isEmpty()) renderWorks(renderedWorks, false);
+        else refreshWorks();
     }
 
     private void showWorksMode() {

@@ -57,7 +57,10 @@ public final class WorkArchiveImporter {
                         : "";
                 String workId = batchId + "-" + (planIndex + 1);
                 if (library.contains(workId)) continue;
-                library.importWork(workId, plan.name, text, images, warning);
+                // Preserve the source folder name so [转]/[泛] archives keep the
+                // same category after a remote or LAN import.
+                library.importWork(workId, plan.name, text, images, warning,
+                        "", "", plan.name);
                 imported++;
             }
         } finally {

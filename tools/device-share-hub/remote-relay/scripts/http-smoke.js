@@ -110,22 +110,19 @@ const memberCertificateSignature = await sign(admin.pair.privateKey, memberCerti
 const memberToken = await createSession(memberCertificate, memberCertificateSignature, member);
 const adminToken = await createSession(adminCertificate, adminCertificateSignature, admin);
 
-const ciphertext = crypto.getRandomValues(new Uint8Array(64));
-const cipherSha256 = Buffer.from(
-  await crypto.subtle.digest("SHA-256", ciphertext),
+const publicWork = crypto.getRandomValues(new Uint8Array(64));
+const publicWorkSha256 = Buffer.from(
+  await crypto.subtle.digest("SHA-256", publicWork),
 ).toString("hex");
 response = await request("/v1/transfers", {
   method: "POST",
   workspaceId: adminCertificate.workspaceId,
   token: adminToken,
   body: {
+    mode: "plain",
     recipientDeviceId: memberCertificate.deviceId,
-    encryptedKeyPackage: {
-      algorithm: "P256-HKDF-SHA256-A256GCM",
-      keyContext: base64Url(crypto.getRandomValues(new Uint8Array(16))),
-      value: "ci-opaque-key-package",
-    },
-    objects: [{ index: 0, cipherBytes: ciphertext.byteLength, cipherSha256 }],
+    objects: [{ index: 0, bytes: publicWork.byteLength, sha256: publicWorkSha256,
+      name: "album-folder-公开测试作品[泛].zip", mime: "application/zip" }],
   },
 });
 assert.equal(response.status, 201);
@@ -135,7 +132,7 @@ response = await request(`/v1/transfers/${transferId}/objects/0`, {
   method: "PUT",
   workspaceId: adminCertificate.workspaceId,
   token: adminToken,
-  bytes: ciphertext,
+  bytes: publicWork,
 });
 assert.equal(response.status, 200);
 response = await request(`/v1/transfers/${transferId}/commit`, {
@@ -155,7 +152,7 @@ for (let attempt = 0; attempt < 5; attempt += 1) {
   await new Promise((resolve) => setTimeout(resolve, 200));
 }
 assert.equal(response.status, 200);
-assert.deepEqual(new Uint8Array(await response.arrayBuffer()), ciphertext);
+assert.deepEqual(new Uint8Array(await response.arrayBuffer()), publicWork);
 
 response = await request(`/v1/transfers/${transferId}/ack`, {
   method: "POST",
@@ -164,7 +161,7 @@ response = await request(`/v1/transfers/${transferId}/ack`, {
   body: {},
 });
 assert.equal(response.status, 200);
-assert.equal((await response.json()).ciphertextDeleted, true);
+assert.equal((await response.json()).objectsDeleted, true);
 
 response = await request(`/v1/transfers/${transferId}/objects/0`, {
   workspaceId: adminCertificate.workspaceId,

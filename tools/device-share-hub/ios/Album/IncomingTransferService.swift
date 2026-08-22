@@ -6,19 +6,48 @@ import Darwin
 private let transferHTTPPort: UInt16 = 45833
 private let transferDiscoveryPort: UInt16 = 45834
 
-final class IncomingTransferService {
+final class IncomingTransferService: P2PTransferEngine.Delegate {
     private let library: WorkLibrary
     private let queue = DispatchQueue(label: "com.zwm.album.incoming-transfer")
     private var tcpListener: NWListener?
     private var udpListener: NWListener?
     private var beaconTimer: DispatchSourceTimer?
+    private let remotePresence: RemoteRelayPresence
     private var tasks: [String: IncomingTask] = [:]
     private var activeRelayIds = Set<String>()
+    private var remoteInboxTasks = Set<String>()
+    private var remoteProcessingTasks = Set<String>()
+    private var p2pEngines = [String: P2PTransferEngine]()
     private var isRunning = false
     private var tcpReady = false
     private var udpReady = false
 
-    init(library: WorkLibrary) { self.library = library }
+    init(library: WorkLibrary) {
+        self.library = library
+        let presence = RemoteRelayPresence()
+        self.remotePresence = presence
+        presence.onInbox = { [weak self] session, tasks in
+            guard let self = self else { return }
+            self.queue.async { [weak self] in self?.handleRemoteInbox(session, tasks: tasks) }
+        }
+        presence.onP2PSessions = { [weak self] session, sessions in
+            guard let self = self else { return }
+            self.queue.async { [weak self] in self?.handleRemoteP2PSessions(session, sessions: sessions) }
+        }
+        presence.inventoryProvider = { [weak self] in self?.remoteInventory() ?? [:] }
+    }
+
+    private func remoteInventory() -> [String: Any] {
+        var inventory: [String: Any] = [
+            "workCount": library.advertisedWorkCount,
+            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "versionCode": Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-1") ?? -1
+        ]
+        if let counts = library.advertisedWorkCounts {
+            inventory["workCounts"] = counts
+        }
+        return inventory
+    }
 
     func start() {
         queue.async { [weak self] in self?.startOnQueue() }
@@ -38,6 +67,9 @@ final class IncomingTransferService {
             self.udpReady = false
             self.tasks.values.forEach { $0.cleanup() }
             self.tasks.removeAll()
+            self.p2pEngines.values.forEach { $0.cancel() }
+            self.p2pEngines.removeAll()
+            self.remotePresence.stop()
             self.updateStatus("局域网接收已暂停")
         }
     }
@@ -45,6 +77,13 @@ final class IncomingTransferService {
     private func startOnQueue() {
         guard !isRunning else { return }
         do {
+            do {
+                try RemoteIdentity.ensure()
+                UserDefaults.standard.removeObject(forKey: "album.remoteIdentityError.v1")
+            } catch {
+                // Remote identity is additive groundwork; never block the existing LAN receiver.
+                UserDefaults.standard.set(error.localizedDescription, forKey: "album.remoteIdentityError.v1")
+            }
             let tcpParameters = NWParameters.tcp
             tcpParameters.allowLocalEndpointReuse = true
             let udpParameters = NWParameters.udp
@@ -66,6 +105,7 @@ final class IncomingTransferService {
             tcpListener = tcp
             udpListener = udp
             isRunning = true
+            remotePresence.start()
             startBeaconTimer()
             updateStatus("正在开启局域网接收…")
         } catch {
@@ -125,6 +165,155 @@ final class IncomingTransferService {
         }
         timer.resume()
         beaconTimer = timer
+    }
+
+    private func handleRemoteInbox(_ session: RemoteRelayClient.Session,
+                                   tasks: [RemoteRelayTask]) {
+        guard isRunning else { return }
+        var fresh = 0
+        for task in tasks {
+            if remoteInboxTasks.insert(task.transferId).inserted,
+               remoteProcessingTasks.insert(task.transferId).inserted {
+                fresh += 1
+                processRemoteTask(session, task: task)
+            }
+        }
+        while remoteInboxTasks.count > 256 {
+            if let first = remoteInboxTasks.first { remoteInboxTasks.remove(first) }
+        }
+        if fresh > 0 {
+            updateStatus("远程作品已接收 \(fresh) 个，正在写入作品库")
+        }
+    }
+
+    private func processRemoteTask(_ session: RemoteRelayClient.Session,
+                                   task: RemoteRelayTask) {
+        let transferDirectory = remoteRoot.appendingPathComponent(task.transferId, isDirectory: true)
+        do {
+            guard task.mode == "plain" else { throw RemoteRelayError.invalidTask }
+            guard let root = library.receivingRootURL else {
+                throw TransferServiceError.conflict("作品文件夹不可用，请在设置里重新选择")
+            }
+            try FileManager.default.createDirectory(at: transferDirectory,
+                                                    withIntermediateDirectories: true)
+            var receivedCount = 0
+            if !wasRemoteImported(task.transferId) {
+                for object in task.objects {
+                    let target = transferDirectory.appendingPathComponent("\(object.index).download")
+                    try RemoteRelayClient.downloadObject(session, transferId: task.transferId,
+                                                         index: object.index, destination: target,
+                                                         expectedBytes: object.bytes,
+                                                         expectedSha256: object.sha256)
+                    if object.name.lowercased().hasPrefix("album-folder-")
+                        && object.name.lowercased().hasSuffix(".zip") {
+                        receivedCount += try StoredZipExtractor.extract(target, to: root)
+                    } else {
+                        let destination = StoredZipExtractor.uniqueDestination(for: object.name, under: root)
+                        try FileManager.default.moveItem(at: target, to: destination)
+                        receivedCount += 1
+                    }
+                }
+                guard receivedCount > 0 else { throw RemoteRelayError.invalidTask }
+                markRemoteImported(task.transferId)
+                DispatchQueue.main.async { [weak library] in
+                    library?.finishIncomingTransfer(itemCount: receivedCount)
+                }
+            }
+            // The ACK is intentionally last; a failed download or library write
+            // keeps the relay object for the next poll.
+            try RemoteRelayClient.ack(session, transferId: task.transferId)
+            remoteInboxTasks.remove(task.transferId)
+            try? FileManager.default.removeItem(at: transferDirectory)
+            updateStatus("远程作品已写入作品库，ACK 已完成")
+        } catch {
+            remoteInboxTasks.remove(task.transferId)
+            try? FileManager.default.removeItem(at: transferDirectory)
+            updateStatus("远程作品接收失败，未发送 ACK：\(error.localizedDescription)", isError: true)
+            TransferNotifications.shared.show("远程接收失败",
+                                              body: error.localizedDescription,
+                                              id: "remote-failed-\(task.transferId)")
+        }
+        remoteProcessingTasks.remove(task.transferId)
+    }
+
+    private func handleRemoteP2PSessions(_ session: RemoteRelayClient.Session,
+                                         sessions: [[String: Any]]) {
+        guard isRunning else { return }
+        for p2p in sessions {
+            guard (p2p["responderDeviceId"] as? String) == session.deviceId,
+                  let id = p2p["sessionId"] as? String,
+                  let state = p2p["state"] as? String,
+                  state != "closed", state != "failed", p2pEngines[id] == nil else { continue }
+            let transport = P2PSignalTransport(session: session, sessionId: id)
+            guard let engine = P2PTransferEngine.accept(session: p2p, transport: transport,
+                                                        delegate: self) else { continue }
+            p2pEngines[id] = engine
+            updateStatus("正在建立 P2P 直连")
+        }
+    }
+
+    func p2pEngine(_ engine: P2PTransferEngine,
+                   didComplete transfer: P2PTransferEngine.Transfer) throws -> Bool {
+        var success = false
+        try queue.sync {
+            if wasRemoteImported(transfer.transferId) {
+                // A previous import may have completed before the sender saw
+                // its ACK. Let the engine ACK the duplicate, but do not leave
+                // the finished session pinned in the active-engine map.
+                p2pEngines = p2pEngines.filter { $0.value !== engine }
+                success = true
+                return
+            }
+            guard let root = library.receivingRootURL else {
+                throw TransferServiceError.conflict("作品文件夹不可用，请在设置里重新选择")
+            }
+            var imported = 0
+            for (index, object) in transfer.objects.enumerated() {
+                let source = transfer.files[index]
+                if object.name.lowercased().hasPrefix("album-folder-")
+                    && object.name.lowercased().hasSuffix(".zip") {
+                    imported += try StoredZipExtractor.extract(source, to: root)
+                } else {
+                    let destination = StoredZipExtractor.uniqueDestination(for: object.name, under: root)
+                    try FileManager.default.moveItem(at: source, to: destination)
+                    imported += 1
+                }
+            }
+            guard imported > 0 else { throw RemoteRelayError.invalidTask }
+            markRemoteImported(transfer.transferId)
+            library.finishIncomingTransfer(itemCount: imported)
+            p2pEngines = p2pEngines.filter { $0.value !== engine }
+            success = true
+            updateStatus("P2P 作品已写入作品库")
+        }
+        return success
+    }
+
+    func p2pEngine(_ engine: P2PTransferEngine, didFail message: String) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.p2pEngines = self.p2pEngines.filter { $0.value !== engine }
+            self.updateStatus("P2P 直传未完成，等待电脑自动切换中继")
+        }
+    }
+
+    private var remoteRoot: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let root = base.appendingPathComponent("RemoteRelay", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func wasRemoteImported(_ transferId: String) -> Bool {
+        Set(UserDefaults.standard.stringArray(forKey: "album.remoteImportedTransfers.v1") ?? [])
+            .contains(transferId)
+    }
+
+    private func markRemoteImported(_ transferId: String) {
+        var values = UserDefaults.standard.stringArray(forKey: "album.remoteImportedTransfers.v1") ?? []
+        if !values.contains(transferId) { values.append(transferId) }
+        if values.count > 256 { values.removeFirst(values.count - 256) }
+        UserDefaults.standard.set(values, forKey: "album.remoteImportedTransfers.v1")
     }
 
     private func broadcastBeacon() {
@@ -188,7 +377,16 @@ final class IncomingTransferService {
         let name = Data(DeviceIdentity.name.utf8).base64URL
         let model = Data(DeviceIdentity.model.utf8).base64URL
         let state = Data("online".utf8).base64URL
-        return Data("ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)||\(library.advertisedWorkCount)".utf8)
+        var beacon = "ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)||\(library.advertisedWorkCount)"
+        if let counts = library.advertisedWorkCounts {
+            // Optional tail fields preserve the old beacon format while
+            // exposing the same precise/traffic inventory available at
+            // /v2/info to the Windows restock decision.
+            beacon += "|\(counts[WorkCategory.conversion] ?? -1)"
+            beacon += "|\(counts[WorkCategory.traffic] ?? -1)"
+            beacon += "|\(counts[WorkCategory.uncategorized] ?? -1)"
+        }
+        return Data(beacon.utf8)
     }
 
     private func acceptHTTP(_ connection: NWConnection) {
@@ -202,6 +400,9 @@ final class IncomingTransferService {
     private func handle(_ request: HTTPRequest) -> HTTPResponse {
         do {
             if request.method == "GET" && request.path == "/v2/info" { return infoResponse() }
+            if request.method == "POST" && request.path == "/v2/relay-profile" {
+                return try saveRelayProfile(request)
+            }
             if request.method == "POST" && request.path == "/v2/tasks" { return try createTask(request) }
             let pieces = request.path.split(separator: "/").map(String.init)
             if request.method == "PUT", pieces.count == 5, pieces[0] == "v2", pieces[1] == "tasks",
@@ -249,6 +450,21 @@ final class IncomingTransferService {
             "workCount": library.advertisedWorkCount,
             "taskId": ""
         ]
+        if let keys = try? RemoteIdentity.publicKeys(),
+           let signing = keys["signingPublicKey"] as? [String: Any],
+           let agreement = keys["agreementPublicKey"] as? [String: Any],
+           let signingX = signing["x"] as? String,
+           let signingY = signing["y"] as? String,
+           let agreementX = agreement["x"] as? String,
+           let agreementY = agreement["y"] as? String {
+            // Only public JWK coordinates are exposed to the trusted LAN
+            // enrollment request; private keys remain in Keychain.
+            info["relaySigningX"] = signingX
+            info["relaySigningY"] = signingY
+            info["relayAgreementX"] = agreementX
+            info["relayAgreementY"] = agreementY
+            info["relayEnabled"] = true
+        }
         if let counts = library.advertisedWorkCounts {
             // Keep the legacy total and the category aggregate from the same
             // scan. This prevents the PC from seeing a stale total beside
@@ -257,6 +473,25 @@ final class IncomingTransferService {
             info["workCounts"] = counts
         }
         return HTTPResponse(status: 200, object: info)
+    }
+
+    private func saveRelayProfile(_ request: HTTPRequest) throws -> HTTPResponse {
+        guard let body = request.bodyData,
+              let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let endpoint = object["endpoint"] as? String,
+              let certificate = object["certificate"] as? [String: Any],
+              let signature = object["certificateSignature"] as? String,
+              !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !signature.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TransferServiceError.badRequest("远程登记资料不完整")
+        }
+        guard (certificate["deviceId"] as? String) == DeviceIdentity.id else {
+            throw TransferServiceError.forbidden("远程登记资料不是发给本机的")
+        }
+        try RemoteRelayProfile.save(endpoint: endpoint, certificate: certificate,
+                                    certificateSignature: signature)
+        updateStatus("远程传送已开启，等待电脑连接")
+        return HTTPResponse(status: 200, object: ["ok": true])
     }
 
     private func createTask(_ request: HTTPRequest) throws -> HTTPResponse {
@@ -668,6 +903,33 @@ final class HTTPRequestReader {
         if let url = bodyFileURL { try? FileManager.default.removeItem(at: url) }
         connection.cancel()
         keepAlive = nil
+    }
+}
+
+private final class P2PSignalTransport: P2PTransferEngine.SignalTransport {
+    private let session: RemoteRelayClient.Session
+    private let sessionId: String
+
+    init(session: RemoteRelayClient.Session, sessionId: String) {
+        self.session = session
+        self.sessionId = sessionId
+    }
+
+    func snapshot() throws -> [String: Any] {
+        try RemoteRelayClient.p2pSession(session, sessionId: sessionId)
+    }
+
+    func send(type: String, data: [String: Any]) throws {
+        try RemoteRelayClient.sendP2PSignal(session, sessionId: sessionId,
+                                            type: type, data: data)
+    }
+
+    func close() {
+        let session = self.session
+        let sessionId = self.sessionId
+        DispatchQueue.global(qos: .utility).async {
+            try? RemoteRelayClient.closeP2PSession(session, sessionId: sessionId)
+        }
     }
 }
 

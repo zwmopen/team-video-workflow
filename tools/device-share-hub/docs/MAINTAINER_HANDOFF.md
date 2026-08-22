@@ -1,8 +1,180 @@
+# 2026-08-23 Cloudflare 中继与混合传输当前真相
+
+## 2026-08-23 HTTPS 代理与远程设备列表容错（Beta 0.6.50 已发布）
+
+- 当前发布版本：Android 0.6.50/versionCode 88、iPhone 0.6.37/build 56、Windows V4.3.26；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.50-beta.1>。
+- Windows 远程中继仍强制 HTTPS；如果直连 `workers.dev` 不通，可在 `%LOCALAPPDATA%\ZwmDeviceShareHub\relay-proxy.txt` 写入 `http://127.0.0.1:7897`，或设置 `ZWM_DEVICE_SHARE_RELAY_PROXY`，仅用于 HTTPS CONNECT 代理。本机已配置 Clash Verge 代理并确认 Worker `/v1/health` 可达。
+- Worker `/v1/devices` 已对历史损坏成员记录做容错：记录告警、跳过坏记录、继续返回有效设备；本机 V4.3.26 重启后不再产生新的 `remote_presence_poll_failed`，但当前没有手机在线，所以设备列表仍为空。
+- Device Share Hub run `32596690436` 的 Android、iOS、Windows、remote-relay check 和线上 Worker E2E 全部成功；Worker 最新部署版本为 `fb0ba8fb-6f15-46f3-b31d-00cbeba36c59`。稳定索引仍为 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.50.apk`、`album-iOS-v0.6.37-altstore.ipa`、`device-share-hub-Windows-V4.3.26-relay-beta.exe`；桌面中控当前 PID 40624，TCP 45833、UDP 45834 均由它监听。
+- 仍未完成的证据：没有连接实体 Android/iPhone；USB、同 Wi-Fi、跨网 P2P DataChannel、P2P 失败后 HTTPS 回退、手机作品库落库/ACK、精准低于 5 自动补货和手机点击更新仍需现场设备验收。不能用云端 E2E 代替这些证据。
+
+## 2026-08-23 P2P 信令会话清理修复（Beta 0.6.49 已发布）
+
+- 当前发布版本：Android 0.6.49/versionCode 87、iPhone 0.6.36/build 55、Windows V4.3.25；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.49-beta.1>。
+- 根因与修复：移动端 P2P 完成 ACK 后此前只关闭 WebRTC PeerConnection，Cloudflare 信令会话仍可能留存；Android/iOS 现在在统一 shutdown 中调用 `transport.close()`，成功、失败、取消都释放信令会话。
+- Device Share Hub run `32594831524` 的 Android、iOS、Windows、remote-relay check 和线上 Worker E2E 全部成功；Beta `latest-beta.json`/AltStore Beta 源已复核到 0.6.49/0.6.36，稳定索引仍为 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.49.apk`、`album-iOS-v0.6.36-altstore.ipa`、`device-share-hub-Windows-V4.3.25-relay-beta.exe`；桌面中控当前为该 V4.3.25 路径，PID 14728，TCP 45833、UDP 45834 均由它监听。
+- 仍未完成的证据：没有连接实体 Android/iPhone；USB、同 Wi-Fi、跨网 P2P DataChannel、P2P 失败后 HTTPS 回退、手机作品库落库/ACK、精准低于 5 自动补货和手机点击更新仍需现场设备验收。不能用云端 E2E 代替这些证据。
+
+## 2026-08-23 iOS P2P ICE 修复与 Beta 0.6.48 发布
+
+- Android 0.6.48/versionCode 86、iPhone 0.6.35/build 54、Windows V4.3.24；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.48-beta.1>。
+- 修复 iOS `pendingCandidates`/`remoteDescriptionSet` 的并发竞态；新增 P2P ICE、ACK、会话回收、HTTPS 回退和库写入顺序不变量门禁。
+- Device Share Hub run `32593184579` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部成功；Beta 索引与 AltStore Beta 源已复核为 Android 0.6.48/versionCode 86、iPhone 0.6.35/build 54。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.48.apk`、`album-iOS-v0.6.35-altstore.ipa`、`device-share-hub-Windows-V4.3.24-relay-beta.exe`；桌面中控已重启并监听 UDP 45834/TCP 45833。
+- 稳定 `latest.json` 保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。当前仍缺真实手机在线条件，USB/Wi-Fi/P2P/HTTPS/ACK/自动补货属于待现场验收，不把云端 E2E 当真机证据。
+
+## 2026-08-23 可选测试版更新通道（Beta 0.6.47/0.6.34 已发布）
+
+- Android 0.6.47/versionCode 85、iPhone 0.6.34/build 53，Windows 继续为 V4.3.23；设置中默认稳定版，可手动切到测试版。
+- Android 测试版检查读取 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest-beta.json`；iPhone 测试版复制并使用 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore-beta.json`，稳定索引和稳定源不变。
+- Device Share Hub run `32590760825` 的三端云构建、remote-relay check 和已部署 Worker live E2E 全部成功；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.47-beta.1>。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.47.apk`、`album-iOS-v0.6.34-altstore.ipa`、`device-share-hub-Windows-V4.3.23-relay-beta.exe`。
+- 当前桌面中控已重启并监听 UDP 45834/TCP 45833；当前仍没有真实手机在线，USB/Wi-Fi/P2P/HTTPS/ACK/自动补货需在手机上线后逐项验收。
+
+## 2026-08-23 混合通道状态合并修复（Beta3 已发布）
+
+- Windows 源码目标版本提升为 V4.3.23；Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52 保持不变。
+- 新增独立 Wi‑Fi 最近观察时间，并合并局域网探测与远程中继设备记录，避免旧 IP 遮蔽远程 P2P/HTTPS 回退，也避免远程凭证和库存被 LAN 探测清掉。
+- run `32589239907` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta `v0.6.46-beta.3` 已发布，桌面包已同步到 `C:\Users\z\Desktop`，稳定更新索引不改。
+- 待完成：真机 USB/Wi‑Fi/P2P/HTTPS/ACK/自动补货验收；当前桌面端已重启到 V4.3.23，但日志仍需手机在线后取得设备证据。
+
+## 2026-08-23 远程库存合并边界修复（Beta 0.6.46-beta.2 已发布）
+
+- Windows 已提升到 V4.3.22；远程心跳缺字段不再覆盖局域网发现的完整库存、版本和更新能力。Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52 保持不变。
+- Device Share Hub run `32587368303` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.2>。
+- 新桌面包已同步到 `C:\Users\z\Desktop\device-share-hub-Windows-V4.3.22-relay-beta.exe`；稳定索引和 AltStore Beta 源不变。真机仍需验证远程 P2P/HTTPS、落库、ACK 和精准阈值补货。
+
+## 2026-08-23 远程库存心跳与自动补货闭环（Beta 已发布）
+
+- 当前源码目标版本为 Windows V4.3.21、Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52。
+- Android/iPhone 远程心跳现在携带分类库存；Cloudflare Durable Object 做计数校验并在 `/v1/devices` 返回库存与版本能力；Windows 合并后统一使用 USB/Wi-Fi/远程可用判断。
+- 本轮协议测试、自动更新/库存静态门禁已通过；Device Share Hub run `32586026767` 的三端云构建和线上 Worker E2E 全部通过，Beta `v0.6.46-beta.1` 已发布，三端包已同步到 `C:\Users\z\Desktop`。稳定索引不改；真机仍需验证远程 P2P/HTTPS、作品落库、ACK 和精准阈值补货。
+- Cloudflare Worker 最新部署版本为 `74aa46b2-8122-437c-93be-844262af7004`；AltStore Beta 源提交为 `4578bce603ea5476252f25bc8a74c2ef719e30b5`。
+
+## 2026-08-23 自动补货递归发现修复（Beta Windows V4.3.20，已发布）
+
+- 现场复核发现精准作品存放在 `成品库\\微信公众号\\作品集_xxx[转]` 子目录，而旧实现只扫描 `library_path` 第一层，导致自动补货找不到精准源。
+- `PickAutoRestockSource` 已改为递归扫描并继续严格匹配 `[转]` / `【转】` 与图文作品结构；run `32583765953` 全部通过，Beta patch 为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.3>。实体手机验收仍待连接，稳定索引不改。
+
+## 2026-08-22 自动分发默认配置修复（Beta Windows V4.3.19，已发布）
+
+- 复核当前电脑数据库发现自动补货开关没有记录，导致自动分发逻辑实际被关闭；已将当前数据库设置为自动手机更新开启、自动补货开启、精准阈值 5，并把原库备份到临时目录。
+- 源码新增 ContentStore 默认迁移：只对缺失设置写默认值，不覆盖用户明确关闭或自定义阈值；Windows 版本提升到 V4.3.19，手机版本保持已发布的 Android 0.6.45/iOS 0.6.32。
+- Device Share Hub run `32581609531` 的 Windows、Android、iOS、remote-relay check 和 live E2E 全部通过；Beta patch 为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.2>，AltStore Beta 源提交为 `83de151d181976cb72e7389790acfaa12cb2eec5`。
+- 当前待手机上线后的真实自动补货/USB/Wi-Fi/P2P/HTTPS 中继回归；稳定索引不改。
+
+## 2026-08-22 自动更新重试与分类库存信标修复（Beta 0.6.45/0.6.32/V4.3.18，已发布）
+
+- 现场发现旧 Android 0.6.29/versionCode 67 曾广播 receiving，但 /v2/info 接收端口无响应；这证明“设备出现在列表”不能等同于 HTTP 接收器可用，也暴露了自动更新失败后的持久化抑制风险。
+- Windows 自动手机更新现在把“发送中”与“已送达”分开：只有 UploadToDevice 成功返回后才写 auto_mobile_update_delivered_<deviceId>；失败路径清除内存占位并保留下一轮推送资格。
+- Android/iPhone 在线信标追加可选 conversion|traffic|uncategorized 尾字段；Windows 解析后优先使用分类字段，旧客户端没有尾字段时继续保持未知，不使用总数替代精准流量。
+- 新增 scripts/verify-auto-mobile-update.mjs，Windows 云构建前检查返回值、成功后持久化和失败重试分支；本轮版本号已提升为 Android 0.6.45/versionCode 83、iPhone 0.6.32/build 51、Windows 4.3.18。
+- Device Share Hub run `32579462284` 的 Android、iOS、Windows、remote-relay check 和已部署 Worker live E2E 均通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.1>。三端包已同步到 `C:\Users\z\Desktop`，哈希已写入 CHANGELOG；AltStore Beta 源提交为 `a0591f1401365e4ae252882083ea9eda51082f8e`。
+- 稳定 `latest.json` 保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。Beta 发布不等于实体设备验收：当前仍需 Android、iPhone、Windows 实机验证安装、在线心跳、USB/Wi-Fi/P2P 成功、HTTPS 中继回退、作品落库、ACK 和精准低于 5 的自动补货。
+
+## 2026-08-22 P2P ACK 丢失后的重复入库修复（Beta 0.6.44/0.6.31/V4.3.17 已发布）
+
+- 已修复 Android 的真实幂等性缺口：P2P 已写库但 ACK 丢失、Windows 转 HTTPS 中继重试时，Android 现在只补发 ACK，不会再次下载或写入作品库。
+- 成功 ACK 后 Android 会移除远程收件内存占位；重复 P2P 完成路径会释放活动引擎并清理缓存。iOS 原有的中继去重逻辑保持，并补齐重复 P2P 路径的活动引擎释放。
+- 本地已通过隐私检查、remote-relay check/typecheck、13/13 协议测试和源码不变量检查；Device Share Hub run `32575362864`、Repository quality `32575362946`、Secret scan `32575362919` 和线上 Worker E2E job `97036844830` 全部通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；Android SHA-256 `0fe499cf1040d12c28ba9ef8c5aa8e7f2d214475d6de7c88e985f27d4430381d`，iPhone IPA SHA-256 `1db6768df098beb2c8924d5b7fb0b923d81ff53678b840bc297787fe1cd25c92`，Windows SHA-256 `f89106a50bd4d73295a098e803382648680c3fbd90d642d70499a0c736a4af52`。
+- 三端包已同步到 `C:\Users\z\Desktop`；AltStore Beta 源内容提交为 `f46cca7fd98504ea4c195e89a75a6697a80d197a`，稳定 `latest.json` 未改动。
+
+## 2026-08-22 Windows 中继失败清理与 Beta 0.6.43（Beta 已发布，真机验收待完成）
+
+- 当前源码版本已同步为 Windows 4.3.16、Android 0.6.43 / versionCode 81、iPhone 0.6.30 / build 49。
+- Windows 远程中继在上传、提交、进度或哈希失败后，现在会立即取消本次 transfer，清理 R2 临时对象和收件箱任务，并重置失败的 transferId，避免孤立任务等待 TTL 或下一轮误重试。
+- Device Share Hub run `32571763937`、Repository quality run `32571763918`、Secret scan run `32571763916` 均通过；其后的文档收口 run `32572517530` 的 Android、iOS、Windows、remote-relay 和正式 Worker E2E job 也全部通过。
+- Beta 发布页为 https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1；AltStore Beta 源已指向 iPhone 0.6.30/build 49。三端新包已同步到 `C:\Users\z\Desktop`；稳定 `latest.json` 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。
+- 当前没有连接实体 Android/iPhone/Windows；真机权限、安全扫描、P2P 成功、HTTPS 自动回退和文件实际落库验收仍未完成，不能用云端构建替代这些证据。
+
+## 2026-08-22 Android P2P ICE 候选竞态修复与 Beta 0.6.42（Beta 已发布，真机验收待完成）
+
+- 当前源码版本已同步为 Windows 4.3.15、Android 0.6.42 / versionCode 80、iPhone 0.6.29 / build 48。
+- Android P2P 的 ICE 候选入队和远端 Description 回调现在通过 iceLock 原子排空，修复候选在并发窗口中丢失导致直连失败的风险；此前的跨线程状态可见性修复保持不变。
+- GitHub Actions Device Share Hub run 32565416952 的 Android、iOS、Windows、remote-relay 全部通过；Repository quality run 32565417059、Secret scan run 32565416950 也已通过。Beta 发布页为 https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1，AltStore Beta 源已同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
+- 当前没有连接实体 Android/iPhone/Windows，真机权限、安全扫描、P2P 成功和 HTTPS 中继回退验收仍未完成。
+
+## 2026-08-22 线上 Cloudflare Worker E2E 门禁
+
+- 代码头 `8846dc23` 新增 `remote-relay-live-e2e` 云端 job；它不使用本机网络或缓存，直接访问 `https://zwm-device-share-relay.zwmrpg.workers.dev`。
+- Device Share Hub run `32568228480` 中，`remote-relay-live-e2e` job `97019921822` 已通过；真实跑通 health、工作区登记、管理员/成员会话、presence、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段。
+- 这项证据证明正式 Worker、Durable Object、R2 和 P2P 信令控制面在线可用；不证明实体 Android/iPhone 的 DataChannel 建连、文件落盘、HTTPS 自动回退或系统权限安全扫描，后四项仍需真实设备。
+- 本机 Windows 直连 `workers.dev` 受系统网络代理影响，Node E2E 可能出现连接超时；正式 E2E 以 GitHub Ubuntu runner 结果为准，避免把本机代理差异误判为服务故障。
+
+## 2026-08-22 Android P2P 共享状态可见性修复与 Beta 0.6.41
+
+- 当前源码版本已同步为 Windows 4.3.14、Android 0.6.41 / versionCode 79、iPhone 0.6.28 / build 47。
+- Android P2P 的 WebRTC 回调、信令轮询、文件处理队列和超时任务共享状态现在使用 volatile，修复跨线程读到旧状态导致误超时或重复清理的风险。
+- GitHub Actions Device Share Hub run 32562005856 已通过，Repository quality run 32562005857、Secret scan run 32562005864 已通过；remote-relay 13/13 通过。没有使用本地 Android Gradle/Xcode/Windows 构建替代证据。
+- Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1>；Android SHA-256 e9bd39eb83b1bdc516c4824fdb4a451cdad97dc31d741d16fc0a9f8de9989cb5，iPhone IPA SHA-256 b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed，Windows SHA-256 a65a325f248e397cba5eacc8057ebffe03227c8cdb3296720353d9d9c11b5bd0。
+- 桌面包路径：C:\Users\z\Desktop\album-Android-v0.6.41.apk、C:\Users\z\Desktop\album-iOS-v0.6.28-altstore.ipa、C:\Users\z\Desktop\device-share-hub-Windows-V4.3.14-relay-beta.exe；AltStore Beta 源内容提交 e58a7b76cb0ecb96b7de05e519f89acf6fc27b41。稳定 latest.json 未改动。
+- 当前没有连接实体 Android/iPhone/Windows，真机权限、安全扫描、P2P 成功和 HTTPS 中继回退验收仍未完成。
+
+## 2026-08-22 Android 媒体权限残留修复与 Beta 0.6.40
+
+- 当前源码版本已同步为 Windows `4.3.13`、Android `0.6.40` / versionCode `78`、iPhone `0.6.27` / build `46`。
+- 删除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；自动截图、悬浮窗、截图观察器和自动剪切板链路此前已删除，本轮把权限声明也收干净。
+- Android 10 隐藏作品兼容导入仍保留旧存储兼容通道；它只在用户主动选择作品文件夹后工作，不等同于系统相册自动扫描。若后续决定彻底放弃 Android 10 隐藏目录兼容，再单独评估删除旧存储权限和导入代码。
+- GitHub Actions Device Share Hub run `32559885341` 已通过：Android 2m31s、iOS 4m21s、Windows 9m05s、remote-relay 22s；Secret scan `32559885315`、Repository quality `32559885563` 也已通过。没有用本地 Android Gradle/Xcode/Windows 构建替代证据。
+- Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1>；Android SHA-256 `f14d708707c8d1ed5be3ae81e0873f644ec5d30d2496592439a6898cba2d6faa`，iPhone IPA SHA-256 `98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`，Windows SHA-256 `994a20ecb0ef01f533bb99e71dfacf1d73886c019127e986ef5a54d48cbcff23`。
+- 桌面包路径：`C:\Users\z\Desktop\album-Android-v0.6.40.apk`、`C:\Users\z\Desktop\album-iOS-v0.6.27-altstore.ipa`、`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.13-relay-beta.exe`。AltStore Beta 源内容提交 `d64b3df036109a52fa62b1fc997cb938419d9b6e`，稳定 `latest.json` 未改动。
+- 真实 Android/iPhone/Windows 设备仍需安装后检查系统权限列表、安全扫描、作品收发、P2P 成功和失败回退；在设备未连接前不宣称真机完成。
+
+## 2026-08-22 Android P2P 会话回收修复与 Beta 0.6.39
+
+- 当前已发布 Beta：Windows `4.3.12`、Android `0.6.39` / versionCode `77`、iPhone `0.6.26` / build `45`。
+- 本轮修复 Android P2P 启动瞬间失败后的残留活动引擎：失败引擎不再进入 map，下一轮轮询可以重试；取消已结束引擎也不会提交到已关闭队列。上一轮 20 秒建连超时、回调线程隔离和 HTTPS 中继回退保持不变。
+- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>；三端代码构建 run `32558264352`（PR #24 代码头 `f69775559f643e15a21095da5b86b61a270993da`），安全扫描 run `32558264343`、质量检查 run `32558264394` 已通过。
+- Android SHA-256：`ff6153918f9c8ac7793e9ce7a0c1284ed20e63243a94c8780d106a41e0bd3f23`；iPhone IPA SHA-256：`189cd17b4904dd97b8fa750559fcb6eeabb018a3274c1367967c2534339b8506`；Windows SHA-256：`ea87a27b79198e091a09e927c0a3369bc919bfd3846ac38210bd284a4d28bb13`。
+- 桌面同步包：`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.12-relay-beta.exe`；Android：`C:\Users\z\Desktop\album-Android-v0.6.39.apk`；iOS：`C:\Users\z\Desktop\album-iOS-v0.6.26-altstore.ipa`。
+- iPhone Beta 更新源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>，当前指向 0.6.26/build 45；稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，未把 Beta 推入稳定自动更新。
+- 已接入真实数据面：Windows 使用 libdatachannel 发起 `album-transfer-v1`，Android/iOS 使用 WebRTC 接收；Cloudflare 只承担短时 SDP/ICE 信令，文件字节不上传 R2。
+- P2P 失败条件（20 秒建连超时、ICE/DataChannel 失败、manifest/大小/SHA-256/作品库写入失败）统一回退现有 HTTPS 中继；中继仍是跨网络必达兜底。
+- P2P 收件端只有在文件完整校验并写入现有作品库后才 ACK，并用 `transferId` 去重，避免 ACK 丢失后的中继回退造成重复作品。
+- 本阶段已通过本地协议检查、远程 Worker 13 项测试和 run `32558264352` 三端云构建；Beta 已发布。没有实体 Android/iPhone/Windows 跨网络设备，暂不宣称真实 P2P 业务已验收。
+
+### 上一版普通 HTTPS 中继基线（历史证据）
+
+- 当前开发交付版本：Windows `4.3.7`、Android `0.6.34` / versionCode `72`、iPhone `0.6.21` / build `40`。
+- 已补齐：Windows 发现手机后自动下发远程成员凭证；Android/iOS 保存凭证、带工作区头登录中继、心跳、下载、写库和 ACK；Windows 无 USB/Wi-Fi 时自动走 Cloudflare 中继。
+- 已用实际 Worker 烟测跑通：健康检查 → 注册工作区 → 管理端/接收端会话 → 在线心跳 → 创建任务 → R2 上传 → 提交 → 收件箱 → 下载 SHA-256 → ACK → R2 删除。
+- Beta 安装包：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.34-beta.1>；对应源码提交 `7c72f43`，GitHub Actions `32469716023`。
+
+- Worker 已部署：`https://zwm-device-share-relay.zwmrpg.workers.dev`。
+- 资源已实读：Worker `zwm-device-share-relay`、Durable Object `WorkspaceRelay`、R2 `zwm-device-share-relay`；当前部署版本 `b4fc48b0-9b3b-4e73-b828-d51abe59ba4c`，100% 生效。该版本由当前工作树部署，包含最新 P2P 会话授权与异常清理修复。
+- 当前 Cloudflare 账号没有活动 Zone，所以暂时不能绑定自定义域名；本机网络对 `workers.dev` 域名存在 DNS/连接异常，不能用本机失败的健康请求否定部署证据。
+- 传输策略：同 Wi-Fi/USB 仍走现有直传；远程中继作为不同网络的 HTTPS 兜底。Cloudflare 已加入短时 WebRTC/ICE 信令协商接口，三端原生 DataChannel 数据面仍未完成，暂时不宣称跨网 P2P。
+- 移动端的 `RemoteRelayProfile` 由 Windows 在可信局域网首次发现时自动下发，不要求用户填写地址、令牌或配对码。
+
 ## 2026-08-20 Android 0.6.29 / iPhone 0.6.16 更新闭环优化
 
 - Android 从后台回到前台且超过 6 小时未检查时，会静默检查并准备更新；启动检查、下载断点、SHA-256 校验和系统安装确认保持不变。
 - iPhone 检查到新版本时，提示直接打开 AltStore 的 My Apps 更新，或复制 AltStore 更新源；不再只提示连接电脑。
 - Android `versionCode=67` / `versionName=0.6.29`；iPhone `0.6.16/build 35`。
+
+## 2026-08-21 高级远程传送：普通公开作品中继链路（历史开发记录）
+
+- Android `0.6.33` / versionCode `71` 与 iPhone `0.6.20` / build `39` 已把中继收件箱接到真实文件处理：下载对象 → SHA-256/大小校验 → 写入现有作品库 → 最后 ACK。
+- 本阶段按用户要求不做应用层端到端加密；文件是公开作品，远程服务只保存 HTTPS 传来的普通 ZIP 临时对象，ACK、取消或过期后删除。旧加密对象字段仍保留兼容读取。
+- 桌面端新增 `remote-relay/scripts/send-public-work.mjs`：输入作品文件夹或 ZIP、接收手机设备 ID 和已建立的 Bearer 会话，即可创建任务、上传、提交。目录使用普通 ZIP，作品名里的 `[转]`/`[泛]` 会保留给手机端分类识别。
+- Android `OnlineService` 与 iOS `IncomingTransferService` 都在写库成功后才 ACK；失败时移除本地“已处理”占位，保留中继任务等待下一轮重试。已确认导入的任务会持久化去重，避免 ACK 失败导致重复作品。
+- `remote-relay/test/protocol.test.js` 新增普通公开作品完整协议测试：创建、上传、提交、收件箱、对象下载标记、ACK 删除；旧加密兼容测试继续保留。
+- 当时尚未完成 Cloudflare 正式部署、Windows 原生面板接入和真实 Android/iPhone 安装；现已由顶部当前真相和 Beta 版本接续。实体手机安装与异地网络业务实传仍需单独验收，不能把协议测试当作真机跨网证据。
+
+## 2026-08-21 高级远程传送：移动端中继会话客户端（历史开发记录）
+
+- 当前开发候选版本：Android `0.6.31` / versionCode `69`；iPhone `0.6.18` / build `37`。
+
+- Android `RemoteRelayClient` 与 iOS `RemoteRelayClient` 已镜像接入中继控制面：`POST /v1/challenges`、`POST /v1/sessions`、`POST /v1/presence`、`GET /v1/inbox`、`GET /v1/transfers/{id}`。
+- 登录签名由本机系统安全存储中的 P-256 私钥完成；客户端只接受 HTTPS，不把 Bearer 会话令牌写日志。收件箱为空时返回空集合，任务 ID 做字符白名单校验，响应体限制为 2 MiB。
+- 两端已增加登记资料存储层：保存中继地址、公开成员凭证和管理员签名，未保存私钥或 Bearer 令牌；未登记时不启动任何远程请求，旧局域网接收路径不变。
+- Android 前台接收服务、iOS 局域网接收服务已挂接独立的 10 秒心跳调度器；它不占用局域网 V2 监听线程，远程登录失败只清除内存会话并等待下轮，不影响局域网收发。
+- 两端当时只在心跳成功后读取 `/v1/inbox`，保留当前接收设备的 `ready` 任务并校验元数据；该限制已由上面的普通公开作品收件链路接续。
+- 远程基地址只允许 HTTPS origin，不允许路径、查询、片段或用户信息；失败重试采用 10 秒起、最长 5 分钟退避，地址/凭证签名/设备 ID 变化会清空旧会话并立即重新认证。
+- 该历史提交不代表 Windows 原生面板按钮化、已部署 Cloudflare 或已完成跨网络实传；当前以普通公开作品脚本发送和本地协议测试作为开发验收入口。
 
 ## 2026-08-20 Android 0.6.28 / iPhone 0.6.15 AltStore 自动更新源
 
@@ -599,3 +771,11 @@
 5. 把三端包发布到 `gallery-updates`，再更新 `latest.json`；
 6. 通过公开 raw 地址确认线上版本，而不是只看本地提交；
 7. 推送主源码和备用副本，确认工作区干净。
+## 2026-08-21 高级远程传送第一阶段：任务状态与幂等重试
+
+- 当前正式基线仍为 Android 0.6.29 / iPhone 0.6.16；本阶段先增强 `remote-relay`，不把未完成的远程客户端混进手机正式包。
+- `GET /v1/transfers/{id}`、`GET /v1/inbox`、`GET /v1/outbox` 现在返回 `uploaded`、`uploadedAt`、`uploadedObjectCount`、`uploadedCipherBytes`、`nextObjectIndex`，供客户端从已有任务恢复。
+- 同一任务对象再次上传时，中继会核对 R2 现存对象大小和 `cipherSha256`，一致则返回 `reused=true`，避免断线重试产生重复写入。
+- Android 与 iOS 接收服务启动时会在系统密钥存储生成远程签名/密钥协商用 P-256 密钥；私钥不进入日志、发现广播或网络请求。
+- 验证：remote-relay 11 项协议测试通过、Node 语法检查通过、`git diff --check` 通过；本机 `tsc` 不在 PATH，类型检查仍以 CI 为准。
+- 下一步唯一动作：实现三端设备凭证与远程会话客户端，先接入在线心跳/任务收件箱，再接密文上传下载；不得直接把 V2 局域网 HTTP 暴露到公网。
