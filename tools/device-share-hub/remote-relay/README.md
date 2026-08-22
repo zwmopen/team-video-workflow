@@ -29,7 +29,7 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 
 - Windows 原生图形面板已经接入自动登记和中继兜底；该脚本仍保留作协议诊断与无界面烟测入口；
 - 尚未完成手机流量与异地 WiFi 的实体跨网络传送；
-- P2P 数据面尚未实现；本阶段远程传送使用 HTTPS 普通公开文件中继。当前已实现受设备证书授权的 WebRTC DataChannel 信令会话，供三端原生数据面接入。
+- 三端原生 P2P DataChannel 数据面已经接入；本阶段远程传送仍以 HTTPS 普通公开文件中继作必达兜底。当前已实现受设备证书授权的 WebRTC DataChannel 信令会话，P2P 直连失败时由 Windows 自动回退中继。
 
 ## Cloudflare 正式部署
 
