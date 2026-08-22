@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.9 / Android 0.6.36 / iPhone 0.6.23 - 2026-08-22
+
+- 修复 P2P 成功 ACK 刚写入发送队列就关闭 DataChannel 的尾部竞态；移动端等待短暂刷新窗口后再关闭，避免电脑误判失败并重复走 HTTPS 中继。
+- iPhone 成功导入后清理 P2P 临时缓存；Windows DataChannel 背压连续停滞 20 秒时主动失败，让既有 HTTPS 中继回退真正生效，不再无限卡住。
+- Android `versionCode=74` / `versionName=0.6.36`；iPhone `0.6.23/build 42`；Windows `4.3.9`。仍需同一次 GitHub Actions 云构建和实体设备业务验收。
+
 ## Beta：Windows V4.3.8 / Android 0.6.35 / iPhone 0.6.22 - 2026-08-22
 
 - 把之前只有 SDP/ICE 信令的“P2P”补成真实 DataChannel 数据面：Windows 使用 libdatachannel，Android 使用 WebRTC SDK，iPhone 使用 WebRTC XCFramework。

@@ -45,6 +45,7 @@ final class P2PTransferEngine {
     private static final int CHUNK_HEADER = 20;
     private static final int MAX_CHUNK = 48 * 1024;
     private static final long MAX_BYTES = 20L * 1024L * 1024L * 1024L;
+    private static final long ACK_FLUSH_DELAY_MS = 500L;
     private static final Object FACTORY_LOCK = new Object();
     private static PeerConnectionFactory factory;
 
@@ -348,7 +349,10 @@ final class P2PTransferEngine {
             throw new IOException("P2P ACK 发送失败");
         }
         finished = true;
-        shutdown(false);
+        // Give the WebRTC SCTP queue time to put the success ACK on the wire
+        // before closing the peer. The sender uses this ACK to avoid a
+        // duplicate HTTPS-relay retry.
+        executor.schedule(() -> shutdown(false), ACK_FLUSH_DELAY_MS, TimeUnit.MILLISECONDS);
     }
 
     private ObjectInfo findObject(int index) throws IOException {

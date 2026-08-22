@@ -20,6 +20,7 @@ constexpr size_t kChunkBytes = 48 * 1024;
 constexpr size_t kBufferedLimit = 4 * 1024 * 1024;
 constexpr auto kConnectTimeout = std::chrono::seconds(20);
 constexpr auto kAckTimeout = std::chrono::seconds(20);
+constexpr auto kBackpressureStallTimeout = std::chrono::seconds(20);
 
 std::string JsonEscape(const std::string& value) {
     std::string output;
@@ -213,7 +214,19 @@ bool Send(const std::string& transferId,
                 input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
                 const auto count = static_cast<size_t>(input.gcount());
                 if (count == 0) continue;
-                while (channel->bufferedAmount() > kBufferedLimit) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                auto drainDeadline = std::chrono::steady_clock::now() + kBackpressureStallTimeout;
+                auto previousBuffered = channel->bufferedAmount();
+                while (previousBuffered > kBufferedLimit) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    const auto buffered = channel->bufferedAmount();
+                    if (buffered < previousBuffered) {
+                        drainDeadline = std::chrono::steady_clock::now() + kBackpressureStallTimeout;
+                    }
+                    previousBuffered = buffered;
+                    if (std::chrono::steady_clock::now() >= drainDeadline) {
+                        throw std::runtime_error("P2P 数据通道背压停滞");
+                    }
+                }
                 auto frame = Chunk(static_cast<uint32_t>(index), offset, buffer, count);
                 channel->send(std::move(frame));
                 offset += count; sentTotal += count;

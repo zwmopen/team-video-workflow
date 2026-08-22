@@ -2,6 +2,18 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-047 P2P 成功尾部 ACK 竞态与背压无限等待（Windows 4.3.9 / Android 0.6.36 / iPhone 0.6.23）
+
+- 现象：手机导入成功后立即关闭 DataChannel，电脑可能在收到 ACK 前看到通道关闭并重复走 HTTPS 中继；iPhone ZIP 导入成功后 P2P 缓存目录可能残留；Windows 发送侧背压长期不下降时没有硬性回退边界。
+- 根因：`sendData`/`DataChannel.send` 只把 ACK 放入 SCTP 队列，紧接着关闭 peer 不能证明字节已经发出；成功路径没有统一清理 iOS 缓存；背压循环只看缓冲量，没有停滞计时。
+- 修复：Android/iOS ACK 后等待 500ms 再关闭；iOS 成功路径删除临时目录；Windows 记录背压下降时间，连续 20 秒无进展即返回失败，由上层自动切 HTTPS 中继。
+- 证据：待新版本同一提交的 GitHub Actions Android/iOS/Windows 构建和实体传输回归确认；当前没有连接实体手机。
+- 回归要求：
+  1. 小 ZIP 成功直传后电脑只收到一次成功 ACK，不创建中继重复任务。
+  2. iPhone 成功导入 ZIP 后，P2P 缓存目录在 ACK 刷新窗口后消失。
+  3. 模拟接收端不读数据时，Windows 最迟 20 秒退出 P2P 并自动进入 HTTPS 中继。
+  4. 正常慢速传输只要缓冲持续下降，不得被 20 秒停滞保护误切换。
+
 ## DSH-046 远程传送只有信令没有文件数据面（Windows 4.3.8 / Android 0.6.35 / iPhone 0.6.22）
 
 - 现象：Cloudflare 的 P2P 会话可以创建并交换 SDP/ICE，但此前没有真正的 DataChannel 文件收发；如果误把信令成功当成文件成功，会出现“已直连但手机没有作品”。

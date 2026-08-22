@@ -13,6 +13,7 @@ final class P2PTransferEngine: NSObject {
     private static let label = "album-transfer-v1"
     private static let maxChunk = 48 * 1024
     private static let maxBytes: Int64 = 20 * 1024 * 1024 * 1024
+    private static let ackFlushDelay: DispatchTimeInterval = .milliseconds(500)
 
     struct ObjectInfo {
         let index: Int
@@ -253,7 +254,12 @@ final class P2PTransferEngine: NSObject {
                                    "bytes": objects.reduce(0) { $0 + $1.bytes }]
         try sendJSON(ack)
         finished = true
-        shutdown(removeFiles: false)
+        // Do not close SCTP immediately after sendData: the sender needs the
+        // ACK to decide not to retry through the HTTPS relay. Also remove the
+        // temporary cache after the existing library import has completed.
+        queue.asyncAfter(deadline: .now() + Self.ackFlushDelay) { [weak self] in
+            self?.shutdown(removeFiles: true)
+        }
     }
 
     private func sendJSON(_ object: [String: Any]) throws {
