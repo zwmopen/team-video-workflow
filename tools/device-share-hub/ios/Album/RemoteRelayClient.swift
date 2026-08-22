@@ -59,6 +59,59 @@ final class RemoteRelayClient {
         return response["transfers"] as? [[String: Any]] ?? []
     }
 
+    /// Creates the WebRTC signaling session; file bytes never go through these calls.
+    static func createP2PSession(_ session: Session, recipientDeviceId: String,
+                                 transferId: String? = nil) throws -> [String: Any] {
+        guard isSafeId(recipientDeviceId) else { throw RemoteRelayError.invalidPeerId }
+        var body: [String: Any] = [
+            "recipientDeviceId": recipientDeviceId,
+            "protocol": "webrtc-datachannel-v1"
+        ]
+        if let transferId = transferId {
+            guard isSafeId(transferId) else { throw RemoteRelayError.invalidTransferId }
+            body["transferId"] = transferId
+        }
+        let response = try requestJSON(url: "\(session.endpoint)/v1/p2p/sessions", method: "POST",
+                                       token: session.token, body: body,
+                                       workspaceId: session.workspaceId)
+        guard let p2p = response["p2p"] as? [String: Any] else {
+            throw RemoteRelayError.invalidResponse
+        }
+        return p2p
+    }
+
+    static func p2pSession(_ session: Session, sessionId: String) throws -> [String: Any] {
+        guard isSafeId(sessionId) else { throw RemoteRelayError.invalidP2PSessionId }
+        let response = try requestJSON(
+            url: "\(session.endpoint)/v1/p2p/sessions/\(sessionId)", method: "GET",
+            token: session.token, body: nil, workspaceId: session.workspaceId
+        )
+        guard let p2p = response["p2p"] as? [String: Any] else {
+            throw RemoteRelayError.invalidResponse
+        }
+        return p2p
+    }
+
+    static func sendP2PSignal(_ session: Session, sessionId: String, type: String,
+                              data: [String: Any]) throws {
+        guard isSafeId(sessionId), !type.isEmpty else {
+            throw RemoteRelayError.invalidP2PSessionId
+        }
+        _ = try requestJSON(
+            url: "\(session.endpoint)/v1/p2p/sessions/\(sessionId)/signals", method: "POST",
+            token: session.token, body: ["type": type, "data": data],
+            workspaceId: session.workspaceId
+        )
+    }
+
+    static func closeP2PSession(_ session: Session, sessionId: String) throws {
+        guard isSafeId(sessionId) else { throw RemoteRelayError.invalidP2PSessionId }
+        _ = try requestJSON(
+            url: "\(session.endpoint)/v1/p2p/sessions/\(sessionId)/close", method: "POST",
+            token: session.token, body: [:], workspaceId: session.workspaceId
+        )
+    }
+
     static func transfer(_ session: Session, transferId: String) throws -> [String: Any] {
         guard isSafeId(transferId) else { throw RemoteRelayError.invalidTransferId }
         let response = try requestJSON(
@@ -222,6 +275,8 @@ enum RemoteRelayError: LocalizedError {
     case httpsRequired
     case invalidURL
     case invalidCertificate
+    case invalidPeerId
+    case invalidP2PSessionId
     case invalidResponse
     case invalidTransferId
     case invalidTask
@@ -233,6 +288,8 @@ enum RemoteRelayError: LocalizedError {
         case .httpsRequired: return "远程服务必须使用 HTTPS。"
         case .invalidURL: return "远程服务地址无效。"
         case .invalidCertificate: return "远程设备凭证不完整。"
+        case .invalidPeerId: return "直连目标设备无效。"
+        case .invalidP2PSessionId: return "直连协商会话无效。"
         case .invalidResponse: return "远程服务响应格式无效。"
         case .invalidTransferId: return "远程任务标识无效。"
         case .invalidTask: return "远程任务内容无效。"

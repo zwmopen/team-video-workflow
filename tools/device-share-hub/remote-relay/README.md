@@ -29,7 +29,7 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 
 - Windows 原生图形面板已经接入自动登记和中继兜底；该脚本仍保留作协议诊断与无界面烟测入口；
 - 尚未完成手机流量与异地 WiFi 的实体跨网络传送；
-- P2P 直连尚未实现；本阶段远程传送使用 HTTPS 普通公开文件中继。
+- P2P 数据面尚未实现；本阶段远程传送使用 HTTPS 普通公开文件中继。当前已实现受设备证书授权的 WebRTC DataChannel 信令会话，供三端原生数据面接入。
 
 ## Cloudflare 正式部署
 
@@ -48,7 +48,7 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 
 - 同一 Wi-Fi 或 USB 网络：继续优先使用现有 V2 直传，不经过 Cloudflare。
 - 不同网络：当前可用的兜底链路是 HTTPS 中继；手机在已登记远程资料后每 10 秒心跳并接收任务。
-- WebRTC/QUIC 打洞尚未写入客户端，不能宣称已经具备跨网 P2P 自动切换。
+- WebRTC/QUIC 数据面尚未写入客户端，不能宣称已经具备跨网 P2P 自动切换；`/v1/p2p/sessions` 只负责短时 offer/answer/ICE 协商，不承载作品文件字节。
 - Windows 原生面板已接入中继身份登记、远程在线轮询和发送兜底；手机凭证由可信局域网首次发现时自动下发，不要求用户填写 Bearer 会话。
 
 ## 本地检查

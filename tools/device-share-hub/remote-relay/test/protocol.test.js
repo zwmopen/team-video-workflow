@@ -333,6 +333,56 @@ test("heartbeat makes a device visible as online without a websocket", async () 
   );
 });
 
+test("P2P signaling is authorized, ordered, and separate from relay file bytes", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  let response = await state.relay.fetch(
+    await jsonRequest("/v1/p2p/sessions", {
+      recipientDeviceId: state.memberCertificate.deviceId,
+      protocol: "webrtc-datachannel-v1",
+    }, adminToken),
+  );
+  assert.equal(response.status, 201);
+  const p2p = (await response.json()).p2p;
+  assert.equal(p2p.protocol, "webrtc-datachannel-v1");
+  assert.equal(p2p.state, "offer-pending");
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/p2p/sessions/${p2p.sessionId}/signals`, {
+      type: "offer",
+      data: { type: "offer", sdp: "v=0\r\n..." },
+    }, adminToken),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state, "offer-sent");
+
+  response = await state.relay.fetch(
+    new Request(`https://relay.test/v1/p2p/sessions/${p2p.sessionId}`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    }),
+  );
+  assert.equal(response.status, 200);
+  const memberView = (await response.json()).p2p;
+  assert.equal(memberView.signals.length, 1);
+  assert.equal(memberView.signals[0].fromDeviceId, state.adminCertificate.deviceId);
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/p2p/sessions/${p2p.sessionId}/signals`, {
+      type: "answer",
+      data: { type: "answer", sdp: "v=0\r\n..." },
+    }, state.token),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state, "answer-sent");
+
+  response = await state.relay.fetch(
+    await jsonRequest(`/v1/p2p/sessions/${p2p.sessionId}/close`, {}, state.token),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state, "closed");
+  assert.equal(state.bucket.values.size, 0);
+});
+
 test("sender outbox and recipient inbox expose committed transfers", async () => {
   const state = await bootstrap();
   const adminToken = await createAdminSession(state);

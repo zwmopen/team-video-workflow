@@ -56,6 +56,35 @@ final class RemoteRelayClient {
         return transfers == null ? new JSONArray() : transfers;
     }
 
+    /** Creates the WebRTC signaling session; file bytes never go through these calls. */
+    static JSONObject createP2PSession(Session session, String recipientDeviceId,
+                                        String transferId) throws Exception {
+        JSONObject body = new JSONObject()
+                .put("recipientDeviceId", safeId(recipientDeviceId))
+                .put("protocol", "webrtc-datachannel-v1");
+        if (transferId != null && !transferId.isEmpty()) body.put("transferId", safeId(transferId));
+        return requestJson(session.endpoint + "/v1/p2p/sessions", "POST", session.token,
+                body, session.workspaceId).getJSONObject("p2p");
+    }
+
+    static JSONObject p2pSession(Session session, String sessionId) throws Exception {
+        return requestJson(session.endpoint + "/v1/p2p/sessions/" + safeId(sessionId), "GET",
+                session.token, null, session.workspaceId).getJSONObject("p2p");
+    }
+
+    static JSONObject sendP2PSignal(Session session, String sessionId, String type,
+                                     JSONObject data) throws Exception {
+        if (type == null || type.isEmpty() || data == null) throw new IOException("直连信令无效");
+        return requestJson(session.endpoint + "/v1/p2p/sessions/" + safeId(sessionId) + "/signals",
+                "POST", session.token, new JSONObject().put("type", type).put("data", data),
+                session.workspaceId);
+    }
+
+    static void closeP2PSession(Session session, String sessionId) throws Exception {
+        requestJson(session.endpoint + "/v1/p2p/sessions/" + safeId(sessionId) + "/close",
+                "POST", session.token, new JSONObject(), session.workspaceId);
+    }
+
     static JSONObject transfer(Session session, String transferId) throws Exception {
         return requestJson(session.endpoint + "/v1/transfers/" + safeId(transferId), "GET",
                 session.token, null, session.workspaceId).getJSONObject("transfer");

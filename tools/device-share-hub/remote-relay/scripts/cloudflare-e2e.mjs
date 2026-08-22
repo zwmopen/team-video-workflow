@@ -99,6 +99,26 @@ if (!devices.devices.some((item) => item.deviceId === memberCertificate.deviceId
   throw new Error("Cloudflare 中继没有把接收端标记为在线");
 }
 
+const p2p = (await request("/v1/p2p/sessions", "POST", adminSession.token, {
+  recipientDeviceId: memberCertificate.deviceId,
+  protocol: "webrtc-datachannel-v1",
+}, 201)).p2p;
+await request(`/v1/p2p/sessions/${p2p.sessionId}/signals`, "POST", adminSession.token, {
+  type: "offer", data: { type: "offer", sdp: "v=0\\r\\ncloudflare-e2e" },
+});
+const memberP2P = await request(`/v1/p2p/sessions/${p2p.sessionId}`, "GET", memberSession.token);
+if (memberP2P.p2p.signals?.[0]?.type !== "offer") {
+  throw new Error("Cloudflare 直连协商没有把 offer 送到接收端");
+}
+await request(`/v1/p2p/sessions/${p2p.sessionId}/signals`, "POST", memberSession.token, {
+  type: "answer", data: { type: "answer", sdp: "v=0\\r\\ncloudflare-e2e" },
+});
+const adminP2P = await request(`/v1/p2p/sessions/${p2p.sessionId}`, "GET", adminSession.token);
+if (!adminP2P.p2p.signals?.some((signal) => signal.type === "answer")) {
+  throw new Error("Cloudflare 直连协商没有把 answer 送回发起端");
+}
+await request(`/v1/p2p/sessions/${p2p.sessionId}/close`, "POST", adminSession.token, {});
+
 const work = new TextEncoder().encode("cloudflare-device-share-e2e-public-work");
 const workHash = await sha256(work);
 const created = await request("/v1/transfers", "POST", adminSession.token, {
@@ -135,5 +155,6 @@ console.log(JSON.stringify({
   ok: true, endpoint, protocol: "plain",
   workspaceId: workspace, transferId: created.transferId,
   stages: ["health", "workspace-register", "admin-session", "member-session",
-    "presence", "inbox", "r2-upload", "commit", "download-sha256", "ack", "r2-delete"],
+    "presence", "p2p-offer", "p2p-answer", "p2p-close", "inbox", "r2-upload",
+    "commit", "download-sha256", "ack", "r2-delete"],
 }, null, 2));

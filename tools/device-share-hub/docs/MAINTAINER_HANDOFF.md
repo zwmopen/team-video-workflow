@@ -8,7 +8,7 @@
 - Worker 已部署：`https://zwm-device-share-relay.zwmrpg.workers.dev`。
 - 资源已实读：Worker `zwm-device-share-relay`、Durable Object `WorkspaceRelay`、R2 `zwm-device-share-relay`；部署版本 `7da4be21-632d-4e74-9a75-4f6d413f8e0a`，100% 生效。
 - 当前 Cloudflare 账号没有活动 Zone，所以暂时不能绑定自定义域名；本机网络对 `workers.dev` 域名存在 DNS/连接异常，不能用本机失败的健康请求否定部署证据。
-- 传输策略：同 Wi-Fi/USB 仍走现有直传；远程中继作为不同网络的 HTTPS 兜底。WebRTC/QUIC 打洞尚未实现，暂时不宣称跨网 P2P。
+- 传输策略：同 Wi-Fi/USB 仍走现有直传；远程中继作为不同网络的 HTTPS 兜底。Cloudflare 已加入短时 WebRTC/ICE 信令协商接口，三端原生 DataChannel 数据面仍未完成，暂时不宣称跨网 P2P。
 - 移动端的 `RemoteRelayProfile` 由 Windows 在可信局域网首次发现时自动下发，不要求用户填写地址、令牌或配对码。
 
 ## 2026-08-20 Android 0.6.29 / iPhone 0.6.16 更新闭环优化

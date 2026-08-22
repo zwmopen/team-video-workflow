@@ -2,6 +2,9 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_TRANSFER_TTL_MS = 24 * 60 * 60 * 1000;
+const P2P_SESSION_TTL_MS = 2 * 60 * 1000;
+const MAX_P2P_SIGNALS = 128;
+const MAX_P2P_SIGNAL_BYTES = 64 * 1024;
 const MAX_OBJECTS = 1_000;
 const MAX_TRANSFER_BYTES = 20 * 1024 * 1024 * 1024;
 
@@ -110,6 +113,25 @@ export class WorkspaceRelayCore {
       }
       if (method === "GET" && url.pathname === "/v1/outbox") {
         return await this.listTransfers(session, false);
+      }
+      if (method === "POST" && url.pathname === "/v1/p2p/sessions") {
+        return await this.createP2PSession(request, session);
+      }
+      if (method === "GET" && url.pathname === "/v1/p2p/sessions") {
+        return await this.listP2PSessions(session);
+      }
+      const p2pMatch = url.pathname.match(
+        /^\/v1\/p2p\/sessions\/([A-Za-z0-9_-]+)(?:\/(signals|close))?$/,
+      );
+      if (p2pMatch && method === "GET" && !p2pMatch[2]) {
+        return await this.getP2PSession(session, p2pMatch[1]);
+      }
+      if (p2pMatch && method === "POST" && p2pMatch[2] === "signals") {
+        return await this.addP2PSignal(request, session, p2pMatch[1]);
+      }
+      if (p2pMatch && method === "POST" && p2pMatch[2] === "close") {
+        await discardRequestBody(request);
+        return await this.closeP2PSession(session, p2pMatch[1], "closed");
       }
       const deviceMatch = url.pathname.match(
         /^\/v1\/devices\/([A-Za-z0-9_-]+)\/(remote|revoke)$/,
@@ -364,6 +386,152 @@ export class WorkspaceRelayCore {
     await this.ctx.storage.put(`presence:${session.deviceId}`, { seenAt });
     await this.scheduleCleanup(seenAt + 60_000);
     return json({ ok: true, deviceId: session.deviceId, seenAt });
+  }
+
+  async createP2PSession(request, session) {
+    const body = await readJson(request);
+    const recipientDeviceId = body?.recipientDeviceId;
+    const protocol = body?.protocol || "webrtc-datachannel-v1";
+    if (!validId(recipientDeviceId) || recipientDeviceId === session.deviceId) {
+      return problem(400, "invalid_peer", "直连目标设备无效");
+    }
+    if (protocol !== "webrtc-datachannel-v1") {
+      return problem(400, "unsupported_p2p_protocol", "直连协议版本不受支持");
+    }
+    const recipient = await this.getStored(`member:${recipientDeviceId}`);
+    if (!recipient || recipient.revokedAt || recipient.channels?.remote === false) {
+      return problem(409, "recipient_unavailable", "直连目标设备未在线授权");
+    }
+    const transferId = body?.transferId || null;
+    if (transferId !== null && !validId(transferId)) {
+      return problem(400, "invalid_transfer", "直连任务标识无效");
+    }
+    if (transferId) {
+      const transfer = await this.getStored(`transfer:${transferId}`);
+      if (!transfer || transfer.senderDeviceId !== session.deviceId ||
+          transfer.recipientDeviceId !== recipientDeviceId ||
+          !["uploading", "ready"].includes(transfer.status)) {
+        return problem(409, "transfer_unavailable", "直连任务不存在或已停止");
+      }
+    }
+    const now = Date.now();
+    const p2p = {
+      version: 1,
+      sessionId: randomId(18),
+      workspaceId: session.workspaceId,
+      initiatorDeviceId: session.deviceId,
+      responderDeviceId: recipientDeviceId,
+      transferId,
+      protocol,
+      state: "offer-pending",
+      signals: [],
+      createdAt: now,
+      expiresAt: now + P2P_SESSION_TTL_MS,
+    };
+    await this.ctx.storage.put(`p2p:${p2p.sessionId}`, p2p);
+    await this.scheduleCleanup(p2p.expiresAt);
+    this.sendToDevice(recipientDeviceId, {
+      type: "p2p-session-ready",
+      sessionId: p2p.sessionId,
+      initiatorDeviceId: p2p.initiatorDeviceId,
+      transferId,
+      protocol,
+      expiresAt: p2p.expiresAt,
+    });
+    return json({ p2p: this.publicP2PSession(p2p) }, 201);
+  }
+
+  async listP2PSessions(session) {
+    const sessions = await this.listStored("p2p:");
+    const visible = [...sessions.values()]
+      .filter((value) => this.canAccessP2PSession(session, value) && value.expiresAt > Date.now())
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, 50)
+      .map((value) => this.publicP2PSession(value));
+    return json({ sessions: visible, serverTime: Date.now() });
+  }
+
+  async getP2PSession(session, sessionId) {
+    const p2p = await this.getStored(`p2p:${sessionId}`);
+    if (!p2p || !this.canAccessP2PSession(session, p2p) || p2p.expiresAt <= Date.now()) {
+      return problem(404, "p2p_session_missing", "直连协商会话不存在或已过期");
+    }
+    return json({ p2p: this.publicP2PSession(p2p, true) });
+  }
+
+  async addP2PSignal(request, session, sessionId) {
+    const p2p = await this.getStored(`p2p:${sessionId}`);
+    if (!p2p || !this.canAccessP2PSession(session, p2p) || p2p.expiresAt <= Date.now()) {
+      return problem(404, "p2p_session_missing", "直连协商会话不存在或已过期");
+    }
+    if (["closed", "failed"].includes(p2p.state)) {
+      return problem(409, "p2p_session_closed", "直连协商已经结束");
+    }
+    const body = await readJson(request);
+    const signalType = body?.type;
+    if (!P2P_SIGNAL_TYPES.has(signalType) || !validP2PSignalData(body?.data)) {
+      return problem(400, "invalid_p2p_signal", "直连协商信令格式无效");
+    }
+    if (signalType === "offer" && session.deviceId !== p2p.initiatorDeviceId) {
+      return problem(403, "p2p_role_mismatch", "只有发起端可以发送 offer");
+    }
+    if (signalType === "answer" && session.deviceId !== p2p.responderDeviceId) {
+      return problem(403, "p2p_role_mismatch", "只有接收端可以发送 answer");
+    }
+    if (p2p.signals.length >= MAX_P2P_SIGNALS) {
+      return problem(409, "p2p_signal_limit", "直连协商信令数量已达到上限");
+    }
+    const signal = {
+      type: signalType,
+      fromDeviceId: session.deviceId,
+      data: body.data,
+      sentAt: Date.now(),
+    };
+    p2p.signals.push(signal);
+    p2p.state = nextP2PState(p2p.state, signalType);
+    await this.ctx.storage.put(`p2p:${sessionId}`, p2p);
+    const target = session.deviceId === p2p.initiatorDeviceId
+      ? p2p.responderDeviceId : p2p.initiatorDeviceId;
+    this.sendToDevice(target, { type: "p2p-signal", sessionId, signal });
+    return json({ ok: true, state: p2p.state, signal });
+  }
+
+  async closeP2PSession(session, sessionId, reason) {
+    const p2p = await this.getStored(`p2p:${sessionId}`);
+    if (!p2p || !this.canAccessP2PSession(session, p2p)) {
+      return problem(404, "p2p_session_missing", "直连协商会话不存在");
+    }
+    p2p.state = reason === "failed" ? "failed" : "closed";
+    p2p.closedAt = Date.now();
+    await this.ctx.storage.put(`p2p:${sessionId}`, p2p);
+    const target = session.deviceId === p2p.initiatorDeviceId
+      ? p2p.responderDeviceId : p2p.initiatorDeviceId;
+    this.sendToDevice(target, {
+      type: "p2p-session-closed", sessionId, reason: p2p.state,
+    });
+    return json({ ok: true, state: p2p.state });
+  }
+
+  canAccessP2PSession(session, p2p) {
+    return session.workspaceId === p2p.workspaceId &&
+      (session.deviceId === p2p.initiatorDeviceId ||
+       session.deviceId === p2p.responderDeviceId);
+  }
+
+  publicP2PSession(p2p, includeSignals = false) {
+    return {
+      version: p2p.version,
+      sessionId: p2p.sessionId,
+      workspaceId: p2p.workspaceId,
+      initiatorDeviceId: p2p.initiatorDeviceId,
+      responderDeviceId: p2p.responderDeviceId,
+      transferId: p2p.transferId,
+      protocol: p2p.protocol,
+      state: p2p.state,
+      createdAt: p2p.createdAt,
+      expiresAt: p2p.expiresAt,
+      ...(includeSignals ? { signals: p2p.signals } : {}),
+    };
   }
 
   async listTransfers(session, inbox) {
@@ -639,7 +807,7 @@ export class WorkspaceRelayCore {
   async alarm() {
     const now = Date.now();
     let nextExpiry = null;
-    for (const prefix of ["challenge:", "session:"]) {
+    for (const prefix of ["challenge:", "session:", "p2p:"]) {
       const expiringValues = await this.listStored(prefix);
       for (const [key, value] of expiringValues) {
         if (value.expiresAt <= now) {
@@ -972,6 +1140,27 @@ function randomId(bytes) {
 
 function validId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value);
+}
+
+const P2P_SIGNAL_TYPES = new Set(["offer", "answer", "ice", "connected", "failed"]);
+
+function validP2PSignalData(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value !== "object" && typeof value !== "string") return false;
+  try {
+    const encoded = canonicalize(value);
+    return encoded.length <= MAX_P2P_SIGNAL_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+function nextP2PState(current, signalType) {
+  if (signalType === "failed") return "failed";
+  if (signalType === "connected") return "connected";
+  if (signalType === "offer") return "offer-sent";
+  if (signalType === "answer") return "answer-sent";
+  return current;
 }
 
 function objectKey(workspaceId, transferId, index) {
