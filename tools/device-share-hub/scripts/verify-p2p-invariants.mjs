@@ -9,6 +9,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), "utf8");
 const android = read("android/app/src/main/java/com/zwm/gallery/P2PTransferEngine.java");
 const ios = read("ios/Album/P2PTransferEngine.swift");
 const windows = read("windows-native/src/remote_relay.cpp");
+const windowsP2P = read("windows-native/src/p2p_transport.cpp");
 const windowsMain = read("windows-native/src/main.cpp");
 const protocol = read("docs/REMOTE_PROTOCOL_V1.md");
 const androidShutdown = android.slice(android.indexOf("private void shutdown"));
@@ -37,6 +38,9 @@ requireText(windows, "closeSession", "Windows P2P session cleanup");
 requireText(windowsMain, "TryP2PTransfer", "Windows P2P route");
 requireText(windowsMain, "SendPlainTransfer", "Windows HTTPS fallback route");
 requireText(windowsMain, "if (!sent)", "Windows fallback failure gate");
+requireText(windowsP2P, "channel.reset()", "Windows P2P channel cleanup");
+requireText(windowsP2P, "peer.reset()", "Windows P2P peer cleanup");
+requireText(windowsP2P, "std::memory_order_release", "Windows P2P closing callback guard");
 requireText(protocol, "中继对象下载 → 本地大小/SHA-256 校验", "relay download/hash order");
 requireText(protocol, "作品库导入后才 ACK", "relay library-before-ACK order");
 

@@ -3,6 +3,7 @@
 #include <rtc/rtc.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <condition_variable>
@@ -128,13 +129,27 @@ bool Send(const std::string& transferId,
           const PollSignals& pollSignals,
           const ProgressCallback& progress,
           std::string& error) {
+    std::shared_ptr<rtc::PeerConnection> peer;
+    std::shared_ptr<rtc::DataChannel> channel;
+    const auto closing = std::make_shared<std::atomic<bool>>(false);
+    const auto cleanup = [&]() {
+        closing->store(true, std::memory_order_release);
+        if (channel) {
+            try { channel->close(); } catch (...) { }
+            channel.reset();
+        }
+        if (peer) {
+            try { peer->close(); } catch (...) { }
+            peer.reset();
+        }
+    };
     try {
         if (files.empty() || !sendSignal || !pollSignals) throw std::runtime_error("P2P 传输参数不完整");
         rtc::Preload();
         rtc::Configuration configuration;
         configuration.iceServers.emplace_back("stun:stun.cloudflare.com:3478");
         configuration.maxMessageSize = kChunkBytes + 20;
-        auto peer = std::make_shared<rtc::PeerConnection>(configuration);
+        peer = std::make_shared<rtc::PeerConnection>(configuration);
         std::mutex mutex;
         std::condition_variable condition;
         bool opened = false;
@@ -154,7 +169,8 @@ bool Send(const std::string& transferId,
                  << ",\"mid\":" << JsonString(candidate.mid()) << '}';
             sendSignal("ice", data.str());
         });
-        peer->onStateChange([&](rtc::PeerConnection::State state) {
+        peer->onStateChange([&, closing](rtc::PeerConnection::State state) {
+            if (closing->load(std::memory_order_acquire)) return;
             if (state == rtc::PeerConnection::State::Failed || state == rtc::PeerConnection::State::Closed) {
                 std::lock_guard<std::mutex> lock(mutex);
                 failed = true;
@@ -162,19 +178,25 @@ bool Send(const std::string& transferId,
                 condition.notify_all();
             }
         });
-        auto channel = peer->createDataChannel("album-transfer-v1");
-        channel->onOpen([&] { std::lock_guard<std::mutex> lock(mutex); opened = true; condition.notify_all(); });
-        channel->onClosed([&] {
+        channel = peer->createDataChannel("album-transfer-v1");
+        channel->onOpen([&, closing] {
+            if (closing->load(std::memory_order_acquire)) return;
+            std::lock_guard<std::mutex> lock(mutex); opened = true; condition.notify_all();
+        });
+        channel->onClosed([&, closing] {
+            if (closing->load(std::memory_order_acquire)) return;
             std::lock_guard<std::mutex> lock(mutex);
             if (!acknowledged) { failed = true; failureReason = "P2P 数据通道已关闭"; }
             condition.notify_all();
         });
-        channel->onError([&](std::string message) {
+        channel->onError([&, closing](std::string message) {
+            if (closing->load(std::memory_order_acquire)) return;
             std::lock_guard<std::mutex> lock(mutex);
             failed = true; failureReason = message.empty() ? "P2P 数据通道错误" : message;
             condition.notify_all();
         });
-        channel->onMessage([&](rtc::message_variant message) {
+        channel->onMessage([&, closing](rtc::message_variant message) {
+            if (closing->load(std::memory_order_acquire)) return;
             if (!std::holds_alternative<rtc::string>(message)) return;
             const auto& text = std::get<rtc::string>(message);
             if (text.find("\"kind\":\"ack\"") == std::string::npos) return;
@@ -249,10 +271,14 @@ bool Send(const std::string& transferId,
             if (acknowledged || failed) break;
             condition.wait_for(lock, std::chrono::milliseconds(100));
         }
-        std::lock_guard<std::mutex> lock(mutex);
-        if (!acknowledged) throw std::runtime_error(failureReason.empty() ? "P2P 文件确认超时" : failureReason);
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (!acknowledged) throw std::runtime_error(failureReason.empty() ? "P2P 文件确认超时" : failureReason);
+        }
+        cleanup();
         return true;
     } catch (const std::exception& exception) {
+        cleanup();
         error = exception.what();
         return false;
     }
