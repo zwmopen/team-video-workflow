@@ -1,6 +1,6 @@
-# 文件收发中控 V4.3.26 / Android 0.6.50 / iPhone 0.6.37（Beta）
+# 文件收发中控 V4.3.27 / Android 0.6.51 / iPhone 0.6.38（Beta）
 
-> Beta `v0.6.50-beta.1` 已发布。本轮新增 HTTPS 代理配置并修复远程设备列表容错，保留 USB/Wi-Fi/P2P/HTTPS 混合传输链路。
+> Beta `v0.6.50-beta.1` 是当前已发布版本；本轮候选为 Windows V4.3.27 / Android 0.6.51 / iPhone 0.6.38，需合并 main 后由云端发布流水线更新索引。新增 Windows 原生 P2P DataChannel loopback 验收与生命周期修复，保留 USB/Wi-Fi/P2P/HTTPS 混合传输链路。
 
 ## 更新通道
 

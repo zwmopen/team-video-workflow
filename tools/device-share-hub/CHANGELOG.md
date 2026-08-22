@@ -1,5 +1,12 @@
 # 变更记录
 
+## Beta：Windows V4.3.27 / Android 0.6.51 / iPhone 0.6.38 - 原生 P2P 数据面验收
+
+- Windows 原生 libdatachannel 新增双 PeerConnection loopback：实际发送 256 KiB+137 字节二进制分片，接收端校验帧顺序和完整字节后回 ACK；云端 CTest 已通过并报告 100% tests passed。
+- 修复 Windows P2P 发送端和接收端 DataChannel 生命周期：清理前阻断 SDP/ICE/状态回调，释放 PeerConnection；避免发送返回后回调触碰已释放状态。
+- 本轮 Device Share Hub run `32601626368` 的 Android、iOS、Windows、remote-relay check 和线上 Worker E2E 全部通过；PR 分支验证完成，合并 main 后才会触发 Beta 发布索引。
+- 真实 Android/iPhone 的 USB、同 Wi-Fi、跨网 P2P、HTTPS 回退、作品库落库/ACK、精准低于 5 自动补货仍需手机在线现场验收，不能用云端 loopback 代替真机证据。
+
 ## Beta：Windows V4.3.26 / Android 0.6.50 / iPhone 0.6.37 - HTTPS 代理与远程设备列表容错（已发布）
 
 - Windows 远程中继新增可选 `ZWM_DEVICE_SHARE_RELAY_PROXY` 环境变量和 `%LOCALAPPDATA%\ZwmDeviceShareHub\relay-proxy.txt` 配置；只通过 HTTPS CONNECT 代理访问 Cloudflare，不降级到明文 HTTP。修复远程模块 User-Agent 仍写 V4.3.22 的版本不一致。

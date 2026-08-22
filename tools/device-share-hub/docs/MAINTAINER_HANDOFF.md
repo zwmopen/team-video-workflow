@@ -1,5 +1,11 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 Windows 原生 P2P 数据面验收候选
+
+- 候选版本：Android 0.6.51/versionCode 89、iPhone 0.6.38/build 57、Windows V4.3.27；提交 `95e8e3f` 后的云端 run `32601626368` 已通过 Android、iOS、Windows 原生 CTest、remote-relay check 和线上 Worker E2E。
+- Windows CTest 实际报告 `p2p_transport_tests ... Passed`、`100% tests passed`：两端 PeerConnection 通过真实 DataChannel 发送二进制分片并收到 ACK；这验证 Windows 数据面和帧协议，不等同于 Android/iPhone 真机验收。
+- 当前已发布 Beta 仍是 Android 0.6.50/versionCode 88、iPhone 0.6.37/build 56、Windows V4.3.26；本候选要合并 main 后才会由 `publish-gallery-updates` 更新 `gallery-updates` 的 Beta 索引和 AltStore Beta 源。
+
 ## 2026-08-23 HTTPS 代理与远程设备列表容错（Beta 0.6.50 已发布）
 
 - 当前发布版本：Android 0.6.50/versionCode 88、iPhone 0.6.37/build 56、Windows V4.3.26；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.50-beta.1>。
