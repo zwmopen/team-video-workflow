@@ -2,12 +2,23 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-048 P2P 异常回退留下开放信令会话（Windows 4.3.9）
+
+- 现象：Windows 已创建 P2P 会话后，如果文件校验、信令或 DataChannel 发送路径抛出异常，外层回退逻辑会继续创建 HTTPS 中继任务，但原 P2P 会话只能等 2 分钟 TTL 才清理。
+- 根因：正常返回路径有 `/close`，异常直接跳到外层 `catch`，没有覆盖“会话已创建、传输尚未正常返回”的范围。
+- 修复：在 `TryP2PTransfer` 创建会话后建立统一 `closeSession` 清理闭包；成功、P2P 返回失败和内部异常都先关闭会话，再把失败交给上层 HTTPS 中继回退。
+- 证据：GitHub Actions run `32551407594` 的 Windows portable、Android、iOS、remote-relay、validate 和两项 secret scan 全部通过；Beta Windows 资产 SHA-256 为 `544a823df94ce0232e98a96e5cc4a1b1ad7398508ff3dcf049ab93b6b12df169`。
+- 回归要求：
+  1. 文件哈希、信令和 DataChannel 任一阶段抛异常时，控制面会话都进入 `closed`，不能只等 TTL。
+  2. P2P 失败后只创建一个 HTTPS 中继任务，不能因为旧会话残留产生重复发送。
+  3. 正常 P2P ACK 和已有局域网/USB 传送不受清理闭包影响。
+
 ## DSH-047 P2P 成功尾部 ACK 竞态与背压无限等待（Windows 4.3.9 / Android 0.6.36 / iPhone 0.6.23）
 
 - 现象：手机导入成功后立即关闭 DataChannel，电脑可能在收到 ACK 前看到通道关闭并重复走 HTTPS 中继；iPhone ZIP 导入成功后 P2P 缓存目录可能残留；Windows 发送侧背压长期不下降时没有硬性回退边界。
 - 根因：`sendData`/`DataChannel.send` 只把 ACK 放入 SCTP 队列，紧接着关闭 peer 不能证明字节已经发出；成功路径没有统一清理 iOS 缓存；背压循环只看缓冲量，没有停滞计时。
 - 修复：Android/iOS ACK 后等待 500ms 再关闭；iOS 成功路径删除临时目录；Windows 记录背压下降时间，连续 20 秒无进展即返回失败，由上层自动切 HTTPS 中继。
-- 证据：待新版本同一提交的 GitHub Actions Android/iOS/Windows 构建和实体传输回归确认；当前没有连接实体手机。
+- 证据：同一提交的 GitHub Actions Android/iOS/Windows 构建、remote-relay、validate 和 secret scan 已通过；当前没有连接实体手机，因此实体传输回归仍未完成。
 - 回归要求：
   1. 小 ZIP 成功直传后电脑只收到一次成功 ACK，不创建中继重复任务。
   2. iPhone 成功导入 ZIP 后，P2P 缓存目录在 ACK 刷新窗口后消失。

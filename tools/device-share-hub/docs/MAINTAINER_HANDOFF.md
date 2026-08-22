@@ -4,7 +4,9 @@
 
 - 当前开发交付版本：Windows `4.3.9`、Android `0.6.36` / versionCode `74`、iPhone `0.6.23` / build `42`。
 - 本轮修复：成功 ACK 发送后的 DataChannel 刷新窗口、iPhone P2P 缓存清理、Windows 背压停滞 20 秒回退；上一 Beta `v0.6.35-beta.1` 仍作为可回退安装包保留。
-- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.36-beta.1>；对应云端构建 run `32549649130`，PR #24 的远端提交 `9a5c39637321400262c84ea8def5304707913357`。
+- 又修复 Windows P2P 会话在文件校验、信令或发送异常后未统一关闭的问题；现在 P2P 失败再回退 HTTPS 中继不会留下开放控制面会话。
+- 修复版 Beta：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.36-beta.1>；三端复跑云端构建 run `32551407594`，PR #24 的远端提交 `ddaf1366954682b5d27fcd7ae19420ac3893c1dc`。
+- Beta Windows 资产已用该次云构建刷新，SHA-256：`544a823df94ce0232e98a96e5cc4a1b1ad7398508ff3dcf049ab93b6b12df169`；桌面同步包为 `C:\Users\z\Desktop\device-share-hub-Windows-V4.3.9-relay-beta.exe`。
 - iPhone Beta 更新源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>；稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`，未把 Beta 误推入稳定自动更新。
 - 已接入真实数据面：Windows 使用 libdatachannel 发起 `album-transfer-v1`，Android/iOS 使用 WebRTC 接收；Cloudflare 只承担短时 SDP/ICE 信令，文件字节不上传 R2。
 - P2P 失败条件（20 秒建连超时、ICE/DataChannel 失败、manifest/大小/SHA-256/作品库写入失败）统一回退现有 HTTPS 中继；中继仍是跨网络必达兜底。

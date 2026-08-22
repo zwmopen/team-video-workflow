@@ -4,7 +4,8 @@
 
 - 修复 P2P 成功 ACK 刚写入发送队列就关闭 DataChannel 的尾部竞态；移动端等待短暂刷新窗口后再关闭，避免电脑误判失败并重复走 HTTPS 中继。
 - iPhone 成功导入后清理 P2P 临时缓存；Windows DataChannel 背压连续停滞 20 秒时主动失败，让既有 HTTPS 中继回退真正生效，不再无限卡住。
-- Android `versionCode=74` / `versionName=0.6.36`；iPhone `0.6.23/build 42`；Windows `4.3.9`。仍需同一次 GitHub Actions 云构建和实体设备业务验收。
+- 修复 Windows 在 P2P 会话已创建后发生文件校验、信令或传输异常时未关闭控制面会话的问题；现在所有异常路径都会先清理会话，再进入 HTTPS 中继回退，避免留下脏会话。
+- Android `versionCode=74` / `versionName=0.6.36`；iPhone `0.6.23/build 42`；Windows `4.3.9`。同一次 GitHub Actions 三端云构建已通过，实体设备业务验收仍待连接手机。
 
 ## Beta：Windows V4.3.8 / Android 0.6.35 / iPhone 0.6.22 - 2026-08-22
 
