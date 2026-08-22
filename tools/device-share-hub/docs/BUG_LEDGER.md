@@ -2,6 +2,22 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-066 生产工作区损坏成员记录导致远程设备列表 500（Worker，已修复并部署）
+
+- 现象：当前电脑通过 HTTPS 代理已能访问 Worker，但 `/v1/devices` 返回 HTTP 500，Windows 远程在线轮询无法继续；云端新鲜测试工作区不复现。
+- 根因：`listDevices` 假定 `member:` 存储记录始终带完整 `certificate`、签名公钥和协商公钥；历史中断登记或旧版本遗留的损坏记录会抛异常，整页列表失败。
+- 修复：遍历成员时校验证书结构；坏记录只写 `invalid_member_skipped` 告警并跳过，保留有效成员的在线、库存、版本和远程权限数据。Worker 已部署版本 `fb0ba8fb-6f15-46f3-b31d-00cbeba36c59`。
+- 证据：本地 13 项远程协议测试通过；云端 run `32596690436` 的 remote-relay check 和线上 Worker E2E 全部成功；本机 V4.3.26 通过 HTTPS 代理重启后不再产生新的 `remote_presence_poll_failed`。
+- 回归要求：损坏成员不影响有效设备列表；有效手机上线后能被 Windows 轮询发现；远程发送、P2P/HTTPS 回退、ACK 和撤销仍按设备身份工作；后续需真实手机现场验收。
+
+## DSH-067 Windows 远程中继直连 workers.dev TLS 不可达（Windows V4.3.26，已修复）
+
+- 现象：本机直连 Cloudflare `workers.dev` 的 HTTPS 超时，但 Clash Verge 的本地 HTTP CONNECT 代理可正常访问；旧版中控持续记录“中继没有响应”。
+- 根因：`RelayHttp` 固定使用 WinHTTP 自动代理；本机 WinHTTP 没有代理设置，未使用已经运行的 Clash 本地端口 `127.0.0.1:7897`。
+- 修复：支持 `ZWM_DEVICE_SHARE_RELAY_PROXY` 和 `relay-proxy.txt`；未配置时保持系统自动代理，配置后使用 `WINHTTP_ACCESS_TYPE_NAMED_PROXY`，协议仍是 HTTPS，不降级 HTTP。
+- 证据：本机 `curl` 直连失败、经 `127.0.0.1:7897` 的 Worker health 200；云端三端构建、远程中继检查和线上 E2E run `32596690436` 全部通过；V4.3.26 重启后未出现新的远程轮询失败。
+- 回归要求：代理不可用时错误可重试、直连可用时不强制代理；HTTPS 证书校验不关闭；真实手机上线后验证设备发现、P2P 直连、HTTPS 回退和 ACK。
+
 ## DSH-065 移动端 P2P 完成后未释放 Cloudflare 信令会话（Android 0.6.49 / iPhone 0.6.36，已修复并发布 Beta）
 
 - 现象：移动端 P2P 成功导入并发送 ACK，或失败/取消关闭 PeerConnection 后，认证的 Cloudflare 信令会话仍可能保持；下一轮在线轮询可能再次看到同一会话，造成无意义的重复协商或旧任务重接收。

@@ -1,5 +1,14 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-23 HTTPS 代理与远程设备列表容错（Beta 0.6.50 已发布）
+
+- 当前发布版本：Android 0.6.50/versionCode 88、iPhone 0.6.37/build 56、Windows V4.3.26；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.50-beta.1>。
+- Windows 远程中继仍强制 HTTPS；如果直连 `workers.dev` 不通，可在 `%LOCALAPPDATA%\ZwmDeviceShareHub\relay-proxy.txt` 写入 `http://127.0.0.1:7897`，或设置 `ZWM_DEVICE_SHARE_RELAY_PROXY`，仅用于 HTTPS CONNECT 代理。本机已配置 Clash Verge 代理并确认 Worker `/v1/health` 可达。
+- Worker `/v1/devices` 已对历史损坏成员记录做容错：记录告警、跳过坏记录、继续返回有效设备；本机 V4.3.26 重启后不再产生新的 `remote_presence_poll_failed`，但当前没有手机在线，所以设备列表仍为空。
+- Device Share Hub run `32596690436` 的 Android、iOS、Windows、remote-relay check 和线上 Worker E2E 全部成功；Worker 最新部署版本为 `fb0ba8fb-6f15-46f3-b31d-00cbeba36c59`。稳定索引仍为 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.50.apk`、`album-iOS-v0.6.37-altstore.ipa`、`device-share-hub-Windows-V4.3.26-relay-beta.exe`；桌面中控当前 PID 40624，TCP 45833、UDP 45834 均由它监听。
+- 仍未完成的证据：没有连接实体 Android/iPhone；USB、同 Wi-Fi、跨网 P2P DataChannel、P2P 失败后 HTTPS 回退、手机作品库落库/ACK、精准低于 5 自动补货和手机点击更新仍需现场设备验收。不能用云端 E2E 代替这些证据。
+
 ## 2026-08-23 P2P 信令会话清理修复（Beta 0.6.49 已发布）
 
 - 当前发布版本：Android 0.6.49/versionCode 87、iPhone 0.6.36/build 55、Windows V4.3.25；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.49-beta.1>。
