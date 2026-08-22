@@ -16,6 +16,12 @@
 - 停止/重启手机接收服务后检查缓存目录和后台轮询线程；旧 USB、同 Wi-Fi V2 和普通 HTTPS 中继路径各至少回归一次。
 - CI 编译通过只证明 SDK/API 接入正确；没有真实 Android/iPhone 实际收发前，交付记录必须标明“P2P 实体业务待验收”。
 
+### 线上 Cloudflare E2E 门禁
+
+- `Device Share Hub` workflow 的 `remote-relay-live-e2e` job 直接访问正式 Worker，不使用本地 Wrangler 模拟服务。
+- 当前证据：run `32567213054` / job `97017519595` 通过；health、工作区登记、双端会话、在线心跳、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段全部成功。
+- 线上 E2E 只证明服务端和控制面/中继数据链路可用，不能替代实体手机的 WebRTC DataChannel、作品库写入、失败回退、权限和厂商安全扫描。
+
 ## 发布前最小检查
 
 ### 1. 自动构建

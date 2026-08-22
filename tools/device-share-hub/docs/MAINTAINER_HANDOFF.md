@@ -7,6 +7,13 @@
 - GitHub Actions Device Share Hub run 32565416952 的 Android、iOS、Windows、remote-relay 全部通过；Repository quality run 32565417059、Secret scan run 32565416950 也已通过。Beta 发布页为 https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1，AltStore Beta 源已同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
 - 当前没有连接实体 Android/iPhone/Windows，真机权限、安全扫描、P2P 成功和 HTTPS 中继回退验收仍未完成。
 
+## 2026-08-22 线上 Cloudflare Worker E2E 门禁
+
+- 代码头 `8846dc23` 新增 `remote-relay-live-e2e` 云端 job；它不使用本机网络或缓存，直接访问 `https://zwm-device-share-relay.zwmrpg.workers.dev`。
+- Device Share Hub run `32567213054` 中，`remote-relay-live-e2e` job `97017519595` 已通过；真实跑通 health、工作区登记、管理员/成员会话、presence、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段。
+- 这项证据证明正式 Worker、Durable Object、R2 和 P2P 信令控制面在线可用；不证明实体 Android/iPhone 的 DataChannel 建连、文件落盘、HTTPS 自动回退或系统权限安全扫描，后四项仍需真实设备。
+- 本机 Windows 直连 `workers.dev` 受系统网络代理影响，Node E2E 可能出现连接超时；正式 E2E 以 GitHub Ubuntu runner 结果为准，避免把本机代理差异误判为服务故障。
+
 ## 2026-08-22 Android P2P 共享状态可见性修复与 Beta 0.6.41
 
 - 当前源码版本已同步为 Windows 4.3.14、Android 0.6.41 / versionCode 79、iPhone 0.6.28 / build 47。

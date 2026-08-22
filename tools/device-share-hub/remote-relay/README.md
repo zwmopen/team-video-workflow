@@ -44,6 +44,8 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 
 当前账号没有可绑定的活动 Cloudflare Zone，因此暂时使用 `workers.dev` 地址，没有自定义域名。部署记录和 R2 资源已由 Wrangler 实读确认；本机当前网络对该 `workers.dev` 域名存在 DNS/连接异常，不能把本机健康检查失败误判为 Worker 未部署。
 
+GitHub Actions `Device Share Hub` run `32567213054` 的 `remote-relay-live-e2e` job `97017519595` 已从 Ubuntu runner 真实跑通正式 Worker 的 14 个阶段：health、登记、双端会话、presence、P2P 信令、R2 上传/下载、SHA-256、ACK 和对象删除。
+
 ## 混合传输边界
 
 - 同一 Wi-Fi 或 USB 网络：继续优先使用现有 V2 直传，不经过 Cloudflare。
