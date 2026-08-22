@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(here, "../windows-native/src/main.cpp");
+const relaySourcePath = path.resolve(here, "../windows-native/src/remote_relay.cpp");
 const storePath = path.resolve(here, "../windows-native/src/content_store.cpp");
 const source = fs.readFileSync(sourcePath, "utf8");
+const relaySource = fs.readFileSync(relaySourcePath, "utf8");
 const storeSource = fs.readFileSync(storePath, "utf8");
 
 const uploadStart = source.indexOf("bool UploadToDevice(");
@@ -57,8 +59,14 @@ if (!upload.includes("const bool liveWifi = IsLiveWifiDevice(device")
     || !upload.includes("if (!liveWifi)")) {
   throw new Error("stale Wi-Fi addresses must not block P2P/HTTPS remote fallback");
 }
-if (!source.includes("DeviceShareHub/4.3.25") || source.includes("DeviceShareHub/4.3.24")) {
+if (!source.includes("DeviceShareHub/4.3.26") || source.includes("DeviceShareHub/4.3.25")) {
   throw new Error("Windows network User-Agent must match the current desktop version");
+}
+if (!relaySource.includes("DeviceShareHub/4.3.26")
+    || relaySource.includes("DeviceShareHub/4.3.25")
+    || !relaySource.includes("relay-proxy.txt")
+    || !relaySource.includes("WINHTTP_ACCESS_TYPE_NAMED_PROXY")) {
+  throw new Error("Cloudflare relay must use the current User-Agent and optional HTTPS proxy configuration");
 }
 
 if (!storeSource.includes("INSERT OR IGNORE INTO settings")
