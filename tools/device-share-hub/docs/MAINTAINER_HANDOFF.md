@@ -1,4 +1,12 @@
-# 2026-08-22 Cloudflare 中继与混合传输当前真相
+# 2026-08-23 Cloudflare 中继与混合传输当前真相
+
+## 2026-08-23 可选测试版更新通道（Beta 0.6.47/0.6.34 已发布）
+
+- Android 0.6.47/versionCode 85、iPhone 0.6.34/build 53，Windows 继续为 V4.3.23；设置中默认稳定版，可手动切到测试版。
+- Android 测试版检查读取 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest-beta.json`；iPhone 测试版复制并使用 `https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore-beta.json`，稳定索引和稳定源不变。
+- Device Share Hub run `32590760825` 的三端云构建、remote-relay check 和已部署 Worker live E2E 全部成功；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.47-beta.1>。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.47.apk`、`album-iOS-v0.6.34-altstore.ipa`、`device-share-hub-Windows-V4.3.23-relay-beta.exe`。
+- 当前桌面中控已重启并监听 UDP 45834/TCP 45833；当前仍没有真实手机在线，USB/Wi-Fi/P2P/HTTPS/ACK/自动补货需在手机上线后逐项验收。
 
 ## 2026-08-23 混合通道状态合并修复（Beta3 已发布）
 

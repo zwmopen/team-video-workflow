@@ -2,6 +2,14 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-063 Beta 已发布但手机更新按钮读不到 Beta 索引（Android/iOS 0.6.47/0.6.34，已修复）
+
+- 现象：Beta 安装包和 Release 已发布，但 Android/iOS 更新器只读取稳定索引；测试机点击“检查更新”时看不到 Beta，iOS 也会复制稳定 AltStore 源。
+- 根因：更新通道没有持久化选择，客户端端点固定为 `latest.json`/`altstore.json`，发布 Beta 不会改变稳定入口。
+- 修复：设置新增稳定版/测试版通道；Android 测试版读取 `latest-beta.json`，iPhone 测试版使用 `altstore-beta.json`；默认保持稳定版，测试版不污染稳定索引。
+- 证据：Android/iOS/Windows 云构建和 remote-relay/Worker E2E run `32590760825` 全部成功；两个公开索引已 API/Raw 复核为 Android 0.6.47/versionCode 85、iPhone 0.6.34/build 53。
+- 回归要求：稳定通道仍读稳定索引；测试通道能发现 Beta；Android 下载前校验 SHA-256；iPhone 复制 Beta 源后由 AltStore 更新；切回稳定版后不显示 Beta。真实手机点击和安装仍需现场验收。
+
 ## DSH-062 远程在线被旧 Wi-Fi 路由遮蔽（Windows 4.3.23，已修复）
 
 - 现象：同一台手机先被局域网发现、后通过中继在线时，远程心跳刷新了整体 `lastSeen`；发送路径只看非空 IP，可能继续连接已经失效的局域网地址，无法进入 P2P/HTTPS 回退。

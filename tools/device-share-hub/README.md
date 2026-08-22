@@ -1,6 +1,14 @@
-# 文件收发中控 V4.3.23 / Android 0.6.46 / iPhone 0.6.33（Beta）
+# 文件收发中控 V4.3.23 / Android 0.6.47 / iPhone 0.6.34（Beta）
 
-> Beta `v0.6.46-beta.3` 已发布。本轮修复局域网探测覆盖远程状态、旧 Wi‑Fi 地址阻断远程回退的边界问题。
+> Beta `v0.6.47-beta.1` 已发布。本轮新增稳定版/测试版更新通道，并保留混合传输修复。
+
+## 更新通道
+
+- 手机设置默认使用稳定版；需要提前验证新功能时，在“软件 → 更新通道”切换到“测试版（Beta）”。
+- Android 测试版会读取 `latest-beta.json`；iPhone 测试版会复制 `altstore-beta.json`，然后在 AltStore 的 My Apps 中更新。
+- 稳定版索引不会被 Beta 覆盖；iOS 仍需要 AltStore/AltServer 完成签名安装。
+
+本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.47-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
 
 ## 本轮开发：混合通道状态合并
 

@@ -1,5 +1,13 @@
 # 变更记录
 
+## Beta：Windows V4.3.23 / Android 0.6.47 / iPhone 0.6.34 - 可选测试版更新通道（已发布）
+
+- Android 和 iPhone 设置新增“更新通道”：默认稳定版，切换到测试版后分别读取 `latest-beta.json` 和 `altstore-beta.json`，不会把 Beta 包推给稳定用户。
+- Android 测试版更新会继续使用 HTTPS 下载、SHA-256 校验和系统安装确认；iPhone 会复制当前通道对应的 AltStore 源，仍由 AltStore/AltServer 完成签名更新。
+- Device Share Hub run `32590760825` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.47-beta.1>。
+- Android SHA-256：`ad3e248c6d988b9c832c4ed5a7b3272b7e13f62d7ad33769b37f76faffc9e465`；iPhone IPA SHA-256：`6e2e34a9ec46c4e013a6beeaefd2913d9c685c5674c6f06e47e12c0601e11a88`；Windows SHA-256：`0dcc312aadd7b883a79b0436e6a98f5dbe4ffeb8c14e5b21f14b0ff2b5d7d4cb`。
+- Beta `latest-beta.json` 和 AltStore Beta 源已同步；稳定 `latest.json` 保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35。真实手机 USB/Wi-Fi/P2P/HTTPS、落库、ACK 和自动补货仍待连接验收。
+
 ## Beta：Windows V4.3.23 / Android 0.6.46 / iPhone 0.6.33 - 混合通道状态合并修复（已发布）
 
 - 修复同一台手机同时被局域网探测和 Cloudflare 中继发现时，局域网记录会覆盖远程在线状态、凭证和库存的问题。
