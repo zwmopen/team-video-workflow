@@ -10,7 +10,7 @@
 ## 2026-08-22 线上 Cloudflare Worker E2E 门禁
 
 - 代码头 `8846dc23` 新增 `remote-relay-live-e2e` 云端 job；它不使用本机网络或缓存，直接访问 `https://zwm-device-share-relay.zwmrpg.workers.dev`。
-- Device Share Hub run `32567213054` 中，`remote-relay-live-e2e` job `97017519595` 已通过；真实跑通 health、工作区登记、管理员/成员会话、presence、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段。
+- Device Share Hub run `32568228480` 中，`remote-relay-live-e2e` job `97019921822` 已通过；真实跑通 health、工作区登记、管理员/成员会话、presence、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段。
 - 这项证据证明正式 Worker、Durable Object、R2 和 P2P 信令控制面在线可用；不证明实体 Android/iPhone 的 DataChannel 建连、文件落盘、HTTPS 自动回退或系统权限安全扫描，后四项仍需真实设备。
 - 本机 Windows 直连 `workers.dev` 受系统网络代理影响，Node E2E 可能出现连接超时；正式 E2E 以 GitHub Ubuntu runner 结果为准，避免把本机代理差异误判为服务故障。
 

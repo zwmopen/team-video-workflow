@@ -6,7 +6,8 @@
 - 三端版本同步提升为 Windows 4.3.15、Android versionCode 80 / versionName 0.6.42、iPhone 0.6.29/build 48；GitHub Actions Device Share Hub run 32565416952、Repository quality run 32565417059、Secret scan run 32565416950 已通过。
 - Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1>，AltStore Beta 源已更新；Android SHA-256：B53D470F0D30115CA493BF162F9E196F6277962B9E4EF00E712B6FA6DCBC6955；iPhone IPA SHA-256：716730F02C949338BB923FD28485F053D4856897D4795088EAE35496AE362017；Windows SHA-256：DD9E256A4A6B41C2084719E2B82CF5FB09858351827DD2BB3798DAD3D1A8784C。
 - 三端云构建包已同步到 C:\Users\z\Desktop；稳定 latest.json 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。真实 Android/iPhone/Windows 设备验收仍待连接，未使用本地 Android Gradle、Xcode 或 Windows 构建替代证据。
-- 工程门禁新增正式 Cloudflare Worker 线上 E2E；run 32567213054 的 `remote-relay-live-e2e` 已验证中继控制面、P2P 信令、R2 临时对象和 ACK 删除，仍不替代实体手机跨网实传验收。
+- 工程门禁新增正式 Cloudflare Worker 线上 E2E；最新 run 32568228480 的 `remote-relay-live-e2e` job 97019921822 已验证中继控制面、P2P 信令、R2 临时对象和 ACK 删除，仍不替代实体手机跨网实传验收。
+- 校正 `docs/REMOTE_PROTOCOL_V1.md` 的过期状态，明确当前是公开作品 `plain` 链路、三端 P2P 数据面已接入、Cloudflare 已部署，且真机跨网验收仍是未完成项。
 
 ## Beta：Windows V4.3.14 / Android 0.6.41 / iPhone 0.6.28 - 2026-08-22
 

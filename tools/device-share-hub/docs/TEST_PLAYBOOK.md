@@ -19,7 +19,7 @@
 ### 线上 Cloudflare E2E 门禁
 
 - `Device Share Hub` workflow 的 `remote-relay-live-e2e` job 直接访问正式 Worker，不使用本地 Wrangler 模拟服务。
-- 当前证据：run `32567213054` / job `97017519595` 通过；health、工作区登记、双端会话、在线心跳、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段全部成功。
+- 当前证据：run `32568228480` / job `97019921822` 通过；health、工作区登记、双端会话、在线心跳、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段全部成功。
 - 线上 E2E 只证明服务端和控制面/中继数据链路可用，不能替代实体手机的 WebRTC DataChannel、作品库写入、失败回退、权限和厂商安全扫描。
 
 ## 发布前最小检查

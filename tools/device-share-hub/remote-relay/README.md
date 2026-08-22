@@ -15,7 +15,7 @@
 - 最长 24 小时自动过期清理；
 - `mode: plain` 会保存安全文件名、MIME、字节数和 SHA-256；这是公开作品传送，不做应用层端到端加密。传输仍强制 HTTPS，云端对象只按短期任务保存并在 ACK/取消/过期后删除。
 
-2026-08-21 已增加任务状态与幂等重试：`/v1/transfers/{id}`、`/v1/inbox`、`/v1/outbox` 返回每个密文对象的上传状态和下一待传索引；同一任务对象再次上传时会先核对 R2 密文的大小与 `cipherSha256`，一致则返回 `reused=true`，避免断线重试重复写入。
+2026-08-21 已增加任务状态与幂等重试：`/v1/transfers/{id}`、`/v1/inbox`、`/v1/outbox` 返回每个对象的上传状态和下一待传索引；`plain` 对象核对 `sha256`，旧 `encrypted` 对象核对 `cipherSha256`，一致则返回 `reused=true`，避免断线重试重复写入。
 
 桌面发送：
 
@@ -44,7 +44,7 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 
 当前账号没有可绑定的活动 Cloudflare Zone，因此暂时使用 `workers.dev` 地址，没有自定义域名。部署记录和 R2 资源已由 Wrangler 实读确认；本机部分 Node.js 直连路径会受系统代理影响，但 PowerShell 健康检查和 GitHub Ubuntu 线上 E2E 均已通过。
 
-GitHub Actions `Device Share Hub` run `32567213054` 的 `remote-relay-live-e2e` job `97017519595` 已从 Ubuntu runner 真实跑通正式 Worker 的 14 个阶段：health、登记、双端会话、presence、P2P 信令、R2 上传/下载、SHA-256、ACK 和对象删除。
+GitHub Actions `Device Share Hub` run `32568228480` 的 `remote-relay-live-e2e` job `97019921822` 已从 Ubuntu runner 真实跑通正式 Worker 的 14 个阶段：health、登记、双端会话、presence、P2P 信令、R2 上传/下载、SHA-256、ACK 和对象删除。
 
 ## 混合传输边界
 
