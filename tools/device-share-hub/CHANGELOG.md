@@ -1,5 +1,11 @@
 # 变更记录
 
+## Beta：Windows V4.3.15 / Android 0.6.42 / iPhone 0.6.29 - 2026-08-22
+
+- 修复 Android P2P ICE 候选入队与远端 Description 回调同时发生时的竞态；候选入队和排空现在由同一把锁保护，避免候选丢失后不必要地回退中继。
+- 三端版本同步提升为 Windows 4.3.15、Android versionCode 80 / versionName 0.6.42、iPhone 0.6.29/build 48；本轮需以新的 GitHub Actions 云构建、Beta Release、AltStore 源和真机验收为交付边界。
+- 云端构建和真实 Android/iPhone/Windows 设备验收尚未完成；未使用本地 Android Gradle、Xcode 或 Windows 构建替代证据。
+
 ## Beta：Windows V4.3.14 / Android 0.6.41 / iPhone 0.6.28 - 2026-08-22
 
 - 修复 Android P2P 引擎跨 WebRTC 回调、信令轮询、文件队列和超时线程读取状态时的可见性问题；peer、channel、finished 和远端描述状态现在使用 volatile，避免活连接被误判为超时或结束后继续清理。

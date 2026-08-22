@@ -1,5 +1,11 @@
 # iOS 变更记录
 
+## 0.6.29 - 2026-08-22
+
+- 与 Android 0.6.42、Windows 4.3.15 同步发布；Android 修复 P2P ICE 候选在远端 SDP 设置回调期间丢失的竞态，三端继续保持 P2P 优先、HTTPS 中继兜底。
+- 版本升级为 0.6.29/build 48；云端 Device Share Hub 构建、Repository quality、Secret scan 和 Beta 发布证据待本轮完成后回填。
+- AltStore Beta 源与 IPA SHA-256 待云端产物发布后同步；实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
+
 ## 0.6.28 - 2026-08-22
 
 - 与 Android 0.6.41、Windows 4.3.14 同步发布；本轮修复 Android P2P 共享状态跨线程可见性，iOS 继续保持既有串行文件处理和失败回退边界。

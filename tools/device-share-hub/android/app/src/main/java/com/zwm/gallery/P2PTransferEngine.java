@@ -102,6 +102,10 @@ final class P2PTransferEngine {
     private final Set<String> appliedSignals = new HashSet<>();
     private final Map<Integer, RandomAccessFile> openFiles = new HashMap<>();
     private final Map<Integer, Long> receivedBytes = new HashMap<>();
+    // The signal poller and WebRTC callback can race while remote SDP is applied.
+    // Keep candidate enqueue and queue draining atomic so an ICE candidate cannot
+    // be added immediately after the callback has already drained the queue.
+    private final Object iceLock = new Object();
     private final List<IceCandidate> pendingIce = new ArrayList<>();
     // These fields are observed from WebRTC callbacks, the signal poller and
     // the serial file queue. Volatile prevents stale state from turning a
@@ -211,9 +215,14 @@ final class P2PTransferEngine {
         if (sdp.isEmpty()) { fail("P2P offer 为空"); return; }
         peer.setRemoteDescription(new SdpObserverAdapter() {
             @Override public void onSetSuccess() {
-                remoteDescriptionSet = true;
-                for (IceCandidate candidate : pendingIce) peer.addIceCandidate(candidate);
-                pendingIce.clear();
+                List<IceCandidate> queued;
+                synchronized (iceLock) {
+                    remoteDescriptionSet = true;
+                    queued = new ArrayList<>(pendingIce);
+                    pendingIce.clear();
+                }
+                PeerConnection current = peer;
+                if (current != null) for (IceCandidate candidate : queued) current.addIceCandidate(candidate);
                 createAnswer();
             }
             @Override public void onSetFailure(String error) { fail("P2P offer 无法应用"); }
@@ -242,13 +251,19 @@ final class P2PTransferEngine {
     }
 
     private void applyIce(JSONObject data) {
-        if (peer == null) return;
+        PeerConnection current = peer;
+        if (current == null) return;
         String candidate = data.optString("candidate", "");
         String mid = data.optString("mid", "");
         if (!candidate.isEmpty() && !mid.isEmpty()) {
             IceCandidate value = new IceCandidate(mid, data.optInt("mLineIndex", 0), candidate);
-            if (remoteDescriptionSet) peer.addIceCandidate(value);
-            else pendingIce.add(value);
+            synchronized (iceLock) {
+                if (!remoteDescriptionSet) {
+                    pendingIce.add(value);
+                    return;
+                }
+            }
+            current.addIceCandidate(value);
         }
     }
 
