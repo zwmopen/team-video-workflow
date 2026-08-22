@@ -2,6 +2,17 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-052 Android Manifest 残留媒体读取权限（Android 0.6.40）
+
+- 现象：自动截图采集、截图观察器、悬浮窗和自动剪切板链路已经删除，但 Manifest 仍声明 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`，与当前隐私边界不一致，可能继续触发厂商权限/风险提示。
+- 根因：旧截图/媒体导入阶段的权限声明没有随功能删除一起清理；源码中当前没有对应的媒体读取调用。
+- 修复：删除两项 Android 13+ 媒体读取权限；保留仅用于 Android 10 隐藏作品兼容导入的 `READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE` 声明和用户主动 SAF 文件夹授权。三端版本同步提升。
+- 证据：本地 Manifest 与源码静态检查；随后以同一提交的 GitHub Actions Android/iOS/Windows/remote-relay 构建、Release 包 Manifest、权限列表和真实设备安全扫描作为最终证据。
+- 回归要求：
+  1. Release 合并 Manifest 不包含 `READ_MEDIA_IMAGES`、`READ_MEDIA_VISUAL_USER_SELECTED`、`SYSTEM_ALERT_WINDOW`，也没有截图观察器、悬浮窗组件或自动剪切板读取。
+  2. Android 10 用户主动选择作品文件夹后，隐藏作品兼容导入、普通文件/图片接收和清理逻辑不回归；Android 11+ SAF 文件夹流程不回归。
+  3. Android/iOS/Windows 云构建、更新索引、Beta 资产和桌面包哈希一致；真实设备安装后复测厂商安全扫描。
+
 ## DSH-051 Android P2P 启动失败会残留活动引擎（Android 0.6.39）
 
 - 现象：Android 创建 P2P PeerConnection 失败时，`accept()` 仍返回已经结束的引擎，`OnlineService` 将它放进 `p2pEngines`；同一会话后续轮询会被“已存在”条件跳过，无法重试。

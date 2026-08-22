@@ -1,4 +1,4 @@
-# 文件收发中控 V4.3.12 / Android 0.6.39 / iPhone 0.6.26（Beta）
+# 文件收发中控 V4.3.13 / Android 0.6.40 / iPhone 0.6.27（Beta）
 
 ## 当前 Beta 测试包
 
@@ -6,17 +6,19 @@
 
 本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱和 P2P 会话，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务。P2P 文件会先写入缓存，完成 SHA-256 校验并写入作品库后才 ACK；Cloudflare 只转发 SDP/ICE，不保存 P2P 文件字节。本阶段不做应用层端到端加密，也没有实体跨网设备验收，因此 Beta 不能替代真机验收。
 
-## 0.6.39 / 0.6.26 / V4.3.12 本轮修复
+## 0.6.40 / 0.6.27 / V4.3.13 本轮修复
 
+- 清除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；自动截图采集、截图观察器、悬浮窗和自动剪切板链路均不再存在。
+- Android 10 的隐藏作品兼容导入仍只使用用户主动选择的 SAF 文件夹和旧兼容通道，不把该权限当作系统相册扫描权限。
 - Android/iOS P2P 收件端建连超过 20 秒会主动失败，Windows 随后自动切 HTTPS 中继；不会把“信令建立但没有文件”记作成功。
 - Android WebRTC 回调只负责复制数据帧，文件写入和 SHA-256 校验交给串行队列，避免大文件阻塞 WebRTC 回调线程。
 - Android P2P 引擎启动瞬间失败时不会再被缓存为处理中；取消已结束引擎也不会抛出清理异常，下一轮可以继续重试。
-- 本次 Beta 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>；iPhone Beta 源：<https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
+- 本次 Beta 发布页和 iPhone Beta 源会在本轮云构建完成后更新；源地址仍为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
 - 云端构建通过不等于实体设备业务通过；需要 Android、iPhone、Windows 实机各安装后再验收同 Wi-Fi、跨网络 P2P 和中继回退。
 
 ## 历史：手机端 0.6.27 / 0.6.14 分类口径、平台按钮状态与隐私边界
 
-- Android 与 iPhone 均移除自动收集截图、自动读取/同步系统剪切板、截图中转相关入口和后台行为；不再申请悬浮窗或相册读取权限。用户主动点“复制文案”“复制诊断信息”仍可明确复制。
+- Android 与 iPhone 均移除自动收集截图、自动读取/同步系统剪切板、截图中转相关入口和后台行为；Android 也不再声明旧的 `READ_MEDIA_IMAGES`/`READ_MEDIA_VISUAL_USER_SELECTED`，但保留 Android 10 隐藏作品兼容导入所需的旧存储兼容通道。用户主动点“复制文案”“复制诊断信息”仍可明确复制。
 - 作品卡片保留“预览”“发抖音”“发小红书”三个入口，改为左对齐的纵向紧凑按钮；预览使用轻量描边，两个平台操作使用主按钮，不再把三个入口挤在一行。
 - 顶部分类统一显示“精准流量”和“泛流量”；内部仍使用 `conversion`/`traffic` 字段，电脑端自动补货与手机端展示保持同一口径。
 - 点击任一平台按钮后，对应按钮立即变灰但仍可点击；返回作品列表时按已保存的抖音/小红书点击次数恢复状态，两个平台互不影响。

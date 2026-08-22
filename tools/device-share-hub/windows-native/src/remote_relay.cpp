@@ -26,7 +26,7 @@ namespace {
 
 constexpr char kEndpoint[] = "https://zwm-device-share-relay.zwmrpg.workers.dev";
 constexpr wchar_t kHost[] = L"zwm-device-share-relay.zwmrpg.workers.dev";
-constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.12";
+constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.13";
 constexpr size_t kMaxResponseBytes = 2 * 1024 * 1024;
 constexpr uint64_t kMaxTransferBytes = 20ull * 1024ull * 1024ull * 1024ull;
 

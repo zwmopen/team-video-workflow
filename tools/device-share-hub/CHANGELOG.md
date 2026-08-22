@@ -1,5 +1,12 @@
 # 变更记录
 
+## Beta：Windows V4.3.13 / Android 0.6.40 / iPhone 0.6.27 - 2026-08-22
+
+- 清除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；手机端没有自动截图采集、截图观察器或悬浮窗功能，不再为这条旧链路声明相册读取权限。
+- 保留 Android 10 隐藏作品兼容通道所需的旧存储权限声明与 SAF 文件夹授权；它只在用户主动选择作品文件夹后用于兼容导入，不读取系统剪切板或自动扫描截图。
+- Windows、Android、iPhone 版本同步提升为 `4.3.13`、`versionCode=78` / `versionName=0.6.40`、`0.6.27/build 46`；需以本次 GitHub Actions 云构建、Beta Release、AltStore Beta 源和真实设备安全扫描作为交付证据。
+- 本轮发布前先做本地权限/源码静态检查；真实 Android/iPhone/Windows 设备仍需连接后复测安装、权限列表、作品收发、P2P 和 HTTPS 中继回退。
+
 ## Beta：Windows V4.3.12 / Android 0.6.39 / iPhone 0.6.26 - 2026-08-22
 
 - 修复 Android P2P 引擎在 PeerConnection 创建瞬间失败后仍被放进活动 map 的问题；现在启动即失败会被丢弃，下一轮收件轮询可以正常重试，不会卡成“已处理中”。

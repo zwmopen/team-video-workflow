@@ -1,5 +1,13 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-22 Android 媒体权限残留修复与 Beta 0.6.40（云构建待完成）
+
+- 当前源码版本已同步为 Windows `4.3.13`、Android `0.6.40` / versionCode `78`、iPhone `0.6.27` / build `46`。
+- 删除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；自动截图、悬浮窗、截图观察器和自动剪切板链路此前已删除，本轮把权限声明也收干净。
+- Android 10 隐藏作品兼容导入仍保留旧存储兼容通道；它只在用户主动选择作品文件夹后工作，不等同于系统相册自动扫描。若后续决定彻底放弃 Android 10 隐藏目录兼容，再单独评估删除旧存储权限和导入代码。
+- 本轮需重新走 GitHub Actions 三端云构建、remote-relay、secret scan、quality、Beta Release 和 AltStore Beta 源同步；没有本地 Android Gradle/Xcode/Windows 构建替代证据。
+- 真实 Android/iPhone/Windows 设备仍需安装后检查系统权限列表、安全扫描、作品收发、P2P 成功和失败回退；在设备未连接前不宣称真机完成。
+
 ## 2026-08-22 Android P2P 会话回收修复与 Beta 0.6.39
 
 - 当前已发布 Beta：Windows `4.3.12`、Android `0.6.39` / versionCode `77`、iPhone `0.6.26` / build `45`。
