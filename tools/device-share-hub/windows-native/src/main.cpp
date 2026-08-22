@@ -15,6 +15,7 @@
 #include "usb_transport.h"
 #include "content_store.h"
 #include "send_to_integration.h"
+#include "remote_relay.h"
 
 #include <algorithm>
 #include <atomic>
@@ -90,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.6";
+constexpr wchar_t APP_VERSION[] = L"4.3.27";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -123,8 +124,15 @@ struct Device {
     bool wifiAllowed = true;
     bool remoteAllowed = true;
     bool remoteConnected = false;
+    std::string relaySigningX;
+    std::string relaySigningY;
+    std::string relayAgreementX;
+    std::string relayAgreementY;
     UsbPeer usbPeer;
     std::chrono::steady_clock::time_point lastSeen;
+    // Keep the last LAN observation separate from relay polling. A remote
+    // heartbeat must not make a stale Wi-Fi address look like a live route.
+    std::chrono::steady_clock::time_point wifiLastSeen;
     std::chrono::steady_clock::time_point lastSentTime;
 };
 
@@ -194,6 +202,7 @@ std::thread gDiscoveryThread;
 std::thread gReceiverThread;
 std::thread gUsbDiscoveryThread;
 std::thread gActiveProbeThread;
+std::thread gRelayThread;
 HANDLE gSingleInstance = nullptr;
 std::filesystem::path gLogPath;
 std::filesystem::path gRemarkPath;
@@ -202,6 +211,8 @@ std::filesystem::path gContentDatabasePath;
 std::filesystem::path gChannelPreferencePath;
 std::unique_ptr<ContentStore> gContentStore;
 std::map<std::wstring, UsbPeer> gUsbPeers;
+std::mutex gRelayProvisionMutex;
+std::set<std::wstring> gRelayProfilesSent;
 std::map<std::wstring, ChannelPreferences> gChannelPreferences;
 std::wstring gLastClipboardText;
 std::map<std::string, std::chrono::steady_clock::time_point> gSeenClipboardMessages;
@@ -473,7 +484,7 @@ struct GitHubRelease {
 };
 
 std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return std::nullopt;
     WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
@@ -522,7 +533,7 @@ std::optional<GitHubRelease> FetchLatestGitHubReleaseRedirect(std::wstring& erro
 }
 
 std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"无法建立 GitHub 网络会话。";
@@ -545,7 +556,7 @@ std::optional<GitHubRelease> FetchLatestGitHubRelease(std::wstring& error) {
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.6\r\n",
+L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -818,6 +829,56 @@ std::wstring DisplayNameFor(const Device& device) {
     auto found = gDeviceRemarks.find(device.id);
     if (found != gDeviceRemarks.end() && !found->second.empty()) return found->second;
     return device.name;
+}
+
+bool IsLiveWifiDevice(const Device& device,
+                      std::chrono::steady_clock::time_point now) {
+    auto wifiSeen = device.wifiLastSeen;
+    // Compatibility for an in-memory device created before the channel
+    // timestamp was introduced. New LAN discovery always fills wifiLastSeen.
+    if (wifiSeen == std::chrono::steady_clock::time_point{} && !device.ip.empty()) {
+        wifiSeen = device.lastSeen;
+    }
+    return !device.ip.empty() && device.wifiAllowed
+        && wifiSeen != std::chrono::steady_clock::time_point{}
+        && now - wifiSeen <= std::chrono::seconds(35);
+}
+
+bool IsLiveTransferDevice(const Device& device,
+                          std::chrono::steady_clock::time_point now) {
+    bool liveWifi = IsLiveWifiDevice(device, now);
+    bool liveUsb = device.usbReady && device.usbAllowed;
+    bool liveRemote = device.remoteAllowed && device.remoteConnected;
+    return liveWifi || liveUsb || liveRemote;
+}
+
+// LAN discovery is a second observation source for the same phone. Merge it
+// into the existing record instead of replacing relay state, credentials or a
+// more complete remote inventory snapshot.
+void MergeLocalDeviceLocked(Device device) {
+    auto found = gDevices.find(device.id);
+    if (found == gDevices.end()) {
+        gDevices.emplace(device.id, std::move(device));
+        return;
+    }
+
+    const Device& previous = found->second;
+    if (device.workCount < 0) device.workCount = previous.workCount;
+    if (device.conversionCount < 0) device.conversionCount = previous.conversionCount;
+    if (device.trafficCount < 0) device.trafficCount = previous.trafficCount;
+    if (device.uncategorizedCount < 0) device.uncategorizedCount = previous.uncategorizedCount;
+    if (device.appVersion.empty()) device.appVersion = previous.appVersion;
+    if (device.appVersionCode < 0) device.appVersionCode = previous.appVersionCode;
+    if (device.updateCapability.empty()) device.updateCapability = previous.updateCapability;
+
+    device.remoteConnected = previous.remoteConnected;
+    device.remoteAllowed = device.remoteAllowed && previous.remoteAllowed;
+    if (device.relaySigningX.empty()) device.relaySigningX = previous.relaySigningX;
+    if (device.relaySigningY.empty()) device.relaySigningY = previous.relaySigningY;
+    if (device.relayAgreementX.empty()) device.relayAgreementX = previous.relayAgreementX;
+    if (device.relayAgreementY.empty()) device.relayAgreementY = previous.relayAgreementY;
+    device.lastSeen = std::max(device.lastSeen, previous.lastSeen);
+    found->second = std::move(device);
 }
 
 struct PromptState {
@@ -1658,6 +1719,94 @@ private:
     }
 };
 
+bool ProvisionRelayDevice(const Device& device) {
+    if (device.ip.empty() || device.relaySigningX.empty() || device.relaySigningY.empty()
+            || device.relayAgreementX.empty() || device.relayAgreementY.empty()) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(gRelayProvisionMutex);
+        if (gRelayProfilesSent.count(device.id)) return true;
+    }
+    remote_relay::EnrollmentInfo enrollment{
+        WideToUtf8(device.id), WideToUtf8(device.name), device.relaySigningX, device.relaySigningY,
+        device.relayAgreementX, device.relayAgreementY};
+    std::string profile;
+    std::string error;
+    if (!remote_relay::BuildMobileProfile(DiagnosticLogPath().parent_path(), enrollment, profile, error)) {
+        WriteDiagnosticLog(L"remote_profile_build_failed", device.name + L" " + Utf8ToWide(error));
+        return false;
+    }
+    try {
+        HttpClient(device.ip, device.port).PostJson(L"/v2/relay-profile", profile);
+        {
+            std::lock_guard<std::mutex> lock(gRelayProvisionMutex);
+            gRelayProfilesSent.insert(device.id);
+        }
+        WriteDiagnosticLog(L"remote_profile_sent", device.name);
+        PostStatus(device.name + L" 已开启远程传送");
+        return true;
+    } catch (const std::exception& exception) {
+        WriteDiagnosticLog(L"remote_profile_send_failed", device.name + L" " + Utf8ToWide(exception.what()));
+        return false;
+    }
+}
+
+void RelayLoop() {
+    while (gRunning) {
+        std::vector<remote_relay::RelayDevice> devices;
+        std::string error;
+        if (remote_relay::ListDevices(DiagnosticLogPath().parent_path(), devices, error)) {
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lock(gDeviceMutex);
+            for (const auto& relay : devices) {
+                if (relay.deviceId.rfind("windows-", 0) == 0) continue;
+                std::wstring id = Utf8ToWide(relay.deviceId);
+                auto found = gDevices.find(id);
+                if (found == gDevices.end()) {
+                    Device device;
+                    device.id = id;
+                    device.name = Utf8ToWide(relay.name.empty() ? relay.deviceId : relay.name);
+                    device.model = L"远程设备";
+                    device.state = relay.online ? L"online" : L"offline";
+                    device.remoteConnected = relay.online;
+                    device.remoteAllowed = relay.remoteAllowed;
+                    device.workCount = relay.workCount;
+                    device.conversionCount = relay.conversionCount;
+                    device.trafficCount = relay.trafficCount;
+                    device.uncategorizedCount = relay.uncategorizedCount;
+                    device.appVersion = Utf8ToWide(relay.appVersion);
+                    device.appVersionCode = relay.appVersionCode;
+                    device.updateCapability = Utf8ToWide(relay.updateCapability);
+                    device.lastSeen = now;
+                    gDevices.emplace(id, std::move(device));
+                } else {
+                    found->second.remoteConnected = relay.online;
+                    found->second.remoteAllowed = relay.remoteAllowed;
+                    if (relay.workCount >= 0) found->second.workCount = relay.workCount;
+                    if (relay.conversionCount >= 0) found->second.conversionCount = relay.conversionCount;
+                    if (relay.trafficCount >= 0) found->second.trafficCount = relay.trafficCount;
+                    if (relay.uncategorizedCount >= 0) found->second.uncategorizedCount = relay.uncategorizedCount;
+                    if (!relay.appVersion.empty()) found->second.appVersion = Utf8ToWide(relay.appVersion);
+                    if (relay.appVersionCode >= 0) found->second.appVersionCode = relay.appVersionCode;
+                    if (!relay.updateCapability.empty()) found->second.updateCapability = Utf8ToWide(relay.updateCapability);
+                    if (!relay.name.empty()) found->second.name = Utf8ToWide(relay.name);
+                    if (relay.online) {
+                        found->second.state = L"online";
+                        found->second.lastSeen = now;
+                    }
+                }
+            }
+            if (gWindow) PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
+        } else if (!error.empty()) {
+            WriteDiagnosticLog(L"remote_presence_poll_failed", Utf8ToWide(error));
+        }
+        for (int tick = 0; tick < 100 && gRunning; ++tick) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+}
+
 bool RelayIncomingToNext(const RelayIncomingTask& task, std::wstring& failure) {
     Device next;
     bool found = false;
@@ -1743,7 +1892,7 @@ int JsonNestedNumber(const std::string& json, const std::string& parent,
 
 std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
                                           size_t maxBytes, std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机更新索引连接"); return std::nullopt; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 30000);
@@ -1759,7 +1908,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
         return std::nullopt;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.6\r\n",
+L"Accept: application/json\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1806,7 +1955,7 @@ std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* pa
 bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
                        const std::filesystem::path& target, uintmax_t maxBytes,
                        std::wstring& error) {
-    HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+HINTERNET session = WinHttpOpen(L"DeviceShareHub/4.3.26", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = LastNetworkError(L"无法建立手机 APK 下载连接"); return false; }
     WinHttpSetTimeouts(session, 5000, 5000, 15000, 120000);
@@ -1822,7 +1971,7 @@ bool DownloadHttpsFile(const std::wstring& host, const std::wstring& path,
         return false;
     }
     WinHttpAddRequestHeaders(request,
-                              L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.6\r\n",
+L"Accept: application/vnd.android.package-archive,*/*\r\nUser-Agent: DeviceShareHub/4.3.26\r\n",
                               -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     bool sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE;
@@ -1957,9 +2106,8 @@ void MaybeFetchMobileUpdateCacheForTarget() {
     const auto now = std::chrono::steady_clock::now();
     bool hasEligibleTarget = false;
     for (const auto& device : gDisplayedDevices) {
-        bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(35);
-        if (liveWifi && !device.appVersion.empty() && SupportsMobileUpdate(device)) {
+        if (IsLiveTransferDevice(device, now)
+                && !device.appVersion.empty() && SupportsMobileUpdate(device)) {
             hasEligibleTarget = true;
             break;
         }
@@ -2078,12 +2226,13 @@ void SyncWindowsClipboard() {
     BroadcastClipboardText(text, messageId, WindowsDeviceId(), 4, {});
 }
 
-void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
+bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
                     bool checkHistory, bool /*notifyCompletion*/) {
     std::wstring taskId = NewTaskId();
     gUploadInProgress = true;
     gShellTransferActive = true;
     gCancelRequested = false;
+    bool transferSucceeded = false;
     PostProgress(0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
     std::vector<std::filesystem::path> temporaryArchives;
@@ -2101,7 +2250,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             gUploadInProgress = false;
             gShellTransferActive = false;
             gCancelRequested = false;
-            return;
+            return false;
         }
 
         if (device.usbReady && device.usbAllowed) {
@@ -2122,7 +2271,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 PostStatus(L"已通过 USB 传送到“" + device.name + L"”");
                 gUploadInProgress = false;
                 gCancelRequested = false;
-                return;
+                return true;
             } catch (const std::exception& usbError) {
                 WriteDiagnosticLog(L"usb_upload_failed", Utf8ToWide(usbError.what()));
                 PostStatus(L"USB 传送未完成，已停止；为避免重复，不自动改用 Wi‑Fi。");
@@ -2130,7 +2279,69 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             }
         }
 
-        if (device.ip.empty() || !device.wifiAllowed) {
+        const bool liveWifi = IsLiveWifiDevice(device, std::chrono::steady_clock::now());
+        if (!liveWifi && device.remoteAllowed && device.remoteConnected) {
+            for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
+                auto& input = files[inputIndex];
+                if (std::filesystem::is_directory(input)) {
+                    input = CreateFolderZip(input, taskId + L"-remote-" + std::to_wstring(inputIndex));
+                    temporaryArchives.push_back(input);
+                }
+            }
+            PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”…");
+            std::string transferId;
+            std::string relayError;
+            std::string p2pError;
+            if (remote_relay::TryP2PTransfer(
+                    DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                    [&](uintmax_t done, uintmax_t total) {
+                        if (gCancelRequested) throw std::runtime_error("传送已取消");
+                        int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                        PostProgress(percent, true);
+                        PostStatus(L"正在 P2P 直传到 “" + device.name + L"”：" + std::to_wstring(percent) + L"%");
+                    }, transferId, p2pError)) {
+                RecordSuccessfulTransfers(device, fingerprints, L"P2P直传");
+                WriteDiagnosticLog(L"p2p_upload_done", device.name + L" transfer=" + Utf8ToWide(transferId));
+                PostShellTransferNotice(L"已通过 P2P 直传到“" + device.name + L"”。", true);
+                PostProgress(100, true);
+                PostStatus(L"已通过 P2P 直传到 “" + device.name + L"”");
+                gUploadInProgress = false;
+                gShellTransferActive = false;
+                gCancelRequested = false;
+                for (const auto& archive : temporaryArchives) {
+                    std::error_code ignored;
+                    std::filesystem::remove(archive, ignored);
+                }
+                return true;
+            }
+            WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
+            PostStatus(L"P2P 直传未成功，自动切换远程中继…");
+            bool sent = remote_relay::SendPlainTransfer(
+                DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                [&](uintmax_t done, uintmax_t total) {
+                    if (gCancelRequested) throw std::runtime_error("传送已取消");
+                    int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                    PostProgress(percent, true);
+                    PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”："
+                               + std::to_wstring(percent) + L"%");
+                }, transferId, relayError);
+            if (!sent) throw std::runtime_error(relayError.empty() ? "远程中继发送失败" : relayError);
+            RecordSuccessfulTransfers(device, fingerprints, L"远程中继");
+            WriteDiagnosticLog(L"remote_relay_upload_committed", device.name
+                               + L" transfer=" + Utf8ToWide(transferId));
+            PostShellTransferNotice(L"已提交到远程中继，手机收到后会自动写入作品库。", true);
+            PostProgress(100, true);
+            PostStatus(L"已通过远程中继发送到 “" + device.name + L"”，等待手机确认");
+            gUploadInProgress = false;
+            gShellTransferActive = false;
+            gCancelRequested = false;
+            for (const auto& archive : temporaryArchives) {
+                std::error_code ignored;
+                std::filesystem::remove(archive, ignored);
+            }
+            return true;
+        }
+        if (!liveWifi) {
             throw std::runtime_error("这台设备当前没有打开可用的传送方式，请右键设备检查 USB、WiFi 或远程传送");
         }
 
@@ -2181,6 +2392,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         }
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
         RecordSuccessfulTransfers(device, fingerprints, L"Wi-Fi");
+        transferSucceeded = true;
         WriteDiagnosticLog(L"upload_commit", taskId);
         PostShellTransferNotice(L"已传送到“" + device.name + L"”的接收文件夹。", true);
         PostProgress(100, true);
@@ -2209,6 +2421,7 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     }
     std::error_code ignored;
     std::filesystem::remove(std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"), ignored);
+    return transferSucceeded;
 }
 
 // Shell SendTo is a background entry point. Keep discovery and receiving
@@ -2238,10 +2451,7 @@ void ProcessPendingShellSend() {
     if (gPendingShellSend->invocation.deviceId.empty()) {
         std::vector<Device> online;
         for (const Device& device : gDisplayedDevices) {
-            bool liveWifi = !device.ip.empty() && device.wifiAllowed
-                && now - device.lastSeen <= std::chrono::seconds(35);
-            bool liveUsb = device.usbReady && device.usbAllowed;
-            if (liveWifi || liveUsb) online.push_back(device);
+            if (IsLiveTransferDevice(device, now)) online.push_back(device);
         }
         if (online.empty()) {
             gActiveProbeRequested = true;
@@ -2284,11 +2494,8 @@ void ProcessPendingShellSend() {
         WriteDiagnosticLog(L"send_to_picker_selected", selectedDevice.name);
     }
     auto found = std::find_if(gDisplayedDevices.begin(), gDisplayedDevices.end(), [now](const Device& device) {
-        bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(35);
-        bool liveUsb = device.usbReady && device.usbAllowed;
         return gPendingShellSend && device.id == gPendingShellSend->invocation.deviceId
-            && (liveWifi || liveUsb);
+            && IsLiveTransferDevice(device, now);
     });
     if (found == gDisplayedDevices.end()) {
         if (now - gPendingShellSend->queuedAt > std::chrono::seconds(8)) {
@@ -2316,10 +2523,7 @@ void SyncSendToMenu(const std::vector<Device>& devices,
     std::vector<send_to::DeviceEntry> online;
     std::wstring signature;
     for (const Device& device : devices) {
-        bool liveWifi = !device.ip.empty() && device.wifiAllowed
-            && now - device.lastSeen <= std::chrono::seconds(35);
-        bool liveUsb = device.usbReady && device.usbAllowed;
-        if (!liveWifi && !liveUsb) continue;
+        if (!IsLiveTransferDevice(device, now)) continue;
         std::wstring display = DisplayNameFor(device);
         online.push_back({device.id, display});
         signature += device.id + L"\x1f" + display + L"\x1e";
@@ -2350,8 +2554,8 @@ bool SupportsMobileUpdate(const Device& device) {
     return device.updateCapability == MOBILE_UPDATE_CAPABILITY || device.appVersionCode >= 54;
 }
 
-std::wstring MobileUpdateSentSettingKey(const std::wstring& deviceId) {
-    return L"auto_mobile_update_sent_" + deviceId;
+std::wstring MobileUpdateDeliveredSettingKey(const std::wstring& deviceId) {
+    return L"auto_mobile_update_delivered_" + deviceId;
 }
 
 void MaybeAutoMobileUpdate() {
@@ -2374,9 +2578,7 @@ void MaybeAutoMobileUpdate() {
             else ++it;
         }
         for (const auto& device : gDisplayedDevices) {
-            bool liveWifi = !device.ip.empty() && device.wifiAllowed
-                && now - device.lastSeen <= std::chrono::seconds(35);
-            if (!liveWifi || device.appVersion.empty()
+            if (!IsLiveTransferDevice(device, now) || device.appVersion.empty()
                     || !SupportsMobileUpdate(device)) continue;
             auto installedVersion = VersionNumbers(WideToUtf8(device.appVersion));
             if (installedVersion.empty()) continue;
@@ -2388,7 +2590,7 @@ void MaybeAutoMobileUpdate() {
             if (lastSent != gAutoMobileUpdateLastSentVersion.end()
                     && lastSent->second == artifact->version) continue;
             if (gContentStore
-                    && gContentStore->GetSetting(MobileUpdateSentSettingKey(device.id))
+                    && gContentStore->GetSetting(MobileUpdateDeliveredSettingKey(device.id))
                         == artifact->version) continue;
             auto cooldown = gAutoMobileUpdateCooldown.find(device.id);
             if (cooldown != gAutoMobileUpdateCooldown.end()
@@ -2396,12 +2598,6 @@ void MaybeAutoMobileUpdate() {
             selected = device;
             gAutoMobileUpdateCooldown[device.id] = now;
             gAutoMobileUpdateLastSentVersion[device.id] = artifact->version;
-            if (gContentStore) {
-                // Mark before starting the transfer: the fallback is at-most-once
-                // for a device/version, even if the desktop process is restarted
-                // after the APK has already reached the phone but before install.
-                gContentStore->SetSetting(MobileUpdateSentSettingKey(device.id), artifact->version);
-            }
             break;
         }
     }
@@ -2413,9 +2609,27 @@ void MaybeAutoMobileUpdate() {
     PostStatus(L"发现“" + DisplayNameFor(selected) + L"”可更新：手机端 v"
                + selected.appVersion + L" → v" + artifact->version + L"，正在发送更新包…");
     std::thread([selected, artifact = *artifact] {
-        UploadToDevice(selected, {artifact.path}, L"", false, false);
-        WriteDiagnosticLog(L"auto_mobile_update_transfer_finished",
-            DisplayNameFor(selected) + L" target=v" + artifact.version);
+        bool succeeded = UploadToDevice(selected, {artifact.path}, L"", false, false);
+        if (succeeded) {
+            if (gContentStore) {
+                gContentStore->SetSetting(
+                    MobileUpdateDeliveredSettingKey(selected.id), artifact.version);
+            }
+            WriteDiagnosticLog(L"auto_mobile_update_succeeded",
+                DisplayNameFor(selected) + L" target=v" + artifact.version);
+        } else {
+            // Keep a failed attempt retryable. The in-memory mark suppresses
+            // duplicates during this attempt; durable state is written only
+            // after the package has actually been sent successfully.
+            std::lock_guard<std::mutex> lock(gAutoMobileUpdateMutex);
+            auto sent = gAutoMobileUpdateLastSentVersion.find(selected.id);
+            if (sent != gAutoMobileUpdateLastSentVersion.end()
+                    && sent->second == artifact.version) {
+                gAutoMobileUpdateLastSentVersion.erase(sent);
+            }
+            WriteDiagnosticLog(L"auto_mobile_update_failed_retryable",
+                DisplayNameFor(selected) + L" target=v" + artifact.version);
+        }
         gAutoMobileUpdateInProgress = false;
     }).detach();
 }
@@ -2747,6 +2961,10 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     device.appVersion = Utf8ToWide(JsonValue(body, "appVersion"));
     device.appVersionCode = std::max<long long>(-1, JsonNumber(body, "versionCode", -1));
     device.updateCapability = Utf8ToWide(JsonValue(body, "updateCapability"));
+    device.relaySigningX = JsonValue(body, "relaySigningX");
+    device.relaySigningY = JsonValue(body, "relaySigningY");
+    device.relayAgreementX = JsonValue(body, "relayAgreementX");
+    device.relayAgreementY = JsonValue(body, "relayAgreementY");
     device.ip = host;
     device.port = static_cast<INTERNET_PORT>(std::clamp(JsonNumber(body, "port", 45833), 1, 65535));
     device.workCount = std::max(-1, JsonNumber(body, "workCount", -1));
@@ -2754,6 +2972,7 @@ std::optional<Device> ProbeDeviceHost(const std::wstring& host) {
     device.trafficCount = std::max(-1, JsonNestedNumber(body, "workCounts", "traffic", -1));
     device.uncategorizedCount = std::max(-1, JsonNestedNumber(body, "workCounts", "uncategorized", -1));
     device.lastSeen = std::chrono::steady_clock::now();
+    device.wifiLastSeen = device.lastSeen;
     if (device.id.empty() || device.name.empty()) return std::nullopt;
     return device;
 }
@@ -2791,6 +3010,7 @@ void ActiveProbeLoop() {
             }
             for (auto& worker : workers) worker.join();
             for (Device& device : found) {
+                ProvisionRelayDevice(device);
                 bool newlyRegistered = false;
                 ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
                 device.usbAllowed = channels.usb;
@@ -2798,7 +3018,7 @@ void ActiveProbeLoop() {
                 device.remoteAllowed = channels.remote;
                 std::lock_guard<std::mutex> lock(gDeviceMutex);
                 bool isNew = gDevices.find(device.id) == gDevices.end();
-                gDevices[device.id] = device;
+                MergeLocalDeviceLocked(std::move(device));
                 if (isNew) WriteDiagnosticLog(L"device_found_active", device.name);
             }
             if (!found.empty() && gWindow) PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
@@ -2890,6 +3110,14 @@ void DiscoveryLoop() {
                         catch (...) { device.appVersionCode = -1; }
                     }
                     if (parts.size() >= 12) device.updateCapability = Utf8ToWide(Base64UrlDecode(parts[11]));
+                    if (parts.size() >= 15) {
+                        try { device.conversionCount = std::max(-1, std::stoi(parts[12])); }
+                        catch (...) { device.conversionCount = -1; }
+                        try { device.trafficCount = std::max(-1, std::stoi(parts[13])); }
+                        catch (...) { device.trafficCount = -1; }
+                        try { device.uncategorizedCount = std::max(-1, std::stoi(parts[14])); }
+                        catch (...) { device.uncategorizedCount = -1; }
+                    }
                     device.ip = Utf8ToWide(ip);
                     bool newlyRegistered = false;
                     ChannelPreferences channels = ChannelsFor(device.id, &newlyRegistered);
@@ -2898,10 +3126,11 @@ void DiscoveryLoop() {
                     device.remoteAllowed = channels.remote;
                     if (newlyRegistered) PostStatus(device.name + L" 已自动登记，传送权限已开启");
                     device.lastSeen = std::chrono::steady_clock::now();
+                    device.wifiLastSeen = device.lastSeen;
                     if (!device.id.empty() && WideToUtf8(device.id) != WindowsDeviceId()) {
                         std::lock_guard<std::mutex> lock(gDeviceMutex);
                         bool isNew = gDevices.find(device.id) == gDevices.end();
-                        gDevices[device.id] = device;
+                        MergeLocalDeviceLocked(std::move(device));
                         if (isNew) WriteDiagnosticLog(L"device_found", device.name + L" ip=" + device.ip + L" state=" + device.state);
                         PostMessageW(gWindow, WM_DEVICES_CHANGED, 0, 0);
                     }
@@ -3527,7 +3756,11 @@ std::optional<std::filesystem::path> PickAutoRestockSource() {
     std::error_code error;
     // The automatic path is intentionally precise-only. A泛流量 folder must
     // never be silently substituted when a device is short of精准流量作品.
-    for (const auto& entry : std::filesystem::directory_iterator(
+    // The production library keeps platform buckets (for example
+    // 成品库\微信公众号) above the actual 作品集_xxx[转] folders. Search
+    // recursively so the precise-only rule works with the real library
+    // layout, while still refusing every folder without a [转]/【转】 tag.
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(
             root, std::filesystem::directory_options::skip_permission_denied, error)) {
         if (error) { error.clear(); continue; }
         if (!entry.is_directory(error)) { error.clear(); continue; }
@@ -3567,10 +3800,7 @@ void MaybeAutoRestock() {
             else ++it;
         }
         for (const Device& device : gDisplayedDevices) {
-            bool liveWifi = !device.ip.empty() && device.wifiAllowed
-                    && now - device.lastSeen <= std::chrono::seconds(35);
-            bool liveUsb = device.usbReady && device.usbAllowed;
-            if (!liveWifi && !liveUsb) continue;
+            if (!IsLiveTransferDevice(device, now)) continue;
             // Automatic restock uses one shared semantic across Android, iPhone,
             // and the PC inventory: only the precise/conversion count qualifies.
             // Missing category data is unknown and must never fall back to total.
@@ -4222,6 +4452,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             WriteDiagnosticLog(L"app_start", L"Windows panel opened");
             gDiscoveryThread = std::thread(DiscoveryLoop);
             gActiveProbeThread = std::thread(ActiveProbeLoop);
+            gRelayThread = std::thread(RelayLoop);
             gUsbDiscoveryThread = std::thread(UsbDiscoveryLoop);
             gReceiverThread = std::thread([] {
                 RunLanReceiver(gRunning, PostStatus, WriteDiagnosticLog,
@@ -4491,6 +4722,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             RemoveTrayIcon();
             if (gDiscoveryThread.joinable()) gDiscoveryThread.join();
             if (gActiveProbeThread.joinable()) gActiveProbeThread.join();
+            if (gRelayThread.joinable()) gRelayThread.join();
             if (gUsbDiscoveryThread.joinable()) gUsbDiscoveryThread.join();
             if (gReceiverThread.joinable()) gReceiverThread.join();
             // Keep the root SendTo shortcut persistent so Explorer can start

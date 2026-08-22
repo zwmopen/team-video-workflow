@@ -19,7 +19,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 5 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, 2, 2, 2, 5][section]
+        return [3, 2, 2, 2, 6][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -89,10 +89,15 @@ final class SettingsViewController: UITableViewController {
             cell.textLabel?.text = "版本"
             cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.3"
         case (4, 2):
-            cell.textLabel?.text = "检查版本更新"
+            cell.textLabel?.text = "更新通道"
+            cell.detailTextLabel?.text = AlbumUpdateChecker.updateChannelLabel + "（点此切换）"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
         case (4, 3):
+            cell.textLabel?.text = "检查版本更新"
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (4, 4):
             cell.textLabel?.text = "软件说明"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
@@ -125,15 +130,35 @@ final class SettingsViewController: UITableViewController {
         } else if indexPath.section == 2 {
             showCleanupChoices(editingMove: indexPath.row == 0)
         } else if indexPath.section == 4 && indexPath.row == 2 {
-            AlbumUpdateChecker.check(from: self)
+            showUpdateChannelChoices()
         } else if indexPath.section == 4 && indexPath.row == 3 {
-            showAbout()
+            AlbumUpdateChecker.check(from: self)
         } else if indexPath.section == 4 && indexPath.row == 4 {
+            showAbout()
+        } else if indexPath.section == 4 && indexPath.row == 5 {
             library.copyDiagnostics()
             let alert = UIAlertController(title: nil, message: "诊断信息已复制", preferredStyle: .alert)
             present(alert, animated: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { alert.dismiss(animated: true) }
         }
+    }
+
+    private func showUpdateChannelChoices() {
+        let alert = UIAlertController(title: "更新通道", message: "稳定版适合日常使用；测试版用于提前验证新功能。", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "稳定版" + (AlbumUpdateChecker.isBetaChannel ? "" : "  ✓"), style: .default) { [weak self] _ in
+            AlbumUpdateChecker.setBetaChannel(false)
+            self?.tableView.reloadData()
+        })
+        alert.addAction(UIAlertAction(title: "测试版（Beta）" + (AlbumUpdateChecker.isBetaChannel ? "  ✓" : ""), style: .default) { [weak self] _ in
+            AlbumUpdateChecker.setBetaChannel(true)
+            self?.tableView.reloadData()
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
     }
 
     @objc private func notificationSwitchChanged(_ sender: UISwitch) {

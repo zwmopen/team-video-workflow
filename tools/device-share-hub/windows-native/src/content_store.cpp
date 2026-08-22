@@ -182,6 +182,16 @@ void ContentStore::Initialize(const std::filesystem::path& legacyHistoryPath) {
         "CREATE TABLE IF NOT EXISTS migrations(key TEXT PRIMARY KEY, completed_at TEXT NOT NULL);"
     );
 
+    // Automatic distribution is the normal operating mode for this panel.
+    // INSERT OR IGNORE preserves a user's explicit off/threshold choices
+    // while making a fresh or older database behave like the settings UI.
+    database.Execute(
+        "INSERT OR IGNORE INTO settings(key, value) VALUES"
+        "('auto_mobile_update_enabled', '1'),"
+        "('auto_restock_enabled', '1'),"
+        "('auto_restock_threshold', '5');"
+    );
+
     Statement migrated(database.Get(), "SELECT 1 FROM migrations WHERE key='legacy-transfer-history-v1';");
     if (sqlite3_step(migrated.Get()) == SQLITE_ROW) return;
 

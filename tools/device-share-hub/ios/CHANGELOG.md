@@ -1,5 +1,67 @@
 # iOS 变更记录
 
+## 0.6.31 - 2026-08-22
+
+- 与 Android 0.6.44、Windows 4.3.17 同步发布；重复 P2P 完成路径现在释放活动引擎，继续保持写入作品库后 ACK、HTTPS 中继兜底和 transferId 去重。
+- 版本升级为 0.6.31/build 50；Device Share Hub run `32575362864` 的 iOS job 通过，IPA SHA-256 为 `1db6768df098beb2c8924d5b7fb0b923d81ff53678b840bc297787fe1cd25c92`。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；AltStore Beta 源已同步为 iOS 0.6.31/build 50，源提交 `f46cca7fd98504ea4c195e89a75a6697a80d197a`。
+
+## 0.6.30 - 2026-08-22
+
+- 与 Android 0.6.43、Windows 4.3.16 同步发布；iOS 保持 P2P 优先、HTTPS 中继兜底、写入作品库后 ACK 的收件语义。
+- 版本升级为 0.6.30/build 49；Device Share Hub run 32571763937、Repository quality run 32571763918、Secret scan run 32571763916 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1>；IPA SHA-256 为 `5e8de6ef4fa435d19b361b889b791b9b8ded80989af4e6a7ca08dd15587214e5`，AltStore Beta 源已同步。
+- 实体 iPhone 权限列表、安装、P2P、HTTPS 回退和文件落库验收仍待连接真实设备。
+
+## 0.6.29 - 2026-08-22
+
+- 与 Android 0.6.42、Windows 4.3.15 同步发布；Android 修复 P2P ICE 候选在远端 SDP 设置回调期间丢失的竞态，三端继续保持 P2P 优先、HTTPS 中继兜底。
+- 版本升级为 0.6.29/build 48；GitHub Actions Device Share Hub run 32565416952、Repository quality run 32565417059、Secret scan run 32565416950 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1>；IPA SHA-256 为 `716730f02c949338bb923fd28485f053d4856897d4795088eae35496ae362017`，AltStore Beta 源已同步；实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
+
+## 0.6.28 - 2026-08-22
+
+- 与 Android 0.6.41、Windows 4.3.14 同步发布；本轮修复 Android P2P 共享状态跨线程可见性，iOS 继续保持既有串行文件处理和失败回退边界。
+- 版本升级为 0.6.28/build 47；GitHub Actions Device Share Hub run 32562005856、remote-relay 13/13、Repository quality run 32562005857、Secret scan run 32562005864 已通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1>；IPA SHA-256 为 b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed，AltStore Beta 源内容提交为 e58a7b76cb0ecb96b7de05e519f89acf6fc27b41。
+- 实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
+
+## 0.6.27 - 2026-08-22
+
+- 与 Android 0.6.40、Windows 4.3.13 同步发布；本轮主要收口 Android 遗留媒体权限，iOS 继续不声明相册读取权限，也不包含自动截图/自动剪切板链路。
+- 版本升级为 0.6.27/build 46；GitHub Actions run `32559885341` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1>。
+- IPA SHA-256 为 `98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`；AltStore Beta 源已同步。
+- 实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
+
+## 0.6.26 - 2026-08-22
+
+- 与 Android 0.6.39、Windows 4.3.12 同步发布；iOS 原有 P2P 收件端的 20 秒建连超时、失败会话关闭和 HTTPS 中继回退保持不变。
+- 版本升级为 0.6.26/build 45；GitHub Actions run `32558264352` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>。
+- IPA SHA-256 为 `189cd17b4904dd97b8fa750559fcb6eeabb018a3274c1367967c2534339b8506`；实体 iPhone 跨网验收仍待完成。
+
+## 0.6.25 - 2026-08-22
+
+- P2P 接收端增加 20 秒建连超时；发送端没有建立 DataChannel 时及时结束本次直连，让 Windows 自动回退 HTTPS 中继。
+- 版本升级为 0.6.25/build 44；GitHub Actions run `32556181728` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.38-beta.1>。
+- IPA SHA-256 为 `14920197a1811a144be995be9eb8f082245a0cd1d54df0a7f0799aa76b5f12e2`；实体 iPhone 跨网验收仍待完成。
+
+## 0.6.24 - 2026-08-22
+
+- P2P 接收失败时异步关闭对应 Cloudflare 信令会话，避免控制面会话残留到 TTL 后才清理，也不阻塞 WebRTC 失败回调。
+- 版本升级为 0.6.24/build 43；GitHub Actions run `32553627094` 已通过并发布 Beta IPA，实体 iPhone 跨网验收仍待完成。
+
+## 0.6.23 - 2026-08-22
+
+- 修复 P2P 成功 ACK 写入后立即关闭 DataChannel 的竞态，给发送端保留短暂刷新窗口。
+- 作品库导入完成后删除 P2P 临时缓存，避免 ZIP 接收成功后长期占用沙盒空间。
+- 版本升级为 0.6.23/build 42；尚无实体 iPhone 跨网验收证据。
+
+## 0.6.22 - 2026-08-22
+
+- 接入认证后的 WebRTC DataChannel 收件端：电脑优先尝试 P2P 发送，失败后继续使用 HTTPS 中继，不改变现有作品库导入和 ACK 语义。
+- P2P 文件先写入缓存并校验大小/SHA-256，确认写入作品库后才回复 ACK；断线或校验失败会清理临时文件。
+- 版本升级为 0.6.22/build 41；需以云端 XcodeGen、iPhoneOS 构建和 IPA 校验为准，尚无实体 iPhone 跨网验收证据。
+
 ## 0.6.16 - 2026-08-20
 
 - 检查到新版本时，提示改为引导打开 AltStore 的 My Apps 更新，不再只提示连接电脑。

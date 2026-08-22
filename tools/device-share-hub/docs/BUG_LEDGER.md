@@ -2,6 +2,228 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-066 生产工作区损坏成员记录导致远程设备列表 500（Worker，已修复并部署）
+
+- 现象：当前电脑通过 HTTPS 代理已能访问 Worker，但 `/v1/devices` 返回 HTTP 500，Windows 远程在线轮询无法继续；云端新鲜测试工作区不复现。
+- 根因：`listDevices` 假定 `member:` 存储记录始终带完整 `certificate`、签名公钥和协商公钥；历史中断登记或旧版本遗留的损坏记录会抛异常，整页列表失败。
+- 修复：遍历成员时校验证书结构；坏记录只写 `invalid_member_skipped` 告警并跳过，保留有效成员的在线、库存、版本和远程权限数据。Worker 已部署版本 `fb0ba8fb-6f15-46f3-b31d-00cbeba36c59`。
+- 证据：本地 13 项远程协议测试通过；云端 run `32596690436` 的 remote-relay check 和线上 Worker E2E 全部成功；本机 V4.3.26 通过 HTTPS 代理重启后不再产生新的 `remote_presence_poll_failed`。
+- 回归要求：损坏成员不影响有效设备列表；有效手机上线后能被 Windows 轮询发现；远程发送、P2P/HTTPS 回退、ACK 和撤销仍按设备身份工作；后续需真实手机现场验收。
+
+## DSH-067 Windows 远程中继直连 workers.dev TLS 不可达（Windows V4.3.26，已修复）
+
+- 现象：本机直连 Cloudflare `workers.dev` 的 HTTPS 超时，但 Clash Verge 的本地 HTTP CONNECT 代理可正常访问；旧版中控持续记录“中继没有响应”。
+- 根因：`RelayHttp` 固定使用 WinHTTP 自动代理；本机 WinHTTP 没有代理设置，未使用已经运行的 Clash 本地端口 `127.0.0.1:7897`。
+- 修复：支持 `ZWM_DEVICE_SHARE_RELAY_PROXY` 和 `relay-proxy.txt`；未配置时保持系统自动代理，配置后使用 `WINHTTP_ACCESS_TYPE_NAMED_PROXY`，协议仍是 HTTPS，不降级 HTTP。
+- 证据：本机 `curl` 直连失败、经 `127.0.0.1:7897` 的 Worker health 200；云端三端构建、远程中继检查和线上 E2E run `32596690436` 全部通过；V4.3.26 重启后未出现新的远程轮询失败。
+- 回归要求：代理不可用时错误可重试、直连可用时不强制代理；HTTPS 证书校验不关闭；真实手机上线后验证设备发现、P2P 直连、HTTPS 回退和 ACK。
+
+## DSH-065 移动端 P2P 完成后未释放 Cloudflare 信令会话（Android 0.6.49 / iPhone 0.6.36，已修复并发布 Beta）
+
+- 现象：移动端 P2P 成功导入并发送 ACK，或失败/取消关闭 PeerConnection 后，认证的 Cloudflare 信令会话仍可能保持；下一轮在线轮询可能再次看到同一会话，造成无意义的重复协商或旧任务重接收。
+- 根因：Android/iOS 的统一 `shutdown` 只停止 WebRTC/文件队列，没有同时关闭 `P2PTransport` 信令会话；成功路径和异常路径的资源边界不完整。
+- 修复：Android `P2PTransferEngine.shutdown` 与 iOS `P2PTransferEngine.shutdown` 增加 `transport.close()`，让成功、失败、取消都释放信令会话；新增静态不变量断言，版本同步为 Android 0.6.49/versionCode 87、iPhone 0.6.36/build 55、Windows V4.3.25。
+- 证据：本地 `verify-p2p-invariants.mjs`、`verify-auto-mobile-update.mjs`、`verify-removed-surfaces.mjs`、13 项远程协议测试和 `git diff --check` 通过；Device Share Hub run `32594831524` 的三端构建、remote-relay check 和线上 Worker E2E 全部成功；Beta `v0.6.49-beta.1` 已发布。
+- 回归要求：
+  1. P2P 成功写库并 ACK 后，信令会话、PeerConnection、临时缓存和活动引擎都释放，下一轮轮询不重复接收同一会话。
+  2. P2P 失败、取消和 20 秒超时都关闭信令会话，并且 Windows 仍只创建一次 HTTPS 回退任务。
+  3. Android/iPhone 真实设备跨网传送小作品，确认 DataChannel 成功不创建中继任务；制造直连失败时只创建一个 HTTPS 中继任务，落库后返回 ACK。
+
+## DSH-064 iOS P2P ICE 候选在 SDP 回调边界丢失（iPhone 0.6.35，已修复并发布 Beta）
+
+- 现象：iPhone 的信令轮询和 WebRTC 回调可能同时处理 ICE 候选；候选恰好在远端 SDP 回调排空队列的窗口到达时，可能既没有入队也没有立即提交，P2P 偶发建连失败并转入 HTTPS 中继。
+- 根因：`pendingCandidates` 与 `remoteDescriptionSet` 没有共享同步边界；此前 Android 已有 `iceLock`，iOS 仍直接读写。
+- 修复：iOS 使用 `NSLock` 将“标记远端 SDP 已就绪、复制并清空待处理候选”和“新候选入队/立即提交”串行化；提交候选放在解锁后执行，避免锁内调用 WebRTC。
+- 证据：本地 P2P 不变量脚本、自动更新/库存脚本、隐私表面检查和 13 项中继协议测试通过；云端 run `32593184579` 的三端构建、remote-relay check 和线上 Worker E2E 全部成功；Beta `v0.6.48-beta.1` 已发布。实体 iPhone P2P 验收仍待连接。
+- 回归要求：
+  1. SDP 成功前后并发到达的 ICE 候选每个都最终提交一次。
+  2. P2P 成功 ACK、失败关闭、HTTPS 回退和重复 transferId 去重不受锁影响。
+  3. iPhone 真实设备跨网络发送小作品，确认 DataChannel 成功时不创建中继任务；制造直连失败时仍只创建一个 HTTPS 中继任务。
+
+## DSH-063 Beta 已发布但手机更新按钮读不到 Beta 索引（Android/iOS 0.6.47/0.6.34，已修复）
+
+- 现象：Beta 安装包和 Release 已发布，但 Android/iOS 更新器只读取稳定索引；测试机点击“检查更新”时看不到 Beta，iOS 也会复制稳定 AltStore 源。
+- 根因：更新通道没有持久化选择，客户端端点固定为 `latest.json`/`altstore.json`，发布 Beta 不会改变稳定入口。
+- 修复：设置新增稳定版/测试版通道；Android 测试版读取 `latest-beta.json`，iPhone 测试版使用 `altstore-beta.json`；默认保持稳定版，测试版不污染稳定索引。
+- 证据：Android/iOS/Windows 云构建和 remote-relay/Worker E2E run `32590760825` 全部成功；两个公开索引已 API/Raw 复核为 Android 0.6.47/versionCode 85、iPhone 0.6.34/build 53。
+- 回归要求：稳定通道仍读稳定索引；测试通道能发现 Beta；Android 下载前校验 SHA-256；iPhone 复制 Beta 源后由 AltStore 更新；切回稳定版后不显示 Beta。真实手机点击和安装仍需现场验收。
+
+## DSH-062 远程在线被旧 Wi-Fi 路由遮蔽（Windows 4.3.23，已修复）
+
+- 现象：同一台手机先被局域网发现、后通过中继在线时，远程心跳刷新了整体 `lastSeen`；发送路径只看非空 IP，可能继续连接已经失效的局域网地址，无法进入 P2P/HTTPS 回退。
+- 根因：局域网探测和远程中继共用一份设备快照与时间戳；任一来源直接替换另一来源，无法表达“Wi‑Fi 已过期但远程仍在线”。
+- 修复：增加独立 `wifiLastSeen`；局域网 UDP/主动探测与中继记录改为字段合并；发送只把 35 秒内的 Wi‑Fi 观察当作直连，过期时自动使用远程通道。
+- 证据：本地源码回归门禁、13 项远程协议测试、隐私表面检查通过；run `32589239907` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过；Beta `v0.6.46-beta.3` 已发布。实体手机仍需现场验证。
+- 回归要求：局域网在线优先 Wi‑Fi；局域网过期但中继在线时走 P2P/HTTPS；中继离线且 Wi‑Fi 过期时不发送；两种来源轮询交错时保留库存、凭证和通道状态。
+
+## DSH-061 远程缺失库存覆盖局域网完整库存（Windows 4.3.21）
+
+- 现象：同一台手机同时通过局域网和远程中继在线时，远程心跳没有分类库存字段；RelayLoop 把 `-1`/空版本覆盖了局域网已经拿到的精准库存，自动补货可能漏发。
+- 根因：远程设备合并逻辑把“字段缺失”当成了“新值未知”，没有按字段保留更完整的本地来源。
+- 修复：只有远程字段带合法值时才覆盖对应本地字段；远程缺字段时保留局域网库存、版本和更新能力。新增源级回归断言。
+- 证据：Device Share Hub run `32587368303` 的三端构建、remote-relay check 和线上 Worker E2E 全部通过；Beta `v0.6.46-beta.2` 已发布；实体设备自动补货仍待现场验收。
+- 回归要求：局域网精准 4、远程字段缺失时仍按 4 判断；远程精准 5 时不补；旧手机和新手机字段切换不抹掉已有完整库存。
+
+## DSH-060 远程中继在线但没有精准库存，自动补货漏掉远程设备（Windows 4.3.20，已修复）
+
+- 现象：手机通过 Cloudflare 远程心跳在线时，电脑只能看到在线/设备名；远程设备没有局域网 IP，因此右键发送、自动更新候选和精准低于 5 自动补货都被旧的 Wi-Fi/USB 判断排除。
+- 根因：手机远程心跳原来发送空 JSON；Durable Object 丢弃心跳内容；Windows RelayLoop 只合并在线状态，且多个发送入口各自重复实现局域网判断。
+- 修复：Android/iPhone 心跳上报并持久化合法库存与版本字段；Windows 合并远程库存并统一使用 USB/Wi-Fi/远程三路可用判断。缺失分类库存仍按未知处理，不使用总数替代精准流量。
+- 证据：remote-relay 协议测试新增库存字段断言并通过；Device Share Hub run `32586026767` 的三端构建、remote-relay check 和线上 Worker E2E 全部通过；Beta `v0.6.46-beta.1` 已发布。实体手机跨网传送、落库、ACK 和精准低于 5 自动补货仍待现场验收。
+- 回归要求：远程设备上报精准 4 时自动补 1 个精准作品；上报精准 5 时不补；只上报总数或旧版没有分类字段时不补；P2P 失败仍回退 HTTPS 中继。
+
+## DSH-059 自动补货只扫作品库第一层导致精准源为空（Windows 4.3.19）
+
+- 现象：当前电脑的精准作品实际位于 `成品库\\微信公众号\\作品集_048[转]` 等子目录；自动补货函数只遍历 `library_path` 第一层，因此找不到任何精准源，即使设备精准库存低于 5 也不会发送。
+- 根因：`PickAutoRestockSource` 使用 `directory_iterator`，没有覆盖生产库按平台分桶的目录结构。
+- 修复：改用 `recursive_directory_iterator`，继续只接受目录名包含 `[转]` 或 `【转】` 且同时包含图文内容的作品文件夹；泛流量目录仍不可作为替代源。
+- 证据：现场库扫描确认存在 `微信公众号\\作品集_048[转]` 等有效精准目录；源码回归门禁新增递归扫描断言；Device Share Hub run `32583765953` 和 Beta `v0.6.45-beta.3` 已通过发布验证；实体设备发送仍待连接。
+- 回归要求：递归目录下精准库存低于阈值时可进入自动补货；精准库存未知或达到阈值时不发送；只有泛流量目录时不发送。
+
+## DSH-058 自动补货默认关闭导致自动分发不触发（Windows 4.3.18）
+
+- 现象：当前电脑内容数据库只有目录设置，没有 `auto_restock_enabled`；虽然设备精准库存低于阈值，自动补货逻辑仍因严格要求值为 `1` 而直接返回。
+- 根因：设置表没有默认迁移，首次使用或旧数据库升级后，UI 与自动分发逻辑没有共同的默认值。
+- 修复：ContentStore 初始化用 `INSERT OR IGNORE` 写入自动更新开启、自动补货开启、精准阈值 5；用户已经明确保存的 `0` 或自定义阈值不会覆盖。当前电脑数据库已同步并留有临时备份。
+- 证据：`verify-auto-mobile-update.mjs` 已增加默认配置断言；本地数据库读取确认三个设置值为 `1/1/5`；Device Share Hub run `32581609531` 的 Windows 构建通过，Beta `v0.6.45-beta.2` 已发布；真实手机自动补货仍待连接验收。
+- 回归要求：新库默认触发自动分发；用户关闭自动补货后不再触发；精准低于 5 才进入补货，泛流量不能替代精准库存。
+
+## DSH-057 自动手机更新失败后永久抑制重试（Windows 4.3.17）
+
+- 现象：Windows 自动更新在传输开始前就把 auto_mobile_update_sent_<deviceId> 写入持久化设置；如果手机离线、HTTP 接收器超时或传输失败，下一次上线仍会被这个版本记录拦截，无法再次推送。
+- 根因：把“尝试发送”当成了“已送达”，且失败路径没有清除持久化标记；现场旧版 Android 设备广播在线但接收端口无响应时会触发这一风险。
+- 修复：UploadToDevice 返回明确成功值；自动更新仅在成功返回后写入 auto_mobile_update_delivered_<deviceId>。失败只清除本次内存占位并记录 auto_mobile_update_failed_retryable，保留下一轮重试。
+- 同轮增强：Android/iPhone 在线信标追加可选精准、泛、未分类库存字段；Windows 解析尾字段，/v2/info 短时不可用时仍可区分“未知”与“精准为 0”，不把总数冒充精准库存。
+- 证据：源级回归脚本 tools/device-share-hub/scripts/verify-auto-mobile-update.mjs 通过；Device Share Hub run `32579462284` 的 Android、iOS、Windows、remote-relay check 和已部署 Worker live E2E 全部通过；Beta `v0.6.45-beta.1` 已发布并完成三包哈希核对。实体设备回归仍待现场执行。
+- 回归要求：
+  1. 更新传输失败后，同一设备/版本下一次上线仍可再次触发；成功传输后才抑制重复推送。
+  2. Android/iPhone 旧版不带尾字段时，Windows 保持未知，不回退到总作品数；新版带尾字段时精准库存按 conversion 读取。
+  3. 普通作品传送、P2P/HTTPS 中继、更新包校验和用户确认安装流程不受影响。
+
+## DSH-056 P2P ACK 丢失后的中继回退重复入库（Android 0.6.44 / iPhone 0.6.31）
+
+- 现象：P2P 已经把作品写入手机作品库，但 ACK 在回电脑途中丢失时，Windows 会按设计切换到 HTTPS 中继；Android 原来的中继收件路径没有先检查持久化的 `remoteImportedTransfers`，会再次下载并写入同一批作品。
+- 根因：Android 只有 P2P 导入路径检查 `wasRemoteImported`，普通中继路径只在导入后写入标记，没有把“已导入、只补 ACK”作为重试分支。
+- 修复：Android 在中继下载前检查持久化 transfer 标记；已导入任务只调用 ACK、清理临时缓存和内存占位，不再创建作品。成功 ACK 后同步移除 `remoteInboxTasks`；Android/iOS 的重复 P2P 完成路径也会释放活动引擎/缓存。
+- 证据：本地隐私回归、remote-relay check/typecheck、13 项协议测试和源码不变量检查通过；Device Share Hub run `32575362864`、线上 Worker E2E job `97036844830`、Repository quality `32575362946` 和 Secret scan `32575362919` 全部通过；Beta `v0.6.44-beta.1` 已发布并完成三包哈希核对。真实手机回退实传仍待现场验收。
+- 回归要求：
+  1. P2P 导入成功但 ACK 丢失后，HTTPS 回退最多补 ACK 一次，作品库不增加重复作品。
+  2. 普通中继首次接收仍按“下载 → 校验 → 写库 → ACK”顺序执行，任何失败都保留重试机会且不提前 ACK。
+  3. Android/iOS 重复 transferId 不留下活动 P2P 引擎、临时缓存或永久收件占位。
+
+## DSH-055 Windows 中继失败后遗留未完成任务（Windows 4.3.16）
+
+- 现象：Windows 已创建远程中继任务后，如果上传、提交、进度读取或本地文件哈希阶段失败，原实现直接返回失败，R2 临时对象和收件箱任务要等 TTL 才清理；同一个失败 `transferId` 也可能继续干扰后续重试。
+- 根因：`SendPlainTransfer` 的异常路径没有统一回收已创建的 transfer；正常提交失败与本地异常没有共享取消闭包。
+- 修复：记录当前活动 `transferId`，所有上传/提交/进度/哈希异常先 best-effort 调用 `/cancel`，随后清空输出 ID；`RelayHttp` 构造异常也保持在捕获范围内，避免把失败任务留在云端。
+- 证据：Device Share Hub run `32571763937` 的 Windows、Android、iOS、remote-relay 和正式 Worker E2E 全部通过；Beta `v0.6.43-beta.1` 已发布。真实设备断网/中断回归仍待现场执行。
+- 回归要求：
+  1. 任务创建后任一上传、提交、进度或哈希失败都发送一次取消，并清理 R2/收件箱状态。
+  2. 失败返回不保留可误用的 `transferId`，下一次重试可以创建独立任务。
+  3. 正常 P2P 成功、P2P 回退 HTTPS、局域网/USB 传送和成功 ACK 不受取消清理影响。
+
+## DSH-054 Android P2P ICE 候选在 SDP 回调竞态中丢失（Android 0.6.42）
+
+- 现象：信令轮询收到 ICE 候选时，如果远端 Description 成功回调正在排空待处理队列，候选可能在排空之后才写入旧队列；该候选不再被提交给 PeerConnection，直连可能失败并回退 HTTPS 中继。
+- 根因：poller 与 WebRTC 回调线程分别读写 ArrayList pendingIce，remoteDescriptionSet 的判断和队列排空不是一个原子操作。
+- 修复：增加 iceLock；远端 Description 成功时在锁内设置状态、复制并清空队列；新候选在锁内判断状态，未就绪则入队，就绪则在锁外立即提交。
+- 证据：源码并发审计；Android 云构建与同一提交的 iOS/Windows/remote-relay run 32565416952 已通过，真实设备跨网操作仍待补齐。
+- 回归要求：
+  1. Description 成功前后并发到达的 ICE 候选都必须最终提交一次。
+  2. P2P 连接失败、取消、ACK 成功和 DataChannel 关闭不重复回调或留下活动引擎。
+  3. HTTPS 中继回退、局域网/USB 传送、作品库写入和重复 transferId 去重不受影响。
+
+## DSH-053 Android P2P 共享状态缺少跨线程可见性（Android 0.6.41）
+
+- 现象：P2P 引擎同时由 WebRTC 回调、信令轮询、文件处理队列和连接超时任务访问；在 Java 内存模型下，某个线程可能看不到最新的 `channel`/`finished` 状态，出现活连接误触发超时、已结束连接继续处理或重复清理。
+- 根因：这些字段是普通非 `volatile` 引用/布尔值，跨线程读写没有明确的 happens-before 关系。
+- 修复：将 `peer`、`channel`、`finished` 和 `remoteDescriptionSet` 声明为 `volatile`；保持已有失败回退、ACK 刷新和活动 map 清理逻辑不变。
+- 证据：本地源码审计与远程中继测试；需以同一提交的 Android/iOS/Windows 云构建和真实设备 P2P/回退操作补齐最终证据。
+- 回归要求：
+  1. 正常 P2P 建连后，20 秒超时任务不会因读取旧 `channel` 状态误触发。
+  2. 失败、取消、ACK 成功和 DataChannel 关闭并发发生时，不重复调用监听器或留下活动引擎。
+  3. HTTPS 中继回退、局域网/USB 传送、作品库写入和重复 `transferId` 去重不受影响。
+
+## DSH-052 Android Manifest 残留媒体读取权限（Android 0.6.40）
+
+- 现象：自动截图采集、截图观察器、悬浮窗和自动剪切板链路已经删除，但 Manifest 仍声明 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`，与当前隐私边界不一致，可能继续触发厂商权限/风险提示。
+- 根因：旧截图/媒体导入阶段的权限声明没有随功能删除一起清理；源码中当前没有对应的媒体读取调用。
+- 修复：删除两项 Android 13+ 媒体读取权限；保留仅用于 Android 10 隐藏作品兼容导入的 `READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE` 声明和用户主动 SAF 文件夹授权。三端版本同步提升。
+- 证据：本地 Manifest 与源码静态检查；随后以同一提交的 GitHub Actions Android/iOS/Windows/remote-relay 构建、Release 包 Manifest、权限列表和真实设备安全扫描作为最终证据。
+- 回归要求：
+  1. Release 合并 Manifest 不包含 `READ_MEDIA_IMAGES`、`READ_MEDIA_VISUAL_USER_SELECTED`、`SYSTEM_ALERT_WINDOW`，也没有截图观察器、悬浮窗组件或自动剪切板读取。
+  2. Android 10 用户主动选择作品文件夹后，隐藏作品兼容导入、普通文件/图片接收和清理逻辑不回归；Android 11+ SAF 文件夹流程不回归。
+  3. Android/iOS/Windows 云构建、更新索引、Beta 资产和桌面包哈希一致；真实设备安装后复测厂商安全扫描。
+
+## DSH-051 Android P2P 启动失败会残留活动引擎（Android 0.6.39）
+
+- 现象：Android 创建 P2P PeerConnection 失败时，`accept()` 仍返回已经结束的引擎，`OnlineService` 将它放进 `p2pEngines`；同一会话后续轮询会被“已存在”条件跳过，无法重试。
+- 根因：Android `accept()` 与 iOS 已有的“启动后若 finished 则返回 nil”保护不一致；取消路径也可能在执行队列已关闭后再次提交任务。
+- 修复：Android `accept()` 在启动同步失败时返回 `null`，调用方不缓存空引擎；取消提交增加已关闭队列保护，失败会话由下一轮收件轮询重新接管。
+- 证据：GitHub Actions run `32558264352` 的 Android、iOS、Windows、remote-relay 全部通过；安全扫描 run `32558264343`、质量检查 run `32558264394` 通过；Beta 发布页为 `v0.6.39-beta.1`。实体手机业务回归仍未完成。
+- 回归要求：
+  1. 模拟 PeerConnection 创建失败时，Android 不把已结束引擎放入 `p2pEngines`，下一次轮询可以再次尝试同一会话。
+  2. 停止接收服务、P2P 失败和 ACK 后延迟关闭都不得因重复 `cancel` 抛异常。
+  3. 正常 P2P、20 秒建连超时、HTTPS 中继回退、局域网/USB 传送和重复 `transferId` 去重保持不变。
+
+## DSH-050 移动端 P2P 收件建连等待无界与 WebRTC 回调阻塞（Android 0.6.38 / iPhone 0.6.25）
+
+- 现象：发送端创建会话后没有真正建立 DataChannel 时，Android/iOS 收件端可能长期等待；Android 直接在 WebRTC 数据回调里执行文件写入和 SHA-256 校验，大文件可能阻塞回调线程。
+- 根因：移动端收件端缺少独立的建连超时；Android 没有把 WebRTC 回调收到的 ByteBuffer 与后续文件 I/O 解耦。
+- 修复：两端增加 20 秒建连超时，超时关闭 P2P 并回退 HTTPS 中继；Android 立即复制 WebRTC 所有权的数据帧，再交给串行队列执行写入、大小校验、SHA-256 和作品库导入。
+- 证据：GitHub Actions run `32556181728` 的 Android、iOS、Windows、remote-relay 全部通过；安全扫描 run `32556181727`、质量检查 run `32556181732` 通过；Beta 发布页为 `v0.6.38-beta.1`。实体手机业务回归仍未完成。
+- 回归要求：
+  1. 发送端不发起 DataChannel 时，Android/iOS 最迟 20 秒结束 P2P，并由 Windows 只创建一个 HTTPS 中继任务。
+  2. 大文件连续分片传输时，WebRTC 回调线程不执行阻塞文件 I/O；manifest、大小、SHA-256、作品库写入和 ACK 顺序保持不变。
+  3. 正常慢速 P2P、局域网/USB 传送、重复 `transferId` 去重和失败会话关闭不受影响。
+
+## DSH-049 移动端 P2P 失败未及时关闭信令会话（Android 0.6.37 / iPhone 0.6.24）
+
+- 现象：Android/iOS P2P 接收失败时会清理本地引擎，但 Cloudflare 控制面会话仍保持开放，直到 2 分钟 TTL 才回收；发送端虽然会回退 HTTPS，中间会留下脏会话。
+- 根因：移动端 `SignalTransport` 只有快照和发信令接口，失败回调没有 `/close` 动作；同步关闭还可能阻塞 WebRTC 失败处理线程。
+- 修复：Android/iOS 为 `SignalTransport` 增加异步 `close`；P2P 失败路径立即排队关闭对应会话，保留本地清理和 HTTPS 回退，不阻塞失败回调。
+- 证据：GitHub Actions run `32553627094` 的 Android、iOS、Windows、remote-relay、质量检查和安全检查全部通过；Beta 发布页为 `v0.6.37-beta.1`。实体手机业务回归仍未完成。
+- 回归要求：
+  1. Android/iOS 在 manifest、数据帧、校验或作品库写入失败后，控制面会话进入 `closed`，不能只等 TTL。
+  2. 关闭请求不得阻塞 WebRTC 失败回调；HTTPS 回退仍只创建一个任务。
+  3. 成功 ACK、局域网/USB 传送和正常慢速 P2P 不受影响。
+
+## DSH-048 P2P 异常回退留下开放信令会话（Windows 4.3.9）
+
+- 现象：Windows 已创建 P2P 会话后，如果文件校验、信令或 DataChannel 发送路径抛出异常，外层回退逻辑会继续创建 HTTPS 中继任务，但原 P2P 会话只能等 2 分钟 TTL 才清理。
+- 根因：正常返回路径有 `/close`，异常直接跳到外层 `catch`，没有覆盖“会话已创建、传输尚未正常返回”的范围。
+- 修复：在 `TryP2PTransfer` 创建会话后建立统一 `closeSession` 清理闭包；成功、P2P 返回失败和内部异常都先关闭会话，再把失败交给上层 HTTPS 中继回退。
+- 证据：GitHub Actions run `32551407594` 的 Windows portable、Android、iOS、remote-relay、validate 和两项 secret scan 全部通过；Beta Windows 资产 SHA-256 为 `544a823df94ce0232e98a96e5cc4a1b1ad7398508ff3dcf049ab93b6b12df169`。
+- 回归要求：
+  1. 文件哈希、信令和 DataChannel 任一阶段抛异常时，控制面会话都进入 `closed`，不能只等 TTL。
+  2. P2P 失败后只创建一个 HTTPS 中继任务，不能因为旧会话残留产生重复发送。
+  3. 正常 P2P ACK 和已有局域网/USB 传送不受清理闭包影响。
+
+## DSH-047 P2P 成功尾部 ACK 竞态与背压无限等待（Windows 4.3.9 / Android 0.6.36 / iPhone 0.6.23）
+
+- 现象：手机导入成功后立即关闭 DataChannel，电脑可能在收到 ACK 前看到通道关闭并重复走 HTTPS 中继；iPhone ZIP 导入成功后 P2P 缓存目录可能残留；Windows 发送侧背压长期不下降时没有硬性回退边界。
+- 根因：`sendData`/`DataChannel.send` 只把 ACK 放入 SCTP 队列，紧接着关闭 peer 不能证明字节已经发出；成功路径没有统一清理 iOS 缓存；背压循环只看缓冲量，没有停滞计时。
+- 修复：Android/iOS ACK 后等待 500ms 再关闭；iOS 成功路径删除临时目录；Windows 记录背压下降时间，连续 20 秒无进展即返回失败，由上层自动切 HTTPS 中继。
+- 证据：同一提交的 GitHub Actions Android/iOS/Windows 构建、remote-relay、validate 和 secret scan 已通过；当前没有连接实体手机，因此实体传输回归仍未完成。
+- 回归要求：
+  1. 小 ZIP 成功直传后电脑只收到一次成功 ACK，不创建中继重复任务。
+  2. iPhone 成功导入 ZIP 后，P2P 缓存目录在 ACK 刷新窗口后消失。
+  3. 模拟接收端不读数据时，Windows 最迟 20 秒退出 P2P 并自动进入 HTTPS 中继。
+  4. 正常慢速传输只要缓冲持续下降，不得被 20 秒停滞保护误切换。
+
+## DSH-046 远程传送只有信令没有文件数据面（Windows 4.3.8 / Android 0.6.35 / iPhone 0.6.22）
+
+- 现象：Cloudflare 的 P2P 会话可以创建并交换 SDP/ICE，但此前没有真正的 DataChannel 文件收发；如果误把信令成功当成文件成功，会出现“已直连但手机没有作品”。
+- 根因：远程中继控制面和 WebRTC 信令已先完成，三端原生 DataChannel 没有接入同一套 manifest、分片、完整性校验和 ACK 协议。
+- 修复：Windows 接入 libdatachannel 发起 `album-transfer-v1`；Android 接入 Maven Central WebRTC SDK；iPhone 接入固定版本 WebRTC XCFramework。发送端按 48 KiB 分片，接收端落缓存、校验大小/SHA-256、写入现有作品库后才 ACK。
+- 回退：建连 20 秒超时、ICE/DataChannel 失败、数据帧越界、哈希不一致或作品库写入失败均返回失败，由 Windows 自动创建现有 `mode: plain` HTTPS 中继任务；P2P 失败不能记作已送达。
+- 证据：本地协议检查通过，远程 Worker 13 项测试通过；三端正式结论必须等待同一提交的 GitHub Actions Windows/Android/iOS 构建。暂无实体 Android/iPhone 跨网络业务证据。
+- 回归要求：
+  1. 同一 Wi-Fi 与不同网络各发送一个小 ZIP，手机只能在写库成功后收到 ACK。
+  2. 接收端断开、篡改分片或制造错误 SHA-256 时，P2P 失败并自动转 HTTPS 中继，作品不重复。
+  3. 发送端不能因为 `libdatachannel` 的缓冲返回值为 false 就误判失败；必须等待缓冲并保持分片顺序。
+  4. 停止 Android/iOS 接收服务时，P2P 临时文件和轮询线程都要清理，旧局域网/USB 传送不受影响。
+
 ## DSH-045 手机端自动截图/剪切板与作品卡片入口收口（Android 0.6.24 / iPhone 0.6.11）
 
 - 现象：手机端不需要自动截图、自动剪切板同步；旧入口和权限让安全扫描产生风险提示，作品卡片的两个纵向按钮也占用过多空间。

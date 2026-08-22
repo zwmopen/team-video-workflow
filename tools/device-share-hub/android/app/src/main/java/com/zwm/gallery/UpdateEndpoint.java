@@ -5,6 +5,8 @@ final class UpdateEndpoint {
             "https://github.com/zwmopen/gallery-updates/releases";
     static final String RELEASE_MANIFEST =
             "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json";
+    static final String BETA_MANIFEST =
+            "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest-beta.json";
     static final String RELEASE_API =
             "https://api.github.com/repos/zwmopen/gallery-updates/releases/latest";
 

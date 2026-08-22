@@ -2,6 +2,9 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_TRANSFER_TTL_MS = 24 * 60 * 60 * 1000;
+const P2P_SESSION_TTL_MS = 2 * 60 * 1000;
+const MAX_P2P_SIGNALS = 128;
+const MAX_P2P_SIGNAL_BYTES = 64 * 1024;
 const MAX_OBJECTS = 1_000;
 const MAX_TRANSFER_BYTES = 20 * 1024 * 1024 * 1024;
 
@@ -58,7 +61,11 @@ async function materializeRelayResponse(response, env) {
     headers: {
       "Content-Type": "application/octet-stream",
       "Content-Length": String(object.size),
-      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") || "",
+      "X-Object-Sha256": response.headers.get("X-Object-Sha256") ||
+        response.headers.get("X-Cipher-Sha256") || "",
+      // Keep the old header for already-built clients during the migration.
+      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") ||
+        response.headers.get("X-Object-Sha256") || "",
       "Cache-Control": "private, no-store",
     },
   });
@@ -98,14 +105,32 @@ export class WorkspaceRelayCore {
         return this.listDevices(session);
       }
       if (method === "POST" && url.pathname === "/v1/presence") {
-        await discardRequestBody(request);
-        return await this.heartbeat(session);
+        return await this.heartbeat(session, await readJson(request));
       }
       if (method === "GET" && url.pathname === "/v1/inbox") {
         return await this.listTransfers(session, true);
       }
       if (method === "GET" && url.pathname === "/v1/outbox") {
         return await this.listTransfers(session, false);
+      }
+      if (method === "POST" && url.pathname === "/v1/p2p/sessions") {
+        return await this.createP2PSession(request, session);
+      }
+      if (method === "GET" && url.pathname === "/v1/p2p/sessions") {
+        return await this.listP2PSessions(session);
+      }
+      const p2pMatch = url.pathname.match(
+        /^\/v1\/p2p\/sessions\/([A-Za-z0-9_-]+)(?:\/(signals|close))?$/,
+      );
+      if (p2pMatch && method === "GET" && !p2pMatch[2]) {
+        return await this.getP2PSession(session, p2pMatch[1]);
+      }
+      if (p2pMatch && method === "POST" && p2pMatch[2] === "signals") {
+        return await this.addP2PSignal(request, session, p2pMatch[1]);
+      }
+      if (p2pMatch && method === "POST" && p2pMatch[2] === "close") {
+        await discardRequestBody(request);
+        return await this.closeP2PSession(session, p2pMatch[1], "closed");
       }
       const deviceMatch = url.pathname.match(
         /^\/v1\/devices\/([A-Za-z0-9_-]+)\/(remote|revoke)$/,
@@ -337,29 +362,210 @@ export class WorkspaceRelayCore {
     const presence = await this.listStored("presence:");
     const now = Date.now();
     const devices = [];
-    for (const value of members.values()) {
-      devices.push({
+    for (const [memberKey, value] of members.entries()) {
+      // A legacy or interrupted enrollment must not take down the whole
+      // presence list. Keep the malformed record for later repair, but let
+      // valid devices continue to appear and receive work.
+      if (!value?.certificate ||
+          typeof value.certificate.deviceId !== "string" ||
+          !value.certificate.signingPublicKey ||
+          !value.certificate.agreementPublicKey) {
+        console.error(JSON.stringify({
+          level: "warn",
+          event: "invalid_member_skipped",
+          memberKey,
+        }));
+        continue;
+      }
+      const presenceState = presence.get(`presence:${value.certificate.deviceId}`) || {};
+      const inventory = presenceState.inventory || {};
+      const device = {
         deviceId: value.certificate.deviceId,
         name: value.certificate.deviceName || "",
         role: value.certificate.role,
         online: socketOnline.has(value.certificate.deviceId) ||
-          Number(presence.get(`presence:${value.certificate.deviceId}`)?.seenAt || 0) >= now - 20_000,
+          Number(presenceState.seenAt || 0) >= now - 20_000,
         revoked: Boolean(value.revokedAt),
         remoteAllowed: value.channels?.remote !== false,
         signingPublicKey: value.certificate.signingPublicKey,
         agreementPublicKey: value.certificate.agreementPublicKey,
         certificate: value.certificate,
         certificateSignature: value.certificateSignature,
-      });
+      };
+      if (Number.isSafeInteger(inventory.workCount) && inventory.workCount >= 0) {
+        device.workCount = inventory.workCount;
+      }
+      if (inventory.workCounts && typeof inventory.workCounts === "object") {
+        device.workCounts = inventory.workCounts;
+      }
+      if (typeof inventory.appVersion === "string" && inventory.appVersion.length <= 64) {
+        device.appVersion = inventory.appVersion;
+      }
+      if (Number.isSafeInteger(inventory.versionCode) && inventory.versionCode >= 0) {
+        device.versionCode = inventory.versionCode;
+      }
+      if (typeof inventory.updateCapability === "string" && inventory.updateCapability.length <= 64) {
+        device.updateCapability = inventory.updateCapability;
+      }
+      devices.push(device);
     }
     return json({ viewerDeviceId: session.deviceId, devices });
   }
 
-  async heartbeat(session) {
+  async heartbeat(session, body = {}) {
     const seenAt = Date.now();
-    await this.ctx.storage.put(`presence:${session.deviceId}`, { seenAt });
+    const inventory = normalizeInventory(body);
+    const presence = { seenAt };
+    if (inventory) presence.inventory = inventory;
+    await this.ctx.storage.put(`presence:${session.deviceId}`, presence);
     await this.scheduleCleanup(seenAt + 60_000);
-    return json({ ok: true, deviceId: session.deviceId, seenAt });
+    return json({ ok: true, deviceId: session.deviceId, seenAt, inventory: inventory || null });
+  }
+
+  async createP2PSession(request, session) {
+    const body = await readJson(request);
+    const recipientDeviceId = body?.recipientDeviceId;
+    const protocol = body?.protocol || "webrtc-datachannel-v1";
+    if (!validId(recipientDeviceId) || recipientDeviceId === session.deviceId) {
+      return problem(400, "invalid_peer", "直连目标设备无效");
+    }
+    if (protocol !== "webrtc-datachannel-v1") {
+      return problem(400, "unsupported_p2p_protocol", "直连协议版本不受支持");
+    }
+    const recipient = await this.getStored(`member:${recipientDeviceId}`);
+    if (!recipient || recipient.revokedAt || recipient.channels?.remote === false) {
+      return problem(409, "recipient_unavailable", "直连目标设备未在线授权");
+    }
+    const transferId = body?.transferId || null;
+    if (transferId !== null && !validId(transferId)) {
+      return problem(400, "invalid_transfer", "直连任务标识无效");
+    }
+    if (transferId) {
+      const transfer = await this.getStored(`transfer:${transferId}`);
+      if (!transfer || transfer.senderDeviceId !== session.deviceId ||
+          transfer.recipientDeviceId !== recipientDeviceId ||
+          !["uploading", "ready"].includes(transfer.status)) {
+        return problem(409, "transfer_unavailable", "直连任务不存在或已停止");
+      }
+    }
+    const now = Date.now();
+    const p2p = {
+      version: 1,
+      sessionId: randomId(18),
+      workspaceId: session.workspaceId,
+      initiatorDeviceId: session.deviceId,
+      responderDeviceId: recipientDeviceId,
+      transferId,
+      protocol,
+      state: "offer-pending",
+      signals: [],
+      createdAt: now,
+      expiresAt: now + P2P_SESSION_TTL_MS,
+    };
+    await this.ctx.storage.put(`p2p:${p2p.sessionId}`, p2p);
+    await this.scheduleCleanup(p2p.expiresAt);
+    this.sendToDevice(recipientDeviceId, {
+      type: "p2p-session-ready",
+      sessionId: p2p.sessionId,
+      initiatorDeviceId: p2p.initiatorDeviceId,
+      transferId,
+      protocol,
+      expiresAt: p2p.expiresAt,
+    });
+    return json({ p2p: this.publicP2PSession(p2p) }, 201);
+  }
+
+  async listP2PSessions(session) {
+    const sessions = await this.listStored("p2p:");
+    const visible = [...sessions.values()]
+      .filter((value) => this.canAccessP2PSession(session, value) && value.expiresAt > Date.now())
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, 50)
+      .map((value) => this.publicP2PSession(value));
+    return json({ sessions: visible, serverTime: Date.now() });
+  }
+
+  async getP2PSession(session, sessionId) {
+    const p2p = await this.getStored(`p2p:${sessionId}`);
+    if (!p2p || !this.canAccessP2PSession(session, p2p) || p2p.expiresAt <= Date.now()) {
+      return problem(404, "p2p_session_missing", "直连协商会话不存在或已过期");
+    }
+    return json({ p2p: this.publicP2PSession(p2p, true) });
+  }
+
+  async addP2PSignal(request, session, sessionId) {
+    const p2p = await this.getStored(`p2p:${sessionId}`);
+    if (!p2p || !this.canAccessP2PSession(session, p2p) || p2p.expiresAt <= Date.now()) {
+      return problem(404, "p2p_session_missing", "直连协商会话不存在或已过期");
+    }
+    if (["closed", "failed"].includes(p2p.state)) {
+      return problem(409, "p2p_session_closed", "直连协商已经结束");
+    }
+    const body = await readJson(request);
+    const signalType = body?.type;
+    if (!P2P_SIGNAL_TYPES.has(signalType) || !validP2PSignalData(body?.data)) {
+      return problem(400, "invalid_p2p_signal", "直连协商信令格式无效");
+    }
+    if (signalType === "offer" && session.deviceId !== p2p.initiatorDeviceId) {
+      return problem(403, "p2p_role_mismatch", "只有发起端可以发送 offer");
+    }
+    if (signalType === "answer" && session.deviceId !== p2p.responderDeviceId) {
+      return problem(403, "p2p_role_mismatch", "只有接收端可以发送 answer");
+    }
+    if (p2p.signals.length >= MAX_P2P_SIGNALS) {
+      return problem(409, "p2p_signal_limit", "直连协商信令数量已达到上限");
+    }
+    const signal = {
+      type: signalType,
+      fromDeviceId: session.deviceId,
+      data: body.data,
+      sentAt: Date.now(),
+    };
+    p2p.signals.push(signal);
+    p2p.state = nextP2PState(p2p.state, signalType);
+    await this.ctx.storage.put(`p2p:${sessionId}`, p2p);
+    const target = session.deviceId === p2p.initiatorDeviceId
+      ? p2p.responderDeviceId : p2p.initiatorDeviceId;
+    this.sendToDevice(target, { type: "p2p-signal", sessionId, signal });
+    return json({ ok: true, state: p2p.state, signal });
+  }
+
+  async closeP2PSession(session, sessionId, reason) {
+    const p2p = await this.getStored(`p2p:${sessionId}`);
+    if (!p2p || !this.canAccessP2PSession(session, p2p)) {
+      return problem(404, "p2p_session_missing", "直连协商会话不存在");
+    }
+    p2p.state = reason === "failed" ? "failed" : "closed";
+    p2p.closedAt = Date.now();
+    await this.ctx.storage.put(`p2p:${sessionId}`, p2p);
+    const target = session.deviceId === p2p.initiatorDeviceId
+      ? p2p.responderDeviceId : p2p.initiatorDeviceId;
+    this.sendToDevice(target, {
+      type: "p2p-session-closed", sessionId, reason: p2p.state,
+    });
+    return json({ ok: true, state: p2p.state });
+  }
+
+  canAccessP2PSession(session, p2p) {
+    return session.workspaceId === p2p.workspaceId &&
+      (session.deviceId === p2p.initiatorDeviceId ||
+       session.deviceId === p2p.responderDeviceId);
+  }
+
+  publicP2PSession(p2p, includeSignals = false) {
+    return {
+      version: p2p.version,
+      sessionId: p2p.sessionId,
+      workspaceId: p2p.workspaceId,
+      initiatorDeviceId: p2p.initiatorDeviceId,
+      responderDeviceId: p2p.responderDeviceId,
+      transferId: p2p.transferId,
+      protocol: p2p.protocol,
+      state: p2p.state,
+      createdAt: p2p.createdAt,
+      expiresAt: p2p.expiresAt,
+      ...(includeSignals ? { signals: p2p.signals } : {}),
+    };
   }
 
   async listTransfers(session, inbox) {
@@ -373,7 +579,11 @@ export class WorkspaceRelayCore {
       if (matches) selected.push(transfer);
     }
     selected.sort((left, right) => right.createdAt - left.createdAt);
-    return json({ transfers: selected.slice(0, 100), serverTime: Date.now() });
+    const visible = [];
+    for (const transfer of selected.slice(0, 100)) {
+      visible.push(await this.transferSnapshot(transfer));
+    }
+    return json({ transfers: visible, serverTime: Date.now() });
   }
 
   async setRemoteAllowed(request, session, deviceId) {
@@ -397,6 +607,7 @@ export class WorkspaceRelayCore {
     });
     if (!body.allowed) {
       await this.invalidateDeviceSessions(deviceId);
+      await this.invalidateP2PSessions(deviceId, "remote-disabled");
       this.closeDeviceSockets(deviceId, 4003, "remote-disabled");
     }
     return json({ ok: true, deviceId, remoteAllowed: body.allowed });
@@ -419,6 +630,7 @@ export class WorkspaceRelayCore {
       message: "这台设备的传送权限已被电脑撤销",
     });
     await this.invalidateDeviceSessions(deviceId);
+    await this.invalidateP2PSessions(deviceId, "device-revoked");
     this.closeDeviceSockets(deviceId, 4003, "device-revoked");
     this.broadcast({ type: "device-revoked", deviceId }, deviceId);
     return json({ ok: true, deviceId, revoked: true, revokedAt: member.revokedAt });
@@ -430,15 +642,16 @@ export class WorkspaceRelayCore {
     if (!recipient || recipient.revokedAt || recipient.channels?.remote === false) {
       return problem(409, "recipient_unavailable", "接收设备未登记、已撤销或关闭了远程传送");
     }
-    const objects = normalizeObjects(body?.objects);
+    const mode = body?.mode === "plain" ? "plain" : "encrypted";
+    const objects = normalizeObjects(body?.objects, mode);
     if (!objects) {
       return problem(400, "invalid_objects", "文件清单无效或超过远程传送限制");
     }
-    if (
+    if (mode === "encrypted" && (
       !body?.encryptedKeyPackage ||
       typeof body.encryptedKeyPackage !== "object" ||
       canonicalize(body.encryptedKeyPackage).length > 16_384
-    ) {
+    )) {
       return problem(400, "missing_key_package", "缺少接收设备专用的密钥包");
     }
 
@@ -451,9 +664,13 @@ export class WorkspaceRelayCore {
       workspaceId: session.workspaceId,
       senderDeviceId: session.deviceId,
       recipientDeviceId: recipient.certificate.deviceId,
-      encryptedKeyPackage: body.encryptedKeyPackage,
+      mode,
+      encryptedKeyPackage: mode === "encrypted" ? body.encryptedKeyPackage : null,
       objects,
-      totalCipherBytes: objects.reduce((sum, item) => sum + item.cipherBytes, 0),
+      totalBytes: objects.reduce((sum, item) => sum + objectBytes(item), 0),
+      totalCipherBytes: mode === "encrypted"
+        ? objects.reduce((sum, item) => sum + item.cipherBytes, 0)
+        : undefined,
       status: "uploading",
       createdAt: now,
       expiresAt: Math.min(requestedExpiry, now + MAX_TRANSFER_TTL_MS),
@@ -481,13 +698,30 @@ export class WorkspaceRelayCore {
     const expected = transfer.objects.find((item) => item.index === index);
     if (!expected) return problem(404, "object_missing", "文件不在传送清单中");
     const contentLength = Number(request.headers.get("Content-Length"));
-    if (!Number.isSafeInteger(contentLength) || contentLength !== expected.cipherBytes) {
-      return problem(400, "size_mismatch", "密文大小与传送清单不一致");
+    if (!Number.isSafeInteger(contentLength) || contentLength !== objectBytes(expected)) {
+      return problem(400, "size_mismatch", "对象大小与传送清单不一致");
     }
     const key = objectKey(transfer.workspaceId, transferId, index);
+    const previous = /** @type {{bytes: number, sha256: string} | undefined} */ (
+      await this.ctx.storage.get(uploadKey(transferId, index))
+    );
+    if (
+      previous &&
+      previous.bytes === objectBytes(expected) &&
+      previous.sha256 === objectSha256(expected)
+    ) {
+      const existing = await this.env.REMOTE_OBJECTS.head(key);
+      if (
+        existing &&
+        existing.size === objectBytes(expected) &&
+        existing.customMetadata?.objectSha256 === objectSha256(expected)
+      ) {
+        return json({ ok: true, index, reused: true });
+      }
+    }
     const options = {
       customMetadata: {
-        cipherSha256: expected.cipherSha256,
+        objectSha256: objectSha256(expected),
         senderDeviceId: session.deviceId,
         recipientDeviceId: transfer.recipientDeviceId,
       },
@@ -505,8 +739,8 @@ export class WorkspaceRelayCore {
       await this.env.REMOTE_OBJECTS.put(key, request.body, options);
     }
     await this.ctx.storage.put(uploadKey(transferId, index), {
-      cipherBytes: expected.cipherBytes,
-      cipherSha256: expected.cipherSha256,
+      bytes: objectBytes(expected),
+      sha256: objectSha256(expected),
       uploadedAt: Date.now(),
     });
     return json({ ok: true, index });
@@ -522,8 +756,8 @@ export class WorkspaceRelayCore {
       const stored = uploaded.get(uploadKey(transferId, expected.index));
       if (
         !stored ||
-        stored.cipherBytes !== expected.cipherBytes ||
-        stored.cipherSha256 !== expected.cipherSha256
+        stored.bytes !== objectBytes(expected) ||
+        stored.sha256 !== objectSha256(expected)
       ) {
         return problem(409, "upload_incomplete", `第 ${expected.index + 1} 个文件尚未完整上传`);
       }
@@ -536,7 +770,8 @@ export class WorkspaceRelayCore {
       transferId,
       senderDeviceId: transfer.senderDeviceId,
       objectCount: transfer.objects.length,
-      totalCipherBytes: transfer.totalCipherBytes,
+      totalBytes: transfer.totalBytes,
+      ...(transfer.totalCipherBytes === undefined ? {} : { totalCipherBytes: transfer.totalCipherBytes }),
       expiresAt: transfer.expiresAt,
     });
     return json({ ok: true, status: transfer.status });
@@ -547,7 +782,7 @@ export class WorkspaceRelayCore {
     if (!transfer || !canAccessTransfer(session, transfer)) {
       return problem(404, "transfer_missing", "远程传送任务不存在");
     }
-    return json({ transfer });
+    return json({ transfer: await this.transferSnapshot(transfer) });
   }
 
   async downloadObject(session, transferId, index) {
@@ -565,7 +800,8 @@ export class WorkspaceRelayCore {
       status: 204,
       headers: {
         "X-Relay-R2-Key": objectKey(transfer.workspaceId, transferId, index),
-        "X-Cipher-Sha256": expected.cipherSha256,
+        "X-Object-Sha256": objectSha256(expected),
+        ...(transfer.mode === "encrypted" ? { "X-Cipher-Sha256": expected.cipherSha256 } : {}),
       },
     });
   }
@@ -584,7 +820,7 @@ export class WorkspaceRelayCore {
       transferId,
       recipientDeviceId: transfer.recipientDeviceId,
     });
-    return json({ ok: true, status: transfer.status, ciphertextDeleted: true });
+    return json({ ok: true, status: transfer.status, objectsDeleted: true, ciphertextDeleted: true });
   }
 
   async cancelTransfer(session, transferId) {
@@ -607,7 +843,7 @@ export class WorkspaceRelayCore {
   async alarm() {
     const now = Date.now();
     let nextExpiry = null;
-    for (const prefix of ["challenge:", "session:"]) {
+    for (const prefix of ["challenge:", "session:", "p2p:"]) {
       const expiringValues = await this.listStored(prefix);
       for (const [key, value] of expiringValues) {
         if (value.expiresAt <= now) {
@@ -723,6 +959,27 @@ export class WorkspaceRelayCore {
     }
   }
 
+  async transferSnapshot(transfer) {
+    const uploaded = await this.listStored(`upload:${transfer.transferId}:`);
+    const objects = transfer.objects.map((item) => {
+      const stored = uploaded.get(uploadKey(transfer.transferId, item.index));
+      return {
+        ...item,
+        uploaded: Boolean(stored),
+        uploadedAt: stored?.uploadedAt || null,
+      };
+    });
+    const uploadedObjects = objects.filter((item) => item.uploaded);
+    return {
+      ...transfer,
+      objects,
+      uploadedObjectCount: uploadedObjects.length,
+      uploadedBytes: uploadedObjects.reduce((sum, item) => sum + objectBytes(item), 0),
+      uploadedCipherBytes: uploadedObjects.reduce((sum, item) => sum + objectBytes(item), 0),
+      nextObjectIndex: objects.find((item) => !item.uploaded)?.index ?? null,
+    };
+  }
+
   async scheduleCleanup(expiresAt) {
     const current = await this.ctx.storage.getAlarm();
     if (current === null || expiresAt < current) await this.ctx.storage.setAlarm(expiresAt);
@@ -735,6 +992,23 @@ export class WorkspaceRelayCore {
         .filter(([, value]) => value.deviceId === deviceId)
         .map(([key]) => this.ctx.storage.delete(key)),
     );
+  }
+
+  async invalidateP2PSessions(deviceId, reason) {
+    const sessions = await this.listStored("p2p:");
+    for (const [key, p2p] of sessions) {
+      if (p2p.initiatorDeviceId !== deviceId && p2p.responderDeviceId !== deviceId) continue;
+      if (["closed", "failed"].includes(p2p.state)) continue;
+      p2p.state = "failed";
+      p2p.failedAt = Date.now();
+      p2p.failureReason = reason;
+      await this.ctx.storage.put(key, p2p);
+      const target = p2p.initiatorDeviceId === deviceId
+        ? p2p.responderDeviceId : p2p.initiatorDeviceId;
+      this.sendToDevice(target, {
+        type: "p2p-session-closed", sessionId: p2p.sessionId, reason,
+      });
+    }
   }
 
   closeDeviceSockets(deviceId, code, reason) {
@@ -806,32 +1080,65 @@ function validPublicJwk(value) {
   );
 }
 
-function normalizeObjects(value) {
+function normalizeObjects(value, mode = "encrypted") {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_OBJECTS) return null;
   const indexes = new Set();
   let total = 0;
   const result = [];
   for (const raw of value) {
     const index = Number(raw?.index);
-    const cipherBytes = Number(raw?.cipherBytes);
-    const cipherSha256 = String(raw?.cipherSha256 || "").toLowerCase();
+    const bytes = Number(mode === "plain" ? raw?.bytes ?? raw?.objectBytes : raw?.cipherBytes);
+    const sha256 = String(mode === "plain" ? raw?.sha256 ?? raw?.objectSha256 : raw?.cipherSha256 || "").toLowerCase();
     if (
       !Number.isSafeInteger(index) ||
       index < 0 ||
       indexes.has(index) ||
-      !Number.isSafeInteger(cipherBytes) ||
-      cipherBytes < 16 ||
-      !/^[a-f0-9]{64}$/.test(cipherSha256)
+      !Number.isSafeInteger(bytes) ||
+      bytes < 1 ||
+      !/^[a-f0-9]{64}$/.test(sha256)
     ) {
       return null;
     }
     indexes.add(index);
-    total += cipherBytes;
+    total += bytes;
     if (total > MAX_TRANSFER_BYTES) return null;
-    result.push({ index, cipherBytes, cipherSha256 });
+    if (mode === "plain") {
+      const name = safeObjectName(raw?.name);
+      const mime = safeMime(raw?.mime);
+      if (!name) return null;
+      result.push({ index, bytes, sha256, name, mime });
+    } else {
+      result.push({ index, cipherBytes: bytes, cipherSha256: sha256 });
+    }
   }
+
   result.sort((a, b) => a.index - b.index);
   return result;
+}
+
+function objectBytes(value) {
+  return Number(value?.bytes ?? value?.cipherBytes ?? 0);
+}
+
+function objectSha256(value) {
+  return String(value?.sha256 ?? value?.cipherSha256 ?? "");
+}
+
+function safeObjectName(value) {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name || name === "." || name === ".." || name.length > 240 ||
+      name.includes("/") || name.includes("\\") || name.includes("\0") ||
+      /^[A-Za-z]:/.test(name)) return null;
+  return name;
+}
+
+function safeMime(value) {
+  if (typeof value !== "string" || !value.trim()) return "application/octet-stream";
+  const mime = value.trim();
+  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(mime)
+    ? mime.slice(0, 120)
+    : "application/octet-stream";
 }
 
 async function verifyEs256(publicJwk, data, signature) {
@@ -889,6 +1196,27 @@ function validId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value);
 }
 
+const P2P_SIGNAL_TYPES = new Set(["offer", "answer", "ice", "connected", "failed"]);
+
+function validP2PSignalData(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value !== "object" && typeof value !== "string") return false;
+  try {
+    const encoded = canonicalize(value);
+    return encoded.length <= MAX_P2P_SIGNAL_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+function nextP2PState(current, signalType) {
+  if (signalType === "failed") return "failed";
+  if (signalType === "connected") return "connected";
+  if (signalType === "offer") return "offer-sent";
+  if (signalType === "answer") return "answer-sent";
+  return current;
+}
+
 function objectKey(workspaceId, transferId, index) {
   return `${workspaceId}/${transferId}/${String(index).padStart(6, "0")}.cipher`;
 }
@@ -926,6 +1254,28 @@ async function readJson(request) {
   } catch {
     return null;
   }
+}
+
+function normalizeInventory(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const nonNegativeCount = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000;
+  const inventory = {};
+  if (nonNegativeCount(body.workCount)) inventory.workCount = body.workCount;
+  if (typeof body.appVersion === "string" && body.appVersion.length <= 64) {
+    inventory.appVersion = body.appVersion;
+  }
+  if (nonNegativeCount(body.versionCode)) inventory.versionCode = body.versionCode;
+  if (typeof body.updateCapability === "string" && body.updateCapability.length <= 64) {
+    inventory.updateCapability = body.updateCapability;
+  }
+  if (body.workCounts && typeof body.workCounts === "object" && !Array.isArray(body.workCounts)) {
+    const workCounts = {};
+    for (const key of ["total", "conversion", "traffic", "uncategorized"]) {
+      if (nonNegativeCount(body.workCounts[key])) workCounts[key] = body.workCounts[key];
+    }
+    if (Object.keys(workCounts).length > 0) inventory.workCounts = workCounts;
+  }
+  return Object.keys(inventory).length > 0 ? inventory : null;
 }
 
 async function discardRequestBody(request) {

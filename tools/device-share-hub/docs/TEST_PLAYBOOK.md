@@ -7,6 +7,21 @@
 - 不在文档保存账号、设备唯一标识、IP、用户作品正文或完整原始日志；
 - 修复兼容问题时使用同一个正式包验证多台设备，不为测试机制作专用包。
 
+## 远程混合传输验收（DSH-046）
+
+- 先确认两台手机已完成电脑登记、远程开关打开并在 `/v1/p2p/sessions` 可见；Cloudflare 请求只应出现会话和 SDP/ICE 信令，不应出现作品字节上传到 R2。
+- Windows 发送一个 `album-folder-*.zip`：先观察 P2P 建连、manifest、分片、ACK，再确认手机作品库新增数量、SHA-256 和 `transferId` 去重记录。
+- 让 P2P 在 20 秒内无法建连或中途断网：Windows 必须自动切换 HTTPS 中继；手机收到后仍要完成大小/SHA-256、作品库导入和 ACK，不能出现重复作品。
+- 伪造错误哈希、未知对象序号、空洞偏移或超 48 KiB 分片：手机必须拒绝并清理缓存，电脑不得把失败记录为成功。
+- 停止/重启手机接收服务后检查缓存目录和后台轮询线程；旧 USB、同 Wi-Fi V2 和普通 HTTPS 中继路径各至少回归一次。
+- CI 编译通过只证明 SDK/API 接入正确；没有真实 Android/iPhone 实际收发前，交付记录必须标明“P2P 实体业务待验收”。
+
+### 线上 Cloudflare E2E 门禁
+
+- `Device Share Hub` workflow 的 `remote-relay-live-e2e` job 直接访问正式 Worker，不使用本地 Wrangler 模拟服务。
+- 当前证据：run `32568228480` / job `97019921822` 通过；health、工作区登记、双端会话、在线心跳、P2P offer/answer/close、R2 上传、commit、收件箱、下载 SHA-256、ACK 和 R2 删除共 14 个阶段全部成功。
+- 线上 E2E 只证明服务端和控制面/中继数据链路可用，不能替代实体手机的 WebRTC DataChannel、作品库写入、失败回退、权限和厂商安全扫描。
+
 ## 发布前最小检查
 
 ### 1. 自动构建

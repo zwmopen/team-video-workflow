@@ -27,4 +27,10 @@ public class OnlineServiceTaskExpiryTest {
         assertFalse(OnlineService.isValidResumeRange(41L, 100L, 60L));
         assertFalse(OnlineService.isValidResumeRange(101L, 100L, 0L));
     }
+
+    @Test
+    public void relayRetryAfterP2PImportOnlyRepairsAck() {
+        assertTrue(OnlineService.shouldImportRemoteTask(false));
+        assertFalse(OnlineService.shouldImportRemoteTask(true));
+    }
 }

@@ -1,8 +1,78 @@
-# 文件收发中控 V4.3.6 / Android 0.6.27 / iPhone 0.6.14
+# 文件收发中控 V4.3.27 / Android 0.6.51 / iPhone 0.6.38（Beta）
 
-## 手机端 0.6.27 / 0.6.14 分类口径、平台按钮状态与隐私边界
+> Beta `v0.6.50-beta.1` 是当前已发布版本；本轮候选为 Windows V4.3.27 / Android 0.6.51 / iPhone 0.6.38，需合并 main 后由云端发布流水线更新索引。新增 Windows 原生 P2P DataChannel loopback 验收与生命周期修复，保留 USB/Wi-Fi/P2P/HTTPS 混合传输链路。
 
-- Android 与 iPhone 均移除自动收集截图、自动读取/同步系统剪切板、截图中转相关入口和后台行为；不再申请悬浮窗或相册读取权限。用户主动点“复制文案”“复制诊断信息”仍可明确复制。
+## 更新通道
+
+- 手机设置默认使用稳定版；需要提前验证新功能时，在“软件 → 更新通道”切换到“测试版（Beta）”。
+- Android 测试版会读取 `latest-beta.json`；iPhone 测试版会复制 `altstore-beta.json`，然后在 AltStore 的 My Apps 中更新。
+- 稳定版索引不会被 Beta 覆盖；iOS 仍需要 AltStore/AltServer 完成签名安装。
+
+本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.50-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
+
+本轮包：`album-Android-v0.6.50.apk`、`album-iOS-v0.6.37-altstore.ipa`、`device-share-hub-Windows-V4.3.26-relay-beta.exe`。
+
+Device Share Hub 云端 run `32596690436` 的三端构建、P2P/ACK 静态门禁、Cloudflare 中继检查和线上 Worker E2E 全部通过；稳定更新索引不变。真实手机传输、落库、ACK 和自动补货仍需设备在线后验收。
+
+本轮修复：Windows 可从 `ZwmDeviceShareHub\relay-proxy.txt` 读取本地 HTTPS CONNECT 代理；Worker 遇到损坏成员记录时跳过并继续返回有效设备；Android/iPhone 在 P2P 成功 ACK、失败或取消后会同时关闭 WebRTC 与 Cloudflare 信令会话。实体手机跨网 DataChannel、HTTPS 回退与自动补货仍需现场确认。
+
+## 本轮开发：混合通道状态合并
+
+- Windows 为 Wi‑Fi 观察单独保存时间戳；远程中继心跳不会把旧 IP 误判为当前局域网直连。
+- UDP/主动探测与远程中继记录采用合并策略，保留远程凭证、在线状态和完整库存；同一台手机不会在两种发现来源之间丢失通道。
+- 发送时优先 USB，其次仅使用仍在 35 秒内被局域网观察到的 Wi‑Fi；Wi‑Fi 地址失效时可以继续进入 P2P/HTTPS 远程路径。
+- Windows 网络 User-Agent 与 V4.3.23 对齐；Android/iPhone 包重新完成云端 Release 构建，本轮不改变手机权限和数据格式。
+- 发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.3>；本轮云端 run `32589239907` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过。
+- 桌面包：`C:\Users\z\Desktop\album-Android-v0.6.46.apk`、`C:\Users\z\Desktop\album-iOS-v0.6.33-altstore.ipa`、`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.23-relay-beta.exe`。
+
+## 本轮开发：远程库存心跳
+
+- 手机远程心跳携带总作品数、精准流量、泛流量、未分类数量和版本能力；中继只接受合法非负计数，旧手机字段缺失时保持未知。
+- Windows 统一按 USB、局域网 Wi-Fi、远程中继在线三种通道判断可发送设备；远程在线设备也会进入右键发送、自动更新缓存和精准低于 5 自动补货候选。
+- 初版远程库存修复的 run `32586026767` 与边界修复 run `32587368303` 的三端云构建、remote-relay check 和线上 Worker E2E 均通过；最新 Beta 发布在 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.2>，稳定更新索引不改。
+- 桌面包：`C:\Users\z\Desktop\album-Android-v0.6.46.apk`、`C:\Users\z\Desktop\album-iOS-v0.6.33-altstore.ipa`、`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.22-relay-beta.exe`；iOS Beta 更新源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
+
+## 本轮自动分发默认配置修复
+
+- 新建或升级本地内容数据库时，自动手机更新、精准流量自动补货默认开启，精准流量补货阈值默认为 5。
+- 使用 `INSERT OR IGNORE` 保留已有的关闭开关和自定义阈值；当前电脑已同步为自动更新开启、自动补货开启、阈值 5。
+
+## 本轮修复：更新重试与库存信标
+
+- Windows 手机自动更新只有在 APK 通过 Wi-Fi 传输成功后才记录“已送达”；网络超时、手机离线或接收失败会保留重试资格，下一次手机上线可以再次发送。
+- Android/iPhone 的在线信标现在可选携带精准流量、泛流量和未分类库存；旧电脑和旧手机仍按原有字段工作，Windows 在 /v2/info 暂时不可用时不会把未知库存误判为 0。
+
+## 当前 Beta 测试包
+
+这是高级远程传送第一阶段的可安装 Beta。现有 USB、局域网 Wi-Fi、作品列表、分类库存和隐私边界保持不变；Cloudflare 中继的电脑登记、手机收件、R2 上传下载、作品库写入和 ACK 已接通，Windows/Android/iPhone 已接入真实 WebRTC DataChannel 数据面。P2P 失败时自动回退 HTTPS 中继；安装后请优先验证日常作品收发、更新检查和设备在线状态。
+
+本轮云端发布已完成：Device Share Hub run `32583765953` 的 Windows、Android、iOS、远程中继检查和已部署 Worker live E2E 均通过。安装包发布在 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.45-beta.3>，iOS Beta 更新源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。稳定更新索引仍未切换到 Beta；iOS 安装/更新仍需 AltStore/AltServer 完成签名，真实手机跨网传输和自动补货仍需实机验收。
+
+本轮客户端会在已登记远程资料存在时每 10 秒读取收件箱和 P2P 会话，并过滤目标不匹配、未提交、过期、对象重复或哈希格式错误的任务。P2P 文件会先写入缓存，完成 SHA-256 校验并写入作品库后才 ACK；Cloudflare 只转发 SDP/ICE，不保存 P2P 文件字节。本阶段不做应用层端到端加密，也没有实体跨网设备验收，因此 Beta 不能替代真机验收。
+
+## 0.6.44 / 0.6.31 / V4.3.17 本轮修复
+
+- Android 修复 P2P 成功但 ACK 丢失后回退 HTTPS 中继造成的重复入库：已导入任务只补 ACK，不会再次下载或写入作品库；成功 ACK 后清理收件占位。iOS 同步释放重复 P2P 会话。
+- 三端版本同步提升为 Windows 4.3.17、Android versionCode 82 / versionName 0.6.44、iPhone 0.6.31/build 50；Device Share Hub run `32575362864`、Repository quality `32575362946`、Secret scan `32575362919` 和线上 Worker E2E job `97036844830` 均通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；AltStore Beta 源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>，源提交 `f46cca7fd98504ea4c195e89a75a6697a80d197a`。
+- 三端包已同步到 `C:\Users\z\Desktop`：`album-Android-v0.6.44.apk`、`album-iOS-v0.6.31-altstore.ipa`、`device-share-hub-Windows-V4.3.17-relay-beta.exe`；SHA-256 见 `SHA256SUMS-v0.6.44-beta.1.txt`。
+- 稳定更新索引仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35；真实手机权限、安装、P2P、HTTPS 回退和文件落库仍待设备连接。
+
+## 历史：0.6.42 / 0.6.29 / V4.3.15 本轮修复
+
+- Android P2P ICE 候选入队和远端 Description 回调使用同一把锁保护，避免候选在排空窗口中丢失，降低不必要的 P2P 失败和中继回退。
+- Android P2P 引擎的 WebRTC/轮询/文件队列共享状态增加跨线程可见性保证，降低活连接误超时和结束后重复清理风险。
+- 清除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；自动截图采集、截图观察器、悬浮窗和自动剪切板链路均不再存在。
+- Android 10 的隐藏作品兼容导入仍只使用用户主动选择的 SAF 文件夹和旧兼容通道，不把该权限当作系统相册扫描权限。
+- Android/iOS P2P 收件端建连超过 20 秒会主动失败，Windows 随后自动切 HTTPS 中继；不会把“信令建立但没有文件”记作成功。
+- Android WebRTC 回调只负责复制数据帧，文件写入和 SHA-256 校验交给串行队列，避免大文件阻塞 WebRTC 回调线程。
+- Android P2P 引擎启动瞬间失败时不会再被缓存为处理中；取消已结束引擎也不会抛出清理异常，下一轮可以继续重试。
+- 本次 Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1>；iPhone Beta 源已更新为 0.6.29/build 48，源地址为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
+- 云端构建通过不等于实体设备业务通过；需要 Android、iPhone、Windows 实机各安装后再验收同 Wi-Fi、跨网络 P2P 和中继回退。
+
+## 历史：手机端 0.6.27 / 0.6.14 分类口径、平台按钮状态与隐私边界
+
+- Android 与 iPhone 均移除自动收集截图、自动读取/同步系统剪切板、截图中转相关入口和后台行为；Android 也不再声明旧的 `READ_MEDIA_IMAGES`/`READ_MEDIA_VISUAL_USER_SELECTED`，但保留 Android 10 隐藏作品兼容导入所需的旧存储兼容通道。用户主动点“复制文案”“复制诊断信息”仍可明确复制。
 - 作品卡片保留“预览”“发抖音”“发小红书”三个入口，改为左对齐的纵向紧凑按钮；预览使用轻量描边，两个平台操作使用主按钮，不再把三个入口挤在一行。
 - 顶部分类统一显示“精准流量”和“泛流量”；内部仍使用 `conversion`/`traffic` 字段，电脑端自动补货与手机端展示保持同一口径。
 - 点击任一平台按钮后，对应按钮立即变灰但仍可点击；返回作品列表时按已保存的抖音/小红书点击次数恢复状态，两个平台互不影响。
@@ -139,10 +209,12 @@
 
 ## 远程传送开发状态
 
-- 加密中继服务基础已经进入同一源码仓库，包含设备组身份、设备签名登录、真实在线连接、密文传送、撤销和自动过期清理。
-- 云端不保存文件名、用户路径、明文或明文密钥；接收成功、取消或过期都会删除临时密文。
-- 当前尚未部署正式服务，也没有接入 Windows/Android/iPhone 客户端，因此这不是用户可用版本，界面仍不会显示“远程”在线。
-- 后续按“CI/Linux 服务集成 → 三端系统密钥与成员凭证 → 加密上传/下载 → 手机流量异网实测”的顺序继续。
+- 远程中继服务已部署到 Cloudflare：`https://zwm-device-share-relay.zwmrpg.workers.dev`，使用 Durable Object `WorkspaceRelay` 保存设备、会话、任务和 ACK 状态，R2 `zwm-device-share-relay` 暂存对象。
+- 当前仍保留公开作品的普通 ZIP 模式；链路强制 HTTPS，接收 ACK、取消或过期后删除 R2 临时对象，不做应用层端到端加密。
+- 混合传输策略是：同 Wi-Fi/USB 优先走现有 V2 直传；跨网络先尝试原生 WebRTC DataChannel P2P，建连、传输或校验失败时自动回退 HTTPS 中继。Cloudflare 负责设备会话与 SDP/ICE 信令；P2P 文件字节不经过 R2，回退时才暂存普通公开 ZIP。
+- Android/iPhone 已接入中继收件、作品库写入、SHA-256 校验和 ACK，也已接入原生 WebRTC 收件数据面；Windows 原生面板使用 libdatachannel 发起 P2P，并在失败时自动走 Cloudflare 中继。Windows 会在可信局域网首次发现手机时下发 RemoteRelayProfile。
+- Windows 云端 CTest 还会拉起两个本地 libdatachannel PeerConnection，真实传输一份二进制文件并等待接收端 ACK；这验证的是 Windows 数据面和帧协议，不替代 Android/iPhone 真机验收。
+- 当前使用 workers.dev 地址，不依赖 Cloudflare Zone；协议测试、云端构建和 Worker 本地集成测试已通过，但真实 Android/iPhone 异地网络收发仍需安装 Beta、完成设备登记后实测。
 
 ## Android 0.6.3 长剪切折叠与完整滚动
 
