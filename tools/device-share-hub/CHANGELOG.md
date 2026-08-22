@@ -3,7 +3,9 @@
 ## Beta：Windows V4.3.16 / Android 0.6.43 / iPhone 0.6.30 - 2026-08-22
 
 - 修复 Windows 远程中继任务在上传/提交失败后没有立即取消的问题；失败时清理 R2 临时对象和收件箱任务，避免孤立任务等待 TTL。
-- 三端版本递增为 Windows 4.3.16、Android versionCode 81 / versionName 0.6.43、iPhone 0.6.30/build 49；云端构建和三端产物哈希待本次 run 完成后补入。
+- 三端版本递增为 Windows 4.3.16、Android versionCode 81 / versionName 0.6.43、iPhone 0.6.30/build 49；Device Share Hub run 32571763937、Repository quality run 32571763918、Secret scan run 32571763916 全部通过，正式 Worker E2E job 97028121778 通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1>；Android SHA-256：15131AC4163FDD0111B0BC9497868D50E1B82E8E8F5352BA1845501B4828FBF9；iPhone IPA SHA-256：5E8DE6EF4FA435D19B361B889B791B9B8DED80989AF4E6A7CA08DD15587214E5；Windows SHA-256：AE8893BFA3F2B2072CCCB44413848E9DFB341985702014B7A818320AFA912F11。
+- 三端新云构建包已同步到 C:\Users\z\Desktop；AltStore Beta 源已更新为 iOS 0.6.30/build 49，源提交 6131dcf4faea6f39c0b49261b471f05079a1c3d6。稳定 latest.json 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。
 
 ## Beta：Windows V4.3.15 / Android 0.6.42 / iPhone 0.6.29 - 2026-08-22
 
