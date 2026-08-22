@@ -1,12 +1,13 @@
-# 文件收发中控 V4.3.21 / Android 0.6.46 / iPhone 0.6.33（Beta 开发中）
+# 文件收发中控 V4.3.21 / Android 0.6.46 / iPhone 0.6.33（Beta）
 
-> 上一版 Beta `v0.6.45-beta.3` 已发布。本轮将发布 Windows V4.3.21、Android 0.6.46、iOS 0.6.33，补齐远程心跳库存后再验收远程自动补货。
+> Beta `v0.6.46-beta.1` 已发布。本轮补齐远程心跳库存，远程在线设备现在可以进入统一的发送、自动更新和精准自动补货判断。
 
 ## 本轮开发：远程库存心跳
 
 - 手机远程心跳携带总作品数、精准流量、泛流量、未分类数量和版本能力；中继只接受合法非负计数，旧手机字段缺失时保持未知。
 - Windows 统一按 USB、局域网 Wi-Fi、远程中继在线三种通道判断可发送设备；远程在线设备也会进入右键发送、自动更新缓存和精准低于 5 自动补货候选。
-- 本轮尚未完成云构建和 Beta 发布；稳定更新索引不改。
+- Device Share Hub run `32586026767` 的三端云构建、remote-relay check 和线上 Worker E2E 全部通过；安装包发布在 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.1>，稳定更新索引不改。
+- 桌面包：`C:\Users\z\Desktop\album-Android-v0.6.46.apk`、`C:\Users\z\Desktop\album-iOS-v0.6.33-altstore.ipa`、`C:\Users\z\Desktop\device-share-hub-Windows-V4.3.21-relay-beta.exe`；iOS Beta 更新源为 <https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json>。
 
 ## 本轮自动分发默认配置修复
 

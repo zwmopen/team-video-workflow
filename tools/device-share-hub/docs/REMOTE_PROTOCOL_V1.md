@@ -1,6 +1,6 @@
 # 远程传送协议 V1
 
-状态：普通公开作品链路已实现并有本地协议闭环测试；Android/iOS 已接入对象下载、作品库导入和 ACK，Windows 原生面板已接入 P2P 优先与 HTTPS 中继兜底，Cloudflare Worker/Durable Object/R2 已正式部署。真实 Android/iPhone/Windows 跨网络传送仍待真机验收。
+状态：普通公开作品链路已实现并有本地协议闭环测试；Android/iOS 已接入对象下载、作品库导入、分类库存心跳和 ACK，Windows 原生面板已接入 P2P 优先与 HTTPS 中继兜底，Cloudflare Worker/Durable Object/R2 已正式部署。真实 Android/iPhone/Windows 跨网络传送仍待真机验收。
 
 ## 普通公开作品模式（当前产品选择）
 
@@ -86,7 +86,7 @@ ws_ + SHA-256(canonical(adminSigningPublicJwk)) 的前 32 个十六进制字符
 2. 设备使用自己的签名私钥签署完整挑战对象；
 3. `POST /v1/sessions` 同时提交成员凭证、管理员签名和挑战签名；
 4. 服务端核对根身份、凭证序号、撤销/远程开关和挑战后，发放 24 小时短期 Bearer 会话；
-5. 前台客户端优先用短期会话连接 `/v1/socket`；无法长期保持 WebSocket 的移动端每 10 秒调用 `/v1/presence`，20 秒内收到的心跳同样视为真实在线；超过 60 秒的心跳记录自动清理。
+5. 前台客户端优先用短期会话连接 `/v1/socket`；无法长期保持 WebSocket 的移动端每 10 秒调用 `/v1/presence`，并可携带 `workCount`、`workCounts.total/conversion/traffic/uncategorized`、`appVersion`、`versionCode` 和 `updateCapability`；20 秒内收到的心跳同样视为真实在线，超过 60 秒的心跳记录自动清理。服务端只保留合法非负库存，字段缺失代表未知。
 
 关闭远程会立即失效该设备的全部会话并断开 WebSocket；撤销设备还会保留独立的撤销状态。客户端必须分别显示“远程已关闭”“设备离线”“设备已撤销”。
 

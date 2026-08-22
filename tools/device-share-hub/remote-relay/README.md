@@ -40,7 +40,7 @@ node scripts/send-public-work.mjs --endpoint https://relay.example.com --token <
 - Worker：`zwm-device-share-relay`
 - Durable Object：`WorkspaceRelay`
 - R2：`zwm-device-share-relay`
-- 部署版本：`b4fc48b0-9b3b-4e73-b828-d51abe59ba4c`
+- 部署版本：`74aa46b2-8122-437c-93be-844262af7004`
 
 当前账号没有可绑定的活动 Cloudflare Zone，因此暂时使用 `workers.dev` 地址，没有自定义域名。部署记录和 R2 资源已由 Wrangler 实读确认；本机部分 Node.js 直连路径会受系统代理影响，但 PowerShell 健康检查和 GitHub Ubuntu 线上 E2E 均已通过。
 

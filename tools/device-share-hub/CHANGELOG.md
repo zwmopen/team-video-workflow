@@ -1,10 +1,12 @@
 # 变更记录
 
-## Beta：Windows V4.3.21 / Android 0.6.46 / iPhone 0.6.33 - 远程库存心跳与自动补货闭环（云构建中）
+## Beta：Windows V4.3.21 / Android 0.6.46 / iPhone 0.6.33 - 远程库存心跳与自动补货闭环（已发布）
 
 - 修复远程中继只上报在线状态、不上报手机精准库存的问题；Android/iPhone 每 10 秒心跳同步总数、精准/泛/未分类库存和版本信息，Durable Object 校验后提供给 Windows。
 - Windows 远程设备现在合并库存并统一进入 USB/Wi-Fi/远程三路可用判断；右键“发送到”、自动更新候选和精准流量低于阈值的自动补货都不再漏掉无局域网 IP 的远程手机在线设备。
-- 旧手机没有分类库存字段时继续按“未知”处理，不会拿总作品数冒充精准流量；稳定 `latest.json` 不切换，待云构建与 Beta 发布后补充 run、下载包和哈希证据。
+- 旧手机没有分类库存字段时继续按“未知”处理，不会拿总作品数冒充精准流量；Device Share Hub run `32586026767` 的 Windows、Android、iOS、remote-relay check 和线上 Worker E2E 全部通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.46-beta.1>；Android SHA-256：`30a0d3ca3376e00f1f6c3a0563e71804a7a80bd6aaddad34d2290fc8b27f902c`；iPhone IPA SHA-256：`d1953c1e8dc5b0ff6851d62c8eecbc3bba663b51341e01bffac8ace70b9e4f6f`；Windows SHA-256：`4429a9a7f9f295fa68989ab1d76b191638c651e01f2ac496f5aca79243524977`。
+- 三端包已同步到 `C:\Users\z\Desktop`；AltStore Beta 源内容提交为 `4578bce603ea5476252f25bc8a74c2ef719e30b5`，稳定 `latest.json` 仍保持 Android 0.6.29/versionCode 67、iPhone 0.6.16/build 35；实体手机验收仍待连接。
 
 ## Beta：Windows V4.3.20 / Android 0.6.45 / iPhone 0.6.32 - 自动补货递归发现修复（已发布）
 

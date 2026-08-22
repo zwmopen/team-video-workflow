@@ -1,10 +1,11 @@
 # 2026-08-22 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-23 远程库存心跳与自动补货闭环（云构建中）
+## 2026-08-23 远程库存心跳与自动补货闭环（Beta 已发布）
 
 - 当前源码目标版本为 Windows V4.3.21、Android 0.6.46/versionCode 84、iPhone 0.6.33/build 52。
 - Android/iPhone 远程心跳现在携带分类库存；Cloudflare Durable Object 做计数校验并在 `/v1/devices` 返回库存与版本能力；Windows 合并后统一使用 USB/Wi-Fi/远程可用判断。
-- 本轮协议测试、自动更新/库存静态门禁已通过；云端三端构建、远程 Worker 部署、Beta 发布和桌面安装包同步尚未完成。稳定索引不改；真机仍需验证远程 P2P/HTTPS、作品落库、ACK 和精准阈值补货。
+- 本轮协议测试、自动更新/库存静态门禁已通过；Device Share Hub run `32586026767` 的三端云构建和线上 Worker E2E 全部通过，Beta `v0.6.46-beta.1` 已发布，三端包已同步到 `C:\Users\z\Desktop`。稳定索引不改；真机仍需验证远程 P2P/HTTPS、作品落库、ACK 和精准阈值补货。
+- Cloudflare Worker 最新部署版本为 `74aa46b2-8122-437c-93be-844262af7004`；AltStore Beta 源提交为 `4578bce603ea5476252f25bc8a74c2ef719e30b5`。
 
 ## 2026-08-23 自动补货递归发现修复（Beta Windows V4.3.20，已发布）
 
