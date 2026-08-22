@@ -11,6 +11,7 @@
 #include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -634,13 +635,17 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
                        const ProgressCallback& progress,
                        std::string& transferId,
                        std::string& error) {
+    transferId.clear();
+    std::unique_ptr<RelayHttp> http;
+    std::string token;
+    std::string activeTransferId;
     try {
         if (files.empty()) throw std::runtime_error("没有可传送的远程作品");
         auto identity = LoadOrCreateIdentity(stateDirectory);
         const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
-        RelayHttp http;
-        http.SetWorkspace(identity.workspaceId);
-        const auto token = RegisterAndSession(http, identity, adminCertificate);
+        http = std::make_unique<RelayHttp>();
+        http->SetWorkspace(identity.workspaceId);
+        token = RegisterAndSession(*http, identity, adminCertificate);
         std::string objects = "[";
         uint64_t totalBytes = 0;
         std::vector<std::string> hashes;
@@ -657,22 +662,35 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
             totalBytes += size;
         }
         objects += "]";
-        std::string created = http.Json(L"POST", L"/v1/transfers",
+        std::string created = http->Json(L"POST", L"/v1/transfers",
             "{\"mode\":\"plain\",\"recipientDeviceId\":\""
             + JsonEscape(recipientDeviceId) + "\",\"objects\":" + objects + "}", token);
-        transferId = JsonValue(created, "transferId");
+        activeTransferId = JsonValue(created, "transferId");
+        transferId = activeTransferId;
         auto paths = JsonPaths(created);
         if (transferId.empty() || paths.size() != files.size()) throw std::runtime_error("中继创建任务响应无效");
         uintmax_t sent = 0;
         for (size_t index = 0; index < files.size(); ++index) {
-            http.Put(std::wstring(paths[index].begin(), paths[index].end()), files[index], token,
+            http->Put(std::wstring(paths[index].begin(), paths[index].end()), files[index], token,
                      hashes[index], progress, sent, totalBytes);
             sent += std::filesystem::file_size(files[index]);
         }
-        http.Json(L"POST", std::wstring(L"/v1/transfers/") +
+        http->Json(L"POST", std::wstring(L"/v1/transfers/") +
                   std::wstring(transferId.begin(), transferId.end()) + L"/commit", "{}", token);
         return true;
     } catch (const std::exception& exception) {
+        // A task with uploaded objects must not be left in R2 when hashing,
+        // upload, commit, cancellation, or progress reporting fails. The
+        // relay also has a TTL alarm, but immediate cancellation keeps the
+        // recipient inbox clean and releases temporary storage now.
+        if (http && !activeTransferId.empty() && !token.empty()) {
+            try {
+                http->Json(L"POST", std::wstring(L"/v1/transfers/") +
+                          std::wstring(activeTransferId.begin(), activeTransferId.end()) + L"/cancel",
+                          "{}", token);
+            } catch (...) { }
+        }
+        transferId.clear();
         error = exception.what();
         return false;
     }
