@@ -10,8 +10,8 @@ android {
         applicationId = "com.zwm.gallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 72
-        versionName = "0.6.34"
+        versionCode = 73
+        versionName = "0.6.35"
     }
 
     signingConfigs {
@@ -44,6 +44,8 @@ android {
 }
 
 dependencies {
+    // Native WebRTC DataChannel for authenticated P2P transfer; HTTPS relay remains fallback.
+    implementation("io.github.webrtc-sdk:android:144.7559.12")
     testImplementation("junit:junit:4.13.2")
     // Android's platform org.json methods are not executable in local JVM tests.
     testImplementation("org.json:json:20240303")

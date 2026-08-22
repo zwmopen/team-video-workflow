@@ -6,7 +6,7 @@ import Darwin
 private let transferHTTPPort: UInt16 = 45833
 private let transferDiscoveryPort: UInt16 = 45834
 
-final class IncomingTransferService {
+final class IncomingTransferService: P2PTransferEngine.Delegate {
     private let library: WorkLibrary
     private let queue = DispatchQueue(label: "com.zwm.album.incoming-transfer")
     private var tcpListener: NWListener?
@@ -17,6 +17,7 @@ final class IncomingTransferService {
     private var activeRelayIds = Set<String>()
     private var remoteInboxTasks = Set<String>()
     private var remoteProcessingTasks = Set<String>()
+    private var p2pEngines = [String: P2PTransferEngine]()
     private var isRunning = false
     private var tcpReady = false
     private var udpReady = false
@@ -28,6 +29,10 @@ final class IncomingTransferService {
         presence.onInbox = { [weak self] session, tasks in
             guard let self = self else { return }
             self.queue.async { [weak self] in self?.handleRemoteInbox(session, tasks: tasks) }
+        }
+        presence.onP2PSessions = { [weak self] session, sessions in
+            guard let self = self else { return }
+            self.queue.async { [weak self] in self?.handleRemoteP2PSessions(session, sessions: sessions) }
         }
     }
 
@@ -49,6 +54,8 @@ final class IncomingTransferService {
             self.udpReady = false
             self.tasks.values.forEach { $0.cleanup() }
             self.tasks.removeAll()
+            self.p2pEngines.values.forEach { $0.cancel() }
+            self.p2pEngines.removeAll()
             self.remotePresence.stop()
             self.updateStatus("局域网接收已暂停")
         }
@@ -214,6 +221,63 @@ final class IncomingTransferService {
                                               id: "remote-failed-\(task.transferId)")
         }
         remoteProcessingTasks.remove(task.transferId)
+    }
+
+    private func handleRemoteP2PSessions(_ session: RemoteRelayClient.Session,
+                                         sessions: [[String: Any]]) {
+        guard isRunning else { return }
+        for p2p in sessions {
+            guard (p2p["responderDeviceId"] as? String) == session.deviceId,
+                  let id = p2p["sessionId"] as? String,
+                  let state = p2p["state"] as? String,
+                  state != "closed", state != "failed", p2pEngines[id] == nil else { continue }
+            let transport = P2PSignalTransport(session: session, sessionId: id)
+            guard let engine = P2PTransferEngine.accept(session: p2p, transport: transport,
+                                                        delegate: self) else { continue }
+            p2pEngines[id] = engine
+            updateStatus("正在建立 P2P 直连")
+        }
+    }
+
+    func p2pEngine(_ engine: P2PTransferEngine,
+                   didComplete transfer: P2PTransferEngine.Transfer) throws -> Bool {
+        var success = false
+        try queue.sync {
+            if wasRemoteImported(transfer.transferId) {
+                success = true
+                return
+            }
+            guard let root = library.receivingRootURL else {
+                throw TransferServiceError.conflict("作品文件夹不可用，请在设置里重新选择")
+            }
+            var imported = 0
+            for (index, object) in transfer.objects.enumerated() {
+                let source = transfer.files[index]
+                if object.name.lowercased().hasPrefix("album-folder-")
+                    && object.name.lowercased().hasSuffix(".zip") {
+                    imported += try StoredZipExtractor.extract(source, to: root)
+                } else {
+                    let destination = StoredZipExtractor.uniqueDestination(for: object.name, under: root)
+                    try FileManager.default.moveItem(at: source, to: destination)
+                    imported += 1
+                }
+            }
+            guard imported > 0 else { throw RemoteRelayError.invalidTask }
+            markRemoteImported(transfer.transferId)
+            library.finishIncomingTransfer(itemCount: imported)
+            p2pEngines = p2pEngines.filter { $0.value !== engine }
+            success = true
+            updateStatus("P2P 作品已写入作品库")
+        }
+        return success
+    }
+
+    func p2pEngine(_ engine: P2PTransferEngine, didFail message: String) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.p2pEngines = self.p2pEngines.filter { $0.value !== engine }
+            self.updateStatus("P2P 直传未完成，等待电脑自动切换中继")
+        }
     }
 
     private var remoteRoot: URL {
@@ -813,6 +877,25 @@ final class HTTPRequestReader {
         if let url = bodyFileURL { try? FileManager.default.removeItem(at: url) }
         connection.cancel()
         keepAlive = nil
+    }
+}
+
+private final class P2PSignalTransport: P2PTransferEngine.SignalTransport {
+    private let session: RemoteRelayClient.Session
+    private let sessionId: String
+
+    init(session: RemoteRelayClient.Session, sessionId: String) {
+        self.session = session
+        self.sessionId = sessionId
+    }
+
+    func snapshot() throws -> [String: Any] {
+        try RemoteRelayClient.p2pSession(session, sessionId: sessionId)
+    }
+
+    func send(type: String, data: [String: Any]) throws {
+        try RemoteRelayClient.sendP2PSignal(session, sessionId: sessionId,
+                                            type: type, data: data)
     }
 }
 

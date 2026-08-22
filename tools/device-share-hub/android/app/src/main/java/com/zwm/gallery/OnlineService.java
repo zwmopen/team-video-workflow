@@ -101,6 +101,7 @@ public final class OnlineService extends Service {
     private RemoteRelayPresence remotePresence;
     private final Set<String> remoteInboxTasks = Collections.synchronizedSet(new HashSet<>());
     private final Set<String> remoteProcessingTasks = Collections.synchronizedSet(new HashSet<>());
+    private final ConcurrentHashMap<String, P2PTransferEngine> p2pEngines = new ConcurrentHashMap<>();
     private volatile boolean running;
     private volatile String state = "online";
     private volatile String currentTaskId = "";
@@ -164,7 +165,14 @@ public final class OnlineService extends Service {
         } catch (Exception error) {
             DiagnosticLog.write(this, "remote_identity_unavailable", error.getClass().getSimpleName());
         }
-        remotePresence = new RemoteRelayPresence(getApplicationContext(), this::handleRemoteInbox);
+        remotePresence = new RemoteRelayPresence(getApplicationContext(), new RemoteRelayPresence.Listener() {
+            @Override public void onInbox(RemoteRelayClient.Session session, JSONArray transfers) {
+                handleRemoteInbox(session, transfers);
+            }
+            @Override public void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) {
+                OnlineService.this.onP2PSessions(session, sessions);
+            }
+        });
         remotePresence.start();
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
@@ -241,6 +249,67 @@ public final class OnlineService extends Service {
         }
     }
 
+    public void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) {
+        if (session == null || sessions == null) return;
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject p2p = sessions.optJSONObject(i);
+            if (p2p == null || !session.deviceId.equals(p2p.optString("responderDeviceId", ""))) continue;
+            String id = p2p.optString("sessionId", "");
+            String state = p2p.optString("state", "");
+            if (id.isEmpty() || "closed".equals(state) || "failed".equals(state)
+                    || p2pEngines.containsKey(id)) continue;
+            P2PTransferEngine.SignalTransport transport = new P2PTransferEngine.SignalTransport() {
+                @Override public JSONObject snapshot() throws Exception {
+                    return RemoteRelayClient.p2pSession(session, id);
+                }
+                @Override public void send(String type, JSONObject data) throws Exception {
+                    RemoteRelayClient.sendP2PSignal(session, id, type, data);
+                }
+            };
+            P2PTransferEngine engine = P2PTransferEngine.accept(this, p2p, transport,
+                    new P2PTransferEngine.Listener() {
+                        @Override public boolean onCompleted(P2PTransferEngine.Transfer transfer) throws Exception {
+                            boolean imported = importP2PTransfer(transfer);
+                            if (imported) p2pEngines.remove(id);
+                            return imported;
+                        }
+                        @Override public void onFailed(String message) {
+                            p2pEngines.remove(id);
+                            DiagnosticLog.write(OnlineService.this, "p2p_transfer_failed",
+                                    "session=" + id + " error=" + message);
+                        }
+                    });
+            p2pEngines.put(id, engine);
+            DiagnosticLog.write(this, "p2p_session_accepted", "session=" + id);
+        }
+    }
+
+    private boolean importP2PTransfer(P2PTransferEngine.Transfer transfer) throws Exception {
+        if (wasRemoteImported(transfer.transferId)) return true;
+        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+        int imported = 0;
+        for (int i = 0; i < transfer.objects.size(); i++) {
+            P2PTransferEngine.ObjectInfo object = transfer.objects.get(i);
+            File source = transfer.files.get(i);
+            if (object.name.toLowerCase(Locale.US).startsWith("album-folder-")
+                    && object.name.toLowerCase(Locale.US).endsWith(".zip")) {
+                imported += WorkArchiveImporter.importZip(source, library, "p2p-" + transfer.transferId);
+            } else if (WorkRules.isSupportedImage(object.name)) {
+                ArrayList<File> images = new ArrayList<>();
+                images.add(source);
+                library.importWork("p2p-" + transfer.transferId + "-" + object.index,
+                        "P2P 传入的作品", "", images, "", "", "", object.name);
+                imported++;
+            }
+        }
+        if (imported <= 0) throw new IOException("P2P 作品包为空");
+        markRemoteImported(transfer.transferId);
+        publishWorkInventory(this, library.listActive());
+        deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
+        notifyStatus("P2P 作品已接收，已写入作品库");
+        return true;
+    }
+
     private void processRemoteTask(RemoteRelayClient.Session session, RemoteRelayTask task) {
         File transferDirectory = new File(getCacheDir(), "remote-relay/" + task.transferId);
         try {
@@ -315,6 +384,8 @@ public final class OnlineService extends Service {
     public void onDestroy() {
         running = false;
         if (remotePresence != null) remotePresence.stop();
+        for (P2PTransferEngine engine : p2pEngines.values()) engine.cancel();
+        p2pEngines.clear();
         closeSockets();
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();

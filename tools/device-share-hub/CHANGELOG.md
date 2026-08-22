@@ -1,5 +1,12 @@
 # 变更记录
 
+## Beta：Windows V4.3.8 / Android 0.6.35 / iPhone 0.6.22 - 2026-08-22
+
+- 把之前只有 SDP/ICE 信令的“P2P”补成真实 DataChannel 数据面：Windows 使用 libdatachannel，Android 使用 WebRTC SDK，iPhone 使用 WebRTC XCFramework。
+- 传输顺序固定为 manifest → 48 KiB 二进制分片 → 完整性校验 → 作品库导入 → ACK；任何建连、断线或校验失败都会自动回退到现有 Cloudflare HTTPS 中继。
+- P2P 信令仍只经过 Cloudflare，公开作品字节不进 Worker/R2；本阶段不增加应用层加密、截图、剪切板、悬浮窗或无障碍权限。
+- Android `versionCode=73` / `versionName=0.6.35`；iPhone `0.6.22/build 41`；Windows `4.3.8`。必须以同一次 GitHub Actions 三端构建和实体手机业务验收作为交付边界。
+
 ## Beta：Windows V4.3.7 / Android 0.6.34 / iPhone 0.6.21 - 2026-08-21
 
 - 补齐混合传输实际链路：Windows 首次发现手机时读取手机公钥，自动签发成员凭证并通过现有局域网下发；手机保存后每 10 秒登录 Cloudflare 中继并上报在线状态。

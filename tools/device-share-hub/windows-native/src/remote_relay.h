@@ -43,6 +43,15 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
                        std::string& transferId,
                        std::string& error);
 
+// Tries the authenticated WebRTC DataChannel path. A false result is an
+// expected transport outcome and must be followed by SendPlainTransfer.
+bool TryP2PTransfer(const std::filesystem::path& stateDirectory,
+                    const std::string& recipientDeviceId,
+                    const std::vector<std::filesystem::path>& files,
+                    const ProgressCallback& progress,
+                    std::string& transferId,
+                    std::string& error);
+
 bool ListDevices(const std::filesystem::path& stateDirectory,
                  std::vector<RelayDevice>& devices,
                  std::string& error);

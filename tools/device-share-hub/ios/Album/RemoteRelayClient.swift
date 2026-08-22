@@ -92,6 +92,13 @@ final class RemoteRelayClient {
         return p2p
     }
 
+    static func p2pSessions(_ session: Session) throws -> [[String: Any]] {
+        let response = try requestJSON(url: "\(session.endpoint)/v1/p2p/sessions", method: "GET",
+                                       token: session.token, body: nil,
+                                       workspaceId: session.workspaceId)
+        return response["sessions"] as? [[String: Any]] ?? []
+    }
+
     static func sendP2PSignal(_ session: Session, sessionId: String, type: String,
                               data: [String: Any]) throws {
         guard isSafeId(sessionId), !type.isEmpty else {

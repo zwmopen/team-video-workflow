@@ -1,4 +1,5 @@
 #include "remote_relay.h"
+#include "p2p_transport.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -14,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <random>
 
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "crypt32.lib")
@@ -24,7 +26,7 @@ namespace {
 
 constexpr char kEndpoint[] = "https://zwm-device-share-relay.zwmrpg.workers.dev";
 constexpr wchar_t kHost[] = L"zwm-device-share-relay.zwmrpg.workers.dev";
-constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.7";
+constexpr wchar_t kUserAgent[] = L"DeviceShareHub/4.3.8";
 constexpr size_t kMaxResponseBytes = 2 * 1024 * 1024;
 constexpr uint64_t kMaxTransferBytes = 20ull * 1024ull * 1024ull * 1024ull;
 
@@ -362,6 +364,77 @@ std::vector<std::string> JsonPaths(const std::string& json) {
     return result;
 }
 
+std::string JsonObjectField(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\"";
+    size_t position = json.find(marker);
+    if (position == std::string::npos) return {};
+    position = json.find(':', position + marker.size());
+    if (position == std::string::npos) return {};
+    position = json.find_first_not_of(" \t\r\n", position + 1);
+    if (position == std::string::npos || json[position] != '{') return {};
+    const size_t start = position;
+    int depth = 0;
+    bool quoted = false;
+    bool escaped = false;
+    for (; position < json.size(); ++position) {
+        const char c = json[position];
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') quoted = false;
+        } else if (c == '"') {
+            quoted = true;
+        } else if (c == '{') {
+            ++depth;
+        } else if (c == '}' && --depth == 0) {
+            return json.substr(start, position - start + 1);
+        }
+    }
+    return {};
+}
+
+std::vector<std::string> JsonArrayObjects(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\"";
+    size_t cursor = json.find(marker);
+    if (cursor == std::string::npos) return {};
+    cursor = json.find('[', cursor + marker.size());
+    if (cursor == std::string::npos) return {};
+    std::vector<std::string> result;
+    for (++cursor; cursor < json.size();) {
+        cursor = json.find('{', cursor);
+        if (cursor == std::string::npos) break;
+        const size_t start = cursor;
+        int depth = 0;
+        bool quoted = false;
+        bool escaped = false;
+        for (; cursor < json.size(); ++cursor) {
+            const char c = json[cursor];
+            if (quoted) {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') quoted = false;
+            } else if (c == '"') {
+                quoted = true;
+            } else if (c == '{') {
+                ++depth;
+            } else if (c == '}' && --depth == 0) {
+                result.push_back(json.substr(start, cursor - start + 1));
+                ++cursor;
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+std::string NewP2PTransferId() {
+    std::random_device random;
+    std::mt19937_64 generator(random());
+    std::ostringstream output;
+    output << "p2p_" << std::hex << GetTickCount64() << generator();
+    return output.str();
+}
+
 class RelayHttp {
 public:
     RelayHttp() {
@@ -598,6 +671,79 @@ bool SendPlainTransfer(const std::filesystem::path& stateDirectory,
         }
         http.Json(L"POST", std::wstring(L"/v1/transfers/") +
                   std::wstring(transferId.begin(), transferId.end()) + L"/commit", "{}", token);
+        return true;
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return false;
+    }
+}
+
+bool TryP2PTransfer(const std::filesystem::path& stateDirectory,
+                    const std::string& recipientDeviceId,
+                    const std::vector<std::filesystem::path>& files,
+                    const ProgressCallback& progress,
+                    std::string& transferId,
+                    std::string& error) {
+    try {
+        if (files.empty()) throw std::runtime_error("没有可传送的 P2P 作品");
+        auto identity = LoadOrCreateIdentity(stateDirectory);
+        const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
+        RelayHttp http;
+        http.SetWorkspace(identity.workspaceId);
+        const auto token = RegisterAndSession(http, identity, adminCertificate);
+        const std::string created = http.Json(L"POST", L"/v1/p2p/sessions",
+            "{\"recipientDeviceId\":\"" + JsonEscape(recipientDeviceId)
+            + "\",\"protocol\":\"webrtc-datachannel-v1\"}", token);
+        const auto sessionId = JsonValue(created, "sessionId");
+        if (sessionId.empty()) throw std::runtime_error("中继没有返回 P2P 会话");
+
+        std::vector<p2p_transport::FileItem> items;
+        for (const auto& path : files) {
+            const uintmax_t bytes = std::filesystem::file_size(path);
+            if (bytes == 0 || bytes > 20ull * 1024ull * 1024ull * 1024ull) {
+                throw std::runtime_error("P2P 作品大小无效或超过限制");
+            }
+            items.push_back({path, path.filename().u8string(), "application/octet-stream",
+                             bytes, Hex(Sha256File(path))});
+        }
+        transferId = NewP2PTransferId();
+        std::string signalError;
+        auto sendSignal = [&](const std::string& type, const std::string& data) {
+            try {
+                http.Json(L"POST", L"/v1/p2p/sessions/" +
+                    std::wstring(sessionId.begin(), sessionId.end()) + L"/signals",
+                    "{\"type\":\"" + JsonEscape(type) + "\",\"data\":" + data + "}", token);
+            } catch (const std::exception& exception) {
+                signalError = exception.what();
+            }
+        };
+        auto pollSignals = [&]() {
+            const std::string response = http.Json(L"GET", L"/v1/p2p/sessions/" +
+                std::wstring(sessionId.begin(), sessionId.end()), "", token);
+            std::vector<p2p_transport::Signal> signals;
+            for (const auto& item : JsonArrayObjects(response, "signals")) {
+                const auto type = JsonValue(item, "type");
+                const auto from = JsonValue(item, "fromDeviceId");
+                const auto sentAt = JsonNumber(item, "sentAt", 0);
+                const auto data = JsonObjectField(item, "data");
+                if (type.empty() || data.empty()) continue;
+                signals.push_back({from + ":" + std::to_string(sentAt) + ":" + type, type, data});
+            }
+            return signals;
+        };
+        std::string p2pError;
+        const bool sent = p2p_transport::Send(
+            transferId, "windows-admin", recipientDeviceId, items, sendSignal, pollSignals,
+            [&](uintmax_t done, uintmax_t total) { if (progress) progress(done, total); }, p2pError);
+        try {
+            http.Json(L"POST", L"/v1/p2p/sessions/" +
+                std::wstring(sessionId.begin(), sessionId.end()) + L"/close", "{}", token);
+        } catch (...) { }
+        if (!sent) {
+            if (!signalError.empty()) p2pError += ": " + signalError;
+            error = p2pError.empty() ? "P2P 直连未完成" : p2pError;
+            return false;
+        }
         return true;
     } catch (const std::exception& exception) {
         error = exception.what();

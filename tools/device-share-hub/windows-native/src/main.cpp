@@ -91,7 +91,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.7";
+constexpr wchar_t APP_VERSION[] = L"4.3.8";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -2224,6 +2224,31 @@ void UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”…");
             std::string transferId;
             std::string relayError;
+            std::string p2pError;
+            if (remote_relay::TryP2PTransfer(
+                    DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                    [&](uintmax_t done, uintmax_t total) {
+                        if (gCancelRequested) throw std::runtime_error("传送已取消");
+                        int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                        PostProgress(percent, true);
+                        PostStatus(L"正在 P2P 直传到 “" + device.name + L"”：" + std::to_wstring(percent) + L"%");
+                    }, transferId, p2pError)) {
+                RecordSuccessfulTransfers(device, fingerprints, L"P2P直传");
+                WriteDiagnosticLog(L"p2p_upload_done", device.name + L" transfer=" + Utf8ToWide(transferId));
+                PostShellTransferNotice(L"已通过 P2P 直传到“" + device.name + L"”。", true);
+                PostProgress(100, true);
+                PostStatus(L"已通过 P2P 直传到 “" + device.name + L"”");
+                gUploadInProgress = false;
+                gShellTransferActive = false;
+                gCancelRequested = false;
+                for (const auto& archive : temporaryArchives) {
+                    std::error_code ignored;
+                    std::filesystem::remove(archive, ignored);
+                }
+                return;
+            }
+            WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
+            PostStatus(L"P2P 直传未成功，自动切换远程中继…");
             bool sent = remote_relay::SendPlainTransfer(
                 DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
                 [&](uintmax_t done, uintmax_t total) {

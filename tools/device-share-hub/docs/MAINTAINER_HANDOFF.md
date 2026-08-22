@@ -1,5 +1,15 @@
 # 2026-08-21 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-22 WebRTC DataChannel 数据面 Beta
+
+- 当前开发交付版本：Windows `4.3.8`、Android `0.6.35` / versionCode `73`、iPhone `0.6.22` / build `41`。
+- 已接入真实数据面：Windows 使用 libdatachannel 发起 `album-transfer-v1`，Android/iOS 使用 WebRTC 接收；Cloudflare 只承担短时 SDP/ICE 信令，文件字节不上传 R2。
+- P2P 失败条件（20 秒建连超时、ICE/DataChannel 失败、manifest/大小/SHA-256/作品库写入失败）统一回退现有 HTTPS 中继；中继仍是跨网络必达兜底。
+- P2P 收件端只有在文件完整校验并写入现有作品库后才 ACK，并用 `transferId` 去重，避免 ACK 丢失后的中继回退造成重复作品。
+- 本阶段已通过本地协议检查和远程 Worker 13 项测试；Android、iOS、Windows 必须以同一提交的 GitHub Actions 云端构建为编译证据。没有实体 Android/iPhone 跨网络设备，暂不宣称真实 P2P 业务已验收。
+
+### 上一版普通 HTTPS 中继基线（历史证据）
+
 - 当前开发交付版本：Windows `4.3.7`、Android `0.6.34` / versionCode `72`、iPhone `0.6.21` / build `40`。
 - 已补齐：Windows 发现手机后自动下发远程成员凭证；Android/iOS 保存凭证、带工作区头登录中继、心跳、下载、写库和 ACK；Windows 无 USB/Wi-Fi 时自动走 Cloudflare 中继。
 - 已用实际 Worker 烟测跑通：健康检查 → 注册工作区 → 管理端/接收端会话 → 在线心跳 → 创建任务 → R2 上传 → 提交 → 收件箱 → 下载 SHA-256 → ACK → R2 删除。

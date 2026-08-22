@@ -72,6 +72,12 @@ final class RemoteRelayClient {
                 session.token, null, session.workspaceId).getJSONObject("p2p");
     }
 
+    static JSONArray p2pSessions(Session session) throws Exception {
+        JSONArray sessions = requestJson(session.endpoint + "/v1/p2p/sessions", "GET",
+                session.token, null, session.workspaceId).optJSONArray("sessions");
+        return sessions == null ? new JSONArray() : sessions;
+    }
+
     static JSONObject sendP2PSignal(Session session, String sessionId, String type,
                                      JSONObject data) throws Exception {
         if (type == null || type.isEmpty() || data == null) throw new IOException("直连信令无效");

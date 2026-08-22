@@ -12,6 +12,8 @@ import java.util.concurrent.TimeUnit;
 final class RemoteRelayPresence {
     interface Listener {
         void onInbox(RemoteRelayClient.Session session, JSONArray transfers);
+
+        default void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) { }
     }
 
     private final Context context;
@@ -71,9 +73,11 @@ final class RemoteRelayPresence {
             }
             RemoteRelayClient.heartbeat(current);
             JSONArray transfers = RemoteRelayClient.inbox(current);
+            JSONArray p2pSessions = RemoteRelayClient.p2pSessions(current);
             if (listener != null) {
                 try {
                     listener.onInbox(current, transfers);
+                    listener.onP2PSessions(current, p2pSessions);
                 } catch (RuntimeException error) {
                     DiagnosticLog.write(context, "remote_inbox_listener_failed",
                             error.getClass().getSimpleName());

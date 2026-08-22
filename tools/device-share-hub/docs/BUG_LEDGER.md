@@ -2,6 +2,19 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-046 远程传送只有信令没有文件数据面（Windows 4.3.8 / Android 0.6.35 / iPhone 0.6.22）
+
+- 现象：Cloudflare 的 P2P 会话可以创建并交换 SDP/ICE，但此前没有真正的 DataChannel 文件收发；如果误把信令成功当成文件成功，会出现“已直连但手机没有作品”。
+- 根因：远程中继控制面和 WebRTC 信令已先完成，三端原生 DataChannel 没有接入同一套 manifest、分片、完整性校验和 ACK 协议。
+- 修复：Windows 接入 libdatachannel 发起 `album-transfer-v1`；Android 接入 Maven Central WebRTC SDK；iPhone 接入固定版本 WebRTC XCFramework。发送端按 48 KiB 分片，接收端落缓存、校验大小/SHA-256、写入现有作品库后才 ACK。
+- 回退：建连 20 秒超时、ICE/DataChannel 失败、数据帧越界、哈希不一致或作品库写入失败均返回失败，由 Windows 自动创建现有 `mode: plain` HTTPS 中继任务；P2P 失败不能记作已送达。
+- 证据：本地协议检查通过，远程 Worker 13 项测试通过；三端正式结论必须等待同一提交的 GitHub Actions Windows/Android/iOS 构建。暂无实体 Android/iPhone 跨网络业务证据。
+- 回归要求：
+  1. 同一 Wi-Fi 与不同网络各发送一个小 ZIP，手机只能在写库成功后收到 ACK。
+  2. 接收端断开、篡改分片或制造错误 SHA-256 时，P2P 失败并自动转 HTTPS 中继，作品不重复。
+  3. 发送端不能因为 `libdatachannel` 的缓冲返回值为 false 就误判失败；必须等待缓冲并保持分片顺序。
+  4. 停止 Android/iOS 接收服务时，P2P 临时文件和轮询线程都要清理，旧局域网/USB 传送不受影响。
+
 ## DSH-045 手机端自动截图/剪切板与作品卡片入口收口（Android 0.6.24 / iPhone 0.6.11）
 
 - 现象：手机端不需要自动截图、自动剪切板同步；旧入口和权限让安全扫描产生风险提示，作品卡片的两个纵向按钮也占用过多空间。
