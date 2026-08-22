@@ -1,10 +1,10 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.6.29 / build 48（Beta）
+版本：0.6.30 / build 49（Beta）
 
 状态：Beta 测试版本；云端构建已通过，当前轮次真机记录见维护交接
 
-0.6.29 延续同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。已移除自动截图识别、截图发送、自动读取/同步系统剪切板和相册读取权限；顶部分类统一显示“精准流量”和“泛流量”，作品卡片提供左对齐的“预览 / 发抖音 / 发小红书”纵向紧凑按钮，点击后对应平台按钮立即变灰但仍可点击，预览页可左右滑动查看下一张。普通文件、图片导入、系统分享与局域网传送不变。此 Beta 已接入 WebRTC DataChannel 真实文件数据面：P2P 接收建连超过 20 秒会失败并回退 HTTPS 中继；失败时自动异步关闭 Cloudflare 信令会话；文件会先校验 SHA-256、写入作品库，确认成功后才发送 ACK，并在 ACK 刷新窗口后清理临时缓存。本版与 Android/Windows 同步发布，iOS 端逻辑保持上述收件和回退边界。本阶段仍无实体跨网设备验收，因此不把云端构建当作真机业务通过。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
+0.6.30 延续同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。已移除自动截图识别、截图发送、自动读取/同步系统剪切板和相册读取权限；顶部分类统一显示“精准流量”和“泛流量”，作品卡片提供左对齐的“预览 / 发抖音 / 发小红书”纵向紧凑按钮，点击后对应平台按钮立即变灰但仍可点击，预览页可左右滑动查看下一张。普通文件、图片导入、系统分享与局域网传送不变。此 Beta 已接入 WebRTC DataChannel 真实文件数据面：P2P 接收建连超过 20 秒会失败并回退 HTTPS 中继；失败时自动异步关闭 Cloudflare 信令会话；文件会先校验 SHA-256、写入作品库，确认成功后才发送 ACK，并在 ACK 刷新窗口后清理临时缓存。本版与 Android/Windows 同步发布，iOS 端逻辑保持上述收件和回退边界。本阶段仍无实体跨网设备验收，因此不把云端构建当作真机业务通过。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
 这是现有“素材投送中控”的 iPhone 客户端，不是另一个项目。它提供递归作品列表、复制文案、多图系统分享、打开分享次数、次日回收和回收站保留 7 天。
 
@@ -12,7 +12,7 @@
 
 本轮 Beta 发布页：
 
-`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1`
+`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1`
 
 每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载与工程版本对应的 `album-ios-altstore-v<版本>` artifact，解压得到：
 
@@ -21,7 +21,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-本轮 Beta IPA 的 SHA-256 为 `716730f02c949338bb923fd28485f053d4856897d4795088eae35496ae362017`；实体检查仍需在真实 iPhone 上完成。
+本轮 Beta IPA 的 SHA-256 为 `5e8de6ef4fa435d19b361b889b791b9b8ded80989af4e6a7ca08dd15587214e5`；实体检查仍需在真实 iPhone 上完成。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
