@@ -176,7 +176,8 @@ int main() {
         condition.notify_all();
     });
     responder->onDataChannel([&](std::shared_ptr<rtc::DataChannel> channel) {
-        channel->onMessage([&, channel](rtc::message_variant message) {
+        const std::weak_ptr<rtc::DataChannel> weakChannel = channel;
+        channel->onMessage([&, weakChannel](rtc::message_variant message) {
             if (std::holds_alternative<rtc::binary>(message)) {
                 std::lock_guard<std::mutex> lock(mutex);
                 CheckFrame(std::get<rtc::binary>(message), received, frameError);
@@ -195,8 +196,10 @@ int main() {
                     condition.notify_all();
                     return;
                 }
-                channel->send("{\"v\":1,\"kind\":\"ack\",\"ok\":true,\"objects\":1,\"bytes\":"
-                              + std::to_string(received.size()) + "}");
+                if (const auto activeChannel = weakChannel.lock()) {
+                    activeChannel->send("{\"v\":1,\"kind\":\"ack\",\"ok\":true,\"objects\":1,\"bytes\":"
+                                        + std::to_string(received.size()) + "}");
+                }
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     transferComplete = true;
@@ -267,6 +270,7 @@ int main() {
     }
     relay.join();
     responder->close();
+    responder.reset();
     std::filesystem::remove_all(root);
 
     if (!sent) return Fail("sender failed: " + error);
