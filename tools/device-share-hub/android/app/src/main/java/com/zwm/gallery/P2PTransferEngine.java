@@ -426,6 +426,10 @@ final class P2PTransferEngine {
 
     private void shutdown(boolean removeFiles) {
         executor.shutdownNow();
+        // Closing the WebRTC peer is not enough: release the authenticated
+        // Cloudflare signaling session so the next presence poll cannot
+        // accept the same completed session again.
+        try { transport.close(); } catch (Exception ignored) { }
         for (Integer index : new ArrayList<>(openFiles.keySet())) closeFile(index);
         if (channel != null) channel.close();
         if (peer != null) peer.close();

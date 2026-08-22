@@ -11,6 +11,8 @@ const ios = read("ios/Album/P2PTransferEngine.swift");
 const windows = read("windows-native/src/remote_relay.cpp");
 const windowsMain = read("windows-native/src/main.cpp");
 const protocol = read("docs/REMOTE_PROTOCOL_V1.md");
+const androidShutdown = android.slice(android.indexOf("private void shutdown"));
+const iosShutdown = ios.slice(ios.indexOf("private func shutdown"));
 
 const requireText = (source, text, label) => {
   if (!source.includes(text)) throw new Error(`${label}: missing ${text}`);
@@ -29,6 +31,8 @@ requireText(ios, "iceLock.lock()", "iOS candidate enqueue lock");
 // duplicate relay transfer.
 requireText(android, "ACK_FLUSH_DELAY_MS", "Android ACK flush delay");
 requireText(ios, "ackFlushDelay", "iOS ACK flush delay");
+requireText(androidShutdown, "transport.close()", "Android signaling session cleanup");
+requireText(iosShutdown, "transport.close()", "iOS signaling session cleanup");
 requireText(windows, "closeSession", "Windows P2P session cleanup");
 requireText(windowsMain, "TryP2PTransfer", "Windows P2P route");
 requireText(windowsMain, "SendPlainTransfer", "Windows HTTPS fallback route");

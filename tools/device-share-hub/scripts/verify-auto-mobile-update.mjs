@@ -57,7 +57,7 @@ if (!upload.includes("const bool liveWifi = IsLiveWifiDevice(device")
     || !upload.includes("if (!liveWifi)")) {
   throw new Error("stale Wi-Fi addresses must not block P2P/HTTPS remote fallback");
 }
-if (!source.includes("DeviceShareHub/4.3.24") || source.includes("DeviceShareHub/4.3.23")) {
+if (!source.includes("DeviceShareHub/4.3.25") || source.includes("DeviceShareHub/4.3.24")) {
   throw new Error("Windows network User-Agent must match the current desktop version");
 }
 

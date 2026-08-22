@@ -302,6 +302,10 @@ final class P2PTransferEngine: NSObject {
 
     private func shutdown(removeFiles: Bool) {
         timer?.cancel(); timer = nil
+        // Closing the WebRTC peer is not enough: release the authenticated
+        // Cloudflare signaling session so the next presence poll cannot
+        // accept the same completed session again.
+        try? transport.close()
         fileHandles.values.forEach { $0.closeFile() }
         fileHandles.removeAll()
         dataChannel?.close(); dataChannel = nil
