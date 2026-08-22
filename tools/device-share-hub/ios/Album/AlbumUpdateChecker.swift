@@ -2,14 +2,29 @@ import Foundation
 import UIKit
 
 enum AlbumUpdateChecker {
-    private static let endpoint = URL(string: "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest.json")!
-    private static let altStoreSource = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json"
+    private static let stableEndpoint = URL(string: "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest.json")!
+    private static let betaEndpoint = URL(string: "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest-beta.json")!
+    private static let stableAltStoreSource = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json"
+    private static let betaAltStoreSource = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore-beta.json"
     private static let altStoreURL = URL(string: "altstore-classic://")!
+    private static let channelKey = "album.updateChannel"
+
+    static var isBetaChannel: Bool {
+        UserDefaults.standard.string(forKey: channelKey) == "beta"
+    }
+
+    static var updateChannelLabel: String {
+        isBetaChannel ? "测试版（Beta）" : "稳定版"
+    }
+
+    static func setBetaChannel(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled ? "beta" : "stable", forKey: channelKey)
+    }
 
     static func check(from controller: UIViewController) {
         let waiting = UIAlertController(title: nil, message: "正在检查新版本…", preferredStyle: .alert)
         controller.present(waiting, animated: true)
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: isBetaChannel ? betaEndpoint : stableEndpoint)
         request.timeoutInterval = 8
         request.setValue("zwm-album-ios", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { data, response, error in
@@ -31,13 +46,15 @@ enum AlbumUpdateChecker {
                         show(controller, title: "已经是最新版本", message: "当前版本 \(current)")
                         return
                     }
-                    showUpdate(controller, candidate: candidate, current: current)
+                    showUpdate(controller, candidate: candidate, current: current,
+                               source: isBetaChannel ? betaAltStoreSource : stableAltStoreSource)
                 }
             }
         }.resume()
     }
 
-    private static func showUpdate(_ controller: UIViewController, candidate: String, current: String) {
+    private static func showUpdate(_ controller: UIViewController, candidate: String, current: String,
+                                   source: String) {
         let alert = UIAlertController(
             title: "发现新版本 \(candidate)",
             message: "当前版本 \(current)。新版本已进入 AltStore 更新源，请在 AltStore 的 My Apps 中点“更新”。这里不会删除作品文件。",
@@ -47,7 +64,7 @@ enum AlbumUpdateChecker {
             UIApplication.shared.open(altStoreURL)
         })
         alert.addAction(UIAlertAction(title: "复制更新源", style: .default) { _ in
-            UIPasteboard.general.string = altStoreSource
+            UIPasteboard.general.string = source
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 show(controller, title: "更新源已复制", message: "打开 AltStore → Sources → + 粘贴即可。")
             }
