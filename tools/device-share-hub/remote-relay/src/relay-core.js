@@ -573,6 +573,7 @@ export class WorkspaceRelayCore {
     });
     if (!body.allowed) {
       await this.invalidateDeviceSessions(deviceId);
+      await this.invalidateP2PSessions(deviceId, "remote-disabled");
       this.closeDeviceSockets(deviceId, 4003, "remote-disabled");
     }
     return json({ ok: true, deviceId, remoteAllowed: body.allowed });
@@ -595,6 +596,7 @@ export class WorkspaceRelayCore {
       message: "这台设备的传送权限已被电脑撤销",
     });
     await this.invalidateDeviceSessions(deviceId);
+    await this.invalidateP2PSessions(deviceId, "device-revoked");
     this.closeDeviceSockets(deviceId, 4003, "device-revoked");
     this.broadcast({ type: "device-revoked", deviceId }, deviceId);
     return json({ ok: true, deviceId, revoked: true, revokedAt: member.revokedAt });
@@ -958,6 +960,23 @@ export class WorkspaceRelayCore {
     );
   }
 
+  async invalidateP2PSessions(deviceId, reason) {
+    const sessions = await this.listStored("p2p:");
+    for (const [key, p2p] of sessions) {
+      if (p2p.initiatorDeviceId !== deviceId && p2p.responderDeviceId !== deviceId) continue;
+      if (["closed", "failed"].includes(p2p.state)) continue;
+      p2p.state = "failed";
+      p2p.failedAt = Date.now();
+      p2p.failureReason = reason;
+      await this.ctx.storage.put(key, p2p);
+      const target = p2p.initiatorDeviceId === deviceId
+        ? p2p.responderDeviceId : p2p.initiatorDeviceId;
+      this.sendToDevice(target, {
+        type: "p2p-session-closed", sessionId: p2p.sessionId, reason,
+      });
+    }
+  }
+
   closeDeviceSockets(deviceId, code, reason) {
     for (const socket of this.ctx.getWebSockets()) {
       if (socket.deserializeAttachment()?.deviceId !== deviceId) continue;
@@ -1058,6 +1077,7 @@ function normalizeObjects(value, mode = "encrypted") {
       result.push({ index, cipherBytes: bytes, cipherSha256: sha256 });
     }
   }
+
   result.sort((a, b) => a.index - b.index);
   return result;
 }

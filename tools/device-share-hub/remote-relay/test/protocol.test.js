@@ -294,6 +294,13 @@ test("a self-signed replacement admin cannot create a session", async () => {
 test("admin can disable remote access and invalidate existing device sessions", async () => {
   const state = await bootstrap();
   const adminToken = await createAdminSession(state);
+  let p2pResponse = await state.relay.fetch(
+    await jsonRequest("/v1/p2p/sessions", {
+      recipientDeviceId: state.memberCertificate.deviceId,
+    }, adminToken),
+  );
+  assert.equal(p2pResponse.status, 201);
+  const p2pSessionId = (await p2pResponse.json()).p2p.sessionId;
   let response = await state.relay.fetch(
     await jsonRequest(
       `/v1/devices/${state.memberCertificate.deviceId}/remote`,
@@ -311,6 +318,13 @@ test("admin can disable remote access and invalidate existing device sessions", 
   );
   assert.equal(response.status, 401);
   assert.equal((await response.json()).code, "unauthorized");
+  p2pResponse = await state.relay.fetch(
+    new Request(`https://relay.test/v1/p2p/sessions/${p2pSessionId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    }),
+  );
+  assert.equal(p2pResponse.status, 200);
+  assert.equal((await p2pResponse.json()).p2p.state, "failed");
 });
 
 test("heartbeat makes a device visible as online without a websocket", async () => {
