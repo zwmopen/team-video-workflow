@@ -43,4 +43,14 @@ if (!storeSource.includes("INSERT OR IGNORE INTO settings")
   throw new Error("fresh content databases must default to enabled precise restock at threshold 5");
 }
 
+const restockStart = source.indexOf("std::optional<std::filesystem::path> PickAutoRestockSource()");
+const restockEnd = source.indexOf("int AutoRestockThreshold()", restockStart);
+if (restockStart < 0 || restockEnd < 0) throw new Error("PickAutoRestockSource function boundary missing");
+const restock = source.slice(restockStart, restockEnd);
+if (!restock.includes("recursive_directory_iterator")
+    || !restock.includes("name.find(L\"[转]\")")
+    || !restock.includes("name.find(L\"【转】\")")) {
+  throw new Error("automatic precise restock must recursively find tagged [转]/【转】 work folders");
+}
+
 console.log("Automatic mobile update retry and inventory beacon checks passed.");
