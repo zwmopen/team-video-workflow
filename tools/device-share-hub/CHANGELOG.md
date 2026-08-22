@@ -4,8 +4,10 @@
 
 - 清除 Android Manifest 中遗留的 `READ_MEDIA_IMAGES` 与 `READ_MEDIA_VISUAL_USER_SELECTED`；手机端没有自动截图采集、截图观察器或悬浮窗功能，不再为这条旧链路声明相册读取权限。
 - 保留 Android 10 隐藏作品兼容通道所需的旧存储权限声明与 SAF 文件夹授权；它只在用户主动选择作品文件夹后用于兼容导入，不读取系统剪切板或自动扫描截图。
-- Windows、Android、iPhone 版本同步提升为 `4.3.13`、`versionCode=78` / `versionName=0.6.40`、`0.6.27/build 46`；需以本次 GitHub Actions 云构建、Beta Release、AltStore Beta 源和真实设备安全扫描作为交付证据。
-- 本轮发布前先做本地权限/源码静态检查；真实 Android/iPhone/Windows 设备仍需连接后复测安装、权限列表、作品收发、P2P 和 HTTPS 中继回退。
+- Windows、Android、iPhone 版本同步提升为 `4.3.13`、`versionCode=78` / `versionName=0.6.40`、`0.6.27/build 46`；GitHub Actions Device Share Hub run `32559885341`、Secret scan `32559885315`、Repository quality `32559885563` 全部通过。
+- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1>；Android SHA-256：`f14d708707c8d1ed5be3ae81e0873f644ec5d30d2496592439a6898cba2d6faa`；iPhone IPA SHA-256：`98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`；Windows SHA-256：`994a20ecb0ef01f533bb99e71dfacf1d73886c019127e986ef5a54d48cbcff23`。
+- 桌面包已同步到 `C:\Users\z\Desktop`；AltStore Beta 源已更新为 iOS `0.6.27/build 46`，内容提交 `d64b3df036109a52fa62b1fc997cb938419d9b6e`。稳定 `latest.json` 仍保持 Android `0.6.29` / versionCode `67`、iPhone `0.6.16` / build `35`。
+- 真实 Android/iPhone/Windows 设备仍需连接后复测安装、权限列表、安全扫描、作品收发、P2P 和 HTTPS 中继回退；云构建和发布不替代真机业务验收。
 
 ## Beta：Windows V4.3.12 / Android 0.6.39 / iPhone 0.6.26 - 2026-08-22
 

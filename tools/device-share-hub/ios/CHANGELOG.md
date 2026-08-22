@@ -3,7 +3,8 @@
 ## 0.6.27 - 2026-08-22
 
 - 与 Android 0.6.40、Windows 4.3.13 同步发布；本轮主要收口 Android 遗留媒体权限，iOS 继续不声明相册读取权限，也不包含自动截图/自动剪切板链路。
-- 版本升级为 0.6.27/build 46；需要以同一轮 GitHub Actions 云构建、Beta 发布页和 AltStore Beta 源为准。
+- 版本升级为 0.6.27/build 46；GitHub Actions run `32559885341` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1>。
+- IPA SHA-256 为 `98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`；AltStore Beta 源已同步。
 - 实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
 
 ## 0.6.26 - 2026-08-22

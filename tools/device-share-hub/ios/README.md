@@ -12,7 +12,7 @@
 
 当前 Beta 发布页：
 
-`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1`
+`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1`
 
 每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载与工程版本对应的 `album-ios-altstore-v<版本>` artifact，解压得到：
 
@@ -21,7 +21,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-本次 Beta IPA 的 SHA-256 为 `189cd17b4904dd97b8fa750559fcb6eeabb018a3274c1367967c2534339b8506`；实体检查仍需在真实 iPhone 上完成。
+本次 Beta IPA 的 SHA-256 为 `98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`；实体检查仍需在真实 iPhone 上完成。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
