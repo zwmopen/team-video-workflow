@@ -8,6 +8,7 @@
 - 三端云构建包已同步到 C:\Users\z\Desktop；稳定 latest.json 仍保持 Android 0.6.29 / versionCode 67、iPhone 0.6.16 / build 35。真实 Android/iPhone/Windows 设备验收仍待连接，未使用本地 Android Gradle、Xcode 或 Windows 构建替代证据。
 - 工程门禁新增正式 Cloudflare Worker 线上 E2E；最新 run 32568228480 的 `remote-relay-live-e2e` job 97019921822 已验证中继控制面、P2P 信令、R2 临时对象和 ACK 删除，仍不替代实体手机跨网实传验收。
 - 校正 `docs/REMOTE_PROTOCOL_V1.md` 的过期状态，明确当前是公开作品 `plain` 链路、三端 P2P 数据面已接入、Cloudflare 已部署，且真机跨网验收仍是未完成项。
+- 新增云端隐私回归门禁：Android/iOS 构建前检查截图监听、悬浮窗、后台读剪切板和相册读取入口，APK 产物再检查已删除的高风险权限，防止旧功能回归。
 
 ## Beta：Windows V4.3.14 / Android 0.6.41 / iPhone 0.6.28 - 2026-08-22
 

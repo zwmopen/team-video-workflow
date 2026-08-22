@@ -137,6 +137,11 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Guard removed screenshot and automatic clipboard surfaces
+        run: node ../scripts/verify-removed-surfaces.mjs
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Install Gradle 9.4.1
         run: |
@@ -152,15 +157,22 @@ jobs:
           if [ "$build_status" -eq 0 ]; then
             apk="app/build/outputs/apk/release/app-release.apk"
             "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" >> /tmp/device-share-android-build.log 2>&1
-            if ! "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" | grep -q 'android.permission.REQUEST_INSTALL_PACKAGES'; then
+            permissions=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk")
+            if ! printf '%s\n' "$permissions" | grep -q 'android.permission.REQUEST_INSTALL_PACKAGES'; then
               echo "Release APK must declare REQUEST_INSTALL_PACKAGES for the verified app-owned installer" >> /tmp/device-share-android-build.log
               build_status=1
             fi
-            if ! "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" | grep -q 'android.permission.FOREGROUND_SERVICE_DATA_SYNC'; then
+            if ! printf '%s\n' "$permissions" | grep -q 'android.permission.FOREGROUND_SERVICE_DATA_SYNC'; then
               echo "Release APK must declare FOREGROUND_SERVICE_DATA_SYNC for the update service" >> /tmp/device-share-android-build.log
               build_status=1
             fi
-            if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$apk" | grep -q "uses-permission: name='android.permission.INSTALL_PACKAGES'"; then
+            for forbidden_permission in SYSTEM_ALERT_WINDOW READ_MEDIA_IMAGES READ_MEDIA_VIDEO READ_MEDIA_VISUAL_USER_SELECTED; do
+              if printf '%s\n' "$permissions" | grep -q "uses-permission: name='android.permission.$forbidden_permission'"; then
+                echo "Release APK must not declare removed privacy permission: $forbidden_permission" >> /tmp/device-share-android-build.log
+                build_status=1
+              fi
+            done
+            if printf '%s\n' "$permissions" | grep -q "uses-permission: name='android.permission.INSTALL_PACKAGES'"; then
               echo "Release APK must not declare privileged INSTALL_PACKAGES" >> /tmp/device-share-android-build.log
               build_status=1
             fi
@@ -219,6 +231,11 @@ jobs:
         working-directory: tools/device-share-hub/ios
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Guard removed screenshot and automatic clipboard surfaces
+        run: node ../scripts/verify-removed-surfaces.mjs
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
