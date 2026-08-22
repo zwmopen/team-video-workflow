@@ -285,6 +285,7 @@ public final class OnlineService extends Service {
                                     "session=" + id + " error=" + message);
                         }
                     });
+            if (engine == null) continue;
             p2pEngines.put(id, engine);
             DiagnosticLog.write(this, "p2p_session_accepted", "session=" + id);
         }

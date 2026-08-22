@@ -125,15 +125,22 @@ final class P2PTransferEngine {
                                     SignalTransport transport, Listener listener) {
         P2PTransferEngine engine = new P2PTransferEngine(context, p2p, transport, listener);
         engine.start();
-        return engine;
+        // A failure while creating the PeerConnection can finish the engine
+        // synchronously. Do not let the caller cache a dead session and block
+        // the next inbox poll from retrying it.
+        return engine.finished ? null : engine;
     }
 
     void cancel() {
-        executor.execute(() -> {
-            if (finished) return;
-            finished = true;
-            shutdown(true);
-        });
+        try {
+            executor.execute(() -> {
+                if (finished) return;
+                finished = true;
+                shutdown(true);
+            });
+        } catch (RuntimeException ignored) {
+            // The engine may already have shut down after a failed transfer.
+        }
     }
 
     private static PeerConnectionFactory factory(Context context) {
