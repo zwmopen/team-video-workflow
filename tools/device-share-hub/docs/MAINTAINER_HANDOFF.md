@@ -2,7 +2,7 @@
 
 ## 2026-08-23 远程更新包闭环候选
 
-- 候选版本：Android 0.6.52/versionCode 90、iPhone 0.6.39/build 58、Windows V4.3.28；APK 更新包已区分 android-update，安卓只有校验并写入更新缓存后才 ACK。
+- 候选版本：Android 0.6.53/versionCode 91、iPhone 0.6.40/build 59、Windows V4.3.29；APK 更新包已区分 android-update，安卓只有校验并写入更新缓存后才 ACK；USB 失败会清理暂存并自动降级到 Wi‑Fi/P2P/HTTPS。
 - Beta Windows 自动移动端更新索引改为 latest-beta.json；APK 自动更新跳过当前仅复制文件的 USB 分支，走同 Wi-Fi、P2P 或 HTTPS 中继。
 - 云端构建、发布索引和真实手机安装/P2P/中继/自动补发仍待本轮流水线及现场设备验收。
 

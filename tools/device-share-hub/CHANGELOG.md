@@ -1,5 +1,12 @@
 # 变更记录
 
+## Beta：Windows V4.3.29 / Android 0.6.53 / iPhone 0.6.40 - USB 失败自动降级
+
+- USB 传送失败后会先清理临时目录，再自动继续走同一 Wi‑Fi、P2P 直传和 HTTPS 中继；用户不需要手动重发。用户主动取消时仍立即停止，不会偷偷改走另一条通道。
+- 保留 USB 的事务性暂存与回滚，避免 USB 部分写入后产生重复作品；新增 USB 失败降级回归门禁。
+- 三端版本提升为 Windows V4.3.29、Android 0.6.53/versionCode 91、iPhone 0.6.40/build 59；本轮需要由 GitHub Actions 云端构建并更新 Beta 索引。
+- 真实 Android/iPhone 的 USB、同 Wi‑Fi、跨网 P2P、HTTPS 回退、作品库 ACK 和精准库存低于 5 自动补货仍必须现场验收。
+
 ## Beta：Windows V4.3.28 / Android 0.6.52 / iPhone 0.6.39 - 远程更新包与混合传输闭环
 
 - 安卓 APK 更新包现在明确标记为 android-update；Cloudflare 中继、Windows 原生 P2P 和安卓接收端统一传递并校验该类型，只有 APK 完成签名/版本校验并写入更新缓存后才发送 ACK。

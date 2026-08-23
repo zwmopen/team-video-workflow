@@ -1,6 +1,6 @@
-# 文件收发中控 V4.3.28 / Android 0.6.52 / iPhone 0.6.39（Beta）
+# 文件收发中控 V4.3.29 / Android 0.6.53 / iPhone 0.6.40（Beta）
 
-> 本轮候选为 Windows V4.3.28 / Android 0.6.52 / iPhone 0.6.39，需由云端流水线构建并发布 Beta。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；Beta 自动更新索引使用 latest-beta.json。
+> 本轮候选为 Windows V4.3.29 / Android 0.6.53 / iPhone 0.6.40，需由云端流水线构建并发布 Beta。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；Beta 自动更新索引使用 latest-beta.json。USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
 
 ## 更新通道
 

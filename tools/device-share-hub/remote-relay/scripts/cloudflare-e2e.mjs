@@ -167,7 +167,7 @@ const updateCreated = await request("/v1/transfers", "POST", adminSession.token,
   mode: "plain", contentKind: "android-update",
   recipientDeviceId: memberCertificate.deviceId,
   objects: [{ index: 0, bytes: update.byteLength, sha256: updateHash,
-    name: "album-Android-v0.6.52.apk", mime: "application/vnd.android.package-archive" }],
+    name: "album-Android-v0.6.53.apk", mime: "application/vnd.android.package-archive" }],
 }, 201);
 await fetch(`${endpoint}${updateCreated.uploads[0].path}`, {
   method: "PUT",
@@ -179,7 +179,7 @@ await request(`/v1/transfers/${updateCreated.transferId}/commit`, "POST", adminS
 const updateInbox = await request("/v1/inbox", "GET", memberSession.token);
 const updateTask = updateInbox.transfers.find((item) => item.transferId === updateCreated.transferId);
 if (!updateTask || updateTask.contentKind !== "android-update" ||
-    updateTask.objects[0]?.name !== "album-Android-v0.6.52.apk") {
+    updateTask.objects[0]?.name !== "album-Android-v0.6.53.apk") {
   throw new Error("线上收件箱没有正确标记 android-update APK 任务");
 }
 const updateAck = await request(`/v1/transfers/${updateCreated.transferId}/ack`, "POST", memberSession.token, {});

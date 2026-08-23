@@ -206,3 +206,7 @@
 - 新增快捷指令真机搭建与 iCloud 链接导出清单。
 
 测试状态：GitHub Actions 云端构建通过；实体 iPhone 功能按实际操作逐项记录。
+## Beta：iPhone 0.6.40/build 59 - USB 失败自动降级
+
+- 与 Windows V4.3.29、Android 0.6.53 同步版本；电脑端 USB 暂存失败后会自动继续 Wi‑Fi/P2P/HTTPS 传送，iPhone 接收端仍只对作品任务落库并 ACK。
+- GitHub Actions 云端构建和真实 iPhone USB/Wi‑Fi/P2P/HTTPS 验收分别记录，不能以编译成功替代实机证据。
