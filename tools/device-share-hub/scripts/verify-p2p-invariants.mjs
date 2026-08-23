@@ -39,6 +39,10 @@ requireText(windowsMain, "TryP2PTransfer", "Windows P2P route");
 requireText(windowsMain, "SendPlainTransfer", "Windows HTTPS fallback route");
 requireText(windowsMain, "if (!sent)", "Windows fallback failure gate");
 requireText(windowsMain, "wifi_upload_failed_fallback", "Windows Wi-Fi failure fallback");
+requireText(windowsMain, "usb_upload_failed_fallback", "Windows USB failure fallback");
+if (windowsMain.includes("为避免重复，不自动改用 Wi‑Fi")) {
+  throw new Error("USB failures must continue through the automatic fallback chain");
+}
 requireText(windowsMain, "!attemptedRemote && !gCancelRequested && device.remoteAllowed && device.remoteConnected",
   "Windows direct Wi-Fi to remote fallback gate");
 requireText(windowsP2P, "channel.reset()", "Windows P2P channel cleanup");

@@ -2,6 +2,14 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-068 USB 传送失败没有自动降级到其他通道（Windows V4.3.28，修复候选）
+
+- 现象：USB 连接短暂中断、手机 USB 文件服务拒绝或线缆异常时，电脑提示 USB 失败并直接结束，即使同一手机仍有 Wi‑Fi/P2P/远程中继可用，也要求用户手动重发。
+- 根因：`UploadToDevice` 的 USB `catch` 为避免重复直接重新抛出；但 Android WPD 和 iPhone House Arrest 实现都先写入临时目录，失败时会清理暂存，成功后才改名/提交，因此没有必要阻断后续通道。
+- 修复：USB 失败且不是用户取消时记录 `usb_upload_failed_fallback`，保留清理后的文件列表，继续使用统一的 Wi‑Fi → P2P → HTTPS 中继链路；用户取消仍立即终止。
+- 证据：新增 `verify-p2p-invariants.mjs` 与 `verify-auto-mobile-update.mjs` 断言；云端 Windows 编译和三端发布需由本轮 Actions 完成。当前电脑没有连接手机，真实 USB 回退仍待现场验证。
+- 回归要求：USB 成功只产生一次 USB 结果；USB 失败后的临时目录为空且只创建一次后续 Wi‑Fi/P2P/中继任务；P2P 失败后只创建一次 HTTPS 中继任务；用户取消不发生自动回退。
+
 ## DSH-066 生产工作区损坏成员记录导致远程设备列表 500（Worker，已修复并部署）
 
 - 现象：当前电脑通过 HTTPS 代理已能访问 Worker，但 `/v1/devices` 返回 HTTP 500，Windows 远程在线轮询无法继续；云端新鲜测试工作区不复现。
