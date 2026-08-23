@@ -38,6 +38,9 @@ requireText(windows, "closeSession", "Windows P2P session cleanup");
 requireText(windowsMain, "TryP2PTransfer", "Windows P2P route");
 requireText(windowsMain, "SendPlainTransfer", "Windows HTTPS fallback route");
 requireText(windowsMain, "if (!sent)", "Windows fallback failure gate");
+requireText(windowsMain, "wifi_upload_failed_fallback", "Windows Wi-Fi failure fallback");
+requireText(windowsMain, "!attemptedRemote && !gCancelRequested && device.remoteAllowed && device.remoteConnected",
+  "Windows direct Wi-Fi to remote fallback gate");
 requireText(windowsP2P, "channel.reset()", "Windows P2P channel cleanup");
 requireText(windowsP2P, "peer.reset()", "Windows P2P peer cleanup");
 requireText(windowsP2P, "std::memory_order_release", "Windows P2P closing callback guard");
