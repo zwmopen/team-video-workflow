@@ -6,6 +6,7 @@
 - Beta Windows 不再读取稳定版 latest.json，自动移动端更新改读 latest-beta.json；APK 不再走只复制文件的 USB 分支，避免误报“更新已送达”。
 - iOS 明确拒绝安卓更新包，不会把 APK 当成普通作品导入；普通作品仍保持 USB、同 Wi-Fi、P2P 优先、HTTPS 中继兜底。
 - 线上 Worker 已部署版本 `4feb3749-a8fd-4a20-a218-6cf5628b51fc`；真实线上 E2E 已覆盖健康检查、P2P 信令、普通作品 R2 闭环，以及 `android-update` P2P/收件箱/ACK 清理。
+- Windows 直连 Wi-Fi 发生端口、连接或提交错误时，现在会清理未完成的局域网任务并自动尝试 P2P，再回退到 HTTPS 中继；不再因为“发现了 Wi-Fi”就放弃远程兜底。
 - 本轮三端由 GitHub Actions 云端构建并发布 Beta；实体 Android/iPhone 的安装、P2P、HTTPS 回退和自动补货仍需现场验收。
 
 ## Beta：Windows V4.3.27 / Android 0.6.51 / iPhone 0.6.38 - 原生 P2P 数据面验收

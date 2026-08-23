@@ -2236,9 +2236,77 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
     PostProgress(0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
     std::vector<std::filesystem::path> temporaryArchives;
+    std::vector<TransferFingerprint> fingerprints;
     bool lanTaskCreated = false;
+    bool attemptedRemote = false;
+    auto clearTemporaryArchives = [&]() {
+        for (const auto& archive : temporaryArchives) {
+            std::error_code ignored;
+            std::filesystem::remove(archive, ignored);
+        }
+        std::error_code ignored;
+        std::filesystem::remove(
+            std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"),
+            ignored);
+    };
+    auto finishRemoteSuccess = [&]() {
+        gUploadInProgress = false;
+        gShellTransferActive = false;
+        gCancelRequested = false;
+        clearTemporaryArchives();
+    };
+    auto prepareTransferFiles = [&]() {
+        for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
+            auto& input = files[inputIndex];
+            if (std::filesystem::is_directory(input)) {
+                input = CreateFolderZip(input, taskId + L"-" + std::to_wstring(inputIndex));
+                temporaryArchives.push_back(input);
+            }
+        }
+    };
+    auto sendRemote = [&]() {
+        PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”…");
+        std::string transferId;
+        std::string relayError;
+        std::string p2pError;
+        if (remote_relay::TryP2PTransfer(
+                DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+                androidUpdate ? "android-update" : "work",
+                [&](uintmax_t done, uintmax_t total) {
+                    if (gCancelRequested) throw std::runtime_error("传送已取消");
+                    int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                    PostProgress(percent, true);
+                    PostStatus(L"正在 P2P 直传到 “" + device.name + L"”：" + std::to_wstring(percent) + L"%");
+                }, transferId, p2pError)) {
+            RecordSuccessfulTransfers(device, fingerprints, L"P2P直传");
+            WriteDiagnosticLog(L"p2p_upload_done", device.name + L" transfer=" + Utf8ToWide(transferId));
+            PostShellTransferNotice(L"已通过 P2P 直传到“" + device.name + L"”。", true);
+            PostProgress(100, true);
+            PostStatus(L"已通过 P2P 直传到 “" + device.name + L"”");
+            return true;
+        }
+        WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
+        PostStatus(L"P2P 直传未成功，自动切换远程中继…");
+        const bool sent = remote_relay::SendPlainTransfer(
+            DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
+            androidUpdate ? "android-update" : "work",
+            [&](uintmax_t done, uintmax_t total) {
+                if (gCancelRequested) throw std::runtime_error("传送已取消");
+                int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                PostProgress(percent, true);
+                PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”："
+                           + std::to_wstring(percent) + L"%");
+            }, transferId, relayError);
+        if (!sent) throw std::runtime_error(relayError.empty() ? "远程中继发送失败" : relayError);
+        RecordSuccessfulTransfers(device, fingerprints, L"远程中继");
+        WriteDiagnosticLog(L"remote_relay_upload_committed", device.name
+                           + L" transfer=" + Utf8ToWide(transferId));
+        PostShellTransferNotice(L"已提交到远程中继，手机收到后会自动写入作品库。", true);
+        PostProgress(100, true);
+        PostStatus(L"已通过远程中继发送到 “" + device.name + L"”，等待手机确认");
+        return true;
+    };
     try {
-        std::vector<TransferFingerprint> fingerprints;
         if (checkHistory) {
             fingerprints = CheckTransferHistory(device, files);
             files.clear();
@@ -2284,79 +2352,17 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
 
         const bool liveWifi = IsLiveWifiDevice(device, std::chrono::steady_clock::now());
         if (!liveWifi && device.remoteAllowed && device.remoteConnected) {
-            for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
-                auto& input = files[inputIndex];
-                if (std::filesystem::is_directory(input)) {
-                    input = CreateFolderZip(input, taskId + L"-remote-" + std::to_wstring(inputIndex));
-                    temporaryArchives.push_back(input);
-                }
-            }
-            PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”…");
-            std::string transferId;
-            std::string relayError;
-            std::string p2pError;
-            if (remote_relay::TryP2PTransfer(
-                    DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
-                    androidUpdate ? "android-update" : "work",
-                    [&](uintmax_t done, uintmax_t total) {
-                        if (gCancelRequested) throw std::runtime_error("传送已取消");
-                        int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
-                        PostProgress(percent, true);
-                        PostStatus(L"正在 P2P 直传到 “" + device.name + L"”：" + std::to_wstring(percent) + L"%");
-                    }, transferId, p2pError)) {
-                RecordSuccessfulTransfers(device, fingerprints, L"P2P直传");
-                WriteDiagnosticLog(L"p2p_upload_done", device.name + L" transfer=" + Utf8ToWide(transferId));
-                PostShellTransferNotice(L"已通过 P2P 直传到“" + device.name + L"”。", true);
-                PostProgress(100, true);
-                PostStatus(L"已通过 P2P 直传到 “" + device.name + L"”");
-                gUploadInProgress = false;
-                gShellTransferActive = false;
-                gCancelRequested = false;
-                for (const auto& archive : temporaryArchives) {
-                    std::error_code ignored;
-                    std::filesystem::remove(archive, ignored);
-                }
-                return true;
-            }
-            WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
-            PostStatus(L"P2P 直传未成功，自动切换远程中继…");
-            bool sent = remote_relay::SendPlainTransfer(
-                DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
-                androidUpdate ? "android-update" : "work",
-                [&](uintmax_t done, uintmax_t total) {
-                    if (gCancelRequested) throw std::runtime_error("传送已取消");
-                    int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
-                    PostProgress(percent, true);
-                    PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”："
-                               + std::to_wstring(percent) + L"%");
-                }, transferId, relayError);
-            if (!sent) throw std::runtime_error(relayError.empty() ? "远程中继发送失败" : relayError);
-            RecordSuccessfulTransfers(device, fingerprints, L"远程中继");
-            WriteDiagnosticLog(L"remote_relay_upload_committed", device.name
-                               + L" transfer=" + Utf8ToWide(transferId));
-            PostShellTransferNotice(L"已提交到远程中继，手机收到后会自动写入作品库。", true);
-            PostProgress(100, true);
-            PostStatus(L"已通过远程中继发送到 “" + device.name + L"”，等待手机确认");
-            gUploadInProgress = false;
-            gShellTransferActive = false;
-            gCancelRequested = false;
-            for (const auto& archive : temporaryArchives) {
-                std::error_code ignored;
-                std::filesystem::remove(archive, ignored);
-            }
+            prepareTransferFiles();
+            attemptedRemote = true;
+            sendRemote();
+            finishRemoteSuccess();
             return true;
         }
         if (!liveWifi) {
             throw std::runtime_error("这台设备当前没有打开可用的传送方式，请右键设备检查 USB、WiFi 或远程传送");
         }
 
-        for (size_t inputIndex = 0; inputIndex < files.size(); ++inputIndex) {
-            auto& input = files[inputIndex];
-            if (std::filesystem::is_directory(input)) {
-                input = CreateFolderZip(input, taskId + L"-" + std::to_wstring(inputIndex));
-                temporaryArchives.push_back(input);
-            }
-        }
+        prepareTransferFiles();
         uintmax_t totalBytes = 0;
         for (const auto& file : files) totalBytes += std::filesystem::file_size(file);
         std::wstring displayName = DisplayNameFor(device);
@@ -2403,8 +2409,6 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         PostProgress(100, true);
         PostStatus(L"已传送到 “" + device.name + L"” 的接收文件夹");
     } catch (const std::exception& error) {
-        WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
-        PostShellTransferNotice(L"传送失败：" + Utf8ToWide(error.what()), false);
         if (lanTaskCreated && !device.ip.empty() && device.wifiAllowed) {
             try {
                 HttpClient cleanup(device.ip, device.port);
@@ -2414,18 +2418,30 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 WriteDiagnosticLog(L"upload_cancel_failed", taskId);
             }
         }
+        if (!attemptedRemote && !gCancelRequested && device.remoteAllowed && device.remoteConnected) {
+            attemptedRemote = true;
+            WriteDiagnosticLog(L"wifi_upload_failed_fallback", device.name
+                               + L" error=" + Utf8ToWide(error.what()));
+            PostStatus(L"Wi-Fi 直传失败，自动切换 P2P/远程中继…");
+            try {
+                prepareTransferFiles();
+                sendRemote();
+                finishRemoteSuccess();
+                return true;
+            } catch (const std::exception& fallbackError) {
+                WriteDiagnosticLog(L"remote_fallback_failed", device.name
+                                   + L" error=" + Utf8ToWide(fallbackError.what()));
+            }
+        }
+        WriteDiagnosticLog(L"upload_failed", Utf8ToWide(error.what()));
+        PostShellTransferNotice(L"传送失败：" + Utf8ToWide(error.what()), false);
         PostProgress(0, false);
         PostStatus(L"传送失败：" + Utf8ToWide(error.what()));
     }
     gUploadInProgress = false;
     gShellTransferActive = false;
     gCancelRequested = false;
-    for (const auto& archive : temporaryArchives) {
-        std::error_code ignored;
-        std::filesystem::remove(archive, ignored);
-    }
-    std::error_code ignored;
-    std::filesystem::remove(std::filesystem::temp_directory_path() / (L"album-folder-" + taskId + L".zip"), ignored);
+    clearTemporaryArchives();
     return transferSucceeded;
 }
 
