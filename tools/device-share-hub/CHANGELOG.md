@@ -5,7 +5,8 @@
 - 安卓 APK 更新包现在明确标记为 android-update；Cloudflare 中继、Windows 原生 P2P 和安卓接收端统一传递并校验该类型，只有 APK 完成签名/版本校验并写入更新缓存后才发送 ACK。
 - Beta Windows 不再读取稳定版 latest.json，自动移动端更新改读 latest-beta.json；APK 不再走只复制文件的 USB 分支，避免误报“更新已送达”。
 - iOS 明确拒绝安卓更新包，不会把 APK 当成普通作品导入；普通作品仍保持 USB、同 Wi-Fi、P2P 优先、HTTPS 中继兜底。
-- 本轮需由 GitHub Actions 云端构建并发布三端 Beta；实体 Android/iPhone 的安装、P2P、HTTPS 回退和自动补货仍需现场验收。
+- 线上 Worker 已部署版本 `4feb3749-a8fd-4a20-a218-6cf5628b51fc`；真实线上 E2E 已覆盖健康检查、P2P 信令、普通作品 R2 闭环，以及 `android-update` P2P/收件箱/ACK 清理。
+- 本轮三端由 GitHub Actions 云端构建并发布 Beta；实体 Android/iPhone 的安装、P2P、HTTPS 回退和自动补货仍需现场验收。
 
 ## Beta：Windows V4.3.27 / Android 0.6.51 / iPhone 0.6.38 - 原生 P2P 数据面验收
 

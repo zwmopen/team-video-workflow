@@ -151,10 +151,47 @@ const afterAck = await fetch(`${endpoint}/v1/transfers/${created.transferId}/obj
 });
 if (afterAck.status === 200) throw new Error("ACK 后 R2 对象仍可下载");
 
+const updateP2P = (await request("/v1/p2p/sessions", "POST", adminSession.token, {
+  recipientDeviceId: memberCertificate.deviceId,
+  contentKind: "android-update",
+  protocol: "webrtc-datachannel-v1",
+}, 201)).p2p;
+if (updateP2P.contentKind !== "android-update") {
+  throw new Error("线上 P2P 会话没有保留 android-update 内容类型");
+}
+await request(`/v1/p2p/sessions/${updateP2P.sessionId}/close`, "POST", adminSession.token, {});
+
+const update = new TextEncoder().encode("synthetic-apk-for-cloudflare-e2e");
+const updateHash = await sha256(update);
+const updateCreated = await request("/v1/transfers", "POST", adminSession.token, {
+  mode: "plain", contentKind: "android-update",
+  recipientDeviceId: memberCertificate.deviceId,
+  objects: [{ index: 0, bytes: update.byteLength, sha256: updateHash,
+    name: "album-Android-v0.6.52.apk", mime: "application/vnd.android.package-archive" }],
+}, 201);
+await fetch(`${endpoint}${updateCreated.uploads[0].path}`, {
+  method: "PUT",
+  headers: { Authorization: `Bearer ${adminSession.token}`,
+    "X-Workspace-Id": workspaceHeader, "Content-Type": "application/octet-stream" },
+  body: Buffer.from(update),
+});
+await request(`/v1/transfers/${updateCreated.transferId}/commit`, "POST", adminSession.token, {});
+const updateInbox = await request("/v1/inbox", "GET", memberSession.token);
+const updateTask = updateInbox.transfers.find((item) => item.transferId === updateCreated.transferId);
+if (!updateTask || updateTask.contentKind !== "android-update" ||
+    updateTask.objects[0]?.name !== "album-Android-v0.6.52.apk") {
+  throw new Error("线上收件箱没有正确标记 android-update APK 任务");
+}
+const updateAck = await request(`/v1/transfers/${updateCreated.transferId}/ack`, "POST", memberSession.token, {});
+if (updateAck.status !== "completed" || updateAck.objectsDeleted !== true) {
+  throw new Error("android-update ACK 没有完成清理");
+}
+
 console.log(JSON.stringify({
   ok: true, endpoint, protocol: "plain",
   workspaceId: workspace, transferId: created.transferId,
   stages: ["health", "workspace-register", "admin-session", "member-session",
     "presence", "p2p-offer", "p2p-answer", "p2p-close", "inbox", "r2-upload",
-    "commit", "download-sha256", "ack", "r2-delete"],
+    "commit", "download-sha256", "ack", "r2-delete", "android-update-p2p",
+    "android-update-inbox", "android-update-ack"],
 }, null, 2));
