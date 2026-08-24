@@ -1,10 +1,11 @@
 # 变更记录
 
-## 0.6.54 / iPhone 0.6.41 - 2026-08-24（待云端构建）
+## 0.6.54 / iPhone 0.6.41 - 2026-08-24（已发布 Beta）
 
 - Android 接收端在最终 commit 失败后清理临时任务并恢复在线，避免卡在“接收中”导致电脑端永不重试。
 - iPhone 预览页增加确认删除按钮，修复预览计数；长按图片进入多选时避免普通点击抢占。
-- 候选版本仅代表源码待构建；稳定版索引和真实设备安装状态以云端构建、发布和手机验收为准。
+- Device Share Hub run `32688671241` 的三端构建、中继 E2E 和发布校验全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.54-beta.1>。
+- 稳定版索引保持 Android 0.6.29 / iPhone 0.6.16；真实设备安装和自动补货仍需手机现场验收。
 
 ## Beta：Windows V4.3.29 / Android 0.6.53 / iPhone 0.6.40 - USB 失败自动降级
 
