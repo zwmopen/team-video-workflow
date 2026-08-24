@@ -29,6 +29,14 @@ public class OnlineServiceTaskExpiryTest {
     }
 
     @Test
+    public void onlyFinalCommitRequestsResetAFailedReceiveTask() {
+        assertTrue(OnlineService.isCommitPath("POST", "/v2/tasks/batch-123/commit"));
+        assertFalse(OnlineService.isCommitPath("PUT", "/v2/tasks/batch-123/commit"));
+        assertFalse(OnlineService.isCommitPath("POST", "/v2/tasks/batch-123/files/0"));
+        assertFalse(OnlineService.isCommitPath("POST", "/v2/tasks//commit"));
+    }
+
+    @Test
     public void relayRetryAfterP2PImportOnlyRepairsAck() {
         assertTrue(OnlineService.shouldImportRemoteTask(false));
         assertFalse(OnlineService.shouldImportRemoteTask(true));

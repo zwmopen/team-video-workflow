@@ -2,13 +2,14 @@ import UIKit
 import ImageIO
 import QuickLook
 
-final class WorkDetailViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+final class WorkDetailViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
     private let library: WorkLibrary
     private var work: WorkItem
     private var selected = Set<URL>()
     private var attachments: [URL] = []
     private var collection: UICollectionView!
     private let actions = UIStackView()
+    private var suppressNextSelection = false
 
     init(library: WorkLibrary, work: WorkItem) {
         self.library = library; self.work = work
@@ -28,9 +29,14 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         layout.sectionInset = UIEdgeInsets(top: 12, left: 16, bottom: 18, right: 16)
         collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.backgroundColor = .clear; collection.dataSource = self; collection.delegate = self
+        collection.allowsMultipleSelection = true
         collection.register(WorkImageCell.self, forCellWithReuseIdentifier: "image")
         collection.translatesAutoresizingMaskIntoConstraints = false
-        collection.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:))))
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:)))
+        longPress.minimumPressDuration = 0.35
+        longPress.cancelsTouchesInView = false
+        longPress.delegate = self
+        collection.addGestureRecognizer(longPress)
         view.addSubview(collection)
 
         actions.axis = .horizontal; actions.spacing = 8; actions.distribution = .fillEqually
@@ -96,12 +102,18 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        if suppressNextSelection {
+            suppressNextSelection = false
+            return
+        }
         if indexPath.item == 0 { copyText(); return }
         if indexPath.item <= work.imageURLs.count {
             let url = work.imageURLs[indexPath.item - 1]
             if selected.isEmpty {
                 navigationController?.pushViewController(
-                    ImagePreviewController(urls: work.imageURLs, initialIndex: indexPath.item - 1),
+                    ImagePreviewController(urls: work.imageURLs, initialIndex: indexPath.item - 1) { [weak self] url in
+                        self?.deletePreviewImage(url) ?? "作品已关闭，无法删除图片。"
+                    },
                     animated: true)
             }
             else { toggle(url) }
@@ -120,9 +132,16 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     }
 
     @objc private func longPressed(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began, let index = collection.indexPathForItem(at: gesture.location(in: collection)),
+        guard gesture.state == .began else { return }
+        guard let index = collection.indexPathForItem(at: gesture.location(in: collection)),
               index.item > 0, index.item <= work.imageURLs.count else { return }
+        suppressNextSelection = true
         toggle(work.imageURLs[index.item - 1])
+        DispatchQueue.main.async { [weak self] in self?.suppressNextSelection = false }
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
     }
     private func toggle(_ url: URL) {
         if selected.contains(url) { selected.remove(url) } else { selected.insert(url) }
@@ -171,6 +190,14 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             catch { self.showToast(error.localizedDescription) }
         })
         present(alert, animated: true)
+    }
+    private func deletePreviewImage(_ url: URL) -> String? {
+        do {
+            _ = try library.moveImagesToTrash(work, images: [url])
+            selected.remove(url)
+            render()
+            return nil
+        } catch { return error.localizedDescription }
     }
     @objc private func restoreImages() {
         do { let count = try library.restoreAllImages(work); render(); showToast("已恢复 \(count) 张") }
@@ -245,19 +272,23 @@ private final class WorkImageCell: UICollectionViewCell {
 private final class ImagePreviewController: UIViewController, UIScrollViewDelegate {
     private let urls: [URL]
     private let initialIndex: Int
+    private let onDelete: (URL) -> String?
     private let scrollView = UIScrollView()
     private let counter = UILabel()
     private var didSetInitialOffset = false
 
-    init(urls: [URL], initialIndex: Int) {
+    init(urls: [URL], initialIndex: Int, onDelete: @escaping (URL) -> String?) {
         self.urls = urls
         self.initialIndex = max(0, min(initialIndex, max(0, urls.count - 1)))
+        self.onDelete = onDelete
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "删除", style: .plain,
+                                                             target: self, action: #selector(deleteTapped))
         scrollView.backgroundColor = .black
         scrollView.isPagingEnabled = true
         scrollView.showsHorizontalScrollIndicator = false
@@ -320,8 +351,29 @@ private final class ImagePreviewController: UIViewController, UIScrollViewDelega
         guard !urls.isEmpty else { return }
         let width = max(scrollView.bounds.width, 1)
         let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
-        counter.text = "(index + 1) / (urls.count)"
+        counter.text = "\(index + 1) / \(urls.count)"
         navigationItem.title = "预览"
+    }
+
+    @objc private func deleteTapped() {
+        guard !urls.isEmpty else { return }
+        let width = max(scrollView.bounds.width, 1)
+        let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
+        let alert = UIAlertController(title: "删除这张图片？",
+                                      message: "图片会移到本作品的图片回收站，保留 7 天。",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            if let error = self.onDelete(self.urls[index]) {
+                let failure = UIAlertController(title: "删除失败", message: error, preferredStyle: .alert)
+                failure.addAction(UIAlertAction(title: "知道了", style: .default))
+                self.present(failure, animated: true)
+            } else {
+                self.navigationController?.popViewController(animated: true)
+            }
+        })
+        present(alert, animated: true)
     }
 }
 

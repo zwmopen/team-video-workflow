@@ -519,12 +519,57 @@ public final class OnlineService extends Service {
         }
     }
 
+    /** Only a failed final commit is terminal for the temporary receive task. */
+    static boolean isCommitPath(String method, String path) {
+        if (!"POST".equalsIgnoreCase(String.valueOf(method)) || path == null) return false;
+        String[] parts = path.split("/");
+        return parts.length == 5
+                && "v2".equals(parts[1])
+                && "tasks".equals(parts[2])
+                && !parts[3].isEmpty()
+                && "commit".equals(parts[4]);
+    }
+
+    private static String commitTaskId(String path) {
+        if (!isCommitPath("POST", path)) return "";
+        return path.split("/")[3];
+    }
+
+    /**
+     * A commit can fail after all bytes are uploaded (for example a stale
+     * work-library entry has no meta.properties).  Do not leave the receiver
+     * stuck in "receiving"; clear only this failed temporary task and never
+     * touch the durable work-library.
+     */
+    private void resetFailedCommitTask(String taskId, String detail) {
+        if (taskId == null || taskId.isEmpty()) return;
+        IncomingTask failed = null;
+        synchronized (taskLock) {
+            if (activeTask != null && taskId.equals(activeTask.id)) {
+                failed = activeTask;
+                activeTask = null;
+                currentTaskId = "";
+                state = "online";
+            }
+        }
+        if (failed == null) return;
+        deleteRecursively(failed.dir);
+        cancelTransferProgressNotification();
+        String reason = compact(detail);
+        DiagnosticLog.write(this, "commit_task_reset", taskId + (reason.isEmpty() ? "" : " " + reason));
+        notifyStatus("接收提交失败，临时文件已清理，可以重新发送");
+        notifyTransferEvent("接收失败后已复位", "临时传输任务已清理，设备已恢复空闲", 3404, null);
+        OperationLog.add(this, "接收任务已复位", "已清理失败任务 " + taskId);
+        requestImmediateBeacon(this);
+    }
+
     private void handleHttp(Socket socket) {
         try (Socket client = socket;
              BufferedInputStream input = new BufferedInputStream(client.getInputStream());
              BufferedOutputStream output = new BufferedOutputStream(client.getOutputStream())) {
+            HttpRequest request = null;
             try {
-                HttpRequest request = HttpRequest.read(input);
+                request = HttpRequest.read(input);
                 DiagnosticLog.write(this, "http_request", request.method + " " + request.path + " bytes=" + request.contentLength);
                 if ("GET".equals(request.method) && "/v2/info".equals(request.path)) {
                     writeJson(output, 200, deviceInfo());
@@ -558,6 +603,9 @@ public final class OnlineService extends Service {
                 }
                 writeText(output, 404, "Not Found");
             } catch (HttpError error) {
+                if (request != null && isCommitPath(request.method, request.path)) {
+                    resetFailedCommitTask(commitTaskId(request.path), error.getMessage());
+                }
                 DiagnosticLog.write(this, "http_error", error.code + " " + compact(error.getMessage()));
                 String message = "接收失败：" + compact(error.getMessage());
                 notifyStatus(message);
@@ -566,6 +614,9 @@ public final class OnlineService extends Service {
                 OperationLog.add(this, "接收失败", compact(error.getMessage()));
                 writeText(output, error.code, error.getMessage());
             } catch (Exception error) {
+                if (request != null && isCommitPath(request.method, request.path)) {
+                    resetFailedCommitTask(commitTaskId(request.path), error.getMessage());
+                }
                 Log.w(TAG, "request failed", error);
                 DiagnosticLog.write(this, "request_failed", compact(error.getMessage()));
                 String message = "接收失败：" + compact(error.getMessage());
