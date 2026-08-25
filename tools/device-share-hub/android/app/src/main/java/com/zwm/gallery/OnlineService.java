@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.Context;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.VibrationEffect;
@@ -107,8 +108,11 @@ public final class OnlineService extends Service {
     private volatile String currentTaskId = "";
     private volatile ServerSocket serverSocket;
     private volatile DatagramSocket discoverySocket;
+    private volatile boolean httpLoopActive;
+    private volatile boolean discoveryLoopActive;
     private volatile boolean beaconRequested;
     private boolean discoveryRecovering;
+    private WifiManager.MulticastLock multicastLock;
     private final Object taskLock = new Object();
     private IncomingTask activeTask;
 
@@ -200,12 +204,9 @@ public final class OnlineService extends Service {
         }
         startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
         DiagnosticLog.write(this, "service_start", "receiver foreground service started");
+        acquireMulticastLock();
         requestExecutor.execute(this::runCleanup);
-        if (!running) {
-            running = true;
-            serviceExecutor.execute(this::httpLoop);
-            serviceExecutor.execute(this::discoveryLoop);
-        }
+        ensureNetworkLoops();
         notifyStatus("局域网接收已开启，等待电脑自动发现");
         if (ACTION_REFRESH_STATUS.equals(action)) beaconRequested = true;
         return START_STICKY;
@@ -448,6 +449,7 @@ public final class OnlineService extends Service {
         for (P2PTransferEngine engine : p2pEngines.values()) engine.cancel();
         p2pEngines.clear();
         closeSockets();
+        releaseMulticastLock();
         serviceExecutor.shutdownNow();
         requestExecutor.shutdownNow();
         cleanupExecutor.shutdownNow();
@@ -482,8 +484,59 @@ public final class OnlineService extends Service {
     private void stopReceiver() {
         running = false;
         closeSockets();
+        releaseMulticastLock();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
+    }
+
+    /**
+     * Some Android Wi-Fi drivers (notably older Xiaomi builds) filter LAN
+     * discovery traffic while the app is not holding a multicast lock. The
+     * receiver uses UDP broadcast rather than multicast, but the same driver
+     * power-saving gate can affect the socket. Keep the lock only while this
+     * long-running foreground receiver is enabled.
+     */
+    private void acquireMulticastLock() {
+        if (multicastLock != null && multicastLock.isHeld()) return;
+        try {
+            WifiManager manager = (WifiManager) getApplicationContext()
+                    .getSystemService(Context.WIFI_SERVICE);
+            if (manager == null) return;
+            WifiManager.MulticastLock lock = manager.createMulticastLock("zwm-device-share-discovery");
+            lock.setReferenceCounted(false);
+            lock.acquire();
+            multicastLock = lock;
+            DiagnosticLog.write(this, "wifi_multicast_lock_acquired", "discovery socket protected");
+        } catch (Exception error) {
+            // The LAN receiver remains usable without the lock on platforms
+            // that do not expose Wi-Fi multicast control.
+            DiagnosticLog.write(this, "wifi_multicast_lock_unavailable",
+                    error.getClass().getSimpleName());
+        }
+    }
+
+    private void releaseMulticastLock() {
+        WifiManager.MulticastLock lock = multicastLock;
+        multicastLock = null;
+        if (lock == null) return;
+        try {
+            if (lock.isHeld()) lock.release();
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "wifi_multicast_lock_release_failed",
+                    error.getClass().getSimpleName());
+        }
+    }
+
+    private synchronized void ensureNetworkLoops() {
+        running = true;
+        if (!httpLoopActive) {
+            httpLoopActive = true;
+            serviceExecutor.execute(this::httpLoop);
+        }
+        if (!discoveryLoopActive) {
+            discoveryLoopActive = true;
+            serviceExecutor.execute(this::discoveryLoop);
+        }
     }
 
     private void closeSockets() {
@@ -516,6 +569,7 @@ public final class OnlineService extends Service {
             notifyStatus("接收端口启动失败：" + compact(error.getMessage()));
         } finally {
             serverSocket = null;
+            httpLoopActive = false;
         }
     }
 
@@ -1150,16 +1204,26 @@ public final class OnlineService extends Service {
                 .put("state", state)
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
-        JSONObject relayKeys = RemoteIdentity.publicKeys(this);
-        JSONObject signingKey = relayKeys.getJSONObject("signingPublicKey");
-        JSONObject agreementKey = relayKeys.getJSONObject("agreementPublicKey");
-        // Flatten the public JWK coordinates for the Windows native client. No
-        // private key material ever leaves Android Keystore.
-        info.put("relaySigningX", signingKey.getString("x"))
-                .put("relaySigningY", signingKey.getString("y"))
-                .put("relayAgreementX", agreementKey.getString("x"))
-                .put("relayAgreementY", agreementKey.getString("y"))
-                .put("relayEnabled", true);
+        try {
+            JSONObject relayKeys = RemoteIdentity.publicKeys(this);
+            JSONObject signingKey = relayKeys.getJSONObject("signingPublicKey");
+            JSONObject agreementKey = relayKeys.getJSONObject("agreementPublicKey");
+            // Flatten the public JWK coordinates for the Windows native client. No
+            // private key material ever leaves Android Keystore.
+            info.put("relaySigningX", signingKey.getString("x"))
+                    .put("relaySigningY", signingKey.getString("y"))
+                    .put("relayAgreementX", agreementKey.getString("x"))
+                    .put("relayAgreementY", agreementKey.getString("y"))
+                    .put("relayEnabled", true);
+        } catch (Exception error) {
+            // LAN discovery and the local HTTP receiver must not depend on the
+            // optional Cloudflare relay identity. Android 10 devices with an
+            // OEM Keystore may reject PURPOSE_AGREE_KEY (64); advertise the
+            // device locally and keep only relay transport disabled.
+            DiagnosticLog.write(this, "relay_identity_unavailable",
+                    error.getClass().getSimpleName() + ":" + compact(error.getMessage()));
+            info.put("relayEnabled", false);
+        }
         if (workCounts != null) info.put("workCounts", workCounts);
         return info;
     }
@@ -1289,11 +1353,15 @@ public final class OnlineService extends Service {
     }
 
     private void discoveryLoop() {
-        DiscoveryRecovery.run(
-                () -> running,
-                this::runDiscoverySession,
-                this::handleDiscoveryFailure,
-                Thread::sleep);
+        try {
+            DiscoveryRecovery.run(
+                    () -> running,
+                    this::runDiscoverySession,
+                    this::handleDiscoveryFailure,
+                    Thread::sleep);
+        } finally {
+            discoveryLoopActive = false;
+        }
     }
 
     private void runDiscoverySession() throws Exception {
@@ -1448,13 +1516,42 @@ public final class OnlineService extends Service {
             for (NetworkInterface network : Collections.list(interfaces)) {
                 if (!network.isUp() || network.isLoopback()) continue;
                 for (InterfaceAddress address : network.getInterfaceAddresses()) {
-                    if (address.getBroadcast() != null) result.add(address.getBroadcast());
+                    InetAddress broadcast = address.getBroadcast();
+                    if (broadcast == null) {
+                        byte[] local = address.getAddress() == null
+                                ? null : address.getAddress().getAddress();
+                        byte[] calculated = ipv4Broadcast(local, address.getNetworkPrefixLength());
+                        if (calculated != null) {
+                            try { broadcast = InetAddress.getByAddress(calculated); }
+                            catch (Exception ignored) { }
+                        }
+                    }
+                    if (broadcast != null) result.add(broadcast);
                 }
             }
         } catch (Exception ignored) {
         }
         try { result.add(InetAddress.getByName("255.255.255.255")); } catch (Exception ignored) { }
         return result;
+    }
+
+    /** Pure helper kept package-visible so discovery fallback remains testable. */
+    static byte[] ipv4Broadcast(byte[] local, int prefixLength) {
+        if (local == null || local.length != 4 || prefixLength < 0 || prefixLength > 32) {
+            return null;
+        }
+        int address = ((local[0] & 0xff) << 24)
+                | ((local[1] & 0xff) << 16)
+                | ((local[2] & 0xff) << 8)
+                | (local[3] & 0xff);
+        int mask = prefixLength == 0 ? 0 : -1 << (32 - prefixLength);
+        int broadcast = address | ~mask;
+        return new byte[]{
+                (byte) (broadcast >>> 24),
+                (byte) (broadcast >>> 16),
+                (byte) (broadcast >>> 8),
+                (byte) broadcast
+        };
     }
 
     private String transportFor(InetAddress remote) {

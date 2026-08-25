@@ -1,5 +1,18 @@
 # 变更记录
 
+## 修复候选：Android 0.6.57 - Android 10 Keystore 不阻断局域网在线
+
+- 修复 Redmi Note 8 / Android 10 实测的 `Unknown purpose: 64`：旧款 OEM Keystore 不支持远程中继 ECDH 密钥用途时，不能再阻断 `deviceInfo()`。
+- 局域网 UDP 发现和本地 HTTP 接收现在会正常上报；仅将可选 Cloudflare 中继标记为不可用，等后续设备支持时再启用，不影响同 Wi‑Fi 传输。
+- versionCode 95 / versionName 0.6.57；已在目标 Redmi Note 8（Android 10）覆盖安装并实测闭环：工作台 UDP 发现成功、HTTP 45833 `/v2/info` 成功、状态 `online`、原作品库存 `2` 正常上报；该机仅 `relayEnabled=false`，不影响局域网传输。
+
+## 修复候选：Android 0.6.56 - Note 8 局域网发现与接收服务自恢复
+
+- Android 接收端持有 Wi-Fi 多播锁，兼容部分旧款小米系统对局域网发现包的省电过滤；停止服务时释放锁，不改变作品数据和传输协议。
+- 发现广播在系统未返回接口广播地址时按 IPv4 网段补算广播地址，并保留 `255.255.255.255` 兜底。
+- HTTP 接收线程和 UDP 发现线程分别记录运行状态；任一线程瞬时失败后，下一次前台刷新可以只恢复缺失线程，不再因总服务仍标记运行而永久离线。
+- versionCode 94 / versionName 0.6.56；本地源码修复候选，尚未发布 Beta，需构建与 Redmi Note 8 真机回归后再发布。
+
 ## Beta：Android 0.6.55 - 断点接收提交容错
 
 - 修复自动补发 ZIP 已上传完成、提交阶段却因 `trash/<id>/meta.properties` 残留目录返回 500 的问题；作品库现在会安全跳过确认已孤立的回收目录，不删除目录、不影响正常作品。

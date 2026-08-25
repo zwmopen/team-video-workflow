@@ -1270,7 +1270,16 @@ public final class MainActivity extends Activity {
 
     private void startReceiver() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("serviceEnabled", true).apply();
-        startForegroundService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
+        Intent intent = new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START);
+        try {
+            startForegroundService(intent);
+        } catch (IllegalStateException | SecurityException error) {
+            // MIUI/Android may defer a foreground-service start during the
+            // activity launch transition. Do not crash the receiver UI; the
+            // onResume refresh path retries once the activity is foreground.
+            DiagnosticLog.write(this, "service_start_deferred",
+                    error.getClass().getSimpleName() + ":" + String.valueOf(error.getMessage()));
+        }
     }
 
     private void ensureDeviceId() {

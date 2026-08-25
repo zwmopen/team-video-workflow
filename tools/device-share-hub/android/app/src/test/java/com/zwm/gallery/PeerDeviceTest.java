@@ -3,7 +3,9 @@ package com.zwm.gallery;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public final class PeerDeviceTest {
@@ -38,5 +40,13 @@ public final class PeerDeviceTest {
         assertFalse(OnlineService.sameSubnet(
                 new byte[]{(byte) 192, (byte) 168, 42, (byte) 129},
                 new byte[]{(byte) 192, (byte) 168, 43, 2}, 24));
+    }
+
+    @Test public void discoveryCalculatesBroadcastWhenAndroidOmitsIt() {
+        assertArrayEquals(new byte[]{(byte) 192, (byte) 168, 1, (byte) 255},
+                OnlineService.ipv4Broadcast(new byte[]{(byte) 192, (byte) 168, 1, 42}, 24));
+        assertArrayEquals(new byte[]{(byte) 192, (byte) 168, 1, 42},
+                OnlineService.ipv4Broadcast(new byte[]{(byte) 192, (byte) 168, 1, 42}, 32));
+        assertNull(OnlineService.ipv4Broadcast(new byte[]{127, 0, 0}, 8));
     }
 }
