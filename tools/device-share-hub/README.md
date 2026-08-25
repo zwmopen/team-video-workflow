@@ -1,6 +1,6 @@
-# 文件收发中控 V4.3.29 / Android 0.6.55 / iPhone 0.6.40（Beta）
+# 文件收发中控 V4.3.29 / Android 0.6.55 / iPhone 0.6.41（Beta 已发布）
 
-> 本轮由 GitHub Actions run `32803292676` 构建通过，待发布 Beta。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；Beta 自动更新索引使用 latest-beta.json。USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
+> 本轮由 GitHub Actions run `32804219391` 完成三端构建、远程中继 E2E 和 Beta 发布。Android 0.6.55/versionCode 93、iPhone 0.6.41/build 60 已写入 `latest-beta.json` 和 AltStore Beta 源。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
 
 本轮修复 Android 孤立回收目录导致的提交 500；真实红米 13 安装 0.6.55 后，还需用同一断点任务验收落库与自动补发。
 

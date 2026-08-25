@@ -2,9 +2,9 @@
 
 ## 2026-08-24 Android 断点接收提交修复候选
 
-- 候选版本：Android 0.6.55/versionCode 93；修复回收目录缺失 `meta.properties` 导致 ZIP 提交 500，并在发送端复用同一断点任务的接收端文件名。
-- 代码回归：传输端 `38 passed`；Android 端新增孤立回收目录重启回归。当前机器没有 Gradle Wrapper/本地 Gradle，尚未生成或安装 APK。
-- 发布前必须由云端构建 Android Release，核对 versionCode 93、签名与 SHA-256；安装到红米 13 后继续当前同一任务，确认收到作品且不重复。
+- 已发布 Beta：Android 0.6.55/versionCode 93；修复回收目录缺失 `meta.properties` 导致 ZIP 提交 500，并在发送端复用同一断点任务的接收端文件名。
+- 代码回归：传输端 `38 passed`；Android 端新增孤立回收目录重启回归。GitHub Actions run `32804219391` 的 Android/iOS/Windows、远程中继 E2E 和发布校验全部通过。
+- 已核对 Android SHA-256 `45fe9f706e428f4eec16e2ed0d3ffc7d0792aed6cae18abd12eb62e3598e797b`；真实红米 13 仍是 0.6.54/code92，安装 0.6.55 后需继续当前同一任务，确认收到作品、落库、ACK 且不重复。
 
 ## 2026-08-23 远程更新包闭环候选
 
