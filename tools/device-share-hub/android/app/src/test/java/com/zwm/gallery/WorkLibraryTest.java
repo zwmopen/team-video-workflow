@@ -43,6 +43,21 @@ public final class WorkLibraryTest {
     }
 
     @Test
+    public void orphanTrashDirectoryDoesNotBlockLibraryReopen() throws Exception {
+        File libraryRoot = temporary.newFolder("orphan-trash-library");
+        WorkLibrary library = new WorkLibrary(libraryRoot);
+        File orphan = new File(libraryRoot, "trash/lark-b766bdce");
+        assertTrue(orphan.mkdirs());
+        Files.write(new File(orphan, "partial.bin").toPath(),
+                "incomplete transfer".getBytes(StandardCharsets.UTF_8));
+
+        WorkLibrary reopened = new WorkLibrary(libraryRoot);
+
+        assertTrue(reopened.listTrash().isEmpty());
+        assertTrue(orphan.isDirectory());
+    }
+
+    @Test
     public void importDropsByteIdenticalImagesWithDifferentNames() throws Exception {
         File source = temporary.newFolder("duplicate-images");
         File first = write(source, "1.png", "same");

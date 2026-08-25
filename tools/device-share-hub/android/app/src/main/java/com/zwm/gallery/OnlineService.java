@@ -1141,6 +1141,7 @@ public final class OnlineService extends Service {
                 .put("deviceId", prefs.getString("deviceId", ""))
                 .put("name", prefs.getString("deviceName", Build.MANUFACTURER + " " + Build.MODEL))
                 .put("model", Build.MANUFACTURER + " " + Build.MODEL)
+                .put("packageName", getPackageName())
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("appVersion", installedVersion())
                 .put("versionCode", installedVersionCode())
@@ -1266,6 +1267,8 @@ public final class OnlineService extends Service {
         JSONObject inventory = new JSONObject();
         try {
             inventory.put("workCount", prefs.getInt(PREF_WORK_COUNT, -1));
+            inventory.put("packageName", getPackageName());
+            inventory.put("androidVersion", Build.VERSION.RELEASE);
             inventory.put("appVersion", installedVersion());
             inventory.put("versionCode", installedVersionCode());
             inventory.put("updateCapability", UPDATE_CAPABILITY);

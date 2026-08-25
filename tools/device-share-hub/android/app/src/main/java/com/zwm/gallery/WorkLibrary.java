@@ -1,6 +1,7 @@
 package com.zwm.gallery;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -620,7 +621,16 @@ public final class WorkLibrary {
         if (directories == null) return Collections.emptyList();
         ArrayList<WorkEntry> entries = new ArrayList<>();
         for (File directory : directories) {
-            if (new File(directory, META_FILE).isFile()) entries.add(readEntry(directory));
+            File metaFile = new File(directory, META_FILE);
+            if (!metaFile.isFile()) continue;
+            try {
+                entries.add(readEntry(directory));
+            } catch (FileNotFoundException missingMeta) {
+                // A cleanup/import can atomically move the metadata after the
+                // isFile() check. Ignore only that now-orphaned directory;
+                // never hide a real metadata read failure.
+                if (metaFile.isFile()) throw missingMeta;
+            }
         }
         entries.sort((left, right) -> WorkRules.compareNatural(left.name, right.name));
         return entries;

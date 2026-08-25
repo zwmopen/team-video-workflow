@@ -1,5 +1,11 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-24 Android 断点接收提交修复候选
+
+- 候选版本：Android 0.6.55/versionCode 93；修复回收目录缺失 `meta.properties` 导致 ZIP 提交 500，并在发送端复用同一断点任务的接收端文件名。
+- 代码回归：传输端 `38 passed`；Android 端新增孤立回收目录重启回归。当前机器没有 Gradle Wrapper/本地 Gradle，尚未生成或安装 APK。
+- 发布前必须由云端构建 Android Release，核对 versionCode 93、签名与 SHA-256；安装到红米 13 后继续当前同一任务，确认收到作品且不重复。
+
 ## 2026-08-23 远程更新包闭环候选
 
 - 候选版本：Android 0.6.53/versionCode 91、iPhone 0.6.40/build 59、Windows V4.3.29；APK 更新包已区分 android-update，安卓只有校验并写入更新缓存后才 ACK；USB 失败会清理暂存并自动降级到 Wi‑Fi/P2P/HTTPS。

@@ -1,8 +1,8 @@
-# 文件收发中控 V4.3.29 / Android 0.6.54 / iPhone 0.6.41（Beta 已发布）
+# 文件收发中控 V4.3.29 / Android 0.6.55 / iPhone 0.6.40（Beta）
 
-> 本轮已由云端流水线构建并发布 Windows V4.3.29 / Android 0.6.54 / iPhone 0.6.41 Beta。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；Beta 自动更新索引使用 latest-beta.json。USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
+> 本轮由 GitHub Actions run `32803292676` 构建通过，待发布 Beta。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；Beta 自动更新索引使用 latest-beta.json。USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
 
-本轮已验证修复：Android 接收提交失败会清理临时任务并恢复在线状态，电脑端可重新触发补发；iPhone 预览页支持确认删除，长按可稳定进入多选。Device Share Hub run `32688671241` 全部通过；Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.54-beta.1>。
+本轮修复 Android 孤立回收目录导致的提交 500；真实红米 13 安装 0.6.55 后，还需用同一断点任务验收落库与自动补发。
 
 ## 更新通道
 
