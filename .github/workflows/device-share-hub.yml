@@ -416,23 +416,23 @@ jobs:
           test "$(sha256sum "$ios_ipa" | awk '{print $1}')" = "$ios_sha256"
 
           repo="zwmopen/gallery-updates"
-          tag="v${version_name}-beta.1"
+          tag="v${version_name}"
           apk_url="https://github.com/${repo}/releases/download/${tag}/${apk_name}"
           ios_ipa_url="https://github.com/${repo}/releases/download/${tag}/${ios_ipa_name}"
           release_url="https://github.com/${repo}/releases/tag/${tag}"
-          source_file="altstore-beta.json"
+          source_file="altstore.json"
           source_url="https://raw.githubusercontent.com/${repo}/main/${source_file}"
           source_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           ios_ipa_size=$(stat -c%s "$ios_ipa")
           if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$repo" --prerelease \
-              --title "相册 Beta Android ${version_name} / iPhone ${ios_version_name}" \
+            gh release create "$tag" --repo "$repo" \
+              --title "相册 Android ${version_name} / iPhone ${ios_version_name}" \
               --notes "Published from zwmopen/team-video-workflow commit ${GITHUB_SHA}. Android versionCode=${version_code}; iPhone build=${ios_build}."
           fi
           gh release upload "$tag" --repo "$repo" "$apk" "$sums" "$ios_ipa" "$ios_sums" --clobber
 
           current_json=$(curl --fail --silent --show-error --retry 3 \
-            "https://raw.githubusercontent.com/${repo}/main/latest-beta.json" || printf '{}')
+            "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
           updated_json=$(printf '%s' "$current_json" | jq \
             --arg version_name "$version_name" \
             --argjson version_code "$version_code" \
@@ -455,16 +455,16 @@ jobs:
              | .ios={version_name:$ios_version_name, build:$ios_build, sha256:$ios_sha256,
                     ipa_url:$ios_ipa_url, ipa_file_name:$ios_ipa_name, release_url:$ios_release_url}')
           content=$(printf '%s' "$updated_json" | base64 -w0)
-          latest_sha=$(gh api "repos/${repo}/contents/latest-beta.json" --jq '.sha' 2>/dev/null || true)
+          latest_sha=$(gh api "repos/${repo}/contents/latest.json" --jq '.sha' 2>/dev/null || true)
           if [ -n "$latest_sha" ]; then
-            gh api --method PUT "repos/${repo}/contents/latest-beta.json" \
-              --field message="release: publish Beta Android ${version_name}" \
+            gh api --method PUT "repos/${repo}/contents/latest.json" \
+              --field message="release: publish Android ${version_name}" \
               --field branch=main \
               --field content="$content" \
               --field sha="$latest_sha" >/dev/null
           else
-            gh api --method PUT "repos/${repo}/contents/latest-beta.json" \
-              --field message="release: publish Beta Android ${version_name}" \
+            gh api --method PUT "repos/${repo}/contents/latest.json" \
+              --field message="release: publish Android ${version_name}" \
               --field branch=main \
               --field content="$content" >/dev/null
           fi
@@ -495,7 +495,7 @@ jobs:
 
           published=""
           for attempt in $(seq 1 10); do
-            published_b64=$(gh api "repos/${repo}/contents/latest-beta.json?ref=main" --jq '.content' 2>/dev/null | tr -d '\r\n' || true)
+            published_b64=$(gh api "repos/${repo}/contents/latest.json?ref=main" --jq '.content' 2>/dev/null | tr -d '\r\n' || true)
             if [ -n "$published_b64" ]; then
               published=$(printf '%s' "$published_b64" | base64 --decode 2>/dev/null || true)
             fi
@@ -536,7 +536,7 @@ jobs:
           test "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].buildVersion')" = "$ios_build"
           test "$(printf '%s' "$source_published" | jq -r '.apps[] | select(.bundleIdentifier == "com.zwm.album") | .versions[0].downloadURL')" = "$ios_ipa_url"
           raw_version=$(curl --silent --show-error --retry 3 \
-            "https://raw.githubusercontent.com/${repo}/main/latest-beta.json?run=${GITHUB_RUN_ID}" \
+            "https://raw.githubusercontent.com/${repo}/main/latest.json?run=${GITHUB_RUN_ID}" \
             | jq -r '.version_name' || true)
           if [ "$raw_version" != "$version_name" ]; then
             echo "::warning::Contents API is current; raw.githubusercontent.com is still propagating (read ${raw_version:-unavailable})."

@@ -42,7 +42,7 @@ public final class SettingsActivity extends Activity {
     private SettingSwitchRow soundSwitch;
     private TextView moveAfterText;
     private TextView deleteAfterText;
-    private TextView updateChannelText;
+    private SettingSwitchRow autoReceiveSwitch;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,6 +82,17 @@ public final class SettingsActivity extends Activity {
         choose.setOnClickListener(v -> chooseFolder());
         root.addView(choose, margins(0, dp(10), 0, dp(20)));
 
+        root.addView(label("接收"));
+        autoReceiveSwitch = settingSwitch(
+                "自动接收",
+                "开启时允许电脑和其他设备投送内容；关闭后只保留在线发现和本机查看",
+                OnlineService.isAutoReceiveEnabled(this));
+        autoReceiveSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            OnlineService.setAutoReceiveEnabled(this, enabled);
+            toast(enabled ? "自动接收已打开" : "自动接收已关闭");
+        });
+        root.addView(autoReceiveSwitch, settingMargins(dp(20)));
+
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
         LinearLayout moveRow = cleanupRow("自动移入回收站", cleanup.moveMinutes / 60);
@@ -116,10 +127,10 @@ public final class SettingsActivity extends Activity {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                         .putBoolean(UpdateChecker.PREF_AUTO_UPDATE_ENABLED, enabled).apply());
         root.addView(autoUpdateSwitch, settingMargins(dp(10)));
-        LinearLayout updateChannel = choiceRow("更新通道", UpdateChecker.updateChannelLabel(this));
-        updateChannelText = (TextView) updateChannel.getChildAt(1);
-        updateChannel.setOnClickListener(v -> showUpdateChannelPicker());
-        root.addView(updateChannel, settingMargins(dp(20)));
+        TextView updateEntry = text("更新入口  最新正式版", 16, true);
+        updateEntry.setPadding(dp(14), dp(16), dp(14), dp(16));
+        updateEntry.setBackground(round(Color.WHITE, 14));
+        root.addView(updateEntry, settingMargins(dp(20)));
         TextView version = text("当前版本  " + UpdateChecker.currentVersion(this), 16, true);
         version.setPadding(dp(14), dp(16), dp(14), dp(16));
         version.setBackground(round(Color.WHITE, 14));
@@ -150,23 +161,6 @@ public final class SettingsActivity extends Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("deviceName", value).apply();
         DiagnosticLog.write(this, "device_name_saved", value);
         toast("已保存，电脑端会自动刷新");
-    }
-
-    private void showUpdateChannelPicker() {
-        String[] labels = {"稳定版", "测试版（Beta）"};
-        int checked = UpdateChecker.CHANNEL_BETA.equals(UpdateChecker.updateChannel(this)) ? 1 : 0;
-        new AlertDialog.Builder(this)
-                .setTitle("更新通道")
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    String channel = which == 1 ? UpdateChecker.CHANNEL_BETA : UpdateChecker.CHANNEL_STABLE;
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                            .putString(UpdateChecker.PREF_UPDATE_CHANNEL, channel).apply();
-                    if (updateChannelText != null) updateChannelText.setText(UpdateChecker.updateChannelLabel(this));
-                    dialog.dismiss();
-                    toast(which == 1 ? "已切换到测试版更新" : "已切换到稳定版更新");
-                })
-                .setNegativeButton("取消", null)
-                .show();
     }
 
     private void showCleanupPicker(boolean editingMove) {

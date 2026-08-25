@@ -41,4 +41,19 @@ public class OnlineServiceTaskExpiryTest {
         assertTrue(OnlineService.shouldImportRemoteTask(false));
         assertFalse(OnlineService.shouldImportRemoteTask(true));
     }
+
+    @Test
+    public void autoReceiveGateFollowsTheUserPreference() {
+        assertTrue(OnlineService.shouldAcceptIncoming(true));
+        assertFalse(OnlineService.shouldAcceptIncoming(false));
+    }
+
+    @Test
+    public void autoReceiveGateCoversAllHttpTransferRequestsButNotDiscovery() {
+        assertTrue(OnlineService.isIncomingTransferPath("POST", "/v2/tasks"));
+        assertTrue(OnlineService.isIncomingTransferPath("PUT", "/v2/tasks/batch-123/files/0"));
+        assertTrue(OnlineService.isIncomingTransferPath("GET", "/v2/tasks/batch-123"));
+        assertFalse(OnlineService.isIncomingTransferPath("GET", "/v2/info"));
+        assertFalse(OnlineService.isIncomingTransferPath("POST", "/v2/relay-profile"));
+    }
 }

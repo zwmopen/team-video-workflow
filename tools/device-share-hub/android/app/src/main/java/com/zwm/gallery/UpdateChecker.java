@@ -28,9 +28,6 @@ final class UpdateChecker {
     static final String PREF_DOWNLOAD_RESULT = "updateDownloadResult";
     static final String PREF_DOWNLOAD_ERROR = "updateDownloadError";
     static final String PREF_LAST_CHECK_ATTEMPT = "lastUpdateCheckAttempt";
-    static final String PREF_UPDATE_CHANNEL = "updateChannel";
-    static final String CHANNEL_STABLE = "stable";
-    static final String CHANNEL_BETA = "beta";
     static final String RESULT_CHECKSUM_FAILED = "checksum_failed";
     static final String RESULT_DOWNLOAD_FAILED = "download_failed";
     static final String PREF_AUTO_UPDATE_ENABLED = "autoUpdateEnabled";
@@ -80,8 +77,7 @@ final class UpdateChecker {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
             try {
-                boolean beta = CHANNEL_BETA.equals(updateChannel(activity));
-                JSONObject release = fetchManifest(beta);
+                JSONObject release = fetchManifest();
                 String tag = release.optString("version_name",
                         release.optString("tag_name", "")).replaceFirst("^[vV]", "");
                 String apkUrl = release.optString("apk_url", "");
@@ -147,15 +143,12 @@ final class UpdateChecker {
         catch (Exception ignored) { return "0.0.0"; }
     }
 
-    private static JSONObject fetchManifest(boolean beta) throws Exception {
+    private static JSONObject fetchManifest() throws Exception {
         try {
-            JSONObject manifest = fetchJson(beta
-                    ? UpdateEndpoint.BETA_MANIFEST
-                    : UpdateEndpoint.RELEASE_MANIFEST);
+            JSONObject manifest = fetchJson(UpdateEndpoint.RELEASE_MANIFEST);
             if (!manifest.optString("apk_url", "").isEmpty()) return manifest;
             throw new IllegalStateException("公开更新索引缺少 APK 地址");
         } catch (Exception manifestError) {
-            if (beta) throw manifestError;
             // Keep the GitHub Release API as a compatibility fallback for an
             // older or temporarily unavailable latest.json.
             try {
@@ -309,14 +302,8 @@ final class UpdateChecker {
                 .putLong("lastUpdateCheck", System.currentTimeMillis()).apply();
     }
 
-    static String updateChannel(Activity activity) {
-        String channel = activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE)
-                .getString(PREF_UPDATE_CHANNEL, CHANNEL_STABLE);
-        return CHANNEL_BETA.equals(channel) ? CHANNEL_BETA : CHANNEL_STABLE;
-    }
-
     static String updateChannelLabel(Activity activity) {
-        return CHANNEL_BETA.equals(updateChannel(activity)) ? "测试版（Beta） ›" : "稳定版 ›";
+        return "最新正式版 ›";
     }
 
     private static void markCheckAttempted(Activity activity) {

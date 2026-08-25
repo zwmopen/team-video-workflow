@@ -70,6 +70,9 @@ public final class OnlineService extends Service {
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
     /** Ask the running receiver to publish its current inventory immediately. */
     public static final String ACTION_REFRESH_STATUS = "com.zwm.gallery.REFRESH_STATUS";
+    /** Apply the user's automatic-receive preference to the running receiver. */
+    public static final String ACTION_AUTO_RECEIVE_CHANGED = "com.zwm.gallery.AUTO_RECEIVE_CHANGED";
+    public static final String EXTRA_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
 
     private static final String TAG = "DeviceShareService";
     private static final String PREFS = "device_share";
@@ -79,6 +82,7 @@ public final class OnlineService extends Service {
     private static final String PREF_WORK_COUNT_UNCATEGORIZED = "advertisedWorkCountUncategorized";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
     private static final String PREF_REMOTE_IMPORTED = "remoteImportedTransfers";
+    private static final String PREF_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
@@ -160,6 +164,42 @@ public final class OnlineService extends Service {
         }
     }
 
+    public static void setAutoReceiveEnabled(Context context, boolean enabled) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(PREF_AUTO_RECEIVE_ENABLED, enabled).apply();
+        Intent intent = new Intent(context, OnlineService.class)
+                .setAction(ACTION_AUTO_RECEIVE_CHANGED)
+                .putExtra(EXTRA_AUTO_RECEIVE_ENABLED, enabled);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (IllegalStateException | SecurityException error) {
+            DiagnosticLog.write(context, "auto_receive_change_deferred",
+                    error.getClass().getSimpleName());
+        }
+    }
+
+    static boolean shouldAcceptIncoming(boolean enabled) {
+        return enabled;
+    }
+
+    public static boolean isAutoReceiveEnabled(Context context) {
+        return context != null && shouldAcceptIncoming(context
+                .getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_AUTO_RECEIVE_ENABLED, true));
+    }
+
+    static boolean isIncomingTransferPath(String method, String path) {
+        if (method == null || path == null || !path.startsWith("/v2/tasks")) return false;
+        return "POST".equalsIgnoreCase(method)
+                || "PUT".equalsIgnoreCase(method)
+                || "GET".equalsIgnoreCase(method);
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -190,6 +230,26 @@ public final class OnlineService extends Service {
             stopReceiver();
             return START_NOT_STICKY;
         }
+        if (ACTION_AUTO_RECEIVE_CHANGED.equals(action)) {
+            startForeground(FOREGROUND_NOTIFICATION_ID,
+                    buildForegroundNotification("局域网接收已开启"));
+            acquireMulticastLock();
+            ensureNetworkLoops();
+            boolean enabled = intent != null
+                    && intent.getBooleanExtra(EXTRA_AUTO_RECEIVE_ENABLED,
+                    isAutoReceiveEnabled());
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_AUTO_RECEIVE_ENABLED, enabled).apply();
+            if (enabled) {
+                DiagnosticLog.write(this, "auto_receive_enabled",
+                        "receiver accepts incoming content");
+                notifyStatus("自动接收已打开");
+                requestImmediateBeacon(this);
+            } else {
+                disableIncomingTransfers();
+            }
+            return START_STICKY;
+        }
         if (ACTION_SHARE_OPENED.equals(action)) {
             DiagnosticLog.write(this, "share_opened", intent == null ? "" : intent.getStringExtra("workId"));
             cancelTaskNotification();
@@ -214,6 +274,10 @@ public final class OnlineService extends Service {
 
     private void handleRemoteInbox(RemoteRelayClient.Session session, JSONArray transfers) {
         if (session == null || transfers == null) return;
+        if (!isAutoReceiveEnabled()) {
+            DiagnosticLog.write(this, "remote_inbox_ignored", "auto_receive_disabled");
+            return;
+        }
         int ready = 0;
         int fresh = 0;
         long now = System.currentTimeMillis();
@@ -252,6 +316,10 @@ public final class OnlineService extends Service {
 
     public void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) {
         if (session == null || sessions == null) return;
+        if (!isAutoReceiveEnabled()) {
+            DiagnosticLog.write(this, "p2p_sessions_ignored", "auto_receive_disabled");
+            return;
+        }
         for (int i = 0; i < sessions.length(); i++) {
             JSONObject p2p = sessions.optJSONObject(i);
             if (p2p == null || !session.deviceId.equals(p2p.optString("responderDeviceId", ""))) continue;
@@ -293,6 +361,7 @@ public final class OnlineService extends Service {
     }
 
     private boolean importP2PTransfer(P2PTransferEngine.Transfer transfer) throws Exception {
+        if (!isAutoReceiveEnabled()) throw new IOException("自动接收已关闭");
         if (wasRemoteImported(transfer.transferId)) {
             // The import already committed, but a previous ACK may have been
             // lost. Remove any retry cache before acknowledging the duplicate.
@@ -337,6 +406,7 @@ public final class OnlineService extends Service {
     private void processRemoteTask(RemoteRelayClient.Session session, RemoteRelayTask task) {
         File transferDirectory = new File(getCacheDir(), "remote-relay/" + task.transferId);
         try {
+            if (!isAutoReceiveEnabled()) throw new IOException("自动接收已关闭");
             if (!"plain".equals(task.mode)) {
                 throw new IOException("当前版本只接收普通公开作品包");
             }
@@ -385,6 +455,7 @@ public final class OnlineService extends Service {
                 throw new IOException("无法创建远程接收缓存");
             }
             for (RemoteRelayTask.ObjectInfo object : task.objects) {
+                if (!isAutoReceiveEnabled()) throw new IOException("自动接收已关闭");
                 File target = new File(transferDirectory, object.index + ".download");
                 RemoteRelayClient.downloadObject(session, task.transferId, object.index, target,
                         object.bytes, object.sha256);
@@ -625,6 +696,10 @@ public final class OnlineService extends Service {
             try {
                 request = HttpRequest.read(input);
                 DiagnosticLog.write(this, "http_request", request.method + " " + request.path + " bytes=" + request.contentLength);
+                if (!isAutoReceiveEnabled()
+                        && isIncomingTransferPath(request.method, request.path)) {
+                    throw new HttpError(403, "手机已关闭自动接收");
+                }
                 if ("GET".equals(request.method) && "/v2/info".equals(request.path)) {
                     writeJson(output, 200, deviceInfo());
                     return;
@@ -1202,6 +1277,7 @@ public final class OnlineService extends Service {
                 .put("updateCapability", UPDATE_CAPABILITY)
                 .put("port", HTTP_PORT)
                 .put("state", state)
+                .put("autoReceiveEnabled", isAutoReceiveEnabled())
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("taskId", currentTaskId);
         try {
@@ -1226,6 +1302,31 @@ public final class OnlineService extends Service {
         }
         if (workCounts != null) info.put("workCounts", workCounts);
         return info;
+    }
+
+    private boolean isAutoReceiveEnabled() {
+        return isAutoReceiveEnabled(this);
+    }
+
+    private void disableIncomingTransfers() {
+        IncomingTask interrupted = null;
+        synchronized (taskLock) {
+            if (activeTask != null) {
+                interrupted = activeTask;
+                activeTask = null;
+                currentTaskId = "";
+                state = "online";
+            }
+        }
+        if (interrupted != null) deleteRecursively(interrupted.dir);
+        for (P2PTransferEngine engine : p2pEngines.values()) engine.cancel();
+        p2pEngines.clear();
+        remoteInboxTasks.clear();
+        remoteProcessingTasks.clear();
+        cancelTransferProgressNotification();
+        DiagnosticLog.write(this, "auto_receive_disabled", "incoming_transfers_stopped");
+        notifyStatus("自动接收已关闭，其他设备不能再投送内容");
+        requestImmediateBeacon(this);
     }
 
     private void saveRelayProfile(HttpRequest request, InputStream input,

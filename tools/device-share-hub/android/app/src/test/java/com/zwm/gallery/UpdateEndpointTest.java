@@ -14,8 +14,8 @@ public final class UpdateEndpointTest {
                 "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json",
                 UpdateEndpoint.RELEASE_MANIFEST);
         assertEquals(
-                "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest-beta.json",
-                UpdateEndpoint.BETA_MANIFEST);
+                "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json",
+                UpdateEndpoint.RELEASE_MANIFEST);
         assertEquals(
                 "https://api.github.com/repos/zwmopen/gallery-updates/releases/latest",
                 UpdateEndpoint.RELEASE_API);

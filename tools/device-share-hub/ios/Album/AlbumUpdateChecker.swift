@@ -3,28 +3,13 @@ import UIKit
 
 enum AlbumUpdateChecker {
     private static let stableEndpoint = URL(string: "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest.json")!
-    private static let betaEndpoint = URL(string: "https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/latest-beta.json")!
     private static let stableAltStoreSource = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json"
-    private static let betaAltStoreSource = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore-beta.json"
     private static let altStoreURL = URL(string: "altstore-classic://")!
-    private static let channelKey = "album.updateChannel"
-
-    static var isBetaChannel: Bool {
-        UserDefaults.standard.string(forKey: channelKey) == "beta"
-    }
-
-    static var updateChannelLabel: String {
-        isBetaChannel ? "测试版（Beta）" : "稳定版"
-    }
-
-    static func setBetaChannel(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled ? "beta" : "stable", forKey: channelKey)
-    }
 
     static func check(from controller: UIViewController) {
         let waiting = UIAlertController(title: nil, message: "正在检查新版本…", preferredStyle: .alert)
         controller.present(waiting, animated: true)
-        var request = URLRequest(url: isBetaChannel ? betaEndpoint : stableEndpoint)
+        var request = URLRequest(url: stableEndpoint)
         request.timeoutInterval = 8
         request.setValue("zwm-album-ios", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { data, response, error in
@@ -47,7 +32,7 @@ enum AlbumUpdateChecker {
                         return
                     }
                     showUpdate(controller, candidate: candidate, current: current,
-                               source: isBetaChannel ? betaAltStoreSource : stableAltStoreSource)
+                               source: stableAltStoreSource)
                 }
             }
         }.resume()
