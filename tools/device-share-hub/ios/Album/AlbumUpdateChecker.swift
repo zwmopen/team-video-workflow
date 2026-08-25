@@ -26,23 +26,27 @@ enum AlbumUpdateChecker {
                         ?? (object["version_name"] as? String)
                         ?? (object["tag_name"] as? String) ?? ""
                     let candidate = raw.replacingOccurrences(of: "v", with: "", options: [.anchored, .caseInsensitive])
+                    let candidateBuild = (iosBlock?["build"] as? NSNumber)?.intValue ?? 0
                     let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
-                    guard isNewer(candidate, than: current) else {
-                        show(controller, title: "已经是最新版本", message: "当前版本 \(current)")
+                    let currentBuild = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
+                    guard isNewer(candidate: candidate, build: candidateBuild, than: current, currentBuild: currentBuild) else {
+                        show(controller, title: "已经是最新版本", message: "当前版本 \(current)（build \(currentBuild)）")
                         return
                     }
-                    showUpdate(controller, candidate: candidate, current: current,
+                    showUpdate(controller, candidate: candidate, candidateBuild: candidateBuild,
+                               current: current, currentBuild: currentBuild,
                                source: stableAltStoreSource)
                 }
             }
         }.resume()
     }
 
-    private static func showUpdate(_ controller: UIViewController, candidate: String, current: String,
+    private static func showUpdate(_ controller: UIViewController, candidate: String, candidateBuild: Int,
+                                   current: String, currentBuild: Int,
                                    source: String) {
         let alert = UIAlertController(
-            title: "发现新版本 \(candidate)",
-            message: "当前版本 \(current)。新版本已进入 AltStore 更新源，请在 AltStore 的 My Apps 中点“更新”。这里不会删除作品文件。",
+            title: "发现新版本 \(candidate)（build \(candidateBuild)）",
+            message: "当前版本 \(current)（build \(currentBuild)）。新版本已进入 AltStore 更新源，请在 AltStore 的 My Apps 中点“更新”。这里不会删除作品文件。",
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "打开 AltStore", style: .default) { _ in
@@ -58,7 +62,7 @@ enum AlbumUpdateChecker {
         controller.present(alert, animated: true)
     }
 
-    private static func isNewer(_ candidate: String, than current: String) -> Bool {
+    private static func isNewer(candidate: String, build: Int, than current: String, currentBuild: Int) -> Bool {
         let left = candidate.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
         let right = current.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
         for index in 0..<max(left.count, right.count) {
@@ -66,7 +70,7 @@ enum AlbumUpdateChecker {
             let b = index < right.count ? right[index] : 0
             if a != b { return a > b }
         }
-        return false
+        return build > currentBuild
     }
 
     private static func show(_ controller: UIViewController, title: String, message: String) {

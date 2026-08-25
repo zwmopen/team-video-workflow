@@ -1,8 +1,8 @@
-# 文件收发中控 V4.3.29 / Android 0.6.58 / iPhone 0.6.41（统一正式入口）
+# 文件收发中控 V4.3.29 / Android 0.6.59 / iPhone 0.6.42（统一正式入口）
 
 Android 设置页提供“自动接收”开关。关闭后手机仍可被电脑发现、查看已有作品和检查版本，但会拒绝局域网 HTTP、P2P 与远程中继投送，并清理正在接收的临时任务；重新打开后恢复接收。默认开启。
 
-> Android 0.6.57/0.6.58 是针对 Redmi Note 8 / Android 10 的局域网发现与自动接收修复；本次发布后 Android、iPhone 和 Windows 只认一个正式更新入口。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
+> Android 0.6.57/0.6.58/0.6.59 是针对 Redmi Note 8 / Android 10 的局域网发现、自动接收和统一更新修复；iPhone 0.6.42 同步修复 build 递增检测。本次发布后 Android、iPhone 和 Windows 只认一个正式更新入口。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
 
 本轮修复 Android 孤立回收目录导致的提交 500；真实红米 13 安装 0.6.55 后，还需用同一断点任务验收落库与自动补发。
 
@@ -11,9 +11,9 @@ Android 设置页提供“自动接收”开关。关闭后手机仍可被电脑
 - Android、iPhone 和 Windows 只使用正式的 `latest.json` / `altstore.json`，不再区分稳定版和测试版。
 - iOS 仍需要 AltStore/AltServer 完成签名安装；Android 使用正式索引下载、校验后由系统确认安装。
 
-本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.50-beta.1>；桌面包位于 `C:\Users\z\Desktop`。
+本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.59>；桌面包位于 `C:\Users\z\Desktop`。
 
-本轮包：`album-Android-v0.6.50.apk`、`album-iOS-v0.6.37-altstore.ipa`、`device-share-hub-Windows-V4.3.26-relay-beta.exe`。
+本轮包：`album-Android-v0.6.59.apk`、`album-iOS-v0.6.42-altstore.ipa`、`device-share-hub-Windows-V4.3.29-relay.exe`。
 
 Device Share Hub 云端 run `32596690436` 的三端构建、P2P/ACK 静态门禁、Cloudflare 中继检查和线上 Worker E2E 全部通过；稳定更新索引不变。真实手机传输、落库、ACK 和自动补货仍需设备在线后验收。
 

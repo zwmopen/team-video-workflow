@@ -1,5 +1,11 @@
 # 变更记录
 
+## Android 0.6.59 / iPhone 0.6.42 - 统一正式入口与 iOS build 检测
+
+- Android versionCode 97 / versionName 0.6.59；iPhone build 61 / marketing version 0.6.42。
+- Android、iPhone、Windows 继续只使用同一个正式更新入口，不再区分稳定版和测试版。
+- iOS 更新检查同时比较 marketing version 和 build；即使版本名不变，build 递增也会提示更新，避免云端已发布但手机显示“已经是最新版本”。
+
 ## Android 0.6.58 - 自动接收开关（统一正式入口）
 
 - 设置页新增“自动接收”开关，默认开启，升级不会改变已有接收习惯。
