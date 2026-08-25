@@ -7,7 +7,6 @@
 - 设备仍保持在线发现、版本上报和本机查看能力；重新打开后恢复接收。
 - `/v2/info` 增加 `autoReceiveEnabled` 状态字段，便于电脑端识别手机当前是否允许投送。
 - versionCode 96 / versionName 0.6.58；Android、iPhone 和 Windows 统一读取正式更新入口。
-
 ## 修复候选：Android 0.6.57 - Android 10 Keystore 不阻断局域网在线
 
 - 修复 Redmi Note 8 / Android 10 实测的 `Unknown purpose: 64`：旧款 OEM Keystore 不支持远程中继 ECDH 密钥用途时，不能再阻断 `deviceInfo()`。
