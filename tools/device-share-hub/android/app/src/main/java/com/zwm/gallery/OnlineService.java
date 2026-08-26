@@ -82,6 +82,7 @@ public final class OnlineService extends Service {
     private static final String PREF_WORK_COUNT_UNCATEGORIZED = "advertisedWorkCountUncategorized";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
     private static final String PREF_REMOTE_IMPORTED = "remoteImportedTransfers";
+    private static final String PREF_COMMITTED_TASKS = "committedIncomingTasks";
     private static final String PREF_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
@@ -644,7 +645,7 @@ public final class OnlineService extends Service {
         }
     }
 
-    /** Only a failed final commit is terminal for the temporary receive task. */
+    /** Only final commit requests may update the retryable receive-task state. */
     static boolean isCommitPath(String method, String path) {
         if (!"POST".equalsIgnoreCase(String.valueOf(method)) || path == null) return false;
         String[] parts = path.split("/");
@@ -661,10 +662,10 @@ public final class OnlineService extends Service {
     }
 
     /**
-     * A commit can fail after all bytes are uploaded (for example a stale
-     * work-library entry has no meta.properties).  Do not leave the receiver
-     * stuck in "receiving"; clear only this failed temporary task and never
-     * touch the durable work-library.
+     * A commit can fail after all bytes are uploaded (for example a transient
+     * work-library or storage error). Keep the task and its files so the same
+     * sender can retry the commit. Deleting it here made the next retry return
+     * "任务不存在" and forced the sender into an unsafe fresh task.
      */
     private void resetFailedCommitTask(String taskId, String detail) {
         if (taskId == null || taskId.isEmpty()) return;
@@ -672,19 +673,18 @@ public final class OnlineService extends Service {
         synchronized (taskLock) {
             if (activeTask != null && taskId.equals(activeTask.id)) {
                 failed = activeTask;
-                activeTask = null;
-                currentTaskId = "";
-                state = "online";
+                failed.lastActivityAtMs = System.currentTimeMillis();
+                failed.commitFailedAtMs = failed.lastActivityAtMs;
+                persistTaskManifest(failed);
             }
         }
         if (failed == null) return;
-        deleteRecursively(failed.dir);
         cancelTransferProgressNotification();
         String reason = compact(detail);
-        DiagnosticLog.write(this, "commit_task_reset", taskId + (reason.isEmpty() ? "" : " " + reason));
-        notifyStatus("接收提交失败，临时文件已清理，可以重新发送");
-        notifyTransferEvent("接收失败后已复位", "临时传输任务已清理，设备已恢复空闲", 3404, null);
-        OperationLog.add(this, "接收任务已复位", "已清理失败任务 " + taskId);
+        DiagnosticLog.write(this, "commit_task_retained", taskId + (reason.isEmpty() ? "" : " " + reason));
+        notifyStatus("接收提交暂时失败，任务已保留，电脑会继续重试");
+        notifyTransferEvent("接收提交可重试", "临时任务仍在手机上，等待电脑重试确认", 3404, null);
+        OperationLog.add(this, "接收任务待重试", "已保留任务 " + taskId);
         requestImmediateBeacon(this);
     }
 
@@ -770,6 +770,12 @@ public final class OnlineService extends Service {
         Map<Integer, IncomingFileSpec> specs = parseFileSpecs(body, fileCount);
         if (!taskId.matches("[A-Za-z0-9._-]{6,100}")) throw new HttpError(400, "taskId 无效");
         if (fileCount < 1 || fileCount > MAX_FILES) throw new HttpError(400, "文件数量无效");
+        JSONObject committed = readCommittedTask(taskId);
+        if (committed != null) {
+            DiagnosticLog.write(this, "task_commit_replay", taskId + " create");
+            writeJson(output, 200, committed);
+            return;
+        }
         JSONObject resumed = null;
         synchronized (taskLock) {
             if (activeTask != null) {
@@ -814,6 +820,12 @@ public final class OnlineService extends Service {
     }
 
     private void taskStatus(String taskId, OutputStream output) throws Exception {
+        JSONObject committed = readCommittedTask(taskId);
+        if (committed != null) {
+            DiagnosticLog.write(this, "task_commit_replay", taskId + " status");
+            writeJson(output, 200, committed);
+            return;
+        }
         IncomingTask task;
         synchronized (taskLock) {
             task = activeTask;
@@ -867,6 +879,7 @@ public final class OnlineService extends Service {
                     fileCount, taskDir, manifest.optLong("startedAtMs", System.currentTimeMillis()),
                     manifest.optString("transferKey", ""), specs);
             task.lastActivityAtMs = manifest.optLong("lastActivityAtMs", task.startedAtMs);
+            task.commitFailedAtMs = manifest.optLong("commitFailedAtMs", 0L);
             JSONArray records = manifest.optJSONArray("files");
             if (records != null) {
                 for (int position = 0; position < records.length(); position++) {
@@ -939,6 +952,7 @@ public final class OnlineService extends Service {
                     .put("fileCount", task.fileCount)
                     .put("startedAtMs", task.startedAtMs)
                     .put("lastActivityAtMs", task.lastActivityAtMs)
+                    .put("commitFailedAtMs", task.commitFailedAtMs)
                     .put("transferKey", task.transferKey);
             JSONArray records = new JSONArray();
             for (int index = 0; index < task.fileCount; index++) {
@@ -973,6 +987,48 @@ public final class OnlineService extends Service {
         }
     }
 
+    private JSONObject readCommittedTask(String taskId) {
+        try {
+            String raw = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getString(PREF_COMMITTED_TASKS, "{}");
+            JSONObject records = new JSONObject(raw == null ? "{}" : raw);
+            JSONObject receipt = records.optJSONObject(taskId);
+            return receipt == null ? null : new JSONObject(receipt.toString());
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "committed_task_receipt_read_failed", compact(error.getMessage()));
+            return null;
+        }
+    }
+
+    private void rememberCommittedTask(String taskId, JSONObject receipt) {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+            JSONObject records = new JSONObject(prefs.getString(PREF_COMMITTED_TASKS, "{}"));
+            records.put(taskId, receipt);
+            JSONArray names = records.names();
+            if (names != null && names.length() > 128) {
+                String oldestId = null;
+                long oldestAt = Long.MAX_VALUE;
+                for (int index = 0; index < names.length(); index++) {
+                    String candidate = names.optString(index, "");
+                    JSONObject candidateReceipt = records.optJSONObject(candidate);
+                    long committedAt = candidateReceipt == null
+                            ? Long.MIN_VALUE
+                            : candidateReceipt.optLong("committedAtMs", Long.MIN_VALUE);
+                    if (committedAt < oldestAt) {
+                        oldestAt = committedAt;
+                        oldestId = candidate;
+                    }
+                }
+                if (oldestId != null) records.remove(oldestId);
+            }
+            prefs.edit().putString(PREF_COMMITTED_TASKS, records.toString()).apply();
+        } catch (Exception error) {
+            // A missing replay receipt must never make a successful import fail.
+            DiagnosticLog.write(this, "committed_task_receipt_write_failed", compact(error.getMessage()));
+        }
+    }
+
     private static long parseHeaderLong(String value, long fallback, String header)
             throws HttpError {
         if (value == null || value.trim().isEmpty()) return fallback;
@@ -1003,7 +1059,12 @@ public final class OnlineService extends Service {
         IncomingFileSpec spec;
         synchronized (taskLock) {
             task = activeTask;
-            if (task == null || !task.id.equals(taskId)) throw new HttpError(404, "任务不存在");
+            if (task == null || !task.id.equals(taskId)) {
+                if (readCommittedTask(taskId) != null) {
+                    throw new HttpError(409, "任务已提交，请重试提交确认");
+                }
+                throw new HttpError(404, "任务不存在");
+            }
             if (index < 0 || index >= task.fileCount) throw new HttpError(400, "文件序号越界");
             if (task.files.containsKey(index)) throw new HttpError(409, "文件已经上传");
             spec = task.specs.get(index);
@@ -1132,7 +1193,13 @@ public final class OnlineService extends Service {
         return 1;
     }
 
-    private void commitTask(String taskId, OutputStream output) throws Exception {
+    private synchronized void commitTask(String taskId, OutputStream output) throws Exception {
+        JSONObject committed = readCommittedTask(taskId);
+        if (committed != null) {
+            DiagnosticLog.write(this, "task_commit_replay", taskId + " commit");
+            writeJson(output, 200, committed);
+            return;
+        }
         IncomingTask task;
         synchronized (taskLock) {
             task = activeTask;
@@ -1215,6 +1282,13 @@ public final class OnlineService extends Service {
             currentTaskId = "";
             state = "online";
         }
+        JSONObject receipt = taskStatusJson(task)
+                .put("state", "committed")
+                .put("committed", true)
+                .put("received", deliveredFiles)
+                .put("imported", imported)
+                .put("committedAtMs", System.currentTimeMillis());
+        rememberCommittedTask(taskId, receipt);
         deleteRecursively(task.dir);
         DiagnosticLog.write(this, "task_committed", taskId + " files=" + deliveredFiles + " works=" + imported);
         publishWorkInventory(this, library.listActive());
@@ -1380,6 +1454,12 @@ public final class OnlineService extends Service {
                 && now - lastActivityAtMs >= INCOMING_TASK_IDLE_TIMEOUT_MS;
     }
 
+    static boolean isFailedCommitTaskStale(long now, long commitFailedAtMs) {
+        return commitFailedAtMs > 0
+                && now >= commitFailedAtMs
+                && now - commitFailedAtMs >= INCOMING_TASK_IDLE_TIMEOUT_MS;
+    }
+
     static boolean isValidResumeRange(long offset, long totalLength, long contentLength) {
         return offset >= 0 && totalLength >= 0 && contentLength >= 0
                 && offset <= totalLength && contentLength == totalLength - offset;
@@ -1397,9 +1477,10 @@ public final class OnlineService extends Service {
         IncomingTask stale = null;
         long now = System.currentTimeMillis();
         synchronized (taskLock) {
-            if (activeTask != null && isIncomingTaskStale(
+            if (activeTask != null && (isIncomingTaskStale(
                     now, activeTask.lastActivityAtMs,
-                    activeTask.files.size(), activeTask.fileCount)) {
+                    activeTask.files.size(), activeTask.fileCount)
+                    || isFailedCommitTaskStale(now, activeTask.commitFailedAtMs))) {
                 stale = activeTask;
                 activeTask = null;
                 currentTaskId = "";
@@ -1897,6 +1978,7 @@ public final class OnlineService extends Service {
         final String transferKey;
         final Map<Integer, IncomingFileSpec> specs;
         final Map<Integer, ReceivedFile> files = new HashMap<>();
+        volatile long commitFailedAtMs;
 
         IncomingTask(
                 String id, String text, boolean autoShare, int fileCount,

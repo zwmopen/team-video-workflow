@@ -14,6 +14,7 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     private var beaconTimer: DispatchSourceTimer?
     private let remotePresence: RemoteRelayPresence
     private var tasks: [String: IncomingTask] = [:]
+    private let committedTaskReceiptsKey = "album.committedIncomingTasks.v1"
     private var activeRelayIds = Set<String>()
     private var remoteInboxTasks = Set<String>()
     private var remoteProcessingTasks = Set<String>()
@@ -410,6 +411,9 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             }
             if request.method == "POST" && request.path == "/v2/tasks" { return try createTask(request) }
             let pieces = request.path.split(separator: "/").map(String.init)
+            if request.method == "GET", pieces.count == 3, pieces[0] == "v2", pieces[1] == "tasks" {
+                return taskStatus(taskID: pieces[2])
+            }
             if request.method == "PUT", pieces.count == 5, pieces[0] == "v2", pieces[1] == "tasks",
                pieces[3] == "files", let index = Int(pieces[4]) {
                 return try uploadFile(taskID: pieces[2], index: index, request: request)
@@ -509,6 +513,10 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         guard isSafeIdentifier(taskID), fileCount > 0, fileCount <= 100 else {
             throw TransferServiceError.badRequest("任务编号或文件数量无效")
         }
+        if let receipt = committedTaskReceipt(taskID) {
+            updateStatus("任务已完成，等待电脑确认")
+            return HTTPResponse(status: 200, object: receipt)
+        }
         if let previous = tasks.removeValue(forKey: taskID) { previous.cleanup() }
         let directory = incomingRoot.appendingPathComponent(taskID, isDirectory: true)
         try? FileManager.default.removeItem(at: directory)
@@ -519,11 +527,28 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         updateStatus("正在接收 \(fileCount) 个项目…")
         TransferNotifications.shared.show("正在向你发送", body: "准备接收 \(fileCount) 个项目",
                                           id: "incoming-start-\(taskID)")
-        return HTTPResponse(status: 201, object: ["ok": true, "taskId": taskID])
+        return HTTPResponse(status: 201, object: tasks[taskID]?.statusObject() ?? [
+            "ok": true, "taskId": taskID, "state": "receiving", "fileCount": fileCount
+        ])
+    }
+
+    private func taskStatus(taskID: String) -> HTTPResponse {
+        if let task = tasks[taskID] {
+            return HTTPResponse(status: 200, object: task.statusObject())
+        }
+        if let receipt = committedTaskReceipt(taskID) {
+            return HTTPResponse(status: 200, object: receipt)
+        }
+        return HTTPResponse(status: 404, message: "任务不存在")
     }
 
     private func uploadFile(taskID: String, index: Int, request: HTTPRequest) throws -> HTTPResponse {
-        guard let task = tasks[taskID] else { throw TransferServiceError.notFound("接收任务不存在，请重试") }
+        guard let task = tasks[taskID] else {
+            if committedTaskReceipt(taskID) != nil {
+                throw TransferServiceError.conflict("任务已提交，请重试提交确认")
+            }
+            throw TransferServiceError.notFound("接收任务不存在，请重试")
+        }
         guard index >= 0, index < task.expectedCount, let temporary = request.bodyFileURL else {
             throw TransferServiceError.badRequest("文件序号无效")
         }
@@ -540,14 +565,21 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         let destination = task.directory.appendingPathComponent("\(index).part")
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: temporary, to: destination)
+        let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         task.files[index] = IncomingFile(name: name,
                                          mime: request.headers["x-file-mime"] ?? "application/octet-stream",
-                                         url: destination)
+                                         url: destination,
+                                         size: size,
+                                         sha256: request.headers["x-file-sha256"] ?? "")
         updateStatus("正在接收 \(task.files.count)/\(task.expectedCount)：\(name)")
         return HTTPResponse(status: 200, object: ["ok": true, "index": index])
     }
 
     private func commitTask(taskID: String) throws -> HTTPResponse {
+        if let receipt = committedTaskReceipt(taskID) {
+            updateStatus("任务已提交，补发接收确认")
+            return HTTPResponse(status: 200, object: receipt)
+        }
         guard let task = tasks[taskID] else { throw TransferServiceError.notFound("接收任务不存在，请重试") }
         guard task.files.count == task.expectedCount else {
             throw TransferServiceError.conflict("文件尚未全部接收，请稍后重试")
@@ -574,12 +606,36 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
                 receivedCount += 1
             }
         }
+        let receipt = saveCommittedTaskReceipt(task, receivedCount: receivedCount)
         tasks.removeValue(forKey: taskID)
         task.cleanup()
         DispatchQueue.main.async { [weak library] in library?.finishIncomingTransfer(itemCount: receivedCount) }
         TransferNotifications.shared.show("接收完成", body: "已收到 \(receivedCount) 个项目",
                                           id: "incoming-complete-\(taskID)")
-        return HTTPResponse(status: 200, object: ["ok": true, "received": receivedCount])
+        return HTTPResponse(status: 200, object: receipt)
+    }
+
+    private func committedTaskReceipt(_ taskID: String) -> [String: Any]? {
+        guard let records = UserDefaults.standard.dictionary(forKey: committedTaskReceiptsKey),
+              let receipt = records[taskID] as? [String: Any] else { return nil }
+        return receipt
+    }
+
+    @discardableResult
+    private func saveCommittedTaskReceipt(_ task: IncomingTask, receivedCount: Int) -> [String: Any] {
+        let receipt = task.committedObject(receivedCount: receivedCount)
+        var records = UserDefaults.standard.dictionary(forKey: committedTaskReceiptsKey) ?? [:]
+        records[task.id] = receipt
+        if records.count > 128 {
+            let oldest = records.keys.min { left, right in
+                let leftAt = (records[left] as? [String: Any])?["committedAtMs"] as? Int ?? Int.min
+                let rightAt = (records[right] as? [String: Any])?["committedAtMs"] as? Int ?? Int.min
+                return leftAt < rightAt
+            }
+            if let oldest = oldest { records.removeValue(forKey: oldest) }
+        }
+        UserDefaults.standard.set(records, forKey: committedTaskReceiptsKey)
+        return receipt
     }
 
     private func cancelTask(taskID: String) -> HTTPResponse {
@@ -720,12 +776,44 @@ private final class IncomingTask {
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: directory) }
+
+    func statusObject() -> [String: Any] {
+        let records = (0..<expectedCount).compactMap { index -> [String: Any]? in
+            guard let file = files[index] else { return nil }
+            return [
+                "index": index,
+                "name": file.name,
+                "size": file.size,
+                "receivedBytes": file.size,
+                "complete": true,
+                "sha256": file.sha256
+            ]
+        }
+        return [
+            "ok": true,
+            "taskId": id,
+            "state": "receiving",
+            "fileCount": expectedCount,
+            "files": records
+        ]
+    }
+
+    func committedObject(receivedCount: Int) -> [String: Any] {
+        var result = statusObject()
+        result["state"] = "committed"
+        result["committed"] = true
+        result["received"] = receivedCount
+        result["committedAtMs"] = Int(Date().timeIntervalSince1970 * 1000)
+        return result
+    }
 }
 
 private struct IncomingFile {
     let name: String
     let mime: String
     let url: URL
+    let size: Int
+    let sha256: String
 }
 
 struct HTTPRequest {

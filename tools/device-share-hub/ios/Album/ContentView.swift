@@ -237,8 +237,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let width = floor((collectionView.bounds.width - 44) / 2)
-        return CGSize(width: width, height: 258)
+        let width = floor(collectionView.bounds.width - 32)
+        return CGSize(width: width, height: 300)
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
@@ -393,6 +393,8 @@ private final class WorkCell: UICollectionViewCell {
     private let icon = UILabel()
     private let count = UILabel()
     private let name = UILabel()
+    private let previewScroll = UIScrollView()
+    private let previewStack = UIStackView()
     private let detail = UILabel()
     private let previewButton = UIButton(type: .system)
     private let xhsButton = UIButton(type: .system)
@@ -407,29 +409,45 @@ private final class WorkCell: UICollectionViewCell {
         icon.font = .systemFont(ofSize: 22)
         count.font = .systemFont(ofSize: 12, weight: .semibold)
         count.textAlignment = .right
-        name.font = .boldSystemFont(ofSize: 16)
-        name.numberOfLines = 2
+        name.font = .boldSystemFont(ofSize: 14)
+        name.numberOfLines = 1
         detail.font = .systemFont(ofSize: 12)
         detail.textColor = AppColors.secondaryText
         let top = UIStackView(arrangedSubviews: [icon, count])
         top.axis = .horizontal
+        previewScroll.showsHorizontalScrollIndicator = false
+        previewScroll.alwaysBounceHorizontal = false
+        previewScroll.accessibilityLabel = "作品缩略图，可横向查看全部图片"
+        previewStack.axis = .horizontal
+        previewStack.spacing = 8
+        previewStack.alignment = .center
+        previewStack.translatesAutoresizingMaskIntoConstraints = false
+        previewScroll.addSubview(previewStack)
+        NSLayoutConstraint.activate([
+            previewStack.leadingAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.leadingAnchor),
+            previewStack.trailingAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.trailingAnchor),
+            previewStack.topAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.topAnchor),
+            previewStack.bottomAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.bottomAnchor),
+            previewStack.heightAnchor.constraint(equalTo: previewScroll.frameLayoutGuide.heightAnchor)
+        ])
         configurePreviewButton()
         configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
         configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
         let platformRow = UIStackView(arrangedSubviews: [previewButton, douyinButton, xhsButton])
-        platformRow.axis = .vertical
-        platformRow.spacing = 6
+        platformRow.axis = .horizontal
+        platformRow.spacing = 7
         platformRow.alignment = .leading
         platformRow.distribution = .fill
-        let stack = UIStackView(arrangedSubviews: [top, name, detail, platformRow])
+        let stack = UIStackView(arrangedSubviews: [top, name, previewScroll, detail, platformRow])
         stack.axis = .vertical
-        stack.spacing = 10
+        stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            previewScroll.heightAnchor.constraint(equalToConstant: 70),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12)
         ])
     }
@@ -438,26 +456,47 @@ private final class WorkCell: UICollectionViewCell {
 
     override func prepareForReuse() { super.prepareForReuse(); onShare = nil; onPreview = nil }
 
+    private func renderPreviews(_ urls: [URL]) {
+        previewStack.arrangedSubviews.forEach { view in
+            previewStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, url) in urls.enumerated() {
+            let imageView = UIImageView(image: UIImage(contentsOfFile: url.path))
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.layer.cornerRadius = 10
+            imageView.layer.borderWidth = 1
+            imageView.layer.borderColor = AppColors.separator.cgColor
+            imageView.backgroundColor = AppColors.sharedBackground
+            imageView.accessibilityLabel = "第 \(index + 1) 张图片"
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.widthAnchor.constraint(equalToConstant: 70).isActive = true
+            imageView.heightAnchor.constraint(equalToConstant: 70).isActive = true
+            previewStack.addArrangedSubview(imageView)
+        }
+    }
+
     private func configurePreviewButton() {
         previewButton.setTitle("预览", for: .normal)
-        previewButton.titleLabel?.font = .boldSystemFont(ofSize: 12)
+        previewButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
         previewButton.backgroundColor = .white
         previewButton.setTitleColor(AppColors.text, for: .normal)
         previewButton.layer.cornerRadius = 10
         previewButton.layer.borderWidth = 1
         previewButton.layer.borderColor = AppColors.separator.cgColor
-        previewButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
-        previewButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        previewButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        previewButton.heightAnchor.constraint(equalToConstant: 34).isActive = true
         previewButton.accessibilityLabel = "预览作品，可左右查看下一张"
         previewButton.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
     }
 
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
         button.setTitle(title, for: .normal)
-        button.titleLabel?.font = .boldSystemFont(ofSize: 12)
+        button.titleLabel?.font = .boldSystemFont(ofSize: 11)
         button.layer.cornerRadius = 10
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
-        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        button.heightAnchor.constraint(equalToConstant: 34).isActive = true
         button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
         applyPlatformButtonState(button, clicked: false)
         button.addTarget(self,
@@ -499,6 +538,7 @@ private final class WorkCell: UICollectionViewCell {
         contentView.backgroundColor = shared ? AppColors.sharedBackground : AppColors.secondaryBackground
         contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor
         name.textColor = shared ? AppColors.secondaryText : AppColors.text
+        renderPreviews(work.imageURLs)
         detail.text = shared ? "首次使用后按清理设置自动回收" : "点白色卡片查看内容"
         applyPlatformButtonState(xhsButton, clicked: work.xhsShareCount > 0)
         applyPlatformButtonState(douyinButton, clicked: work.douyinShareCount > 0)

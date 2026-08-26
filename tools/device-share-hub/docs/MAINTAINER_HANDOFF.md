@@ -1,5 +1,12 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-08-26 移动端接收任务提交重试修复候选
+
+- 候选版本：Android 0.6.61/versionCode 99、iPhone 0.6.44/build 63。
+- 根因：提交阶段的短暂 500/超时会让 Android 清掉仍可重试的任务；导入成功但 ACK 丢失时，Android/iOS 又没有持久完成回执，电脑重试同一 taskId 得到“任务不存在”。
+- 修复：Android 保留失败提交任务和 manifest，iOS/Android 保存最近 128 个完成回执；GET 状态、重复 create 和重复 commit 都可以返回完成回执，重复请求不重复导入。Android commit 入口串行化，避免并发提交重复写库。
+- 本地证据：`verify-task-receipts.mjs`、P2P/自动更新/移除权限静态门禁和 `git diff --check` 已通过；云端三端构建、发布索引、真实手机接收/落库/ACK 仍待本轮完成。
+
 ## 2026-08-24 Android 断点接收提交修复候选
 
 - 已发布 Beta：Android 0.6.55/versionCode 93；修复回收目录缺失 `meta.properties` 导致 ZIP 提交 500，并在发送端复用同一断点任务的接收端文件名。

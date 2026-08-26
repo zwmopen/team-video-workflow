@@ -13,6 +13,8 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -31,6 +33,7 @@ import android.animation.LayoutTransition;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -503,28 +506,10 @@ public final class MainActivity extends Activity {
             if (!animate) worksContainer.setLayoutTransition(transition);
             return;
         }
-        for (int index = 0; index < entries.size(); index += 2) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            addGridCard(row, entries.get(index), false);
-            if (index + 1 < entries.size()) addGridCard(row, entries.get(index + 1), true);
-            else {
-                View spacer = new View(this);
-                LinearLayout.LayoutParams spacerParams = new LinearLayout.LayoutParams(0, 1, 1);
-                spacerParams.setMargins(dp(6), 0, 0, 0);
-                row.addView(spacer, spacerParams);
-            }
-            worksContainer.addView(row, margins(0, 0, 0, dp(10)));
+        for (WorkLibrary.WorkEntry entry : entries) {
+            worksContainer.addView(workCard(entry), margins(0, 0, 0, dp(10)));
         }
         if (!animate) worksContainer.setLayoutTransition(transition);
-    }
-
-    private void addGridCard(LinearLayout row, WorkLibrary.WorkEntry work, boolean right) {
-        boolean compactActions = selectedWorkIds.isEmpty() && !showingTrash;
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                0, dp(compactActions ? 258 : 174), 1);
-        params.setMargins(right ? dp(5) : 0, 0, right ? 0 : dp(5), 0);
-        row.addView(workCard(work), params);
     }
 
     private View workCard(WorkLibrary.WorkEntry work) {
@@ -544,8 +529,8 @@ public final class MainActivity extends Activity {
         LinearLayout nameRow = new LinearLayout(this);
         nameRow.setOrientation(LinearLayout.HORIZONTAL);
         nameRow.setGravity(Gravity.TOP);
-        TextView name = text(work.name, 16, true);
-        name.setMaxLines(2);
+        TextView name = text(work.name, 14, true);
+        name.setMaxLines(1);
         nameRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
         CheckBox checkBox = new CheckBox(this);
         checkBox.setButtonTintList(new ColorStateList(
@@ -556,6 +541,8 @@ public final class MainActivity extends Activity {
         checkBox.setContentDescription(selected ? "取消选择" : "选择作品");
         nameRow.addView(checkBox, new LinearLayout.LayoutParams(dp(42), dp(42)));
         card.addView(nameRow);
+
+        card.addView(previewStrip(work), margins(0, dp(2), 0, dp(2)));
         String detail = work.images.size() + " 张图片";
         if (work.used) {
             detail += "\n✓ 小红书 " + work.xhsShareCount + " · 抖音 " + work.douyinShareCount;
@@ -565,8 +552,8 @@ public final class MainActivity extends Activity {
         else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
         TextView meta = text(detail, 12, false);
         meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(78, 78, 75));
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, 0, 1);
-        metaParams.setMargins(0, dp(3), 0, dp(6));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.setMargins(0, dp(3), 0, dp(5));
         card.addView(meta, metaParams);
         String actionText = selecting ? (selected ? "已选择" : "选择") : "恢复";
         Button action = smallButton(actionText, false);
@@ -614,12 +601,55 @@ public final class MainActivity extends Activity {
                 markPlatformButtonClicked(xhs, "发小红书", work.xhsShareCount);
                 openShare(work, "xhs");
             });
-            platformRow.addView(preview, compactButtonParams(false));
-            platformRow.addView(douyin, compactButtonParams(true));
-            platformRow.addView(xhs, compactButtonParams(true));
+            platformRow.addView(preview, compactButtonRowParams(false));
+            platformRow.addView(douyin, compactButtonRowParams(true));
+            platformRow.addView(xhs, compactButtonRowParams(true));
             card.addView(platformRow);
         }
         return card;
+    }
+
+    private View previewStrip(WorkLibrary.WorkEntry work) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+
+        LinearLayout strip = new LinearLayout(this);
+        strip.setOrientation(LinearLayout.HORIZONTAL);
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setPadding(0, 0, dp(2), 0);
+        for (int index = 0; index < work.images.size(); index++) {
+            String imageName = work.images.get(index);
+            ImageView thumbnail = new ImageView(this);
+            thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbnail.setBackground(roundWithStroke(
+                    Color.rgb(239, 242, 240), 10, Color.rgb(216, 222, 218)));
+            thumbnail.setClipToOutline(true);
+            thumbnail.setContentDescription("预览第 " + (index + 1) + " 张图片");
+            Bitmap bitmap = loadThumbnail(new File(work.directory, imageName), dp(68));
+            if (bitmap != null) thumbnail.setImageBitmap(bitmap);
+            thumbnail.setOnClickListener(v -> openPreview(work));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(68), dp(68));
+            if (index > 0) params.setMargins(dp(7), 0, 0, 0);
+            strip.addView(thumbnail, params);
+        }
+        scroll.addView(strip, new HorizontalScrollView.LayoutParams(-2, dp(68)));
+        return scroll;
+    }
+
+    private Bitmap loadThumbnail(File image, int targetPx) {
+        if (!image.isFile()) return null;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(image.getAbsolutePath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        int sample = 1;
+        while (bounds.outWidth / sample > targetPx * 2 || bounds.outHeight / sample > targetPx * 2) {
+            sample *= 2;
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        return BitmapFactory.decodeFile(image.getAbsolutePath(), options);
     }
 
     private void addCategoryButton(String label, String category) {
@@ -1447,9 +1477,9 @@ public final class MainActivity extends Activity {
         button.setEnabled(true);
     }
 
-    private LinearLayout.LayoutParams compactButtonParams(boolean withTopMargin) {
+    private LinearLayout.LayoutParams compactButtonRowParams(boolean withLeftMargin) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
-        if (withTopMargin) params.setMargins(0, dp(5), 0, 0);
+        if (withLeftMargin) params.setMargins(dp(6), 0, 0, 0);
         return params;
     }
 

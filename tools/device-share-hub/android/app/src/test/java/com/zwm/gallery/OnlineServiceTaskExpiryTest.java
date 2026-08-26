@@ -29,11 +29,18 @@ public class OnlineServiceTaskExpiryTest {
     }
 
     @Test
-    public void onlyFinalCommitRequestsResetAFailedReceiveTask() {
+    public void onlyFinalCommitRequestsUseCommitRecoveryPath() {
         assertTrue(OnlineService.isCommitPath("POST", "/v2/tasks/batch-123/commit"));
         assertFalse(OnlineService.isCommitPath("PUT", "/v2/tasks/batch-123/commit"));
         assertFalse(OnlineService.isCommitPath("POST", "/v2/tasks/batch-123/files/0"));
         assertFalse(OnlineService.isCommitPath("POST", "/v2/tasks//commit"));
+    }
+
+    @Test
+    public void failedCommitTaskRemainsRetryableUntilIdleTimeout() {
+        assertFalse(OnlineService.isFailedCommitTaskStale(1_799_999L, 1L));
+        assertTrue(OnlineService.isFailedCommitTaskStale(1_800_001L, 1L));
+        assertFalse(OnlineService.isFailedCommitTaskStale(0L, 1L));
     }
 
     @Test

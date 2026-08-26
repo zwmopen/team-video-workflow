@@ -1,5 +1,20 @@
 # 变更记录
 
+## Android 0.6.61 / iPhone 0.6.44 - 接收任务重试与回执修复（源码候选）
+
+- 修复电脑提交阶段遇到超时/HTTP 500 后，手机提前删除任务，电脑下一次重试被误报“任务不存在”的问题。
+- Android 保留提交失败的任务、文件和断点清单，等待同一任务 ID 重试；任务闲置超时后才清理。
+- Android 与 iPhone 都保存最近 128 个已完成任务回执；重复查询、创建或提交同一任务只补发完成回执，不会重复导入作品。
+- iPhone 增加 `GET /v2/tasks/{taskId}` 状态接口，电脑可以在提交前确认断点和已完成状态。
+- Android versionCode 99 / versionName 0.6.61；iPhone build 63 / marketing version 0.6.44。尚未云端构建、发布或进行实体手机验收。
+
+## Android 0.6.60 / iPhone 0.6.43 - 作品操作模块重排（源码候选）
+
+- Android 与 iPhone 作品列表统一为单列全宽操作模块，不再把作品压成两列卡片。
+- 每个模块显示缩小后的标题、顶部横向缩略图带和底部“预览 / 发抖音 / 发小红书”三个紧凑按钮；缩略图可横向查看全部图片。
+- 保留原有预览、系统分享、平台点击计数、灰色已点击状态和作品库逻辑；本轮未改变传输协议与权限。
+- Android versionCode 98 / versionName 0.6.60；iPhone build 62 / marketing version 0.6.43。尚未云端构建或发布。
+
 ## Android 0.6.59 / iPhone 0.6.42 - 统一正式入口与 iOS build 检测
 
 - Android versionCode 97 / versionName 0.6.59；iPhone build 61 / marketing version 0.6.42。
