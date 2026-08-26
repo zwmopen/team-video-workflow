@@ -106,7 +106,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func configureCollection() {
         let layout = UICollectionViewFlowLayout()
-        layout.minimumInteritemSpacing = 12
+        layout.minimumInteritemSpacing = 0
         layout.minimumLineSpacing = 12
         layout.sectionInset = UIEdgeInsets(top: 16, left: 16, bottom: 24, right: 16)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -212,6 +212,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             self.navigationController?.pushViewController(
                 WorkDetailViewController(library: self.library, work: work), animated: true)
         }
+        cell.onDelete = { [weak self] in self?.requestDelete(work) }
         return cell
     }
 
@@ -235,10 +236,23 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
     }
 
+    private func requestDelete(_ work: WorkItem) {
+        let alert = UIAlertController(
+            title: "删除“\(work.name)”？",
+            message: "作品会移到“相册回收站”，不会立即永久删除；分享次数会保留。",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
+            do { try self?.library.moveWorkToTrash(work) }
+            catch { self?.showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription) }
+        })
+        present(alert, animated: true)
+    }
+
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let width = floor((collectionView.bounds.width - 44) / 2)
-        return CGSize(width: width, height: 258)
+        let width = floor(collectionView.bounds.width - 32)
+        return CGSize(width: width, height: 214)
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
@@ -397,8 +411,10 @@ private final class WorkCell: UICollectionViewCell {
     private let previewButton = UIButton(type: .system)
     private let xhsButton = UIButton(type: .system)
     private let douyinButton = UIButton(type: .system)
+    private let deleteButton = UIButton(type: .system)
     var onShare: ((CopyPlatform) -> Void)?
     var onPreview: (() -> Void)?
+    var onDelete: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -416,11 +432,12 @@ private final class WorkCell: UICollectionViewCell {
         configurePreviewButton()
         configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
         configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
-        let platformRow = UIStackView(arrangedSubviews: [previewButton, douyinButton, xhsButton])
-        platformRow.axis = .vertical
-        platformRow.spacing = 6
-        platformRow.alignment = .leading
-        platformRow.distribution = .fill
+        configureDeleteButton()
+        let platformRow = UIStackView(arrangedSubviews: [previewButton, douyinButton, xhsButton, deleteButton])
+        platformRow.axis = .horizontal
+        platformRow.spacing = 5
+        platformRow.alignment = .fill
+        platformRow.distribution = .fillEqually
         let stack = UIStackView(arrangedSubviews: [top, name, detail, platformRow])
         stack.axis = .vertical
         stack.spacing = 10
@@ -436,7 +453,12 @@ private final class WorkCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func prepareForReuse() { super.prepareForReuse(); onShare = nil; onPreview = nil }
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onShare = nil
+        onPreview = nil
+        onDelete = nil
+    }
 
     private func configurePreviewButton() {
         previewButton.setTitle("预览", for: .normal)
@@ -454,15 +476,29 @@ private final class WorkCell: UICollectionViewCell {
 
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
         button.setTitle(title, for: .normal)
-        button.titleLabel?.font = .boldSystemFont(ofSize: 12)
+        button.titleLabel?.font = .boldSystemFont(ofSize: 11)
         button.layer.cornerRadius = 10
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 3, bottom: 0, right: 3)
         button.heightAnchor.constraint(equalToConstant: 36).isActive = true
         button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
         applyPlatformButtonState(button, clicked: false)
         button.addTarget(self,
                          action: platform == .xhs ? #selector(xhsTapped) : #selector(douyinTapped),
                          for: .touchUpInside)
+    }
+
+    private func configureDeleteButton() {
+        deleteButton.setTitle("删除", for: .normal)
+        deleteButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
+        deleteButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.08)
+        deleteButton.setTitleColor(.systemRed, for: .normal)
+        deleteButton.layer.cornerRadius = 10
+        deleteButton.layer.borderWidth = 1
+        deleteButton.layer.borderColor = UIColor.systemRed.withAlphaComponent(0.28).cgColor
+        deleteButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 3, bottom: 0, right: 3)
+        deleteButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        deleteButton.accessibilityLabel = "删除作品，移到相册回收站"
+        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
     }
 
     private func applyPlatformButtonState(_ button: UIButton, clicked: Bool) {
@@ -488,6 +524,7 @@ private final class WorkCell: UICollectionViewCell {
         markPlatformButtonClicked(.douyin)
         onShare?(.douyin)
     }
+    @objc private func deleteTapped() { onDelete?() }
 
     func configure(_ work: WorkItem) {
         let shared = work.used

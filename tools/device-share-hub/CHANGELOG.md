@@ -1,10 +1,12 @@
 # 变更记录
 
-## Android 0.6.59 / iPhone 0.6.42 - 统一正式入口与 iOS build 检测
+## Android 0.6.59 / iPhone 0.6.42 作品卡整卡面板 - 2026-08-26
 
-- Android versionCode 97 / versionName 0.6.59；iPhone build 61 / marketing version 0.6.42。
-- Android、iPhone、Windows 继续只使用同一个正式更新入口，不再区分稳定版和测试版。
-- iOS 更新检查同时比较 marketing version 和 build；即使版本名不变，build 递增也会提示更新，避免云端已发布但手机显示“已经是最新版本”。
+- Android 与 iPhone 作品列表改为整卡面板，统一提供“预览 / 发抖音 / 发小红书 / 删除”。
+- 删除必须确认，确认后移动整个作品文件夹到“相册回收站”，分享记录保留且支持恢复。
+- 平台按钮点击后即时灰化但继续可点击；保留原有平台文案、分享计数、自动清理和传输逻辑。
+- 版本：Android versionCode 97 / versionName 0.6.59；iPhone 0.6.42/build 61。
+- 当前为源码候选，云端构建、统一更新索引和真机安装待本轮验证。
 
 ## Android 0.6.58 - 自动接收开关（统一正式入口）
 

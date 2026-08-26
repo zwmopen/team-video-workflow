@@ -320,6 +320,40 @@ final class WorkLibrary {
         return moved
     }
 
+    func moveWorkToTrash(_ work: WorkItem) throws {
+        guard let root = rootURL else { throw LibraryError.noFolder }
+        let source = work.folderURL.standardizedFileURL
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            throw LibraryError.operationFailed("作品文件夹不存在，未删除任何内容。")
+        }
+        let now = Date()
+        let trashURL = root.appendingPathComponent(trashName, isDirectory: true)
+        try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
+        let destination = StoredZipExtractor.uniqueDestination(
+            for: "\(source.lastPathComponent)-\(UUID().uuidString.prefix(8))", under: trashURL)
+        try FileManager.default.moveItem(at: source, to: destination)
+
+        let previous = state.works[work.key] ?? WorkState()
+        var record = previous
+        record.trashedDate = Self.dayFormatter.string(from: now)
+        record.trashedAtMs = now.timeIntervalSince1970 * 1000
+        record.originalRelativePath = work.relativePath
+        record.trashFolderName = destination.lastPathComponent
+        if record.firstSharedAtMs == nil && record.firstUsedAtMs == nil {
+            record.firstSharedAtMs = record.trashedAtMs
+        }
+        state.works[work.key] = record
+        do {
+            try saveState(to: root)
+        } catch {
+            state.works[work.key] = previous
+            try? FileManager.default.moveItem(at: destination, to: source)
+            throw error
+        }
+        message = "已移到回收站：\(work.name)"
+        refresh(showConfirmation: false)
+    }
+
     func imageTrashCount(_ work: WorkItem) -> Int {
         let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
         guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
