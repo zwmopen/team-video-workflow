@@ -503,28 +503,12 @@ public final class MainActivity extends Activity {
             if (!animate) worksContainer.setLayoutTransition(transition);
             return;
         }
-        for (int index = 0; index < entries.size(); index += 2) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            addGridCard(row, entries.get(index), false);
-            if (index + 1 < entries.size()) addGridCard(row, entries.get(index + 1), true);
-            else {
-                View spacer = new View(this);
-                LinearLayout.LayoutParams spacerParams = new LinearLayout.LayoutParams(0, 1, 1);
-                spacerParams.setMargins(dp(6), 0, 0, 0);
-                row.addView(spacer, spacerParams);
-            }
-            worksContainer.addView(row, margins(0, 0, 0, dp(10)));
+        // Use a full-width card so the four actions remain legible on narrow phones
+        // and match the iOS panel interaction model.
+        for (WorkLibrary.WorkEntry entry : entries) {
+            worksContainer.addView(workCard(entry), margins(0, 0, 0, dp(10)));
         }
         if (!animate) worksContainer.setLayoutTransition(transition);
-    }
-
-    private void addGridCard(LinearLayout row, WorkLibrary.WorkEntry work, boolean right) {
-        boolean compactActions = selectedWorkIds.isEmpty() && !showingTrash;
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                0, dp(compactActions ? 258 : 174), 1);
-        params.setMargins(right ? dp(5) : 0, 0, right ? 0 : dp(5), 0);
-        row.addView(workCard(work), params);
     }
 
     private View workCard(WorkLibrary.WorkEntry work) {
@@ -532,6 +516,7 @@ public final class MainActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         boolean selected = selectedWorkIds.contains(work.id);
         boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
+        if (!selecting && !showingTrash) card.setMinimumHeight(dp(214));
         if (selected) {
             card.setBackground(roundWithStroke(
                     Color.rgb(250, 230, 226), 16, Color.rgb(209, 126, 116)));
@@ -565,7 +550,7 @@ public final class MainActivity extends Activity {
         else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
         TextView meta = text(detail, 12, false);
         meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(78, 78, 75));
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.setMargins(0, dp(3), 0, dp(6));
         card.addView(meta, metaParams);
         String actionText = selecting ? (selected ? "已选择" : "选择") : "恢复";
@@ -597,14 +582,19 @@ public final class MainActivity extends Activity {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             LinearLayout platformRow = new LinearLayout(this);
-            platformRow.setOrientation(LinearLayout.VERTICAL);
-            platformRow.setGravity(Gravity.START);
+            platformRow.setOrientation(LinearLayout.HORIZONTAL);
+            platformRow.setGravity(Gravity.CENTER_VERTICAL);
             Button preview = compactButton("预览", false);
             Button douyin = compactButton("发抖音", work.douyinShareCount == 0);
             Button xhs = compactButton("发小红书", work.xhsShareCount == 0);
+            Button delete = compactButton("删除", false);
+            delete.setTextColor(Color.rgb(177, 63, 56));
+            delete.setBackground(roundWithStroke(
+                    Color.rgb(255, 247, 246), 12, Color.rgb(232, 177, 171)));
             preview.setContentDescription("预览作品，可在大图中查看下一张");
             douyin.setContentDescription("发抖音，已点击 " + work.douyinShareCount + " 次");
             xhs.setContentDescription("发小红书，已点击 " + work.xhsShareCount + " 次");
+            delete.setContentDescription("删除作品，移到相册回收站");
             preview.setOnClickListener(v -> openPreview(work));
             douyin.setOnClickListener(v -> {
                 markPlatformButtonClicked(douyin, "发抖音", work.douyinShareCount);
@@ -614,9 +604,11 @@ public final class MainActivity extends Activity {
                 markPlatformButtonClicked(xhs, "发小红书", work.xhsShareCount);
                 openShare(work, "xhs");
             });
-            platformRow.addView(preview, compactButtonParams(false));
-            platformRow.addView(douyin, compactButtonParams(true));
-            platformRow.addView(xhs, compactButtonParams(true));
+            delete.setOnClickListener(v -> confirmMoveToTrash(work));
+            platformRow.addView(preview, compactButtonParams());
+            platformRow.addView(douyin, compactButtonParams());
+            platformRow.addView(xhs, compactButtonParams());
+            platformRow.addView(delete, compactButtonParams());
             card.addView(platformRow);
         }
         return card;
@@ -982,6 +974,19 @@ public final class MainActivity extends Activity {
                 .setMessage("这些作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("移到回收站", (dialog, which) -> moveSelectedToTrash(ids))
+                .show();
+    }
+
+    private void confirmMoveToTrash(WorkLibrary.WorkEntry work) {
+        new AlertDialog.Builder(this)
+                .setTitle("删除“" + work.name + "”？")
+                .setMessage("作品会移到“相册回收站”，不会立即永久删除；分享次数会保留。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("移到回收站", (dialog, which) -> {
+                    LinkedHashSet<String> ids = new LinkedHashSet<>();
+                    ids.add(work.id);
+                    moveSelectedToTrash(ids);
+                })
                 .show();
     }
 
@@ -1428,7 +1433,9 @@ public final class MainActivity extends Activity {
         button.setTextSize(11.5f);
         button.setMinHeight(0);
         button.setMinimumHeight(0);
-        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setPadding(dp(6), 0, dp(6), 0);
         button.setGravity(Gravity.CENTER);
         button.setMaxLines(1);
         if ("预览".equals(label)) {
@@ -1447,9 +1454,9 @@ public final class MainActivity extends Activity {
         button.setEnabled(true);
     }
 
-    private LinearLayout.LayoutParams compactButtonParams(boolean withTopMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
-        if (withTopMargin) params.setMargins(0, dp(5), 0, 0);
+    private LinearLayout.LayoutParams compactButtonParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(34), 1);
+        params.setMargins(dp(2), 0, dp(2), 0);
         return params;
     }
 
