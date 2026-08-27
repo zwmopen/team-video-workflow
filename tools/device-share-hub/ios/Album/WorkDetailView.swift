@@ -10,9 +10,13 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private var collection: UICollectionView!
     private let actions = UIStackView()
     private var suppressNextSelection = false
+    private var initialPreviewShown = false
 
-    init(library: WorkLibrary, work: WorkItem) {
+    private let initialImageIndex: Int?
+
+    init(library: WorkLibrary, work: WorkItem, initialImageIndex: Int? = nil) {
         self.library = library; self.work = work
+        self.initialImageIndex = initialImageIndex
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -21,6 +25,17 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         super.viewDidLoad()
         view.backgroundColor = AppColors.background
         configureUI(); render()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !initialPreviewShown, let index = initialImageIndex,
+              index >= 0, index < work.imageURLs.count else { return }
+        initialPreviewShown = true
+        navigationController?.pushViewController(
+            ImagePreviewController(urls: work.imageURLs, initialIndex: index) { [weak self] url in
+                self?.deletePreviewImage(url) ?? "作品已关闭，无法删除图片。"
+            }, animated: true)
     }
 
     private func configureUI() {

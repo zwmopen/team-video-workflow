@@ -207,11 +207,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let work = filteredWorks[indexPath.item]
         cell.configure(work)
         cell.onShare = { [weak self, weak cell] platform in self?.share(work, platform: platform, source: cell) }
-        cell.onPreview = { [weak self] in
+        cell.onPreview = { [weak self] index in
             guard let self = self else { return }
             self.navigationController?.pushViewController(
-                WorkDetailViewController(library: self.library, work: work), animated: true)
+                WorkDetailViewController(library: self.library, work: work, initialImageIndex: index), animated: true)
         }
+        cell.onDelete = { [weak self] in self?.confirmMoveToTrash(work) }
         return cell
     }
 
@@ -239,6 +240,23 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
         return CGSize(width: width, height: 300)
+    }
+
+    private func confirmMoveToTrash(_ work: WorkItem) {
+        let alert = UIAlertController(title: "移到回收站？",
+                                      message: "作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            do {
+                try self.library.moveWorkToTrash(work)
+                self.render()
+            } catch {
+                self.showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+        })
+        present(alert, animated: true)
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
@@ -396,11 +414,12 @@ private final class WorkCell: UICollectionViewCell {
     private let previewScroll = UIScrollView()
     private let previewStack = UIStackView()
     private let detail = UILabel()
-    private let previewButton = UIButton(type: .system)
     private let xhsButton = UIButton(type: .system)
     private let douyinButton = UIButton(type: .system)
+    private let deleteButton = UIButton(type: .system)
     var onShare: ((CopyPlatform) -> Void)?
-    var onPreview: (() -> Void)?
+    var onPreview: ((Int) -> Void)?
+    var onDelete: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -430,14 +449,14 @@ private final class WorkCell: UICollectionViewCell {
             previewStack.bottomAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.bottomAnchor),
             previewStack.heightAnchor.constraint(equalTo: previewScroll.frameLayoutGuide.heightAnchor)
         ])
-        configurePreviewButton()
         configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
         configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
-        let platformRow = UIStackView(arrangedSubviews: [previewButton, douyinButton, xhsButton])
+        configureDeleteButton()
+        let platformRow = UIStackView(arrangedSubviews: [douyinButton, xhsButton, deleteButton])
         platformRow.axis = .horizontal
-        platformRow.spacing = 7
-        platformRow.alignment = .leading
-        platformRow.distribution = .fill
+        platformRow.spacing = 6
+        platformRow.alignment = .fill
+        platformRow.distribution = .fillEqually
         let stack = UIStackView(arrangedSubviews: [top, name, previewScroll, detail, platformRow])
         stack.axis = .vertical
         stack.spacing = 8
@@ -454,7 +473,7 @@ private final class WorkCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func prepareForReuse() { super.prepareForReuse(); onShare = nil; onPreview = nil }
+    override func prepareForReuse() { super.prepareForReuse(); onShare = nil; onPreview = nil; onDelete = nil }
 
     private func renderPreviews(_ urls: [URL]) {
         previewStack.arrangedSubviews.forEach { view in
@@ -462,46 +481,60 @@ private final class WorkCell: UICollectionViewCell {
             view.removeFromSuperview()
         }
         for (index, url) in urls.enumerated() {
+            let thumbnail = UIButton(type: .custom)
             let imageView = UIImageView(image: UIImage(contentsOfFile: url.path))
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
-            imageView.layer.cornerRadius = 10
-            imageView.layer.borderWidth = 1
-            imageView.layer.borderColor = AppColors.separator.cgColor
             imageView.backgroundColor = AppColors.sharedBackground
-            imageView.accessibilityLabel = "第 \(index + 1) 张图片"
             imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.widthAnchor.constraint(equalToConstant: 70).isActive = true
-            imageView.heightAnchor.constraint(equalToConstant: 70).isActive = true
-            previewStack.addArrangedSubview(imageView)
+            thumbnail.addSubview(imageView)
+            thumbnail.translatesAutoresizingMaskIntoConstraints = false
+            thumbnail.layer.cornerRadius = 10
+            thumbnail.layer.borderWidth = 1
+            thumbnail.layer.borderColor = AppColors.separator.cgColor
+            thumbnail.clipsToBounds = true
+            thumbnail.accessibilityLabel = "预览第 \(index + 1) 张图片"
+            thumbnail.tag = index
+            thumbnail.addTarget(self, action: #selector(thumbnailTapped(_:)), for: .touchUpInside)
+            NSLayoutConstraint.activate([
+                imageView.leadingAnchor.constraint(equalTo: thumbnail.leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: thumbnail.trailingAnchor),
+                imageView.topAnchor.constraint(equalTo: thumbnail.topAnchor),
+                imageView.bottomAnchor.constraint(equalTo: thumbnail.bottomAnchor),
+                thumbnail.widthAnchor.constraint(equalToConstant: 70),
+                thumbnail.heightAnchor.constraint(equalToConstant: 70)
+            ])
+            previewStack.addArrangedSubview(thumbnail)
         }
-    }
-
-    private func configurePreviewButton() {
-        previewButton.setTitle("预览", for: .normal)
-        previewButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
-        previewButton.backgroundColor = .white
-        previewButton.setTitleColor(AppColors.text, for: .normal)
-        previewButton.layer.cornerRadius = 10
-        previewButton.layer.borderWidth = 1
-        previewButton.layer.borderColor = AppColors.separator.cgColor
-        previewButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        previewButton.heightAnchor.constraint(equalToConstant: 34).isActive = true
-        previewButton.accessibilityLabel = "预览作品，可左右查看下一张"
-        previewButton.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
     }
 
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = .boldSystemFont(ofSize: 11)
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.75
         button.layer.cornerRadius = 10
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
         button.heightAnchor.constraint(equalToConstant: 34).isActive = true
         button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
         applyPlatformButtonState(button, clicked: false)
         button.addTarget(self,
                          action: platform == .xhs ? #selector(xhsTapped) : #selector(douyinTapped),
                          for: .touchUpInside)
+    }
+
+    private func configureDeleteButton() {
+        deleteButton.setTitle("删除", for: .normal)
+        deleteButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
+        deleteButton.setTitleColor(UIColor(red: 0.74, green: 0.22, blue: 0.20, alpha: 1), for: .normal)
+        deleteButton.backgroundColor = .white
+        deleteButton.layer.cornerRadius = 10
+        deleteButton.layer.borderWidth = 1
+        deleteButton.layer.borderColor = UIColor(red: 0.89, green: 0.67, blue: 0.64, alpha: 1).cgColor
+        deleteButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+        deleteButton.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        deleteButton.accessibilityLabel = "删除作品，移到回收站"
+        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
     }
 
     private func applyPlatformButtonState(_ button: UIButton, clicked: Bool) {
@@ -518,7 +551,7 @@ private final class WorkCell: UICollectionViewCell {
         }
     }
 
-    @objc private func previewTapped() { onPreview?() }
+    @objc private func thumbnailTapped(_ sender: UIButton) { onPreview?(sender.tag) }
     @objc private func xhsTapped() {
         markPlatformButtonClicked(.xhs)
         onShare?(.xhs)
@@ -527,6 +560,7 @@ private final class WorkCell: UICollectionViewCell {
         markPlatformButtonClicked(.douyin)
         onShare?(.douyin)
     }
+    @objc private func deleteTapped() { onDelete?() }
 
     func configure(_ work: WorkItem) {
         let shared = work.used

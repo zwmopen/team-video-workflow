@@ -584,15 +584,17 @@ public final class MainActivity extends Activity {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             LinearLayout platformRow = new LinearLayout(this);
-            platformRow.setOrientation(LinearLayout.VERTICAL);
-            platformRow.setGravity(Gravity.START);
-            Button preview = compactButton("预览", false);
+            platformRow.setOrientation(LinearLayout.HORIZONTAL);
+            platformRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
             Button douyin = compactButton("发抖音", work.douyinShareCount == 0);
             Button xhs = compactButton("发小红书", work.xhsShareCount == 0);
-            preview.setContentDescription("预览作品，可在大图中查看下一张");
+            Button delete = compactButton("删除", false);
+            delete.setTextColor(Color.rgb(188, 66, 60));
+            delete.setBackground(roundWithStroke(
+                    Color.WHITE, 12, Color.rgb(226, 170, 164)));
             douyin.setContentDescription("发抖音，已点击 " + work.douyinShareCount + " 次");
             xhs.setContentDescription("发小红书，已点击 " + work.xhsShareCount + " 次");
-            preview.setOnClickListener(v -> openPreview(work));
+            delete.setContentDescription("删除作品，移到回收站");
             douyin.setOnClickListener(v -> {
                 markPlatformButtonClicked(douyin, "发抖音", work.douyinShareCount);
                 openShare(work, "douyin");
@@ -601,9 +603,10 @@ public final class MainActivity extends Activity {
                 markPlatformButtonClicked(xhs, "发小红书", work.xhsShareCount);
                 openShare(work, "xhs");
             });
-            platformRow.addView(preview, compactButtonRowParams(false));
+            delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
             platformRow.addView(douyin, compactButtonRowParams(true));
             platformRow.addView(xhs, compactButtonRowParams(true));
+            platformRow.addView(delete, compactButtonRowParams(true));
             card.addView(platformRow);
         }
         return card;
@@ -628,7 +631,8 @@ public final class MainActivity extends Activity {
             thumbnail.setContentDescription("预览第 " + (index + 1) + " 张图片");
             Bitmap bitmap = loadThumbnail(new File(work.directory, imageName), dp(68));
             if (bitmap != null) thumbnail.setImageBitmap(bitmap);
-            thumbnail.setOnClickListener(v -> openPreview(work));
+            final int imageIndex = index;
+            thumbnail.setOnClickListener(v -> openPreview(work, imageIndex));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(68), dp(68));
             if (index > 0) params.setMargins(dp(7), 0, 0, 0);
             strip.addView(thumbnail, params);
@@ -768,8 +772,26 @@ public final class MainActivity extends Activity {
     }
 
     private void openPreview(WorkLibrary.WorkEntry work) {
+        openPreview(work, -1);
+    }
+
+    private void openPreview(WorkLibrary.WorkEntry work, int imageIndex) {
         startActivity(new Intent(this, WorkDetailActivity.class)
-                .putExtra(WorkDetailActivity.EXTRA_WORK_ID, work.id));
+                .putExtra(WorkDetailActivity.EXTRA_WORK_ID, work.id)
+                .putExtra(WorkDetailActivity.EXTRA_IMAGE_INDEX, imageIndex));
+    }
+
+    private void confirmMoveWorkToTrash(String id) {
+        new AlertDialog.Builder(this)
+                .setTitle("移到回收站？")
+                .setMessage("作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("移到回收站", (dialog, which) -> {
+                    LinkedHashSet<String> ids = new LinkedHashSet<>();
+                    ids.add(id);
+                    moveSelectedToTrash(ids);
+                })
+                .show();
     }
 
     private void toggleWorkSelection(String id) {
@@ -1461,11 +1483,6 @@ public final class MainActivity extends Activity {
         button.setPadding(dp(12), 0, dp(12), 0);
         button.setGravity(Gravity.CENTER);
         button.setMaxLines(1);
-        if ("预览".equals(label)) {
-            button.setTextColor(Color.rgb(57, 61, 59));
-            button.setBackground(roundWithStroke(
-                    Color.WHITE, 12, Color.rgb(207, 214, 210)));
-        }
         return button;
     }
 

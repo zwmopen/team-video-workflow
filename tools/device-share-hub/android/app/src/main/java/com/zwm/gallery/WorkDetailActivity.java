@@ -2,6 +2,7 @@ package com.zwm.gallery;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -12,6 +13,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
@@ -37,6 +39,7 @@ import java.util.Locale;
 /** Folder-like preview for one work. Long press an image to start multi-select. */
 public final class WorkDetailActivity extends Activity {
     public static final String EXTRA_WORK_ID = "workId";
+    public static final String EXTRA_IMAGE_INDEX = "imageIndex";
 
     private final LinkedHashSet<String> selected = new LinkedHashSet<>();
     private WorkLibrary library;
@@ -53,6 +56,10 @@ public final class WorkDetailActivity extends Activity {
             if (work == null) throw new IllegalStateException("作品不存在或已在回收站");
             setContentView(ScreenInsets.protect(buildUi()));
             render();
+            int initialIndex = getIntent().getIntExtra(EXTRA_IMAGE_INDEX, -1);
+            if (initialIndex >= 0 && initialIndex < work.images.size()) {
+                showLargeImage(work.images.get(initialIndex));
+            }
         } catch (Exception error) {
             Toast.makeText(this, "无法打开作品：" + error.getMessage(), Toast.LENGTH_LONG).show();
             finish();
@@ -283,10 +290,18 @@ public final class WorkDetailActivity extends Activity {
         container.setBackgroundColor(Color.BLACK);
         container.setMinimumHeight(dp(420));
 
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(12), dp(8), dp(12), dp(4));
         TextView counter = text("", 13, true);
         counter.setGravity(Gravity.CENTER);
         counter.setTextColor(Color.WHITE);
-        container.addView(counter, new LinearLayout.LayoutParams(-1, dp(34)));
+        header.addView(counter, new LinearLayout.LayoutParams(0, dp(40), 1));
+        Button close = button("关闭", Color.rgb(45, 45, 45), Color.WHITE);
+        close.setTextSize(13);
+        close.setContentDescription("关闭全屏预览");
+        header.addView(close, new LinearLayout.LayoutParams(dp(72), dp(40)));
+        container.addView(header);
 
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -323,7 +338,16 @@ public final class WorkDetailActivity extends Activity {
         next.setOnClickListener(v -> {
             if (currentIndex[0] + 1 < work.images.size()) { currentIndex[0]++; render.run(); }
         });
-        new AlertDialog.Builder(this).setTitle("预览").setView(container).setPositiveButton("关闭", null).show();
+        Dialog dialog = new Dialog(this, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+        dialog.setContentView(container);
+        close.setOnClickListener(v -> dialog.dismiss());
+        dialog.setOnShowListener(ignored -> {
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+                dialog.getWindow().setLayout(-1, -1);
+            }
+        });
+        dialog.show();
         render.run();
     }
 
