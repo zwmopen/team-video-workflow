@@ -2,6 +2,13 @@
 
 更新时间：2026-08-26
 
+## 2026-08-27 Android 0.6.62 / iPhone 0.6.45 / Windows V4.3.29 正式发布
+
+- GitHub Actions run `33036449234` 的三端构建、远程中继检查、线上验证和发布任务全部成功。
+- 正式发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62>；Android versionCode 100，iPhone build 64。
+- `latest.json`、`latest-beta.json`、`altstore.json`、`altstore-beta.json` 已核对为同一正式版本。桌面 APK/IPA 哈希与发布索引一致。
+- 当前机器未识别实体 Android/iPhone；侧载签名续期、覆盖安装、真实 P2P/HTTPS 回退、落库/ACK 和自动补货仍待设备上线后验收。
+
 ## 2026-08-26 Android 0.6.59 / iPhone 0.6.42 作品卡整卡面板候选
 
 - Android versionCode 97 / versionName 0.6.59；iPhone 0.6.42/build 61。

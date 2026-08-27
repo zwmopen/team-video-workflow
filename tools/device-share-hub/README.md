@@ -1,25 +1,28 @@
-# 文件收发中控 V4.3.29 / Android 0.6.62 / iPhone 0.6.45（统一正式入口）
+# 文件收发中控 V4.3.29 / Android 0.6.62 / iPhone 0.6.45（已正式发布）
 
-当前源码候选：Android 0.6.62 / versionCode 100，iPhone 0.6.45 / build 64。本轮作品卡片取消独立“预览”按钮，点击缩略图直接从对应图片进入全屏预览；底部操作统一为横排“发抖音 / 发小红书 / 删除”，删除确认后移入回收站。上一轮接收任务提交重试修复继续保留，云端构建和发布仍以本轮 Actions 结果为准。
+当前正式版本为 Android 0.6.62 / versionCode 100、iPhone 0.6.45 / build 64、Windows V4.3.29。GitHub Actions run `33036449234` 的 Windows、Android、iOS、远程中继和发布任务均已成功；正式发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62>。
 
-Android 设置页提供“自动接收”开关。关闭后手机仍可被电脑发现、查看已有作品和检查版本，但会拒绝局域网 HTTP、P2P 与远程中继投送，并清理正在接收的临时任务；重新打开后恢复接收。默认开启。
+本版作品卡片取消独立“预览”按钮，点击缩略图直接从对应图片进入全屏预览；底部操作统一为横排“发抖音 / 发小红书 / 删除”，删除确认后移入回收站。上一轮接收任务提交重试、P2P/HTTPS 中继回退、ACK 幂等和自动补货修复继续保留。
 
-> Android 0.6.57/0.6.58/0.6.59 是针对 Redmi Note 8 / Android 10 的局域网发现、自动接收和统一更新修复；iPhone 0.6.42 同步修复 build 递增检测。本次发布后 Android、iPhone 和 Windows 只认一个正式更新入口。安卓更新包使用 android-update 协议：P2P/HTTPS 接收完成校验并进入更新缓存后才 ACK；USB 失败会在临时目录清理后自动降级到 Wi‑Fi/P2P/HTTPS。
-
-本轮修复 Android 孤立回收目录导致的提交 500；真实红米 13 安装 0.6.55 后，还需用同一断点任务验收落库与自动补发。
+Android、iPhone 和 Windows 统一读取正式更新入口。为兼容仍运行旧测试通道的设备，`latest-beta.json` 与 `altstore-beta.json` 也已同步到同一正式版本，不再产生第二套包或版本。
 
 ## 更新入口
 
-- Android、iPhone 和 Windows 只使用正式的 `latest.json` / `altstore.json`，不再区分稳定版和测试版。
-- iOS 仍需要 AltStore/AltServer 完成签名安装；Android 使用正式索引下载、校验后由系统确认安装。
+- Android、iPhone 和 Windows：使用 <https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json>。
+- iPhone AltStore：使用 <https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json>。
+- iOS 仍需要 AltStore/AltServer 或 Sideloadly 使用用户自己的 Apple ID 完成签名；Android 下载后由系统确认安装。应用不能静默替换自身。
 
-本轮发布页：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.59>；桌面包位于 `C:\Users\z\Desktop`。
+桌面当前包位于 `C:\Users\z\Desktop`：`album-Android-v0.6.62.apk`、`album-iOS-v0.6.45-altstore.ipa`。两者哈希已与发布索引一致。
 
-本轮包：`album-Android-v0.6.59.apk`、`album-iOS-v0.6.42-altstore.ipa`、`device-share-hub-Windows-V4.3.29-relay.exe`。
+当前机器已运行 AltServer 与 Sideloadly 后台服务，但本次检查没有发现实体 iPhone 或 Android 设备，因此续签、覆盖安装和真机传输不能在没有设备的情况下宣称完成。设备解锁、信任电脑并启用 Wi‑Fi 同步后，再进行现场验收。
 
-Device Share Hub 云端 run `32596690436` 的三端构建、P2P/ACK 静态门禁、Cloudflare 中继检查和线上 Worker E2E 全部通过；稳定更新索引不变。真实手机传输、落库、ACK 和自动补货仍需设备在线后验收。
+## 当前能力边界
 
-本轮修复：Windows 可从 `ZwmDeviceShareHub\relay-proxy.txt` 读取本地 HTTPS CONNECT 代理；Worker 遇到损坏成员记录时跳过并继续返回有效设备；Android/iPhone 在 P2P 成功 ACK、失败或取消后会同时关闭 WebRTC 与 Cloudflare 信令会话。实体手机跨网 DataChannel、HTTPS 回退与自动补货仍需现场确认。
+Android 设置页提供“自动接收”开关。关闭后手机仍可被电脑发现、查看已有作品和检查版本，但会拒绝局域网 HTTP、P2P 与远程中继投送，并清理正在接收的临时任务；重新打开后恢复接收。默认开启。
+
+Cloudflare Worker、Durable Objects、R2 和 P2P 信令的云端检查已通过；实体手机跨网 DataChannel、HTTPS 回退、作品实际落库/ACK 和精准库存自动补货，仍需设备上线后现场验证。
+
+以下内容为历史版本记录。
 
 ## 本轮开发：混合通道状态合并
 

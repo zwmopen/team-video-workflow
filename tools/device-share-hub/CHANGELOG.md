@@ -1,11 +1,15 @@
 # 变更记录
 
-## Android 0.6.62 / iPhone 0.6.45 - 作品卡片直接预览与横排操作（源码候选）
+## Android 0.6.62 / iPhone 0.6.45 / Windows V4.3.29 - 作品卡片直接预览与横排操作（已正式发布）
 
 - 移除作品卡片上的“预览”按钮，缩略图本身可点击；点击第几张就从第几张进入全屏大图，并可继续切换图片。
 - Android 与 iPhone 的作品卡片底部统一为横排“发抖音 / 发小红书 / 删除”，删除始终可见并在确认后移入回收站。
 - Android 全屏预览改为真正铺满屏幕并保留“上一张 / 下一张 / 关闭”；iPhone 继续使用全屏分页预览并从点击的缩略图开始。
-- Android versionCode 100 / versionName 0.6.62；iPhone build 64 / marketing version 0.6.45。云端构建、发布和真机验收待本轮完成。
+- Android versionCode 100 / versionName 0.6.62；iPhone build 64 / marketing version 0.6.45；Windows V4.3.29。
+- GitHub Actions run `33036449234` 的三端构建、P2P/ACK 静态门禁、远程中继检查、线上验证和发布任务全部成功；正式发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62>。
+- `latest.json`、`altstore.json` 以及为兼容旧安装保留的 `latest-beta.json`、`altstore-beta.json` 已统一指向 Android 0.6.62/versionCode 100 和 iPhone 0.6.45/build 64。
+- Android APK SHA-256：`b2bc21687d0a126d696ce66f33668564d57ce70127ff76652b428ba417f5b3aa`；iPhone IPA SHA-256：`cae9c6739bed206703c9669a97930f4955738b2fbc67f912acdf413a16677ca2`。
+- 当前机器的 AltServer 与 Sideloadly 后台服务在运行，但没有识别到实体手机；签名续期、覆盖安装、真实 P2P/HTTPS 回退和自动补货仍不能用云端构建替代。
 
 ## Android 0.6.61 / iPhone 0.6.44 - 接收任务重试与回执修复（源码候选）
 
