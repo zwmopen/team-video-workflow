@@ -1,11 +1,14 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
-## 2026-08-27 作品卡片直接预览与横排操作（构建候选）
+## 2026-08-27 作品卡片直接预览与横排操作（已正式发布）
 
-- 候选版本：Android 0.6.62/versionCode 100、iPhone 0.6.45/build 64。
+- 正式版本：Android 0.6.62/versionCode 100、iPhone 0.6.45/build 64、Windows V4.3.29。
 - 作品列表取消独立“预览”按钮；Android/iPhone 缩略图均作为可点击控件，点击第 N 张进入从第 N 张开始的全屏预览。
 - 卡片底部统一为横排“发抖音 / 发小红书 / 删除”，删除保留确认并复用现有回收站移动逻辑；Android 按钮改为水平布局，iPhone 使用等宽水平操作栏，避免删除按钮被挤出。
-- 本地源码与静态检查待复验；因 4348 运行页当前无法访问，桌面真实页面点击验收待运行服务恢复；三端云端构建、发布索引和真机覆盖安装尚未完成。
+- GitHub Actions run `33036449234` 的 Windows、Android、iOS、远程中继和发布任务全部成功；正式发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62>。
+- Android APK SHA-256：`b2bc21687d0a126d696ce66f33668564d57ce70127ff76652b428ba417f5b3aa`；iPhone IPA SHA-256：`cae9c6739bed206703c9669a97930f4955738b2fbc67f912acdf413a16677ca2`；桌面包已同步到 `C:\Users\z\Desktop`。
+- `latest.json`、`latest-beta.json`、`altstore.json`、`altstore-beta.json` 已在线核对为同一正式版本，解决旧测试通道无法跳到最新版的问题。
+- 当前机器 AltServer 与 Sideloadly 后台服务均在运行，但本次没有识别到实体 Android/iPhone；侧载续签、覆盖安装、真实 P2P/HTTPS 回退、落库/ACK 和精准库存自动补货仍待设备上线后验收。
 
 ## 2026-08-26 移动端接收任务提交重试修复候选
 
