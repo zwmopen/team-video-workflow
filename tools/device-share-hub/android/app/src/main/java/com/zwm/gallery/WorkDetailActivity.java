@@ -21,6 +21,10 @@ import android.text.format.Formatter;
 import android.util.LruCache;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -295,60 +299,139 @@ public final class WorkDetailActivity extends Activity {
     }
 
     private void showLargeImage(String name) {
+        if (work == null || work.images.isEmpty()) return;
         int initialIndex = Math.max(0, work.images.indexOf(name));
-        LinearLayout container = new LinearLayout(this);
-        container.setOrientation(LinearLayout.VERTICAL);
+        
+        FrameLayout container = new FrameLayout(this);
         container.setBackgroundColor(Color.BLACK);
-        container.setMinimumHeight(dp(420));
-
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(12), dp(8), dp(12), dp(4));
-        TextView counter = text("", 13, true);
-        counter.setGravity(Gravity.CENTER);
-        counter.setTextColor(Color.WHITE);
-        header.addView(counter, new LinearLayout.LayoutParams(0, dp(40), 1));
-        Button close = button("关闭", Color.rgb(45, 45, 45), Color.WHITE);
-        close.setTextSize(13);
-        close.setContentDescription("关闭全屏预览");
-        header.addView(close, new LinearLayout.LayoutParams(dp(72), dp(40)));
-        container.addView(header);
 
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setBackgroundColor(Color.BLACK);
-        container.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
+        image.setClickable(true);
+        image.setFocusable(true);
+        container.addView(image, new FrameLayout.LayoutParams(-1, -1));
 
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setPadding(dp(12), dp(10), dp(12), dp(4));
-        Button previous = button("上一张", Color.rgb(65, 65, 65), Color.WHITE);
-        Button next = button("下一张", Color.rgb(38, 145, 94), Color.WHITE);
-        previous.setTextSize(13);
-        next.setTextSize(13);
-        controls.addView(previous, new LinearLayout.LayoutParams(0, dp(42), 1));
-        LinearLayout.LayoutParams nextParams = new LinearLayout.LayoutParams(0, dp(42), 1);
-        nextParams.setMargins(dp(8), 0, 0, 0);
-        controls.addView(next, nextParams);
-        container.addView(controls);
+        // Top Navigation Header
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(16), dp(14), dp(16), dp(8));
+
+        Button close = button("✕", Color.argb(150, 45, 45, 45), Color.WHITE);
+        close.setTextSize(14);
+        close.setContentDescription("关闭全屏预览");
+        close.setPadding(0, 0, 0, 0);
+        close.setGravity(Gravity.CENTER);
+        header.addView(close, new LinearLayout.LayoutParams(dp(38), dp(38)));
+
+        TextView titleText = text(work.name, 13, false);
+        titleText.setTextColor(Color.rgb(200, 200, 200));
+        titleText.setMaxLines(1);
+        titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleText.setPadding(dp(12), 0, dp(12), 0);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
+        header.addView(titleText, titleParams);
+
+        FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        container.addView(header, headerParams);
+
+        // Bottom Controls with Index Counter
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setPadding(dp(16), dp(10), dp(16), dp(22));
+
+        Button previous = button("‹ 上一张", Color.argb(160, 45, 45, 45), Color.WHITE);
+        previous.setTextSize(12.5f);
+        previous.setMinHeight(dp(38));
+        previous.setPadding(dp(12), 0, dp(12), 0);
+        footer.addView(previous, new LinearLayout.LayoutParams(-2, dp(38)));
+
+        TextView counter = text("", 13, true);
+        counter.setGravity(Gravity.CENTER);
+        counter.setTextColor(Color.WHITE);
+        counter.setBackground(round(Color.argb(160, 35, 35, 35), 18));
+        counter.setPadding(dp(14), dp(6), dp(14), dp(6));
+        LinearLayout.LayoutParams counterParams = new LinearLayout.LayoutParams(0, -2, 1);
+        counterParams.setMargins(dp(10), 0, dp(10), 0);
+        counter.setLayoutParams(counterParams);
+        footer.addView(counter);
+
+        Button next = button("下一张 ›", Color.rgb(38, 145, 94), Color.WHITE);
+        next.setTextSize(12.5f);
+        next.setMinHeight(dp(38));
+        next.setPadding(dp(12), 0, dp(12), 0);
+        footer.addView(next, new LinearLayout.LayoutParams(-2, dp(38)));
+
+        FrameLayout.LayoutParams footerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        container.addView(footer, footerParams);
 
         final int[] currentIndex = {initialIndex};
         Runnable render = () -> {
             if (work.images.isEmpty()) return;
             String currentName = work.images.get(currentIndex[0]);
             counter.setText((currentIndex[0] + 1) + " / " + work.images.size());
+            
+            // Smooth fade transition
+            AlphaAnimation fade = new AlphaAnimation(0.6f, 1.0f);
+            fade.setDuration(120);
+            image.startAnimation(fade);
+            
             loadThumbnailAsync(new File(work.directory, currentName), 1800, image);
             previous.setEnabled(currentIndex[0] > 0);
             next.setEnabled(currentIndex[0] < work.images.size() - 1);
-            previous.setAlpha(previous.isEnabled() ? 1f : 0.45f);
-            next.setAlpha(next.isEnabled() ? 1f : 0.45f);
+            previous.setAlpha(previous.isEnabled() ? 1f : 0.4f);
+            next.setAlpha(next.isEnabled() ? 1f : 0.4f);
         };
+
+        // Swipe Left/Right Gesture Detector
+        GestureDetector detector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            private static final int SWIPE_MIN_DISTANCE = 60;
+            private static final int SWIPE_THRESHOLD_VELOCITY = 100;
+
+            @Override
+            public boolean onDown(MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+                if (e1 == null || e2 == null) return false;
+                float diffX = e2.getX() - e1.getX();
+                float diffY = e2.getY() - e1.getY();
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > SWIPE_MIN_DISTANCE && Math.abs(velocityX) > SWIPE_THRESHOLD_VELOCITY) {
+                    if (diffX > 0) {
+                        // Swipe Right -> Previous
+                        if (currentIndex[0] > 0) {
+                            currentIndex[0]--;
+                            render.run();
+                            return true;
+                        }
+                    } else {
+                        // Swipe Left -> Next
+                        if (currentIndex[0] + 1 < work.images.size()) {
+                            currentIndex[0]++;
+                            render.run();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+        });
+
+        View.OnTouchListener touchListener = (v, event) -> detector.onTouchEvent(event);
+        image.setOnTouchListener(touchListener);
+        container.setOnTouchListener(touchListener);
+
         previous.setOnClickListener(v -> {
             if (currentIndex[0] > 0) { currentIndex[0]--; render.run(); }
         });
         next.setOnClickListener(v -> {
             if (currentIndex[0] + 1 < work.images.size()) { currentIndex[0]++; render.run(); }
         });
+
         Dialog dialog = new Dialog(this, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
         dialog.setContentView(container);
         close.setOnClickListener(v -> dialog.dismiss());
