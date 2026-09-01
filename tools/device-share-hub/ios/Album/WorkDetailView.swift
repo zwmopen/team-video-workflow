@@ -584,7 +584,7 @@ private final class WorkTrashRestoreCell: UICollectionViewCell {
     }
 }
 
-private final class ImagePreviewController: UIViewController, UIScrollViewDelegate {
+final class ImagePreviewController: UIViewController, UIScrollViewDelegate {
     private let workName: String
     private let urls: [URL]
     private let initialIndex: Int

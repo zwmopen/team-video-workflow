@@ -212,7 +212,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             let preview = ImagePreviewController(workName: work.name, urls: work.imageURLs, initialIndex: index) { [weak self] targetURL in
                 guard let self = self else { return "作品已关闭" }
                 do {
-                    try self.library.deleteImage(work: work, imageURL: targetURL)
+                    try FileManager.default.removeItem(at: targetURL)
                     self.render()
                     return nil
                 } catch {
