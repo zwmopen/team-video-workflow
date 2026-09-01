@@ -11,10 +11,13 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private let actions = UIStackView()
     private var toastLabel: UILabel?
     private var suppressNextSelection = false
+    private let initialImageIndex: Int?
+    private var hasPresentedInitialPreview = false
 
-    init(library: WorkLibrary, work: WorkItem) {
+    init(library: WorkLibrary, work: WorkItem, initialImageIndex: Int? = nil) {
         self.library = library
         self.work = work
+        self.initialImageIndex = initialImageIndex
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -25,6 +28,14 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         configureNavigation()
         configureUI()
         render()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !hasPresentedInitialPreview, let index = initialImageIndex, index >= 0, index < work.imageURLs.count {
+            hasPresentedInitialPreview = true
+            openPreview(initialIndex: index)
+        }
     }
 
     private func configureNavigation() {
@@ -122,10 +133,6 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private var hasTrashRow: Bool { trashCount > 0 }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        // item 0: 文案卡片 (全宽)
-        // item 1...N: 图片网格
-        // 接下来: 附件列表
-        // 最后 (可选): 回收站恢复按钮
         var count = 1 + work.imageURLs.count + attachments.count
         if hasTrashRow { count += 1 }
         return count
@@ -153,7 +160,6 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             return cell
         }
 
-        // 回收站恢复行
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "trashRestore", for: indexPath) as! WorkTrashRestoreCell
         cell.configure(trashCount)
         return cell
@@ -173,10 +179,7 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         if imageIndex < work.imageURLs.count {
             let url = work.imageURLs[imageIndex]
             if selected.isEmpty {
-                let preview = ImagePreviewController(url: url) { [weak self] in
-                    self?.deletePreviewImage(url) ?? "作品已关闭，无法删除图片。"
-                }
-                navigationController?.pushViewController(preview, animated: true)
+                openPreview(initialIndex: imageIndex)
             } else {
                 toggle(url)
             }
@@ -190,7 +193,6 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             return
         }
 
-        // 点击了回收站恢复
         restoreImages()
     }
 
@@ -222,6 +224,14 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         true
+    }
+
+    private func openPreview(initialIndex: Int) {
+        let preview = ImagePreviewController(urls: work.imageURLs, initialIndex: initialIndex) { [weak self] targetURL in
+            guard let self = self else { return "作品已关闭，无法删除图片。" }
+            return self.deletePreviewImage(targetURL)
+        }
+        navigationController?.pushViewController(preview, animated: true)
     }
 
     private func toggle(_ url: URL) {
@@ -572,37 +582,104 @@ private final class WorkTrashRestoreCell: UICollectionViewCell {
     }
 }
 
-private final class ImagePreviewController: UIViewController {
-    private let url: URL
-    private let onDelete: () -> String?
-    init(url: URL, onDelete: @escaping () -> String?) {
-        self.url = url
+private final class ImagePreviewController: UIViewController, UIScrollViewDelegate {
+    private let urls: [URL]
+    private let initialIndex: Int
+    private let onDelete: (URL) -> String?
+    private let scrollView = UIScrollView()
+    private let counter = UILabel()
+    private var didSetInitialOffset = false
+
+    init(urls: [URL], initialIndex: Int, onDelete: @escaping (URL) -> String?) {
+        self.urls = urls
+        self.initialIndex = max(0, min(initialIndex, max(0, urls.count - 1)))
         self.onDelete = onDelete
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        title = "预览"
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: "删除", style: .plain, target: self, action: #selector(deleteTapped))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "删除", style: .plain,
+                                                             target: self, action: #selector(deleteTapped))
+        scrollView.backgroundColor = .black
+        scrollView.isPagingEnabled = true
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.delegate = self
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+
         let longestSide = max(UIScreen.main.bounds.width, UIScreen.main.bounds.height) * UIScreen.main.scale
-        let image = UIImageView(image: downsampledImage(at: url, maxPixel: max(1200, longestSide)))
-        image.contentMode = .scaleAspectFit
-        image.frame = view.bounds
-        image.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(image)
+        for url in urls {
+            let image = UIImageView(image: downsampledImage(at: url, maxPixel: max(1200, longestSide)))
+            image.contentMode = .scaleAspectFit
+            image.backgroundColor = .black
+            image.isAccessibilityElement = true
+            image.accessibilityLabel = url.lastPathComponent
+            scrollView.addSubview(image)
+        }
+        counter.font = .boldSystemFont(ofSize: 13)
+        counter.textColor = .white
+        counter.textAlignment = .center
+        counter.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        counter.layer.cornerRadius = 14
+        counter.clipsToBounds = true
+        counter.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(counter)
+        NSLayoutConstraint.activate([
+            counter.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            counter.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            counter.widthAnchor.constraint(greaterThanOrEqualToConstant: 68),
+            counter.heightAnchor.constraint(equalToConstant: 28)
+        ])
+        updateCounter()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let pageWidth = scrollView.bounds.width
+        let pageHeight = scrollView.bounds.height
+        guard pageWidth > 0, pageHeight > 0 else { return }
+        for (index, subview) in scrollView.subviews.enumerated() {
+            subview.frame = CGRect(x: pageWidth * CGFloat(index), y: 0,
+                                   width: pageWidth, height: pageHeight)
+        }
+        scrollView.contentSize = CGSize(width: pageWidth * CGFloat(urls.count), height: pageHeight)
+        if !didSetInitialOffset {
+            didSetInitialOffset = true
+            scrollView.setContentOffset(CGPoint(x: pageWidth * CGFloat(initialIndex), y: 0), animated: false)
+            updateCounter()
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) { updateCounter() }
+
+    private func updateCounter() {
+        guard !urls.isEmpty else { return }
+        let width = max(scrollView.bounds.width, 1)
+        let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
+        counter.text = "\(index + 1) / \(urls.count)"
+        navigationItem.title = "预览"
     }
 
     @objc private func deleteTapped() {
+        guard !urls.isEmpty else { return }
+        let width = max(scrollView.bounds.width, 1)
+        let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
         let alert = UIAlertController(title: "删除这张图片？",
                                       message: "图片会移到本作品的图片回收站，保留 7 天。",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
-            if let error = self.onDelete() {
+            if let error = self.onDelete(self.urls[index]) {
                 let failure = UIAlertController(title: "删除失败", message: error, preferredStyle: .alert)
                 failure.addAction(UIAlertAction(title: "知道了", style: .default))
                 self.present(failure, animated: true)
