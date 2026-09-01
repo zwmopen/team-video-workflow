@@ -209,8 +209,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         cell.onShare = { [weak self, weak cell] platform in self?.share(work, platform: platform, source: cell) }
         cell.onPreview = { [weak self] index in
             guard let self = self else { return }
-            self.navigationController?.pushViewController(
-                WorkDetailViewController(library: self.library, work: work, initialImageIndex: index), animated: true)
+            let preview = ImagePreviewController(workName: work.name, urls: work.imageURLs, initialIndex: index) { [weak self] targetURL in
+                guard let self = self else { return "作品已关闭" }
+                do {
+                    try self.library.deleteImage(work: work, imageURL: targetURL)
+                    self.render()
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }
+            preview.modalPresentationStyle = .fullScreen
+            preview.modalTransitionStyle = .crossDissolve
+            self.present(preview, animated: true)
         }
         cell.onDelete = { [weak self] in self?.confirmMoveToTrash(work) }
         return cell
@@ -239,7 +250,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        return CGSize(width: width, height: 300)
+        return CGSize(width: width, height: 204)
     }
 
     private func confirmMoveToTrash(_ work: WorkItem) {
@@ -515,7 +526,7 @@ private final class WorkCell: UICollectionViewCell {
         button.titleLabel?.minimumScaleFactor = 0.75
         button.layer.cornerRadius = 10
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
-        button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 38).isActive = true
         button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
         applyPlatformButtonState(button, clicked: false)
         button.addTarget(self,
@@ -532,7 +543,7 @@ private final class WorkCell: UICollectionViewCell {
         deleteButton.layer.borderWidth = 1
         deleteButton.layer.borderColor = UIColor(red: 0.89, green: 0.67, blue: 0.64, alpha: 1).cgColor
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
-        deleteButton.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        deleteButton.heightAnchor.constraint(equalToConstant: 38).isActive = true
         deleteButton.accessibilityLabel = "删除作品，移到回收站"
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
     }

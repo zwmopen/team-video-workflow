@@ -227,11 +227,13 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     }
 
     private func openPreview(initialIndex: Int) {
-        let preview = ImagePreviewController(urls: work.imageURLs, initialIndex: initialIndex) { [weak self] targetURL in
+        let preview = ImagePreviewController(workName: work.name, urls: work.imageURLs, initialIndex: initialIndex) { [weak self] targetURL in
             guard let self = self else { return "作品已关闭，无法删除图片。" }
             return self.deletePreviewImage(targetURL)
         }
-        navigationController?.pushViewController(preview, animated: true)
+        preview.modalPresentationStyle = .fullScreen
+        preview.modalTransitionStyle = .crossDissolve
+        present(preview, animated: true)
     }
 
     private func toggle(_ url: URL) {
@@ -583,14 +585,18 @@ private final class WorkTrashRestoreCell: UICollectionViewCell {
 }
 
 private final class ImagePreviewController: UIViewController, UIScrollViewDelegate {
+    private let workName: String
     private let urls: [URL]
     private let initialIndex: Int
     private let onDelete: (URL) -> String?
     private let scrollView = UIScrollView()
     private let counter = UILabel()
+    private let previousButton = UIButton(type: .system)
+    private let nextButton = UIButton(type: .system)
     private var didSetInitialOffset = false
 
-    init(urls: [URL], initialIndex: Int, onDelete: @escaping (URL) -> String?) {
+    init(workName: String, urls: [URL], initialIndex: Int, onDelete: @escaping (URL) -> String?) {
+        self.workName = workName
         self.urls = urls
         self.initialIndex = max(0, min(initialIndex, max(0, urls.count - 1)))
         self.onDelete = onDelete
@@ -598,14 +604,17 @@ private final class ImagePreviewController: UIViewController, UIScrollViewDelega
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    override var prefersStatusBarHidden: Bool { false }
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "删除", style: .plain,
-                                                             target: self, action: #selector(deleteTapped))
+
         scrollView.backgroundColor = .black
         scrollView.isPagingEnabled = true
         scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
         scrollView.delegate = self
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
@@ -625,20 +634,84 @@ private final class ImagePreviewController: UIViewController, UIScrollViewDelega
             image.accessibilityLabel = url.lastPathComponent
             scrollView.addSubview(image)
         }
-        counter.font = .boldSystemFont(ofSize: 13)
+
+        // Top Navigation Header
+        let header = UIStackView()
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 12
+        header.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(header)
+
+        let closeButton = UIButton(type: .system)
+        closeButton.setTitle("✕", for: .normal)
+        closeButton.setTitleColor(.white, for: .normal)
+        closeButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .bold)
+        closeButton.backgroundColor = UIColor(white: 0.15, alpha: 0.75)
+        closeButton.layer.cornerRadius = 21
+        closeButton.clipsToBounds = true
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        closeButton.heightAnchor.constraint(equalToConstant: 42).isActive = true
+        header.addArrangedSubview(closeButton)
+
+        let titleLabel = UILabel()
+        titleLabel.text = workName
+        titleLabel.textColor = UIColor(white: 0.85, alpha: 1)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+        header.addArrangedSubview(titleLabel)
+
+        // Bottom Controls with Index Counter Badge & Nav Buttons
+        let footer = UIStackView()
+        footer.axis = .horizontal
+        footer.alignment = .center
+        footer.distribution = .equalSpacing
+        footer.spacing = 12
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(footer)
+
+        previousButton.setTitle("‹ 上一张", for: .normal)
+        previousButton.setTitleColor(.white, for: .normal)
+        previousButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        previousButton.backgroundColor = UIColor(white: 0.18, alpha: 0.8)
+        previousButton.layer.cornerRadius = 14
+        previousButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        previousButton.addTarget(self, action: #selector(previousTapped), for: .touchUpInside)
+        footer.addArrangedSubview(previousButton)
+
+        counter.font = .boldSystemFont(ofSize: 13.5)
         counter.textColor = .white
         counter.textAlignment = .center
-        counter.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        counter.backgroundColor = UIColor(white: 0.12, alpha: 0.85)
         counter.layer.cornerRadius = 16
         counter.clipsToBounds = true
         counter.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(counter)
+        counter.widthAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+        counter.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        footer.addArrangedSubview(counter)
+
+        nextButton.setTitle("下一张 ›", for: .normal)
+        nextButton.setTitleColor(.white, for: .normal)
+        nextButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        nextButton.backgroundColor = UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1)
+        nextButton.layer.cornerRadius = 14
+        nextButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
+        footer.addArrangedSubview(nextButton)
+
         NSLayoutConstraint.activate([
-            counter.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            counter.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
-            counter.widthAnchor.constraint(greaterThanOrEqualToConstant: 76),
-            counter.heightAnchor.constraint(equalToConstant: 32)
+            header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            header.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            footer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
         ])
+
         updateCounter()
     }
 
@@ -666,30 +739,33 @@ private final class ImagePreviewController: UIViewController, UIScrollViewDelega
         let width = max(scrollView.bounds.width, 1)
         let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
         counter.text = "\(index + 1) / \(urls.count)"
-        navigationItem.title = "预览"
+        previousButton.isEnabled = index > 0
+        nextButton.isEnabled = index < urls.count - 1
+        previousButton.alpha = previousButton.isEnabled ? 1.0 : 0.4
+        nextButton.alpha = nextButton.isEnabled ? 1.0 : 0.4
     }
 
-    @objc private func deleteTapped() {
-        guard !urls.isEmpty else { return }
+    @objc private func closeTapped() {
+        dismiss(animated: true)
+    }
+
+    @objc private func previousTapped() {
         let width = max(scrollView.bounds.width, 1)
         let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
-        let alert = UIAlertController(title: "删除这张图片？",
-                                      message: "图片会移到本作品的图片回收站，保留 7 天。",
-                                      preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            if let error = self.onDelete(self.urls[index]) {
-                let failure = UIAlertController(title: "删除失败", message: error, preferredStyle: .alert)
-                failure.addAction(UIAlertAction(title: "知道了", style: .default))
-                self.present(failure, animated: true)
-            } else {
-                self.navigationController?.popViewController(animated: true)
-            }
-        })
-        present(alert, animated: true)
+        if index > 0 {
+            scrollView.setContentOffset(CGPoint(x: width * CGFloat(index - 1), y: 0), animated: true)
+        }
+    }
+
+    @objc private func nextTapped() {
+        let width = max(scrollView.bounds.width, 1)
+        let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
+        if index + 1 < urls.count {
+            scrollView.setContentOffset(CGPoint(x: width * CGFloat(index + 1), y: 0), animated: true)
+        }
     }
 }
+
 
 private final class FilePreviewController: QLPreviewController, QLPreviewControllerDataSource {
     private let url: URL
