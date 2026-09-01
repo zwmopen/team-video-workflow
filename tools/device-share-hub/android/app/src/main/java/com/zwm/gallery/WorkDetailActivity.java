@@ -337,7 +337,7 @@ public final class WorkDetailActivity extends Activity {
             if (work.images.isEmpty()) return;
             String currentName = work.images.get(currentIndex[0]);
             counter.setText((currentIndex[0] + 1) + " / " + work.images.size());
-            image.setImageBitmap(loadThumbnail(new File(work.directory, currentName), 1800));
+            loadThumbnailAsync(new File(work.directory, currentName), 1800, image);
             previous.setEnabled(currentIndex[0] > 0);
             next.setEnabled(currentIndex[0] < work.images.size() - 1);
             previous.setAlpha(previous.isEnabled() ? 1f : 0.45f);
