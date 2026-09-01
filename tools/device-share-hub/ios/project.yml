@@ -31,7 +31,6 @@ targets:
         CFBundleShortVersionString: "0.7.0"
         CFBundleVersion: "37"
         NSLocalNetworkUsageDescription: 用于让同一 Wi-Fi 的素材投送中控自动发现这台 iPhone，并把文件直接传入所选作品文件夹。
-        NSPhotoLibraryUsageDescription: 用于在你开启“自动识别新截图”后，回到相册时识别刚保存的截图并发送到所选主设备。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         LSApplicationCategoryType: public.app-category.productivity
