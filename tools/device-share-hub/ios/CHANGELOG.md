@@ -1,125 +1,23 @@
 # iOS 变更记录
 
-## 0.6.45 - 作品卡片直接预览与横排操作（已正式发布）
+## 0.7.0 - 2026-09-01
 
-- 移除作品卡片上的独立“预览”按钮，横向缩略图改为可点击控件，点击第几张就从第几张进入全屏分页预览。
-- 作品卡片底部统一为横排“发抖音 / 发小红书 / 删除”，删除确认后移动到相册回收站；平台按钮的灰色点击状态和计数保持不变。
-- build 64；GitHub Actions run `33036449234` 已完成云端构建和发布。正式发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62>；实体 iPhone 覆盖安装、续签和传输仍需现场验收。
-- 兼容旧测试通道的 `altstore-beta.json` 已与正式 `altstore.json` 同步到本版本，不再维护单独 Beta 包。
+- **发布交互对齐 Android 大升级**：
+  - 详情页底部新增高亮突出的 **【🚀 一键直接发布】** 主按钮：未选图时一键打包全部图片，自动将 TXT 文案复制到系统剪贴板并秒级唤起系统分享表单（小红书/抖音一步到位）；
+  - 选图模式下提供 **【🚀 直接发布 (所选 N 张)】**，自动复制文案 + 唤起多图分享。
+- **文案卡片独立置顶**：
+  - 将 `文案.txt` 从普通网格 Cell 提升为顶部的独立全宽大卡片（带 `📝 文案.txt (点按一键复制)` 标题与 3 行文案预览），单点即复制并伴随触觉反馈与轻量 Toast 提示。
+- **分享防重保护与计账**：
+  - 记录作品 `shareCount`，当作品已有分享记录时，再次点击直接发布会弹出友好的二次确认弹窗（“该作品已分享 N 次，确认再次发布吗？”），防止重复串帖。
+- **视觉风格全对齐**：
+  - 统一采用 246 暖白质感底色 + 18px 优雅大圆角卡片 + 绿色/蓝色分类徽标 Chip。
+- 版本升级为 **0.7.0 / build 37**。
 
-## 0.6.44 - 接收任务重试与回执修复（源码候选）
+## 0.6.17 - 2026-08-24
 
-- 增加 `GET /v2/tasks/{taskId}` 状态查询，电脑可在提交前确认断点或已完成状态。
-- 提交临时失败时不再让同一任务变成“任务不存在”；完成导入后保存回执，重复提交只补发确认，不重复写入作品库。
-- build 63；尚未云端构建、发布或进行实体 iPhone 验收。
-
-## 0.6.43 - 作品操作模块重排（源码候选）
-
-- 作品列表改为单列全宽卡片，标题缩小并在卡片顶部显示横向缩略图带。
-- 底部固定“预览 / 发抖音 / 发小红书”三个紧凑按钮，保留平台点击后的灰色状态和原有分享计数。
-- build 62；尚未云端构建、发布或进行实体 iPhone 验收。
-
-## 0.6.41 - 2026-08-24（已发布 Beta）
-
-- 预览页增加右上角“删除”按钮，删除前确认并移入图片回收站；修复预览页计数显示。
-- 长按图片进入多选时不再被普通点击手势打断，可连续选择后批量删除。
-- 与 Android 0.6.54、Windows 自动分发失败复位修复同步发布；Device Share Hub run `32688671241` 通过，IPA 已进入 AltStore Beta 源，真实设备安装与验收仍待现场完成。
-
-## 0.6.31 - 2026-08-22
-
-- 与 Android 0.6.44、Windows 4.3.17 同步发布；重复 P2P 完成路径现在释放活动引擎，继续保持写入作品库后 ACK、HTTPS 中继兜底和 transferId 去重。
-- 版本升级为 0.6.31/build 50；Device Share Hub run `32575362864` 的 iOS job 通过，IPA SHA-256 为 `1db6768df098beb2c8924d5b7fb0b923d81ff53678b840bc297787fe1cd25c92`。
-- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.44-beta.1>；AltStore Beta 源已同步为 iOS 0.6.31/build 50，源提交 `f46cca7fd98504ea4c195e89a75a6697a80d197a`。
-
-## 0.6.30 - 2026-08-22
-
-- 与 Android 0.6.43、Windows 4.3.16 同步发布；iOS 保持 P2P 优先、HTTPS 中继兜底、写入作品库后 ACK 的收件语义。
-- 版本升级为 0.6.30/build 49；Device Share Hub run 32571763937、Repository quality run 32571763918、Secret scan run 32571763916 已通过。
-- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.43-beta.1>；IPA SHA-256 为 `5e8de6ef4fa435d19b361b889b791b9b8ded80989af4e6a7ca08dd15587214e5`，AltStore Beta 源已同步。
-- 实体 iPhone 权限列表、安装、P2P、HTTPS 回退和文件落库验收仍待连接真实设备。
-
-## 0.6.29 - 2026-08-22
-
-- 与 Android 0.6.42、Windows 4.3.15 同步发布；Android 修复 P2P ICE 候选在远端 SDP 设置回调期间丢失的竞态，三端继续保持 P2P 优先、HTTPS 中继兜底。
-- 版本升级为 0.6.29/build 48；GitHub Actions Device Share Hub run 32565416952、Repository quality run 32565417059、Secret scan run 32565416950 已通过。
-- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.42-beta.1>；IPA SHA-256 为 `716730f02c949338bb923fd28485f053d4856897d4795088eae35496ae362017`，AltStore Beta 源已同步；实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
-
-## 0.6.28 - 2026-08-22
-
-- 与 Android 0.6.41、Windows 4.3.14 同步发布；本轮修复 Android P2P 共享状态跨线程可见性，iOS 继续保持既有串行文件处理和失败回退边界。
-- 版本升级为 0.6.28/build 47；GitHub Actions Device Share Hub run 32562005856、remote-relay 13/13、Repository quality run 32562005857、Secret scan run 32562005864 已通过。
-- Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.41-beta.1>；IPA SHA-256 为 b03f6fa4ba9830b88f059fc1a5fe41f07d4b24d8e852ec6049c7e77e4a28deed，AltStore Beta 源内容提交为 e58a7b76cb0ecb96b7de05e519f89acf6fc27b41。
-- 实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
-
-## 0.6.27 - 2026-08-22
-
-- 与 Android 0.6.40、Windows 4.3.13 同步发布；本轮主要收口 Android 遗留媒体权限，iOS 继续不声明相册读取权限，也不包含自动截图/自动剪切板链路。
-- 版本升级为 0.6.27/build 46；GitHub Actions run `32559885341` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.40-beta.1>。
-- IPA SHA-256 为 `98d671107d6ad686870fcebdd1f64a0198960e14276cd532ac2b6baeabbbd61f`；AltStore Beta 源已同步。
-- 实体 iPhone 权限列表、安装和跨网传送验收仍待设备连接。
-
-## 0.6.26 - 2026-08-22
-
-- 与 Android 0.6.39、Windows 4.3.12 同步发布；iOS 原有 P2P 收件端的 20 秒建连超时、失败会话关闭和 HTTPS 中继回退保持不变。
-- 版本升级为 0.6.26/build 45；GitHub Actions run `32558264352` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.39-beta.1>。
-- IPA SHA-256 为 `189cd17b4904dd97b8fa750559fcb6eeabb018a3274c1367967c2534339b8506`；实体 iPhone 跨网验收仍待完成。
-
-## 0.6.25 - 2026-08-22
-
-- P2P 接收端增加 20 秒建连超时；发送端没有建立 DataChannel 时及时结束本次直连，让 Windows 自动回退 HTTPS 中继。
-- 版本升级为 0.6.25/build 44；GitHub Actions run `32556181728` 的 iOS 构建与 remote-relay 检查通过，Beta 发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.38-beta.1>。
-- IPA SHA-256 为 `14920197a1811a144be995be9eb8f082245a0cd1d54df0a7f0799aa76b5f12e2`；实体 iPhone 跨网验收仍待完成。
-
-## 0.6.24 - 2026-08-22
-
-- P2P 接收失败时异步关闭对应 Cloudflare 信令会话，避免控制面会话残留到 TTL 后才清理，也不阻塞 WebRTC 失败回调。
-- 版本升级为 0.6.24/build 43；GitHub Actions run `32553627094` 已通过并发布 Beta IPA，实体 iPhone 跨网验收仍待完成。
-
-## 0.6.23 - 2026-08-22
-
-- 修复 P2P 成功 ACK 写入后立即关闭 DataChannel 的竞态，给发送端保留短暂刷新窗口。
-- 作品库导入完成后删除 P2P 临时缓存，避免 ZIP 接收成功后长期占用沙盒空间。
-- 版本升级为 0.6.23/build 42；尚无实体 iPhone 跨网验收证据。
-
-## 0.6.22 - 2026-08-22
-
-- 接入认证后的 WebRTC DataChannel 收件端：电脑优先尝试 P2P 发送，失败后继续使用 HTTPS 中继，不改变现有作品库导入和 ACK 语义。
-- P2P 文件先写入缓存并校验大小/SHA-256，确认写入作品库后才回复 ACK；断线或校验失败会清理临时文件。
-- 版本升级为 0.6.22/build 41；需以云端 XcodeGen、iPhoneOS 构建和 IPA 校验为准，尚无实体 iPhone 跨网验收证据。
-
-## 0.6.16 - 2026-08-20
-
-- 检查到新版本时，提示改为引导打开 AltStore 的 My Apps 更新，不再只提示连接电脑。
-- 增加“复制更新源”操作，方便重新添加或恢复 AltStore 更新源。
-- 版本升级为 0.6.16/build 35；需以云端 IPA 结构、版本和 SHA-256 校验为准。
-
-## 0.6.14 - 2026-08-20
-
-- 顶部分类筛选从“转化帖”统一显示为“精准流量”，泛流量筛选也统一去掉“帖”后缀；内部分类字段和目录识别保持不变。
-- 版本升级为 0.6.14/build 33；需以云端 IPA 结构、版本和 SHA-256 校验为准。
-
-## 0.6.13 - 2026-08-20
-
-- 点击“发抖音”或“发小红书”后，对应按钮立即变为灰色；灰色仍可再次点击，不代表按钮被禁用。
-- 作品卡片按平台分享次数恢复各自按钮状态；分享准备失败时会回滚即时灰色状态。
-- 版本升级为 0.6.13/build 32；需以云端 IPA 结构、版本和 SHA-256 校验为准。
-
-## 0.6.12 - 2026-08-19
-
-- 作品卡片的“预览 / 发抖音 / 发小红书”改为左对齐的纵向紧凑按钮，按钮宽度按文案自适应，预览使用描边样式。
-- 版本升级为 0.6.12/build 31；需以云端 IPA 结构、版本和 SHA-256 校验为准。
-
-## 0.6.11 - 2026-08-18
-
-- 删除 `ClipboardBridge`、剪切板自动监听/同步、`/v2/clipboard` 接收接口和设置开关；主动复制文案与诊断信息仍保留。
-- 作品卡片改为一行“预览 / 发抖音 / 发小红书”三个紧凑按钮；作品详情图片预览支持左右滑动并显示张数。
-- 版本升级为 0.6.11/build 30；需以云端 IPA 结构、版本和 SHA-256 校验为准。
-
-## 0.6.10 - 2026-08-18
-
-- 移除自动识别新截图、截图自动发送和截图主设备设置，不再申请相册读取权限。
-- 删除截图接收开关和相关前台轮询；普通文件、图片导入、局域网收发与系统分享保持不变。
-- 版本升级为 0.6.10/build 29；云端 IPA 会重新执行结构、版本和 SHA-256 校验。
+- 作品图片长按选择不再被同一次点击回调立即取消，支持连续点选多张后移到图片回收站。
+- 图片预览右上角增加“删除”按钮，二次确认后进入图片回收站，取消不会修改原文件。
+- 版本升级为 0.6.17/build 36；待 GitHub Actions 和 AltStore/真机验收。
 
 ## 0.6.9 - 2026-08-18
 
@@ -231,7 +129,3 @@
 - 新增快捷指令真机搭建与 iCloud 链接导出清单。
 
 测试状态：GitHub Actions 云端构建通过；实体 iPhone 功能按实际操作逐项记录。
-## Beta：iPhone 0.6.40/build 59 - USB 失败自动降级
-
-- 与 Windows V4.3.29、Android 0.6.53 同步版本；电脑端 USB 暂存失败后会自动继续 Wi‑Fi/P2P/HTTPS 传送，iPhone 接收端仍只对作品任务落库并 ACK。
-- GitHub Actions 云端构建和真实 iPhone USB/Wi‑Fi/P2P/HTTPS 验收分别记录，不能以编译成功替代实机证据。

@@ -9,14 +9,12 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private var attachments: [URL] = []
     private var collection: UICollectionView!
     private let actions = UIStackView()
+    private var toastLabel: UILabel?
     private var suppressNextSelection = false
-    private var initialPreviewShown = false
 
-    private let initialImageIndex: Int?
-
-    init(library: WorkLibrary, work: WorkItem, initialImageIndex: Int? = nil) {
-        self.library = library; self.work = work
-        self.initialImageIndex = initialImageIndex
+    init(library: WorkLibrary, work: WorkItem) {
+        self.library = library
+        self.work = work
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -24,29 +22,32 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = AppColors.background
-        configureUI(); render()
+        configureNavigation()
+        configureUI()
+        render()
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        guard !initialPreviewShown, let index = initialImageIndex,
-              index >= 0, index < work.imageURLs.count else { return }
-        initialPreviewShown = true
-        navigationController?.pushViewController(
-            ImagePreviewController(urls: work.imageURLs, initialIndex: index) { [weak self] url in
-                self?.deletePreviewImage(url) ?? "作品已关闭，无法删除图片。"
-            }, animated: true)
+    private func configureNavigation() {
+        navigationItem.backBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)
     }
 
     private func configureUI() {
         let layout = UICollectionViewFlowLayout()
-        layout.minimumInteritemSpacing = 8; layout.minimumLineSpacing = 8
-        layout.sectionInset = UIEdgeInsets(top: 12, left: 16, bottom: 18, right: 16)
+        layout.minimumInteritemSpacing = 8
+        layout.minimumLineSpacing = 10
+        layout.sectionInset = UIEdgeInsets(top: 12, left: 16, bottom: 20, right: 16)
+        
         collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collection.backgroundColor = .clear; collection.dataSource = self; collection.delegate = self
+        collection.backgroundColor = .clear
+        collection.dataSource = self
+        collection.delegate = self
         collection.allowsMultipleSelection = true
+        collection.register(WorkTextCardCell.self, forCellWithReuseIdentifier: "textCard")
         collection.register(WorkImageCell.self, forCellWithReuseIdentifier: "image")
+        collection.register(WorkFileCell.self, forCellWithReuseIdentifier: "file")
+        collection.register(WorkTrashRestoreCell.self, forCellWithReuseIdentifier: "trashRestore")
         collection.translatesAutoresizingMaskIntoConstraints = false
+
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:)))
         longPress.minimumPressDuration = 0.35
         longPress.cancelsTouchesInView = false
@@ -54,9 +55,12 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         collection.addGestureRecognizer(longPress)
         view.addSubview(collection)
 
-        actions.axis = .horizontal; actions.spacing = 8; actions.distribution = .fillEqually
+        actions.axis = .horizontal
+        actions.spacing = 8
+        actions.distribution = .fillEqually
         actions.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(actions)
+
         NSLayoutConstraint.activate([
             collection.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -65,7 +69,7 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             actions.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             actions.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             actions.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            actions.heightAnchor.constraint(equalToConstant: 48)
+            actions.heightAnchor.constraint(equalToConstant: 50)
         ])
     }
 
@@ -73,46 +77,85 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         if let fresh = library.works.first(where: { $0.key == work.key }) { work = fresh }
         selected = Set(selected.filter { work.imageURLs.contains($0) })
         attachments = loadAttachments()
-        title = "\(work.name)  ·  \(work.imageURLs.count)"
-        collection.reloadData(); renderActions()
+        title = "\(work.name)  ·  \(work.imageURLs.count) 图"
+        collection.reloadData()
+        renderActions()
     }
 
     private func renderActions() {
         actions.arrangedSubviews.forEach { actions.removeArrangedSubview($0); $0.removeFromSuperview() }
         if selected.isEmpty {
-            let copy = actionButton("复制文案", background: .white, foreground: view.tintColor, action: #selector(copyText))
-            let restoreCount = library.imageTrashCount(work)
-            if restoreCount > 0 {
-                let restore = actionButton("恢复图片 \(restoreCount)", background: .white,
-                                           foreground: view.tintColor, action: #selector(restoreImages))
-                actions.addArrangedSubview(restore)
-            }
-            actions.addArrangedSubview(copy)
+            // 未选图状态：呈现大号【🚀 一键直接发布】主按钮
+            let publishButton = UIButton(type: .system)
+            publishButton.setTitle("🚀 一键直接发布 (复制文案 + 分享全部)", for: .normal)
+            publishButton.titleLabel?.font = .boldSystemFont(ofSize: 16)
+            publishButton.backgroundColor = UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1)
+            publishButton.setTitleColor(.white, for: .normal)
+            publishButton.layer.cornerRadius = 16
+            publishButton.addTarget(self, action: #selector(publishAllImages), for: .touchUpInside)
+            actions.addArrangedSubview(publishButton)
             return
         }
-        actions.addArrangedSubview(iconActionButton(.trash, label: "移到回收站",
-                                                     background: UIColor(red: 1, green: 0.92, blue: 0.91, alpha: 1),
-                                                     foreground: UIColor(red: 0.74, green: 0.22, blue: 0.2, alpha: 1),
-                                                     action: #selector(deleteImages)))
-        actions.addArrangedSubview(iconActionButton(.share, label: "分享到其他应用", background: .white,
-                                                     foreground: AppColors.text, action: #selector(shareImages)))
-        actions.addArrangedSubview(iconActionButton(.plane, label: "传送到其他设备", background: view.tintColor,
-                                                     foreground: .white, action: #selector(sendImages)))
+
+        // 多选状态：呈现【移到回收站】、【🚀 直接发布 (所选 N 张)】、【传送其他设备】
+        let deleteBtn = iconActionButton(.trash, label: "移到回收站",
+                                         background: UIColor(red: 1, green: 0.92, blue: 0.91, alpha: 1),
+                                         foreground: UIColor(red: 0.74, green: 0.22, blue: 0.2, alpha: 1),
+                                         action: #selector(deleteImages))
+
+        let publishBtn = actionButton("🚀 直接发布 (\(selected.count)张)",
+                                      background: UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1),
+                                      foreground: .white,
+                                      action: #selector(publishSelectedImages))
+
+        let sendBtn = iconActionButton(.plane, label: "传送其他设备",
+                                       background: UIColor(red: 0.94, green: 0.96, blue: 0.95, alpha: 1),
+                                       foreground: UIColor(red: 0.21, green: 0.34, blue: 0.28, alpha: 1),
+                                       action: #selector(sendImages))
+
+        actions.addArrangedSubview(deleteBtn)
+        actions.addArrangedSubview(publishBtn)
+        actions.addArrangedSubview(sendBtn)
     }
 
+    private var trashCount: Int { library.imageTrashCount(work) }
+    private var hasTrashRow: Bool { trashCount > 0 }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return work.imageURLs.count + attachments.count + 1
+        // item 0: 文案卡片 (全宽)
+        // item 1...N: 图片网格
+        // 接下来: 附件列表
+        // 最后 (可选): 回收站恢复按钮
+        var count = 1 + work.imageURLs.count + attachments.count
+        if hasTrashRow { count += 1 }
+        return count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "image", for: indexPath) as! WorkImageCell
-        if indexPath.item == 0 { cell.configureText(work.textURL) }
-        else if indexPath.item <= work.imageURLs.count {
-            let url = work.imageURLs[indexPath.item - 1]
-            cell.configureImage(url, selected: selected.contains(url))
-        } else {
-            cell.configureFile(attachments[indexPath.item - work.imageURLs.count - 1])
+        if indexPath.item == 0 {
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "textCard", for: indexPath) as! WorkTextCardCell
+            cell.configure(work.textURL)
+            return cell
         }
+        
+        let imageIndex = indexPath.item - 1
+        if imageIndex < work.imageURLs.count {
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "image", for: indexPath) as! WorkImageCell
+            let url = work.imageURLs[imageIndex]
+            cell.configureImage(url, selected: selected.contains(url))
+            return cell
+        }
+
+        let attachIndex = imageIndex - work.imageURLs.count
+        if attachIndex < attachments.count {
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "file", for: indexPath) as! WorkFileCell
+            cell.configureFile(attachments[attachIndex])
+            return cell
+        }
+
+        // 回收站恢复行
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "trashRestore", for: indexPath) as! WorkTrashRestoreCell
+        cell.configure(trashCount)
         return cell
     }
 
@@ -121,49 +164,69 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             suppressNextSelection = false
             return
         }
-        if indexPath.item == 0 { copyText(); return }
-        if indexPath.item <= work.imageURLs.count {
-            let url = work.imageURLs[indexPath.item - 1]
-            if selected.isEmpty {
-                navigationController?.pushViewController(
-                    ImagePreviewController(urls: work.imageURLs, initialIndex: indexPath.item - 1) { [weak self] url in
-                        self?.deletePreviewImage(url) ?? "作品已关闭，无法删除图片。"
-                    },
-                    animated: true)
-            }
-            else { toggle(url) }
-        } else if selected.isEmpty {
-            let url = attachments[indexPath.item - work.imageURLs.count - 1]
-            navigationController?.pushViewController(FilePreviewController(url: url), animated: true)
+        if indexPath.item == 0 {
+            copyText()
+            return
         }
+        
+        let imageIndex = indexPath.item - 1
+        if imageIndex < work.imageURLs.count {
+            let url = work.imageURLs[imageIndex]
+            if selected.isEmpty {
+                let preview = ImagePreviewController(url: url) { [weak self] in
+                    self?.deletePreviewImage(url) ?? "作品已关闭，无法删除图片。"
+                }
+                navigationController?.pushViewController(preview, animated: true)
+            } else {
+                toggle(url)
+            }
+            return
+        }
+
+        let attachIndex = imageIndex - work.imageURLs.count
+        if attachIndex < attachments.count {
+            let url = attachments[attachIndex]
+            navigationController?.pushViewController(FilePreviewController(url: url), animated: true)
+            return
+        }
+
+        // 点击了回收站恢复
+        restoreImages()
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let width = floor((collectionView.bounds.width - 40) / 2)
-        if indexPath.item == 0 { return CGSize(width: width, height: 128) }
-        if indexPath.item <= work.imageURLs.count { return CGSize(width: width, height: floor(width * 4 / 3)) }
-        return CGSize(width: width, height: 128)
+        let fullWidth = collectionView.bounds.width - 32
+        if indexPath.item == 0 {
+            return CGSize(width: fullWidth, height: 110)
+        }
+        let imageIndex = indexPath.item - 1
+        if imageIndex < work.imageURLs.count {
+            let halfWidth = floor((collectionView.bounds.width - 40) / 2)
+            return CGSize(width: halfWidth, height: floor(halfWidth * 4 / 3))
+        }
+        return CGSize(width: fullWidth, height: 52)
     }
 
     @objc private func longPressed(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began else { return }
         guard let index = collection.indexPathForItem(at: gesture.location(in: collection)),
-              index.item > 0, index.item <= work.imageURLs.count else { return }
+              index.item > 0, (index.item - 1) < work.imageURLs.count else { return }
         suppressNextSelection = true
         toggle(work.imageURLs[index.item - 1])
-        DispatchQueue.main.async { [weak self] in self?.suppressNextSelection = false }
+        DispatchQueue.main.async { [weak self] in
+            self?.suppressNextSelection = false
+        }
     }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        return true
+        true
     }
+
     private func toggle(_ url: URL) {
         if selected.contains(url) { selected.remove(url) } else { selected.insert(url) }
-        renderActions()
-        if let index = work.imageURLs.firstIndex(of: url) {
-            collection.reloadItems(at: [IndexPath(item: index + 1, section: 0)])
-        }
+        render()
     }
 
     private func loadAttachments() -> [URL] {
@@ -182,119 +245,338 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     }
 
     @objc private func copyText() {
-        UIPasteboard.general.string = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
-        showToast("复制成功")
+        let content = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
+        UIPasteboard.general.string = content
+        if #available(iOS 10.0, *) {
+            let feedback = UIImpactFeedbackGenerator(style: .medium)
+            feedback.impactOccurred()
+        }
+        showToast("✅ 文案已复制 (共 \(content.count) 字)")
     }
-    @objc private func shareImages() {
+
+    @objc private func publishAllImages() {
+        copyText()
+        if work.shareCount > 0 {
+            let alert = UIAlertController(title: "该作品已发布/分享 \(work.shareCount) 次",
+                                          message: "继续操作会再次记录分享。确认是要发到另一个平台或重新发布吗？",
+                                          preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+            alert.addAction(UIAlertAction(title: "继续发布全部", style: .default) { [weak self] _ in
+                self?.executeShare(images: self?.work.imageURLs ?? [])
+            })
+            present(alert, animated: true)
+            return
+        }
+        executeShare(images: work.imageURLs)
+    }
+
+    @objc private func publishSelectedImages() {
+        copyText()
+        let imagesToShare = Array(selected)
+        if work.shareCount > 0 {
+            let alert = UIAlertController(title: "该作品已发布/分享 \(work.shareCount) 次",
+                                          message: "继续操作会再次记录分享。确认继续发布所选 \(imagesToShare.count) 张图片吗？",
+                                          preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+            alert.addAction(UIAlertAction(title: "继续发布", style: .default) { [weak self] _ in
+                self?.executeShare(images: imagesToShare)
+            })
+            present(alert, animated: true)
+            return
+        }
+        executeShare(images: imagesToShare)
+    }
+
+    private func executeShare(images: [URL]) {
         do {
-            let controller = UIActivityViewController(activityItems: try library.prepareShare(work, images: Array(selected)),
-                                                      applicationActivities: nil)
-            controller.popoverPresentationController?.sourceView = view
+            let items = try library.prepareShare(work, images: images)
+            let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            controller.popoverPresentationController?.sourceView = actions
             present(controller, animated: true)
-        } catch { showToast(error.localizedDescription) }
+        } catch {
+            showToast(error.localizedDescription)
+        }
     }
+
     @objc private func sendImages() {
         navigationController?.pushViewController(TransferViewController(pendingURLs: Array(selected)), animated: true)
     }
+
     @objc private func deleteImages() {
         let alert = UIAlertController(title: "移除 \(selected.count) 张图片？",
                                       message: "图片进入本作品的图片回收站，保留 7 天。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { _ in
-            do { _ = try self.library.moveImagesToTrash(self.work, images: Array(self.selected)); self.selected.removeAll(); self.render() }
-            catch { self.showToast(error.localizedDescription) }
+        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            do {
+                _ = try self.library.moveImagesToTrash(self.work, images: Array(self.selected))
+                self.selected.removeAll()
+                self.render()
+            } catch {
+                self.showToast(error.localizedDescription)
+            }
         })
         present(alert, animated: true)
     }
+
     private func deletePreviewImage(_ url: URL) -> String? {
         do {
             _ = try library.moveImagesToTrash(work, images: [url])
             selected.remove(url)
             render()
             return nil
-        } catch { return error.localizedDescription }
+        } catch {
+            return error.localizedDescription
+        }
     }
+
     @objc private func restoreImages() {
-        do { let count = try library.restoreAllImages(work); render(); showToast("已恢复 \(count) 张") }
-        catch { showToast(error.localizedDescription) }
+        do {
+            let count = try library.restoreAllImages(work)
+            render()
+            showToast("✅ 已恢复 \(count) 张图片")
+        } catch {
+            showToast(error.localizedDescription)
+        }
     }
 
     private func actionButton(_ title: String, background: UIColor, foreground: UIColor, action: Selector) -> UIButton {
-        let button = UIButton(type: .system); button.setTitle(title, for: .normal)
-        button.backgroundColor = background; button.setTitleColor(foreground, for: .normal)
-        button.titleLabel?.font = .boldSystemFont(ofSize: 15); button.layer.cornerRadius = 15
-        button.addTarget(self, action: action, for: .touchUpInside); return button
+        let button = UIButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.backgroundColor = background
+        button.setTitleColor(foreground, for: .normal)
+        button.titleLabel?.font = .boldSystemFont(ofSize: 15)
+        button.layer.cornerRadius = 16
+        button.addTarget(self, action: action, for: .touchUpInside)
+        return button
     }
+
     private func iconActionButton(_ icon: AlbumToolbarSymbol, label: String, background: UIColor,
                                   foreground: UIColor, action: Selector) -> UIButton {
         let button = UIButton(type: .system)
         button.setImage(AlbumToolbarIcon.image(icon, color: foreground), for: .normal)
-        button.tintColor = foreground; button.backgroundColor = background
-        button.layer.cornerRadius = 15; button.accessibilityLabel = label
+        button.tintColor = foreground
+        button.backgroundColor = background
+        button.layer.cornerRadius = 16
+        button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
         return button
     }
+
     private func showToast(_ text: String) {
-        let alert = UIAlertController(title: nil, message: text, preferredStyle: .alert)
-        present(alert, animated: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { alert.dismiss(animated: true) }
+        toastLabel?.removeFromSuperview()
+        let label = UILabel()
+        label.text = text
+        label.font = .boldSystemFont(ofSize: 14)
+        label.textColor = .white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.85)
+        label.textAlignment = .center
+        label.layer.cornerRadius = 18
+        label.clipsToBounds = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            label.heightAnchor.constraint(equalToConstant: 38),
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40)
+        ])
+        toastLabel = label
+        UIView.animate(withDuration: 0.3, delay: 1.8, options: [], animations: { label.alpha = 0 }) { _ in
+            label.removeFromSuperview()
+        }
+    }
+}
+
+// MARK: - Custom Cells
+
+private final class WorkTextCardCell: UICollectionViewCell {
+    private let titleLabel = UILabel()
+    private let hintLabel = UILabel()
+    private let bodyLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.layer.cornerRadius = 18
+        contentView.clipsToBounds = true
+        contentView.backgroundColor = .white
+        contentView.layer.borderWidth = 1
+        contentView.layer.borderColor = UIColor(red: 0.90, green: 0.93, blue: 0.91, alpha: 1).cgColor
+
+        titleLabel.font = .boldSystemFont(ofSize: 15)
+        titleLabel.textColor = UIColor(red: 0.21, green: 0.41, blue: 0.32, alpha: 1)
+        titleLabel.text = "📝 文案.txt"
+
+        hintLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        hintLabel.textColor = UIColor(red: 0.39, green: 0.55, blue: 0.47, alpha: 1)
+        hintLabel.text = "(点按一键复制)"
+
+        bodyLabel.font = .systemFont(ofSize: 13)
+        bodyLabel.textColor = UIColor(red: 0.36, green: 0.35, blue: 0.33, alpha: 1)
+        bodyLabel.numberOfLines = 3
+
+        let headerStack = UIStackView(arrangedSubviews: [titleLabel, hintLabel])
+        headerStack.axis = .horizontal
+        headerStack.spacing = 6
+        headerStack.alignment = .center
+
+        let mainStack = UIStackView(arrangedSubviews: [headerStack, bodyLabel])
+        mainStack.axis = .vertical
+        mainStack.spacing = 6
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(mainStack)
+
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
+            mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
+            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            mainStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(_ url: URL) {
+        let content = ((try? String(contentsOf: url, encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        bodyLabel.text = content.isEmpty ? "没有文案内容" : content
     }
 }
 
 private final class WorkImageCell: UICollectionViewCell {
-    private let image = UIImageView(); private let label = UILabel(); private let badge = UILabel()
+    private let image = UIImageView()
+    private let badge = UILabel()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 18; contentView.clipsToBounds = true; contentView.backgroundColor = .white
-        image.contentMode = .scaleAspectFill; image.clipsToBounds = true; image.translatesAutoresizingMaskIntoConstraints = false
-        label.numberOfLines = 4; label.font = .systemFont(ofSize: 13); label.translatesAutoresizingMaskIntoConstraints = false
-        badge.text = "✓"; badge.textAlignment = .center; badge.textColor = .white
-        badge.layer.cornerRadius = 14; badge.clipsToBounds = true; badge.translatesAutoresizingMaskIntoConstraints = false
+        contentView.layer.cornerRadius = 18
+        contentView.clipsToBounds = true
+        contentView.backgroundColor = .white
+        image.contentMode = .scaleAspectFill
+        image.clipsToBounds = true
+        image.translatesAutoresizingMaskIntoConstraints = false
+
+        badge.text = "✓"
+        badge.textAlignment = .center
+        badge.textColor = .white
+        badge.font = .boldSystemFont(ofSize: 16)
+        badge.layer.cornerRadius = 15
+        badge.clipsToBounds = true
+        badge.translatesAutoresizingMaskIntoConstraints = false
         badge.backgroundColor = UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1)
-        contentView.addSubview(image); contentView.addSubview(label); contentView.addSubview(badge)
+
+        contentView.addSubview(image)
+        contentView.addSubview(badge)
         NSLayoutConstraint.activate([
-            image.leadingAnchor.constraint(equalTo: contentView.leadingAnchor), image.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            image.topAnchor.constraint(equalTo: contentView.topAnchor), image.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14), label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
-            label.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            badge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8), badge.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            badge.widthAnchor.constraint(equalToConstant: 28), badge.heightAnchor.constraint(equalToConstant: 28)
+            image.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            image.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            image.topAnchor.constraint(equalTo: contentView.topAnchor),
+            image.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            badge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            badge.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            badge.widthAnchor.constraint(equalToConstant: 30),
+            badge.heightAnchor.constraint(equalToConstant: 30)
         ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func configureText(_ url: URL) {
-        image.image = nil; image.isHidden = true; label.isHidden = false; badge.isHidden = true
-        contentView.layer.borderWidth = 0
-        label.text = "\(url.lastPathComponent)\n\n" + ((try? String(contentsOf: url, encoding: .utf8)) ?? "没有文案")
-    }
+
     func configureImage(_ url: URL, selected: Bool) {
-        label.isHidden = true; image.isHidden = false
-        image.image = downsampledImage(at: url, maxPixel: 420)
+        image.image = downsampledImage(at: url, maxPixel: 480)
         badge.isHidden = !selected
         contentView.layer.borderWidth = selected ? 4 : 0
         contentView.layer.borderColor = UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1).cgColor
     }
+}
+
+private final class WorkFileCell: UICollectionViewCell {
+    private let typeBadge = UILabel()
+    private let nameLabel = UILabel()
+    private let sizeLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.layer.cornerRadius = 14
+        contentView.clipsToBounds = true
+        contentView.backgroundColor = .white
+
+        typeBadge.font = .boldSystemFont(ofSize: 12)
+        typeBadge.textAlignment = .center
+        typeBadge.textColor = UIColor(red: 0.21, green: 0.41, blue: 0.32, alpha: 1)
+        typeBadge.backgroundColor = UIColor(red: 0.90, green: 0.94, blue: 0.91, alpha: 1)
+        typeBadge.layer.cornerRadius = 10
+        typeBadge.clipsToBounds = true
+        typeBadge.translatesAutoresizingMaskIntoConstraints = false
+
+        nameLabel.font = .boldSystemFont(ofSize: 14)
+        nameLabel.textColor = AppColors.text
+        nameLabel.numberOfLines = 1
+
+        sizeLabel.font = .systemFont(ofSize: 12)
+        sizeLabel.textColor = .gray
+
+        let infoStack = UIStackView(arrangedSubviews: [nameLabel, sizeLabel])
+        infoStack.axis = .vertical
+        infoStack.spacing = 2
+
+        let rowStack = UIStackView(arrangedSubviews: [typeBadge, infoStack])
+        rowStack.axis = .horizontal
+        rowStack.spacing = 12
+        rowStack.alignment = .center
+        rowStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(rowStack)
+
+        NSLayoutConstraint.activate([
+            typeBadge.widthAnchor.constraint(equalToConstant: 44),
+            typeBadge.heightAnchor.constraint(equalToConstant: 36),
+            rowStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            rowStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            rowStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
     func configureFile(_ url: URL) {
-        image.image = nil; image.isHidden = true; label.isHidden = false; badge.isHidden = true
-        contentView.layer.borderWidth = 0
         let ext = url.pathExtension.isEmpty ? "文件" : url.pathExtension.uppercased()
+        typeBadge.text = ext
+        nameLabel.text = url.lastPathComponent
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-        let size = bytes > 0 ? ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) : "点按预览"
-        label.text = "\(ext)\n\(url.lastPathComponent)\n\(size)"
+        sizeLabel.text = bytes > 0 ? ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) : "点按预览"
     }
 }
 
-private final class ImagePreviewController: UIViewController, UIScrollViewDelegate {
-    private let urls: [URL]
-    private let initialIndex: Int
-    private let onDelete: (URL) -> String?
-    private let scrollView = UIScrollView()
-    private let counter = UILabel()
-    private var didSetInitialOffset = false
+private final class WorkTrashRestoreCell: UICollectionViewCell {
+    private let titleLabel = UILabel()
 
-    init(urls: [URL], initialIndex: Int, onDelete: @escaping (URL) -> String?) {
-        self.urls = urls
-        self.initialIndex = max(0, min(initialIndex, max(0, urls.count - 1)))
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.layer.cornerRadius = 14
+        contentView.clipsToBounds = true
+        contentView.backgroundColor = .white
+        contentView.layer.borderWidth = 1
+        contentView.layer.borderColor = UIColor(red: 0.85, green: 0.90, blue: 0.87, alpha: 1).cgColor
+
+        titleLabel.font = .boldSystemFont(ofSize: 14)
+        titleLabel.textColor = UIColor(red: 0.28, green: 0.41, blue: 0.34, alpha: 1)
+        titleLabel.textAlignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(titleLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(_ count: Int) {
+        titleLabel.text = "♻️ 图片回收站 · \(count) 张 · 点此全部恢复"
+    }
+}
+
+private final class ImagePreviewController: UIViewController {
+    private let url: URL
+    private let onDelete: () -> String?
+    init(url: URL, onDelete: @escaping () -> String?) {
+        self.url = url
         self.onDelete = onDelete
         super.init(nibName: nil, bundle: nil)
     }
@@ -302,85 +584,25 @@ private final class ImagePreviewController: UIViewController, UIScrollViewDelega
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "删除", style: .plain,
-                                                             target: self, action: #selector(deleteTapped))
-        scrollView.backgroundColor = .black
-        scrollView.isPagingEnabled = true
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.delegate = self
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
-        NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-
+        title = "预览"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            title: "删除", style: .plain, target: self, action: #selector(deleteTapped))
         let longestSide = max(UIScreen.main.bounds.width, UIScreen.main.bounds.height) * UIScreen.main.scale
-        for url in urls {
-            let image = UIImageView(image: downsampledImage(at: url, maxPixel: max(1200, longestSide)))
-            image.contentMode = .scaleAspectFit
-            image.backgroundColor = .black
-            image.isAccessibilityElement = true
-            image.accessibilityLabel = url.lastPathComponent
-            scrollView.addSubview(image)
-        }
-        counter.font = .boldSystemFont(ofSize: 13)
-        counter.textColor = .white
-        counter.textAlignment = .center
-        counter.backgroundColor = UIColor.black.withAlphaComponent(0.65)
-        counter.layer.cornerRadius = 14
-        counter.clipsToBounds = true
-        counter.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(counter)
-        NSLayoutConstraint.activate([
-            counter.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            counter.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            counter.widthAnchor.constraint(greaterThanOrEqualToConstant: 68),
-            counter.heightAnchor.constraint(equalToConstant: 28)
-        ])
-        updateCounter()
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        let pageWidth = scrollView.bounds.width
-        let pageHeight = scrollView.bounds.height
-        guard pageWidth > 0, pageHeight > 0 else { return }
-        for (index, subview) in scrollView.subviews.enumerated() {
-            subview.frame = CGRect(x: pageWidth * CGFloat(index), y: 0,
-                                   width: pageWidth, height: pageHeight)
-        }
-        scrollView.contentSize = CGSize(width: pageWidth * CGFloat(urls.count), height: pageHeight)
-        if !didSetInitialOffset {
-            didSetInitialOffset = true
-            scrollView.setContentOffset(CGPoint(x: pageWidth * CGFloat(initialIndex), y: 0), animated: false)
-            updateCounter()
-        }
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { updateCounter() }
-
-    private func updateCounter() {
-        guard !urls.isEmpty else { return }
-        let width = max(scrollView.bounds.width, 1)
-        let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
-        counter.text = "\(index + 1) / \(urls.count)"
-        navigationItem.title = "预览"
+        let image = UIImageView(image: downsampledImage(at: url, maxPixel: max(1200, longestSide)))
+        image.contentMode = .scaleAspectFit
+        image.frame = view.bounds
+        image.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(image)
     }
 
     @objc private func deleteTapped() {
-        guard !urls.isEmpty else { return }
-        let width = max(scrollView.bounds.width, 1)
-        let index = max(0, min(urls.count - 1, Int(round(scrollView.contentOffset.x / width))))
         let alert = UIAlertController(title: "删除这张图片？",
                                       message: "图片会移到本作品的图片回收站，保留 7 天。",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
-            if let error = self.onDelete(self.urls[index]) {
+            if let error = self.onDelete() {
                 let failure = UIAlertController(title: "删除失败", message: error, preferredStyle: .alert)
                 failure.addAction(UIAlertAction(title: "知道了", style: .default))
                 self.present(failure, animated: true)

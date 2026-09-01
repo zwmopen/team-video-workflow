@@ -1,18 +1,14 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.6.45 / build 64（已正式发布）
+版本：0.7.0 / build 37
 
-状态：GitHub Actions 已完成云端构建与发布；发布页为 `https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62`，当前 IPA 已同步到 `C:\Users\z\Desktop\album-iOS-v0.6.45-altstore.ipa`。
+状态：候选版本；云端构建和当前轮次真机记录见维护交接
 
-0.6.45 延续同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。已移除自动截图识别、截图发送、自动读取/同步系统剪切板和相册读取权限；顶部分类统一显示“精准流量”和“泛流量”。作品卡片取消独立“预览”按钮，点击横向缩略图直接从对应图片进入全屏分页预览；底部固定横排“发抖音 / 发小红书 / 删除”三个操作，删除确认后移入回收站，平台按钮的点击灰态与计数保持不变。本轮还修复接收任务提交重试，保留同一任务 ID 并支持完成回执重放，避免网络抖动后误报“任务不存在”。普通文件、图片导入、系统分享与局域网传送不变。
+0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
 这是现有“素材投送中控”的 iPhone 客户端，不是另一个项目。它提供递归作品列表、复制文案、多图系统分享、打开分享次数、次日回收和回收站保留 7 天。
 
 ## 下载构建产物
-
-正式发布页：
-
-`https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62`
 
 每次推送后，在 GitHub 仓库的 Actions 页面打开最新的 `Device Share Hub` 工作流，下载与工程版本对应的 `album-ios-altstore-v<版本>` artifact，解压得到：
 
@@ -21,11 +17,11 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-当前 IPA 的 SHA-256 为 `cae9c6739bed206703c9669a97930f4955738b2fbc67f912acdf413a16677ca2`；AltStore 正式源和兼容旧 Beta 的源均已更新为 iOS 0.6.45/build 64。当前机器未识别实体 iPhone，因此覆盖安装、续签和局域网传输仍需现场验收。
+IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；实体检查完成后再创建正式 GitHub Release。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
-## Windows + Sideloadly 安装（备用）
+## Windows + Sideloadly 安装（推荐）
 
 1. 安装 Apple 官网版本的 iTunes 和 iCloud。
 2. 数据线连接、解锁 iPhone 并选择“信任此电脑”；先确认 iTunes 能显示 iPhone。
@@ -38,27 +34,13 @@ CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载�
 
 推荐只让轻量 `sideloadlydaemon` 随 Windows 登录启动；它按约 96 小时刷新，主界面平时可以关闭。电脑不必一直开机，但不能连续超过 7 天都没有一次满足“电脑开机 + 手机同一 Wi-Fi”的续签机会。
 
-## Windows + AltStore 安装（推荐）
+## Windows + AltStore 安装（备选）
 
 1. 按 AltStore 官方说明安装 Apple 官网版本的 iTunes、iCloud 和 AltServer。
 2. 第一次用数据线连接 iPhone，在 iTunes 中开启 Wi-Fi 同步。
 3. 用 AltServer 把 AltStore 安装到 iPhone；iOS 16 及以上开启“开发者模式”。
 4. 把 IPA 保存到 iPhone“文件”，在 AltStore 的 `My Apps` 页点 `+` 并选择 IPA。
 5. 打开“相册”。iOS 13 及以上只选择一次固定作品总文件夹；iOS 12 直接使用应用内固定文件夹。
-
-### AltStore 自动发现更新
-
-首次在 AltStore 的 Sources 中添加以下地址：
-
-`https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json`
-
-仍运行旧版测试通道的安装可以继续使用兼容源：
-
-`https://raw.githubusercontent.com/zwmopen/gallery-updates/refs/heads/main/altstore-beta.json`
-
-该兼容源当前与正式源指向同一套 0.6.45/build 64，不再单独发布 Beta 包。更新仍需在 AltStore 的 `My Apps` 中确认一次。
-
-之后每次云端发布新的 iPhone IPA，AltStore 会从该源自动发现新版本；AltServer 在同一 Wi-Fi 下负责侧载和免费证书刷新。更新安装仍需在 AltStore 中确认一次，iOS 不允许应用静默替换自身。
 
 遇到问题时，在“设置 → 复制诊断信息”取得版本、iOS、授权状态、作品数量和最近错误；诊断内容不包含文案、图片内容或完整文件路径。
 
