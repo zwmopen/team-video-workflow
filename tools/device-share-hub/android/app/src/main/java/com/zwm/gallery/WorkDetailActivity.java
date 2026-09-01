@@ -351,7 +351,7 @@ public final class WorkDetailActivity extends Activity {
         previous.setPadding(dp(14), 0, dp(14), 0);
         footer.addView(previous, new LinearLayout.LayoutParams(-2, dp(38)));
 
-        TextView counter = text("", 13.5f, true);
+        TextView counter = text("", 13, true);
         counter.setGravity(Gravity.CENTER);
         counter.setTextColor(Color.WHITE);
         counter.setBackground(round(Color.argb(170, 30, 30, 30), 18));
