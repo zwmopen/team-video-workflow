@@ -312,7 +312,7 @@ public final class WorkDetailActivity extends Activity {
         image.setFocusable(true);
         container.addView(image, new FrameLayout.LayoutParams(-1, -1));
 
-        // Top Navigation Header
+        // Top Navigation Header (Close button & title)
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -336,32 +336,35 @@ public final class WorkDetailActivity extends Activity {
         FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
         container.addView(header, headerParams);
 
-        // Bottom Controls with Index Counter
+        // Bottom Controls with Index Counter Badge & 3-Button Navigation Bar Safe Insets
+        int navHeight = ScreenInsets.getNavigationBarHeight(this);
+        int safeBottomPadding = Math.max(dp(28), navHeight + dp(14));
+
         LinearLayout footer = new LinearLayout(this);
         footer.setOrientation(LinearLayout.HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(dp(16), dp(10), dp(16), dp(22));
+        footer.setPadding(dp(18), dp(10), dp(18), safeBottomPadding);
 
         Button previous = button("‹ 上一张", Color.argb(160, 45, 45, 45), Color.WHITE);
         previous.setTextSize(12.5f);
         previous.setMinHeight(dp(38));
-        previous.setPadding(dp(12), 0, dp(12), 0);
+        previous.setPadding(dp(14), 0, dp(14), 0);
         footer.addView(previous, new LinearLayout.LayoutParams(-2, dp(38)));
 
-        TextView counter = text("", 13, true);
+        TextView counter = text("", 13.5f, true);
         counter.setGravity(Gravity.CENTER);
         counter.setTextColor(Color.WHITE);
-        counter.setBackground(round(Color.argb(160, 35, 35, 35), 18));
-        counter.setPadding(dp(14), dp(6), dp(14), dp(6));
+        counter.setBackground(round(Color.argb(170, 30, 30, 30), 18));
+        counter.setPadding(dp(14), dp(8), dp(14), dp(8));
         LinearLayout.LayoutParams counterParams = new LinearLayout.LayoutParams(0, -2, 1);
-        counterParams.setMargins(dp(10), 0, dp(10), 0);
+        counterParams.setMargins(dp(12), 0, dp(12), 0);
         counter.setLayoutParams(counterParams);
         footer.addView(counter);
 
         Button next = button("下一张 ›", Color.rgb(38, 145, 94), Color.WHITE);
         next.setTextSize(12.5f);
         next.setMinHeight(dp(38));
-        next.setPadding(dp(12), 0, dp(12), 0);
+        next.setPadding(dp(14), 0, dp(14), 0);
         footer.addView(next, new LinearLayout.LayoutParams(-2, dp(38)));
 
         FrameLayout.LayoutParams footerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
@@ -373,8 +376,7 @@ public final class WorkDetailActivity extends Activity {
             String currentName = work.images.get(currentIndex[0]);
             counter.setText((currentIndex[0] + 1) + " / " + work.images.size());
             
-            // Smooth fade transition
-            AlphaAnimation fade = new AlphaAnimation(0.6f, 1.0f);
+            AlphaAnimation fade = new AlphaAnimation(0.65f, 1.0f);
             fade.setDuration(120);
             image.startAnimation(fade);
             
@@ -385,10 +387,10 @@ public final class WorkDetailActivity extends Activity {
             next.setAlpha(next.isEnabled() ? 1f : 0.4f);
         };
 
-        // Swipe Left/Right Gesture Detector
+        // Swipe Left/Right Gesture Detection
         GestureDetector detector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            private static final int SWIPE_MIN_DISTANCE = 60;
-            private static final int SWIPE_THRESHOLD_VELOCITY = 100;
+            private static final int SWIPE_MIN_DISTANCE = 40;
+            private static final int SWIPE_THRESHOLD_VELOCITY = 80;
 
             @Override
             public boolean onDown(MotionEvent e) {
@@ -400,7 +402,7 @@ public final class WorkDetailActivity extends Activity {
                 if (e1 == null || e2 == null) return false;
                 float diffX = e2.getX() - e1.getX();
                 float diffY = e2.getY() - e1.getY();
-                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > SWIPE_MIN_DISTANCE && Math.abs(velocityX) > SWIPE_THRESHOLD_VELOCITY) {
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > dp(SWIPE_MIN_DISTANCE) && Math.abs(velocityX) > dp(SWIPE_THRESHOLD_VELOCITY)) {
                     if (diffX > 0) {
                         // Swipe Right -> Previous
                         if (currentIndex[0] > 0) {
@@ -421,7 +423,10 @@ public final class WorkDetailActivity extends Activity {
             }
         });
 
-        View.OnTouchListener touchListener = (v, event) -> detector.onTouchEvent(event);
+        View.OnTouchListener touchListener = (v, event) -> {
+            if (detector.onTouchEvent(event)) return true;
+            return false;
+        };
         image.setOnTouchListener(touchListener);
         container.setOnTouchListener(touchListener);
 

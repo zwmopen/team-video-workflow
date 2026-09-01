@@ -629,15 +629,15 @@ private final class ImagePreviewController: UIViewController, UIScrollViewDelega
         counter.textColor = .white
         counter.textAlignment = .center
         counter.backgroundColor = UIColor.black.withAlphaComponent(0.65)
-        counter.layer.cornerRadius = 14
+        counter.layer.cornerRadius = 16
         counter.clipsToBounds = true
         counter.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(counter)
         NSLayoutConstraint.activate([
             counter.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            counter.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            counter.widthAnchor.constraint(greaterThanOrEqualToConstant: 68),
-            counter.heightAnchor.constraint(equalToConstant: 28)
+            counter.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            counter.widthAnchor.constraint(greaterThanOrEqualToConstant: 76),
+            counter.heightAnchor.constraint(equalToConstant: 32)
         ])
         updateCounter()
     }
