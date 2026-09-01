@@ -1,4 +1,8 @@
 name: Album
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    exactVersion: 151.0.0
 options:
   bundleIdPrefix: com.zwm
   deploymentTarget:
@@ -14,12 +18,17 @@ targets:
     platform: iOS
     sources:
       - path: Album
+    dependencies:
+      - package: WebRTC
+        product: WebRTC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zwm.album
+        # Keep bundle/executable paths ASCII-only. The user-facing name stays Chinese
+        # via CFBundleDisplayName, avoiding IPA ZIP filename encoding failures.
         PRODUCT_NAME: Album
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 37
+        CURRENT_PROJECT_VERSION: 65
         MARKETING_VERSION: 0.7.0
         SWIFT_OBJC_BRIDGING_HEADER: Album/Album-Bridging-Header.h
         OTHER_LDFLAGS: "$(inherited) -lz"
@@ -29,7 +38,7 @@ targets:
         CFBundleDisplayName: 相册
         CFBundleName: Album
         CFBundleShortVersionString: "0.7.0"
-        CFBundleVersion: "37"
+        CFBundleVersion: "65"
         NSLocalNetworkUsageDescription: 用于让同一 Wi-Fi 的素材投送中控自动发现这台 iPhone，并把文件直接传入所选作品文件夹。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
