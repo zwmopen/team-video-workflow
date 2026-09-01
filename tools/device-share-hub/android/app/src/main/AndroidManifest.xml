@@ -20,6 +20,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="相册"
         android:requestLegacyExternalStorage="true"
+        android:largeHeap="true"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">

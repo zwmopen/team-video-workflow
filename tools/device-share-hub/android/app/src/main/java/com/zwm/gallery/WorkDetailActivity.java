@@ -18,6 +18,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.text.format.Formatter;
+import android.util.LruCache;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -38,6 +41,14 @@ import java.util.Locale;
 
 /** Folder-like preview for one work. Long press an image to start multi-select. */
 public final class WorkDetailActivity extends Activity {
+    private static final int THUMBNAIL_CACHE_SIZE = (int) Math.max(16 * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
+    private static final LruCache<String, Bitmap> DETAIL_CACHE = new LruCache<String, Bitmap>(THUMBNAIL_CACHE_SIZE) {
+        @Override
+        protected int sizeOf(String key, Bitmap bitmap) {
+            return bitmap.getByteCount();
+        }
+    };
+    private static final ExecutorService DETAIL_EXECUTOR = Executors.newFixedThreadPool(3);
     public static final String EXTRA_WORK_ID = "workId";
     public static final String EXTRA_IMAGE_INDEX = "imageIndex";
 
@@ -163,7 +174,7 @@ public final class WorkDetailActivity extends Activity {
         frame.setBackground(round(chosen ? Color.rgb(38, 145, 94) : Color.WHITE, 18));
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        image.setImageBitmap(loadThumbnail(new File(work.directory, name), 420));
+        loadThumbnailAsync(new File(work.directory, name), 420, image);
         frame.addView(image, new FrameLayout.LayoutParams(-1, -1));
         TextView badge = text(chosen ? "✓" : "", 16, true);
         badge.setGravity(Gravity.CENTER);
@@ -410,15 +421,48 @@ public final class WorkDetailActivity extends Activity {
         catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
     }
 
-    private Bitmap loadThumbnail(File file, int target) {
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
-        int sample = 1;
-        while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inSampleSize = Math.max(1, sample);
-        return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+    private void loadThumbnailAsync(File file, int target, ImageView targetView) {
+        if (!file.isFile()) {
+            targetView.setImageDrawable(null);
+            return;
+        }
+        String path = file.getAbsolutePath();
+        targetView.setTag(path);
+        Bitmap cached = DETAIL_CACHE.get(path);
+        if (cached != null && !cached.isRecycled()) {
+            targetView.setImageBitmap(cached);
+            return;
+        }
+        targetView.setImageDrawable(null);
+        DETAIL_EXECUTOR.execute(() -> {
+            Bitmap decoded = decodeThumbnail(file, target);
+            if (decoded != null) {
+                DETAIL_CACHE.put(path, decoded);
+                runOnUiThread(() -> {
+                    if (path.equals(targetView.getTag())) {
+                        targetView.setImageBitmap(decoded);
+                    }
+                });
+            }
+        });
+    }
+
+    private Bitmap decodeThumbnail(File file, int target) {
+        try {
+            if (!file.isFile()) return null;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = Math.max(1, sample);
+            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private GridLayout.LayoutParams gridParams() {

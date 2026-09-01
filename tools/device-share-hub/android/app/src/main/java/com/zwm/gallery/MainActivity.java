@@ -26,6 +26,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
@@ -59,6 +60,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
+    private static final int THUMBNAIL_CACHE_SIZE = (int) Math.max(16 * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
+    private static final LruCache<String, Bitmap> THUMBNAIL_CACHE = new LruCache<String, Bitmap>(THUMBNAIL_CACHE_SIZE) {
+        @Override
+        protected int sizeOf(String key, Bitmap bitmap) {
+            return bitmap.getByteCount();
+        }
+    };
+    private static final ExecutorService THUMBNAIL_EXECUTOR = Executors.newFixedThreadPool(3);
     private static final String PREFS = "device_share";
     private static final String PREF_TREE_URI = "libraryTreeUri";
     private static final String PREF_TREE_NAME = "libraryTreeName";
@@ -604,10 +613,12 @@ public final class MainActivity extends Activity {
                 openShare(work, "xhs");
             });
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
-            platformRow.addView(douyin, compactButtonRowParams(true));
+            platformRow.addView(douyin, compactButtonRowParams(false));
             platformRow.addView(xhs, compactButtonRowParams(true));
             platformRow.addView(delete, compactButtonRowParams(true));
-            card.addView(platformRow);
+            LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
+            platformRowParams.setMargins(0, dp(8), 0, dp(2));
+            card.addView(platformRow, platformRowParams);
         }
         return card;
     }
@@ -629,8 +640,7 @@ public final class MainActivity extends Activity {
                     Color.rgb(239, 242, 240), 10, Color.rgb(216, 222, 218)));
             thumbnail.setClipToOutline(true);
             thumbnail.setContentDescription("预览第 " + (index + 1) + " 张图片");
-            Bitmap bitmap = loadThumbnail(new File(work.directory, imageName), dp(68));
-            if (bitmap != null) thumbnail.setImageBitmap(bitmap);
+            loadThumbnailAsync(new File(work.directory, imageName), dp(68), thumbnail);
             final int imageIndex = index;
             thumbnail.setOnClickListener(v -> openPreview(work, imageIndex));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(68), dp(68));
@@ -641,19 +651,50 @@ public final class MainActivity extends Activity {
         return scroll;
     }
 
-    private Bitmap loadThumbnail(File image, int targetPx) {
-        if (!image.isFile()) return null;
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(image.getAbsolutePath(), bounds);
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
-        int sample = 1;
-        while (bounds.outWidth / sample > targetPx * 2 || bounds.outHeight / sample > targetPx * 2) {
-            sample *= 2;
+    private void loadThumbnailAsync(File image, int targetPx, ImageView targetView) {
+        if (!image.isFile()) {
+            targetView.setImageDrawable(null);
+            return;
         }
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inSampleSize = sample;
-        return BitmapFactory.decodeFile(image.getAbsolutePath(), options);
+        String path = image.getAbsolutePath();
+        targetView.setTag(path);
+        Bitmap cached = THUMBNAIL_CACHE.get(path);
+        if (cached != null && !cached.isRecycled()) {
+            targetView.setImageBitmap(cached);
+            return;
+        }
+        targetView.setImageDrawable(null);
+        THUMBNAIL_EXECUTOR.execute(() -> {
+            Bitmap decoded = decodeThumbnail(image, targetPx);
+            if (decoded != null) {
+                THUMBNAIL_CACHE.put(path, decoded);
+                runOnUiThread(() -> {
+                    if (path.equals(targetView.getTag())) {
+                        targetView.setImageBitmap(decoded);
+                    }
+                });
+            }
+        });
+    }
+
+    private Bitmap decodeThumbnail(File image, int targetPx) {
+        try {
+            if (!image.isFile()) return null;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(image.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (bounds.outWidth / sample > targetPx * 2 || bounds.outHeight / sample > targetPx * 2) {
+                sample *= 2;
+            }
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = Math.max(1, sample);
+            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            return BitmapFactory.decodeFile(image.getAbsolutePath(), options);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private void addCategoryButton(String label, String category) {
@@ -1457,7 +1498,7 @@ public final class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(12), dp(11), dp(12), dp(11));
+        card.setPadding(dp(14), dp(12), dp(14), dp(14));
         card.setBackground(roundWithStroke(
                 Color.WHITE, 16, Color.rgb(224, 228, 226)));
         card.setElevation(dp(1));
@@ -1477,10 +1518,10 @@ public final class MainActivity extends Activity {
 
     private Button compactButton(String label, boolean primary) {
         Button button = smallButton(label, primary);
-        button.setTextSize(11.5f);
-        button.setMinHeight(0);
-        button.setMinimumHeight(0);
-        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setTextSize(12f);
+        button.setMinHeight(dp(36));
+        button.setMinimumHeight(dp(36));
+        button.setPadding(dp(14), 0, dp(14), 0);
         button.setGravity(Gravity.CENTER);
         button.setMaxLines(1);
         return button;
@@ -1495,8 +1536,8 @@ public final class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams compactButtonRowParams(boolean withLeftMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
-        if (withLeftMargin) params.setMargins(dp(6), 0, 0, 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(36));
+        if (withLeftMargin) params.setMargins(dp(8), 0, 0, 0);
         return params;
     }
 
