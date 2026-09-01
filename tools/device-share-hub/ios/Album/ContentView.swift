@@ -250,7 +250,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        return CGSize(width: width, height: 204)
+        return CGSize(width: width, height: 172)
     }
 
     private func confirmMoveToTrash(_ work: WorkItem) {
@@ -434,22 +434,17 @@ private final class WorkCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 18
+        contentView.layer.cornerRadius = 16
         contentView.layer.borderWidth = 1
-        icon.font = .systemFont(ofSize: 22)
-        count.font = .systemFont(ofSize: 12, weight: .semibold)
-        count.textAlignment = .right
-        name.font = .boldSystemFont(ofSize: 14)
+        name.font = .boldSystemFont(ofSize: 14.5)
         name.numberOfLines = 1
-        detail.font = .systemFont(ofSize: 12)
+        detail.font = .systemFont(ofSize: 11.5)
         detail.textColor = AppColors.secondaryText
-        let top = UIStackView(arrangedSubviews: [icon, count])
-        top.axis = .horizontal
         previewScroll.showsHorizontalScrollIndicator = false
         previewScroll.alwaysBounceHorizontal = false
         previewScroll.accessibilityLabel = "作品缩略图，可横向查看全部图片"
         previewStack.axis = .horizontal
-        previewStack.spacing = 8
+        previewStack.spacing = 6
         previewStack.alignment = .center
         previewStack.translatesAutoresizingMaskIntoConstraints = false
         previewScroll.addSubview(previewStack)
@@ -468,17 +463,17 @@ private final class WorkCell: UICollectionViewCell {
         platformRow.spacing = 6
         platformRow.alignment = .fill
         platformRow.distribution = .fillEqually
-        let stack = UIStackView(arrangedSubviews: [top, name, previewScroll, detail, platformRow])
+        let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformRow])
         stack.axis = .vertical
-        stack.spacing = 8
+        stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            previewScroll.heightAnchor.constraint(equalToConstant: 70),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12)
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            previewScroll.heightAnchor.constraint(equalToConstant: 64),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
         ])
     }
 
@@ -512,8 +507,8 @@ private final class WorkCell: UICollectionViewCell {
                 imageView.trailingAnchor.constraint(equalTo: thumbnail.trailingAnchor),
                 imageView.topAnchor.constraint(equalTo: thumbnail.topAnchor),
                 imageView.bottomAnchor.constraint(equalTo: thumbnail.bottomAnchor),
-                thumbnail.widthAnchor.constraint(equalToConstant: 70),
-                thumbnail.heightAnchor.constraint(equalToConstant: 70)
+                thumbnail.widthAnchor.constraint(equalToConstant: 64),
+                thumbnail.heightAnchor.constraint(equalToConstant: 64)
             ])
             previewStack.addArrangedSubview(thumbnail)
         }
