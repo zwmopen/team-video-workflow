@@ -73,7 +73,7 @@ public final class WorkDetailActivity extends Activity {
             render();
             int initialIndex = getIntent().getIntExtra(EXTRA_IMAGE_INDEX, -1);
             if (initialIndex >= 0 && initialIndex < work.images.size()) {
-                showLargeImage(work.images.get(initialIndex));
+                showLargeImage(work.images.get(initialIndex), true);
             }
         } catch (Exception error) {
             Toast.makeText(this, "无法打开作品：" + error.getMessage(), Toast.LENGTH_LONG).show();
@@ -299,6 +299,10 @@ public final class WorkDetailActivity extends Activity {
     }
 
     private void showLargeImage(String name) {
+        showLargeImage(name, false);
+    }
+
+    private void showLargeImage(String name, boolean finishOnClose) {
         if (work == null || work.images.isEmpty()) return;
         int initialIndex = Math.max(0, work.images.indexOf(name));
         
@@ -312,18 +316,21 @@ public final class WorkDetailActivity extends Activity {
         image.setFocusable(true);
         container.addView(image, new FrameLayout.LayoutParams(-1, -1));
 
-        // Top Navigation Header (Close button & title)
+        // Top Navigation Header (Close button & title with safe status bar insets)
+        int statusBarHeight = ScreenInsets.getStatusBarHeight(this);
+        int topPadding = Math.max(dp(14), statusBarHeight + dp(8));
+
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(16), dp(14), dp(16), dp(8));
+        header.setPadding(dp(16), topPadding, dp(16), dp(8));
 
-        Button close = button("✕", Color.argb(150, 45, 45, 45), Color.WHITE);
-        close.setTextSize(14);
+        Button close = button("✕", Color.argb(160, 35, 35, 35), Color.WHITE);
+        close.setTextSize(15);
         close.setContentDescription("关闭全屏预览");
         close.setPadding(0, 0, 0, 0);
         close.setGravity(Gravity.CENTER);
-        header.addView(close, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        header.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         TextView titleText = text(work.name, 13, false);
         titleText.setTextColor(Color.rgb(200, 200, 200));
@@ -439,7 +446,13 @@ public final class WorkDetailActivity extends Activity {
 
         Dialog dialog = new Dialog(this, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
         dialog.setContentView(container);
-        close.setOnClickListener(v -> dialog.dismiss());
+        close.setOnClickListener(v -> {
+            dialog.dismiss();
+            if (finishOnClose) finish();
+        });
+        dialog.setOnCancelListener(d -> {
+            if (finishOnClose) finish();
+        });
         dialog.setOnShowListener(ignored -> {
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));

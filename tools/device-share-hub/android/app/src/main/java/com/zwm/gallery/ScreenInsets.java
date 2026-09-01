@@ -61,4 +61,15 @@ final class ScreenInsets {
         } catch (Throwable ignored) { }
         return 0;
     }
+
+    static int getStatusBarHeight(Context context) {
+        try {
+            Resources resources = context.getResources();
+            int resourceId = resources.getIdentifier("status_bar_height", "dimen", "android");
+            if (resourceId > 0) {
+                return resources.getDimensionPixelSize(resourceId);
+            }
+        } catch (Throwable ignored) { }
+        return 0;
+    }
 }
