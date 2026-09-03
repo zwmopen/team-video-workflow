@@ -595,27 +595,34 @@ public final class MainActivity extends Activity {
             LinearLayout platformRow = new LinearLayout(this);
             platformRow.setOrientation(LinearLayout.HORIZONTAL);
             platformRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-            Button douyin = compactButton("发抖音", work.douyinShareCount == 0);
-            Button xhs = compactButton("发小红书", work.xhsShareCount == 0);
+            List<PlatformCopyParser.AvailableItem> availablePlatforms =
+                    PlatformCopyParser.parseAvailablePlatforms(work.text);
+            boolean firstButton = true;
+            for (PlatformCopyParser.AvailableItem item : availablePlatforms) {
+                int clickCount = 0;
+                if (item.platform == PlatformCopyParser.Platform.DOUYIN) {
+                    clickCount = work.douyinShareCount;
+                } else if (item.platform == PlatformCopyParser.Platform.XHS
+                        || item.platform == PlatformCopyParser.Platform.XHS_2) {
+                    clickCount = work.xhsShareCount;
+                }
+                Button btn = compactButton(item.buttonLabel, clickCount == 0);
+                btn.setContentDescription(item.buttonLabel + "，已点击 " + clickCount + " 次");
+                final int finalClickCount = clickCount;
+                btn.setOnClickListener(v -> {
+                    markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
+                    openShare(work, item.platform.code);
+                });
+                platformRow.addView(btn, compactButtonRowParams(!firstButton));
+                firstButton = false;
+            }
             Button delete = compactButton("删除", false);
             delete.setTextColor(Color.rgb(188, 66, 60));
             delete.setBackground(roundWithStroke(
                     Color.WHITE, 12, Color.rgb(226, 170, 164)));
-            douyin.setContentDescription("发抖音，已点击 " + work.douyinShareCount + " 次");
-            xhs.setContentDescription("发小红书，已点击 " + work.xhsShareCount + " 次");
             delete.setContentDescription("删除作品，移到回收站");
-            douyin.setOnClickListener(v -> {
-                markPlatformButtonClicked(douyin, "发抖音", work.douyinShareCount);
-                openShare(work, "douyin");
-            });
-            xhs.setOnClickListener(v -> {
-                markPlatformButtonClicked(xhs, "发小红书", work.xhsShareCount);
-                openShare(work, "xhs");
-            });
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
-            platformRow.addView(douyin, compactButtonRowParams(false));
-            platformRow.addView(xhs, compactButtonRowParams(true));
-            platformRow.addView(delete, compactButtonRowParams(true));
+            platformRow.addView(delete, compactButtonRowParams(!firstButton));
             LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
             platformRowParams.setMargins(0, dp(8), 0, dp(2));
             card.addView(platformRow, platformRowParams);

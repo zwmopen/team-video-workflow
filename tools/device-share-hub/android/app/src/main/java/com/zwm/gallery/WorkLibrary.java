@@ -286,7 +286,7 @@ public final class WorkLibrary {
         }
         int count = parseCount(meta.getProperty("shareCount", "0"));
         meta.setProperty("shareCount", Integer.toString(count + 1));
-        if ("xhs".equals(platform)) {
+        if ("xhs".equals(platform) || "xhs2".equals(platform) || "xhs_2".equals(platform)) {
             int xhs = parseCount(meta.getProperty("xhsShareCount", "0"));
             meta.setProperty("xhsShareCount", Integer.toString(xhs + 1));
         } else if ("douyin".equals(platform)) {

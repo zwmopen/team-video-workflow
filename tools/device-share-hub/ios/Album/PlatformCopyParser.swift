@@ -1,12 +1,38 @@
 import Foundation
 
 enum CopyPlatform: String {
-    case xhs
     case douyin
+    case xhs
+    case xhs2
 
-    var displayName: String { self == .xhs ? "小红书" : "抖音" }
-    var startMarker: String { self == .xhs ? "<<<XHS_START>>>" : "<<<DOUYIN_START>>>" }
-    var endMarker: String { self == .xhs ? "<<<XHS_END>>>" : "<<<DOUYIN_END>>>" }
+    var displayName: String {
+        switch self {
+        case .douyin: return "抖音"
+        case .xhs: return "小红书"
+        case .xhs2: return "小红书方案"
+        }
+    }
+    var shortLabel: String {
+        switch self {
+        case .douyin: return "避坑版"
+        case .xhs: return "种草版"
+        case .xhs2: return "大纲版"
+        }
+    }
+    var startMarker: String {
+        switch self {
+        case .douyin: return "<<<DOUYIN_START>>>"
+        case .xhs: return "<<<XHS_START>>>"
+        case .xhs2: return "<<<XHS_2_START>>>"
+        }
+    }
+    var endMarker: String {
+        switch self {
+        case .douyin: return "<<<DOUYIN_END>>>"
+        case .xhs: return "<<<XHS_END>>>"
+        case .xhs2: return "<<<XHS_2_END>>>"
+        }
+    }
 }
 
 enum PlatformCopyStatus: Equatable {
@@ -22,21 +48,68 @@ struct PlatformCopyResult: Equatable {
     var isOK: Bool { status == .ok }
 }
 
+struct AvailableCopyPlatform: Equatable {
+    let platform: CopyPlatform
+    let buttonLabel: String
+    let copyText: String
+}
+
 enum PlatformCopyParser {
-    static let header = "<<<COPY_FORMAT:2>>>"
+    static let headerV2 = "<<<COPY_FORMAT:2>>>"
+    static let headerV3 = "<<<COPY_FORMAT:3>>>"
+
+    static func parseAvailablePlatforms(_ source: String?) -> [AvailableCopyPlatform] {
+        guard var value = source else { return [] }
+        if value.first == "\u{FEFF}" { value.removeFirst() }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let isProtocol = value.contains(headerV2) || value.contains(headerV3)
+            || value.contains("<<<XHS_START>>>") || value.contains("<<<DOUYIN_START>>>")
+            || value.contains("<<<XHS_2_START>>>")
+        guard isProtocol else {
+            return [AvailableCopyPlatform(platform: .xhs, buttonLabel: "发小红书", copyText: trimmed)]
+        }
+
+        var items: [AvailableCopyPlatform] = []
+        let douyinRes = parse(value, platform: .douyin)
+        let xhsRes = parse(value, platform: .xhs)
+        let xhs2Res = parse(value, platform: .xhs2)
+        let hasXhs2 = xhs2Res.isOK
+
+        if douyinRes.isOK {
+            let label = hasXhs2 ? "避坑版" : "发抖音"
+            items.append(AvailableCopyPlatform(platform: .douyin, buttonLabel: label, copyText: douyinRes.text))
+        }
+        if xhsRes.isOK {
+            let label = hasXhs2 ? "种草版" : "发小红书"
+            items.append(AvailableCopyPlatform(platform: .xhs, buttonLabel: label, copyText: xhsRes.text))
+        }
+        if hasXhs2 {
+            items.append(AvailableCopyPlatform(platform: .xhs2, buttonLabel: "大纲版", copyText: xhs2Res.text))
+        }
+        return items
+    }
 
     static func parse(_ source: String?, platform: CopyPlatform) -> PlatformCopyResult {
         guard var value = source else { return PlatformCopyResult(status: .unreadable, text: "") }
         if value.first == "\u{FEFF}" { value.removeFirst() }
-        guard value.contains(header) else {
+        guard value.contains(headerV2) || value.contains(headerV3)
+            || value.contains(platform.startMarker) else {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? PlatformCopyResult(status: .unreadable, text: "")
                 : PlatformCopyResult(status: .ok, text: value)
         }
 
         guard let start = value.range(of: platform.startMarker) else {
-            let other: CopyPlatform = platform == .xhs ? .douyin : .xhs
-            if !value.contains(other.startMarker) && !value.contains(other.endMarker) {
+            let otherPlatforms: [CopyPlatform]
+            switch platform {
+            case .douyin: otherPlatforms = [.xhs, .xhs2]
+            case .xhs: otherPlatforms = [.douyin, .xhs2]
+            case .xhs2: otherPlatforms = [.douyin, .xhs]
+            }
+            let hasOther = otherPlatforms.contains { value.contains($0.startMarker) || value.contains($0.endMarker) }
+            if !hasOther {
                 return PlatformCopyResult(status: .unreadable, text: "")
             }
             return PlatformCopyResult(status: .missing, text: "")

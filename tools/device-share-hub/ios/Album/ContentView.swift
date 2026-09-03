@@ -426,8 +426,10 @@ private final class WorkCell: UICollectionViewCell {
     private let previewStack = UIStackView()
     private let detail = UILabel()
     private let xhsButton = UIButton(type: .system)
+    private let xhs2Button = UIButton(type: .system)
     private let douyinButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
+    private let platformRow = UIStackView()
     var onShare: ((CopyPlatform) -> Void)?
     var onPreview: ((Int) -> Void)?
     var onDelete: (() -> Void)?
@@ -456,9 +458,9 @@ private final class WorkCell: UICollectionViewCell {
             previewStack.heightAnchor.constraint(equalTo: previewScroll.frameLayoutGuide.heightAnchor)
         ])
         configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
+        configurePlatformButton(xhs2Button, title: "大纲版", platform: .xhs2)
         configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
         configureDeleteButton()
-        let platformRow = UIStackView(arrangedSubviews: [douyinButton, xhsButton, deleteButton])
         platformRow.axis = .horizontal
         platformRow.spacing = 6
         platformRow.alignment = .fill
@@ -522,11 +524,15 @@ private final class WorkCell: UICollectionViewCell {
         button.layer.cornerRadius = 10
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
         button.heightAnchor.constraint(equalToConstant: 38).isActive = true
-        button.accessibilityLabel = platform == .xhs ? "发小红书" : "发抖音"
+        button.accessibilityLabel = platform.shortLabel
         applyPlatformButtonState(button, clicked: false)
-        button.addTarget(self,
-                         action: platform == .xhs ? #selector(xhsTapped) : #selector(douyinTapped),
-                         for: .touchUpInside)
+        let action: Selector
+        switch platform {
+        case .xhs: action = #selector(xhsTapped)
+        case .xhs2: action = #selector(xhs2Tapped)
+        case .douyin: action = #selector(douyinTapped)
+        }
+        button.addTarget(self, action: action, for: .touchUpInside)
     }
 
     private func configureDeleteButton() {
@@ -553,6 +559,7 @@ private final class WorkCell: UICollectionViewCell {
     private func markPlatformButtonClicked(_ platform: CopyPlatform) {
         switch platform {
         case .xhs: applyPlatformButtonState(xhsButton, clicked: true)
+        case .xhs2: applyPlatformButtonState(xhs2Button, clicked: true)
         case .douyin: applyPlatformButtonState(douyinButton, clicked: true)
         }
     }
@@ -562,11 +569,44 @@ private final class WorkCell: UICollectionViewCell {
         markPlatformButtonClicked(.xhs)
         onShare?(.xhs)
     }
+    @objc private func xhs2Tapped() {
+        markPlatformButtonClicked(.xhs2)
+        onShare?(.xhs2)
+    }
     @objc private func douyinTapped() {
         markPlatformButtonClicked(.douyin)
         onShare?(.douyin)
     }
     @objc private func deleteTapped() { onDelete?() }
+
+    private func updatePlatformRow(_ work: WorkItem) {
+        platformRow.arrangedSubviews.forEach { view in
+            platformRow.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let text = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
+        let available = PlatformCopyParser.parseAvailablePlatforms(text)
+        for item in available {
+            switch item.platform {
+            case .douyin:
+                douyinButton.setTitle(item.buttonLabel, for: .normal)
+                applyPlatformButtonState(douyinButton, clicked: work.douyinShareCount > 0)
+                douyinButton.accessibilityValue = "已点击 \(work.douyinShareCount) 次"
+                platformRow.addArrangedSubview(douyinButton)
+            case .xhs:
+                xhsButton.setTitle(item.buttonLabel, for: .normal)
+                applyPlatformButtonState(xhsButton, clicked: work.xhsShareCount > 0)
+                xhsButton.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
+                platformRow.addArrangedSubview(xhsButton)
+            case .xhs2:
+                xhs2Button.setTitle(item.buttonLabel, for: .normal)
+                applyPlatformButtonState(xhs2Button, clicked: work.xhsShareCount > 0)
+                xhs2Button.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
+                platformRow.addArrangedSubview(xhs2Button)
+            }
+        }
+        platformRow.addArrangedSubview(deleteButton)
+    }
 
     func configure(_ work: WorkItem) {
         let shared = work.used
@@ -580,9 +620,6 @@ private final class WorkCell: UICollectionViewCell {
         name.textColor = shared ? AppColors.secondaryText : AppColors.text
         renderPreviews(work.imageURLs)
         detail.text = shared ? "首次使用后按清理设置自动回收" : "点白色卡片查看内容"
-        applyPlatformButtonState(xhsButton, clicked: work.xhsShareCount > 0)
-        applyPlatformButtonState(douyinButton, clicked: work.douyinShareCount > 0)
-        xhsButton.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
-        douyinButton.accessibilityValue = "已点击 \(work.douyinShareCount) 次"
+        updatePlatformRow(work)
     }
 }

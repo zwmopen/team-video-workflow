@@ -39,4 +39,48 @@ public final class PlatformCopyParserTest {
         assertEquals(PlatformCopyParser.Status.UNREADABLE,
                 PlatformCopyParser.parse(source, PlatformCopyParser.Platform.XHS).status);
     }
+
+    @Test
+    public void parsesThreeSectionsInFormat3() {
+        String source = "<<<COPY_FORMAT:3>>>\n<<<XHS_START>>>\n种草版标题\n种草版正文\n<<<XHS_END>>>\n"
+                + "<<<XHS_2_START>>>\n大纲方案标题\n大纲方案正文\n<<<XHS_2_END>>>\n"
+                + "<<<DOUYIN_START>>>\n避坑版第一行\n避坑版第二行\n<<<DOUYIN_END>>>";
+        PlatformCopyParser.Result xhs = PlatformCopyParser.parse(source, PlatformCopyParser.Platform.XHS);
+        PlatformCopyParser.Result xhs2 = PlatformCopyParser.parse(source, PlatformCopyParser.Platform.XHS_2);
+        PlatformCopyParser.Result douyin = PlatformCopyParser.parse(source, PlatformCopyParser.Platform.DOUYIN);
+        assertTrue(xhs.isOk());
+        assertEquals("种草版标题\n种草版正文", xhs.text);
+        assertTrue(xhs2.isOk());
+        assertEquals("大纲方案标题\n大纲方案正文", xhs2.text);
+        assertTrue(douyin.isOk());
+        assertEquals("避坑版第一行\n避坑版第二行", douyin.text);
+
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertEquals(3, available.size());
+        assertEquals("避坑版", available.get(0).buttonLabel);
+        assertEquals("种草版", available.get(1).buttonLabel);
+        assertEquals("大纲版", available.get(2).buttonLabel);
+    }
+
+    @Test
+    public void format2YieldsTwoButtons() {
+        String source = "<<<COPY_FORMAT:2>>>\n<<<XHS_START>>>\n小红书文案\n<<<XHS_END>>>\n"
+                + "<<<DOUYIN_START>>>\n抖音文案\n<<<DOUYIN_END>>>";
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertEquals(2, available.size());
+        assertEquals("发抖音", available.get(0).buttonLabel);
+        assertEquals("发小红书", available.get(1).buttonLabel);
+    }
+
+    @Test
+    public void legacyYieldsSingleButton() {
+        String source = "旧版纯文案";
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertEquals(1, available.size());
+        assertEquals("发小红书", available.get(0).buttonLabel);
+        assertEquals("旧版纯文案", available.get(0).copyText);
+    }
 }

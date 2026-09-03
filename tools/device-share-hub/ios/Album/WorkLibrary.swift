@@ -275,7 +275,7 @@ final class WorkLibrary {
         state.history.removeValue(forKey: work.key)
         record.shareCount += 1
         record.used = true
-        if platform == .xhs { record.xhsShareCount += 1 }
+        if platform == .xhs || platform == .xhs2 { record.xhsShareCount += 1 }
         if platform == .douyin { record.douyinShareCount += 1 }
         let now = Date()
         record.lastShareDate = Self.dayFormatter.string(from: now)

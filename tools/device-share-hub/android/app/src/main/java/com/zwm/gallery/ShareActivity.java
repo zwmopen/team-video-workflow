@@ -186,9 +186,12 @@ public final class ShareActivity extends Activity {
     }
 
     private static PlatformCopyParser.Platform platformFor(String value) {
-        return "douyin".equalsIgnoreCase(value)
-                ? PlatformCopyParser.Platform.DOUYIN
-                : PlatformCopyParser.Platform.XHS;
+        if ("douyin".equalsIgnoreCase(value)) {
+            return PlatformCopyParser.Platform.DOUYIN;
+        } else if ("xhs2".equalsIgnoreCase(value) || "xhs_2".equalsIgnoreCase(value)) {
+            return PlatformCopyParser.Platform.XHS_2;
+        }
+        return PlatformCopyParser.Platform.XHS;
     }
 
     private LinearLayout preparingView() {

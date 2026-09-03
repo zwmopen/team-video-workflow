@@ -52,9 +52,8 @@ final class DocumentTreeExporter {
                 if (declared > MAX_ENTRY_BYTES) throw new IOException("压缩包中单个文件超过 4GB：" + baseName(path));
                 String parentPath = parentPath(normalized);
                 Uri parent = ensureDirectory(resolver, tree, directories, parentPath);
-                Uri target = DocumentsContract.createDocument(
-                        resolver, parent, mimeFor(baseName(normalized)), safeDisplayName(baseName(normalized)));
-                if (target == null) throw new IOException("无法创建文件：" + baseName(normalized));
+                Uri target = prepareTargetFile(
+                        resolver, tree, parent, mimeFor(baseName(normalized)), safeDisplayName(baseName(normalized)));
                 long copied = copyBounded(resolver, target, zip.getInputStream(entry), MAX_ENTRY_BYTES);
                 totalBytes += copied;
                 if (totalBytes > MAX_TOTAL_BYTES) throw new IOException("压缩包解压后总大小超过 20GB");
@@ -67,9 +66,8 @@ final class DocumentTreeExporter {
     static void exportFile(ContentResolver resolver, Uri tree, File source, String displayName, String mime)
             throws IOException {
         Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-        Uri target = DocumentsContract.createDocument(resolver, root,
+        Uri target = prepareTargetFile(resolver, tree, root,
                 mime == null || mime.isEmpty() ? mimeFor(displayName) : mime, safeDisplayName(displayName));
-        if (target == null) throw new IOException("无法创建文件：" + displayName);
         try (InputStream input = new FileInputStream(source)) {
             copyBounded(resolver, target, input, MAX_ENTRY_BYTES);
         }
@@ -89,11 +87,10 @@ final class DocumentTreeExporter {
         for (int index = 0; index < sources.size(); index++) {
             String displayName = safeDisplayName(displayNames.get(index));
             String mime = index < mimes.size() ? mimes.get(index) : "";
-            Uri target = DocumentsContract.createDocument(
-                    resolver, folder,
+            Uri target = prepareTargetFile(
+                    resolver, tree, folder,
                     mime == null || mime.isEmpty() ? mimeFor(displayName) : mime,
                     displayName);
-            if (target == null) throw new IOException("无法创建文件：" + displayName);
             try (InputStream input = new FileInputStream(sources.get(index))) {
                 copyBounded(resolver, target, input, MAX_ENTRY_BYTES);
             }
@@ -101,10 +98,15 @@ final class DocumentTreeExporter {
         }
         String cleanText = text == null ? "" : text.trim();
         if (!cleanText.isEmpty()) {
-            Uri target = DocumentsContract.createDocument(
-                    resolver, folder, "text/plain", "文案.txt");
-            if (target == null) throw new IOException("无法创建文案.txt");
-            try (OutputStream output = resolver.openOutputStream(target, "w")) {
+            Uri target = prepareTargetFile(
+                    resolver, tree, folder, "text/plain", "文案.txt");
+            OutputStream rawTextOut = null;
+            try {
+                rawTextOut = resolver.openOutputStream(target, "wt");
+            } catch (Exception fallback) {
+                rawTextOut = resolver.openOutputStream(target, "w");
+            }
+            try (OutputStream output = rawTextOut) {
                 if (output == null) throw new IOException("无法写入文案.txt");
                 output.write(cleanText.getBytes(StandardCharsets.UTF_8));
             }
@@ -167,7 +169,13 @@ final class DocumentTreeExporter {
 
     private static long copyBounded(ContentResolver resolver, Uri target, InputStream source, long limit)
             throws IOException {
-        try (InputStream input = source; OutputStream output = resolver.openOutputStream(target, "w")) {
+        OutputStream rawOut = null;
+        try {
+            rawOut = resolver.openOutputStream(target, "wt");
+        } catch (Exception fallback) {
+            rawOut = resolver.openOutputStream(target, "w");
+        }
+        try (InputStream input = source; OutputStream output = rawOut) {
             if (output == null) throw new IOException("无法写入接收文件夹");
             byte[] buffer = new byte[128 * 1024];
             long total = 0;
@@ -200,6 +208,109 @@ final class DocumentTreeExporter {
     private static String safeDisplayName(String value) {
         String safe = value.replace('/', '_').replace('\\', '_').trim();
         return safe.isEmpty() ? "未命名" : safe;
+    }
+
+    private static Uri prepareTargetFile(
+            ContentResolver resolver, Uri tree, Uri parent, String mime, String displayName)
+            throws IOException {
+        String name = safeDisplayName(displayName);
+        purgeConflictingDocuments(resolver, tree, parent, name);
+        try {
+            Uri target = DocumentsContract.createDocument(resolver, parent, mime, name);
+            if (target != null) return target;
+        } catch (Exception e) {
+            purgeAllCandidates(resolver, tree, parent, name);
+            try {
+                Uri retry = DocumentsContract.createDocument(resolver, parent, mime, name);
+                if (retry != null) return retry;
+            } catch (Exception ignored) {}
+        }
+        Uri fallback = findChildFile(resolver, tree, parent, name);
+        if (fallback != null) return fallback;
+        throw new IOException("无法创建文件：" + name);
+    }
+
+    private static void purgeConflictingDocuments(
+            ContentResolver resolver, Uri tree, Uri parent, String displayName) {
+        String parentId = DocumentsContract.getDocumentId(parent);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        String[] columns = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+        try (Cursor cursor = resolver.query(children, columns, null, null, null)) {
+            if (cursor == null) return;
+            while (cursor.moveToNext()) {
+                String docId = cursor.getString(0);
+                String name = cursor.getString(1);
+                String mime = cursor.getString(2);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) continue;
+                if (displayName.equalsIgnoreCase(name)) {
+                    try {
+                        DocumentsContract.deleteDocument(resolver,
+                                DocumentsContract.buildDocumentUriUsingTree(tree, docId));
+                    } catch (Exception ignored) {}
+                }
+            }
+        } catch (RuntimeException ignored) {}
+    }
+
+    private static void purgeAllCandidates(
+            ContentResolver resolver, Uri tree, Uri parent, String displayName) {
+        String parentId = DocumentsContract.getDocumentId(parent);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        String[] columns = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+        String stem = stemOf(displayName).toLowerCase(Locale.ROOT);
+        try (Cursor cursor = resolver.query(children, columns, null, null, null)) {
+            if (cursor == null) return;
+            while (cursor.moveToNext()) {
+                String docId = cursor.getString(0);
+                String name = cursor.getString(1);
+                String mime = cursor.getString(2);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) continue;
+                if (name != null) {
+                    String lower = name.toLowerCase(Locale.ROOT);
+                    if (lower.equals(displayName.toLowerCase(Locale.ROOT))
+                            || (lower.startsWith(stem) && (lower.contains("(") || lower.endsWith(".tmp") || lower.endsWith(".part")))) {
+                        try {
+                            DocumentsContract.deleteDocument(resolver,
+                                    DocumentsContract.buildDocumentUriUsingTree(tree, docId));
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {}
+    }
+
+    private static String stemOf(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static Uri findChildFile(
+            ContentResolver resolver, Uri tree, Uri parent, String displayName) {
+        String parentId = DocumentsContract.getDocumentId(parent);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        String[] columns = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+        try (Cursor cursor = resolver.query(children, columns, null, null, null)) {
+            if (cursor == null) return null;
+            while (cursor.moveToNext()) {
+                if (displayName.equalsIgnoreCase(cursor.getString(1))
+                        && !DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
+                    return DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+                }
+            }
+        } catch (RuntimeException ignored) {}
+        return null;
     }
 
     private static String mimeFor(String name) {
