@@ -2,6 +2,7 @@ package com.zwm.gallery;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Rule;
@@ -9,6 +10,8 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDate;
@@ -55,6 +58,32 @@ public final class WorkLibraryTest {
 
         assertTrue(reopened.listTrash().isEmpty());
         assertTrue(orphan.isDirectory());
+    }
+
+    @Test
+    public void staleScannedTrashEntryIsIgnoredWhenMetadataDisappears() throws Exception {
+        File source = temporary.newFolder("stale-trash-source");
+        File root = temporary.newFolder("stale-trash-library");
+        WorkLibrary library = new WorkLibrary(root);
+        library.importWork("stale-trash", "过期快照", "文案",
+                Arrays.asList(write(source, "1.jpg", "one")), "");
+        library.moveToTrash("stale-trash", LocalDate.of(2026, 7, 26));
+
+        // This entry models the snapshot already returned by list() just before
+        // cleanup moves/removes its metadata.
+        WorkLibrary.WorkEntry stale = library.listTrash().get(0);
+        assertTrue(new File(stale.directory, "meta.properties").delete());
+
+        Method ensureSignature = WorkLibrary.class.getDeclaredMethod(
+                "ensureContentSignature", WorkLibrary.WorkEntry.class);
+        ensureSignature.setAccessible(true);
+        try {
+            assertNull(ensureSignature.invoke(library, stale));
+        } catch (InvocationTargetException error) {
+            throw new AssertionError("孤立回收目录不应阻塞内容指纹整理", error.getCause());
+        }
+        assertTrue(stale.directory.isDirectory());
+        assertFalse(new File(stale.directory, "meta.properties").exists());
     }
 
     @Test

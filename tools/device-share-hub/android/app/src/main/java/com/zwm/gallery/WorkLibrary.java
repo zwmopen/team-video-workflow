@@ -200,10 +200,12 @@ public final class WorkLibrary {
         }
         String wanted = signature(text, hashes);
         for (WorkEntry entry : list(activeRoot)) {
-            if (wanted.equals(ensureContentSignature(entry))) return entry;
+            String signature = ensureContentSignature(entry);
+            if (signature != null && wanted.equals(signature)) return entry;
         }
         for (WorkEntry entry : list(trashRoot)) {
-            if (wanted.equals(ensureContentSignature(entry))) return entry;
+            String signature = ensureContentSignature(entry);
+            if (signature != null && wanted.equals(signature)) return entry;
         }
         return null;
     }
@@ -316,7 +318,8 @@ public final class WorkLibrary {
             long anchor = legacyDate.isBefore(today)
                     ? legacyDate.atStartOfDay(BEIJING).toInstant().toEpochMilli()
                     : nowMs;
-            Properties meta = loadMeta(entry.directory);
+            Properties meta = loadMetaIfPresent(entry.directory);
+            if (meta == null) continue;
             meta.setProperty("firstSharedAtMs", Long.toString(anchor));
             if (trashed && entry.trashedAtMs <= 0) {
                 meta.setProperty("trashedAtMs", Long.toString(anchor));
@@ -526,7 +529,9 @@ public final class WorkLibrary {
                 clearMissingMarker(entry.directory);
                 continue;
             }
-            if (!missingConfirmed(entry.directory, nowMs)) {
+            Boolean confirmed = missingConfirmed(entry.directory, nowMs);
+            if (confirmed == null) continue;
+            if (!confirmed) {
                 result.pendingConfirmation++;
                 continue;
             }
@@ -541,7 +546,9 @@ public final class WorkLibrary {
                 clearMissingMarker(entry.directory);
                 continue;
             }
-            if (!missingConfirmed(entry.directory, nowMs)) {
+            Boolean confirmed = missingConfirmed(entry.directory, nowMs);
+            if (confirmed == null) continue;
+            if (!confirmed) {
                 result.pendingConfirmation++;
                 continue;
             }
@@ -563,7 +570,9 @@ public final class WorkLibrary {
                 clearMissingMarker(entry.directory);
                 continue;
             }
-            if (!missingConfirmed(entry.directory, nowMs)) {
+            Boolean confirmed = missingConfirmed(entry.directory, nowMs);
+            if (confirmed == null) continue;
+            if (!confirmed) {
                 result.pendingConfirmation++;
                 continue;
             }
@@ -573,8 +582,9 @@ public final class WorkLibrary {
         return result;
     }
 
-    private boolean missingConfirmed(File directory, long nowMs) throws IOException {
-        Properties meta = loadMeta(directory);
+    private Boolean missingConfirmed(File directory, long nowMs) throws IOException {
+        Properties meta = loadMetaIfPresent(directory);
+        if (meta == null) return null;
         long firstMissing = parseLong(meta.getProperty(SOURCE_MISSING_SINCE, "0"));
         if (firstMissing <= 0 || nowMs < firstMissing) {
             meta.setProperty(SOURCE_MISSING_SINCE, Long.toString(nowMs));
@@ -585,7 +595,8 @@ public final class WorkLibrary {
     }
 
     private void clearMissingMarker(File directory) throws IOException {
-        Properties meta = loadMeta(directory);
+        Properties meta = loadMetaIfPresent(directory);
+        if (meta == null) return;
         if (meta.remove(SOURCE_MISSING_SINCE) != null) saveMeta(directory, meta);
     }
 
@@ -626,10 +637,9 @@ public final class WorkLibrary {
             try {
                 entries.add(readEntry(directory));
             } catch (FileNotFoundException missingMeta) {
-                // A cleanup/import can atomically move the metadata after the
-                // isFile() check. Ignore only that now-orphaned directory;
-                // never hide a real metadata read failure.
-                if (metaFile.isFile()) throw missingMeta;
+                // A cleanup/import or deleted file in trash can leave an orphaned directory;
+                // skip it safely instead of failing the entire library operation.
+                continue;
             }
         }
         entries.sort((left, right) -> WorkRules.compareNatural(left.name, right.name));
@@ -652,7 +662,7 @@ public final class WorkLibrary {
                 }
             }
             if (document == null) continue;
-            mergeDuplicateMetadata(document, legacy);
+            if (!mergeDuplicateMetadata(document, legacy)) continue;
             deleteTree(legacy.directory);
             removed++;
         }
@@ -686,7 +696,7 @@ public final class WorkLibrary {
                 }
             }
             if (trashedMatch == null) continue;
-            mergeDuplicateMetadata(trashedMatch, current);
+            if (!mergeDuplicateMetadata(trashedMatch, current)) continue;
             deleteTree(current.directory);
             removed++;
         }
@@ -698,14 +708,17 @@ public final class WorkLibrary {
         Map<String, WorkEntry> trashedByContent = new HashMap<>();
         for (WorkEntry entry : trash) {
             if (!entry.directory.isDirectory()) continue;
-            trashedByContent.put(ensureContentSignature(entry), entry);
+            String signature = ensureContentSignature(entry);
+            if (signature != null) trashedByContent.put(signature, entry);
         }
         int removed = 0;
         for (WorkEntry current : list(activeRoot)) {
             if (!current.directory.isDirectory()) continue;
-            WorkEntry match = trashedByContent.get(ensureContentSignature(current));
+            String signature = ensureContentSignature(current);
+            if (signature == null) continue;
+            WorkEntry match = trashedByContent.get(signature);
             if (match == null || !match.directory.isDirectory()) continue;
-            mergeDuplicateMetadata(match, current);
+            if (!mergeDuplicateMetadata(match, current)) continue;
             deleteTree(current.directory);
             removed++;
         }
@@ -714,7 +727,8 @@ public final class WorkLibrary {
 
     /** Lazily migrates old libraries and removes byte-identical app-private image copies. */
     private String ensureContentSignature(WorkEntry entry) throws IOException {
-        Properties meta = loadMeta(entry.directory);
+        Properties meta = loadMetaIfPresent(entry.directory);
+        if (meta == null) return null;
         String existing = meta.getProperty("contentSignature", "");
         if (!existing.isEmpty()) return existing;
         ArrayList<String> retainedNames = new ArrayList<>();
@@ -740,12 +754,15 @@ public final class WorkLibrary {
         }
         String signature = signature(entry.text, hashes);
         meta.setProperty("contentSignature", signature);
+        if (!entry.directory.isDirectory()
+                || !new File(entry.directory, META_FILE).isFile()) return null;
         saveMeta(entry.directory, meta);
         return signature;
     }
 
-    private void mergeDuplicateMetadata(WorkEntry retained, WorkEntry duplicate) throws IOException {
-        Properties meta = loadMeta(retained.directory);
+    private boolean mergeDuplicateMetadata(WorkEntry retained, WorkEntry duplicate) throws IOException {
+        Properties meta = loadMetaIfPresent(retained.directory);
+        if (meta == null || !hasMetaFile(duplicate.directory)) return false;
         int combinedCount = Math.min(10000, retained.shareCount + duplicate.shareCount);
         meta.setProperty("shareCount", Integer.toString(combinedCount));
         meta.setProperty("xhsShareCount", Integer.toString(Math.min(10000,
@@ -774,6 +791,7 @@ public final class WorkLibrary {
         copyIfEmpty(meta, "trashDocumentId", duplicate.trashDocumentId);
         copyIfEmpty(meta, "externalTrashName", duplicate.externalTrashName);
         saveMeta(retained.directory, meta);
+        return true;
     }
 
     private static void copyIfEmpty(Properties target, String key, String value) {
@@ -910,6 +928,25 @@ public final class WorkLibrary {
             meta.load(input);
         }
         return meta;
+    }
+
+    /**
+     * Reads metadata for a directory that was already present in a snapshot.
+     * Cleanup and import can move the directory after the snapshot was taken;
+     * a directory whose metadata is now absent is an orphan, not a corrupt
+     * library. Real I/O/parse errors still propagate to the caller.
+     */
+    private static Properties loadMetaIfPresent(File directory) throws IOException {
+        try {
+            return loadMeta(directory);
+        } catch (FileNotFoundException missingMeta) {
+            return null;
+        }
+    }
+
+    private static boolean hasMetaFile(File directory) {
+        return directory != null && directory.isDirectory()
+                && new File(directory, META_FILE).isFile();
     }
 
     private Properties loadHistory(String id) throws IOException {
