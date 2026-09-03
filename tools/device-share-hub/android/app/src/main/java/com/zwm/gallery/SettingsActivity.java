@@ -127,7 +127,9 @@ public final class SettingsActivity extends Activity {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                         .putBoolean(UpdateChecker.PREF_AUTO_UPDATE_ENABLED, enabled).apply());
         root.addView(autoUpdateSwitch, settingMargins(dp(10)));
-        TextView updateEntry = text("更新入口  最新正式版", 16, true);
+        String lan = UpdateChecker.getLanServerUrl(this);
+        String sourceLabel = lan.isEmpty() ? "更新源  优先电脑局域网 / 备用云端" : "更新源  电脑局域网 (" + lan.replace("http://", "") + ")";
+        TextView updateEntry = text(sourceLabel, 15, true);
         updateEntry.setPadding(dp(14), dp(16), dp(14), dp(16));
         updateEntry.setBackground(round(Color.WHITE, 14));
         root.addView(updateEntry, settingMargins(dp(20)));

@@ -629,6 +629,15 @@ public final class OnlineService extends Service {
             while (running) {
                 try {
                     Socket socket = server.accept();
+                    java.net.InetAddress remote = socket.getInetAddress();
+                    if (remote != null) {
+                        String host = remote.getHostAddress();
+                        if (host != null && !host.isEmpty() && !host.equals("127.0.0.1")) {
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                    .putString("lastKnownPcServer", "http://" + host + ":4348")
+                                    .apply();
+                        }
+                    }
                     socket.setSoTimeout(60_000);
                     requestExecutor.execute(() -> handleHttp(socket));
                 } catch (Exception error) {

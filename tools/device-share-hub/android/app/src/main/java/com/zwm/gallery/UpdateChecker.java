@@ -77,17 +77,18 @@ final class UpdateChecker {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
             try {
-                JSONObject release = fetchManifest();
+                JSONObject release = fetchManifest(activity);
                 String tag = release.optString("version_name",
                         release.optString("tag_name", "")).replaceFirst("^[vV]", "");
                 String apkUrl = release.optString("apk_url", "");
                 String sha256 = release.optString("sha256", "");
+                String source = release.optString("source", "cloud");
                 String current = currentVersion(activity);
                 markChecked(activity);
                 activity.runOnUiThread(() -> {
                     if (isNewer(tag, current)) {
                         if (silent) downloadUpdate(activity, tag, apkUrl, sha256);
-                        else showUpdate(activity, tag, apkUrl, sha256);
+                        else showUpdate(activity, tag, apkUrl, sha256, source);
                     } else if (!silent) toast(activity, "当前已经是最新版本 " + current);
                 });
             } catch (Exception error) {
@@ -143,16 +144,50 @@ final class UpdateChecker {
         catch (Exception ignored) { return "0.0.0"; }
     }
 
-    private static JSONObject fetchManifest() throws Exception {
+    static String getLanServerUrl(android.content.Context context) {
+        if (context == null) return "";
+        android.content.SharedPreferences prefs =
+                context.getSharedPreferences("device_share", android.content.Context.MODE_PRIVATE);
+        return prefs.getString("lastKnownPcServer", "").trim();
+    }
+
+    static boolean isLocalOrPrivateHost(String host) {
+        if (host == null || host.trim().isEmpty()) return false;
+        String h = host.trim().toLowerCase(java.util.Locale.US);
+        return h.equals("localhost") || h.equals("127.0.0.1")
+                || h.startsWith("192.168.") || h.startsWith("10.")
+                || h.matches("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*");
+    }
+
+    private static JSONObject fetchManifest(android.content.Context context) throws Exception {
+        String lanServer = getLanServerUrl(context);
+        if (!lanServer.isEmpty()) {
+            try {
+                JSONObject lanManifest = fetchJson(lanServer + "/latest.json", 1500, 2000);
+                String apkUrl = lanManifest.optString("apk_url", "");
+                if (!apkUrl.isEmpty()) {
+                    if (apkUrl.startsWith("/")) {
+                        lanManifest.put("apk_url", lanServer + apkUrl);
+                    }
+                    lanManifest.put("source", "lan");
+                    return lanManifest;
+                }
+            } catch (Exception lanError) {
+                DiagnosticLog.write(context, "update_lan_offline", lanError.getMessage());
+            }
+        }
         try {
-            JSONObject manifest = fetchJson(UpdateEndpoint.RELEASE_MANIFEST);
-            if (!manifest.optString("apk_url", "").isEmpty()) return manifest;
+            JSONObject manifest = fetchJson(UpdateEndpoint.RELEASE_MANIFEST, 8000, 8000);
+            if (!manifest.optString("apk_url", "").isEmpty()) {
+                manifest.put("source", "cloud");
+                return manifest;
+            }
             throw new IllegalStateException("公开更新索引缺少 APK 地址");
         } catch (Exception manifestError) {
-            // Keep the GitHub Release API as a compatibility fallback for an
-            // older or temporarily unavailable latest.json.
             try {
-                return normalizeGitHubRelease(fetchJson(UpdateEndpoint.RELEASE_API));
+                JSONObject fallback = normalizeGitHubRelease(fetchJson(UpdateEndpoint.RELEASE_API, 8000, 8000));
+                fallback.put("source", "cloud");
+                return fallback;
             } catch (Exception fallbackError) {
                 fallbackError.addSuppressed(manifestError);
                 throw fallbackError;
@@ -160,9 +195,9 @@ final class UpdateChecker {
         }
     }
 
-    private static JSONObject fetchJson(String endpoint) throws Exception {
+    private static JSONObject fetchJson(String endpoint, int connectTimeout, int readTimeout) throws Exception {
         HttpURLConnection connection = open(endpoint);
-        connection.setConnectTimeout(8000); connection.setReadTimeout(8000);
+        connection.setConnectTimeout(connectTimeout); connection.setReadTimeout(readTimeout);
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("User-Agent", "zwm-gallery-android");
         int code = connection.getResponseCode();
@@ -226,13 +261,15 @@ final class UpdateChecker {
         return "";
     }
 
-    private static void showUpdate(Activity activity, String version, String apkUrl, String sha256) {
+    private static void showUpdate(Activity activity, String version, String apkUrl, String sha256, String source) {
         boolean downloadable = apkUrl != null && !apkUrl.trim().isEmpty();
+        String title = "发现新版本 " + version + ("lan".equals(source) ? "（本地极速源）" : "（云端源）");
+        String message = "lan".equals(source)
+                ? "检测到电脑本地有新版本，可通过局域网极速下载更新（约 1~2 秒）。是否立即更新？"
+                : "是否下载更新？下载完成后会先校验安装包，再由你点击“安装”进入 Android 系统安装界面。";
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
-                .setTitle("发现新版本 " + version)
-                .setMessage(downloadable
-                        ? "是否下载更新？下载完成后会先校验安装包，再由你点击“安装”进入 Android 系统安装界面。"
-                        : "新版本尚未准备好安装包，请稍后再试。")
+                .setTitle(title)
+                .setMessage(downloadable ? message : "新版本尚未准备好安装包，请稍后再试。")
                 .setNegativeButton("稍后", null);
         if (downloadable) builder.setPositiveButton("下载更新", (dialog, which) ->
                 downloadUpdate(activity, version, apkUrl, sha256));
@@ -244,7 +281,9 @@ final class UpdateChecker {
             android.content.SharedPreferences prefs =
                     activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
             Uri uri = Uri.parse(apkUrl.trim());
-            if (!"https".equalsIgnoreCase(uri.getScheme())) throw new IllegalArgumentException("更新地址不是安全连接");
+            boolean isHttps = "https".equalsIgnoreCase(uri.getScheme());
+            boolean isLocalHttp = "http".equalsIgnoreCase(uri.getScheme()) && isLocalOrPrivateHost(uri.getHost());
+            if (!isHttps && !isLocalHttp) throw new IllegalArgumentException("更新地址不是安全连接");
             String pendingVersion = prefs.getString(PREF_PENDING_DOWNLOAD_VERSION, "");
             String readyVersion = prefs.getString(PREF_READY_DOWNLOAD_VERSION, "");
             if (version.equals(readyVersion) && showReadyInstallPrompt(activity)) return;

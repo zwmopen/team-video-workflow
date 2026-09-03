@@ -124,7 +124,10 @@ public final class AppUpdateService extends Service {
         String value = initialUrl;
         for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
             URL parsed = new URL(value);
-            if (!"https".equalsIgnoreCase(parsed.getProtocol())) throw new IllegalArgumentException("更新地址不是安全连接");
+            boolean isHttps = "https".equalsIgnoreCase(parsed.getProtocol());
+            boolean isLocalHttp = "http".equalsIgnoreCase(parsed.getProtocol())
+                    && UpdateChecker.isLocalOrPrivateHost(parsed.getHost());
+            if (!isHttps && !isLocalHttp) throw new IllegalArgumentException("更新地址不是安全连接");
             HttpURLConnection connection = (HttpURLConnection) parsed.openConnection();
             connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(15000); connection.setReadTimeout(30000);
             connection.setRequestProperty("Accept", "application/vnd.android.package-archive,*/*");
