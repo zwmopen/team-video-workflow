@@ -13,9 +13,9 @@ final class PlatformCopyParser {
     private PlatformCopyParser() { }
 
     enum Platform {
-        DOUYIN("抖音", "DOUYIN", "douyin", "避坑版"),
-        XHS("小红书", "XHS", "xhs", "种草版"),
-        XHS_2("小红书方案", "XHS_2", "xhs2", "大纲版");
+        DOUYIN("规避营销版", "DOUYIN", "douyin", "规避营销版"),
+        XHS("种草版", "XHS", "xhs", "种草版"),
+        XHS_2("大纲方案版", "XHS_2", "xhs2", "大纲方案版");
 
         final String displayName;
         final String marker;
@@ -66,7 +66,7 @@ final class PlatformCopyParser {
 
         boolean hasXhs2 = xhs2Res.isOk();
         if (douyinRes.isOk()) {
-            String label = hasXhs2 ? "避坑版" : "发抖音";
+            String label = hasXhs2 ? "规避营销版" : "发抖音";
             items.add(new AvailableItem(Platform.DOUYIN, label, douyinRes.text));
         }
         if (xhsRes.isOk()) {
@@ -74,7 +74,7 @@ final class PlatformCopyParser {
             items.add(new AvailableItem(Platform.XHS, label, xhsRes.text));
         }
         if (hasXhs2) {
-            items.add(new AvailableItem(Platform.XHS_2, "大纲版", xhs2Res.text));
+            items.add(new AvailableItem(Platform.XHS_2, "大纲方案版", xhs2Res.text));
         }
         return items;
     }

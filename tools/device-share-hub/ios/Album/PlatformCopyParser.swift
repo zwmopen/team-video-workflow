@@ -7,16 +7,16 @@ enum CopyPlatform: String {
 
     var displayName: String {
         switch self {
-        case .douyin: return "抖音"
-        case .xhs: return "小红书"
-        case .xhs2: return "小红书方案"
+        case .douyin: return "规避营销版"
+        case .xhs: return "种草版"
+        case .xhs2: return "大纲方案版"
         }
     }
     var shortLabel: String {
         switch self {
-        case .douyin: return "避坑版"
+        case .douyin: return "规避营销版"
         case .xhs: return "种草版"
-        case .xhs2: return "大纲版"
+        case .xhs2: return "大纲方案版"
         }
     }
     var startMarker: String {
@@ -78,7 +78,7 @@ enum PlatformCopyParser {
         let hasXhs2 = xhs2Res.isOK
 
         if douyinRes.isOK {
-            let label = hasXhs2 ? "避坑版" : "发抖音"
+            let label = hasXhs2 ? "规避营销版" : "发抖音"
             items.append(AvailableCopyPlatform(platform: .douyin, buttonLabel: label, copyText: douyinRes.text))
         }
         if xhsRes.isOK {
@@ -86,7 +86,7 @@ enum PlatformCopyParser {
             items.append(AvailableCopyPlatform(platform: .xhs, buttonLabel: label, copyText: xhsRes.text))
         }
         if hasXhs2 {
-            items.append(AvailableCopyPlatform(platform: .xhs2, buttonLabel: "大纲版", copyText: xhs2Res.text))
+            items.append(AvailableCopyPlatform(platform: .xhs2, buttonLabel: "大纲方案版", copyText: xhs2Res.text))
         }
         return items
     }

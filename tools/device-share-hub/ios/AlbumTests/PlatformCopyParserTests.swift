@@ -37,9 +37,9 @@ final class PlatformCopyParserTests: XCTestCase {
 
         let available = PlatformCopyParser.parseAvailablePlatforms(source)
         XCTAssertEqual(available.count, 3)
-        XCTAssertEqual(available[0].buttonLabel, "避坑版")
+        XCTAssertEqual(available[0].buttonLabel, "规避营销版")
         XCTAssertEqual(available[1].buttonLabel, "种草版")
-        XCTAssertEqual(available[2].buttonLabel, "大纲版")
+        XCTAssertEqual(available[2].buttonLabel, "大纲方案版")
     }
 
     func testFormat2YieldsTwoButtons() {
