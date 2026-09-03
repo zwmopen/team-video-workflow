@@ -176,7 +176,7 @@ public final class WorkLibrary {
 
     public synchronized boolean contains(String id) throws IOException {
         validateId(id);
-        return child(activeRoot, id).isDirectory() || child(trashRoot, id).isDirectory();
+        return hasMetaFile(child(activeRoot, id)) || hasMetaFile(child(trashRoot, id));
     }
 
     public synchronized WorkEntry findBySourceRelativePath(String relativePath) throws IOException {
@@ -221,7 +221,8 @@ public final class WorkLibrary {
         File directory = child(activeRoot, id);
         if (!directory.isDirectory()) directory = child(trashRoot, id);
         if (!directory.isDirectory()) return;
-        Properties meta = loadMeta(directory);
+        Properties meta = loadMetaIfPresent(directory);
+        if (meta == null) return;
         if (sourceDocumentId != null && !sourceDocumentId.isEmpty()) {
             meta.setProperty("sourceDocumentId", sourceDocumentId);
         }
@@ -240,7 +241,8 @@ public final class WorkLibrary {
         validateId(id);
         File directory = child(trashRoot, id);
         if (!directory.isDirectory()) return;
-        Properties meta = loadMeta(directory);
+        Properties meta = loadMetaIfPresent(directory);
+        if (meta == null) return;
         meta.setProperty("trashDocumentId", valueOrEmpty(trashDocumentId));
         meta.setProperty("externalTrashName", valueOrEmpty(externalTrashName));
         saveMeta(directory, meta);
@@ -412,7 +414,8 @@ public final class WorkLibrary {
         File directory = child(activeRoot, id);
         if (!directory.isDirectory()) directory = child(trashRoot, id);
         if (!directory.isDirectory()) return;
-        Properties meta = loadMeta(directory);
+        Properties meta = loadMetaIfPresent(directory);
+        if (meta == null) return;
         meta.setProperty("category", normalizeCategory(category));
         saveMeta(directory, meta);
     }
