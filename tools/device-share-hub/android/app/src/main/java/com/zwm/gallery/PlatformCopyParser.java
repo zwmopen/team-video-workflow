@@ -66,12 +66,10 @@ final class PlatformCopyParser {
 
         boolean hasXhs2 = xhs2Res.isOk();
         if (douyinRes.isOk()) {
-            String label = hasXhs2 ? "规避营销版" : "发抖音";
-            items.add(new AvailableItem(Platform.DOUYIN, label, douyinRes.text));
+            items.add(new AvailableItem(Platform.DOUYIN, "规避营销版", douyinRes.text));
         }
         if (xhsRes.isOk()) {
-            String label = hasXhs2 ? "种草版" : "发小红书";
-            items.add(new AvailableItem(Platform.XHS, label, xhsRes.text));
+            items.add(new AvailableItem(Platform.XHS, "种草版", xhsRes.text));
         }
         if (hasXhs2) {
             items.add(new AvailableItem(Platform.XHS_2, "大纲方案版", xhs2Res.text));

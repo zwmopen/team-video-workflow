@@ -78,12 +78,10 @@ enum PlatformCopyParser {
         let hasXhs2 = xhs2Res.isOK
 
         if douyinRes.isOK {
-            let label = hasXhs2 ? "规避营销版" : "发抖音"
-            items.append(AvailableCopyPlatform(platform: .douyin, buttonLabel: label, copyText: douyinRes.text))
+            items.append(AvailableCopyPlatform(platform: .douyin, buttonLabel: "规避营销版", copyText: douyinRes.text))
         }
         if xhsRes.isOK {
-            let label = hasXhs2 ? "种草版" : "发小红书"
-            items.append(AvailableCopyPlatform(platform: .xhs, buttonLabel: label, copyText: xhsRes.text))
+            items.append(AvailableCopyPlatform(platform: .xhs, buttonLabel: "种草版", copyText: xhsRes.text))
         }
         if hasXhs2 {
             items.append(AvailableCopyPlatform(platform: .xhs2, buttonLabel: "大纲方案版", copyText: xhs2Res.text))

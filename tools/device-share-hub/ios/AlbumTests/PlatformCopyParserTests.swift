@@ -47,8 +47,8 @@ final class PlatformCopyParserTests: XCTestCase {
             + "<<<DOUYIN_START>>>\n抖音文案\n<<<DOUYIN_END>>>"
         let available = PlatformCopyParser.parseAvailablePlatforms(source)
         XCTAssertEqual(available.count, 2)
-        XCTAssertEqual(available[0].buttonLabel, "发抖音")
-        XCTAssertEqual(available[1].buttonLabel, "发小红书")
+        XCTAssertEqual(available[0].buttonLabel, "规避营销版")
+        XCTAssertEqual(available[1].buttonLabel, "种草版")
     }
 
     func testLegacyYieldsSingleButton() {
