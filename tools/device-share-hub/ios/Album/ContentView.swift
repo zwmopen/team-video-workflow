@@ -457,7 +457,7 @@ private final class WorkCell: UICollectionViewCell {
             previewStack.bottomAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.bottomAnchor),
             previewStack.heightAnchor.constraint(equalTo: previewScroll.frameLayoutGuide.heightAnchor)
         ])
-        configurePlatformButton(xhsButton, title: "发小红书", platform: .xhs)
+        configurePlatformButton(xhsButton, title: "发布", platform: .xhs)
         configurePlatformButton(xhs2Button, title: "大纲方案版", platform: .xhs2)
         configurePlatformButton(douyinButton, title: "发抖音", platform: .douyin)
         configureDeleteButton()

@@ -68,7 +68,7 @@ enum PlatformCopyParser {
             || value.contains("<<<XHS_START>>>") || value.contains("<<<DOUYIN_START>>>")
             || value.contains("<<<XHS_2_START>>>")
         guard isProtocol else {
-            return [AvailableCopyPlatform(platform: .xhs, buttonLabel: "发小红书", copyText: trimmed)]
+            return [AvailableCopyPlatform(platform: .xhs, buttonLabel: "发布", copyText: trimmed)]
         }
 
         var items: [AvailableCopyPlatform] = []

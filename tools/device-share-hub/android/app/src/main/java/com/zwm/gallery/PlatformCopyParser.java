@@ -56,7 +56,7 @@ final class PlatformCopyParser {
                 || text.contains("<<<XHS_START>>>") || text.contains("<<<DOUYIN_START>>>")
                 || text.contains("<<<XHS_2_START>>>");
         if (!isProtocol) {
-            return Collections.singletonList(new AvailableItem(Platform.XHS, "发小红书", text.trim()));
+            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布", text.trim()));
         }
 
         List<AvailableItem> items = new ArrayList<>();

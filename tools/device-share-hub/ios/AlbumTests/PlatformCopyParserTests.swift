@@ -55,7 +55,7 @@ final class PlatformCopyParserTests: XCTestCase {
         let source = "旧版纯文案"
         let available = PlatformCopyParser.parseAvailablePlatforms(source)
         XCTAssertEqual(available.count, 1)
-        XCTAssertEqual(available[0].buttonLabel, "发小红书")
+        XCTAssertEqual(available[0].buttonLabel, "发布")
         XCTAssertEqual(available[0].copyText, "旧版纯文案")
     }
 }

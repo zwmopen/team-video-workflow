@@ -80,6 +80,8 @@ public final class WorkLibrary {
                 WorkCategory.fromPath(sourceRelativePath));
     }
 
+    private static final Object IMPORT_LOCK = new Object();
+
     public synchronized WorkEntry importWork(
             String id,
             String name,
@@ -94,61 +96,71 @@ public final class WorkLibrary {
         if (sourceImages == null || sourceImages.isEmpty()) {
             throw new IOException("作品中没有可导入的图片");
         }
-        File destination = child(activeRoot, id);
-        if (destination.exists() || child(trashRoot, id).exists()) {
-            throw new IOException("作品已存在：" + id);
-        }
-
-        File staging = child(root, ".import-" + id);
-        if (staging.exists()) deleteTree(staging);
-        ensureDirectory(staging);
-        boolean completed = false;
-        try {
-            ArrayList<File> sorted = new ArrayList<>(sourceImages);
-            sorted.sort((left, right) -> WorkRules.compareNatural(left.getName(), right.getName()));
-            ArrayList<String> storedImages = new ArrayList<>();
-            ArrayList<String> contentHashes = new ArrayList<>();
-            HashSet<String> seenContent = new HashSet<>();
-            for (File source : sorted) {
-                if (!source.isFile()) throw new IOException("图片不存在：" + source.getName());
-                String contentHash = hashFile(source);
-                if (!seenContent.add(contentHash)) continue;
-                String storedName = uniqueName(staging, safeFileName(source.getName()));
-                Files.copy(source.toPath(), child(staging, storedName).toPath(),
-                        StandardCopyOption.REPLACE_EXISTING);
-                storedImages.add(storedName);
-                contentHashes.add(contentHash);
+        synchronized (IMPORT_LOCK) {
+            File destination = child(activeRoot, id);
+            File trashed = child(trashRoot, id);
+            if (trashed.exists()) {
+                deleteTree(trashed);
+            }
+            if (destination.exists()) {
+                if (!hasMetaFile(destination)) {
+                    deleteTree(destination);
+                } else {
+                    return readEntry(destination);
+                }
             }
 
-            Properties meta = new Properties();
-            meta.setProperty("id", id);
-            meta.setProperty("name", valueOrEmpty(name));
-            meta.setProperty("text", valueOrEmpty(text));
-            meta.setProperty("warning", valueOrEmpty(warning));
-            meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
-            meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
-            meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
-            meta.setProperty("category", normalizeCategory(category));
-            Properties history = loadHistory(id);
-            copyIfPresent(meta, history, "used");
-            copyIfPresent(meta, history, "xhsShareCount");
-            copyIfPresent(meta, history, "douyinShareCount");
-            copyIfPresent(meta, history, "shareCount");
-            copyIfPresent(meta, history, "sharedDate");
-            copyIfPresent(meta, history, "firstSharedAtMs");
-            copyIfPresent(meta, history, "firstUsedAtMs");
-            copyIfPresent(meta, history, "deleteScheduledAtMs");
-            meta.setProperty("contentSignature", signature(valueOrEmpty(text), contentHashes));
-            meta.setProperty("image.count", Integer.toString(storedImages.size()));
-            for (int index = 0; index < storedImages.size(); index++) {
-                meta.setProperty("image." + index, storedImages.get(index));
+            File staging = child(root, ".import-" + id + "-" + System.nanoTime());
+            if (staging.exists()) deleteTree(staging);
+            ensureDirectory(staging);
+            boolean completed = false;
+            try {
+                ArrayList<File> sorted = new ArrayList<>(sourceImages);
+                sorted.sort((left, right) -> WorkRules.compareNatural(left.getName(), right.getName()));
+                ArrayList<String> storedImages = new ArrayList<>();
+                ArrayList<String> contentHashes = new ArrayList<>();
+                HashSet<String> seenContent = new HashSet<>();
+                for (File source : sorted) {
+                    if (!source.isFile()) throw new IOException("图片不存在：" + source.getName());
+                    String contentHash = hashFile(source);
+                    if (!seenContent.add(contentHash)) continue;
+                    String storedName = uniqueName(staging, safeFileName(source.getName()));
+                    Files.copy(source.toPath(), child(staging, storedName).toPath(),
+                            StandardCopyOption.REPLACE_EXISTING);
+                    storedImages.add(storedName);
+                    contentHashes.add(contentHash);
+                }
+
+                Properties meta = new Properties();
+                meta.setProperty("id", id);
+                meta.setProperty("name", valueOrEmpty(name));
+                meta.setProperty("text", valueOrEmpty(text));
+                meta.setProperty("warning", valueOrEmpty(warning));
+                meta.setProperty("sourceDocumentId", valueOrEmpty(sourceDocumentId));
+                meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
+                meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
+                meta.setProperty("category", normalizeCategory(category));
+                Properties history = loadHistory(id);
+                copyIfPresent(meta, history, "used");
+                copyIfPresent(meta, history, "xhsShareCount");
+                copyIfPresent(meta, history, "douyinShareCount");
+                copyIfPresent(meta, history, "shareCount");
+                copyIfPresent(meta, history, "sharedDate");
+                copyIfPresent(meta, history, "firstSharedAtMs");
+                copyIfPresent(meta, history, "firstUsedAtMs");
+                copyIfPresent(meta, history, "deleteScheduledAtMs");
+                meta.setProperty("contentSignature", signature(valueOrEmpty(text), contentHashes));
+                meta.setProperty("image.count", Integer.toString(storedImages.size()));
+                for (int index = 0; index < storedImages.size(); index++) {
+                    meta.setProperty("image." + index, storedImages.get(index));
+                }
+                saveMeta(staging, meta);
+                moveDirectory(staging, destination);
+                completed = true;
+                return readEntry(destination);
+            } finally {
+                if (!completed && staging.exists()) deleteTree(staging);
             }
-            saveMeta(staging, meta);
-            moveDirectory(staging, destination);
-            completed = true;
-            return readEntry(destination);
-        } finally {
-            if (!completed && staging.exists()) deleteTree(staging);
         }
     }
 

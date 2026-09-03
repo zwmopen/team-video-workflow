@@ -61,9 +61,19 @@ final class DocumentTreeImporter {
                 String text = readText(resolver, work.caption.uri);
                 String warning = work.textCount > 1
                         ? "检测到多个 TXT，已使用“" + work.caption.name + "”" : "";
-                library.importWork(id, work.name, text, images, warning,
-                        work.documentId, work.parentDocumentId, "", work.category);
-                imported++;
+                try {
+                    library.importWork(id, work.name, text, images, warning,
+                            work.documentId, work.parentDocumentId, "", work.category);
+                    imported++;
+                } catch (IOException error) {
+                    if (error.getMessage() != null && error.getMessage().contains("作品已存在")) {
+                        library.updateSourceReference(id, work.documentId, work.parentDocumentId, "");
+                        library.updateCategory(id, work.category);
+                        skipped++;
+                    } else {
+                        throw error;
+                    }
+                }
             } finally {
                 deleteTree(temporary);
             }

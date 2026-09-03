@@ -1221,68 +1221,80 @@ public final class OnlineService extends Service {
         int imported = 0;
         int deliveredFiles = 0;
         String autoShareWorkId = "";
-        ReceivedFile only = task.fileCount == 1 ? task.files.get(0) : null;
-        String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
-        if (isIncomingUpdatePackage(only)) {
-            deliveredFiles = stageIncomingUpdatePackage(only);
-        } else if (!treeValue.isEmpty()) {
-            android.net.Uri tree = android.net.Uri.parse(treeValue);
-            java.util.ArrayList<File> directFiles = new java.util.ArrayList<>();
-            java.util.ArrayList<String> directNames = new java.util.ArrayList<>();
-            java.util.ArrayList<String> directMimes = new java.util.ArrayList<>();
-            java.util.ArrayList<File> directImages = new java.util.ArrayList<>();
-            int exportedDirectories = 0;
-            for (int index = 0; index < task.fileCount; index++) {
-                ReceivedFile file = task.files.get(index);
-                if (file == null) throw new HttpError(409, "缺少文件 " + index);
-                if (isZip(file)) {
-                    DocumentTreeExporter.ExportResult exported = DocumentTreeExporter.exportZip(
-                            getContentResolver(), tree, file.file, task.id + "-" + index);
+        try {
+            ReceivedFile only = task.fileCount == 1 ? task.files.get(0) : null;
+            String treeValue = getSharedPreferences(PREFS, MODE_PRIVATE).getString("libraryTreeUri", "");
+            if (isIncomingUpdatePackage(only)) {
+                deliveredFiles = stageIncomingUpdatePackage(only);
+            } else if (!treeValue.isEmpty()) {
+                android.net.Uri tree = android.net.Uri.parse(treeValue);
+                java.util.ArrayList<File> directFiles = new java.util.ArrayList<>();
+                java.util.ArrayList<String> directNames = new java.util.ArrayList<>();
+                java.util.ArrayList<String> directMimes = new java.util.ArrayList<>();
+                java.util.ArrayList<File> directImages = new java.util.ArrayList<>();
+                int exportedDirectories = 0;
+                for (int index = 0; index < task.fileCount; index++) {
+                    ReceivedFile file = task.files.get(index);
+                    if (file == null) throw new HttpError(409, "缺少文件 " + index);
+                    if (isZip(file)) {
+                        DocumentTreeExporter.ExportResult exported = DocumentTreeExporter.exportZip(
+                                getContentResolver(), tree, file.file, task.id + "-" + index);
+                        deliveredFiles += exported.files;
+                        exportedDirectories += exported.directories;
+                    } else {
+                        directFiles.add(file.file);
+                        directNames.add(file.name);
+                        directMimes.add(file.mime);
+                        if (WorkRules.isSupportedImage(file.name)) directImages.add(file.file);
+                    }
+                }
+                if (!directFiles.isEmpty()) {
+                    DocumentTreeExporter.ExportResult exported =
+                            DocumentTreeExporter.exportBundle(
+                                    getContentResolver(), tree, "接收-" + task.id,
+                                    directFiles, directNames, directMimes, task.text);
                     deliveredFiles += exported.files;
                     exportedDirectories += exported.directories;
+                }
+                DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
+                        getContentResolver(), tree, library, new File(getCacheDir(), "tree-import-service"));
+                imported = result.imported;
+                if (task.autoShare && !directImages.isEmpty()) {
+                    WorkLibrary.WorkEntry matched = library.findByContent(task.text, directImages);
+                    if (matched != null) autoShareWorkId = matched.id;
+                }
+                DiagnosticLog.write(this, "tree_export", "files=" + deliveredFiles
+                        + " directories=" + exportedDirectories + " works=" + imported);
+            } else if (only != null && isZip(only)) {
+                    imported = WorkArchiveImporter.importZip(only.file, library, task.id);
+                    if (imported == 0) throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用压缩包");
+                    deliveredFiles = 1;
+            } else {
+                java.util.ArrayList<File> images = new java.util.ArrayList<>();
+                for (int index = 0; index < task.fileCount; index++) {
+                    ReceivedFile file = task.files.get(index);
+                    if (file == null) throw new HttpError(409, "缺少文件 " + index);
+                    if (WorkRules.isSupportedImage(file.name)) images.add(file.file);
+                }
+                if (!images.isEmpty()) {
+                    library.importWork(task.id, "电脑传入的作品", task.text, images, "");
+                    imported = 1;
+                    deliveredFiles = task.fileCount;
+                    if (task.autoShare) autoShareWorkId = task.id;
                 } else {
-                    directFiles.add(file.file);
-                    directNames.add(file.name);
-                    directMimes.add(file.mime);
-                    if (WorkRules.isSupportedImage(file.name)) directImages.add(file.file);
+                    throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用文件");
                 }
             }
-            if (!directFiles.isEmpty()) {
-                DocumentTreeExporter.ExportResult exported =
-                        DocumentTreeExporter.exportBundle(
-                                getContentResolver(), tree, "接收-" + task.id,
-                                directFiles, directNames, directMimes, task.text);
-                deliveredFiles += exported.files;
-                exportedDirectories += exported.directories;
+        } catch (Throwable t) {
+            synchronized (taskLock) {
+                if (activeTask == task) {
+                    activeTask = null;
+                    currentTaskId = "";
+                    state = "online";
+                }
             }
-            DocumentTreeImporter.ImportResult result = DocumentTreeImporter.importTree(
-                    getContentResolver(), tree, library, new File(getCacheDir(), "tree-import-service"));
-            imported = result.imported;
-            if (task.autoShare && !directImages.isEmpty()) {
-                WorkLibrary.WorkEntry matched = library.findByContent(task.text, directImages);
-                if (matched != null) autoShareWorkId = matched.id;
-            }
-            DiagnosticLog.write(this, "tree_export", "files=" + deliveredFiles
-                    + " directories=" + exportedDirectories + " works=" + imported);
-        } else if (only != null && isZip(only)) {
-                imported = WorkArchiveImporter.importZip(only.file, library, task.id);
-                if (imported == 0) throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用压缩包");
-                deliveredFiles = 1;
-        } else {
-            java.util.ArrayList<File> images = new java.util.ArrayList<>();
-            for (int index = 0; index < task.fileCount; index++) {
-                ReceivedFile file = task.files.get(index);
-                if (file == null) throw new HttpError(409, "缺少文件 " + index);
-                if (WorkRules.isSupportedImage(file.name)) images.add(file.file);
-            }
-            if (!images.isEmpty()) {
-                library.importWork(task.id, "电脑传入的作品", task.text, images, "");
-                imported = 1;
-                deliveredFiles = task.fileCount;
-                if (task.autoShare) autoShareWorkId = task.id;
-            } else {
-                throw new HttpError(409, "请先在手机设置接收文件夹，再传送通用文件");
-            }
+            if (t instanceof Exception) throw (Exception) t;
+            throw new RuntimeException(t);
         }
 
         synchronized (taskLock) {

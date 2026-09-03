@@ -80,7 +80,7 @@ public final class PlatformCopyParserTest {
         java.util.List<PlatformCopyParser.AvailableItem> available =
                 PlatformCopyParser.parseAvailablePlatforms(source);
         assertEquals(1, available.size());
-        assertEquals("发小红书", available.get(0).buttonLabel);
+        assertEquals("发布", available.get(0).buttonLabel);
         assertEquals("旧版纯文案", available.get(0).copyText);
     }
 }
