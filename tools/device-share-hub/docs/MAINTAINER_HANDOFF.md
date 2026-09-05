@@ -1,5 +1,24 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-04 文案按钮命名彻底统一与双端实机闭环（v0.7.7 已正式发布）
+
+- **正式发布版本**：Android 0.7.7 / versionCode 108、iPhone 0.7.7 / build 68、云端 Release `v0.7.7`。
+- **按钮业务规则**：
+  - 3 文案作品：`[规避营销版]`、`[种草版]`、`[大纲方案版]`、`[删除]`。
+  - 2 文案作品：统一固定为 `[规避营销版]`、`[种草版]`、`[删除]`，不再根据 `hasXhs2` 退回“发抖音/发小红书”。
+  - 1 文案作品（泛流量/小游戏）：兜底固定为 `[发布]`、`[删除]`。
+- **Android 底层健壮性**：
+  - `WorkLibrary.java` 静态类锁 `IMPORT_LOCK` 阻断 SAF 观察器与网络接收并发冲突；
+  - 暂存目录使用纳米时间戳防同作品删除冲突；`importWork` 重复导入幂等跳过不报错 500；`commitTask` 异常强制复位 `state = online`。
+- **现场实机验证**：
+  - **红米 13**：132 套作品完整在线（94 精准 / 34 泛流量），小游戏等泛流量按钮实机显示为 `[发布]`。
+  - **小米 15**：连线瞬间自动通过 ADB 刷入覆盖，实机确认最新版。
+  - **苹果 iPhone 12**：通过 Sideloadly 守护进程与本地 XOR 缓存签名管道经 USB 全自动免密刷入，`pymobiledevice3` 底层回读与实机打开均确认为 `Version 0.7.7 Build 68`，卡片按钮实机显示为 `[规避营销版]` 与 `[种草版]`。
+- **发布产物与索引**：
+  - GitHub Actions run `33783200715` 编译打包全绿。
+  - 发布仓库：<https://github.com/zwmopen/gallery-updates/releases/tag/v0.7.7>
+  - 索引与 AltStore 源已同步更新：`latest.json` 与 `altstore.json`。
+
 ## 2026-08-27 作品卡片直接预览与横排操作（已正式发布）
 
 - 正式版本：Android 0.6.62/versionCode 100、iPhone 0.6.45/build 64、Windows V4.3.29。
