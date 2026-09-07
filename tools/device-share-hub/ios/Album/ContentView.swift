@@ -8,11 +8,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var toastView: UILabel?
     private var initialFolderPromptShown = false
     private var selectedCategory = WorkCategory.all
-    private var filterBar: UISegmentedControl!
+    private var filterScrollView: UIScrollView!
+    private var filterStackView: UIStackView!
+    private var filterButtons: [String: UIButton] = [:]
 
     private var filteredWorks: [WorkItem] {
         guard selectedCategory != WorkCategory.all else { return library.works }
-        return library.works.filter { $0.category == selectedCategory }
+        return library.works.filter { $0.folderName == selectedCategory }
     }
 
     init(library: WorkLibrary) {
@@ -78,29 +80,49 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func configureFilterBar() {
-        filterBar = UISegmentedControl(items: WorkCategory.filters.map { $0.label })
-        filterBar.selectedSegmentIndex = 0
-        filterBar.translatesAutoresizingMaskIntoConstraints = false
-        filterBar.backgroundColor = AppColors.secondaryBackground
-        filterBar.layer.cornerRadius = 10
-        filterBar.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 12, weight: .semibold)],
-                                         for: .normal)
-        if #available(iOS 13.0, *) { filterBar.selectedSegmentTintColor = .white }
-        else { filterBar.tintColor = view.tintColor }
-        filterBar.addTarget(self, action: #selector(filterChanged(_:)), for: .valueChanged)
-        view.addSubview(filterBar)
+        filterScrollView = UIScrollView()
+        filterScrollView.translatesAutoresizingMaskIntoConstraints = false
+        filterScrollView.showsHorizontalScrollIndicator = false
+        filterScrollView.alwaysBounceHorizontal = false
+        filterScrollView.backgroundColor = AppColors.secondaryBackground
+        filterScrollView.layer.cornerRadius = 10
+        view.addSubview(filterScrollView)
+
+        filterStackView = UIStackView()
+        filterStackView.translatesAutoresizingMaskIntoConstraints = false
+        filterStackView.axis = .horizontal
+        filterStackView.spacing = 4
+        filterStackView.alignment = .center
+        filterStackView.distribution = .fill
+        filterStackView.isLayoutMarginsRelativeArrangement = true
+        filterStackView.layoutMargins = UIEdgeInsets(top: 3, left: 4, bottom: 3, right: 4)
+        filterScrollView.addSubview(filterStackView)
+
         NSLayoutConstraint.activate([
-            filterBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            filterBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            filterBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
-            filterBar.heightAnchor.constraint(equalToConstant: 36)
+            filterScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            filterScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            filterScrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            filterScrollView.heightAnchor.constraint(equalToConstant: 36),
+
+            filterStackView.leadingAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.leadingAnchor),
+            filterStackView.trailingAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.trailingAnchor),
+            filterStackView.topAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.topAnchor),
+            filterStackView.bottomAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.bottomAnchor),
+            filterStackView.heightAnchor.constraint(equalTo: filterScrollView.frameLayoutGuide.heightAnchor)
         ])
     }
 
-    @objc private func filterChanged(_ sender: UISegmentedControl) {
-        let index = sender.selectedSegmentIndex
-        selectedCategory = index >= 0 && index < WorkCategory.filters.count
-            ? WorkCategory.filters[index].id : WorkCategory.all
+    private final class CategoryFilterButton: UIButton {
+        var folderKey: String = ""
+        var displayLabel: String = ""
+    }
+
+    @objc private func filterButtonTapped(_ sender: CategoryFilterButton) {
+        guard selectedCategory != sender.folderKey else { return }
+        selectedCategory = sender.folderKey
+        for (key, btn) in filterButtons {
+            applyFilterButtonStyle(btn, isSelected: key == selectedCategory)
+        }
         render()
     }
 
@@ -122,7 +144,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.topAnchor.constraint(equalTo: filterBar.bottomAnchor, constant: 8),
+            collectionView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 8),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
@@ -174,7 +196,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if noFolder {
             emptyDetail.text = "只需选择一次。点击作品卡片上的平台按钮，会复制对应文案并把全部图片交给系统分享。"
         } else if selectedCategory != WorkCategory.all && !library.works.isEmpty {
-            emptyDetail.text = "当前分类没有作品。切回“全部”可查看所有内容。"
+            emptyDetail.text = "当前合集没有作品。切回“全部”可查看所有内容。"
         } else {
             emptyDetail.text = library.scanSummary ?? "没有找到同时包含图片和 TXT 的作品文件夹。"
         }
@@ -182,20 +204,87 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if let message = library.message { showToast(message) }
     }
 
-    private func updateFilterTitles() {
-        for (index, filter) in WorkCategory.filters.enumerated() {
-            let count = filter.id == WorkCategory.all
-                ? library.works.count
-                : library.works.filter { $0.category == filter.id }.count
-            let compactLabel: String
-            switch filter.id {
-            case WorkCategory.conversion: compactLabel = "精准流量"
-            case WorkCategory.traffic: compactLabel = "泛流量"
-            default: compactLabel = filter.label
-            }
-            filterBar.setTitle("\(compactLabel) \(count)", forSegmentAt: index)
+    static func formatFolderLabel(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == WorkCategory.all {
+            return "全部"
         }
-        filterBar.accessibilityLabel = "作品分类"
+        if trimmed.count > 5 {
+            let prefix = String(trimmed.prefix(5))
+            return prefix + "..."
+        }
+        return trimmed
+    }
+
+    private func updateFilterTitles() {
+        var folderCounts: [String: Int] = [:]
+        var orderedFolders: [String] = []
+        for work in library.works {
+            let folder = work.folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !folder.isEmpty {
+                if folderCounts[folder] == nil {
+                    orderedFolders.append(folder)
+                }
+                folderCounts[folder, default: 0] += 1
+            }
+        }
+
+        if selectedCategory != WorkCategory.all && folderCounts[selectedCategory] == nil {
+            selectedCategory = WorkCategory.all
+        }
+
+        for subview in filterStackView.arrangedSubviews {
+            filterStackView.removeArrangedSubview(subview)
+            subview.removeFromSuperview()
+        }
+        filterButtons.removeAll()
+
+        // 1. 全部
+        let allButton = createFilterButton(key: WorkCategory.all, display: "全部", fullTitle: "全部 \(library.works.count)", isSelected: selectedCategory == WorkCategory.all)
+        filterStackView.addArrangedSubview(allButton)
+        filterButtons[WorkCategory.all] = allButton
+
+        // 2. Dynamic folders
+        for folder in orderedFolders {
+            let count = folderCounts[folder] ?? 0
+            let formatted = Self.formatFolderLabel(folder)
+            let fullTitle = "\(formatted) \(count)"
+            let isSelected = folder == selectedCategory
+            let button = createFilterButton(key: folder, display: formatted, fullTitle: fullTitle, isSelected: isSelected)
+            filterStackView.addArrangedSubview(button)
+            filterButtons[folder] = button
+        }
+        filterScrollView.accessibilityLabel = "作品合集分类"
+    }
+
+    private func createFilterButton(key: String, display: String, fullTitle: String, isSelected: Bool) -> UIButton {
+        let button = CategoryFilterButton(type: .system)
+        button.folderKey = key
+        button.displayLabel = display
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle(fullTitle, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        applyFilterButtonStyle(button, isSelected: isSelected)
+        button.addTarget(self, action: #selector(filterButtonTapped(_:)), for: .touchUpInside)
+        return button
+    }
+
+    private func applyFilterButtonStyle(_ button: UIButton, isSelected: Bool) {
+        if isSelected {
+            button.backgroundColor = AppColors.background
+            button.setTitleColor(AppColors.text, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+            button.layer.cornerRadius = 8
+            button.layer.shadowColor = UIColor.black.cgColor
+            button.layer.shadowOpacity = 0.08
+            button.layer.shadowOffset = CGSize(width: 0, height: 1)
+            button.layer.shadowRadius = 2
+        } else {
+            button.backgroundColor = .clear
+            button.setTitleColor(AppColors.secondaryText, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .regular)
+            button.layer.shadowOpacity = 0
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {

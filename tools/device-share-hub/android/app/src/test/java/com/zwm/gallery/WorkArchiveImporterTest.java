@@ -34,6 +34,7 @@ public final class WorkArchiveImporterTest {
         WorkLibrary.WorkEntry entry = library.listActive().get(0);
         assertEquals("作品2", entry.name);
         assertEquals("第二条文案", entry.text);
+        assertEquals("作品合集", entry.getFolderName());
         assertEquals("2.jpg", entry.images.get(0));
         assertEquals("10.jpg", entry.images.get(1));
     }
@@ -47,6 +48,7 @@ public final class WorkArchiveImporterTest {
 
         assertEquals(1, WorkArchiveImporter.importZip(zip(content), library, "windows-batch"));
         assertEquals("Windows ZIP 文案", library.listActive().get(0).text);
+        assertEquals("合集", library.listActive().get(0).getFolderName());
     }
 
     @Test

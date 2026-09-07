@@ -32,7 +32,7 @@ final class DocumentTreeImporter {
         ScanStats stats = new ScanStats();
         ArrayList<Folder> works = new ArrayList<>();
         scan(resolver, tree, rootId, rootId, leafName(rootId), 0, works, stats,
-                WorkCategory.UNCATEGORIZED);
+                WorkCategory.UNCATEGORIZED, "");
         int imported = 0;
         int skipped = 0;
         HashSet<String> detectedDocumentIds = new HashSet<>();
@@ -42,7 +42,7 @@ final class DocumentTreeImporter {
                     : readText(resolver, work.marker.uri).trim();
             if (!id.matches("[A-Za-z0-9._-]{1,120}")) id = "lark-" + Integer.toHexString(work.documentId.hashCode());
             if (library.contains(id)) {
-                library.updateSourceReference(id, work.documentId, work.parentDocumentId, "");
+                library.updateSourceReference(id, work.documentId, work.parentDocumentId, work.relativePath);
                 library.updateCategory(id, work.category);
                 skipped++;
                 continue;
@@ -63,11 +63,11 @@ final class DocumentTreeImporter {
                         ? "检测到多个 TXT，已使用“" + work.caption.name + "”" : "";
                 try {
                     library.importWork(id, work.name, text, images, warning,
-                            work.documentId, work.parentDocumentId, "", work.category);
+                            work.documentId, work.parentDocumentId, work.relativePath, work.category);
                     imported++;
                 } catch (IOException error) {
                     if (error.getMessage() != null && error.getMessage().contains("作品已存在")) {
-                        library.updateSourceReference(id, work.documentId, work.parentDocumentId, "");
+                        library.updateSourceReference(id, work.documentId, work.parentDocumentId, work.relativePath);
                         library.updateCategory(id, work.category);
                         skipped++;
                     } else {
@@ -84,7 +84,7 @@ final class DocumentTreeImporter {
 
     private static int scan(ContentResolver resolver, Uri tree, String documentId, String parentDocumentId,
                             String displayName, int depth, List<Folder> works, ScanStats stats,
-                            String inheritedCategory) throws Exception {
+                            String inheritedCategory, String currentPath) throws Exception {
         if (depth > MAX_DEPTH) return 0;
         if (isTrashFolderName(displayName)) return 0;
         String category = WorkCategory.fromPath(displayName);
@@ -131,8 +131,9 @@ final class DocumentTreeImporter {
         int childWorks = 0;
         for (Item folder : folders) {
             try {
+                String childPath = currentPath.isEmpty() ? folder.name : currentPath + "/" + folder.name;
                 childWorks += scan(resolver, tree, folder.documentId, documentId,
-                        folder.name, depth + 1, works, stats, category);
+                        folder.name, depth + 1, works, stats, category, childPath);
             } catch (Exception error) {
                 // Huawei/HarmonyOS may keep a stale MediaProvider row after a folder was
                 // moved or deleted. One broken child must not make the whole granted tree
@@ -147,7 +148,7 @@ final class DocumentTreeImporter {
             if (caption != null) {
                 if (childWorks == 0) {
                     works.add(new Folder(documentId, displayName, images, caption, marker,
-                            texts.size(), parentDocumentId, category));
+                            texts.size(), parentDocumentId, category, currentPath));
                     return 1;
                 }
                 stats.aggregateFolders++;
@@ -159,7 +160,6 @@ final class DocumentTreeImporter {
     static boolean isTrashFolderName(String name) {
         return name != null && name.matches("_?相册回收站(?: \\(\\d+\\))?");
     }
-
     private static String readText(ContentResolver resolver, Uri uri) throws IOException {
         try (InputStream input = resolver.openInputStream(uri);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -286,8 +286,9 @@ final class DocumentTreeImporter {
         final int textCount;
         final String parentDocumentId;
         final String category;
+        final String relativePath;
         Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker,
-               int textCount, String parentDocumentId, String category) {
+               int textCount, String parentDocumentId, String category, String relativePath) {
             this.documentId = documentId;
             this.name = name;
             this.images = images;
@@ -296,6 +297,7 @@ final class DocumentTreeImporter {
             this.textCount = textCount;
             this.parentDocumentId = parentDocumentId;
             this.category = category;
+            this.relativePath = relativePath == null ? "" : relativePath;
         }
     }
 }

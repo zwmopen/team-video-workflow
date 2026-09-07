@@ -14,6 +14,15 @@ struct WorkItem: Identifiable, Hashable {
     let category: String
 
     var id: String { key }
+
+    var folderName: String {
+        let normalized = relativePath.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let slashIndex = normalized.firstIndex(of: "/") else {
+            return ""
+        }
+        let folder = String(normalized[..<slashIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return folder
+    }
 }
 
 struct TrashItem: Identifiable, Hashable {

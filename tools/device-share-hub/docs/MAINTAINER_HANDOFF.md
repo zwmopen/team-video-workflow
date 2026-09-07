@@ -1,5 +1,21 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-07 顶部动态文件夹合集 Tab 栏与自适应截断（v0.7.8 双端对齐）
+
+- **最新版本**：Android 0.7.8 / versionCode 109、iPhone 0.7.8 / build 69。
+- **核心变更**：
+  - 彻底移除顶部固定分类 Tab（全部/精准流量/泛流量/未分类）；
+  - 顶部 Tab 栏基于作品库实际存在的父级文件夹合集名动态生成；
+  - 第一项固定为“全部”，后续项按文件夹名称自适应截断（超过 5 字符截取前 5 字 + `...`，不超过 5 字完整显示），并标注各合集作品数；
+  - 点击对应合集 Tab 即时过滤作品；选中合集被清空时平滑回退至“全部”；
+  - 双端容器升级：Android 采用 `HorizontalScrollView` 包裹胶囊 Tab，iOS 采用 `UIScrollView` + `UIStackView` 胶囊按钮，横向随手滑动防挤压；
+  - 数据源链路贯通：Android `WorkArchiveImporter` 保留 `plan.directory`，`DocumentTreeImporter` 保留相对路径，`WorkEntry.getFolderName()` 与 iOS `WorkItem.folderName` 双端对齐提取合集名。
+- **自动化测试**：
+  - `WorkCategoryTest.java`：覆盖自适应 5 字符截断规则与各场景标签格式化；
+  - `WorkArchiveImporterTest.java`：覆盖 ZIP 合集解压与合集名提取；
+  - `WorkCategoryTests.swift`：覆盖 Swift 端的 `formatFolderLabel` 与 `WorkItem.folderName` 属性测试；
+  - `test_folder_tabs.py`：端到端验证双端算法、合集统计与过滤一致性。
+
 ## 2026-09-04 文案按钮命名彻底统一与双端实机闭环（v0.7.7 已正式发布）
 
 - **正式发布版本**：Android 0.7.7 / versionCode 108、iPhone 0.7.7 / build 68、云端 Release `v0.7.7`。

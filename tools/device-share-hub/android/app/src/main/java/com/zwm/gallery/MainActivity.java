@@ -96,7 +96,6 @@ public final class MainActivity extends Activity {
     private String selectedCategory = WorkCategory.ALL;
     private LinearLayout categoryBar;
     private FrameLayout categorySelector;
-    private View categoryIndicator;
     private SpringScrollView contentScroll;
     private LinearLayout refreshIndicator;
     private ProgressBar refreshSpinner;
@@ -291,21 +290,16 @@ public final class MainActivity extends Activity {
         categoryBar = new LinearLayout(this);
         categoryBar.setOrientation(LinearLayout.HORIZONTAL);
         categoryBar.setGravity(Gravity.CENTER_VERTICAL);
-        addCategoryButton("全部", WorkCategory.ALL);
-        addCategoryButton("精准流量", WorkCategory.CONVERSION);
-        addCategoryButton("泛流量", WorkCategory.TRAFFIC);
-        addCategoryButton("未分类", WorkCategory.UNCATEGORIZED);
-        categoryIndicator = new View(this);
-        categoryIndicator.setBackground(round(Color.WHITE, 10));
-        categoryIndicator.setElevation(dp(1));
+        categoryBar.setPadding(dp(3), dp(3), dp(3), dp(3));
+
+        HorizontalScrollView categoryScrollView = new HorizontalScrollView(this);
+        categoryScrollView.setHorizontalScrollBarEnabled(false);
+        categoryScrollView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        categoryScrollView.addView(categoryBar, new FrameLayout.LayoutParams(-2, -1));
+
         categorySelector = new FrameLayout(this);
-        categorySelector.setPadding(dp(3), dp(3), dp(3), dp(3));
         categorySelector.setBackground(round(Color.rgb(232, 234, 233), 11));
-        categorySelector.addView(categoryIndicator, new FrameLayout.LayoutParams(0, dp(38)));
-        categoryBar.setElevation(dp(2));
-        categorySelector.addView(categoryBar, new FrameLayout.LayoutParams(-1, dp(38)));
-        categorySelector.addOnLayoutChangeListener((v, left, top, right, bottom,
-                oldLeft, oldTop, oldRight, oldBottom) -> animateCategoryIndicator(false));
+        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(40)));
         worksContainer = new LinearLayout(this);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         LayoutTransition contentTransition = new LayoutTransition();
@@ -484,7 +478,7 @@ public final class MainActivity extends Activity {
         if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
             ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
             for (WorkLibrary.WorkEntry entry : entries) {
-                if (selectedCategory.equals(entry.category)) filtered.add(entry);
+                if (selectedCategory.equals(entry.getFolderName())) filtered.add(entry);
             }
             entries = filtered;
         }
@@ -704,71 +698,93 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void addCategoryButton(String label, String category) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(12);
-        button.setMinHeight(dp(40));
-        button.setPadding(dp(4), 0, dp(4), 0);
-        button.setBackgroundColor(Color.TRANSPARENT);
-        button.setElevation(0);
-        button.setOnClickListener(v -> {
-            selectedCategory = category;
-            animateCategoryIndicator(true);
-            refreshWorks();
-            toast("已显示" + label);
-        });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1);
-        categoryBar.addView(button, params);
-        categoryButtons.put(category, button);
-        categoryLabels.put(category, label);
+    static String formatFolderLabel(String name) {
+        if (name == null || name.trim().isEmpty() || WorkCategory.ALL.equals(name)) {
+            return "全部";
+        }
+        String trimmed = name.trim();
+        if (trimmed.codePointCount(0, trimmed.length()) > 5) {
+            int offset = trimmed.offsetByCodePoints(0, 5);
+            return trimmed.substring(0, offset) + "...";
+        }
+        return trimmed;
     }
 
     private void updateCategoryCounts(List<WorkLibrary.WorkEntry> entries) {
-        Map<String, Integer> counts = new LinkedHashMap<>();
-        counts.put(WorkCategory.ALL, entries.size());
-        counts.put(WorkCategory.CONVERSION, 0);
-        counts.put(WorkCategory.TRAFFIC, 0);
-        counts.put(WorkCategory.UNCATEGORIZED, 0);
+        Map<String, Integer> folderCounts = new LinkedHashMap<>();
         for (WorkLibrary.WorkEntry entry : entries) {
-            if (counts.containsKey(entry.category)) {
-                counts.put(entry.category, counts.get(entry.category) + 1);
+            String folder = entry.getFolderName();
+            if (folder != null && !folder.trim().isEmpty()) {
+                folder = folder.trim();
+                folderCounts.put(folder, folderCounts.getOrDefault(folder, 0) + 1);
             }
         }
-        for (Map.Entry<String, Button> item : categoryButtons.entrySet()) {
-            int count = counts.containsKey(item.getKey()) ? counts.get(item.getKey()) : 0;
-            item.getValue().setText(categoryLabels.get(item.getKey()) + " " + count);
-            boolean selected = item.getKey().equals(selectedCategory);
-            item.getValue().setTextColor(selected ? Color.rgb(24, 25, 24) : Color.rgb(104, 108, 106));
-            item.getValue().setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-            item.getValue().animate().scaleX(selected ? 1f : 0.98f)
-                    .scaleY(selected ? 1f : 0.98f).alpha(selected ? 1f : 0.78f)
-                    .setDuration(180).start();
+        if (!WorkCategory.ALL.equals(selectedCategory) && !folderCounts.containsKey(selectedCategory)) {
+            selectedCategory = WorkCategory.ALL;
         }
-        animateCategoryIndicator(true);
+
+        categoryBar.removeAllViews();
+        categoryButtons.clear();
+        categoryLabels.clear();
+
+        String allLabel = "全部 " + entries.size();
+        Button allButton = createCategoryButton(WorkCategory.ALL, "全部", allLabel, WorkCategory.ALL.equals(selectedCategory));
+        categoryBar.addView(allButton);
+        categoryButtons.put(WorkCategory.ALL, allButton);
+        categoryLabels.put(WorkCategory.ALL, "全部");
+
+        for (Map.Entry<String, Integer> item : folderCounts.entrySet()) {
+            String folderName = item.getKey();
+            int count = item.getValue();
+            String formatted = formatFolderLabel(folderName);
+            String fullLabel = formatted + " " + count;
+            boolean isSelected = folderName.equals(selectedCategory);
+            Button folderButton = createCategoryButton(folderName, formatted, fullLabel, isSelected);
+            categoryBar.addView(folderButton);
+            categoryButtons.put(folderName, folderButton);
+            categoryLabels.put(folderName, formatted);
+        }
     }
 
-    private void animateCategoryIndicator(boolean animated) {
-        if (categorySelector == null || categoryIndicator == null || categorySelector.getWidth() <= 0) return;
-        int available = categorySelector.getWidth()
-                - categorySelector.getPaddingLeft() - categorySelector.getPaddingRight();
-        int width = available / Math.max(1, categoryButtons.size());
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) categoryIndicator.getLayoutParams();
-        if (params.width != width || params.height != dp(38)) {
-            params.width = width;
-            params.height = dp(38);
-            categoryIndicator.setLayoutParams(params);
+    private Button createCategoryButton(String folderKey, String displayBase, String buttonText, boolean isSelected) {
+        Button button = new Button(this);
+        button.setText(buttonText);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setMinHeight(dp(34));
+        button.setMinimumWidth(dp(48));
+        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setElevation(0);
+        button.setGravity(Gravity.CENTER);
+        applyCategoryButtonStyle(button, isSelected);
+
+        button.setOnClickListener(v -> {
+            if (folderKey.equals(selectedCategory)) return;
+            selectedCategory = folderKey;
+            for (Map.Entry<String, Button> item : categoryButtons.entrySet()) {
+                applyCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedCategory));
+            }
+            refreshWorks();
+            toast("已显示 " + displayBase);
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
+        params.setMargins(dp(2), 0, dp(2), 0);
+        button.setLayoutParams(params);
+        return button;
+    }
+
+    private void applyCategoryButtonStyle(Button button, boolean isSelected) {
+        if (isSelected) {
+            button.setBackground(round(Color.WHITE, 10));
+            button.setTextColor(Color.rgb(24, 25, 24));
+            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            button.setElevation(dp(1));
+        } else {
+            button.setBackgroundColor(Color.TRANSPARENT);
+            button.setTextColor(Color.rgb(104, 108, 106));
+            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            button.setElevation(0);
         }
-        int index = 0;
-        for (String category : categoryButtons.keySet()) {
-            if (category.equals(selectedCategory)) break;
-            index++;
-        }
-        float target = index * width;
-        if (!animated) categoryIndicator.setTranslationX(target);
-        else categoryIndicator.animate().translationX(target).setDuration(240)
-                .setInterpolator(new DecelerateInterpolator(1.7f)).start();
     }
 
     private void showPullProgress(float progress, boolean ready) {

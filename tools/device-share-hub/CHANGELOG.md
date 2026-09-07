@@ -1,5 +1,26 @@
 # 变更记录
 
+## Android 0.7.8 / iPhone 0.7.8 - 顶部动态文件夹合集 Tab 栏与自适应截断（双端对齐）
+
+- **顶部分类 Tab 栏全面升级为动态文件夹合集**：
+  - 彻底移除原先硬编码的固定分类按钮（`全部 / 精准流量 / 泛流量 / 未分类`）；
+  - 顶部 Tab 栏完全根据相册内实际存放作品的**文件夹合集名称**动态生成；
+  - 第一项固定为 `全部 (总数)`，后续项按作品包含的实际合集名动态呈现并附带对应作品数；
+  - 点击对应合集 Tab 即时按合集归属过滤展示该合集下的作品；
+  - 当选中的合集作品被清空或删除时，平滑回退至“全部”视图。
+- **合集名称自适应 5 字符截断规则**：
+  - 规则严格对齐：若合集名长度 `<= 5` 字符（如 `安吉站`），完整显示；超过 5 字符截取前 5 字并追加 `...`（如 `作品集_100` 显示为 `作品集_1...`）；
+  - Android 与 iOS 双端 100% 对齐格式化算法与单元测试。
+- **横向平滑滚动防挤压容器**：
+  - Android：`categoryBar` 升级包裹进无滚动条平滑 `HorizontalScrollView`，按钮采用自适应内容宽度的圆角胶囊设计；
+  - iOS：原静态 `UISegmentedControl` 重构为基于 `UIScrollView` + `UIStackView` 的胶囊按钮组，多文件夹合集横向平滑随手滑动，杜绝界面挤压变形。
+- **合集数据源解析链路对齐**：
+  - Android `WorkArchiveImporter` 导入时完整保留 `plan.directory` 顶级文件夹至 `sourceRelativePath`；
+  - Android `DocumentTreeImporter` 递归扫描层级时透传并在作品元数据中记录真实相对路径；
+  - `WorkEntry.getFolderName()` 与 iOS `WorkItem.folderName` 双端统一从相对路径中精准解析顶级合集文件夹名。
+- **版本号**：
+  - Android versionCode 109 / versionName 0.7.8；iPhone build 69 / marketing version 0.7.8。
+
 ## Android 0.7.7 / iPhone 0.7.7 - 文案按钮命名彻底统一与健壮并发导入（已正式发布）
 
 - **文案按钮命名双端彻底统一**：

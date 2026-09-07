@@ -1145,6 +1145,20 @@ public final class WorkLibrary {
             this.category = category;
             this.directory = directory;
         }
+
+        public String getFolderName() {
+            if (sourceRelativePath == null || sourceRelativePath.trim().isEmpty()) {
+                return "";
+            }
+            String normalized = sourceRelativePath.replace('\\', '/').trim();
+            while (normalized.startsWith("/")) normalized = normalized.substring(1);
+            while (normalized.endsWith("/")) normalized = normalized.substring(0, normalized.length() - 1);
+            int slashIndex = normalized.indexOf('/');
+            if (slashIndex > 0) {
+                return normalized.substring(0, slashIndex).trim();
+            }
+            return "";
+        }
     }
 
     public static final class HistoryEntry {
