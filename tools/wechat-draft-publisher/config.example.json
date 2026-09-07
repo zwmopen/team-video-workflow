@@ -1,0 +1,16 @@
+{
+  "library_root": "D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目\\成品库",
+  "default_account": "main",
+  "title_trigger": 24,
+  "title_target": 20,
+  "body_soft_limit": 1000,
+  "max_images": 10,
+  "accounts": {
+    "main": {
+      "name": "团建公众号",
+      "app_id": "wx_your_app_id",
+      "app_secret_env": "WECHAT_MAIN_APP_SECRET",
+      "author": ""
+    }
+  }
+}
