@@ -29,6 +29,7 @@ import android.provider.Settings;
 import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
 import android.animation.LayoutTransition;
 import android.widget.Button;
@@ -586,12 +587,11 @@ public final class MainActivity extends Activity {
         if (selecting || showingTrash) {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
-            LinearLayout platformRow = new LinearLayout(this);
-            platformRow.setOrientation(LinearLayout.HORIZONTAL);
-            platformRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            FlowLayout platformRow = new FlowLayout(this);
+            platformRow.setHorizontalSpacing(dp(8));
+            platformRow.setVerticalSpacing(dp(8));
             List<PlatformCopyParser.AvailableItem> availablePlatforms =
                     PlatformCopyParser.parseAvailablePlatforms(work.text);
-            boolean firstButton = true;
             for (PlatformCopyParser.AvailableItem item : availablePlatforms) {
                 int clickCount = 0;
                 if (item.platform == PlatformCopyParser.Platform.DOUYIN) {
@@ -607,8 +607,7 @@ public final class MainActivity extends Activity {
                     markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
                     openShare(work, item.platform.code);
                 });
-                platformRow.addView(btn, compactButtonRowParams(!firstButton));
-                firstButton = false;
+                platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             }
             Button delete = compactButton("删除", false);
             delete.setTextColor(Color.rgb(188, 66, 60));
@@ -616,7 +615,7 @@ public final class MainActivity extends Activity {
                     Color.WHITE, 12, Color.rgb(226, 170, 164)));
             delete.setContentDescription("删除作品，移到回收站");
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
-            platformRow.addView(delete, compactButtonRowParams(!firstButton));
+            platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
             platformRowParams.setMargins(0, dp(8), 0, dp(2));
             card.addView(platformRow, platformRowParams);

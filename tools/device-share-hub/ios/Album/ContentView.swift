@@ -518,7 +518,9 @@ private final class WorkCell: UICollectionViewCell {
     private let xhs2Button = UIButton(type: .system)
     private let douyinButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
-    private let platformRow = UIStackView()
+    private let platformContainer = UIStackView()
+    private let platformRow1 = UIStackView()
+    private let platformRow2 = UIStackView()
     var onShare: ((CopyPlatform) -> Void)?
     var onPreview: ((Int) -> Void)?
     var onDelete: (() -> Void)?
@@ -550,11 +552,19 @@ private final class WorkCell: UICollectionViewCell {
         configurePlatformButton(xhs2Button, title: "大纲方案版", platform: .xhs2)
         configurePlatformButton(douyinButton, title: "规避营销版", platform: .douyin)
         configureDeleteButton()
-        platformRow.axis = .horizontal
-        platformRow.spacing = 6
-        platformRow.alignment = .fill
-        platformRow.distribution = .fillEqually
-        let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformRow])
+        platformRow1.axis = .horizontal
+        platformRow1.spacing = 6
+        platformRow1.alignment = .fill
+        platformRow1.distribution = .fillEqually
+        platformRow2.axis = .horizontal
+        platformRow2.spacing = 6
+        platformRow2.alignment = .fill
+        platformRow2.distribution = .fillEqually
+        platformContainer.axis = .vertical
+        platformContainer.spacing = 6
+        platformContainer.addArrangedSubview(platformRow1)
+        platformContainer.addArrangedSubview(platformRow2)
+        let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformContainer])
         stack.axis = .vertical
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -669,32 +679,52 @@ private final class WorkCell: UICollectionViewCell {
     @objc private func deleteTapped() { onDelete?() }
 
     private func updatePlatformRow(_ work: WorkItem) {
-        platformRow.arrangedSubviews.forEach { view in
-            platformRow.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        [platformRow1, platformRow2].forEach { row in
+            row.arrangedSubviews.forEach { view in
+                row.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
         }
         let text = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
         let available = PlatformCopyParser.parseAvailablePlatforms(text)
+        var buttons: [UIButton] = []
         for item in available {
             switch item.platform {
             case .douyin:
                 douyinButton.setTitle(item.buttonLabel, for: .normal)
                 applyPlatformButtonState(douyinButton, clicked: work.douyinShareCount > 0)
                 douyinButton.accessibilityValue = "已点击 \(work.douyinShareCount) 次"
-                platformRow.addArrangedSubview(douyinButton)
+                buttons.append(douyinButton)
             case .xhs:
                 xhsButton.setTitle(item.buttonLabel, for: .normal)
                 applyPlatformButtonState(xhsButton, clicked: work.xhsShareCount > 0)
                 xhsButton.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
-                platformRow.addArrangedSubview(xhsButton)
+                buttons.append(xhsButton)
             case .xhs2:
                 xhs2Button.setTitle(item.buttonLabel, for: .normal)
                 applyPlatformButtonState(xhs2Button, clicked: work.xhsShareCount > 0)
                 xhs2Button.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
-                platformRow.addArrangedSubview(xhs2Button)
+                buttons.append(xhs2Button)
             }
         }
-        platformRow.addArrangedSubview(deleteButton)
+        buttons.append(deleteButton)
+
+        if buttons.count > 3 {
+            let half = (buttons.count + 1) / 2
+            for (index, button) in buttons.enumerated() {
+                if index < half {
+                    platformRow1.addArrangedSubview(button)
+                } else {
+                    platformRow2.addArrangedSubview(button)
+                }
+            }
+            platformRow2.isHidden = false
+        } else {
+            for button in buttons {
+                platformRow1.addArrangedSubview(button)
+            }
+            platformRow2.isHidden = true
+        }
     }
 
     func configure(_ work: WorkItem) {
