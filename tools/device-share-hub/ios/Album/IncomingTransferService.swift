@@ -22,6 +22,8 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     private var isRunning = false
     private var tcpReady = false
     private var udpReady = false
+    private let pathMonitor = NWPathMonitor()
+    private var currentNetworkType = "unknown" 
 
     init(library: WorkLibrary) {
         self.library = library
@@ -36,6 +38,18 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             self.queue.async { [weak self] in self?.handleRemoteP2PSessions(session, sessions: sessions) }
         }
         presence.inventoryProvider = { [weak self] in self?.remoteInventory() ?? [:] }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            if path.usesInterfaceType(.wifi) {
+                self?.currentNetworkType = "wifi"
+            } else if path.usesInterfaceType(.cellular) {
+                self?.currentNetworkType = "cellular"
+            } else if path.usesInterfaceType(.wiredEthernet) {
+                self?.currentNetworkType = "ethernet"
+            } else {
+                self?.currentNetworkType = path.status == .satisfied ? "other" : "offline"
+            }
+        }
+        pathMonitor.start(queue: queue)
     }
 
     private func remoteInventory() -> [String: Any] {
@@ -47,6 +61,7 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         if let counts = library.advertisedWorkCounts {
             inventory["workCounts"] = counts
         }
+        inventory["network"] = currentNetworkType
         return inventory
     }
 
@@ -392,6 +407,7 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             beacon += "|\(counts[WorkCategory.traffic] ?? -1)"
             beacon += "|\(counts[WorkCategory.uncategorized] ?? -1)"
         }
+        beacon += "|net:\(currentNetworkType)"
         return Data(beacon.utf8)
     }
 
@@ -466,6 +482,7 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             "port": Int(transferHTTPPort),
             "state": "online",
             "workCount": library.advertisedWorkCount,
+            "network": currentNetworkType,
             "taskId": ""
         ]
         if let keys = try? RemoteIdentity.publicKeys(),

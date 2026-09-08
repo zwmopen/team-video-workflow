@@ -194,6 +194,24 @@ public final class OnlineService extends Service {
                 .getBoolean(PREF_AUTO_RECEIVE_ENABLED, true));
     }
 
+    static String currentNetworkType(Context context) {
+        try {
+            android.net.ConnectivityManager cm =
+                    (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return "offline";
+            android.net.Network active = cm.getActiveNetwork();
+            if (active == null) return "offline";
+            android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+            if (caps == null) return "offline";
+            if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) return "wifi";
+            if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) return "cellular";
+            if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet";
+            return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ? "other" : "offline";
+        } catch (Exception ignored) {
+            return "unknown";
+        }
+    }
+
     static boolean isIncomingTransferPath(String method, String path) {
         if (method == null || path == null || !path.startsWith("/v2/tasks")) return false;
         return "POST".equalsIgnoreCase(method)
@@ -1460,6 +1478,7 @@ public final class OnlineService extends Service {
                 .put("state", state)
                 .put("autoReceiveEnabled", isAutoReceiveEnabled())
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
+                .put("network", currentNetworkType(this))
                 .put("taskId", currentTaskId);
         try {
             JSONObject relayKeys = RemoteIdentity.publicKeys(this);
@@ -1785,6 +1804,7 @@ public final class OnlineService extends Service {
                     + "|" + counts.optInt("traffic", -1)
                     + "|" + counts.optInt("uncategorized", -1);
         }
+        beacon += "|net:" + info.optString("network", "unknown");
         byte[] bytes = beacon.getBytes(StandardCharsets.UTF_8);
         if (directTarget != null) {
             socket.send(new DatagramPacket(bytes, bytes.length, directTarget));
