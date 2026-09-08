@@ -23,7 +23,7 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     private var tcpReady = false
     private var udpReady = false
     private let pathMonitor = NWPathMonitor()
-    private var currentNetworkType = "unknown" 
+    private var currentNetworkType = "unknown"
 
     init(library: WorkLibrary) {
         self.library = library
@@ -689,7 +689,12 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     }
 
     private func updateWorkText(workId: String, request: HTTPRequest) throws -> HTTPResponse {
-        guard let data = request.body, !data.isEmpty else {
+        let data: Data
+        if let bodyData = request.bodyData, !bodyData.isEmpty {
+            data = bodyData
+        } else if let fileURL = request.bodyFileURL, let fileData = try? Data(contentsOf: fileURL), !fileData.isEmpty {
+            data = fileData
+        } else {
             return HTTPResponse(status: 400, message: "请求体为空")
         }
         var newText = ""

@@ -1,8 +1,17 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-08 卡片操作按钮轻拟态悬浮、通透微阴影与物理回弹动效升级（v0.8.1 双端对齐）
+
+- **最新版本**：Android 0.8.1 / versionCode 112、iPhone 0.8.1 / build 72。
+- **核心变更**：
+  - **Android 端操作按钮轻拟态与通透阴影升级**：彻底移除原生 Button 生硬发黑、发脏的默认矩形系统投影（`stateListAnimator = null`），通过 `ViewOutlineProvider.BACKGROUND` 结合 `setOutlineAmbientShadowColor` 与 `setOutlineSpotShadowColor` 引入三套轻拟态风格（翡翠绿主色光晕、雅致浅灰漫反射软阴影、白底红字专属朱砂红通透微阴影），卡片上的删除按钮呈现通透悬浮质感；
+  - **按压下沉与 Q 弹悬浮回弹动效**：实现 `applyFloatingSpringTouchEffect`，触摸按下（`ACTION_DOWN`）时缩放至 `0.94f` 并沉降贴合卡片表面；手指抬起（`ACTION_UP`）时通过 `OvershootInterpolator(1.4f)` 弹性超调回弹至原位，赋予极具真实感的物理机械触感，且完全不干扰点击分享或删除事件；
+  - **阴影抗裁剪贯通**：在 `root`、`worksContainer`、`card`、`platformRow` 容器链路全量放开 `setClipChildren(false)` 与 `setClipToPadding(false)`，确保悬浮光晕与回弹边缘完整呈现不被切边；
+  - **iOS 端编译修复**：修复 `IncomingTransferService.swift` 中 `HTTPRequest.body` 为 `bodyData` / `bodyFileURL` 的类型成员错误，打通全自动化 CI 云端流水线。
+
 ## 2026-09-08 电脑远程操控手机作品（存量查询 / 覆盖改文案 / 删作品）（v0.8.0 双端对齐）
 
-- **最新版本**：Android 0.8.0 / versionCode 111、iPhone 0.8.0 / build 71。
+- **历史版本**：Android 0.8.0 / versionCode 111、iPhone 0.8.0 / build 71。
 - **核心能力与协议接口（端口 45833）**：
   - **存量作品查询**：`GET /v2/works`，返回手机本地全部活跃作品结构化列表（`id`, `name`, `folderName`, `text`, `imageCount`, `category`, `shareCount`, `used`）；
   - **文案直接覆盖修改**：`PUT /v2/works/{id}/text`，直接以电脑新文案覆盖手机作品文本（Android `meta.properties`，iOS 对应的文本文件），手机界面即刻刷新，点击复制即是新文案，无需人工二次编辑；

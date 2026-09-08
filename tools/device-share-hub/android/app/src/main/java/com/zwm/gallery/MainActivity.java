@@ -17,6 +17,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -28,9 +29,12 @@ import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.util.LruCache;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.animation.LayoutTransition;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -222,6 +226,8 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(pad, dp(8), pad, dp(36));
         root.setBackgroundColor(Color.rgb(248, 249, 248));
+        root.setClipChildren(false);
+        root.setClipToPadding(false);
 
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -302,6 +308,8 @@ public final class MainActivity extends Activity {
         categorySelector.setBackground(round(Color.rgb(232, 234, 233), 11));
         categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(40)));
         worksContainer = new LinearLayout(this);
+        worksContainer.setClipChildren(false);
+        worksContainer.setClipToPadding(false);
         worksContainer.setOrientation(LinearLayout.VERTICAL);
         LayoutTransition contentTransition = new LayoutTransition();
         contentTransition.setDuration(180);
@@ -588,6 +596,8 @@ public final class MainActivity extends Activity {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             FlowLayout platformRow = new FlowLayout(this);
+            platformRow.setClipChildren(false);
+            platformRow.setClipToPadding(false);
             platformRow.setHorizontalSpacing(dp(8));
             platformRow.setVerticalSpacing(dp(8));
             List<PlatformCopyParser.AvailableItem> availablePlatforms =
@@ -609,10 +619,9 @@ public final class MainActivity extends Activity {
                 });
                 platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             }
-            Button delete = compactButton("删除", false);
-            delete.setTextColor(Color.rgb(188, 66, 60));
-            delete.setBackground(roundWithStroke(
-                    Color.WHITE, 12, Color.rgb(226, 170, 164)));
+            Button delete = new Button(this);
+            delete.setText("删除");
+            styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
             delete.setContentDescription("删除作品，移到回收站");
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
             platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
@@ -1521,39 +1530,114 @@ public final class MainActivity extends Activity {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(12), dp(14), dp(14));
+        card.setClipChildren(false);
+        card.setClipToPadding(false);
         card.setBackground(roundWithStroke(
                 Color.WHITE, 16, Color.rgb(224, 228, 226)));
         card.setElevation(dp(1));
         return card;
     }
 
+    private static final int STYLE_PRIMARY_GREEN = 0;
+    private static final int STYLE_MUTED_GRAY = 1;
+    private static final int STYLE_DANGER_WHITE = 2;
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void applyFloatingSpringTouchEffect(View view, float normalElevationDp,
+                                                Drawable normalBg, Drawable pressedBg) {
+        view.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    v.animate()
+                            .scaleX(0.94f)
+                            .scaleY(0.94f)
+                            .translationZ(-dp(Math.max(1f, normalElevationDp - 0.5f)))
+                            .setDuration(90)
+                            .setInterpolator(new DecelerateInterpolator())
+                            .start();
+                    if (pressedBg != null) v.setBackground(pressedBg);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    v.animate()
+                            .scaleX(1.0f)
+                            .scaleY(1.0f)
+                            .translationZ(0f)
+                            .setDuration(200)
+                            .setInterpolator(new OvershootInterpolator(1.4f))
+                            .start();
+                    if (normalBg != null) v.setBackground(normalBg);
+                    break;
+            }
+            return false;
+        });
+    }
+
+    private void styleNeumorphicButton(Button button, int style) {
+        button.setStateListAnimator(null);
+        button.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
+        button.setClipToOutline(false);
+        button.setAllCaps(false);
+        button.setTextSize(12.5f);
+        button.setMinHeight(dp(36));
+        button.setMinimumHeight(dp(36));
+        button.setPadding(dp(15), 0, dp(15), 0);
+        button.setGravity(Gravity.CENTER);
+        button.setMaxLines(1);
+
+        Drawable normalBg;
+        Drawable pressedBg;
+        int shadowColor;
+        float elevationDp = 2.5f;
+
+        if (style == STYLE_PRIMARY_GREEN) {
+            button.setTextColor(Color.WHITE);
+            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            normalBg = round(Color.rgb(16, 151, 99), 14);
+            pressedBg = round(Color.rgb(11, 122, 80), 14);
+            shadowColor = Color.argb(55, 16, 151, 99);
+        } else if (style == STYLE_DANGER_WHITE) {
+            button.setTextColor(Color.rgb(205, 58, 48));
+            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            normalBg = roundWithStroke(Color.rgb(255, 255, 255), 14, Color.rgb(243, 208, 204));
+            pressedBg = roundWithStroke(Color.rgb(255, 242, 240), 14, Color.rgb(235, 185, 180));
+            shadowColor = Color.argb(45, 205, 58, 48);
+        } else { // STYLE_MUTED_GRAY
+            button.setTextColor(Color.rgb(72, 80, 76));
+            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            normalBg = roundWithStroke(Color.rgb(240, 243, 241), 14, Color.rgb(222, 226, 224));
+            pressedBg = roundWithStroke(Color.rgb(226, 230, 228), 14, Color.rgb(212, 216, 214));
+            shadowColor = Color.argb(30, 60, 70, 65);
+            elevationDp = 1.5f;
+        }
+
+        button.setElevation(dp(elevationDp));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            button.setOutlineAmbientShadowColor(shadowColor);
+            button.setOutlineSpotShadowColor(shadowColor);
+        }
+        button.setBackground(normalBg);
+        applyFloatingSpringTouchEffect(button, elevationDp, normalBg, pressedBg);
+    }
+
     private Button smallButton(String label, boolean primary) {
         Button button = new Button(this);
         button.setText(label);
-        button.setTextSize(14);
-        button.setAllCaps(false);
-        button.setTextColor(primary ? Color.WHITE : Color.rgb(47, 48, 46));
-        button.setBackground(round(primary ? Color.rgb(15, 155, 99) : Color.rgb(232, 234, 233), 14));
-        button.setPadding(dp(13), 0, dp(13), 0);
+        styleNeumorphicButton(button, primary ? STYLE_PRIMARY_GREEN : STYLE_MUTED_GRAY);
+        button.setTextSize(13);
         return button;
     }
 
     private Button compactButton(String label, boolean primary) {
-        Button button = smallButton(label, primary);
-        button.setTextSize(12f);
-        button.setMinHeight(dp(36));
-        button.setMinimumHeight(dp(36));
-        button.setPadding(dp(14), 0, dp(14), 0);
-        button.setGravity(Gravity.CENTER);
-        button.setMaxLines(1);
+        Button button = new Button(this);
+        button.setText(label);
+        styleNeumorphicButton(button, primary ? STYLE_PRIMARY_GREEN : STYLE_MUTED_GRAY);
         return button;
     }
 
     private void markPlatformButtonClicked(Button button, String label, int previousCount) {
-        button.setTextColor(Color.rgb(47, 48, 46));
-        button.setBackground(round(Color.rgb(232, 234, 233), 14));
+        styleNeumorphicButton(button, STYLE_MUTED_GRAY);
         button.setContentDescription(label + "，已点击 " + Math.max(1, previousCount + 1) + " 次");
-        // A gray button is an informational state, not a disabled state. It remains clickable.
         button.setEnabled(true);
     }
 
@@ -1609,6 +1693,7 @@ public final class MainActivity extends Activity {
 
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 
     private static final class FileEntry {
         final String id;
