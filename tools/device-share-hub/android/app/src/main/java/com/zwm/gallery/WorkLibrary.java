@@ -432,6 +432,28 @@ public final class WorkLibrary {
         saveMeta(directory, meta);
     }
 
+    public synchronized WorkEntry updateText(String id, String newText) throws IOException {
+        validateId(id);
+        File directory = child(activeRoot, id);
+        if (!directory.isDirectory()) directory = child(trashRoot, id);
+        if (!directory.isDirectory()) throw new IOException("找不到作品：" + id);
+        Properties meta = loadMeta(directory);
+        meta.setProperty("text", valueOrEmpty(newText));
+
+        int imageCount = parseCount(meta.getProperty("image.count", "0"));
+        ArrayList<String> hashes = new ArrayList<>();
+        for (int index = 0; index < imageCount; index++) {
+            String image = meta.getProperty("image." + index, "");
+            if (!image.isEmpty()) {
+                File file = child(directory, image);
+                if (file.isFile()) hashes.add(hashFile(file));
+            }
+        }
+        meta.setProperty("contentSignature", signature(valueOrEmpty(newText), hashes));
+        saveMeta(directory, meta);
+        return readEntry(directory);
+    }
+
     private static ArrayList<File> collectImageTrashFiles(File root) {
         ArrayList<File> result = new ArrayList<>();
         File[] children = root.listFiles();

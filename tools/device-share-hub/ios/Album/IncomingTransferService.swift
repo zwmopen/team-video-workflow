@@ -431,6 +431,15 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
                pieces[3] == "cancel" {
                 return cancelTask(taskID: pieces[2])
             }
+            if request.method == "GET" && request.path == "/v2/works" {
+                return listWorks()
+            }
+            if request.method == "PUT", pieces.count == 4, pieces[0] == "v2", pieces[1] == "works", pieces[3] == "text" {
+                return try updateWorkText(workId: pieces[2], request: request)
+            }
+            if request.method == "DELETE", pieces.count == 3, pieces[0] == "v2", pieces[1] == "works" {
+                return try deleteWork(workId: pieces[2])
+            }
             return HTTPResponse(status: 404, message: "请求路径不存在")
         } catch let error as TransferServiceError {
             TransferNotifications.shared.show("接收失败", body: error.localizedDescription,
@@ -644,6 +653,54 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         return HTTPResponse(status: 200, object: ["ok": true])
     }
 
+    private func listWorks() -> HTTPResponse {
+        var items: [[String: Any]] = []
+        for work in library.works {
+            let text = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
+            items.append([
+                "id": work.id,
+                "name": work.name,
+                "folderName": work.folderName,
+                "text": text,
+                "imageCount": work.imageURLs.count,
+                "category": work.category,
+                "shareCount": work.shareCount,
+                "used": work.used
+            ])
+        }
+        return HTTPResponse(status: 200, array: items)
+    }
+
+    private func updateWorkText(workId: String, request: HTTPRequest) throws -> HTTPResponse {
+        guard let data = request.body, !data.isEmpty else {
+            return HTTPResponse(status: 400, message: "请求体为空")
+        }
+        var newText = ""
+        if let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+           let text = json["text"] as? String {
+            newText = text
+        } else if let raw = String(data: data, encoding: .utf8) {
+            newText = raw
+        }
+        try library.updateWorkText(workId: workId, newText: newText)
+        return HTTPResponse(status: 200, object: [
+            "success": true,
+            "id": workId,
+            "textLength": newText.count,
+            "message": "文案已覆盖并刷新"
+        ])
+    }
+
+    private func deleteWork(workId: String) throws -> HTTPResponse {
+        try library.moveWorkToTrash(workId: workId)
+        return HTTPResponse(status: 200, object: [
+            "success": true,
+            "id": workId,
+            "action": "trashed",
+            "remainingWorks": library.works.count
+        ])
+    }
+
     private var incomingRoot: URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let root = base.appendingPathComponent("IncomingTransfer", isDirectory: true)
@@ -835,6 +892,11 @@ struct HTTPResponse {
 
     init(status: Int, message: String) {
         self.init(status: status, object: ["ok": false, "error": message])
+    }
+
+    init(status: Int, array: [Any]) {
+        self.status = status
+        self.body = (try? JSONSerialization.data(withJSONObject: array)) ?? Data("[]".utf8)
     }
 
     var wireData: Data {

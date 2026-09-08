@@ -1,5 +1,20 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-08 电脑远程操控手机作品（存量查询 / 覆盖改文案 / 删作品）（v0.8.0 双端对齐）
+
+- **最新版本**：Android 0.8.0 / versionCode 111、iPhone 0.8.0 / build 71。
+- **核心能力与协议接口（端口 45833）**：
+  - **存量作品查询**：`GET /v2/works`，返回手机本地全部活跃作品结构化列表（`id`, `name`, `folderName`, `text`, `imageCount`, `category`, `shareCount`, `used`）；
+  - **文案直接覆盖修改**：`PUT /v2/works/{id}/text`，直接以电脑新文案覆盖手机作品文本（Android `meta.properties`，iOS 对应的文本文件），手机界面即刻刷新，点击复制即是新文案，无需人工二次编辑；
+  - **作品远程安全删除**：`DELETE /v2/works/{id}`，将指定作品移入手机回收站（安全可逆），同步刷新手机作品列表、通知栏计数与局域网广播 Beacon；
+  - **双端原生轻量**：双端纯原生 Socket/HTTP 分发，零新增第三方库，体积增量 < 5KB，日常零功耗。
+- **PC CLI 命令行支持（`send_to_device.py`）**：
+  - `--list-works --device <name>`：表格化/JSON 展示手机活跃作品与文案首句；
+  - `--get-work <id> --device <name>`：查看指定作品全量信息与完整文案；
+  - `--update-text <id> --text "..." [--text-file <path>] --device <name>`：直接覆盖修改指定作品文案；
+  - `--delete-work <id> --device <name>`：删除指定作品移入回收站；
+  - `--json`：支持纯 JSON 管道输出，便于上层脚本与自动化串联。
+
 ## 2026-09-07 作品卡片操作按钮流式自适应折行与双端防挤压布局（v0.7.9 双端对齐）
 
 - **最新版本**：Android 0.7.9 / versionCode 110、iPhone 0.7.9 / build 70。

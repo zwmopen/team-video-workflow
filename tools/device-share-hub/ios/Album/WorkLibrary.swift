@@ -354,6 +354,31 @@ final class WorkLibrary {
         refresh(showConfirmation: false)
     }
 
+    func updateWorkText(workId: String, newText: String) throws {
+        guard let work = works.first(where: { $0.id == workId || $0.key == workId || $0.name == workId }) else {
+            throw LibraryError.operationFailed("找不到作品：\(workId)")
+        }
+        guard let data = newText.data(using: .utf8) else {
+            throw LibraryError.operationFailed("文案编码失败")
+        }
+        try data.write(to: work.textURL, options: .atomic)
+        message = "已更新文案：\(work.name)"
+        if Thread.isMainThread {
+            refresh(showConfirmation: false)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.refresh(showConfirmation: false)
+            }
+        }
+    }
+
+    func moveWorkToTrash(workId: String) throws {
+        guard let work = works.first(where: { $0.id == workId || $0.key == workId || $0.name == workId }) else {
+            throw LibraryError.operationFailed("找不到作品：\(workId)")
+        }
+        try moveWorkToTrash(work)
+    }
+
     func imageTrashCount(_ work: WorkItem) -> Int {
         let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
         guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }

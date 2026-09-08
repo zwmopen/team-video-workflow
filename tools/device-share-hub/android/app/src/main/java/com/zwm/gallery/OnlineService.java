@@ -739,6 +739,20 @@ public final class OnlineService extends Service {
                     cancelTask(parts[3], output);
                     return;
                 }
+                if ("GET".equals(request.method) && "/v2/works".equals(request.path)) {
+                    listWorks(output);
+                    return;
+                }
+                if (parts.length == 5 && "PUT".equals(request.method)
+                        && "v2".equals(parts[1]) && "works".equals(parts[2]) && "text".equals(parts[4])) {
+                    updateWorkText(parts[3], request, input, output);
+                    return;
+                }
+                if (parts.length == 4 && "DELETE".equals(request.method)
+                        && "v2".equals(parts[1]) && "works".equals(parts[2])) {
+                    deleteWork(parts[3], output);
+                    return;
+                }
                 writeText(output, 404, "Not Found");
             } catch (HttpError error) {
                 if (request != null && isCommitPath(request.method, request.path)) {
@@ -1329,6 +1343,78 @@ public final class OnlineService extends Service {
             }
         }
         writeText(output, 200, "OK");
+    }
+
+    private void listWorks(OutputStream output) throws Exception {
+        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+        List<WorkLibrary.WorkEntry> active = library.listActive();
+        JSONArray array = new JSONArray();
+        for (WorkLibrary.WorkEntry entry : active) {
+            JSONObject obj = new JSONObject()
+                    .put("id", entry.id)
+                    .put("name", entry.name)
+                    .put("folderName", entry.getFolderName())
+                    .put("text", entry.text)
+                    .put("imageCount", entry.images.size())
+                    .put("category", entry.category)
+                    .put("shareCount", entry.shareCount)
+                    .put("used", entry.used);
+            array.put(obj);
+        }
+        writeJson(output, 200, array);
+    }
+
+    private void updateWorkText(String workId, HttpRequest request, InputStream input, OutputStream output) throws Exception {
+        if (request.contentLength < 0 || request.contentLength > MAX_JSON_BYTES) {
+            throw new HttpError(413, "文案内容过大");
+        }
+        String raw = new String(readExact(input, request.contentLength), StandardCharsets.UTF_8);
+        String newText = "";
+        try {
+            JSONObject body = new JSONObject(raw);
+            newText = body.optString("text", raw);
+        } catch (Exception notJson) {
+            newText = raw;
+        }
+        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+        WorkLibrary.WorkEntry updated = library.updateText(workId, newText);
+
+        DiagnosticLog.write(this, "work_text_updated", workId + " length=" + newText.length());
+        OperationLog.add(this, "修改文案", "远程修改作品 " + workId + " 文案（" + newText.length() + "字）");
+        notifyStatus("电脑已更新作品文案：" + updated.name);
+
+        sendBroadcast(new Intent(ACTION_TASK_READY).setPackage(getPackageName()));
+
+        JSONObject response = new JSONObject()
+                .put("success", true)
+                .put("id", workId)
+                .put("textLength", newText.length())
+                .put("message", "文案已覆盖并刷新");
+        writeJson(output, 200, response);
+    }
+
+    private void deleteWork(String workId, OutputStream output) throws Exception {
+        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+        WorkLibrary.WorkEntry entry = library.getActive(workId);
+        if (entry == null) {
+            throw new HttpError(404, "找不到作品：" + workId);
+        }
+        library.moveToTrash(workId, System.currentTimeMillis());
+        List<WorkLibrary.WorkEntry> remaining = library.listActive();
+        publishWorkInventory(this, remaining);
+
+        DiagnosticLog.write(this, "work_deleted", workId);
+        OperationLog.add(this, "删除作品", "远程删除作品 " + workId + "（移入回收站）");
+        notifyStatus("电脑已删除作品：" + entry.name);
+
+        sendBroadcast(new Intent(ACTION_TASK_READY).setPackage(getPackageName()));
+
+        JSONObject response = new JSONObject()
+                .put("success", true)
+                .put("id", workId)
+                .put("action", "trashed")
+                .put("remainingWorks", remaining.size());
+        writeJson(output, 200, response);
     }
 
     private void onTaskReady(String taskId, int deliveredFiles, int imported,
@@ -1932,6 +2018,10 @@ public final class OnlineService extends Service {
     }
 
     private static void writeJson(OutputStream output, int code, JSONObject value) throws Exception {
+        writeResponse(output, code, value.toString().getBytes(StandardCharsets.UTF_8), "application/json; charset=utf-8");
+    }
+
+    private static void writeJson(OutputStream output, int code, JSONArray value) throws Exception {
         writeResponse(output, code, value.toString().getBytes(StandardCharsets.UTF_8), "application/json; charset=utf-8");
     }
 
