@@ -1,8 +1,16 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-09 回收站废品远程读取与不合格成品打标系统（v0.8.2 双端对齐）
+
+- **最新版本**：Android 0.8.2 / versionCode 113、iPhone 0.8.2 / build 73。
+- **核心能力与协议接口（端口 45833）**：
+  - **回收站作品全量查询**：`GET /v2/trash`（或 `GET /v2/works/trash`），返回手机回收站中保留的全部作品结构化列表（`id`, `name`, `folderName`, `text`, `imageCount`, `category`, `shareCount`, `used`, `trashedDate`）；
+  - **直接淘汰废品精准捕获**：以 `used == false && shareCount == 0` 为刚性判断标准，100% 确定用户未曾点击任何复制/分享按钮而直接淘汰的作品，与正常发布后按保留时间移入回收站的作品严格区分；
+  - **电脑端一机一档与本地打标隔离**：PC 端提供 `--audit-trash` 与 `--tag-local`，自动将手机端被淘汰的作品与本地 `已发送1次（微信公众号可发）` 对账，物理移入 `不合格成品` 专区，生成 `quality_tag.json`，并写入每台手机的专属设备日志（`device-journals/<设备名>.md`），彻底阻断劣质废品流向微信公众号。
+
 ## 2026-09-08 卡片操作按钮轻拟态悬浮、通透微阴影与物理回弹动效升级（v0.8.1 双端对齐）
 
-- **最新版本**：Android 0.8.1 / versionCode 112、iPhone 0.8.1 / build 72。
+- **历史版本**：Android 0.8.1 / versionCode 112、iPhone 0.8.1 / build 72。
 - **核心变更**：
   - **Android 端操作按钮轻拟态与通透阴影升级**：彻底移除原生 Button 生硬发黑、发脏的默认矩形系统投影（`stateListAnimator = null`），通过 `ViewOutlineProvider.BACKGROUND` 结合 `setOutlineAmbientShadowColor` 与 `setOutlineSpotShadowColor` 引入三套轻拟态风格（翡翠绿主色光晕、雅致浅灰漫反射软阴影、白底红字专属朱砂红通透微阴影），卡片上的删除按钮呈现通透悬浮质感；
   - **按压下沉与 Q 弹悬浮回弹动效**：实现 `applyFloatingSpringTouchEffect`，触摸按下（`ACTION_DOWN`）时缩放至 `0.94f` 并沉降贴合卡片表面；手指抬起（`ACTION_UP`）时通过 `OvershootInterpolator(1.4f)` 弹性超调回弹至原位，赋予极具真实感的物理机械触感，且完全不干扰点击分享或删除事件；

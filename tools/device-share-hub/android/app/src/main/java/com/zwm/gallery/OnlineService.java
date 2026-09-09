@@ -761,6 +761,10 @@ public final class OnlineService extends Service {
                     listWorks(output);
                     return;
                 }
+                if ("GET".equals(request.method) && ("/v2/trash".equals(request.path) || "/v2/works/trash".equals(request.path))) {
+                    listTrash(output);
+                    return;
+                }
                 if (parts.length == 5 && "PUT".equals(request.method)
                         && "v2".equals(parts[1]) && "works".equals(parts[2]) && "text".equals(parts[4])) {
                     updateWorkText(parts[3], request, input, output);
@@ -1377,6 +1381,26 @@ public final class OnlineService extends Service {
                     .put("category", entry.category)
                     .put("shareCount", entry.shareCount)
                     .put("used", entry.used);
+            array.put(obj);
+        }
+        writeJson(output, 200, array);
+    }
+
+    private void listTrash(OutputStream output) throws Exception {
+        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
+        List<WorkLibrary.WorkEntry> trash = library.listTrash();
+        JSONArray array = new JSONArray();
+        for (WorkLibrary.WorkEntry entry : trash) {
+            JSONObject obj = new JSONObject()
+                    .put("id", entry.id)
+                    .put("name", entry.name)
+                    .put("folderName", entry.getFolderName())
+                    .put("text", entry.text)
+                    .put("imageCount", entry.images.size())
+                    .put("category", entry.category)
+                    .put("shareCount", entry.shareCount)
+                    .put("used", entry.used)
+                    .put("trashedDate", entry.trashedDate != null ? entry.trashedDate.toString() : "");
             array.put(obj);
         }
         writeJson(output, 200, array);

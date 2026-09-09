@@ -447,8 +447,11 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
                pieces[3] == "cancel" {
                 return cancelTask(taskID: pieces[2])
             }
-            if request.method == "GET" && request.path == "/v2/works" {
+            if request.method == "GET" && (request.path == "/v2/works" || request.path == "/v2/works/") {
                 return listWorks()
+            }
+            if request.method == "GET" && (request.path == "/v2/trash" || request.path == "/v2/works/trash") {
+                return listTrash()
             }
             if request.method == "PUT", pieces.count == 4, pieces[0] == "v2", pieces[1] == "works", pieces[3] == "text" {
                 return try updateWorkText(workId: pieces[2], request: request)
@@ -683,6 +686,30 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
                 "category": work.category,
                 "shareCount": work.shareCount,
                 "used": work.used
+            ])
+        }
+        return HTTPResponse(status: 200, array: items)
+    }
+
+    private func listTrash() -> HTTPResponse {
+        var items: [[String: Any]] = []
+        for item in library.trash {
+            let pathParts = item.originalRelativePath.components(separatedBy: "/")
+            let folderName = pathParts.count > 1 ? pathParts[0] : ""
+            let trashedDateStr: String
+            if let d = item.trashedDate {
+                trashedDateStr = ISO8601DateFormatter().string(from: d)
+            } else {
+                trashedDateStr = ""
+            }
+            items.append([
+                "id": item.key,
+                "name": item.name,
+                "folderName": folderName,
+                "originalRelativePath": item.originalRelativePath,
+                "shareCount": item.shareCount,
+                "used": item.shareCount > 0,
+                "trashedDate": trashedDateStr
             ])
         }
         return HTTPResponse(status: 200, array: items)
