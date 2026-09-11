@@ -24,6 +24,31 @@ public final class WorkRulesTest {
     }
 
     @Test
+    public void prefersPublishCopyOverSessionMetadata() {
+        assertEquals("小红书文案.txt", WorkRules.chooseCaption(
+                Arrays.asList("会话追踪.txt", "小红书文案.txt")));
+        assertEquals(1, WorkRules.countCaptionCandidates(
+                Arrays.asList("会话追踪.txt", "小红书文案.txt")));
+    }
+
+    @Test
+    public void doesNotTreatMetadataOnlyAsCaption() {
+        assertEquals("", WorkRules.chooseCaption(
+                Arrays.asList("会话追踪.txt", "生产对话轨迹.txt", "生产记录.txt", "质量报告.txt")));
+        assertEquals("", WorkRules.chooseCaption(
+                Arrays.asList("质量报告_20260908.txt", "会话追踪.md")));
+        assertEquals(0, WorkRules.countCaptionCandidates(
+                Arrays.asList("会话追踪.txt", "生产对话轨迹.txt", "生产记录.txt", "质量报告.txt")));
+    }
+
+    @Test
+    public void recognizesOnlyTheKnownWorkflowSummaryAsRepairableMetadata() {
+        assertTrue(WorkRules.isWorkflowMetadataText(
+                "母版URL: x\n分支URL: y\n执行账号: 账号1\n生成卡片数: 8\n完成时间: now"));
+        assertFalse(WorkRules.isWorkflowMetadataText("标题\n正文\n完成时间：明天"));
+    }
+
+    @Test
     public void sortsNumberedImagesNaturally() {
         assertTrue(WorkRules.compareNatural("作品2.png", "作品10.png") < 0);
         assertTrue(WorkRules.compareNatural("01.png", "2.png") < 0);

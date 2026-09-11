@@ -56,7 +56,10 @@ public final class WorkArchiveImporter {
                         ? "检测到多个 TXT，已使用“" + baseName(plan.captionEntry) + "”"
                         : "";
                 String workId = batchId + "-" + (planIndex + 1);
-                if (library.contains(workId)) continue;
+                if (library.contains(workId)) {
+                    library.repairTextIfWorkflowMetadata(workId, text);
+                    continue;
+                }
                 // Preserve the source folder name so [转]/[泛] archives keep the
                 // same category after a remote or LAN import.
                 String sourceRelative = plan.directory != null && !plan.directory.isEmpty()

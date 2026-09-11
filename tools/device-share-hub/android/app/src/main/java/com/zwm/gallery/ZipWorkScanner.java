@@ -44,7 +44,8 @@ final class ZipWorkScanner {
             String captionName = WorkRules.chooseCaption(textNames);
             if (images.isEmpty() || captionName.isEmpty()) continue;
             images.sort((left, right) -> WorkRules.compareNatural(baseName(left), baseName(right)));
-            result.add(new WorkPlan(baseName(directory.getKey()), directory.getKey(), textPaths.get(captionName), images, textNames.size()));
+            result.add(new WorkPlan(baseName(directory.getKey()), directory.getKey(), textPaths.get(captionName), images,
+                    WorkRules.countCaptionCandidates(textNames)));
         }
         result.sort((left, right) -> WorkRules.compareNatural(left.directory, right.directory));
         return result;

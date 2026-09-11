@@ -1,8 +1,8 @@
-# 文件收发中控 V4.3.29 / Android 0.6.62 / iPhone 0.6.45（已正式发布）
+# 文件收发中控（当前源码候选：Android 0.8.3 / iPhone 0.8.3）
 
-当前正式版本为 Android 0.6.62 / versionCode 100、iPhone 0.6.45 / build 64、Windows V4.3.29。GitHub Actions run `33036449234` 的 Windows、Android、iOS、远程中继和发布任务均已成功；正式发布页为 <https://github.com/zwmopen/gallery-updates/releases/tag/v0.6.62>。
+当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。本轮源码候选为 Android 0.8.3 / versionCode 114、iPhone 0.8.3 / build 74；尚未完成云端发布或实体手机验收。
 
-本版作品卡片取消独立“预览”按钮，点击缩略图直接从对应图片进入全屏预览；底部操作统一为横排“发抖音 / 发小红书 / 删除”，删除确认后移入回收站。上一轮接收任务提交重试、P2P/HTTPS 中继回退、ACK 幂等和自动补货修复继续保留。
+本轮仅修复移动端作品导入/扫描时的文案候选选择：会话追踪、生产记录等元数据不会再被当成可复制文案；不改变传送协议、作品库数据格式或现有分享按钮行为。
 
 Android、iPhone 和 Windows 统一读取正式更新入口。为兼容仍运行旧测试通道的设备，`latest-beta.json` 与 `altstore-beta.json` 也已同步到同一正式版本，不再产生第二套包或版本。
 

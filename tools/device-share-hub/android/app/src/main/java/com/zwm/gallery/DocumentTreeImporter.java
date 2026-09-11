@@ -148,7 +148,7 @@ final class DocumentTreeImporter {
             if (caption != null) {
                 if (childWorks == 0) {
                     works.add(new Folder(documentId, displayName, images, caption, marker,
-                            texts.size(), parentDocumentId, category, currentPath));
+                            WorkRules.countCaptionCandidates(textNames), parentDocumentId, category, currentPath));
                     return 1;
                 }
                 stats.aggregateFolders++;

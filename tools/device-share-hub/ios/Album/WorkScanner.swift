@@ -72,22 +72,23 @@ final class WorkScanner {
 
             if !relativeComponents.isEmpty && !images.isEmpty && !texts.isEmpty {
                 let relativePath = relativeComponents.joined(separator: "/")
-                let preferred = texts.first { $0.lastPathComponent == "文案.txt" } ?? texts[0]
-                let saved = state.works[relativePath] ?? state.history[relativePath]
-                found.append(WorkItem(
-                    key: relativePath,
-                    name: folder.lastPathComponent,
-                    relativePath: relativePath,
-                    folderURL: folder,
-                    textURL: preferred,
-                    imageURLs: images,
-                    shareCount: saved?.shareCount ?? 0,
-                    xhsShareCount: saved?.xhsShareCount ?? 0,
-                    douyinShareCount: saved?.douyinShareCount ?? 0,
-                    used: saved?.used ?? false,
-                    category: WorkCategory.from(path: relativePath)
-                ))
-                return
+                if let preferred = CaptionFilePolicy.choose(from: texts) {
+                    let saved = state.works[relativePath] ?? state.history[relativePath]
+                    found.append(WorkItem(
+                        key: relativePath,
+                        name: folder.lastPathComponent,
+                        relativePath: relativePath,
+                        folderURL: folder,
+                        textURL: preferred,
+                        imageURLs: images,
+                        shareCount: saved?.shareCount ?? 0,
+                        xhsShareCount: saved?.xhsShareCount ?? 0,
+                        douyinShareCount: saved?.douyinShareCount ?? 0,
+                        used: saved?.used ?? false,
+                        category: WorkCategory.from(path: relativePath)
+                    ))
+                    return
+                }
             }
 
             guard depth < maximumScanDepth else {

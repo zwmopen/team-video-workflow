@@ -76,11 +76,13 @@ final class LegacyHiddenFolderImporter {
         if (caption == null) return;
 
         result.detected++;
+        String captionText = readText(caption);
         String sourceRelativePath = relativePath(root, directory);
         String category = WorkCategory.fromPath(sourceRelativePath);
         result.detectedRelativePaths.add(sourceRelativePath);
         WorkLibrary.WorkEntry existingSource = library.findBySourceRelativePath(sourceRelativePath);
         if (existingSource != null) {
+            library.repairTextIfWorkflowMetadata(existingSource.id, captionText);
             library.updateSourceReference(existingSource.id, "", "", sourceRelativePath);
             library.updateCategory(existingSource.id, category);
             result.skipped++;
@@ -91,17 +93,18 @@ final class LegacyHiddenFolderImporter {
         if (!id.matches("[A-Za-z0-9._-]{1,120}")) {
             id = "huawei-hidden-" + Integer.toHexString(relativePath(root, directory).hashCode());
         }
-        String captionText = readText(caption);
         WorkLibrary.WorkEntry matchingContent = library.findByContent(captionText, images);
         if (library.contains(id) || matchingContent != null) {
             String existingId = matchingContent == null ? id : matchingContent.id;
+            library.repairTextIfWorkflowMetadata(existingId, captionText);
             library.updateSourceReference(existingId, "", "", sourceRelativePath);
             library.updateCategory(existingId, category);
             result.skipped++;
             return;
         }
         String name = directory.getName().replaceFirst("^\\.+", "");
-        String warning = texts.size() > 1 ? "检测到多个 TXT，已使用“" + captionName + "”" : "";
+        String warning = WorkRules.countCaptionCandidates(textNames) > 1
+                ? "检测到多个文案 TXT，已使用“" + captionName + "”" : "";
         library.importWork(id, name.isEmpty() ? directory.getName() : name,
                 captionText, images, warning, "", "", sourceRelativePath, category);
         result.imported++;

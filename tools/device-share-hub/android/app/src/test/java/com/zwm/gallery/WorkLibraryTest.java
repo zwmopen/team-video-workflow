@@ -46,6 +46,23 @@ public final class WorkLibraryTest {
     }
 
     @Test
+    public void reimportRepairsKnownWorkflowMetadataButDoesNotOverwriteRealCaption() throws Exception {
+        File source = temporary.newFolder("metadata-repair-source");
+        File image = write(source, "1.jpg", "image");
+        WorkLibrary library = new WorkLibrary(temporary.newFolder("metadata-repair-library"));
+        String tracking = "母版URL: x\n分支URL: y\n执行账号: 账号1\n生成卡片数: 8\n完成时间: now";
+
+        library.importWork("repair", "作品", tracking, Arrays.asList(image), "");
+        WorkLibrary.WorkEntry repaired = library.importWork(
+                "repair", "作品", "真实小红书文案", Arrays.asList(image), "");
+
+        assertEquals("真实小红书文案", repaired.text);
+        WorkLibrary.WorkEntry preserved = library.importWork(
+                "repair", "作品", "用户手工改过的文案", Arrays.asList(image), "");
+        assertEquals("真实小红书文案", preserved.text);
+    }
+
+    @Test
     public void orphanTrashDirectoryDoesNotBlockLibraryReopen() throws Exception {
         File libraryRoot = temporary.newFolder("orphan-trash-library");
         WorkLibrary library = new WorkLibrary(libraryRoot);

@@ -106,7 +106,13 @@ public final class WorkLibrary {
                 if (!hasMetaFile(destination)) {
                     deleteTree(destination);
                 } else {
-                    return readEntry(destination);
+                    WorkEntry existing = readEntry(destination);
+                    if (WorkRules.isWorkflowMetadataText(existing.text)
+                            && !WorkRules.isWorkflowMetadataText(text)
+                            && !valueOrEmpty(existing.text).equals(valueOrEmpty(text))) {
+                        return updateText(id, text);
+                    }
+                    return existing;
                 }
             }
 
@@ -189,6 +195,20 @@ public final class WorkLibrary {
     public synchronized boolean contains(String id) throws IOException {
         validateId(id);
         return hasMetaFile(child(activeRoot, id)) || hasMetaFile(child(trashRoot, id));
+    }
+
+    /** Repairs only known old session-summary corruption during re-import. */
+    public synchronized WorkEntry repairTextIfWorkflowMetadata(String id, String replacement)
+            throws IOException {
+        WorkEntry active = getActive(id);
+        WorkEntry trash = active == null ? getTrash(id) : null;
+        WorkEntry existing = active == null ? trash : active;
+        if (existing == null || WorkRules.isWorkflowMetadataText(replacement)
+                || !WorkRules.isWorkflowMetadataText(existing.text)
+                || valueOrEmpty(existing.text).equals(valueOrEmpty(replacement))) {
+            return existing;
+        }
+        return updateText(id, replacement);
     }
 
     public synchronized WorkEntry findBySourceRelativePath(String relativePath) throws IOException {

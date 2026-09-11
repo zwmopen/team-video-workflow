@@ -21,6 +21,55 @@ final class WorkScannerTests: XCTestCase {
         XCTAssertEqual(result.statistics.missingTexts, 1)
     }
 
+    func testPrefersPublishCopyOverSessionMetadata() throws {
+        let root = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let work = root.appendingPathComponent("合集/作品", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try Data("母版 URL 和执行账号".utf8).write(to: work.appendingPathComponent("会话追踪.txt"))
+        try Data("标题\n正文".utf8).write(to: work.appendingPathComponent("小红书文案.txt"))
+        try Data([1]).write(to: work.appendingPathComponent("01.jpg"))
+
+        let result = try WorkScanner(excludedDirectoryNames: []).scan(
+            root: root, state: LibraryState()
+        )
+
+        XCTAssertEqual(result.works.count, 1)
+        XCTAssertEqual(result.works[0].textURL.lastPathComponent, "小红书文案.txt")
+    }
+
+    func testDoesNotTreatSessionMetadataAloneAsPublishCopy() throws {
+        let root = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let work = root.appendingPathComponent("合集/只有元数据", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try Data("母版 URL 和执行账号".utf8).write(to: work.appendingPathComponent("会话追踪.txt"))
+        try Data("母版 URL 和执行账号".utf8).write(to: work.appendingPathComponent("生产对话轨迹.txt"))
+        try Data([1]).write(to: work.appendingPathComponent("01.jpg"))
+
+        let result = try WorkScanner(excludedDirectoryNames: []).scan(
+            root: root, state: LibraryState()
+        )
+
+        XCTAssertTrue(result.works.isEmpty)
+    }
+
+    func testExcludesSuffixedWorkflowMetadata() throws {
+        let root = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let work = root.appendingPathComponent("合集/带后缀元数据", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try Data("质量报告".utf8).write(to: work.appendingPathComponent("质量报告_20260908.txt"))
+        try Data("会话追踪".utf8).write(to: work.appendingPathComponent("会话追踪.md"))
+        try Data([1]).write(to: work.appendingPathComponent("01.jpg"))
+
+        let result = try WorkScanner(excludedDirectoryNames: []).scan(
+            root: root, state: LibraryState()
+        )
+
+        XCTAssertTrue(result.works.isEmpty)
+    }
+
     func testSkipsHiddenAndTrashFoldersAtEveryDepth() throws {
         let root = temporaryFolder()
         defer { try? FileManager.default.removeItem(at: root) }
