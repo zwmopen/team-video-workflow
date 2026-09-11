@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.3 / build 74（源码候选）
+版本：0.8.3 / build 74（已发布）
 
-状态：候选版本；云端构建和当前轮次真机记录见维护交接
+状态：已发布至 `gallery-updates` 的 `v0.8.3`；云端构建记录与真机验收边界见维护交接
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
@@ -17,7 +17,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；实体检查完成后再创建正式 GitHub Release。
+IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；正式 GitHub Release 已由发布流水线创建，实体覆盖安装仍需设备在线后完成。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 

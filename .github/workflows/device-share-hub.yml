@@ -448,8 +448,11 @@ jobs:
             --arg ios_release_url "$release_url" \
             '.version_name=$version_name
              | .version_code=$version_code
+             | .versionName=$version_name
+             | .versionCode=$version_code
              | .sha256=$sha256
              | .apk_url=$apk_url
+             | .url=$apk_url
              | .tag_name=$tag_name
              | .html_url=$html_url
              | .ios={version_name:$ios_version_name, build:$ios_build, sha256:$ios_sha256,
@@ -501,6 +504,8 @@ jobs:
             fi
             if [ "$(printf '%s' "$published" | jq -r '.version_name' 2>/dev/null || true)" = "$version_name" ] \
               && [ "$(printf '%s' "$published" | jq -r '.version_code' 2>/dev/null || true)" = "$version_code" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.versionName' 2>/dev/null || true)" = "$version_name" ] \
+              && [ "$(printf '%s' "$published" | jq -r '.versionCode' 2>/dev/null || true)" = "$version_code" ] \
               && [ "$(printf '%s' "$published" | jq -r '.sha256' 2>/dev/null || true)" = "$sha256" ] \
               && [ "$(printf '%s' "$published" | jq -r '.ios.version_name' 2>/dev/null || true)" = "$ios_version_name" ] \
               && [ "$(printf '%s' "$published" | jq -r '.ios.build' 2>/dev/null || true)" = "$ios_build" ] \
@@ -513,6 +518,8 @@ jobs:
           done
           test "$(printf '%s' "$published" | jq -r '.version_name')" = "$version_name"
           test "$(printf '%s' "$published" | jq -r '.version_code')" = "$version_code"
+          test "$(printf '%s' "$published" | jq -r '.versionName')" = "$version_name"
+          test "$(printf '%s' "$published" | jq -r '.versionCode')" = "$version_code"
           test "$(printf '%s' "$published" | jq -r '.sha256')" = "$sha256"
           test "$(printf '%s' "$published" | jq -r '.ios.version_name')" = "$ios_version_name"
           test "$(printf '%s' "$published" | jq -r '.ios.build')" = "$ios_build"

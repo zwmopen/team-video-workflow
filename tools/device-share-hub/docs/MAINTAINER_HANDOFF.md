@@ -1,11 +1,11 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
-## 2026-09-11 文案与会话元数据选择隔离（Android/iPhone 0.8.3，源码候选）
+## 2026-09-11 文案与会话元数据选择隔离（Android/iPhone 0.8.3，已发布）
 
 - **版本**：Android 0.8.3 / versionCode 114；iPhone 0.8.3 / build 74。
 - **根因**：手机扫描器在找不到 `文案.txt` 时，对目录内全部 TXT 做自然排序；`会话追踪.txt` 可能被选为 `WorkEntry.text` 或 iOS `textURL`，所以按钮点击正常但复制内容错误。
 - **修复**：双端统一优先选择 `文案.txt`、`小红书文案.txt`、`抖音文案.txt`，排除会话追踪、生产记录、质量报告、标签、元数据和日志类 TXT；只有元数据的目录不再识别为作品。当前生产工作台已将结构化运行记录写入 JSON，旧归档不做破坏性改名。
-- **验证**：Android `testDebugUnitTest`、`assembleRelease`、`lintRelease` 通过；新增 Android 选择规则/ZIP 导入回归与 iOS 扫描回归。尚未完成 GitHub Actions、K60 覆盖安装和实体点击剪贴板验证。
+- **验证**：Android `testDebugUnitTest`、`assembleRelease`、`lintRelease` 通过；新增 Android 选择规则/ZIP 导入回归与 iOS 扫描回归；GitHub Actions 的 Android、iOS、Windows 构建与 `publish-gallery-updates` 已通过。K60 当前未在线，覆盖安装和实体点击剪贴板验证仍待现场设备。
 - **接班先做**：使用同一正式签名包覆盖 K60，先验证本条样例新导入时剪贴板为小红书文案；K60 已存在的错误 `meta.properties` 不会因升级自动恢复，需用现有 `PUT /v2/works/{id}/text` 覆盖为正确文本或重新发送修复后的压缩包。
 
 ## 2026-09-09 回收站废品远程读取与不合格成品打标系统（v0.8.2 双端对齐）
