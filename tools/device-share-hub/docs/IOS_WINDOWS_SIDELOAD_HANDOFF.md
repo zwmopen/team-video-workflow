@@ -81,6 +81,12 @@ schtasks /delete /tn "SideloadlyInteractive" /f
 1. **`No code signature found (0xe800801c)`**：
    - 原因：直接用原生工具推送了 GitHub CI 产出的原始 IPA（未包含个人证书）；
    - 解法：必须通过 Sideloadly 或 AltServer 借助 Apple ID 完成本地 Resign 签名注入。
-2. **掉签原因与周期**：
+2. **掉签原因与周期（96 小时预刷新）**：
    - 苹果个人免费开发者账号生成的描述文件严格限制有效期为 **7 天**；
-   - 保持电脑端 `sideloadlydaemon` 或 `AltServer` 运行，手机和电脑连在同一 Wi-Fi 下可实现后台自动续签。
+   - 保持电脑端 `sideloadlydaemon` 运行，设备底层已永久启用 `EnableWifiConnections: True`，当证书剩余时间不足 96 小时（4 天）时，只要手机与电脑在同一 Wi-Fi，后台通过 Bonjour 自动静默下发新证书，手机实现 100% 免插线永久保活。
+3. **桌面残留“待下载”幽灵图标（无法验证完整性）**：
+   - 原因：此前尝试通过命令行未签名推送，被苹果安全芯片在 40% 拦截，留下了 `com.zwm.album` 占位符；
+   - 解决：执行 `python -m pymobiledevice3 apps uninstall com.zwm.album`，直接物理拔除幽灵图标。
+4. **新版本升级链路（首选 Wi-Fi 无线，备选数据线）**：
+   - 首选：手机在同一 Wi-Fi 亮屏解锁，运行 `python D:\AICode\AI\skills\技能包\技能\ios-sideload-automation\scripts\ios_sideload_engine.py auto`；
+   - 备选：局域网丢包或设备休眠时，插上数据线执行同一脚本，几秒内完成直刷。

@@ -1,5 +1,17 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-12 iPhone 12 实机 v0.8.3 侧载闭环、硬件级无线续签与双技能沉淀
+
+- **实装与对账**：iPhone 12 实机成功通过 Sideloadly 侧载注入个人证书，实机版本 `0.8.3`（Build `74`，`com.zwm.album.TXA6HP98BX`），`ProfileValidated: true`；
+- **幽灵图标拔除**：因早期未签名 IPA 强推被 iOS 安全拦截残留的 `com.zwm.album` 占位图标已通过 `pymobiledevice3 apps uninstall com.zwm.album` 彻底注销拔除；
+- **硬件级免线无线续签**：向 iOS 底层 lockdown 写入 `EnableWifiConnections: True`，打通 Bonjour 局域网广播；`sideloadlydaemon.exe`（Row 40）常驻后台开启 96 小时预刷新（7 天寿命内剩余不足 4 天时无线静默续签），脱离数据线束缚；
+- **本地极速更新源（端口 4348）与双源容灾**：
+  - 启动常驻服务 `lan_update_server.py`，提供局域网内秒速拉取更新与探针响应；
+  - 客户端同 Wi-Fi 走内网极速通道，换 Wi-Fi / 外网环境 1.5 秒超时平滑降级至 GitHub Releases 云端源，杜绝死锁；
+- **双技能沉淀与代码化直达**：
+  - `windows-computer-use`：Session 0 穿透控制 Session 1 桌面，完成无感交互；
+  - `ios-sideload-automation`：提供 `ios_sideload_engine.py auto` 一键全流程无线/有线侧载与真机对账。
+
 ## 2026-09-11 文案与会话元数据选择隔离（Android/iPhone 0.8.3，已发布）
 
 - **版本**：Android 0.8.3 / versionCode 114；iPhone 0.8.3 / build 74。
