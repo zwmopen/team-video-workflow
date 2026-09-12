@@ -1,17 +1,23 @@
 # iOS Windows 侧载交付、自动化调度与排障手册
 
-## 交付结论（2026-09-01 实机验收）
+## 交付结论（2026-09-12 最新实机验收）
 
 - **实体机型号**：`iPhone 12`（Identifier: `00008101-000D34561EE3003A`，iOS 26.6 / Build 23G71）；
 - **实装应用 1（AltStore 官方商店）**：
   - Bundle ID：`com.TXA6HP98BX.com.rileytestut.AltStore`
-  - 版本：`2.2.1`
+  - 版本：`2.2.1`（Build 48）
   - 签名状态：🟢 `iPhone Developer: zwmfree@qq.com (K7NZ5F3428)`
 - **实装应用 2（相册 客户端）**：
   - Bundle ID：`com.zwm.album.TXA6HP98BX`
-  - 版本：`0.6.45`
+  - 版本：`0.8.3`（Build 74，对齐最新 Android 极速传输协议与全新交互）
   - 签名状态：🟢 `iPhone Developer: zwmfree@qq.com (K7NZ5F3428)`
-- **验证方式**：通过底层真机 `pymobiledevice3 apps list` 完整读取应用清单与签名回执，双应用均已成功写入并激活。
+- **脱离数据线与无线续签**：
+  - 底层硬件服务 `com.apple.mobile.wireless_lockdown` 已激活 `EnableWifiConnections: True`；
+  - `sideloadlydaemon` 常驻后台自动续签（登记项 ID 40，7 天周期，96 小时无感刷新）。
+- **验证方式**：通过底层真机 `pymobiledevice3 apps list` 完整读取应用清单与签名回执，应用已成功写入并激活。
+- **固化专属技能**：
+  - `windows-computer-use`：前台 Session 1 桌面穿透、截屏与模拟点击；
+  - `ios-sideload-automation`：iOS 全自动免连线侧载安装与无线续签对账闭环。
 
 ---
 
