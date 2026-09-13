@@ -11,21 +11,21 @@ const androidDetail = read("android/app/src/main/java/com/zwm/gallery/WorkDetail
 const iosContent = read("ios/Album/ContentView.swift");
 const iosDetail = read("ios/Album/WorkDetailView.swift");
 
-assert.match(androidMain, /platformRow\.setOrientation\(LinearLayout\.HORIZONTAL\)/);
+assert.match(androidMain, /FlowLayout platformRow = new FlowLayout/);
 assert.doesNotMatch(androidMain, /Button preview = compactButton\("预览"/);
-assert.match(androidMain, /Button delete = compactButton\("删除"/);
+assert.match(androidMain, /delete\.setText\("删除"\)/);
 assert.match(androidMain, /openPreview\(work, imageIndex\)/);
 assert.match(androidMain, /EXTRA_IMAGE_INDEX/);
 assert.match(androidDetail, /EXTRA_IMAGE_INDEX = "imageIndex"/);
 assert.match(androidDetail, /Theme_DeviceDefault_NoActionBar_Fullscreen/);
 
 assert.doesNotMatch(iosContent, /previewButton/);
-assert.match(iosContent, /UIStackView\(arrangedSubviews: \[douyinButton, xhsButton, deleteButton\]\)/);
-assert.match(iosContent, /platformRow\.distribution = \.fillEqually/);
+assert.match(iosContent, /platformContainer\.addArrangedSubview\(platformRow1\)/);
+assert.match(iosContent, /platformRow1\.distribution = \.fillEqually/);
 assert.match(iosContent, /thumbnailTapped\(_ sender: UIButton\)/);
 assert.match(iosContent, /onPreview: \(\(Int\) -> Void\)\?/);
 assert.match(iosContent, /onDelete: \(\(\) -> Void\)\?/);
-assert.match(iosDetail, /initialImageIndex: Int\? = nil/);
-assert.match(iosDetail, /ImagePreviewController\(urls: work\.imageURLs, initialIndex: index\)/);
+assert.match(iosDetail, /initialIndex: Int/);
+assert.match(iosDetail, /ImagePreviewController\(workName: work\.name, urls: work\.imageURLs, initialIndex: initialIndex\)/);
 
 console.log("work-card-ui: 14 checks passed");

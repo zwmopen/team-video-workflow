@@ -89,7 +89,7 @@ final class ExternalTrashManager {
                 Uri trash = ensureSafTrash(resolver, tree);
                 Uri source = DocumentsContract.buildDocumentUriUsingTree(tree, entry.sourceDocumentId);
                 Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, entry.sourceParentDocumentId);
-                Uri moved = DocumentsContract.moveDocument(resolver, source, parent, trash);
+                Uri moved = safeMoveSafSource(resolver, tree, source, parent, trash, entry.name);
                 if (moved == null) throw new IOException("系统没有完成原文件夹移动");
                 // Count the external move before persisting its location. If metadata persistence fails,
                 // callers must not roll the private entry back to the now-empty original location.
@@ -110,13 +110,13 @@ final class ExternalTrashManager {
                 throw new IOException("请重新选择作品文件夹后再清理");
             }
         } catch (FileNotFoundException missing) {
-            recoverMissingHuaweiSource(legacyRoot, library, entry, result);
+            recoverMissingSource(resolver, tree, legacyRoot, library, entry, result);
         } catch (Exception error) {
             // HarmonyOS sometimes transports FileNotFoundException through Binder as a
             // runtime ParcelableException, so checking only the Java exception type is
             // insufficient.
             if (isMissingDocument(error)) {
-                recoverMissingHuaweiSource(legacyRoot, library, entry, result);
+                recoverMissingSource(resolver, tree, legacyRoot, library, entry, result);
             } else {
                 result.failures.add(entry.name + "：" + safeMessage(error));
             }
@@ -124,9 +124,46 @@ final class ExternalTrashManager {
         return result;
     }
 
-    private static void recoverMissingHuaweiSource(
-            File legacyRoot, WorkLibrary library, WorkLibrary.WorkEntry entry, Result result) {
+    private static Uri safeMoveSafSource(ContentResolver resolver, Uri tree, Uri source,
+                                         Uri parent, Uri trash, String entryName) throws Exception {
+        Uri existingInTrash = findSafChildByName(resolver, tree, trash, entryName);
+        if (existingInTrash != null) {
+            try {
+                DocumentsContract.deleteDocument(resolver, existingInTrash);
+            } catch (Exception ignored) {
+            }
+        }
         try {
+            return DocumentsContract.moveDocument(resolver, source, parent, trash);
+        } catch (Exception error) {
+            if (isAlreadyExistsDocument(error)) {
+                Uri stale = findSafChildByName(resolver, tree, trash, entryName);
+                if (stale != null) {
+                    try {
+                        DocumentsContract.deleteDocument(resolver, stale);
+                    } catch (Exception ignored) {
+                    }
+                }
+                return DocumentsContract.moveDocument(resolver, source, parent, trash);
+            }
+            throw error;
+        }
+    }
+
+    private static void recoverMissingSource(
+            ContentResolver resolver, Uri tree, File legacyRoot, WorkLibrary library,
+            WorkLibrary.WorkEntry entry, Result result) {
+        try {
+            if (tree != null && resolver != null) {
+                Uri trash = ensureSafTrash(resolver, tree);
+                Uri existingInTrash = findSafChildByName(resolver, tree, trash, entry.name);
+                if (existingInTrash != null) {
+                    library.updateExternalTrashLocation(
+                            entry.id, DocumentsContract.getDocumentId(existingInTrash), "");
+                    result.alreadyMissing++;
+                    return;
+                }
+            }
             File existingTrash = legacyRoot == null ? null : findLegacyTrashEntry(legacyRoot, entry);
             if (existingTrash != null) {
                 library.updateExternalTrashLocation(entry.id, "", existingTrash.getName());
@@ -139,8 +176,8 @@ final class ExternalTrashManager {
                 library.deleteTrash(entry.id);
                 result.alreadyMissing++;
             }
-        } catch (IOException cleanupFailure) {
-            result.failures.add(entry.name + "：" + safeMessage(cleanupFailure));
+        } catch (Exception cleanupFailure) {
+            result.failures.add(entry.name + "：" + safeMessage((Exception) cleanupFailure));
         }
     }
 
@@ -332,6 +369,21 @@ final class ExternalTrashManager {
         } else {
             result.alreadyMissing++;
         }
+    }
+
+    private static boolean isAlreadyExistsDocument(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && (message.contains("Already exists")
+                    || message.contains("already exists")
+                    || message.contains("File already exists")
+                    || message.contains("EEXIST"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static boolean isMissingDocument(Throwable error) {

@@ -2,6 +2,53 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-072 缩略图手势精准分流、卡片边框裁剪溢出根除与宽屏预加载优化（Android 0.8.8 / versionCode 119）
+
+- **现象**：
+  1. 用户在卡片小缩略图上左右滑动浏览图片时，容易误触发外层全屏左右切 Tab 手势；
+  2. 横向滑动缩略图预览条时，图片滑动边缘突破白色圆角卡片边框，产生视觉溢出穿透；
+  3. Redmi K60 等 1080p 宽屏设备上首屏卡片第 5、6 张图片出现未加载灰白方块。
+- **根因**：
+  1. `SpringScrollView.onInterceptTouchEvent` 对横向滑动统一拦截，未在 ACTION_DOWN 时根据触摸落点坐标检测子级 `HorizontalScrollView` 并做事件分流；
+  2. `MainActivity.card()` 与 `previewStrip()` 未开启双向视图裁剪（`setClipChildren(false)`），导致子视图在平移滚动时穿透卡片圆角描边外框；
+  3. 异步缩略图预加载阈值固定为 `index < 4`，少于宽屏设备一行能容纳的 5~6 张预览图。
+- **修复**：
+  1. `SpringScrollView` 增加 `findHorizontalScrollViewAt(View, int, int)` 递归检测，当触摸在缩略图预览条内时标记 `touchStartedInHorizontalChild = true`，父级绝对不拦截横向手势；触摸在标题、按钮或卡片留白时才触发顶部分类 Tab 秒级切换；
+  2. `MainActivity.card()` 与 `previewStrip()` 严格开启 `setClipChildren(true)` 与 `setClipToPadding(true)`，双向裁剪锁死在卡片 14dp 内边距中，彻底阻绝视觉溢出；
+  3. 预加载阈值由 `index < 4` 提升至 `index < 8`，首屏第 5、6 张小图瞬间显示，消除灰方块；
+  4. 同步更新 `verify-work-card-ui.mjs` 与 `verify-p2p-invariants.mjs`，确保全套端到端校验脚本 100% 绿灯。
+- **证据**：
+  1. `build-local.ps1 -AndroidOnly`（单测 22 项、assembleRelease、lintRelease）通过，版本号 `0.8.8` / `119`；
+  2. 5 项核心验证脚本（p2p-invariants, removed-surfaces, task-receipts, work-card-ui, auto-mobile-update）全部绿灯；
+  3. Redmi K60 与 Redmi 13C 实机安装覆盖，截图实测滑动不切 Tab、图片绝不破框、灰白方块彻底消失。
+- **回归要求**：
+  1. 缩略图横滑必须保持原位平滑滚动，绝不能误切 Tab；卡片空白区域左右滑必须切换 Tab。
+  2. 缩略图左右滑动边界必须严密限制在白色卡片边框内。
+  3. 5 项 Node 检验脚本与 Android 单元测试必须保持 100% 通过。
+
+## DSH-071 手机端虚假“接收失败”通知刷屏、传送界面设备发现主动广播与全屏分类左右滑手势升级（Android 0.8.7 / versionCode 118）
+
+- **现象 1**：手机相册未发起传送时，系统通知栏频繁弹出“接收失败 Broken pipe”弹窗，传送界面历史记录充斥大量“接收失败 Broken pipe”垃圾日志。
+- **根因 1**：PC 端 Electron `server.js` 探活定时器（`fastDeviceProbingTimer`）每 5 秒发起一次 500ms 超时的 TCP/HTTP 探针；探针超时关闭 socket 时，手机端 `HttpRequest.readLine` 在 0 字节 EOF 时抛出 `HttpError(400, "连接提前结束")`，`handleHttp` 将其捕获并无差别作为传输失败记录到 `OperationLog` 并弹出通知。
+- **修复 1**：
+  1. `HttpRequest.readLine` 识别 0 字节 EOF 作为客户端正常断开连接（返回 `null`），不抛出 HttpError。
+  2. `handleHttp` 捕获异常时严格校验 `isIncomingTransferPath`，只有真实文件/任务传输请求失败才弹出通知并写入操作记录，完全屏蔽后台探测与无害连接断开。
+  3. `OperationLog` 增加 `clear(context)`，并在 `TransferActivity` 增加“清空”按钮，一键抹除历史虚假记录。
+- **现象 2**：传送界面无法发现同局域网设备（因部分 Wi-Fi 路由开启 AP 隔离阻断点对点广播），且界面缺少主动刷新触发按钮。
+- **修复 2**：传送界面增加“🔄 刷新设备”按钮，主动在 UDP 45832 广播 `ZWMDS2_DISCOVER`，促使局域网内对端设备立即回送自身 Beacon。
+- **现象 3**：用户左右滑动卡片时希望能切换顶部分类 Tab，同时手指在卡片底部的横向缩略图预览条上滑动时应只滚动缩略图，互不干扰。
+- **修复 3**：
+  1. `SpringScrollView` 增加横向滑动手势监听器 `SwipeListener`（`onSwipeLeft` / `onSwipeRight`），利用 `VelocityTracker` 与 `minSwipeDistance = dp(42)` 精确识别左右滑手势。
+  2. 尊重子 `HorizontalScrollView`（预览图条）的 `requestDisallowInterceptTouchEvent`，滑动缩略图时只滚动图片条；滑动卡片其余区域（标题、按钮、留白）时触发分类 Tab 快速切换（内存级秒切，分类按钮自动居中平滑滚动）。
+- **证据**：
+  1. 单元测试 `gradle.bat :app:testDebugUnitTest` 22 项全过；
+  2. 编译 Release APK 安装至红米 13C (`69PNFQUCT4XGKZRO`) 与红米 K60 (`e3b58850`)；
+  3. 真机 live 验证：卡片区域左右滑动即刻切换分类（全部 -> 团建游戏 -> 象山）、分类 Tab 自动居中平滑对齐；缩略图区域左右滑动正常滚动图片；传送页一键清空日志、“🔄 刷新设备”广播发送正常、虚假接收失败通知彻底消除。
+- **回归要求**：
+  1. 缩略图横向滑动不能触发分类切换，卡片其他区域左右滑动必须秒级切换分类。
+  2. 局域网探测断开不产生任何系统通知与操作记录。
+  3. 传送界面“清空”按钮能即刻持久化清空历史记录，“🔄 刷新设备”按钮能主动触发组播与广播。
+
 ## DSH-070 移动端把会话追踪 TXT 当成可复制文案（Android/iPhone 0.8.3，修复候选）
 
 - 现象：作品目录同时存在 `会话追踪.txt` 和 `小红书文案.txt` 时，手机点击文案卡片复制了母版 URL、分支 URL、账号等会话元数据。

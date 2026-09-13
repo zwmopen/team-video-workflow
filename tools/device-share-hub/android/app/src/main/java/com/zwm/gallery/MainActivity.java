@@ -101,6 +101,7 @@ public final class MainActivity extends Activity {
     private String selectedCategory = WorkCategory.ALL;
     private LinearLayout categoryBar;
     private FrameLayout categorySelector;
+    private HorizontalScrollView categoryScrollView;
     private SpringScrollView contentScroll;
     private LinearLayout refreshIndicator;
     private ProgressBar refreshSpinner;
@@ -299,7 +300,7 @@ public final class MainActivity extends Activity {
         categoryBar.setGravity(Gravity.CENTER_VERTICAL);
         categoryBar.setPadding(dp(3), dp(3), dp(3), dp(3));
 
-        HorizontalScrollView categoryScrollView = new HorizontalScrollView(this);
+        categoryScrollView = new HorizontalScrollView(this);
         categoryScrollView.setHorizontalScrollBarEnabled(false);
         categoryScrollView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         categoryScrollView.addView(categoryBar, new FrameLayout.LayoutParams(-2, -1));
@@ -328,6 +329,10 @@ public final class MainActivity extends Activity {
         root.addView(footerNote, margins(0, dp(12), 0, 0));
 
         contentScroll = new SpringScrollView(this);
+        contentScroll.setSwipeListener(new SpringScrollView.SwipeListener() {
+            @Override public void onSwipeLeft() { switchToNextCategory(); }
+            @Override public void onSwipeRight() { switchToPreviousCategory(); }
+        });
         contentScroll.setPullRefreshListener(new SpringScrollView.PullRefreshListener() {
             @Override public void onPull(float progress, boolean ready) {
                 showPullProgress(progress, ready);
@@ -398,6 +403,14 @@ public final class MainActivity extends Activity {
                     DiagnosticLog.write(this, "duplicate_works_merged",
                             "count=" + library.reconciledDuplicates());
                 }
+                // Fast-path: render visible items immediately so UI appears instantly without waiting for cleanup
+                List<WorkLibrary.WorkEntry> initialActive = library.listActive();
+                List<WorkLibrary.WorkEntry> initialEntries = showingTrash ? library.listTrash() : initialActive;
+                runOnUiThread(() -> {
+                    renderWorks(initialEntries);
+                    finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + initialEntries.size() + " 个");
+                });
+
                 CleanupCoordinator.Result cleanup = CleanupCoordinator.run(this);
                 if (!cleanup.failure.isEmpty()) {
                     DiagnosticLog.write(this, "external_trash_purge_failed", cleanup.failure);
@@ -405,10 +418,9 @@ public final class MainActivity extends Activity {
                 List<WorkLibrary.WorkEntry> activeEntries = library.listActive();
                 List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : activeEntries;
                 OnlineService.publishWorkInventory(this, activeEntries);
-                runOnUiThread(() -> {
-                    renderWorks(entries);
-                    finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + entries.size() + " 个");
-                });
+                if (cleanup.moved > 0 || cleanup.deleted > 0 || entries.size() != initialEntries.size()) {
+                    runOnUiThread(() -> renderWorks(entries, false));
+                }
             } catch (Exception error) {
                 DiagnosticLog.write(this, "library_refresh_failed", error.getMessage());
                 runOnUiThread(() -> {
@@ -477,20 +489,25 @@ public final class MainActivity extends Activity {
     }
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries) {
-        renderWorks(entries, true);
+        renderWorks(entries, false);
     }
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries, boolean animate) {
         if (fileMode) return;
         renderedWorks = new ArrayList<>(entries);
         if (!showingTrash) updateCategoryCounts(entries);
+        List<WorkLibrary.WorkEntry> displayEntries = entries;
         if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
             ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
             for (WorkLibrary.WorkEntry entry : entries) {
                 if (selectedCategory.equals(entry.getFolderName())) filtered.add(entry);
             }
-            entries = filtered;
+            displayEntries = filtered;
         }
+        renderWorksCards(displayEntries, animate);
+    }
+
+    private void renderWorksCards(List<WorkLibrary.WorkEntry> entries, boolean animate) {
         LayoutTransition transition = worksContainer.getLayoutTransition();
         if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();
@@ -522,6 +539,29 @@ public final class MainActivity extends Activity {
             worksContainer.addView(workCard(entry), margins(0, 0, 0, dp(10)));
         }
         if (!animate) worksContainer.setLayoutTransition(transition);
+    }
+
+    private void applyCategoryFilter(String folderKey) {
+        if (fileMode || showingTrash) return;
+        if (renderedWorks == null || renderedWorks.isEmpty()) {
+            refreshWorks();
+            return;
+        }
+        List<WorkLibrary.WorkEntry> filtered;
+        if (WorkCategory.ALL.equals(folderKey)) {
+            filtered = renderedWorks;
+        } else {
+            filtered = new ArrayList<>();
+            for (WorkLibrary.WorkEntry entry : renderedWorks) {
+                if (folderKey.equals(entry.getFolderName())) {
+                    filtered.add(entry);
+                }
+            }
+        }
+        renderWorksCards(filtered, false);
+        if (contentScroll != null) {
+            contentScroll.scrollTo(0, 0);
+        }
     }
 
     private View workCard(WorkLibrary.WorkEntry work) {
@@ -636,11 +676,16 @@ public final class MainActivity extends Activity {
         HorizontalScrollView scroll = new HorizontalScrollView(this);
         scroll.setHorizontalScrollBarEnabled(false);
         scroll.setFillViewport(false);
+        scroll.setClipChildren(true);
+        scroll.setClipToPadding(true);
 
         LinearLayout strip = new LinearLayout(this);
         strip.setOrientation(LinearLayout.HORIZONTAL);
         strip.setGravity(Gravity.CENTER_VERTICAL);
         strip.setPadding(0, 0, dp(2), 0);
+        strip.setClipChildren(true);
+        strip.setClipToPadding(true);
+        final List<Runnable> deferredLoads = new ArrayList<>();
         for (int index = 0; index < work.images.size(); index++) {
             String imageName = work.images.get(index);
             ImageView thumbnail = new ImageView(this);
@@ -649,12 +694,33 @@ public final class MainActivity extends Activity {
                     Color.rgb(239, 242, 240), 10, Color.rgb(216, 222, 218)));
             thumbnail.setClipToOutline(true);
             thumbnail.setContentDescription("预览第 " + (index + 1) + " 张图片");
-            loadThumbnailAsync(new File(work.directory, imageName), dp(68), thumbnail);
+            File imageFile = new File(work.directory, imageName);
+            if (index < 8) {
+                loadThumbnailAsync(imageFile, dp(68), thumbnail);
+            } else {
+                String path = imageFile.getAbsolutePath();
+                Bitmap cached = THUMBNAIL_CACHE.get(path);
+                if (cached != null && !cached.isRecycled()) {
+                    thumbnail.setImageBitmap(cached);
+                } else {
+                    deferredLoads.add(() -> loadThumbnailAsync(imageFile, dp(68), thumbnail));
+                }
+            }
             final int imageIndex = index;
             thumbnail.setOnClickListener(v -> openPreview(work, imageIndex));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(68), dp(68));
             if (index > 0) params.setMargins(dp(7), 0, 0, 0);
             strip.addView(thumbnail, params);
+        }
+        if (!deferredLoads.isEmpty()) {
+            scroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if (scrollX > dp(20)) {
+                    scroll.setOnScrollChangeListener(null);
+                    for (Runnable task : deferredLoads) {
+                        task.run();
+                    }
+                }
+            });
         }
         scroll.addView(strip, new HorizontalScrollView.LayoutParams(-2, dp(68)));
         return scroll;
@@ -754,6 +820,44 @@ public final class MainActivity extends Activity {
         }
     }
 
+    public void switchToNextCategory() {
+        if (categoryButtons.size() <= 1 || fileMode || showingTrash) return;
+        List<String> keys = new ArrayList<>(categoryButtons.keySet());
+        int currentIndex = keys.indexOf(selectedCategory);
+        if (currentIndex < 0) currentIndex = 0;
+        int nextIndex = (currentIndex + 1) % keys.size();
+        selectCategory(keys.get(nextIndex), true);
+    }
+
+    public void switchToPreviousCategory() {
+        if (categoryButtons.size() <= 1 || fileMode || showingTrash) return;
+        List<String> keys = new ArrayList<>(categoryButtons.keySet());
+        int currentIndex = keys.indexOf(selectedCategory);
+        if (currentIndex < 0) currentIndex = 0;
+        int prevIndex = (currentIndex - 1 + keys.size()) % keys.size();
+        selectCategory(keys.get(prevIndex), true);
+    }
+
+    private void selectCategory(String folderKey, boolean showToast) {
+        if (folderKey == null || !categoryButtons.containsKey(folderKey)) return;
+        if (folderKey.equals(selectedCategory)) return;
+        selectedCategory = folderKey;
+        for (Map.Entry<String, Button> item : categoryButtons.entrySet()) {
+            applyCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedCategory));
+        }
+        applyCategoryFilter(selectedCategory);
+        Button activeBtn = categoryButtons.get(folderKey);
+        if (activeBtn != null && categoryScrollView != null) {
+            int scrollX = activeBtn.getLeft() - (categoryScrollView.getWidth() - activeBtn.getWidth()) / 2;
+            categoryScrollView.smoothScrollTo(Math.max(0, scrollX), 0);
+        }
+        if (showToast) {
+            String displayBase = categoryLabels.get(folderKey);
+            if (displayBase == null) displayBase = folderKey;
+            toast("已显示 " + displayBase);
+        }
+    }
+
     private Button createCategoryButton(String folderKey, String displayBase, String buttonText, boolean isSelected) {
         Button button = new Button(this);
         button.setText(buttonText);
@@ -766,15 +870,7 @@ public final class MainActivity extends Activity {
         button.setGravity(Gravity.CENTER);
         applyCategoryButtonStyle(button, isSelected);
 
-        button.setOnClickListener(v -> {
-            if (folderKey.equals(selectedCategory)) return;
-            selectedCategory = folderKey;
-            for (Map.Entry<String, Button> item : categoryButtons.entrySet()) {
-                applyCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedCategory));
-            }
-            refreshWorks();
-            toast("已显示 " + displayBase);
-        });
+        button.setOnClickListener(v -> selectCategory(folderKey, true));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
         params.setMargins(dp(2), 0, dp(2), 0);
         button.setLayoutParams(params);
@@ -1530,8 +1626,8 @@ public final class MainActivity extends Activity {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(12), dp(14), dp(14));
-        card.setClipChildren(false);
-        card.setClipToPadding(false);
+        card.setClipChildren(true);
+        card.setClipToPadding(true);
         card.setBackground(roundWithStroke(
                 Color.WHITE, 16, Color.rgb(224, 228, 226)));
         card.setElevation(dp(1));

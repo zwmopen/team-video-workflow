@@ -40,6 +40,7 @@ public final class TransferActivity extends Activity {
     private static final String CHANNEL_WIFI = "wifi";
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private LinearLayout peersContainer;
+    private LinearLayout recordsContainer;
     private TextView status;
     private ProgressBar progress;
     private Button channelButton;
@@ -98,14 +99,38 @@ public final class TransferActivity extends Activity {
         TextView hint = text("先选传送方式和设备，再选文件或文件夹。同一 Wi‑Fi 可直连；数据线需要打开 USB 网络共享。", 14, false);
         hint.setTextColor(Color.rgb(103, 100, 95));
         root.addView(hint, margins(0, dp(8), 0, dp(14)));
+        LinearLayout channelRow = new LinearLayout(this);
+        channelRow.setOrientation(LinearLayout.HORIZONTAL);
+        channelRow.setGravity(Gravity.CENTER_VERTICAL);
+
         channelButton = new Button(this);
         channelButton.setAllCaps(false);
-        channelButton.setTextSize(15);
+        channelButton.setTextSize(14);
         channelButton.setTextColor(Color.rgb(38, 115, 77));
         channelButton.setBackground(round(Color.WHITE, 14));
         channelButton.setOnClickListener(v -> chooseChannel());
         updateChannelButton();
-        root.addView(channelButton, margins(0, 0, 0, dp(12)));
+
+        Button refreshButton = new Button(this);
+        refreshButton.setText("🔄 刷新设备");
+        refreshButton.setAllCaps(false);
+        refreshButton.setTextSize(14);
+        refreshButton.setTextColor(Color.rgb(38, 115, 77));
+        refreshButton.setBackground(round(Color.WHITE, 14));
+        refreshButton.setPadding(dp(14), 0, dp(14), 0);
+        refreshButton.setOnClickListener(v -> {
+            OnlineService.requestImmediateDiscovery(TransferActivity.this);
+            renderPeers();
+            if (status != null) status.setText("正在重新搜索局域网设备…");
+            Toast.makeText(TransferActivity.this, "已发送发现广播，正在搜索设备", Toast.LENGTH_SHORT).show();
+        });
+
+        channelRow.addView(channelButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(-2, dp(44));
+        refreshParams.setMargins(dp(8), 0, 0, 0);
+        channelRow.addView(refreshButton, refreshParams);
+        root.addView(channelRow, margins(0, 0, 0, dp(12)));
+
         peersContainer = new LinearLayout(this);
         peersContainer.setOrientation(LinearLayout.VERTICAL);
         root.addView(peersContainer);
@@ -129,23 +154,52 @@ public final class TransferActivity extends Activity {
         status.setGravity(Gravity.CENTER);
         status.setTextColor(Color.rgb(71, 104, 87));
         root.addView(status, margins(0, dp(12), 0, 0));
+
+        LinearLayout recordsHeader = new LinearLayout(this);
+        recordsHeader.setOrientation(LinearLayout.HORIZONTAL);
+        recordsHeader.setGravity(Gravity.CENTER_VERTICAL);
         TextView recordsTitle = text("操作记录", 16, true);
-        root.addView(recordsTitle, margins(0, dp(24), 0, dp(8)));
+        recordsHeader.addView(recordsTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        Button clearBtn = new Button(this);
+        clearBtn.setText("清空");
+        clearBtn.setTextSize(13);
+        clearBtn.setAllCaps(false);
+        clearBtn.setTextColor(Color.rgb(130, 130, 128));
+        clearBtn.setBackgroundColor(Color.TRANSPARENT);
+        clearBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
+        clearBtn.setOnClickListener(v -> {
+            OperationLog.clear(TransferActivity.this);
+            renderRecords();
+            Toast.makeText(TransferActivity.this, "记录已清空", Toast.LENGTH_SHORT).show();
+        });
+        recordsHeader.addView(clearBtn);
+        root.addView(recordsHeader, margins(0, dp(24), 0, dp(8)));
+
+        recordsContainer = new LinearLayout(this);
+        recordsContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(recordsContainer);
+        renderRecords();
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(root);
+        return scroll;
+    }
+
+    private void renderRecords() {
+        if (recordsContainer == null) return;
+        recordsContainer.removeAllViews();
         List<String> records = OperationLog.recent(this, 12);
         if (records.isEmpty()) {
-            root.addView(text("暂无传送记录", 13, false));
+            recordsContainer.addView(text("暂无传送记录", 13, false));
         } else {
             for (String record : records) {
                 TextView item = text(record, 13, false);
                 item.setPadding(dp(12), dp(10), dp(12), dp(10));
                 item.setBackground(round(Color.WHITE, 12));
-                root.addView(item, margins(0, 0, 0, dp(7)));
+                recordsContainer.addView(item, margins(0, 0, 0, dp(7)));
             }
         }
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.addView(root);
-        return scroll;
     }
 
     private void renderPeers() {
@@ -314,7 +368,12 @@ public final class TransferActivity extends Activity {
     }
 
     private void updateProgress(int value, String message) {
-        runOnUiThread(() -> { progress.setProgress(value); progress.setVisibility(View.VISIBLE); status.setText(message); });
+        runOnUiThread(() -> {
+            progress.setProgress(value);
+            progress.setVisibility(View.VISIBLE);
+            status.setText(message);
+            renderRecords();
+        });
     }
 
     private Button action(String title) {

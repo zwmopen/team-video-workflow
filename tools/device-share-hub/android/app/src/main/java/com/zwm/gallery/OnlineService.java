@@ -70,6 +70,8 @@ public final class OnlineService extends Service {
     public static final String ACTION_SHARE_FINISHED = "com.zwm.gallery.SHARE_FINISHED";
     /** Ask the running receiver to publish its current inventory immediately. */
     public static final String ACTION_REFRESH_STATUS = "com.zwm.gallery.REFRESH_STATUS";
+    /** Ask the running receiver to actively broadcast discovery to all LAN peers immediately. */
+    public static final String ACTION_DISCOVER_PEERS = "com.zwm.gallery.DISCOVER_PEERS";
     /** Apply the user's automatic-receive preference to the running receiver. */
     public static final String ACTION_AUTO_RECEIVE_CHANGED = "com.zwm.gallery.AUTO_RECEIVE_CHANGED";
     public static final String EXTRA_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
@@ -81,7 +83,6 @@ public final class OnlineService extends Service {
     private static final String PREF_WORK_COUNT_TRAFFIC = "advertisedWorkCountTraffic";
     private static final String PREF_WORK_COUNT_UNCATEGORIZED = "advertisedWorkCountUncategorized";
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
-    private static final String PREF_REMOTE_IMPORTED = "remoteImportedTransfers";
     private static final String PREF_COMMITTED_TASKS = "committedIncomingTasks";
     private static final String PREF_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
@@ -104,10 +105,6 @@ public final class OnlineService extends Service {
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
-    private RemoteRelayPresence remotePresence;
-    private final Set<String> remoteInboxTasks = Collections.synchronizedSet(new HashSet<>());
-    private final Set<String> remoteProcessingTasks = Collections.synchronizedSet(new HashSet<>());
-    private final ConcurrentHashMap<String, P2PTransferEngine> p2pEngines = new ConcurrentHashMap<>();
     private volatile boolean running;
     private volatile String state = "online";
     private volatile String currentTaskId = "";
@@ -116,6 +113,7 @@ public final class OnlineService extends Service {
     private volatile boolean httpLoopActive;
     private volatile boolean discoveryLoopActive;
     private volatile boolean beaconRequested;
+    private volatile boolean discoverRequested;
     private boolean discoveryRecovering;
     private WifiManager.MulticastLock multicastLock;
     private final Object taskLock = new Object();
@@ -161,6 +159,22 @@ public final class OnlineService extends Service {
             // A background refresh may be restricted by the OS. The running service's
             // regular beacon is still authoritative, so this is deliberately best effort.
             DiagnosticLog.write(context, "status_beacon_request_deferred",
+                    error.getClass().getSimpleName());
+        }
+    }
+
+    public static void requestImmediateDiscovery(Context context) {
+        if (context == null) return;
+        Intent intent = new Intent(context, OnlineService.class)
+                .setAction(ACTION_DISCOVER_PEERS);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (IllegalStateException | SecurityException error) {
+            DiagnosticLog.write(context, "discovery_request_deferred",
                     error.getClass().getSimpleName());
         }
     }
@@ -223,20 +237,6 @@ public final class OnlineService extends Service {
     public void onCreate() {
         super.onCreate();
         ensureIdentity();
-        try {
-            RemoteIdentity.ensure(this);
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "remote_identity_unavailable", error.getClass().getSimpleName());
-        }
-        remotePresence = new RemoteRelayPresence(getApplicationContext(), new RemoteRelayPresence.Listener() {
-            @Override public void onInbox(RemoteRelayClient.Session session, JSONArray transfers) {
-                handleRemoteInbox(session, transfers);
-            }
-            @Override public void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) {
-                OnlineService.this.onP2PSessions(session, sessions);
-            }
-        }, this::remoteInventory);
-        remotePresence.start();
         createChannel();
         cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
     }
@@ -288,256 +288,16 @@ public final class OnlineService extends Service {
         ensureNetworkLoops();
         notifyStatus("局域网接收已开启，等待电脑自动发现");
         if (ACTION_REFRESH_STATUS.equals(action)) beaconRequested = true;
+        if (ACTION_DISCOVER_PEERS.equals(action)) {
+            beaconRequested = true;
+            discoverRequested = true;
+        }
         return START_STICKY;
-    }
-
-    private void handleRemoteInbox(RemoteRelayClient.Session session, JSONArray transfers) {
-        if (session == null || transfers == null) return;
-        if (!isAutoReceiveEnabled()) {
-            DiagnosticLog.write(this, "remote_inbox_ignored", "auto_receive_disabled");
-            return;
-        }
-        int ready = 0;
-        int fresh = 0;
-        long now = System.currentTimeMillis();
-        for (int i = 0; i < transfers.length(); i++) {
-            JSONObject object = transfers.optJSONObject(i);
-            try {
-                RemoteRelayTask task = RemoteRelayTask.parse(object, session.deviceId, now);
-                if (task.expired(now)) continue;
-                ready++;
-                if (remoteInboxTasks.add(task.transferId)
-                        && remoteProcessingTasks.add(task.transferId)) {
-                    fresh++;
-                    DiagnosticLog.write(this, "remote_task_ready",
-                            "mode=" + task.mode + " objects=" + task.objectCount
-                                    + " bytes=" + task.totalBytes);
-                    requestExecutor.execute(() -> processRemoteTask(session, task));
-                }
-            } catch (Exception error) {
-                DiagnosticLog.write(this, "remote_task_ignored",
-                        error.getClass().getSimpleName());
-            }
-        }
-        if (remoteInboxTasks.size() > 256) {
-            synchronized (remoteInboxTasks) {
-                while (remoteInboxTasks.size() > 192) {
-                    String first = remoteInboxTasks.iterator().next();
-                    remoteInboxTasks.remove(first);
-                }
-            }
-        }
-        if (ready > 0 && fresh > 0) {
-            DiagnosticLog.write(this, "remote_inbox_ready",
-                    "ready=" + ready + " fresh=" + fresh);
-        }
-    }
-
-    public void onP2PSessions(RemoteRelayClient.Session session, JSONArray sessions) {
-        if (session == null || sessions == null) return;
-        if (!isAutoReceiveEnabled()) {
-            DiagnosticLog.write(this, "p2p_sessions_ignored", "auto_receive_disabled");
-            return;
-        }
-        for (int i = 0; i < sessions.length(); i++) {
-            JSONObject p2p = sessions.optJSONObject(i);
-            if (p2p == null || !session.deviceId.equals(p2p.optString("responderDeviceId", ""))) continue;
-            String id = p2p.optString("sessionId", "");
-            String state = p2p.optString("state", "");
-            if (id.isEmpty() || "closed".equals(state) || "failed".equals(state)
-                    || p2pEngines.containsKey(id)) continue;
-            P2PTransferEngine.SignalTransport transport = new P2PTransferEngine.SignalTransport() {
-                @Override public JSONObject snapshot() throws Exception {
-                    return RemoteRelayClient.p2pSession(session, id);
-                }
-                @Override public void send(String type, JSONObject data) throws Exception {
-                    RemoteRelayClient.sendP2PSignal(session, id, type, data);
-                }
-                @Override public void close() {
-                    requestExecutor.execute(() -> {
-                        try { RemoteRelayClient.closeP2PSession(session, id); }
-                        catch (Exception ignored) { }
-                    });
-                }
-            };
-            P2PTransferEngine engine = P2PTransferEngine.accept(this, p2p, transport,
-                    new P2PTransferEngine.Listener() {
-                        @Override public boolean onCompleted(P2PTransferEngine.Transfer transfer) throws Exception {
-                            boolean imported = importP2PTransfer(transfer);
-                            if (imported) p2pEngines.remove(id);
-                            return imported;
-                        }
-                        @Override public void onFailed(String message) {
-                            p2pEngines.remove(id);
-                            DiagnosticLog.write(OnlineService.this, "p2p_transfer_failed",
-                                    "session=" + id + " error=" + message);
-                        }
-                    });
-            if (engine == null) continue;
-            p2pEngines.put(id, engine);
-            DiagnosticLog.write(this, "p2p_session_accepted", "session=" + id);
-        }
-    }
-
-    private boolean importP2PTransfer(P2PTransferEngine.Transfer transfer) throws Exception {
-        if (!isAutoReceiveEnabled()) throw new IOException("自动接收已关闭");
-        if (wasRemoteImported(transfer.transferId)) {
-            // The import already committed, but a previous ACK may have been
-            // lost. Remove any retry cache before acknowledging the duplicate.
-            deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
-            return true;
-        }
-        if ("android-update".equals(transfer.contentKind)) {
-            if (transfer.objects.size() != 1 || transfer.files.size() != 1
-                    || !transfer.objects.get(0).name.toLowerCase(Locale.US).endsWith(".apk")) {
-                throw new IOException("安卓更新任务必须是单个 APK");
-            }
-            stageIncomingUpdatePackage(transfer.files.get(0));
-            markRemoteImported(transfer.transferId);
-            deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
-            notifyStatus("P2P 更新包已校验，等待系统安装");
-            return true;
-        }
-        WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
-        int imported = 0;
-        for (int i = 0; i < transfer.objects.size(); i++) {
-            P2PTransferEngine.ObjectInfo object = transfer.objects.get(i);
-            File source = transfer.files.get(i);
-            if (object.name.toLowerCase(Locale.US).startsWith("album-folder-")
-                    && object.name.toLowerCase(Locale.US).endsWith(".zip")) {
-                imported += WorkArchiveImporter.importZip(source, library, "p2p-" + transfer.transferId);
-            } else if (WorkRules.isSupportedImage(object.name)) {
-                ArrayList<File> images = new ArrayList<>();
-                images.add(source);
-                library.importWork("p2p-" + transfer.transferId + "-" + object.index,
-                        "P2P 传入的作品", "", images, "", "", "", object.name);
-                imported++;
-            }
-        }
-        if (imported <= 0) throw new IOException("P2P 作品包为空");
-        markRemoteImported(transfer.transferId);
-        publishWorkInventory(this, library.listActive());
-        deleteRecursively(new File(getCacheDir(), "p2p/" + transfer.transferId));
-        notifyStatus("P2P 作品已接收，已写入作品库");
-        return true;
-    }
-
-    private void processRemoteTask(RemoteRelayClient.Session session, RemoteRelayTask task) {
-        File transferDirectory = new File(getCacheDir(), "remote-relay/" + task.transferId);
-        try {
-            if (!isAutoReceiveEnabled()) throw new IOException("自动接收已关闭");
-            if (!"plain".equals(task.mode)) {
-                throw new IOException("当前版本只接收普通公开作品包");
-            }
-            // A P2P delivery can finish importing before its ACK reaches the
-            // sender. The sender then retries through the relay. In that case
-            // the durable marker is authoritative: only repair the missing
-            // relay ACK and never import the same work a second time.
-            if (!shouldImportRemoteTask(wasRemoteImported(task.transferId))) {
-                RemoteRelayClient.ack(session, task.transferId);
-                remoteInboxTasks.remove(task.transferId);
-                deleteRecursively(transferDirectory);
-                DiagnosticLog.write(this, "remote_task_ack_repaired",
-                        "transferId=" + task.transferId + " already_imported=true");
-                notifyStatus("远程作品已接收，已补发 ACK");
-                return;
-            }
-            WorkLibrary library = new WorkLibrary(new File(getFilesDir(), "work-library"));
-            if ("android-update".equals(task.contentKind)) {
-                if (task.objects.size() != 1
-                        || !task.objects.get(0).name.toLowerCase(Locale.US).endsWith(".apk")) {
-                    throw new IOException("安卓更新任务必须是单个 APK");
-                }
-                RemoteRelayTask.ObjectInfo object = task.objects.get(0);
-                if (!transferDirectory.isDirectory() && !transferDirectory.mkdirs()
-                        && !transferDirectory.isDirectory()) {
-                    throw new IOException("无法创建远程更新缓存");
-                }
-                File target = new File(transferDirectory, object.index + ".apk");
-                RemoteRelayClient.downloadObject(session, task.transferId, object.index, target,
-                        object.bytes, object.sha256);
-                stageIncomingUpdatePackage(target);
-                long stagedBytes = target.length();
-                markRemoteImported(task.transferId);
-                RemoteRelayClient.ack(session, task.transferId);
-                remoteInboxTasks.remove(task.transferId);
-                deleteRecursively(transferDirectory);
-                DiagnosticLog.write(this, "remote_update_completed",
-                        "transferId=" + task.transferId + " bytes=" + stagedBytes);
-                notifyStatus("远程更新包已校验，等待系统安装");
-                return;
-            }
-            int imported = 0;
-            int delivered = 0;
-            if (!transferDirectory.isDirectory() && !transferDirectory.mkdirs()
-                    && !transferDirectory.isDirectory()) {
-                throw new IOException("无法创建远程接收缓存");
-            }
-            for (RemoteRelayTask.ObjectInfo object : task.objects) {
-                if (!isAutoReceiveEnabled()) throw new IOException("自动接收已关闭");
-                File target = new File(transferDirectory, object.index + ".download");
-                RemoteRelayClient.downloadObject(session, task.transferId, object.index, target,
-                        object.bytes, object.sha256);
-                if (object.name.toLowerCase(Locale.US).startsWith("album-folder-")
-                        && object.name.toLowerCase(Locale.US).endsWith(".zip")) {
-                    imported += WorkArchiveImporter.importZip(target, library,
-                            "remote-" + task.transferId);
-                } else if (WorkRules.isSupportedImage(object.name)) {
-                    ArrayList<File> images = new ArrayList<>();
-                    images.add(target);
-                    library.importWork("remote-" + task.transferId + "-" + object.index,
-                            "远程传入的作品", "", images, "", "", "", object.name);
-                    imported++;
-                } else {
-                    throw new IOException("远程对象不是可导入的作品文件");
-                }
-                delivered++;
-            }
-            if (imported <= 0 && !wasRemoteImported(task.transferId)) {
-                throw new IOException("远程作品包为空");
-            }
-            markRemoteImported(task.transferId);
-            publishWorkInventory(this, library.listActive());
-            // ACK is deliberately last: download, hash verification and library
-            // commit must all finish before the relay deletes its object.
-            RemoteRelayClient.ack(session, task.transferId);
-            remoteInboxTasks.remove(task.transferId);
-            deleteRecursively(transferDirectory);
-            DiagnosticLog.write(this, "remote_task_completed",
-                    "transferId=" + task.transferId + " files=" + delivered
-                            + " works=" + imported);
-            notifyStatus("远程作品已接收，已写入作品库");
-        } catch (Exception error) {
-            remoteInboxTasks.remove(task.transferId);
-            DiagnosticLog.write(this, "remote_task_failed",
-                    "transferId=" + task.transferId + " error=" + error.getClass().getSimpleName());
-            notifyStatus("远程作品接收失败，未发送 ACK：" + error.getMessage());
-        } finally {
-            remoteProcessingTasks.remove(task.transferId);
-            if (!remoteInboxTasks.contains(task.transferId)) deleteRecursively(transferDirectory);
-        }
-    }
-
-    private boolean wasRemoteImported(String transferId) {
-        return getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getStringSet(PREF_REMOTE_IMPORTED, Collections.emptySet()).contains(transferId);
-    }
-
-    private void markRemoteImported(String transferId) {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        Set<String> values = new HashSet<>(prefs.getStringSet(PREF_REMOTE_IMPORTED,
-                Collections.emptySet()));
-        values.add(transferId);
-        while (values.size() > 256) values.remove(values.iterator().next());
-        prefs.edit().putStringSet(PREF_REMOTE_IMPORTED, values).apply();
     }
 
     @Override
     public void onDestroy() {
         running = false;
-        if (remotePresence != null) remotePresence.stop();
-        for (P2PTransferEngine engine : p2pEngines.values()) engine.cancel();
-        p2pEngines.clear();
         closeSockets();
         releaseMulticastLock();
         serviceExecutor.shutdownNow();
@@ -722,6 +482,7 @@ public final class OnlineService extends Service {
             HttpRequest request = null;
             try {
                 request = HttpRequest.read(input);
+                if (request == null) return;
                 DiagnosticLog.write(this, "http_request", request.method + " " + request.path + " bytes=" + request.contentLength);
                 if (!isAutoReceiveEnabled()
                         && isIncomingTransferPath(request.method, request.path)) {
@@ -729,10 +490,6 @@ public final class OnlineService extends Service {
                 }
                 if ("GET".equals(request.method) && "/v2/info".equals(request.path)) {
                     writeJson(output, 200, deviceInfo());
-                    return;
-                }
-                if ("POST".equals(request.method) && "/v2/relay-profile".equals(request.path)) {
-                    saveRelayProfile(request, input, output);
                     return;
                 }
                 if ("POST".equals(request.method) && "/v2/tasks".equals(request.path)) {
@@ -781,24 +538,45 @@ public final class OnlineService extends Service {
                     resetFailedCommitTask(commitTaskId(request.path), error.getMessage());
                 }
                 DiagnosticLog.write(this, "http_error", error.code + " " + compact(error.getMessage()));
-                String message = "接收失败：" + compact(error.getMessage());
-                notifyStatus(message);
-                cancelTransferProgressNotification();
-                notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
-                OperationLog.add(this, "接收失败", compact(error.getMessage()));
-                writeText(output, error.code, error.getMessage());
+                boolean isTransfer = request != null && isIncomingTransferPath(request.method, request.path);
+                if (isTransfer) {
+                    String message = "接收失败：" + compact(error.getMessage());
+                    notifyStatus(message);
+                    cancelTransferProgressNotification();
+                    notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
+                    OperationLog.add(this, "接收失败", compact(error.getMessage()));
+                }
+                try {
+                    writeText(output, error.code, error.getMessage());
+                } catch (Exception ignored) {
+                }
             } catch (Exception error) {
                 if (request != null && isCommitPath(request.method, request.path)) {
                     resetFailedCommitTask(commitTaskId(request.path), error.getMessage());
                 }
+                boolean isTransfer = request != null && isIncomingTransferPath(request.method, request.path);
+                if (isClientDisconnect(error)) {
+                    Log.i(TAG, "client disconnected prematurely: " + error.getMessage());
+                    DiagnosticLog.write(this, "client_disconnected", compact(error.getMessage()));
+                    cancelTransferProgressNotification();
+                    if (isTransfer) {
+                        notifyStatus("传送已中断，等待重试");
+                    }
+                    return;
+                }
                 Log.w(TAG, "request failed", error);
                 DiagnosticLog.write(this, "request_failed", compact(error.getMessage()));
-                String message = "接收失败：" + compact(error.getMessage());
-                notifyStatus(message);
-                cancelTransferProgressNotification();
-                notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
-                OperationLog.add(this, "接收失败", compact(error.getMessage()));
-                writeText(output, 500, compact(error.getMessage()));
+                if (isTransfer) {
+                    String message = "接收失败：" + compact(error.getMessage());
+                    notifyStatus(message);
+                    cancelTransferProgressNotification();
+                    notifyTransferEvent("接收失败", compact(error.getMessage()), 3404, null);
+                    OperationLog.add(this, "接收失败", compact(error.getMessage()));
+                }
+                try {
+                    writeText(output, 500, compact(error.getMessage()));
+                } catch (Exception ignored) {
+                }
             }
         } catch (Exception error) {
             Log.w(TAG, "connection failed", error);
@@ -1476,6 +1254,34 @@ public final class OnlineService extends Service {
         }
     }
 
+    static boolean isClientDisconnect(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof java.net.SocketException) {
+                String message = current.getMessage();
+                if (message != null) {
+                    String lower = message.toLowerCase(Locale.US);
+                    if (lower.contains("broken pipe")
+                            || lower.contains("connection reset")
+                            || lower.contains("connection abort")
+                            || lower.contains("software caused connection abort")) {
+                        return true;
+                    }
+                }
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(Locale.US);
+                if (lower.contains("epipe") || lower.contains("econnreset")
+                        || lower.contains("broken pipe") || lower.contains("connection reset")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     private JSONObject deviceInfo() throws Exception {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         JSONObject workCounts = null;
@@ -1504,26 +1310,7 @@ public final class OnlineService extends Service {
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("network", currentNetworkType(this))
                 .put("taskId", currentTaskId);
-        try {
-            JSONObject relayKeys = RemoteIdentity.publicKeys(this);
-            JSONObject signingKey = relayKeys.getJSONObject("signingPublicKey");
-            JSONObject agreementKey = relayKeys.getJSONObject("agreementPublicKey");
-            // Flatten the public JWK coordinates for the Windows native client. No
-            // private key material ever leaves Android Keystore.
-            info.put("relaySigningX", signingKey.getString("x"))
-                    .put("relaySigningY", signingKey.getString("y"))
-                    .put("relayAgreementX", agreementKey.getString("x"))
-                    .put("relayAgreementY", agreementKey.getString("y"))
-                    .put("relayEnabled", true);
-        } catch (Exception error) {
-            // LAN discovery and the local HTTP receiver must not depend on the
-            // optional Cloudflare relay identity. Android 10 devices with an
-            // OEM Keystore may reject PURPOSE_AGREE_KEY (64); advertise the
-            // device locally and keep only relay transport disabled.
-            DiagnosticLog.write(this, "relay_identity_unavailable",
-                    error.getClass().getSimpleName() + ":" + compact(error.getMessage()));
-            info.put("relayEnabled", false);
-        }
+        info.put("relayEnabled", false);
         if (workCounts != null) info.put("workCounts", workCounts);
         return info;
     }
@@ -1543,38 +1330,10 @@ public final class OnlineService extends Service {
             }
         }
         if (interrupted != null) deleteRecursively(interrupted.dir);
-        for (P2PTransferEngine engine : p2pEngines.values()) engine.cancel();
-        p2pEngines.clear();
-        remoteInboxTasks.clear();
-        remoteProcessingTasks.clear();
         cancelTransferProgressNotification();
         DiagnosticLog.write(this, "auto_receive_disabled", "incoming_transfers_stopped");
         notifyStatus("自动接收已关闭，其他设备不能再投送内容");
         requestImmediateBeacon(this);
-    }
-
-    private void saveRelayProfile(HttpRequest request, InputStream input,
-                                  OutputStream output) throws Exception {
-        if (request.contentLength < 0 || request.contentLength > MAX_JSON_BYTES) {
-            throw new HttpError(413, "远程登记资料过大");
-        }
-        JSONObject body = new JSONObject(new String(
-                readExact(input, request.contentLength), StandardCharsets.UTF_8));
-        String endpoint = body.optString("endpoint", "").trim();
-        JSONObject certificate = body.optJSONObject("certificate");
-        String signature = body.optString("certificateSignature", "").trim();
-        if (endpoint.isEmpty() || certificate == null || signature.isEmpty()) {
-            throw new HttpError(400, "远程登记资料不完整");
-        }
-        String expectedDeviceId = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString("deviceId", "");
-        if (!expectedDeviceId.equals(certificate.optString("deviceId", ""))) {
-            throw new HttpError(403, "远程登记资料不是发给本机的");
-        }
-        RemoteRelayProfile.save(this, endpoint, certificate, signature);
-        DiagnosticLog.write(this, "remote_profile_saved", "endpoint=" + endpoint);
-        notifyStatus("远程传送已开启，等待电脑连接");
-        writeJson(output, 200, new JSONObject().put("ok", true));
     }
 
     private static boolean isZip(ReceivedFile file) {
@@ -1615,14 +1374,6 @@ public final class OnlineService extends Service {
                 && offset <= totalLength && contentLength == totalLength - offset;
     }
 
-    /**
-     * P2P may have imported a transfer before its ACK reached the sender.
-     * A relay retry must repair the ACK only, never import the works again.
-     */
-    static boolean shouldImportRemoteTask(boolean alreadyImported) {
-        return !alreadyImported;
-    }
-
     private void cleanupStaleIncomingTask() {
         IncomingTask stale = null;
         long now = System.currentTimeMillis();
@@ -1658,32 +1409,6 @@ public final class OnlineService extends Service {
         }
     }
 
-    private JSONObject remoteInventory() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        JSONObject inventory = new JSONObject();
-        try {
-            inventory.put("workCount", prefs.getInt(PREF_WORK_COUNT, -1));
-            inventory.put("packageName", getPackageName());
-            inventory.put("androidVersion", Build.VERSION.RELEASE);
-            inventory.put("appVersion", installedVersion());
-            inventory.put("versionCode", installedVersionCode());
-            inventory.put("updateCapability", UPDATE_CAPABILITY);
-            if (prefs.contains(PREF_WORK_COUNT_CONVERSION)
-                    && prefs.contains(PREF_WORK_COUNT_TRAFFIC)
-                    && prefs.contains(PREF_WORK_COUNT_UNCATEGORIZED)) {
-                inventory.put("workCounts", new JSONObject()
-                        .put("total", prefs.getInt(PREF_WORK_COUNT, -1))
-                        .put("conversion", prefs.getInt(PREF_WORK_COUNT_CONVERSION, -1))
-                        .put("traffic", prefs.getInt(PREF_WORK_COUNT_TRAFFIC, -1))
-                        .put("uncategorized", prefs.getInt(PREF_WORK_COUNT_UNCATEGORIZED, -1)));
-            }
-        } catch (Exception error) {
-            DiagnosticLog.write(this, "remote_inventory_build_failed",
-                    error.getClass().getSimpleName());
-        }
-        return inventory;
-    }
-
     private void discoveryLoop() {
         try {
             DiscoveryRecovery.run(
@@ -1712,9 +1437,14 @@ public final class OnlineService extends Service {
             byte[] buffer = new byte[2048];
             while (running) {
                 long now = System.currentTimeMillis();
-                if (beaconRequested || now >= nextBeacon) {
+                if (beaconRequested || discoverRequested || now >= nextBeacon) {
+                    boolean broadcastDiscovery = discoverRequested;
                     beaconRequested = false;
+                    discoverRequested = false;
                     sendBeacon(socket, null);
+                    if (broadcastDiscovery) {
+                        sendDiscover(socket);
+                    }
                     nextBeacon = now + 2500;
                 }
                 try {
@@ -1834,6 +1564,16 @@ public final class OnlineService extends Service {
             socket.send(new DatagramPacket(bytes, bytes.length, directTarget));
             return;
         }
+        for (InetAddress address : broadcastAddresses()) {
+            try {
+                socket.send(new DatagramPacket(bytes, bytes.length, address, DISCOVERY_PORT));
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void sendDiscover(DatagramSocket socket) {
+        byte[] bytes = "ZWMDS2_DISCOVER".getBytes(StandardCharsets.UTF_8);
         for (InetAddress address : broadcastAddresses()) {
             try {
                 socket.send(new DatagramPacket(bytes, bytes.length, address, DISCOVERY_PORT));
@@ -2223,12 +1963,13 @@ public final class OnlineService extends Service {
 
         static HttpRequest read(InputStream input) throws Exception {
             String requestLine = readLine(input, 8192);
+            if (requestLine == null) return null;
             String[] first = requestLine.split(" ");
             if (first.length < 2) throw new HttpError(400, "请求行无效");
             Map<String, String> headers = new HashMap<>();
             while (true) {
                 String line = readLine(input, 16_384);
-                if (line.isEmpty()) break;
+                if (line == null || line.isEmpty()) break;
                 int colon = line.indexOf(':');
                 if (colon <= 0) throw new HttpError(400, "请求头无效");
                 headers.put(line.substring(0, colon).trim().toLowerCase(Locale.US), line.substring(colon + 1).trim());
@@ -2246,7 +1987,10 @@ public final class OnlineService extends Service {
             int previous = -1;
             while (output.size() <= max) {
                 int current = input.read();
-                if (current < 0) throw new HttpError(400, "连接提前结束");
+                if (current < 0) {
+                    if (output.size() == 0) return null;
+                    throw new HttpError(400, "连接提前结束");
+                }
                 if (previous == '\r' && current == '\n') {
                     byte[] bytes = output.toByteArray();
                     return new String(bytes, 0, Math.max(0, bytes.length - 1), StandardCharsets.US_ASCII);

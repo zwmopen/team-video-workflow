@@ -35,6 +35,11 @@ final class OperationLog {
         }
     }
 
+    static synchronized void clear(Context context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().remove(KEY).apply();
+    }
+
     static synchronized List<String> recent(Context context, int limit) {
         ArrayList<String> result = new ArrayList<>();
         try {

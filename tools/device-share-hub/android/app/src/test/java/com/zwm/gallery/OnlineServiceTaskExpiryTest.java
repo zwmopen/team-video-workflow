@@ -1,5 +1,6 @@
 package com.zwm.gallery;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -44,9 +45,11 @@ public class OnlineServiceTaskExpiryTest {
     }
 
     @Test
-    public void relayRetryAfterP2PImportOnlyRepairsAck() {
-        assertTrue(OnlineService.shouldImportRemoteTask(false));
-        assertFalse(OnlineService.shouldImportRemoteTask(true));
+    public void clientDisconnectsAreDetectedAccurately() {
+        assertTrue(OnlineService.isClientDisconnect(new java.net.SocketException("Broken pipe")));
+        assertTrue(OnlineService.isClientDisconnect(new java.net.SocketException("Connection reset by peer")));
+        assertTrue(OnlineService.isClientDisconnect(new RuntimeException(new java.net.SocketException("software caused connection abort"))));
+        assertFalse(OnlineService.isClientDisconnect(new IllegalArgumentException("invalid path")));
     }
 
     @Test
@@ -61,6 +64,16 @@ public class OnlineServiceTaskExpiryTest {
         assertTrue(OnlineService.isIncomingTransferPath("PUT", "/v2/tasks/batch-123/files/0"));
         assertTrue(OnlineService.isIncomingTransferPath("GET", "/v2/tasks/batch-123"));
         assertFalse(OnlineService.isIncomingTransferPath("GET", "/v2/info"));
+        assertFalse(OnlineService.isIncomingTransferPath("GET", "/v2/works"));
+        assertFalse(OnlineService.isIncomingTransferPath("GET", "/v2/trash"));
+        assertFalse(OnlineService.isIncomingTransferPath("PUT", "/v2/works/123/text"));
+        assertFalse(OnlineService.isIncomingTransferPath("DELETE", "/v2/works/123"));
         assertFalse(OnlineService.isIncomingTransferPath("POST", "/v2/relay-profile"));
+    }
+
+    @Test
+    public void discoveryActionConstantsAreDefined() {
+        assertEquals("com.zwm.gallery.DISCOVER_PEERS", OnlineService.ACTION_DISCOVER_PEERS);
+        assertEquals("com.zwm.gallery.REFRESH_STATUS", OnlineService.ACTION_REFRESH_STATUS);
     }
 }
