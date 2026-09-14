@@ -103,7 +103,7 @@ public final class OnlineService extends Service {
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
-    private final ExecutorService requestExecutor = Executors.newFixedThreadPool(4);
+    private final ExecutorService requestExecutor = Executors.newFixedThreadPool(16);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running;
     private volatile String state = "online";
@@ -416,7 +416,7 @@ public final class OnlineService extends Service {
                                     .apply();
                         }
                     }
-                    socket.setSoTimeout(60_000);
+                    socket.setSoTimeout(5_000);
                     requestExecutor.execute(() -> handleHttp(socket));
                 } catch (Exception error) {
                     if (running) Log.w(TAG, "accept failed", error);
@@ -503,6 +503,7 @@ public final class OnlineService extends Service {
                     return;
                 }
                 if (parts.length == 6 && "PUT".equals(request.method) && "v2".equals(parts[1]) && "tasks".equals(parts[2]) && "files".equals(parts[4])) {
+                    client.setSoTimeout(60_000);
                     uploadFile(parts[3], parts[5], request, input, output);
                     return;
                 }
