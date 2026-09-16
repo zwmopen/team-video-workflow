@@ -1,5 +1,20 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-14 Android v0.8.10：作品卡片秒级“秒删”乐观 UI 重构、回收站与恢复全链路瞬时响应（versionCode: 121）
+
+- **版本与安装对账**：Android `0.8.10`（`versionCode: 121`），已成功通过 ADB 覆盖安装至华为 P30（`8KE0219924003568`）并完成实机功能验证。
+- **瞬时乐观 UI 移除（<16ms 响应）**：
+  - 卡片绑定唯一标识（`card.setTag(work.id)`）；
+  - `moveSelectedToTrash`、`restore` 与 `clearTrash` 引入 `optimisticRemoveWorks` 机制：在用户点击弹窗确认的瞬间，主线程在下一帧内立刻从内存列表剔除目标项，触发 `LayoutTransition` 180ms 丝滑折叠淡出动画，页面元素优雅收缩；
+  - 顶部分类 Tab 胶囊徽标与标题栏总计数即刻递减/更新，列表为空时瞬间展示空态占位。
+- **I/O 与全盘扫描彻底异步解耦**：
+  - 大图跨目录移动、SAF IPC 跨进程操作与属性持久化移入后台单线程池静默执行；
+  - 彻底拔除导致 5 秒卡顿的元凶：成功回调中不再执行 `refreshWorks()`，不再触发 `CleanupCoordinator.run(this)` 的全盘缓存与有效性扫描，不再执行 `worksContainer.removeAllViews()` 彻底销毁重建；
+  - 静默通知 `OnlineService.publishWorkInventory` 刷新局域网在线状态与广播信标。
+- **回收站双向闭环与秒级恢复**：
+  - 回收站中的“恢复”按钮升级为秒级乐观移除，作品瞬时折叠消失，后台静默恢复属性并回推库存；
+  - 回收站“清空”按钮升级为瞬时清空视图并显示空态，后台并发批量清理物理文件。
+
 ## 2026-09-13 Android v0.8.8：缩略图手势分流、卡片边框裁剪防溢出、宽屏预加载优化
 
 - **版本与安装对账**：Android `0.8.8`（`versionCode: 119`），已成功覆盖安装至红米 13C 5G (`69PNFQUCT4XGKZRO`) 与红米 K60 (`e3b58850`) 实机运行。

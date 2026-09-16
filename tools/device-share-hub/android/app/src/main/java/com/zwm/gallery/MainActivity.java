@@ -469,6 +469,20 @@ public final class MainActivity extends Activity {
     }
 
     private void clearTrash() {
+        renderedWorks.clear();
+        selectedWorkIds.clear();
+        quickTrashButton.setVisibility(View.GONE);
+        worksContainer.removeAllViews();
+        TextView empty = text("回收站是空的", 14, false);
+        empty.setGravity(Gravity.CENTER);
+        empty.setTextColor(Color.GRAY);
+        empty.setPadding(dp(14), dp(28), dp(14), dp(28));
+        empty.setBackground(round(Color.WHITE, 18));
+        worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        scannedCountText.setText("0");
+        statusText.setText("回收站已清空");
+        toast("回收站已清空");
+
         worker.execute(() -> {
             try {
                 DiagnosticLog.write(this, "trash_clear_started", "user confirmed");
@@ -479,11 +493,16 @@ public final class MainActivity extends Activity {
                 }
                 library.clearTrash();
                 DiagnosticLog.write(this, "trash_cleared", "user confirmed");
-                runOnUiThread(() -> { toast("回收站已清空"); refreshWorks(); });
+                try {
+                    OnlineService.publishWorkInventory(this, library.listActive());
+                } catch (Exception ignored) { }
             } catch (Exception error) {
                 DiagnosticLog.write(this, "trash_clear_failed",
                         error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
-                runOnUiThread(() -> toast("清空失败：" + error.getMessage()));
+                runOnUiThread(() -> {
+                    toast("清空失败：" + error.getMessage());
+                    refreshWorks();
+                });
             }
         });
     }
@@ -566,6 +585,7 @@ public final class MainActivity extends Activity {
 
     private View workCard(WorkLibrary.WorkEntry work) {
         LinearLayout card = card();
+        card.setTag(work.id);
         card.setOrientation(LinearLayout.VERTICAL);
         boolean selected = selectedWorkIds.contains(work.id);
         boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
@@ -1205,12 +1225,58 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
+    private void optimisticRemoveWorks(Set<String> ids, String toastMessage) {
+        if (ids == null || ids.isEmpty() || fileMode) return;
+        selectedWorkIds.removeAll(ids);
+        quickTrashButton.setEnabled(true);
+        quickTrashButton.setVisibility(selectedWorkIds.isEmpty() ? View.GONE : View.VISIBLE);
+
+        renderedWorks.removeIf(entry -> ids.contains(entry.id));
+
+        for (int i = worksContainer.getChildCount() - 1; i >= 0; i--) {
+            View child = worksContainer.getChildAt(i);
+            if (child != null && ids.contains(child.getTag())) {
+                worksContainer.removeViewAt(i);
+            }
+        }
+
+        if (renderedWorks.isEmpty()) {
+            TextView empty = text(showingTrash ? "回收站是空的" : "还没有作品\n从电脑拖入 ZIP，或选择手机里的 Lark 文件夹", 14, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setTextColor(Color.GRAY);
+            empty.setPadding(dp(14), dp(28), dp(14), dp(28));
+            empty.setBackground(round(Color.WHITE, 18));
+            worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        if (!showingTrash) {
+            String prevCategory = selectedCategory;
+            updateCategoryCounts(renderedWorks);
+            if (!prevCategory.equals(selectedCategory)) {
+                renderWorksCards(renderedWorks, true);
+            }
+        }
+
+        boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
+        headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : ""));
+        scannedCountText.setText(String.valueOf(renderedWorks.size()));
+
+        if (toastMessage != null && !toastMessage.isEmpty()) {
+            statusText.setText(toastMessage);
+            toast(toastMessage);
+        }
+    }
+
     private void moveSelectedToTrash(Set<String> ids) {
-        quickTrashButton.setEnabled(false);
+        if (ids == null || ids.isEmpty()) return;
+        final LinkedHashSet<String> targets = new LinkedHashSet<>(ids);
+        String msg = targets.size() > 1 ? "已移到回收站 " + targets.size() + " 个" : "已移到回收站";
+
+        optimisticRemoveWorks(targets, msg);
+
         worker.execute(() -> {
-            ArrayList<String> completed = new ArrayList<>();
             ArrayList<String> failures = new ArrayList<>();
-            for (String id : ids) {
+            for (String id : targets) {
                 try {
                     WorkLibrary library = library();
                     WorkLibrary.WorkEntry entry = library.moveToTrash(id, LocalDate.now());
@@ -1221,21 +1287,22 @@ public final class MainActivity extends Activity {
                         if (moved.moved == 0 && moved.alreadyMissing == 0) library.rollbackTrashMove(id);
                         throw new IOException(moved.firstFailure());
                     }
-                    completed.add(id);
                     DiagnosticLog.write(this, "manual_trash_move", id);
                 } catch (Exception error) {
                     failures.add(error.getMessage() == null ? "移动失败" : error.getMessage());
                 }
             }
-            runOnUiThread(() -> {
-                selectedWorkIds.removeAll(completed);
-                quickTrashButton.setEnabled(true);
-                quickTrashButton.setVisibility(selectedWorkIds.isEmpty() ? View.GONE : View.VISIBLE);
-                String message = failures.isEmpty() ? "已移到回收站 " + completed.size() + " 个"
-                        : "已移动 " + completed.size() + " 个，失败 " + failures.size() + " 个";
-                toast(message);
-                refreshWorks();
-            });
+
+            try {
+                OnlineService.publishWorkInventory(this, library().listActive());
+            } catch (Exception ignored) { }
+
+            if (!failures.isEmpty()) {
+                runOnUiThread(() -> {
+                    toast("移到回收站失败 " + failures.size() + " 个，正在刷新");
+                    refreshWorks();
+                });
+            }
         });
     }
 
@@ -1401,6 +1468,10 @@ public final class MainActivity extends Activity {
     }
 
     private void restore(String id) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        ids.add(id);
+        optimisticRemoveWorks(ids, "已恢复");
+
         worker.execute(() -> {
             try {
                 WorkLibrary library = library();
@@ -1410,9 +1481,14 @@ public final class MainActivity extends Activity {
                 ExternalTrashManager.restoreSource(
                         getContentResolver(), tree, legacyRoot(tree), library, entry);
                 library.restore(id);
-                runOnUiThread(() -> { toast("已恢复"); refreshWorks(); });
+                try {
+                    OnlineService.publishWorkInventory(this, library.listActive());
+                } catch (Exception ignored) { }
             } catch (Exception error) {
-                runOnUiThread(() -> toast("恢复失败：" + error.getMessage()));
+                runOnUiThread(() -> {
+                    toast("恢复失败：" + error.getMessage());
+                    refreshWorks();
+                });
             }
         });
     }

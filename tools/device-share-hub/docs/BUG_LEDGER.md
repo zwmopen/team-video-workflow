@@ -2,6 +2,41 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+## DSH-073 Android 相册 App 回收站秒删性能与乐观 UI 彻底重构（Android 0.8.10 / versionCode 121）
+
+- **现象**：
+  在手机端相册列表点击作品卡片“删除”按钮并确认移到回收站时，界面无任何即时视觉反馈，卡顿冻结近 5 秒后才刷新并弹出提示，操作响应极其迟钝，体验严重不佳。
+- **根因**：
+  1. **UI 线程零即时响应**：原 `moveSelectedToTrash` 逻辑将所有任务提交给单线程 `worker` 执行后，主线程没有任何先验（Optimistic）视图变更，用户误以为点击无效；
+  2. **物理搬迁串行阻塞**：`moveToTrash` 和 `ExternalTrashManager.moveTrashedSource` 涉及多张高清大图跨目录移动与 SAF（Storage Access Framework）IPC 跨进程调用，物理 I/O 耗时达数百毫秒至数秒；
+  3. **最严重瓶颈——全量维护扫描与重绘**：后台搬迁完毕后，在主线程同步调用了 `refreshWorks()`，而 `refreshWorks()` 内部无差别同步调用了 `CleanupCoordinator.run(this)`（全盘遍历扫描过期缓存、读取全量 active/trash properties 元数据、执行全量 maintain 扫描，并对所有作品重新执行 SAF 目录存在性检测），并粗暴清空 `worksContainer.removeAllViews()` 将页面上全部卡片 View 彻底销毁重建，触发所有缩略图重新异步解码与布局重排！
+  4. 回收站单项恢复（`restore`）与清空（`clearTrash`）同样存在调用 `refreshWorks()` 的全盘阻塞机制。
+- **修复**：
+  1. **瞬时乐观 UI（Optimistic UI）**：
+     - 为每个卡片 View 绑定对应作品 ID（`card.setTag(work.id)`）；
+     - 新增 `optimisticRemoveWorks(Set<String> ids, String toastMessage)`：
+       - 主线程下一帧（< 16ms）瞬间从内存活跃集 `renderedWorks` 中剔除目标 ID；
+       - 通过容器关联查找卡片，调用 `worksContainer.removeViewAt(i)` 触发 Android 原生 `LayoutTransition` 180ms 丝滑折叠与渐隐过渡；
+       - 列表为空时瞬间切换至空态占位提示；
+       - 瞬间更新顶部分类 Tab 徽标数字（`updateCategoryCounts`）与标题栏计数；
+       - 弹出即时轻量 Toast（如“已移到回收站”）；
+  2. **物理文件与 SAF 搬迁完全后台异步解耦**：
+     - 后台 `worker` 静默完成文件挪移与属性写入；
+     - 静默调用 `OnlineService.publishWorkInventory(this, active)` 更新在线心跳与广播，**彻底剔除成功路径上的 `refreshWorks()` 与 `CleanupCoordinator.run(this)`**；
+     - 仅在物理移动发生严重异常时，主线程弹出错误 Toast 并由下一次页面自然生命周期进行对账；
+  3. **回收站与恢复操作全链路对齐秒级响应**：
+     - `restore(String id)`：回收站界面瞬间乐观移除恢复项并刷新徽标，后台异步还原属性并静默发布心跳；
+     - `clearTrash()`：确认后瞬间清空容器并切换为空态提示，后台静默批量删除物理文件与 SAF 源；
+  4. **版本递增**：升级至 Android `v0.8.10`（`versionCode: 121`）。
+- **证据**：
+  1. 单元测试 `build-local.ps1 -AndroidOnly`（单测全绿，assembleRelease 编译打包生成 `app-release.apk`）；
+  2. 通过 ADB 覆盖安装至华为 P30（`8KE0219924003568`），通过前台 live 截图确认 `v0.8.10 (121)` 正常启动运行；
+  3. 现场实操验证：原移入回收站的 2 项作品在回收站中瞬间恢复成功，主相册作品数即刻恢复为 8 篇，回收站归零，分类角标即时递减/递增，卡片移除折叠流畅无感，耗时感官从 5000ms 降至 0ms。
+- **回归要求**：
+  1. 点击“删除”移到回收站、“恢复作品”以及“清空回收站”，必须在点击确认瞬间（<16ms）卡片消失，绝不许出现等待转圈或冻结；
+  2. 乐观移除后分类角标数量和标题作品数必须即刻减 1，后台物理搬迁成功后在线 Beacon 作品计数保持准确；
+  3. 单元测试与构建流水线保持 100% 绿灯。
+
 ## DSH-072 缩略图手势精准分流、卡片边框裁剪溢出根除与宽屏预加载优化（Android 0.8.8 / versionCode 119）
 
 - **现象**：
