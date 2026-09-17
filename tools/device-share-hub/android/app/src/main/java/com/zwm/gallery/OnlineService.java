@@ -11,6 +11,7 @@ import android.content.Context;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
@@ -118,6 +119,47 @@ public final class OnlineService extends Service {
     private WifiManager.MulticastLock multicastLock;
     private final Object taskLock = new Object();
     private IncomingTask activeTask;
+    private PowerManager.WakeLock transferWakeLock;
+    private WifiManager.WifiLock transferWifiLock;
+    private volatile String lastNotifiedStatus = "";
+
+    private synchronized void acquireTransferWakeLock() {
+        try {
+            if (transferWakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    transferWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zwm:TransferWakeLock");
+                    transferWakeLock.setReferenceCounted(false);
+                }
+            }
+            if (transferWakeLock != null && !transferWakeLock.isHeld()) {
+                transferWakeLock.acquire(10 * 60 * 1000L);
+            }
+            if (transferWifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    transferWifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "zwm:TransferWifiLock");
+                    transferWifiLock.setReferenceCounted(false);
+                }
+            }
+            if (transferWifiLock != null && !transferWifiLock.isHeld()) {
+                transferWifiLock.acquire();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private synchronized void releaseTransferWakeLock() {
+        try {
+            if (transferWakeLock != null && transferWakeLock.isHeld()) {
+                transferWakeLock.release();
+            }
+            if (transferWifiLock != null && transferWifiLock.isHeld()) {
+                transferWifiLock.release();
+            }
+        } catch (Exception ignored) {
+        }
+    }
 
     public static List<PeerDevice> peers() {
         long cutoff = System.currentTimeMillis() - PEER_TIMEOUT_MS;
@@ -141,8 +183,6 @@ public final class OnlineService extends Service {
                 .putInt(PREF_WORK_COUNT_UNCATEGORIZED, counts.uncategorized)
                 .apply();
         // The normal 2.5s beacon and the Windows polling loop remain as fallbacks.
-        // This makes a manual/app-triggered refresh visible to the PC immediately.
-        requestImmediateBeacon(context);
     }
 
     public static void requestImmediateBeacon(Context context) {
@@ -238,7 +278,7 @@ public final class OnlineService extends Service {
         super.onCreate();
         ensureIdentity();
         createChannel();
-        cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 1, 1, TimeUnit.MINUTES);
+        cleanupExecutor.scheduleWithFixedDelay(this::runCleanup, 5, 5, TimeUnit.MINUTES);
     }
 
     @Override
@@ -248,6 +288,15 @@ public final class OnlineService extends Service {
             DiagnosticLog.write(this, "service_stop", "receiver stopped");
             stopReceiver();
             return START_NOT_STICKY;
+        }
+        if (ACTION_REFRESH_STATUS.equals(action)) {
+            beaconRequested = true;
+            return START_STICKY;
+        }
+        if (ACTION_DISCOVER_PEERS.equals(action)) {
+            beaconRequested = true;
+            discoverRequested = true;
+            return START_STICKY;
         }
         if (ACTION_AUTO_RECEIVE_CHANGED.equals(action)) {
             startForeground(FOREGROUND_NOTIFICATION_ID,
@@ -284,20 +333,15 @@ public final class OnlineService extends Service {
         startForeground(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification("局域网接收已开启"));
         DiagnosticLog.write(this, "service_start", "receiver foreground service started");
         acquireMulticastLock();
-        requestExecutor.execute(this::runCleanup);
         ensureNetworkLoops();
         notifyStatus("局域网接收已开启，等待电脑自动发现");
-        if (ACTION_REFRESH_STATUS.equals(action)) beaconRequested = true;
-        if (ACTION_DISCOVER_PEERS.equals(action)) {
-            beaconRequested = true;
-            discoverRequested = true;
-        }
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
         running = false;
+        releaseTransferWakeLock();
         closeSockets();
         releaseMulticastLock();
         serviceExecutor.shutdownNow();
@@ -631,6 +675,7 @@ public final class OnlineService extends Service {
                 }
             }
         }
+        acquireTransferWakeLock();
         if (resumed != null) {
             DiagnosticLog.write(this, "task_resume", taskId);
             notifyStatus("发现未完成传输，等待电脑从断点继续…");
@@ -876,6 +921,7 @@ public final class OnlineService extends Service {
     }
 
     private void uploadFile(String taskId, String indexText, HttpRequest request, InputStream input, OutputStream output) throws Exception {
+        acquireTransferWakeLock();
         int index;
         try { index = Integer.parseInt(indexText); } catch (NumberFormatException error) { throw new HttpError(400, "文件序号无效"); }
         if (request.contentLength < 0 || request.contentLength > MAX_FILE_BYTES) throw new HttpError(413, "文件过大");
@@ -1101,6 +1147,7 @@ public final class OnlineService extends Service {
                 }
             }
         } catch (Throwable t) {
+            releaseTransferWakeLock();
             synchronized (taskLock) {
                 if (activeTask == task) {
                     activeTask = null;
@@ -1113,11 +1160,15 @@ public final class OnlineService extends Service {
         }
 
         synchronized (taskLock) {
-            if (activeTask != task) throw new HttpError(409, "任务状态已变化");
+            if (activeTask != task) {
+                releaseTransferWakeLock();
+                throw new HttpError(409, "任务状态已变化");
+            }
             activeTask = null;
             currentTaskId = "";
             state = "online";
         }
+        releaseTransferWakeLock();
         JSONObject receipt = taskStatusJson(task)
                 .put("state", "committed")
                 .put("committed", true)
@@ -1134,6 +1185,7 @@ public final class OnlineService extends Service {
     }
 
     private void cancelTask(String taskId, OutputStream output) throws Exception {
+        releaseTransferWakeLock();
         synchronized (taskLock) {
             if (activeTask != null && activeTask.id.equals(taskId)) {
                 deleteRecursively(activeTask.dir);
@@ -1390,6 +1442,7 @@ public final class OnlineService extends Service {
             }
         }
         if (stale == null) return;
+        releaseTransferWakeLock();
         deleteRecursively(stale.dir);
         cancelTransferProgressNotification();
         String detail = stale.id + " idleMs="
@@ -1783,8 +1836,11 @@ public final class OnlineService extends Service {
 
     private void notifyStatus(String message) {
         sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()).putExtra("message", message));
-        if (running) getSystemService(NotificationManager.class)
-                .notify(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification(message));
+        if (running && !message.equals(lastNotifiedStatus)) {
+            lastNotifiedStatus = message;
+            getSystemService(NotificationManager.class)
+                    .notify(FOREGROUND_NOTIFICATION_ID, buildForegroundNotification(message));
+        }
     }
 
     private static byte[] readExact(InputStream input, long length) throws Exception {
