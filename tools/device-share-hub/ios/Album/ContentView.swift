@@ -1,4 +1,5 @@
 import UIKit
+import ImageIO
 
 final class LibraryViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     private let library: WorkLibrary
@@ -359,7 +360,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         present(alert, animated: true)
     }
 
-    @objc private func refreshPulled(_ sender: UIRefreshControl) { library.refresh() }
+    @objc private func refreshPulled(_ sender: UIRefreshControl) {
+        CopyParserCache.clear()
+        ThumbnailLoader.shared.clearCache()
+        library.refresh()
+    }
     @objc private func emptyAction() {
         library.supportsExternalFolderSelection ? presentFolderPicker() : presentImportPicker()
     }
@@ -507,6 +512,117 @@ enum AlbumToolbarIcon {
     }
 }
 
+private final class ThumbnailLoader {
+    static let shared = ThumbnailLoader()
+    private let cache = NSCache<NSURL, UIImage>()
+    private let queue = DispatchQueue(label: "com.zwm.album.thumbnailLoader", qos: .userInitiated, attributes: .concurrent)
+
+    private init() {
+        cache.countLimit = 400
+        cache.totalCostLimit = 80 * 1024 * 1024 // 80MB 最大内存预算
+    }
+
+    func loadThumbnail(at url: URL, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
+        let key = url as NSURL
+        if let cached = cache.object(forKey: key) {
+            completion(cached)
+            return
+        }
+
+        queue.async {
+            let options = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            let thumbnailOptions = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                kCGImageSourceShouldCacheImmediately: true
+            ] as CFDictionary
+
+            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) {
+                let image = UIImage(cgImage: cgImage)
+                let cost = Int(maxPixel * maxPixel * 4)
+                self.cache.setObject(image, forKey: key, cost: cost)
+                DispatchQueue.main.async { completion(image) }
+            } else {
+                DispatchQueue.main.async { completion(nil) }
+            }
+        }
+    }
+
+    func clearCache() {
+        cache.removeAllObjects()
+    }
+}
+
+private final class ThumbnailButton: UIButton {
+    let imageViewWidget = UIImageView()
+    var currentURL: URL?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        imageViewWidget.contentMode = .scaleAspectFill
+        imageViewWidget.clipsToBounds = true
+        imageViewWidget.backgroundColor = AppColors.sharedBackground
+        imageViewWidget.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageViewWidget)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer.cornerRadius = 10
+        layer.borderWidth = 1
+        layer.borderColor = AppColors.separator.cgColor
+        clipsToBounds = true
+        NSLayoutConstraint.activate([
+            imageViewWidget.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageViewWidget.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageViewWidget.topAnchor.constraint(equalTo: topAnchor),
+            imageViewWidget.bottomAnchor.constraint(equalTo: bottomAnchor),
+            widthAnchor.constraint(equalToConstant: 64),
+            heightAnchor.constraint(equalToConstant: 64)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func load(url: URL) {
+        currentURL = url
+        imageViewWidget.image = nil
+        ThumbnailLoader.shared.loadThumbnail(at: url, maxPixel: 200) { [weak self] image in
+            guard let self = self, self.currentURL == url else { return }
+            self.imageViewWidget.image = image
+        }
+    }
+}
+
+private enum CopyParserCache {
+    private static var cache: [URL: [PlatformCopyItem]] = [:]
+    private static let lock = NSLock()
+
+    static func platforms(for url: URL) -> [PlatformCopyItem] {
+        lock.lock()
+        if let cached = cache[url] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let parsed = PlatformCopyParser.parseAvailablePlatforms(text)
+        lock.lock()
+        cache[url] = parsed
+        lock.unlock()
+        return parsed
+    }
+
+    static func clear() {
+        lock.lock()
+        cache.removeAll()
+        lock.unlock()
+    }
+}
+
 private final class WorkCell: UICollectionViewCell {
     private let icon = UILabel()
     private let count = UILabel()
@@ -580,38 +696,40 @@ private final class WorkCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func prepareForReuse() { super.prepareForReuse(); onShare = nil; onPreview = nil; onDelete = nil }
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onShare = nil
+        onPreview = nil
+        onDelete = nil
+        for view in previewStack.arrangedSubviews {
+            if let tb = view as? ThumbnailButton {
+                tb.currentURL = nil
+                tb.imageViewWidget.image = nil
+            }
+        }
+    }
 
     private func renderPreviews(_ urls: [URL]) {
-        previewStack.arrangedSubviews.forEach { view in
-            previewStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        let currentViews = previewStack.arrangedSubviews.compactMap { $0 as? ThumbnailButton }
+        if currentViews.count > urls.count {
+            for v in currentViews[urls.count...] {
+                previewStack.removeArrangedSubview(v)
+                v.removeFromSuperview()
+            }
         }
+
         for (index, url) in urls.enumerated() {
-            let thumbnail = UIButton(type: .custom)
-            let imageView = UIImageView(image: UIImage(contentsOfFile: url.path))
-            imageView.contentMode = .scaleAspectFill
-            imageView.clipsToBounds = true
-            imageView.backgroundColor = AppColors.sharedBackground
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            thumbnail.addSubview(imageView)
-            thumbnail.translatesAutoresizingMaskIntoConstraints = false
-            thumbnail.layer.cornerRadius = 10
-            thumbnail.layer.borderWidth = 1
-            thumbnail.layer.borderColor = AppColors.separator.cgColor
-            thumbnail.clipsToBounds = true
-            thumbnail.accessibilityLabel = "预览第 \(index + 1) 张图片"
-            thumbnail.tag = index
-            thumbnail.addTarget(self, action: #selector(thumbnailTapped(_:)), for: .touchUpInside)
-            NSLayoutConstraint.activate([
-                imageView.leadingAnchor.constraint(equalTo: thumbnail.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: thumbnail.trailingAnchor),
-                imageView.topAnchor.constraint(equalTo: thumbnail.topAnchor),
-                imageView.bottomAnchor.constraint(equalTo: thumbnail.bottomAnchor),
-                thumbnail.widthAnchor.constraint(equalToConstant: 64),
-                thumbnail.heightAnchor.constraint(equalToConstant: 64)
-            ])
-            previewStack.addArrangedSubview(thumbnail)
+            let button: ThumbnailButton
+            if index < currentViews.count {
+                button = currentViews[index]
+            } else {
+                button = ThumbnailButton(type: .custom)
+                button.addTarget(self, action: #selector(thumbnailTapped(_:)), for: .touchUpInside)
+                previewStack.addArrangedSubview(button)
+            }
+            button.tag = index
+            button.accessibilityLabel = "预览第 \(index + 1) 张图片"
+            button.load(url: url)
         }
     }
 
@@ -685,8 +803,7 @@ private final class WorkCell: UICollectionViewCell {
                 view.removeFromSuperview()
             }
         }
-        let text = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
-        let available = PlatformCopyParser.parseAvailablePlatforms(text)
+        let available = CopyParserCache.platforms(for: work.textURL)
         var buttons: [UIButton] = []
         for item in available {
             switch item.platform {
