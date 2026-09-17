@@ -331,6 +331,24 @@ public final class WorkLibrary {
         return updated;
     }
 
+    /** Resets the share/used state of an active work back to pristine unshared status. */
+    public synchronized WorkEntry resetShare(String id) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        Properties meta = loadMeta(entry.directory);
+        meta.setProperty("used", "false");
+        meta.setProperty("shareCount", "0");
+        meta.setProperty("xhsShareCount", "0");
+        meta.setProperty("douyinShareCount", "0");
+        meta.remove("sharedDate");
+        meta.setProperty("firstSharedAtMs", "0");
+        meta.setProperty("firstUsedAtMs", "0");
+        meta.setProperty("deleteScheduledAtMs", "0");
+        saveMeta(entry.directory, meta);
+        WorkEntry updated = readEntry(entry.directory);
+        saveHistory(updated);
+        return updated;
+    }
+
     /**
      * Converts day-only records written by 0.5.5 and earlier into the precise cleanup clock.
      * Earlier Beijing dates are already due; a same-day record receives a one-hour grace period
@@ -699,7 +717,25 @@ public final class WorkLibrary {
                 continue;
             }
         }
-        entries.sort((left, right) -> WorkRules.compareNatural(left.name, right.name));
+        if (parent.equals(activeRoot)) {
+            entries.sort((left, right) -> {
+                boolean leftUsed = left.shareCount > 0;
+                boolean rightUsed = right.shareCount > 0;
+                if (leftUsed != rightUsed) {
+                    return leftUsed ? -1 : 1;
+                }
+                if (leftUsed && rightUsed) {
+                    long leftTime = Math.max(left.firstSharedAtMs, left.firstUsedAtMs);
+                    long rightTime = Math.max(right.firstSharedAtMs, right.firstUsedAtMs);
+                    if (leftTime != rightTime) {
+                        return Long.compare(rightTime, leftTime);
+                    }
+                }
+                return WorkRules.compareNatural(left.name, right.name);
+            });
+        } else {
+            entries.sort((left, right) -> WorkRules.compareNatural(left.name, right.name));
+        }
         return entries;
     }
 

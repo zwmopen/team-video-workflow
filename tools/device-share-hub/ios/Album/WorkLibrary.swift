@@ -302,6 +302,33 @@ final class WorkLibrary {
         return selected.map { $0 as NSURL }
     }
 
+    func resetShare(_ work: WorkItem) throws {
+        guard var record = state.works[work.key] ?? state.history[work.key] else {
+            return
+        }
+        record.shareCount = 0
+        record.xhsShareCount = 0
+        record.douyinShareCount = 0
+        record.used = false
+        record.lastShareDate = nil
+        record.firstSharedAtMs = nil
+        record.firstUsedAtMs = nil
+        record.deleteScheduledAtMs = nil
+        record.trashedDate = nil
+        record.trashedAtMs = nil
+
+        state.works[work.key] = record
+        state.history.removeValue(forKey: work.key)
+
+        guard let root = rootURL else { throw LibraryError.noFolder }
+        do { try saveState(to: root) }
+        catch { throw LibraryError.stateWriteFailed }
+
+        message = "已重置分享状态并取消自动删除排期"
+        works = (try? scanner.scan(root: root, state: state).works) ?? works
+        notify()
+    }
+
     func moveImagesToTrash(_ work: WorkItem, images: [URL]) throws -> Int {
         let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
         let selected = images.map { $0.standardizedFileURL }.filter { allowed.contains($0) }

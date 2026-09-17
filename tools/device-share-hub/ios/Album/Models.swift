@@ -12,6 +12,24 @@ struct WorkItem: Identifiable, Hashable {
     let douyinShareCount: Int
     let used: Bool
     let category: String
+    let deleteScheduledAtMs: Double?
+
+    init(key: String, name: String, relativePath: String, folderURL: URL, textURL: URL,
+         imageURLs: [URL], shareCount: Int, xhsShareCount: Int, douyinShareCount: Int,
+         used: Bool, category: String, deleteScheduledAtMs: Double? = nil) {
+        self.key = key
+        self.name = name
+        self.relativePath = relativePath
+        self.folderURL = folderURL
+        self.textURL = textURL
+        self.imageURLs = imageURLs
+        self.shareCount = shareCount
+        self.xhsShareCount = xhsShareCount
+        self.douyinShareCount = douyinShareCount
+        self.used = used
+        self.category = category
+        self.deleteScheduledAtMs = deleteScheduledAtMs
+    }
 
     var id: String { key }
 

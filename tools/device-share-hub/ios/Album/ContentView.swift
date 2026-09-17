@@ -313,6 +313,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             preview.modalTransitionStyle = .crossDissolve
             self.present(preview, animated: true)
         }
+        cell.onReset = { [weak self] in self?.confirmResetWork(work) }
         cell.onDelete = { [weak self] in self?.confirmMoveToTrash(work) }
         return cell
     }
@@ -341,6 +342,23 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
         return CGSize(width: width, height: 172)
+    }
+
+    private func confirmResetWork(_ work: WorkItem) {
+        let alert = UIAlertController(title: "重置作品状态？",
+                                      message: "将清空分享计数、取消自动删除排期，并移回普通列表排序。",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "重置", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            do {
+                try self.library.resetShare(work)
+                self.render()
+            } catch {
+                self.showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+        })
+        present(alert, animated: true)
     }
 
     private func confirmMoveToTrash(_ work: WorkItem) {
@@ -633,12 +651,14 @@ private final class WorkCell: UICollectionViewCell {
     private let xhsButton = UIButton(type: .system)
     private let xhs2Button = UIButton(type: .system)
     private let douyinButton = UIButton(type: .system)
+    private let resetButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
     private let platformContainer = UIStackView()
     private let platformRow1 = UIStackView()
     private let platformRow2 = UIStackView()
     var onShare: ((CopyPlatform) -> Void)?
     var onPreview: ((Int) -> Void)?
+    var onReset: (() -> Void)?
     var onDelete: (() -> Void)?
 
     override init(frame: CGRect) {
@@ -667,6 +687,7 @@ private final class WorkCell: UICollectionViewCell {
         configurePlatformButton(xhsButton, title: "发布", platform: .xhs)
         configurePlatformButton(xhs2Button, title: "大纲方案版", platform: .xhs2)
         configurePlatformButton(douyinButton, title: "规避营销版", platform: .douyin)
+        configureResetButton()
         configureDeleteButton()
         platformRow1.axis = .horizontal
         platformRow1.spacing = 6
@@ -700,6 +721,7 @@ private final class WorkCell: UICollectionViewCell {
         super.prepareForReuse()
         onShare = nil
         onPreview = nil
+        onReset = nil
         onDelete = nil
         for view in previewStack.arrangedSubviews {
             if let tb = view as? ThumbnailButton {
@@ -751,6 +773,22 @@ private final class WorkCell: UICollectionViewCell {
         }
         button.addTarget(self, action: action, for: .touchUpInside)
     }
+
+    private func configureResetButton() {
+        resetButton.setTitle("重置", for: .normal)
+        resetButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
+        resetButton.setTitleColor(AppColors.secondaryText, for: .normal)
+        resetButton.backgroundColor = .white
+        resetButton.layer.cornerRadius = 10
+        resetButton.layer.borderWidth = 1
+        resetButton.layer.borderColor = AppColors.separator.cgColor
+        resetButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+        resetButton.heightAnchor.constraint(equalToConstant: 38).isActive = true
+        resetButton.accessibilityLabel = "重置分享状态并取消自动删除"
+        resetButton.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
+    }
+
+    @objc private func resetTapped() { onReset?() }
 
     private func configureDeleteButton() {
         deleteButton.setTitle("删除", for: .normal)
@@ -824,6 +862,9 @@ private final class WorkCell: UICollectionViewCell {
                 buttons.append(xhs2Button)
             }
         }
+        if work.shareCount > 0 {
+            buttons.append(resetButton)
+        }
         buttons.append(deleteButton)
 
         if buttons.count > 3 {
@@ -849,7 +890,7 @@ private final class WorkCell: UICollectionViewCell {
         icon.text = shared ? "✓" : "▣"
         icon.textColor = shared ? AppColors.secondaryText : tintColor
         count.text = shared ? "×\(work.shareCount)  ·  \(work.imageURLs.count) 图" : "\(work.imageURLs.count) 图"
-        name.text = work.name
+        name.text = shared ? "📌 \(work.name)" : work.name
         detail.text = shared ? "小红书 \(work.xhsShareCount) · 抖音 \(work.douyinShareCount)" : "选择平台后复制文案并分享图片"
         contentView.backgroundColor = shared ? AppColors.sharedBackground : AppColors.secondaryBackground
         contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor

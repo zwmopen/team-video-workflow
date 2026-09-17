@@ -85,7 +85,8 @@ final class WorkScanner {
                         xhsShareCount: saved?.xhsShareCount ?? 0,
                         douyinShareCount: saved?.douyinShareCount ?? 0,
                         used: saved?.used ?? false,
-                        category: WorkCategory.from(path: relativePath)
+                        category: WorkCategory.from(path: relativePath),
+                        deleteScheduledAtMs: saved?.deleteScheduledAtMs
                     ))
                     return
                 }
@@ -110,7 +111,17 @@ final class WorkScanner {
         }
 
         visit(root, relativeComponents: [], depth: 0)
-        found.sort { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
+        found.sort { left, right in
+            let u1 = left.shareCount > 0
+            let u2 = right.shareCount > 0
+            if u1 != u2 { return u1 }
+            if u1 && u2 {
+                let t1 = left.deleteScheduledAtMs ?? 0
+                let t2 = right.deleteScheduledAtMs ?? 0
+                if t1 != t2 { return t1 > t2 }
+            }
+            return left.relativePath.localizedStandardCompare(right.relativePath) == .orderedAscending
+        }
         return ScanResult(works: found, statistics: statistics)
     }
 

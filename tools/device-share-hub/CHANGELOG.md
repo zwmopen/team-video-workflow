@@ -1,5 +1,18 @@
 # 变更记录
 
+## Android 0.8.12 / iPhone 0.8.5 - 已用作品临时置顶复盘与卡片【重置】误触回滚
+
+- **已发作品临时浮动置顶（Floating Top Retention）**：
+  - 解决用户从 20+ 套作品中挑选发布某篇后，因卡片变灰沉底需要滑到很深处才能复盘的痛点；
+  - 凡 `shareCount > 0` 的作品自动浮动置顶至列表顶部，卡片标题附加 `📌 ` 醒目标记；多套已用作品按最近使用时间倒序排列（最新使用的置于最前），未发作品维持自然名称升序。
+- **卡片新增【重置】状态按钮（Reset Share Action）**：
+  - 在已分享卡片的【删除】按钮左侧动态显示深灰拟态【重置】按钮；
+  - 点击后弹窗二次确认防误触，确认后立即清空分享记录（`shareCount = 0`）、解除变灰恢复未发初始状态、取消 1 小时自动删除排期，并从置顶区自动归位回到普通列表；完美解决误触点击或改期明天再发的诉求。
+- **双端架构完全对称对齐**：
+  - Android：`WorkLibrary.java` 新增 `resetShare(id)` 与浮动置顶排序，`MainActivity.java` 动态注入 `[重置]` 按钮与即时刷新；
+  - iOS：`WorkLibrary.swift` 新增 `resetShare(work)` 与状态保存，`WorkScanner.swift` 实现浮动置顶与时间排序，`ContentView.swift` 动态注入 `[重置]` 按钮；
+  - 版本号：Android versionCode 123 / versionName 0.8.12；iPhone build 76 / marketing version 0.8.5。
+
 ## Android 0.8.3 / iPhone 0.8.3 - 文案与会话元数据选择隔离（源码候选）
 
 - 修复 Android ZIP、SAF 和隐藏目录扫描在同时存在 `会话追踪.txt` 与真实文案时，按自然排序误选会话元数据并复制到剪贴板的问题。

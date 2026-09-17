@@ -623,7 +623,8 @@ public final class MainActivity extends Activity {
         LinearLayout nameRow = new LinearLayout(this);
         nameRow.setOrientation(LinearLayout.HORIZONTAL);
         nameRow.setGravity(Gravity.TOP);
-        TextView name = text(work.name, 14, true);
+        String title = work.used ? "📌 " + work.name : work.name;
+        TextView name = text(title, 14, true);
         name.setMaxLines(1);
         nameRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
         CheckBox checkBox = new CheckBox(this);
@@ -700,6 +701,14 @@ public final class MainActivity extends Activity {
                     openShare(work, item.platform.code);
                 });
                 platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            }
+            if (work.shareCount > 0) {
+                Button reset = new Button(this);
+                reset.setText("重置");
+                styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
+                reset.setContentDescription("重置作品状态为未发布");
+                reset.setOnClickListener(v -> confirmResetWork(work.id));
+                platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             }
             Button delete = new Button(this);
             delete.setText("删除");
@@ -1006,6 +1015,29 @@ public final class MainActivity extends Activity {
                     moveSelectedToTrash(ids);
                 })
                 .show();
+    }
+
+    private void confirmResetWork(String id) {
+        new AlertDialog.Builder(this)
+                .setTitle("重置为未发布？")
+                .setMessage("确定要重置为未发布状态吗？\n将清零分享点击记录、取消 1 小时自动清理排期，并恢复为未发作品。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("重置", (dialog, which) -> resetWork(id))
+                .show();
+    }
+
+    private void resetWork(String id) {
+        worker.execute(() -> {
+            try {
+                library().resetShare(id);
+                uiHandler.post(() -> {
+                    Toast.makeText(this, "已重置为未发布", Toast.LENGTH_SHORT).show();
+                    refreshWorks();
+                });
+            } catch (Exception error) {
+                uiHandler.post(() -> Toast.makeText(this, "重置失败：" + error.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        });
     }
 
     private void toggleWorkSelection(String id) {
