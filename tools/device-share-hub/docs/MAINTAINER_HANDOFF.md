@@ -1,5 +1,16 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-17 Android v0.8.13：待机 CPU 300% 根治、后台与锁屏静默传输双保活（versionCode: 124）
+
+- **版本与安装对账**：Android `0.8.13`（`versionCode: 124`），已通过 ADB 覆盖安装至华为 P30（`8KE0219924003568`，`ELE-AL00`）实机运行。
+- **待机 300% CPU 暴风骤雨递归根治**：
+  - 根因定位：原版 `publishWorkInventory` 调用 `requestImmediateBeacon` 发送 `ACTION_REFRESH_STATUS`，`onStartCommand` 收到后顺序执行 `startForeground`、`runCleanup`，`runCleanup` 又调用 `publishWorkInventory`，形成每秒百次级死循环，待机 CPU 打满 3 核心（257%~300%）；
+  - 根治落地：移除 `publishWorkInventory` 中的 `requestImmediateBeacon`；`onStartCommand` 对 `ACTION_REFRESH_STATUS` / `ACTION_DISCOVER_PEERS` 优先标记并立即返回，不再重复调用 `startForeground` 与 `runCleanup`；`notifyStatus` 增加状态内容比对去重；定时清理改为每 5 分钟极轻量轮转；
+  - 功耗实测证据：待机 CPU 从 300% 暴跌至 **0.0% ~ 1.0%**，彻底杜绝发烫与耗电。
+- **后台与锁屏静默传输支持**：
+  - 引入按需动态 WakeLock（`PARTIAL_WAKE_LOCK`）与 WifiLock（`WIFI_MODE_FULL_HIGH_PERF`，带 10 分钟超时兜底），在 `createTask` 与 `uploadFile` 动态申请，在 `commitTask` / `cancelTask` / `cleanupStaleIncomingTask` / `onDestroy` 立即释放；
+  - 实测验证：App 在后台或手机完全锁屏深度睡眠（`mWakefulness=Asleep`, `Display Power: OFF`）下，纯 Wi-Fi 局域网（10MB 测试包）均能稳定全速接收入库（有效带宽 2.74 MB/s，单套耗时 5~6 秒），测完即刻销毁测试作品，现存作品严格锁定为 8 篇，100% 零污染。
+
 ## 2026-09-14 Android v0.8.10：作品卡片秒级“秒删”乐观 UI 重构、回收站与恢复全链路瞬时响应（versionCode: 121）
 
 - **版本与安装对账**：Android `0.8.10`（`versionCode: 121`），已成功通过 ADB 覆盖安装至华为 P30（`8KE0219924003568`）并完成实机功能验证。
