@@ -54,6 +54,8 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -72,7 +74,12 @@ public final class MainActivity extends Activity {
             return bitmap.getByteCount();
         }
     };
-    private static final ExecutorService THUMBNAIL_EXECUTOR = Executors.newFixedThreadPool(3);
+    private static final ExecutorService THUMBNAIL_EXECUTOR = Executors.newFixedThreadPool(3, runnable -> {
+        Thread thread = new Thread(runnable, "thumb-decode");
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
+    private final Set<String> pendingTrashIds = Collections.synchronizedSet(new HashSet<>());
     private static final String PREFS = "device_share";
     private static final String PREF_TREE_URI = "libraryTreeUri";
     private static final String PREF_TREE_NAME = "libraryTreeName";
@@ -405,10 +412,15 @@ public final class MainActivity extends Activity {
                 }
                 // Fast-path: render visible items immediately so UI appears instantly without waiting for cleanup
                 List<WorkLibrary.WorkEntry> initialActive = library.listActive();
+                if (!showingTrash && !pendingTrashIds.isEmpty()) {
+                    initialActive = new ArrayList<>(initialActive);
+                    initialActive.removeIf(entry -> pendingTrashIds.contains(entry.id));
+                }
                 List<WorkLibrary.WorkEntry> initialEntries = showingTrash ? library.listTrash() : initialActive;
+                final List<WorkLibrary.WorkEntry> finalInitial = initialEntries;
                 runOnUiThread(() -> {
-                    renderWorks(initialEntries);
-                    finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + initialEntries.size() + " 个");
+                    renderWorks(finalInitial);
+                    finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + finalInitial.size() + " 个");
                 });
 
                 CleanupCoordinator.Result cleanup = CleanupCoordinator.run(this);
@@ -416,10 +428,15 @@ public final class MainActivity extends Activity {
                     DiagnosticLog.write(this, "external_trash_purge_failed", cleanup.failure);
                 }
                 List<WorkLibrary.WorkEntry> activeEntries = library.listActive();
+                if (!showingTrash && !pendingTrashIds.isEmpty()) {
+                    activeEntries = new ArrayList<>(activeEntries);
+                    activeEntries.removeIf(entry -> pendingTrashIds.contains(entry.id));
+                }
                 List<WorkLibrary.WorkEntry> entries = showingTrash ? library.listTrash() : activeEntries;
                 OnlineService.publishWorkInventory(this, activeEntries);
-                if (cleanup.moved > 0 || cleanup.deleted > 0 || entries.size() != initialEntries.size()) {
-                    runOnUiThread(() -> renderWorks(entries, false));
+                if (cleanup.moved > 0 || cleanup.deleted > 0 || entries.size() != finalInitial.size()) {
+                    final List<WorkLibrary.WorkEntry> finalEntries = entries;
+                    runOnUiThread(() -> renderWorks(finalEntries, false));
                 }
             } catch (Exception error) {
                 DiagnosticLog.write(this, "library_refresh_failed", error.getMessage());
@@ -513,12 +530,17 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries, boolean animate) {
         if (fileMode) return;
-        renderedWorks = new ArrayList<>(entries);
-        if (!showingTrash) updateCategoryCounts(entries);
-        List<WorkLibrary.WorkEntry> displayEntries = entries;
+        List<WorkLibrary.WorkEntry> cleanEntries = entries;
+        if (!showingTrash && !pendingTrashIds.isEmpty()) {
+            cleanEntries = new ArrayList<>(entries);
+            cleanEntries.removeIf(entry -> pendingTrashIds.contains(entry.id));
+        }
+        renderedWorks = new ArrayList<>(cleanEntries);
+        if (!showingTrash) updateCategoryCounts(cleanEntries);
+        List<WorkLibrary.WorkEntry> displayEntries = cleanEntries;
         if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
             ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
-            for (WorkLibrary.WorkEntry entry : entries) {
+            for (WorkLibrary.WorkEntry entry : cleanEntries) {
                 if (selectedCategory.equals(entry.getFolderName())) filtered.add(entry);
             }
             displayEntries = filtered;
@@ -572,7 +594,7 @@ public final class MainActivity extends Activity {
         } else {
             filtered = new ArrayList<>();
             for (WorkLibrary.WorkEntry entry : renderedWorks) {
-                if (folderKey.equals(entry.getFolderName())) {
+                if (folderKey.equals(entry.getFolderName()) && !pendingTrashIds.contains(entry.id)) {
                     filtered.add(entry);
                 }
             }
@@ -715,7 +737,7 @@ public final class MainActivity extends Activity {
             thumbnail.setClipToOutline(true);
             thumbnail.setContentDescription("预览第 " + (index + 1) + " 张图片");
             File imageFile = new File(work.directory, imageName);
-            if (index < 8) {
+            if (index < 4) {
                 loadThumbnailAsync(imageFile, dp(68), thumbnail);
             } else {
                 String path = imageFile.getAbsolutePath();
@@ -760,6 +782,10 @@ public final class MainActivity extends Activity {
         }
         targetView.setImageDrawable(null);
         THUMBNAIL_EXECUTOR.execute(() -> {
+            try {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            } catch (Throwable ignored) { }
+            if (!path.equals(targetView.getTag())) return;
             Bitmap decoded = decodeThumbnail(image, targetPx);
             if (decoded != null) {
                 THUMBNAIL_CACHE.put(path, decoded);
@@ -1270,6 +1296,7 @@ public final class MainActivity extends Activity {
     private void moveSelectedToTrash(Set<String> ids) {
         if (ids == null || ids.isEmpty()) return;
         final LinkedHashSet<String> targets = new LinkedHashSet<>(ids);
+        pendingTrashIds.addAll(targets);
         String msg = targets.size() > 1 ? "已移到回收站 " + targets.size() + " 个" : "已移到回收站";
 
         optimisticRemoveWorks(targets, msg);
@@ -1284,11 +1311,15 @@ public final class MainActivity extends Activity {
                     ExternalTrashManager.Result moved = ExternalTrashManager.moveTrashedSource(
                             getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library, entry);
                     if (!moved.succeeded()) {
-                        if (moved.moved == 0 && moved.alreadyMissing == 0) library.rollbackTrashMove(id);
+                        if (moved.moved == 0 && moved.alreadyMissing == 0) {
+                            library.rollbackTrashMove(id);
+                            pendingTrashIds.remove(id);
+                        }
                         throw new IOException(moved.firstFailure());
                     }
                     DiagnosticLog.write(this, "manual_trash_move", id);
                 } catch (Exception error) {
+                    pendingTrashIds.remove(id);
                     failures.add(error.getMessage() == null ? "移动失败" : error.getMessage());
                 }
             }
@@ -1296,6 +1327,8 @@ public final class MainActivity extends Activity {
             try {
                 OnlineService.publishWorkInventory(this, library().listActive());
             } catch (Exception ignored) { }
+
+            pendingTrashIds.removeAll(targets);
 
             if (!failures.isEmpty()) {
                 runOnUiThread(() -> {
