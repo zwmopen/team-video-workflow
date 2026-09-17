@@ -597,10 +597,10 @@ private final class ThumbnailButton: UIButton {
 }
 
 private enum CopyParserCache {
-    private static var cache: [URL: [PlatformCopyItem]] = [:]
+    private static var cache: [URL: [AvailableCopyPlatform]] = [:]
     private static let lock = NSLock()
 
-    static func platforms(for url: URL) -> [PlatformCopyItem] {
+    static func platforms(for url: URL) -> [AvailableCopyPlatform] {
         lock.lock()
         if let cached = cache[url] {
             lock.unlock()
