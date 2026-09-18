@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 [CmdletBinding()]
 param(
     [int]$Port = 45835,
@@ -17,7 +17,7 @@ if (-not (Test-Path -LiteralPath $ServiceScript)) {
 $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 if ($conns.Count -gt 0) {
     if ($Restart) {
-        Write-Host "检测到服务正在运行，正在重启..."
+        Write-Host "Restarting existing online gallery service..."
         foreach ($c in $conns) {
             Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
         }
@@ -25,12 +25,12 @@ if ($conns.Count -gt 0) {
     } else {
         try {
             $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/online/status" -TimeoutSec 2
-            Write-Host "在线相册服务已在运行中" -ForegroundColor Green
-            Write-Host "局域网地址: http://$($resp.ip):$Port"
-            Write-Host "作品总数: $($resp.totalWorks) 套"
+            Write-Host "Online gallery service is already running." -ForegroundColor Green
+            Write-Host "LAN Address: http://$($resp.ip):$Port"
+            Write-Host "Total Works: $($resp.totalWorks)"
             return
         } catch {
-            Write-Host "端口被占用但未正常响应，正在清理占用进程..."
+            Write-Host "Port occupied but not responding, cleaning up..."
             foreach ($c in $conns) {
                 Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
             }
@@ -53,21 +53,13 @@ if (Test-Path -LiteralPath $defaultPyw) {
     }
 }
 
-Write-Host "正在无窗静默启动在线相册 PC 服务 (端口: $Port)..."
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $pythonExe
-$psi.Arguments = "`"$ServiceScript`" --port $Port"
-$psi.WorkingDirectory = $ScriptDir
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
-$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-
-$proc = [System.Diagnostics.Process]::Start($psi)
+Write-Host "Starting Online Gallery LAN Service (Port: $Port)..."
+$proc = Start-Process -FilePath $pythonExe -ArgumentList "`"$ServiceScript`" --port $Port" -WorkingDirectory $ScriptDir -WindowStyle Hidden -PassThru
 if (-not $proc) {
-    throw "启动 Python 进程失败。"
+    throw "Failed to start Python process."
 }
 
-# 3. 等待服务就绪
+# 3. Wait for service readiness
 $ready = $false
 for ($i = 0; $i -lt 15; $i++) {
     Start-Sleep -Milliseconds 300
@@ -75,10 +67,9 @@ for ($i = 0; $i -lt 15; $i++) {
         $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/online/status" -TimeoutSec 1
         if ($resp.ok) {
             $ready = $true
-            Write-Host "在线相册 PC 局域网服务已启动成功！" -ForegroundColor Green
-            Write-Host "局域网地址: http://$($resp.ip):$Port" -ForegroundColor Cyan
-            Write-Host "作品真源: $($resp.libraryRoot)"
-            Write-Host "作品总数: $($resp.totalWorks) 套"
+            Write-Host "Online Gallery LAN Service started successfully!" -ForegroundColor Green
+            Write-Host "LAN Address: http://$($resp.ip):$Port" -ForegroundColor Cyan
+            Write-Host "Total Works: $($resp.totalWorks)"
             break
         }
     } catch {
@@ -87,5 +78,5 @@ for ($i = 0; $i -lt 15; $i++) {
 }
 
 if (-not $ready) {
-    throw "服务在 5 秒内未能正常响应，请检查端口 $Port 占用。"
+    throw "Service failed to respond within 5 seconds on port $Port."
 }

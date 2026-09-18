@@ -16,9 +16,20 @@ Online Gallery LAN Service for Device Share Hub & Mobile Gallery
 import os
 import sys
 
-if hasattr(sys.stdout, "reconfigure"):
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.path.join(os.path.dirname(__file__), "online_gallery_service.log"), "a", encoding="utf-8")
+    except Exception:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+elif hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "reconfigure"):
+
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.path.join(os.path.dirname(__file__), "online_gallery_service_err.log"), "a", encoding="utf-8")
+    except Exception:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+elif hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import json
@@ -28,6 +39,7 @@ import threading
 import hashlib
 import urllib.parse
 import re
+import shutil
 from io import BytesIO
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional
@@ -148,10 +160,12 @@ class WorkScanner:
 
             # 扫描根目录下最新直出的合法作品，排除忽略目录与特殊目录
             IGNORED_NAMES = {
-                "已发送0次（抖音小红书可发）", "已发送1次（微信公众号可发）", "已发送2次（其他平台可发）",
+                "已发送0次（抖音小红书可发）", "已发送1次（微信公众号可发）", "_已发送1次（微信公众号可发）",
+                "_已发送一次", "已发送2次（其他平台可发）", "_已发送2次（其他平台可发）",
                 "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
                 "_portfolio_backup", "_portfolio_move_logs", "_不合格成品合集", "_作品历史数据",
                 "_制作中", "_待补全_单封面作品集", "_测试验收", "_生产计划与排产参考", "_重复待处理",
+                "_垃圾作品（后续参考分析）",
                 "发布空间", "待制作待补全", "抖音小红书"
             }
             try:
@@ -604,6 +618,108 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, "workId": work_id, "useCount": 0, "message": "已重置为待首发状态"})
             return
 
+        if path in ("/api/online/delete-work", "/api/online/delete"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body)
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+
+            work_id = req.get("workId") or req.get("id") or ""
+            work_id = work_id.strip()
+            device_name = req.get("deviceName", "移动相册客户端")
+
+            if not work_id:
+                self.send_error(400, "Missing workId")
+                return
+
+            works = self.scanner.scan()
+            target_work = next((w for w in works if w["id"] == work_id), None)
+            if not target_work:
+                self.send_error(404, "Work not found")
+                return
+
+            src_path = target_work["path"]
+            folder_name = os.path.basename(src_path)
+            use_count = target_work.get("useCount", 0)
+
+            # 确定目标目录
+            root_dir = self.scanner.root
+            if use_count > 0:
+                # 发过的作品：移动到 _已发送1次（微信公众号可发）
+                cand_dirs = [
+                    os.path.join(root_dir, "_已发送1次（微信公众号可发）"),
+                    os.path.join(root_dir, "_已发送一次"),
+                    os.path.join(root_dir, "已发送1次（微信公众号可发）"),
+                ]
+                dest_base = None
+                for cd in cand_dirs:
+                    if os.path.exists(cd):
+                        dest_base = cd
+                        break
+                if not dest_base:
+                    dest_base = cand_dirs[0]
+                    os.makedirs(dest_base, exist_ok=True)
+                action_type = "dispatched"
+                action_desc = "已移入「_已发送一次」"
+            else:
+                # 没用过的作品：移动到垃圾作品/负面样本库，作为后续参考分析
+                cand_dirs = [
+                    os.path.join(root_dir, "_垃圾作品（后续参考分析）"),
+                    os.path.join(root_dir, "_不合格成品合集"),
+                    os.path.join(root_dir, "已废弃-负面样本库"),
+                ]
+                dest_base = None
+                for cd in cand_dirs:
+                    if os.path.exists(cd):
+                        dest_base = cd
+                        break
+                if not dest_base:
+                    dest_base = cand_dirs[0]
+                    os.makedirs(dest_base, exist_ok=True)
+                action_type = "trash"
+                action_desc = "已移入「垃圾作品库（供后续参考分析）」"
+
+            # 目标文件夹路径（若已存在同名文件夹，附加时间戳避免覆盖冲突）
+            target_dest = os.path.join(dest_base, folder_name)
+            if os.path.exists(target_dest):
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
+
+            try:
+                shutil.move(src_path, target_dest)
+            except Exception as e:
+                self.send_json(500, {"ok": False, "error": f"物理移动失败: {str(e)}"})
+                return
+
+            # 记录删除流转审计日志
+            log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+            try:
+                header_needed = not os.path.exists(log_file)
+                with open(log_file, "a", encoding="utf-8-sig") as fp:
+                    if header_needed:
+                        fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
+                    fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{src_path},{target_dest},{use_count},{action_type}\n")
+            except Exception:
+                pass
+
+            # 强制刷新扫描缓存
+            self.scanner.scan(force=True)
+
+            self.send_json(200, {
+                "ok": True,
+                "workId": work_id,
+                "action": action_type,
+                "message": action_desc,
+                "targetPath": target_dest,
+                "remainingWorks": len(self.scanner.scan())
+            })
+            return
+
         self.send_error(404, "Not Found")
 
 
@@ -629,6 +745,14 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     except KeyboardInterrupt:
         print("\n服务正在平稳退出...")
         server.server_close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        with open(os.path.join(os.path.dirname(__file__), "crash.log"), "w", encoding="utf-8") as fp:
+            fp.write(traceback.format_exc())
+    finally:
+        with open(os.path.join(os.path.dirname(__file__), "exit.log"), "w", encoding="utf-8") as fp:
+            fp.write(f"Exited at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
 
 if __name__ == "__main__":

@@ -295,6 +295,49 @@ public final class OnlineGalleryClient {
         });
     }
 
+    public static class DeleteResult {
+        public final boolean ok;
+        public final String workId;
+        public final String action;
+        public final String message;
+        public final String targetPath;
+        public final int remainingWorks;
+
+        public DeleteResult(boolean ok, String workId, String action, String message, String targetPath, int remainingWorks) {
+            this.ok = ok;
+            this.workId = workId;
+            this.action = action;
+            this.message = message;
+            this.targetPath = targetPath;
+            this.remainingWorks = remainingWorks;
+        }
+    }
+
+    public void deleteWork(String workId, Callback<DeleteResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                URL url = new URL(baseUrl + "/api/online/delete-work");
+                JSONObject body = new JSONObject();
+                body.put("workId", workId);
+                body.put("deviceName", android.os.Build.MODEL != null ? android.os.Build.MODEL : "移动端");
+                String resp = httpPost(url, body.toString());
+                JSONObject json = new JSONObject(resp);
+                DeleteResult res = new DeleteResult(
+                        json.optBoolean("ok", false),
+                        json.optString("workId", workId),
+                        json.optString("action", ""),
+                        json.optString("message", ""),
+                        json.optString("targetPath", ""),
+                        json.optInt("remainingWorks", -1)
+                );
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
     public void downloadWorkImages(String workId, List<String> fileNames, Callback<List<java.io.File>> callback) {
         executor.execute(() -> {
             try {

@@ -2669,6 +2669,13 @@ public final class MainActivity extends Activity {
             platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
         }
 
+        Button delete = new Button(this);
+        delete.setText("删除");
+        styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
+        delete.setContentDescription("删除电脑在线作品");
+        delete.setOnClickListener(v -> confirmDeleteOnlineWork(work));
+        platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+
         LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
         platformRowParams.setMargins(0, dp(8), 0, dp(2));
         card.addView(platformRow, platformRowParams);
@@ -2770,6 +2777,57 @@ public final class MainActivity extends Activity {
                         @Override
                         public void onError(Exception error) {
                             toast("重置失败: " + error.getMessage());
+                        }
+                    });
+                })
+                .show();
+    }
+
+    private void confirmDeleteOnlineWork(OnlineWorkEntry work) {
+        String msg;
+        if (work.useCount > 0) {
+            msg = "该作品已使用 " + work.useCount + " 次。\n删除后将从电脑首发库物理移入「_已发送一次」归档。\n\n确认删除？";
+        } else {
+            msg = "该作品尚未发布。\n删除后将从电脑首发库移入「_垃圾作品（后续参考分析）」归档保存。\n\n确认删除？";
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("删除电脑在线作品")
+                .setMessage(msg)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认删除", (dialog, which) -> {
+                    toast("正在通知电脑端安全流转…");
+                    onlineClient.deleteWork(work.id, new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteResult>() {
+                        @Override
+                        public void onSuccess(OnlineGalleryClient.DeleteResult result) {
+                            if (result != null && result.ok) {
+                                String toastMsg = "dispatched".equals(result.action)
+                                        ? "📦 已移入电脑「_已发送一次」"
+                                        : "🗑️ 已移入电脑「垃圾作品库（供后续参考分析）」";
+                                toast(toastMsg);
+
+                                for (int i = 0; i < onlineWorks.size(); i++) {
+                                    if (onlineWorks.get(i).id.equals(work.id)) {
+                                        onlineWorks.remove(i);
+                                        break;
+                                    }
+                                }
+                                for (int i = 0; i < currentOnlineFilteredEntries.size(); i++) {
+                                    if (currentOnlineFilteredEntries.get(i).id.equals(work.id)) {
+                                        currentOnlineFilteredEntries.remove(i);
+                                        break;
+                                    }
+                                }
+
+                                refreshOnlineWorks(false);
+                            } else {
+                                toast("删除失败: " + (result != null ? result.message : "未知错误"));
+                            }
+                        }
+
+                        @Override
+                        public void onError(Exception error) {
+                            toast("删除失败: " + (error != null ? error.getMessage() : "网络超时"));
                         }
                     });
                 })
