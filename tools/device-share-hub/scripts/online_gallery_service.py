@@ -373,14 +373,27 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 dest = w.get("destination", "其他")
                 counts[dest] = counts.get(dest, 0) + 1
 
-            # 纯净分类聚合：彻底剔除“待首发”、“已发1次”等阶段分类，仅返回按数量倒序的目的地
+            # 节日时令专题聚合（中秋、国庆优先置顶）
+            mid_autumn_count = sum(1 for w in works if "中秋" in (w.get("rawTitle", "") + " " + w.get("copyText", "")))
+            national_day_count = sum(1 for w in works if ("国庆" in (w.get("rawTitle", "") + " " + w.get("copyText", "")) or "十一" in (w.get("rawTitle", "") + " " + w.get("copyText", ""))))
+
+            # 纯净分类聚合：节日专题置顶，其余按数量倒序的目的地
             categories = []
+            if mid_autumn_count > 0:
+                categories.append({"name": "🌕 中秋", "count": mid_autumn_count})
+            if national_day_count > 0:
+                categories.append({"name": "🇨🇳 国庆", "count": national_day_count})
+
+            dest_categories = []
             for d in DESTINATIONS:
+                if d in ("中秋", "国庆"):
+                    continue
                 if d in counts and counts[d] > 0:
-                    categories.append({"name": d, "count": counts[d]})
+                    dest_categories.append({"name": d, "count": counts[d]})
             if "其他" in counts and counts["其他"] > 0:
-                categories.append({"name": "其他", "count": counts["其他"]})
-            categories.sort(key=lambda c: -c["count"])
+                dest_categories.append({"name": "其他", "count": counts["其他"]})
+            dest_categories.sort(key=lambda c: -c["count"])
+            categories.extend(dest_categories)
 
             self.send_json(200, {"ok": True, "categories": categories, "stages": [], "total": len(works)})
             return
@@ -395,9 +408,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             filtered = []
             for w in works:
-                # 分类过滤
+                # 分类过滤（支持专题分类与地域分类）
                 if category and category != "全部":
-                    if category == "待首发" and w.get("useCount", 0) != 0:
+                    if category in ("🌕 中秋", "中秋"):
+                        if "中秋" not in (w.get("rawTitle", "") + " " + w.get("copyText", "")):
+                            continue
+                    elif category in ("🇨🇳 国庆", "国庆"):
+                        blob = w.get("rawTitle", "") + " " + w.get("copyText", "")
+                        if "国庆" not in blob and "十一" not in blob:
+                            continue
+                    elif category == "待首发" and w.get("useCount", 0) != 0:
                         continue
                     elif category == "已发1次" and w.get("useCount", 0) != 1:
                         continue

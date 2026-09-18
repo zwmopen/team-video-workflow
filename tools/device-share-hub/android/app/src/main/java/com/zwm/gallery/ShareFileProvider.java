@@ -63,7 +63,8 @@ public final class ShareFileProvider extends ContentProvider {
         if (segments.size() == 3 && "online".equals(segments.get(0))) {
             String workId = segments.get(1);
             String storedName = segments.get(2);
-            if (!workId.matches("[A-Za-z0-9._-]+") || storedName.contains("/") || storedName.contains("\\")) {
+            if (workId.contains("..") || workId.contains("/") || workId.contains("\\")
+                    || storedName.contains("..") || storedName.contains("/") || storedName.contains("\\")) {
                 throw new SecurityException("非法文件路径");
             }
             File root = new File(getContext().getFilesDir(), "work-library/online");
@@ -74,7 +75,8 @@ public final class ShareFileProvider extends ContentProvider {
         }
         String workId = segments.get(1);
         String storedName = segments.get(2);
-        if (!workId.matches("[A-Za-z0-9._-]+") || storedName.contains("/") || storedName.contains("\\")) {
+        if (workId.contains("..") || workId.contains("/") || workId.contains("\\")
+                || storedName.contains("..") || storedName.contains("/") || storedName.contains("\\")) {
             throw new SecurityException("非法文件路径");
         }
         File root = new File(getContext().getFilesDir(), "work-library/active");

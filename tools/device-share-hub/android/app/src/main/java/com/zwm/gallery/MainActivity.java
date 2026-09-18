@@ -30,6 +30,7 @@ import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.text.Editable;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.LruCache;
 import android.util.TypedValue;
@@ -2488,8 +2489,11 @@ public final class MainActivity extends Activity {
                 } else if ("已发2次".equals(catKey) || "已发2".equals(catKey) || "已用满".equals(catKey)) {
                     matchesCategory = (work.useCount >= 2);
                 } else {
-                    matchesCategory = catKey.equals(work.destination) || catKey.equals(work.stage)
-                            || (work.title != null && work.title.contains(catKey))
+                    String cleanCat = catKey.replace("🌕", "").replace("🇨🇳", "").replace("🏷️", "").trim();
+                    matchesCategory = catKey.equals(work.destination) || cleanCat.equals(work.destination)
+                            || catKey.equals(work.stage) || cleanCat.equals(work.stage)
+                            || (work.title != null && (work.title.contains(catKey) || (!cleanCat.isEmpty() && work.title.contains(cleanCat))))
+                            || (work.copyText != null && !cleanCat.isEmpty() && work.copyText.contains(cleanCat))
                             || (work.stage != null && work.stage.contains(catKey));
                 }
                 if (!matchesCategory) continue;
@@ -2917,22 +2921,36 @@ public final class MainActivity extends Activity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setGravity(Gravity.CENTER);
-        layout.setPadding(dp(12), dp(12), dp(12), dp(12));
+        layout.setPadding(dp(14), dp(14), dp(14), dp(14));
+
+        LinearLayout headerRow = new LinearLayout(this);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView title = text(work.title + " (" + (imageIndex + 1) + "/" + work.images.size() + ")", 14, true);
-        title.setGravity(Gravity.CENTER);
-        layout.addView(title, margins(0, 0, 0, dp(8)));
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1.0f);
+        headerRow.addView(title, titleParams);
+
+        TextView badge = text("⏳ 拉取原画中…", 11, false);
+        badge.setTextColor(Color.rgb(180, 120, 20));
+        badge.setBackground(round(Color.rgb(255, 246, 230), 8));
+        badge.setPadding(dp(8), dp(3), dp(8), dp(3));
+        headerRow.addView(badge, new LinearLayout.LayoutParams(-2, -2));
+
+        layout.addView(headerRow, margins(0, 0, 0, dp(8)));
 
         ImageView fullView = new ImageView(this);
         fullView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         fullView.setAdjustViewBounds(true);
         fullView.setBackground(round(Color.rgb(20, 20, 20), 12));
 
-        int maxImgHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.65f);
+        int maxImgHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.68f);
         fullView.setMaxHeight(maxImgHeight);
 
         ProgressBar spinner = new ProgressBar(this);
-        layout.addView(spinner, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        layout.addView(spinner, new LinearLayout.LayoutParams(dp(36), dp(36)));
         layout.addView(fullView, new LinearLayout.LayoutParams(-1, -2));
 
         builder.setView(layout);
@@ -2940,52 +2958,125 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = builder.create();
         dialog.show();
 
-        String cacheKey = "online:" + work.id + ":" + imageName;
-        Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
-        if (cached != null) {
-            fullView.setImageBitmap(cached);
+        // 1. 先展示已有的缩略图占位（0 秒白屏）
+        String cacheKeyThumb = "online:" + work.id + ":" + imageName;
+        Bitmap cachedThumb = THUMBNAIL_CACHE.get(cacheKeyThumb);
+        if (cachedThumb != null && !cachedThumb.isRecycled()) {
+            fullView.setImageBitmap(cachedThumb);
             spinner.setVisibility(View.GONE);
         }
-        onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+
+        // 2. 检查是否有高清原画缓存
+        String cacheKeyFull = "online:full:" + work.id + ":" + imageName;
+        Bitmap cachedFull = THUMBNAIL_CACHE.get(cacheKeyFull);
+        if (cachedFull != null && !cachedFull.isRecycled()) {
+            fullView.setImageBitmap(cachedFull);
+            badge.setText("✅ 100% 原画");
+            badge.setTextColor(Color.rgb(15, 135, 88));
+            badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+            spinner.setVisibility(View.GONE);
+            return;
+        }
+
+        // 3. 异步拉取 100% 原始画质原画
+        onlineClient.loadFullImage(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
             @Override
             public void onSuccess(Bitmap result) {
                 spinner.setVisibility(View.GONE);
-                if (result != null) {
-                    THUMBNAIL_CACHE.put(cacheKey, result);
+                if (result != null && !result.isRecycled()) {
+                    THUMBNAIL_CACHE.put(cacheKeyFull, result);
                     fullView.setImageBitmap(result);
+                    badge.setText("✅ 100% 原画");
+                    badge.setTextColor(Color.rgb(15, 135, 88));
+                    badge.setBackground(round(Color.rgb(235, 247, 240), 8));
                 }
             }
 
             @Override
             public void onError(Exception error) {
                 spinner.setVisibility(View.GONE);
-                toast("加载大图失败");
+                badge.setText("缩略图预览");
+                badge.setTextColor(Color.GRAY);
+                badge.setBackground(round(Color.rgb(240, 240, 240), 8));
             }
         });
     }
 
     private void handleOnlineWorkUse(OnlineWorkEntry work, String platformCode, String label, String copyText) {
         copyToClipboard(label, copyText);
-        toast("已复制 " + label + "，正在准备图片并打开…");
 
-        if (work.images != null && !work.images.isEmpty()) {
-            onlineClient.downloadWorkImages(work.id, work.images, new OnlineGalleryClient.Callback<List<java.io.File>>() {
-                @Override
-                public void onSuccess(List<java.io.File> files) {
-                    launchOnlineShare(work, files, copyText, platformCode);
-                }
-
-                @Override
-                public void onError(Exception error) {
-                    toast("下载图片失败: " + error.getMessage() + "，文案已在剪贴板");
-                }
-            });
+        if (work.images == null || work.images.isEmpty()) {
+            toast("已复制 " + label + "（无图片作品）");
+            return;
         }
+
+        // 创建并显示动态下载进度弹窗
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setCancelable(false);
+
+        LinearLayout dlLayout = new LinearLayout(this);
+        dlLayout.setOrientation(LinearLayout.VERTICAL);
+        dlLayout.setPadding(dp(20), dp(20), dp(20), dp(18));
+
+        TextView dlTitle = text("正在从电脑同步原图到手机…", 15, true);
+        dlTitle.setTextColor(Color.rgb(24, 25, 24));
+        dlLayout.addView(dlTitle);
+
+        TextView dlStatus = text("准备连接电脑真源拉取 " + work.images.size() + " 张原图…", 12, false);
+        dlStatus.setTextColor(Color.rgb(104, 108, 106));
+        dlLayout.addView(dlStatus, margins(0, dp(6), 0, dp(12)));
+
+        ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pb.setIndeterminate(false);
+        pb.setMax(work.images.size());
+        pb.setProgress(0);
+        dlLayout.addView(pb, new LinearLayout.LayoutParams(-1, dp(8)));
+
+        TextView dlCounter = text("0 / " + work.images.size() + " 张", 12, true);
+        dlCounter.setTextColor(Color.rgb(15, 135, 88));
+        dlCounter.setGravity(Gravity.END);
+        dlLayout.addView(dlCounter, margins(0, dp(6), 0, 0));
+
+        builder.setView(dlLayout);
+        builder.setNegativeButton("取消", (d, w) -> d.dismiss());
+        AlertDialog dlDialog = builder.create();
+        dlDialog.show();
+
+        onlineClient.downloadWorkImages(work.id, work.images, new OnlineGalleryClient.DownloadProgressCallback() {
+            @Override
+            public void onProgress(int downloaded, int total, String currentFileName) {
+                if (dlDialog.isShowing()) {
+                    pb.setMax(total);
+                    pb.setProgress(downloaded);
+                    dlCounter.setText(downloaded + " / " + total + " 张");
+                    if (currentFileName != null && !currentFileName.isEmpty()) {
+                        dlStatus.setText("正在下载: " + currentFileName);
+                    }
+                }
+            }
+
+            @Override
+            public void onSuccess(List<java.io.File> files) {
+                if (dlDialog.isShowing()) {
+                    try { dlDialog.dismiss(); } catch (Exception ignored) {}
+                }
+                toast("✅ 原图已全部同步到手机，正在唤起分享…");
+                launchOnlineShare(work, files, copyText, platformCode);
+            }
+
+            @Override
+            public void onError(Exception error) {
+                if (dlDialog.isShowing()) {
+                    try { dlDialog.dismiss(); } catch (Exception ignored) {}
+                }
+                toast("下载图片失败: " + (error != null ? error.getMessage() : "网络超时") + "，文案已在剪贴板");
+            }
+        });
 
         onlineClient.recordUse(work.id, getDeviceName(), platformCode, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
-                if (result.ok) {
+                if (result != null && result.ok) {
                     updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses,
                             getDeviceName() + "(" + platformCode + ")");
                 }

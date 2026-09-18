@@ -252,6 +252,47 @@ public final class OnlineGalleryClient {
         });
     }
 
+    public void loadFullImage(String workId, String fileName, Callback<Bitmap> callback) {
+        executor.execute(() -> {
+            HttpURLConnection conn = null;
+            try {
+                String baseUrl = resolveBaseUrl();
+                String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
+                        + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=0";
+                URL url = new URL(uStr);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestProperty("Connection", "close");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(20000);
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    throw new Exception("HTTP " + code);
+                }
+                InputStream in = new BufferedInputStream(conn.getInputStream());
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = in.read(buf)) != -1) {
+                    baos.write(buf, 0, len);
+                }
+                in.close();
+                byte[] imgBytes = baos.toByteArray();
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                Bitmap bmp = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length, opts);
+                if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
+                mainHandler.post(() -> callback.onSuccess(bmp));
+            } catch (Exception e) {
+                Log.w("OnlineGalleryClient", "loadFullImage failed for " + workId + " / " + fileName + ": " + e.getMessage());
+                mainHandler.post(() -> callback.onError(e));
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Throwable ignored) {}
+                }
+            }
+        });
+    }
+
     public void recordUse(String workId, String deviceName, String platform, Callback<UseResult> callback) {
         executor.execute(() -> {
             try {
@@ -338,7 +379,21 @@ public final class OnlineGalleryClient {
         });
     }
 
+    public interface DownloadProgressCallback {
+        void onProgress(int downloaded, int total, String currentFileName);
+        void onSuccess(List<java.io.File> files);
+        void onError(Exception error);
+    }
+
     public void downloadWorkImages(String workId, List<String> fileNames, Callback<List<java.io.File>> callback) {
+        downloadWorkImages(workId, fileNames, new DownloadProgressCallback() {
+            @Override public void onProgress(int downloaded, int total, String currentFileName) {}
+            @Override public void onSuccess(List<java.io.File> files) { callback.onSuccess(files); }
+            @Override public void onError(Exception error) { callback.onError(error); }
+        });
+    }
+
+    public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback) {
         executor.execute(() -> {
             try {
                 String baseUrl = resolveBaseUrl();
@@ -346,33 +401,47 @@ public final class OnlineGalleryClient {
                 if (!targetDir.exists()) targetDir.mkdirs();
 
                 List<java.io.File> result = new ArrayList<>();
-                for (String fileName : fileNames) {
-                    java.io.File localFile = new java.io.File(targetDir, fileName);
-                    if (localFile.exists() && localFile.length() > 0) {
+                int total = fileNames != null ? fileNames.size() : 0;
+                int count = 0;
+                if (fileNames != null) {
+                    for (String fileName : fileNames) {
+                        final int progStart = count;
+                        final String curName = fileName;
+                        mainHandler.post(() -> callback.onProgress(progStart, total, curName));
+
+                        java.io.File localFile = new java.io.File(targetDir, fileName);
+                        if (localFile.exists() && localFile.length() > 0) {
+                            result.add(localFile);
+                            count++;
+                            final int progDone = count;
+                            mainHandler.post(() -> callback.onProgress(progDone, total, curName));
+                            continue;
+                        }
+                        String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
+                                + "&file=" + URLEncoder.encode(fileName, "UTF-8");
+                        URL url = new URL(uStr);
+                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                        conn.setConnectTimeout(TIMEOUT_MS);
+                        conn.setReadTimeout(TIMEOUT_MS * 3);
+                        if (conn.getResponseCode() != 200) {
+                            throw new Exception("HTTP " + conn.getResponseCode() + " 下载 " + fileName + " 失败");
+                        }
+                        InputStream in = new BufferedInputStream(conn.getInputStream());
+                        java.io.FileOutputStream out = new java.io.FileOutputStream(localFile);
+                        byte[] buf = new byte[8192];
+                        int len;
+                        while ((len = in.read(buf)) != -1) {
+                            out.write(buf, 0, len);
+                        }
+                        out.flush();
+                        out.close();
+                        in.close();
+                        conn.disconnect();
                         result.add(localFile);
-                        continue;
+                        count++;
+                        final int progDone = count;
+                        mainHandler.post(() -> callback.onProgress(progDone, total, curName));
                     }
-                    String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
-                            + "&file=" + URLEncoder.encode(fileName, "UTF-8");
-                    URL url = new URL(uStr);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setConnectTimeout(TIMEOUT_MS);
-                    conn.setReadTimeout(TIMEOUT_MS * 3);
-                    if (conn.getResponseCode() != 200) {
-                        throw new Exception("HTTP " + conn.getResponseCode() + " 下载 " + fileName + " 失败");
-                    }
-                    InputStream in = new BufferedInputStream(conn.getInputStream());
-                    java.io.FileOutputStream out = new java.io.FileOutputStream(localFile);
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = in.read(buf)) != -1) {
-                        out.write(buf, 0, len);
-                    }
-                    out.flush();
-                    out.close();
-                    in.close();
-                    conn.disconnect();
-                    result.add(localFile);
                 }
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
