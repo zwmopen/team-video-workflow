@@ -25,7 +25,9 @@ import json
 import time
 import socket
 import threading
+import hashlib
 import urllib.parse
+import re
 from io import BytesIO
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional
@@ -77,14 +79,27 @@ def detect_destination(title: str) -> str:
     return "其他"
 
 
+DISK_THUMB_DIR = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "gallery_thumb_cache")
+try:
+    os.makedirs(DISK_THUMB_DIR, exist_ok=True)
+except Exception:
+    pass
+
 class WorkScanner:
-    """负责扫描成品库作品与元数据（仅限已发送0次与根目录直出合法成品，严格排除已发1次/2次与忽略目录）"""
+    """负责扫描成品库作品与元数据（覆盖已发送0次、已发送1次、已发送2次及根目录直出合法成品）"""
 
     def __init__(self, root: str):
         self.root = os.path.abspath(root)
         self._lock = threading.Lock()
         self._cached_works: List[Dict[str, Any]] = []
+        self._works_by_id: Dict[str, Dict[str, Any]] = {}
         self._last_scan_time = 0.0
+
+    def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            if not self._works_by_id:
+                self.scan()
+            return self._works_by_id.get(work_id)
 
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
@@ -131,10 +146,13 @@ class WorkScanner:
                             seen_ids.add(work["id"])
                             results.append(work)
 
-            # 2. 扫描根目录下最新直出的合法作品（如 20260914 Codex-...），排除忽略目录与特殊目录
+            # 扫描根目录下最新直出的合法作品，排除忽略目录与特殊目录
             IGNORED_NAMES = {
                 "已发送0次（抖音小红书可发）", "已发送1次（微信公众号可发）", "已发送2次（其他平台可发）",
-                "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts"
+                "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
+                "_portfolio_backup", "_portfolio_move_logs", "_不合格成品合集", "_作品历史数据",
+                "_制作中", "_待补全_单封面作品集", "_测试验收", "_生产计划与排产参考", "_重复待处理",
+                "发布空间", "待制作待补全", "抖音小红书"
             }
             try:
                 root_entries = os.listdir(self.root)
@@ -144,7 +162,7 @@ class WorkScanner:
                     full_path = os.path.join(self.root, entry)
                     if not os.path.isdir(full_path):
                         continue
-                    work = self._inspect_work_dir(full_path, entry, "已发送0次", 0)
+                    work = self._inspect_work_dir(full_path, entry, "待首发", 0)
                     if work and work["id"] not in seen_ids:
                         seen_ids.add(work["id"])
                         results.append(work)
@@ -154,6 +172,7 @@ class WorkScanner:
             # 按时间倒序（标题通常带时间戳）
             results.sort(key=lambda w: w.get("title", ""), reverse=True)
             self._cached_works = results
+            self._works_by_id = {w["id"]: w for w in results}
             self._last_scan_time = now
             return results
 
@@ -242,9 +261,23 @@ class WorkScanner:
 
         destination = detect_destination(folder_name)
 
+        # 优雅标题清洗：剥离时间戳与机器流水线前缀，让手机端直显方案名
+        clean_title = folder_name
+        clean_title = re.sub(r'^\d{8}[_\-]\d{6}[_\-]?', '', clean_title)
+        clean_title = re.sub(r'^\d{8}[_\-]?', '', clean_title)
+        clean_title = re.sub(r'^(网页CDP|CodexAPI|Codex|CDP)[_\-]?', '', clean_title)
+        clean_title = re.sub(r'^[（\(\[【_\-\s]+', '', clean_title)
+        clean_title = re.sub(r'[\)\]】_\-\s]+$', '', clean_title)
+        clean_title = re.sub(r'[\(（]?_{0,3}COPY_FORMAT_\d+_{0,3}[\)）]?', '', clean_title)
+        clean_title = re.sub(r'<{1,3}COPY_FORMAT:\d+>{1,3}', '', clean_title)
+        clean_title = clean_title.replace("[转]", "").strip()
+        if not clean_title:
+            clean_title = folder_name
+
         return {
             "id": folder_name,
-            "title": folder_name,
+            "title": clean_title,
+            "rawTitle": folder_name,
             "destination": destination,
             "stage": stage_name,
             "path": dir_path,
@@ -312,18 +345,27 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/api/online/categories":
             works = self.scanner.scan()
             counts: Dict[str, int] = {}
+            count_stage0 = 0
+            count_stage1 = 0
+            count_stage2 = 0
             for w in works:
+                uc = w.get("useCount", 0)
+                if uc == 0:
+                    count_stage0 += 1
+                elif uc == 1:
+                    count_stage1 += 1
+                else:
+                    count_stage2 += 1
                 dest = w.get("destination", "其他")
                 counts[dest] = counts.get(dest, 0) + 1
 
-            # 纯净目的地聚合，按数量倒序，绝对不包含“全部”（客户端自带单个“全部”）
+            # 纯净分类聚合：彻底剔除“待首发”、“已发1次”等阶段分类，仅返回按数量倒序的目的地
             categories = []
             for d in DESTINATIONS:
                 if d in counts and counts[d] > 0:
                     categories.append({"name": d, "count": counts[d]})
             if "其他" in counts and counts["其他"] > 0:
                 categories.append({"name": "其他", "count": counts["其他"]})
-
             categories.sort(key=lambda c: -c["count"])
 
             self.send_json(200, {"ok": True, "categories": categories, "stages": [], "total": len(works)})
@@ -376,8 +418,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Missing id or file")
                 return
 
-            works = self.scanner.scan()
-            target_work = next((w for w in works if w["id"] == work_id), None)
+            target_work = self.scanner.get_work(work_id)
             if not target_work:
                 self.send_error(404, "Work not found")
                 return
@@ -387,15 +428,25 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Image file not found")
                 return
 
-            cache_key = f"{img_path}:thumb" if thumb else img_path
-            with THUMB_CACHE_LOCK:
-                cached = THUMB_CACHE.get(cache_key)
+            try:
+                mtime = os.path.getmtime(img_path)
+            except Exception:
+                mtime = 0
 
-            if cached:
-                data = cached
-                mime = "image/jpeg"
-            else:
-                if thumb and HAS_PIL:
+            data = None
+            mime = "image/jpeg"
+
+            if thumb:
+                cache_file_name = hashlib.md5(f"{img_path}_{mtime}".encode("utf-8")).hexdigest() + ".jpg"
+                cache_file_path = os.path.join(DISK_THUMB_DIR, cache_file_name)
+                if os.path.isfile(cache_file_path):
+                    try:
+                        with open(cache_file_path, "rb") as fp:
+                            data = fp.read()
+                    except Exception:
+                        data = None
+
+                if data is None and HAS_PIL:
                     try:
                         with Image.open(img_path) as im:
                             im.thumbnail((320, 320), Image.Resampling.LANCZOS)
@@ -403,25 +454,25 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             rgb_im = im.convert("RGB")
                             rgb_im.save(buf, format="JPEG", quality=82)
                             data = buf.getvalue()
-                            mime = "image/jpeg"
+                        with open(cache_file_path, "wb") as fp:
+                            fp.write(data)
                     except Exception:
-                        with open(img_path, "rb") as fp:
-                            data = fp.read()
-                        mime = "image/jpeg" if img_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
-                else:
+                        data = None
+
+            if data is None:
+                try:
                     with open(img_path, "rb") as fp:
                         data = fp.read()
                     mime = "image/jpeg" if img_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
-
-                with THUMB_CACHE_LOCK:
-                    if len(THUMB_CACHE) > MAX_CACHE_ENTRIES:
-                        THUMB_CACHE.pop(next(iter(THUMB_CACHE)))
-                    THUMB_CACHE[cache_key] = data
+                except Exception:
+                    self.send_error(500, "Failed to read image")
+                    return
 
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Connection", "close")
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(data)

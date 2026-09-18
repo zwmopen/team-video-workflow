@@ -91,9 +91,43 @@ public final class MainActivity extends Activity {
     private static final String PREFS = "device_share";
     private static final String PREF_TREE_URI = "libraryTreeUri";
     private static final String PREF_TREE_NAME = "libraryTreeName";
+    private static final String PREF_IS_ONLINE_MODE = "is_online_mode";
     private static final int REQUEST_TREE = 61;
     private static final int REQUEST_LEGACY_STORAGE = 62;
     public static volatile boolean isVisible;
+
+    static String formatDisplayTitle(String rawTitle) {
+        if (rawTitle == null) return "";
+        String clean = rawTitle.trim();
+        boolean changed = true;
+        while (changed) {
+            String prev = clean;
+            clean = clean.replaceFirst("^\\d{8}[_\\-]\\d{6}[_\\-]?", "");
+            clean = clean.replaceFirst("^\\d{8}[_\\-]?", "");
+            clean = clean.replaceFirst("^(网页CDP|CodexAPI|Codex|CDP|制作中|待补全|成品)[_\\-]?", "");
+            clean = clean.replaceFirst("^[（\\(\\[【\\_\\-\\s]+", "");
+            clean = clean.replaceFirst("[\\)\\]】\\_\\-\\s]+$", "");
+            clean = clean.replace("[转]", "");
+            clean = clean.replaceAll("[\\(（]?_{0,3}COPY_FORMAT_\\d+_{0,3}[\\)）]?", "");
+            clean = clean.replaceAll("<{1,3}COPY_FORMAT:\\d+>{1,3}", "");
+            clean = clean.trim();
+            changed = !clean.equals(prev);
+        }
+        return clean.isEmpty() ? rawTitle : clean;
+    }
+
+    static String extractTimestampBadge(String rawTitle) {
+        if (rawTitle == null) return "";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{4})(\\d{2})(\\d{2})_(\\d{2})(\\d{2})").matcher(rawTitle);
+        if (m.find()) {
+            return m.group(2) + "-" + m.group(3) + " " + m.group(4) + ":" + m.group(5);
+        }
+        java.util.regex.Matcher mDate = java.util.regex.Pattern.compile("^(\\d{4})(\\d{2})(\\d{2})").matcher(rawTitle);
+        if (mDate.find()) {
+            return mDate.group(2) + "-" + mDate.group(3);
+        }
+        return "";
+    }
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private LinearLayout worksContainer;
@@ -137,6 +171,8 @@ public final class MainActivity extends Activity {
     private String selectedOnlineCategory = WorkCategory.ALL;
     private final Map<String, Button> onlineCategoryButtons = new LinkedHashMap<>();
     private final Map<String, String> onlineCategoryLabels = new LinkedHashMap<>();
+    private int onlinePageLimit = 25;
+    private final List<OnlineWorkEntry> currentOnlineFilteredEntries = new ArrayList<>();
 
     static boolean matchesSearchTokens(String name, String folder, String[] tokens) {
         if (tokens == null || tokens.length == 0) return true;
@@ -187,6 +223,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        isOnlineMode = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_IS_ONLINE_MODE, false);
         onlineClient = new OnlineGalleryClient(this);
         ensureDeviceId();
         setContentView(ScreenInsets.protect(buildUi()));
@@ -211,7 +248,9 @@ public final class MainActivity extends Activity {
         filter.addAction(UpdateDownloadReceiver.ACTION_UPDATE_READY);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
-        if (fileMode) {
+        if (isOnlineMode) {
+            refreshOnlineWorks(false);
+        } else if (fileMode) {
             openSelectedTreeForBrowsing(false);
         } else if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) {
             refreshWorks();
@@ -325,6 +364,9 @@ public final class MainActivity extends Activity {
             if (fileMode) showWorksMode();
             else showFileMode();
         });
+        if (isOnlineMode) {
+            modeButton.setVisibility(View.GONE);
+        }
         titleRow.addView(modeButton, iconParams(false));
         titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
         ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
@@ -343,8 +385,8 @@ public final class MainActivity extends Activity {
         updateSourceModeButtonStyle();
         titleRow.addView(sourceModeButton, iconParams(true));
 
-        leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
-        leftModeButton.setVisibility(View.GONE);
+        leftModeButton = iconButton(R.drawable.ic_album_refresh, isOnlineMode ? "刷新电脑作品" : "刷新作品");
+        leftModeButton.setVisibility(isOnlineMode ? View.VISIBLE : View.GONE);
         leftModeButton.setOnClickListener(v -> {
             if (fileMode) {
                 refreshFiles();
@@ -361,6 +403,7 @@ public final class MainActivity extends Activity {
         });
         titleRow.addView(leftModeButton, iconParams(true));
         rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
+        rightModeButton.setVisibility(isOnlineMode ? View.GONE : View.VISIBLE);
         rightModeButton.setOnClickListener(v -> {
             if (fileMode) {
                 leaveFileMode();
@@ -840,7 +883,8 @@ public final class MainActivity extends Activity {
         LinearLayout nameRow = new LinearLayout(this);
         nameRow.setOrientation(LinearLayout.HORIZONTAL);
         nameRow.setGravity(Gravity.TOP);
-        String title = work.used ? "📌 " + work.name : work.name;
+        String displayTitle = formatDisplayTitle(work.name);
+        String title = work.used ? "📌 " + displayTitle : displayTitle;
         TextView name = text(title, 14, true);
         name.setMaxLines(1);
         nameRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
@@ -2199,26 +2243,32 @@ public final class MainActivity extends Activity {
 
     private void switchToLocalMode() {
         isOnlineMode = false;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_IS_ONLINE_MODE, false).apply();
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
+        if (modeButton != null) modeButton.setVisibility(View.VISIBLE);
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
-        footerNote.setText("点击平台按钮会复制对应文案并打开图片分享。首次使用后按现有清理设置自动回收；两个平台共用一个作品生命周期。");
+        footerNote.setText("📱 手机本地作品：点击文案复制并唤起分享；长按文案按钮可全屏预览。");
+        worksContainer.removeAllViews();
         showWorks();
         toast("已切换至：📱 手机本地作品");
     }
 
     private void switchToOnlineMode() {
         isOnlineMode = true;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_IS_ONLINE_MODE, true).apply();
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
+        if (modeButton != null) modeButton.setVisibility(View.GONE);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新电脑作品");
         leftModeButton.setVisibility(View.VISIBLE);
         rightModeButton.setVisibility(View.GONE);
-        footerNote.setText("电脑在线作品：受“两次使用保护”铁律约束，发送未满2次不挪移文件夹，自动同步打标记录。长按文案按钮可预览文案。");
+        footerNote.setText("💻 电脑在线作品：实时读取电脑首发成品，点击文案复制并唤起分享；长按文案按钮可全屏预览。");
+        worksContainer.removeAllViews();
         toast("已切换至：💻 电脑在线相册");
 
         if (!onlineWorks.isEmpty()) {
@@ -2358,6 +2408,7 @@ public final class MainActivity extends Activity {
             for (OnlineGalleryClient.CategoryItem cat : catResult.categories) {
                 if (cat.count <= 0) continue;
                 if ("全部".equals(cat.name) || WorkCategory.ALL.equals(cat.name) || onlineCategoryButtons.containsKey(cat.name)) continue;
+                if ("待首发".equals(cat.name) || "已发1次".equals(cat.name) || "已发2次".equals(cat.name)) continue;
                 String displayBase = formatFolderLabel(cat.name);
                 String fullLabel = displayBase + " " + cat.count;
                 Button btn = createOnlineCategoryButton(cat.name, displayBase, fullLabel, cat.name.equals(selectedOnlineCategory));
@@ -2422,10 +2473,11 @@ public final class MainActivity extends Activity {
 
     private void applyOnlineCategoryFilter(String catKey) {
         if (!isOnlineMode) return;
+        onlinePageLimit = 25;
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
 
-        List<OnlineWorkEntry> filtered = new ArrayList<>();
+        currentOnlineFilteredEntries.clear();
         for (OnlineWorkEntry work : onlineWorks) {
             if (!WorkCategory.ALL.equals(catKey) && !"全部".equals(catKey)) {
                 boolean matchesCategory;
@@ -2445,9 +2497,9 @@ public final class MainActivity extends Activity {
             if (tokens.length > 0 && !matchesSearchTokens(work.title, work.destination, tokens)) {
                 continue;
             }
-            filtered.add(work);
+            currentOnlineFilteredEntries.add(work);
         }
-        renderOnlineWorksCards(filtered, false);
+        renderOnlineWorksCards(currentOnlineFilteredEntries, false);
         if (contentScroll != null) {
             contentScroll.scrollTo(0, 0);
         }
@@ -2495,9 +2547,28 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        for (OnlineWorkEntry work : entries) {
-            worksContainer.addView(onlineWorkCard(work), margins(0, 0, 0, dp(10)));
+        int showCount = Math.min(entries.size(), onlinePageLimit);
+        for (int i = 0; i < showCount; i++) {
+            worksContainer.addView(onlineWorkCard(entries.get(i)), margins(0, 0, 0, dp(10)));
         }
+
+        if (entries.size() > showCount) {
+            Button loadMoreBtn = new Button(this);
+            loadMoreBtn.setText("加载更多作品 (已显示 " + showCount + " / " + entries.size() + " 套)");
+            loadMoreBtn.setAllCaps(false);
+            loadMoreBtn.setTextSize(13);
+            loadMoreBtn.setTextColor(Color.rgb(15, 135, 88));
+            loadMoreBtn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(200, 230, 215)));
+            loadMoreBtn.setPadding(dp(16), dp(10), dp(16), dp(10));
+            loadMoreBtn.setOnClickListener(v -> {
+                onlinePageLimit += 30;
+                renderOnlineWorksCards(currentOnlineFilteredEntries, false);
+            });
+            LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(-1, dp(44));
+            btnParams.setMargins(dp(12), dp(8), dp(12), dp(24));
+            worksContainer.addView(loadMoreBtn, btnParams);
+        }
+
         if (!animate) worksContainer.setLayoutTransition(transition);
     }
 
@@ -2539,8 +2610,10 @@ public final class MainActivity extends Activity {
             titleRow.addView(useBadge, useBadgeParams);
         }
 
-        TextView name = text(work.title, 14, true);
+        String displayTitle = formatDisplayTitle(work.title);
+        TextView name = text(displayTitle, 14, true);
         name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         titleRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
         card.addView(titleRow);
 
@@ -2550,6 +2623,13 @@ public final class MainActivity extends Activity {
 
         StringBuilder detail = new StringBuilder();
         detail.append(work.imageCount).append(" 张图片 · 电脑真源");
+        String timeBadge = extractTimestampBadge(work.id);
+        if (timeBadge.isEmpty()) {
+            timeBadge = extractTimestampBadge(work.title);
+        }
+        if (!timeBadge.isEmpty()) {
+            detail.append(" · ").append(timeBadge);
+        }
         if (work.useCount > 0 && work.dispatchedTo != null && !work.dispatchedTo.isEmpty()) {
             detail.append("\n记录：").append(String.join("、", work.dispatchedTo));
         }
@@ -2710,6 +2790,7 @@ public final class MainActivity extends Activity {
 
         int thumbW = dp(84);
         int thumbH = dp(112);
+        List<Runnable> deferredLoads = new ArrayList<>();
 
         for (int i = 0; i < work.images.size(); i++) {
             String imageName = work.images.get(i);
@@ -2723,16 +2804,17 @@ public final class MainActivity extends Activity {
 
             String cacheKey = "online:" + work.id + ":" + imageName;
             Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
-            if (cached != null) {
+            if (cached != null && !cached.isRecycled()) {
                 thumbView.setImageBitmap(cached);
             } else {
                 thumbView.setTag(cacheKey);
-                onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                final String finalCacheKey = cacheKey;
+                Runnable task = () -> onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
                     @Override
                     public void onSuccess(Bitmap result) {
-                        if (result != null) {
-                            THUMBNAIL_CACHE.put(cacheKey, result);
-                            if (cacheKey.equals(thumbView.getTag())) {
+                        if (result != null && !result.isRecycled()) {
+                            THUMBNAIL_CACHE.put(finalCacheKey, result);
+                            if (finalCacheKey.equals(thumbView.getTag())) {
                                 thumbView.setImageBitmap(result);
                             }
                         }
@@ -2741,11 +2823,28 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onError(Exception error) {}
                 });
+
+                if (i < 4) {
+                    task.run();
+                } else {
+                    deferredLoads.add(task);
+                }
             }
 
             final int imgIndex = i;
             thumbView.setOnClickListener(v -> showOnlineImageDialog(work, imgIndex));
             strip.addView(thumbView, params);
+        }
+
+        if (!deferredLoads.isEmpty()) {
+            scroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if (scrollX > dp(20)) {
+                    scroll.setOnScrollChangeListener(null);
+                    for (Runnable task : deferredLoads) {
+                        task.run();
+                    }
+                }
+            });
         }
 
         scroll.addView(strip);

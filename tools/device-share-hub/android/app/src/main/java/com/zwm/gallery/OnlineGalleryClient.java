@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -212,25 +213,41 @@ public final class OnlineGalleryClient {
 
     public void loadThumbnail(String workId, String fileName, Callback<Bitmap> callback) {
         executor.execute(() -> {
+            HttpURLConnection conn = null;
             try {
                 String baseUrl = resolveBaseUrl();
                 String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
                         + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=1";
                 URL url = new URL(uStr);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(TIMEOUT_MS);
-                conn.setReadTimeout(TIMEOUT_MS);
-                if (conn.getResponseCode() != 200) {
-                    throw new Exception("HTTP " + conn.getResponseCode());
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestProperty("Connection", "close");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(8000);
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    throw new Exception("HTTP " + code);
                 }
                 InputStream in = new BufferedInputStream(conn.getInputStream());
-                Bitmap bmp = BitmapFactory.decodeStream(in);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = in.read(buf)) != -1) {
+                    baos.write(buf, 0, len);
+                }
                 in.close();
-                conn.disconnect();
-                if (bmp == null) throw new Exception("Failed to decode bitmap");
+                byte[] imgBytes = baos.toByteArray();
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inPreferredConfig = Bitmap.Config.RGB_565;
+                Bitmap bmp = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length, opts);
+                if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
                 mainHandler.post(() -> callback.onSuccess(bmp));
             } catch (Exception e) {
+                Log.w("OnlineGalleryClient", "loadThumbnail failed for " + workId + " / " + fileName + ": " + e.getMessage());
                 mainHandler.post(() -> callback.onError(e));
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Throwable ignored) {}
+                }
             }
         });
     }
