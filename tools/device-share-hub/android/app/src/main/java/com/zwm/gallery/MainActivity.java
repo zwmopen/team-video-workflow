@@ -27,17 +27,23 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.LruCache;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.animation.LayoutTransition;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
@@ -117,6 +123,34 @@ public final class MainActivity extends Activity {
     private boolean updateReadyPromptShown;
     private final Map<String, Button> categoryButtons = new LinkedHashMap<>();
     private final Map<String, String> categoryLabels = new LinkedHashMap<>();
+    private LinearLayout searchBar;
+    private EditText searchInput;
+    private ImageView clearSearchButton;
+    private String searchQuery = "";
+
+    static boolean matchesSearchTokens(String name, String folder, String[] tokens) {
+        if (tokens == null || tokens.length == 0) return true;
+        String cleanName = name != null ? name.toLowerCase(Locale.ROOT) : "";
+        String cleanFolder = folder != null ? folder.toLowerCase(Locale.ROOT) : "";
+        for (String token : tokens) {
+            if (token == null || token.isEmpty()) continue;
+            String lowerToken = token.toLowerCase(Locale.ROOT);
+            boolean inName = cleanName.contains(lowerToken);
+            boolean inFolder = cleanFolder.contains(lowerToken);
+            if (!inName && !inFolder) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void hideKeyboard(View view) {
+        if (view == null) return;
+        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        }
+    }
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -198,6 +232,16 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (searchQuery != null && !searchQuery.isEmpty()) {
+            if (searchInput != null) {
+                searchInput.setText("");
+            }
+            searchQuery = "";
+            hideKeyboard(searchInput);
+            if (searchInput != null) searchInput.clearFocus();
+            applyCategoryFilter(selectedCategory);
+            return;
+        }
         if (!selectedWorkIds.isEmpty()) {
             selectedWorkIds.clear();
             quickTrashButton.setVisibility(View.GONE);
@@ -240,7 +284,7 @@ public final class MainActivity extends Activity {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        titleRow.setPadding(dp(12), dp(18), dp(12), dp(14));
+        titleRow.setPadding(dp(12), dp(18), dp(12), dp(10));
         titleRow.setBackgroundColor(Color.rgb(248, 249, 248));
         LinearLayout titleCluster = new LinearLayout(this);
         titleCluster.setOrientation(LinearLayout.HORIZONTAL);
@@ -315,6 +359,68 @@ public final class MainActivity extends Activity {
         categorySelector = new FrameLayout(this);
         categorySelector.setBackground(round(Color.rgb(232, 234, 233), 11));
         categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(40)));
+
+        searchBar = new LinearLayout(this);
+        searchBar.setOrientation(LinearLayout.HORIZONTAL);
+        searchBar.setGravity(Gravity.CENTER_VERTICAL);
+        searchBar.setBackground(roundWithStroke(Color.WHITE, 12, Color.rgb(220, 224, 222)));
+        searchBar.setPadding(dp(10), 0, dp(6), 0);
+
+        ImageView searchIcon = new ImageView(this);
+        searchIcon.setImageResource(R.drawable.ic_album_search);
+        searchIcon.setImageTintList(ColorStateList.valueOf(Color.rgb(130, 136, 133)));
+        LinearLayout.LayoutParams sIconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+        sIconParams.setMargins(0, 0, dp(6), 0);
+        searchBar.addView(searchIcon, sIconParams);
+
+        searchInput = new EditText(this);
+        searchInput.setHint("搜索作品标题或文件夹/目的地...");
+        searchInput.setHintTextColor(Color.rgb(155, 160, 158));
+        searchInput.setTextColor(Color.rgb(32, 34, 33));
+        searchInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        searchInput.setBackground(null);
+        searchInput.setSingleLine(true);
+        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        searchInput.setPadding(0, dp(4), 0, dp(4));
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                String newQuery = s != null ? s.toString().trim() : "";
+                clearSearchButton.setVisibility(newQuery.isEmpty() ? View.GONE : View.VISIBLE);
+                if (!newQuery.equals(searchQuery)) {
+                    searchQuery = newQuery;
+                    applyCategoryFilter(selectedCategory);
+                }
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+        searchInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
+                hideKeyboard(searchInput);
+                searchInput.clearFocus();
+                return true;
+            }
+            return false;
+        });
+        LinearLayout.LayoutParams sInputParams = new LinearLayout.LayoutParams(0, -2, 1);
+        searchBar.addView(searchInput, sInputParams);
+
+        clearSearchButton = new ImageView(this);
+        clearSearchButton.setImageResource(R.drawable.ic_album_clear);
+        clearSearchButton.setImageTintList(ColorStateList.valueOf(Color.rgb(150, 155, 153)));
+        clearSearchButton.setVisibility(View.GONE);
+        clearSearchButton.setPadding(dp(6), dp(6), dp(6), dp(6));
+        clearSearchButton.setContentDescription("清空搜索");
+        clearSearchButton.setOnClickListener(v -> {
+            searchInput.setText("");
+            searchQuery = "";
+            hideKeyboard(searchInput);
+            searchInput.clearFocus();
+            applyCategoryFilter(selectedCategory);
+        });
+        LinearLayout.LayoutParams sClearParams = new LinearLayout.LayoutParams(dp(32), dp(32));
+        searchBar.addView(clearSearchButton, sClearParams);
+
         worksContainer = new LinearLayout(this);
         worksContainer.setClipChildren(false);
         worksContainer.setClipToPadding(false);
@@ -358,6 +464,12 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+        contentScroll.getViewTreeObserver().addOnScrollChangedListener(() -> {
+            if (searchInput != null && searchInput.isFocused()) {
+                hideKeyboard(searchInput);
+                searchInput.clearFocus();
+            }
+        });
         contentScroll.addView(root);
         FrameLayout contentFrame = new FrameLayout(this);
         refreshIndicator = new LinearLayout(this);
@@ -384,8 +496,11 @@ public final class MainActivity extends Activity {
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(Color.rgb(248, 249, 248));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(44));
-        categoryParams.setMargins(dp(12), 0, dp(12), 0);
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(38));
+        searchParams.setMargins(dp(12), 0, dp(12), dp(8));
+        frozenLayout.addView(searchBar, searchParams);
+        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(40));
+        categoryParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(categorySelector, categoryParams);
         frozenLayout.addView(contentFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
@@ -452,6 +567,7 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
+        if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
         categorySelector.setVisibility(View.VISIBLE);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新作品");
@@ -466,6 +582,7 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = true;
+        if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
         leftModeButton.setImageResource(R.drawable.ic_album_back);
         leftModeButton.setContentDescription("返回作品");
@@ -537,13 +654,17 @@ public final class MainActivity extends Activity {
         }
         renderedWorks = new ArrayList<>(cleanEntries);
         if (!showingTrash) updateCategoryCounts(cleanEntries);
-        List<WorkLibrary.WorkEntry> displayEntries = cleanEntries;
-        if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory)) {
-            ArrayList<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
-            for (WorkLibrary.WorkEntry entry : cleanEntries) {
-                if (selectedCategory.equals(entry.getFolderName())) filtered.add(entry);
+        String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
+        String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
+        List<WorkLibrary.WorkEntry> displayEntries = new ArrayList<>();
+        for (WorkLibrary.WorkEntry entry : cleanEntries) {
+            if (!showingTrash && !WorkCategory.ALL.equals(selectedCategory) && !selectedCategory.equals(entry.getFolderName())) {
+                continue;
             }
-            displayEntries = filtered;
+            if (!showingTrash && tokens.length > 0 && !matchesSearchTokens(entry.name, entry.getFolderName(), tokens)) {
+                continue;
+            }
+            displayEntries.add(entry);
         }
         renderWorksCards(displayEntries, animate);
     }
@@ -567,7 +688,15 @@ public final class MainActivity extends Activity {
         rightModeButton.setEnabled(true);
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
         if (entries.isEmpty()) {
-            TextView empty = text(showingTrash ? "回收站是空的" : "还没有作品\n从电脑拖入 ZIP，或选择手机里的 Lark 文件夹", 14, false);
+            String emptyMsg;
+            if (showingTrash) {
+                emptyMsg = "回收站是空的";
+            } else if (searchQuery != null && !searchQuery.trim().isEmpty()) {
+                emptyMsg = "未找到匹配「" + searchQuery.trim() + "」的作品\n请尝试搜索其他标题或文件夹关键字";
+            } else {
+                emptyMsg = "还没有作品\n从电脑拖入 ZIP，或选择手机里的 Lark 文件夹";
+            }
+            TextView empty = text(emptyMsg, 14, false);
             empty.setGravity(Gravity.CENTER);
             empty.setTextColor(Color.GRAY);
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
@@ -588,17 +717,46 @@ public final class MainActivity extends Activity {
             refreshWorks();
             return;
         }
-        List<WorkLibrary.WorkEntry> filtered;
-        if (WorkCategory.ALL.equals(folderKey)) {
-            filtered = renderedWorks;
-        } else {
-            filtered = new ArrayList<>();
+        String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
+        String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
+
+        // If a specific folder is selected, check if user searched for something outside this folder
+        // If current folder has 0 matches for this search query, but ALL works has matches,
+        // automatically switch to ALL so user sees the results!
+        if (!WorkCategory.ALL.equals(folderKey) && tokens.length > 0) {
+            boolean hasMatchesInCurrent = false;
+            boolean hasMatchesInAll = false;
             for (WorkLibrary.WorkEntry entry : renderedWorks) {
-                if (folderKey.equals(entry.getFolderName()) && !pendingTrashIds.contains(entry.id)) {
-                    filtered.add(entry);
+                if (pendingTrashIds.contains(entry.id)) continue;
+                if (matchesSearchTokens(entry.name, entry.getFolderName(), tokens)) {
+                    hasMatchesInAll = true;
+                    if (folderKey.equals(entry.getFolderName())) {
+                        hasMatchesInCurrent = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasMatchesInCurrent && hasMatchesInAll) {
+                selectedCategory = WorkCategory.ALL;
+                folderKey = WorkCategory.ALL;
+                for (Map.Entry<String, Button> item : categoryButtons.entrySet()) {
+                    applyCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedCategory));
                 }
             }
         }
+
+        List<WorkLibrary.WorkEntry> filtered = new ArrayList<>();
+        for (WorkLibrary.WorkEntry entry : renderedWorks) {
+            if (pendingTrashIds.contains(entry.id)) continue;
+            if (!WorkCategory.ALL.equals(folderKey) && !folderKey.equals(entry.getFolderName())) {
+                continue;
+            }
+            if (tokens.length > 0 && !matchesSearchTokens(entry.name, entry.getFolderName(), tokens)) {
+                continue;
+            }
+            filtered.add(entry);
+        }
+
         renderWorksCards(filtered, false);
         if (contentScroll != null) {
             contentScroll.scrollTo(0, 0);
@@ -1058,6 +1216,7 @@ public final class MainActivity extends Activity {
 
     private void leaveFileMode() {
         fileMode = false;
+        if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
         categorySelector.setVisibility(View.VISIBLE);
         fileTree = null;
         filePath.clear();
@@ -1077,6 +1236,7 @@ public final class MainActivity extends Activity {
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
         fileMode = true;
+        if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
         modeButton.setImageResource(R.drawable.ic_album_share);
         modeButton.setContentDescription("切换到作品分享");
