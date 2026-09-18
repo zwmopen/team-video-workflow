@@ -60,6 +60,15 @@ public final class ShareFileProvider extends ContentProvider {
             if (!storedName.matches("[A-Za-z0-9._-]+")) throw new SecurityException("非法更新文件名");
             return checked(new File(getContext().getFilesDir(), "updates"), storedName);
         }
+        if (segments.size() == 3 && "online".equals(segments.get(0))) {
+            String workId = segments.get(1);
+            String storedName = segments.get(2);
+            if (!workId.matches("[A-Za-z0-9._-]+") || storedName.contains("/") || storedName.contains("\\")) {
+                throw new SecurityException("非法文件路径");
+            }
+            File root = new File(getContext().getFilesDir(), "work-library/online");
+            return checked(new File(root, workId), storedName);
+        }
         if (segments.size() != 3 || !"active".equals(segments.get(0))) {
             throw new IllegalArgumentException("URI 格式无效");
         }

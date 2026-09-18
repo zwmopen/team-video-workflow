@@ -12,10 +12,17 @@ final class PlatformCopyParser {
     private static final String HEADER_V3 = "<<<COPY_FORMAT:3>>>";
     private PlatformCopyParser() { }
 
+    private static final Pattern GENERIC_BLOCK_PATTERN =
+            Pattern.compile("(?s)<<<([A-Za-z0-9_\u4e00-\u9fa5]+)_START>>>[\\r\\n]*(.*?)[\\r\\n]*<<<\\1_END>>>");
+
     enum Platform {
         DOUYIN("规避营销版", "DOUYIN", "douyin", "规避营销版"),
         XHS("种草版", "XHS", "xhs", "种草版"),
-        XHS_2("大纲方案版", "XHS_2", "xhs2", "大纲方案版");
+        XHS_2("大纲方案版", "XHS_2", "xhs2", "大纲方案版"),
+        XHS_3("短文精选版", "XHS_3", "xhs3", "短文精选版"),
+        WECHAT("公众号版", "WECHAT", "wechat", "公众号版"),
+        HR("HR决策版", "HR", "hr", "HR决策版"),
+        GENERAL("参考文案", "GENERAL", "general", "参考文案");
 
         final String displayName;
         final String marker;
@@ -47,14 +54,28 @@ final class PlatformCopyParser {
         }
     }
 
+    static String friendlyLabelForMarker(String marker) {
+        if (marker == null || marker.trim().isEmpty()) return "参考文案";
+        String upper = marker.trim().toUpperCase(java.util.Locale.ROOT);
+        if ("XHS_3".equals(upper)) return "短文精选版";
+        if ("WECHAT".equals(upper)) return "公众号版";
+        if ("HR".equals(upper)) return "HR决策版";
+        if (upper.startsWith("VERSION_") || upper.startsWith("V_")) {
+            return "版本 " + upper.substring(upper.indexOf('_') + 1);
+        }
+        if (marker.endsWith("版")) {
+            return marker;
+        }
+        return marker + "版";
+    }
+
     static List<AvailableItem> parseAvailablePlatforms(String source) {
         if (source == null || source.trim().isEmpty()) {
             return Collections.emptyList();
         }
         String text = stripBom(source);
         boolean isProtocol = text.contains(HEADER_V2) || text.contains(HEADER_V3)
-                || text.contains("<<<XHS_START>>>") || text.contains("<<<DOUYIN_START>>>")
-                || text.contains("<<<XHS_2_START>>>");
+                || text.contains("_START>>>");
         if (!isProtocol) {
             return Collections.singletonList(new AvailableItem(Platform.XHS, "发布", text.trim()));
         }
@@ -74,7 +95,46 @@ final class PlatformCopyParser {
         if (hasXhs2) {
             items.add(new AvailableItem(Platform.XHS_2, "大纲方案版", xhs2Res.text));
         }
+
+        // Additional known platforms
+        Result xhs3Res = parse(text, Platform.XHS_3);
+        if (xhs3Res.isOk()) {
+            items.add(new AvailableItem(Platform.XHS_3, Platform.XHS_3.displayName, xhs3Res.text));
+        }
+        Result wechatRes = parse(text, Platform.WECHAT);
+        if (wechatRes.isOk()) {
+            items.add(new AvailableItem(Platform.WECHAT, Platform.WECHAT.displayName, wechatRes.text));
+        }
+        Result hrRes = parse(text, Platform.HR);
+        if (hrRes.isOk()) {
+            items.add(new AvailableItem(Platform.HR, Platform.HR.displayName, hrRes.text));
+        }
+
+        // Parse any dynamic / custom markers
+        Matcher matcher = GENERIC_BLOCK_PATTERN.matcher(text);
+        while (matcher.find()) {
+            String marker = matcher.group(1).trim();
+            String upper = marker.toUpperCase(java.util.Locale.ROOT);
+            if (upper.equals("DOUYIN") || upper.equals("XHS") || upper.equals("XHS_2")
+                    || upper.equals("XHS_3") || upper.equals("WECHAT") || upper.equals("HR")) {
+                continue;
+            }
+            String content = stripOuterLineBreaks(matcher.group(2));
+            if (!content.trim().isEmpty()) {
+                String label = friendlyLabelForMarker(marker);
+                items.add(new AvailableItem(Platform.GENERAL, label, content));
+            }
+        }
+
+        if (items.isEmpty()) {
+            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布", text.trim()));
+        }
         return items;
+    }
+
+    static String extractPlatformCopy(String source, Platform platform) {
+        Result res = parse(source, platform);
+        return res.isOk() ? res.text : "";
     }
 
     static Result parse(String source, Platform platform) {
@@ -119,6 +179,29 @@ final class PlatformCopyParser {
         while (start < end && (value.charAt(start) == '\r' || value.charAt(start) == '\n')) start++;
         while (end > start && (value.charAt(end - 1) == '\r' || value.charAt(end - 1) == '\n')) end--;
         return value.substring(start, end);
+    }
+
+    static String synthesizeDouyinCopy(String source) {
+        if (source == null || source.trim().isEmpty()) return "";
+        String clean = stripBom(source);
+        clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_START>>>", "");
+        clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_END>>>", "");
+        clean = clean.replace(HEADER_V2, "").replace(HEADER_V3, "");
+        // Remove hashtag topic tags commonly used in XHS
+        clean = clean.replaceAll("#[^\\s#]+", "");
+        // Remove XHS emoji tags like [打卡R] etc
+        clean = clean.replaceAll("\\[[^\\]]+R\\]", "");
+        clean = clean.trim();
+        return clean.isEmpty() ? source.trim() : clean;
+    }
+
+    static String synthesizeOutlineCopy(String source) {
+        if (source == null || source.trim().isEmpty()) return "";
+        String clean = stripBom(source);
+        clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_START>>>", "");
+        clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_END>>>", "");
+        clean = clean.replace(HEADER_V2, "").replace(HEADER_V3, "").trim();
+        return clean.isEmpty() ? source.trim() : clean;
     }
 
     static final class Result {

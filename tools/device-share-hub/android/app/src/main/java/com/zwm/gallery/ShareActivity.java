@@ -190,6 +190,14 @@ public final class ShareActivity extends Activity {
             return PlatformCopyParser.Platform.DOUYIN;
         } else if ("xhs2".equalsIgnoreCase(value) || "xhs_2".equalsIgnoreCase(value)) {
             return PlatformCopyParser.Platform.XHS_2;
+        } else if ("xhs3".equalsIgnoreCase(value) || "xhs_3".equalsIgnoreCase(value)) {
+            return PlatformCopyParser.Platform.XHS_3;
+        } else if ("wechat".equalsIgnoreCase(value)) {
+            return PlatformCopyParser.Platform.WECHAT;
+        } else if ("hr".equalsIgnoreCase(value)) {
+            return PlatformCopyParser.Platform.HR;
+        } else if ("general".equalsIgnoreCase(value)) {
+            return PlatformCopyParser.Platform.GENERAL;
         }
         return PlatformCopyParser.Platform.XHS;
     }

@@ -6,6 +6,8 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.res.ColorStateList;
 import android.content.Context;
 import android.content.Intent;
@@ -127,6 +129,14 @@ public final class MainActivity extends Activity {
     private EditText searchInput;
     private ImageView clearSearchButton;
     private String searchQuery = "";
+    private OnlineGalleryClient onlineClient;
+    private boolean isOnlineMode = false;
+    private ImageButton sourceModeButton;
+    private OnlineGalleryClient.CategoriesResult lastCategoriesResult;
+    private final List<OnlineWorkEntry> onlineWorks = new ArrayList<>();
+    private String selectedOnlineCategory = WorkCategory.ALL;
+    private final Map<String, Button> onlineCategoryButtons = new LinkedHashMap<>();
+    private final Map<String, String> onlineCategoryLabels = new LinkedHashMap<>();
 
     static boolean matchesSearchTokens(String name, String folder, String[] tokens) {
         if (tokens == null || tokens.length == 0) return true;
@@ -177,6 +187,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        onlineClient = new OnlineGalleryClient(this);
         ensureDeviceId();
         setContentView(ScreenInsets.protect(buildUi()));
         startReceiver();
@@ -239,13 +250,21 @@ public final class MainActivity extends Activity {
             searchQuery = "";
             hideKeyboard(searchInput);
             if (searchInput != null) searchInput.clearFocus();
-            applyCategoryFilter(selectedCategory);
+            if (isOnlineMode) {
+                applyOnlineCategoryFilter(selectedOnlineCategory);
+            } else {
+                applyCategoryFilter(selectedCategory);
+            }
             return;
         }
         if (!selectedWorkIds.isEmpty()) {
             selectedWorkIds.clear();
             quickTrashButton.setVisibility(View.GONE);
             refreshWorks();
+            return;
+        }
+        if (isOnlineMode) {
+            switchToLocalMode();
             return;
         }
         if (fileMode) {
@@ -314,14 +333,28 @@ public final class MainActivity extends Activity {
             startActivity(new Intent(this, TransferActivity.class));
         });
         titleRow.addView(transfer, iconParams(true));
+
+        sourceModeButton = iconButton(R.drawable.ic_mode_phone, "当前：手机本地作品 (点击切换到电脑在线)");
+        sourceModeButton.setOnClickListener(v -> toggleSourceMode());
+        sourceModeButton.setOnLongClickListener(v -> {
+            showOnlineStatusOrConfigDialog();
+            return true;
+        });
+        updateSourceModeButtonStyle();
+        titleRow.addView(sourceModeButton, iconParams(true));
+
         leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
         leftModeButton.setVisibility(View.GONE);
         leftModeButton.setOnClickListener(v -> {
             if (fileMode) {
                 refreshFiles();
                 toast("正在刷新文件");
-            } else if (showingTrash) showWorks();
-            else {
+            } else if (showingTrash) {
+                showWorks();
+            } else if (isOnlineMode) {
+                toast("正在刷新电脑作品…");
+                refreshOnlineWorks(true);
+            } else {
                 toast("正在刷新作品");
                 importSelectedTree(true);
             }
@@ -389,7 +422,11 @@ public final class MainActivity extends Activity {
                 clearSearchButton.setVisibility(newQuery.isEmpty() ? View.GONE : View.VISIBLE);
                 if (!newQuery.equals(searchQuery)) {
                     searchQuery = newQuery;
-                    applyCategoryFilter(selectedCategory);
+                    if (isOnlineMode) {
+                        applyOnlineCategoryFilter(selectedOnlineCategory);
+                    } else {
+                        applyCategoryFilter(selectedCategory);
+                    }
                 }
             }
             @Override public void afterTextChanged(Editable s) {}
@@ -416,7 +453,11 @@ public final class MainActivity extends Activity {
             searchQuery = "";
             hideKeyboard(searchInput);
             searchInput.clearFocus();
-            applyCategoryFilter(selectedCategory);
+            if (isOnlineMode) {
+                applyOnlineCategoryFilter(selectedOnlineCategory);
+            } else {
+                applyCategoryFilter(selectedCategory);
+            }
         });
         LinearLayout.LayoutParams sClearParams = new LinearLayout.LayoutParams(dp(32), dp(32));
         searchBar.addView(clearSearchButton, sClearParams);
@@ -443,8 +484,14 @@ public final class MainActivity extends Activity {
 
         contentScroll = new SpringScrollView(this);
         contentScroll.setSwipeListener(new SpringScrollView.SwipeListener() {
-            @Override public void onSwipeLeft() { switchToNextCategory(); }
-            @Override public void onSwipeRight() { switchToPreviousCategory(); }
+            @Override public void onSwipeLeft() {
+                if (isOnlineMode) switchToNextOnlineCategory();
+                else switchToNextCategory();
+            }
+            @Override public void onSwipeRight() {
+                if (isOnlineMode) switchToPreviousOnlineCategory();
+                else switchToPreviousCategory();
+            }
         });
         contentScroll.setPullRefreshListener(new SpringScrollView.PullRefreshListener() {
             @Override public void onPull(float progress, boolean ready) {
@@ -455,6 +502,7 @@ public final class MainActivity extends Activity {
                 beginVisibleRefresh();
                 if (fileMode) refreshFiles();
                 else if (showingTrash) refreshWorks();
+                else if (isOnlineMode) refreshOnlineWorks(true);
                 else importSelectedTree(true);
             }
 
@@ -518,7 +566,12 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshWorks() {
+        if (isOnlineMode) {
+            refreshOnlineWorks(false);
+            return;
+        }
         worker.execute(() -> {
+            if (isOnlineMode) return;
             try {
                 WorkLibrary library = library();
                 if (library.reconciledDuplicates() > 0) {
@@ -534,6 +587,7 @@ public final class MainActivity extends Activity {
                 List<WorkLibrary.WorkEntry> initialEntries = showingTrash ? library.listTrash() : initialActive;
                 final List<WorkLibrary.WorkEntry> finalInitial = initialEntries;
                 runOnUiThread(() -> {
+                    if (isOnlineMode) return;
                     renderWorks(finalInitial);
                     finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + finalInitial.size() + " 个");
                 });
@@ -551,11 +605,15 @@ public final class MainActivity extends Activity {
                 OnlineService.publishWorkInventory(this, activeEntries);
                 if (cleanup.moved > 0 || cleanup.deleted > 0 || entries.size() != finalInitial.size()) {
                     final List<WorkLibrary.WorkEntry> finalEntries = entries;
-                    runOnUiThread(() -> renderWorks(finalEntries, false));
+                    runOnUiThread(() -> {
+                        if (isOnlineMode) return;
+                        renderWorks(finalEntries, false);
+                    });
                 }
             } catch (Exception error) {
                 DiagnosticLog.write(this, "library_refresh_failed", error.getMessage());
                 runOnUiThread(() -> {
+                    if (isOnlineMode) return;
                     statusText.setText("读取作品失败：" + error.getMessage());
                     finishVisibleRefresh("刷新失败");
                 });
@@ -647,6 +705,7 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries, boolean animate) {
         if (fileMode) return;
+        if (isOnlineMode) return;
         List<WorkLibrary.WorkEntry> cleanEntries = entries;
         if (!showingTrash && !pendingTrashIds.isEmpty()) {
             cleanEntries = new ArrayList<>(entries);
@@ -841,14 +900,17 @@ public final class MainActivity extends Activity {
             platformRow.setClipToPadding(false);
             platformRow.setHorizontalSpacing(dp(8));
             platformRow.setVerticalSpacing(dp(8));
-            List<PlatformCopyParser.AvailableItem> availablePlatforms =
+            List<PlatformCopyParser.AvailableItem> rawPlatforms =
                     PlatformCopyParser.parseAvailablePlatforms(work.text);
+            List<PlatformCopyParser.AvailableItem> availablePlatforms =
+                    enrichPlatformSuite(rawPlatforms, work.text, work.name);
             for (PlatformCopyParser.AvailableItem item : availablePlatforms) {
                 int clickCount = 0;
                 if (item.platform == PlatformCopyParser.Platform.DOUYIN) {
                     clickCount = work.douyinShareCount;
                 } else if (item.platform == PlatformCopyParser.Platform.XHS
-                        || item.platform == PlatformCopyParser.Platform.XHS_2) {
+                        || item.platform == PlatformCopyParser.Platform.XHS_2
+                        || item.platform == PlatformCopyParser.Platform.XHS_3) {
                     clickCount = work.xhsShareCount;
                 }
                 Button btn = compactButton(item.buttonLabel, clickCount == 0);
@@ -857,6 +919,15 @@ public final class MainActivity extends Activity {
                 btn.setOnClickListener(v -> {
                     markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
                     openShare(work, item.platform.code);
+                });
+                final String copyForPlatform = (item.copyText != null && !item.copyText.isEmpty())
+                        ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.text, item.platform);
+                btn.setOnLongClickListener(v -> {
+                    showCopyPreviewDialog(work.name, item.buttonLabel, copyForPlatform, () -> {
+                        markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
+                        openShare(work, item.platform.code);
+                    });
+                    return true;
                 });
                 platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             }
@@ -998,6 +1069,7 @@ public final class MainActivity extends Activity {
     }
 
     private void updateCategoryCounts(List<WorkLibrary.WorkEntry> entries) {
+        if (isOnlineMode) return;
         Map<String, Integer> folderCounts = new LinkedHashMap<>();
         for (WorkLibrary.WorkEntry entry : entries) {
             String folder = entry.getFolderName();
@@ -1562,6 +1634,10 @@ public final class MainActivity extends Activity {
     }
 
     private void importSelectedTree(boolean notifyWhenFinished) {
+        if (isOnlineMode) {
+            refreshOnlineWorks(notifyWhenFinished);
+            return;
+        }
         String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
         if (stored.isEmpty()) {
             refreshWorks();
@@ -2091,6 +2167,857 @@ public final class MainActivity extends Activity {
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    // ==========================================
+    // Online Gallery & Copy Preview Features
+    // ==========================================
+
+    private void updateSourceModeButtonStyle() {
+        if (sourceModeButton == null) return;
+        if (!isOnlineMode) {
+            sourceModeButton.setImageResource(R.drawable.ic_mode_phone);
+            sourceModeButton.setImageTintList(ColorStateList.valueOf(Color.rgb(15, 135, 88)));
+            sourceModeButton.setBackground(round(Color.rgb(226, 244, 236), 21));
+            sourceModeButton.setContentDescription("当前：手机本地作品 (点击切换到电脑在线)");
+        } else {
+            sourceModeButton.setImageResource(R.drawable.ic_mode_pc);
+            sourceModeButton.setImageTintList(ColorStateList.valueOf(Color.rgb(2, 132, 199)));
+            sourceModeButton.setBackground(round(Color.rgb(224, 242, 254), 21));
+            sourceModeButton.setContentDescription("当前：电脑在线作品 (点击切换到手机本地)");
+        }
+    }
+
+    private void toggleSourceMode() {
+        if (fileMode) leaveFileMode();
+        if (showingTrash) showingTrash = false;
+        if (isOnlineMode) {
+            switchToLocalMode();
+        } else {
+            switchToOnlineMode();
+        }
+    }
+
+    private void switchToLocalMode() {
+        isOnlineMode = false;
+        updateSourceModeButtonStyle();
+        selectedWorkIds.clear();
+        quickTrashButton.setVisibility(View.GONE);
+        leftModeButton.setVisibility(View.GONE);
+        rightModeButton.setVisibility(View.VISIBLE);
+        footerNote.setText("点击平台按钮会复制对应文案并打开图片分享。首次使用后按现有清理设置自动回收；两个平台共用一个作品生命周期。");
+        showWorks();
+        toast("已切换至：📱 手机本地作品");
+    }
+
+    private void switchToOnlineMode() {
+        isOnlineMode = true;
+        updateSourceModeButtonStyle();
+        selectedWorkIds.clear();
+        quickTrashButton.setVisibility(View.GONE);
+        leftModeButton.setImageResource(R.drawable.ic_album_refresh);
+        leftModeButton.setContentDescription("刷新电脑作品");
+        leftModeButton.setVisibility(View.VISIBLE);
+        rightModeButton.setVisibility(View.GONE);
+        footerNote.setText("电脑在线作品：受“两次使用保护”铁律约束，发送未满2次不挪移文件夹，自动同步打标记录。长按文案按钮可预览文案。");
+        toast("已切换至：💻 电脑在线相册");
+
+        if (!onlineWorks.isEmpty()) {
+            if (lastCategoriesResult != null) {
+                updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
+            }
+            applyOnlineCategoryFilter(selectedOnlineCategory);
+            statusText.setText("💻 电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");
+            refreshOnlineWorks(false);
+        } else {
+            refreshOnlineWorks(true);
+        }
+    }
+
+    private void showOnlineStatusOrConfigDialog() {
+        String modeStr = isOnlineMode ? "💻 电脑在线模式" : "📱 手机本地模式";
+        String serverUrl = onlineClient.resolveBaseUrl();
+        int count = onlineWorks.size();
+        new AlertDialog.Builder(this)
+                .setTitle("在线相册网络状态")
+                .setMessage("当前状态：" + modeStr + "\n电脑服务：" + serverUrl + "\n在线作品缓存：" + count + " 套\n\n提示：点击小图标可直接在手机与电脑之间秒切。")
+                .setNegativeButton("关闭", null)
+                .setNeutralButton("修改电脑 IP", (dialog, which) -> showEditPcIpDialog())
+                .setPositiveButton("重测连接", (dialog, which) -> {
+                    toast("正在探测电脑相册服务…");
+                    onlineClient.checkConnection(new OnlineGalleryClient.Callback<Boolean>() {
+                        @Override
+                        public void onSuccess(Boolean ok) {
+                            if (ok) {
+                                toast("✅ 电脑相册连接正常！");
+                                if (isOnlineMode) refreshOnlineWorks(true);
+                            } else {
+                                toast("⚠️ 电脑端口响应异常");
+                            }
+                        }
+
+                        @Override
+                        public void onError(Exception error) {
+                            toast("❌ 连接失败：" + error.getMessage());
+                        }
+                    });
+                })
+                .show();
+    }
+
+    private void refreshOnlineWorks(boolean userInitiated) {
+        statusText.setText("正在连接电脑在线相册…");
+        onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.CategoriesResult catResult) {
+                lastCategoriesResult = catResult;
+                onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
+                    @Override
+                    public void onSuccess(List<OnlineWorkEntry> works) {
+                        if (!isOnlineMode) return;
+                        onlineWorks.clear();
+                        if (works != null) {
+                            onlineWorks.addAll(works);
+                        }
+                        updateOnlineCategoryCounts(catResult, onlineWorks);
+                        applyOnlineCategoryFilter(selectedOnlineCategory);
+                        statusText.setText("💻 已连接电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");
+                        finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+                        if (!isOnlineMode) return;
+                        handleOnlineError("读取作品列表失败", error);
+                    }
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                if (!isOnlineMode) return;
+                handleOnlineError("连接电脑相册服务失败", error);
+            }
+        });
+    }
+
+    private void handleOnlineError(String prefix, Exception error) {
+        finishVisibleRefresh("连接失败");
+        String msg = error != null && error.getMessage() != null ? error.getMessage() : "网络超时";
+        statusText.setText(prefix + " (" + msg + ")");
+        worksContainer.removeAllViews();
+        scannedCountText.setText("0");
+
+        LinearLayout errorCard = new LinearLayout(this);
+        errorCard.setOrientation(LinearLayout.VERTICAL);
+        errorCard.setPadding(dp(18), dp(24), dp(18), dp(24));
+        errorCard.setBackground(round(Color.WHITE, 16));
+        errorCard.setGravity(Gravity.CENTER);
+
+        TextView title = text("未连接到电脑在线相册", 16, true);
+        title.setTextColor(Color.rgb(180, 50, 40));
+        errorCard.addView(title);
+
+        TextView hint = text("当前地址：" + onlineClient.resolveBaseUrl() + "\n\n请确认：\n1. 电脑端已启动 online_gallery_service.py（端口 45835）\n2. 手机与电脑连接同一 Wi-Fi 网络\n3. 电脑防火墙已放行 45835 端口", 13, false);
+        hint.setTextColor(Color.rgb(90, 95, 92));
+        hint.setLineSpacing(dp(3), 1.15f);
+        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
+        hintParams.setMargins(0, dp(12), 0, dp(16));
+        errorCard.addView(hint, hintParams);
+
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        btnRow.setGravity(Gravity.CENTER);
+
+        Button retryBtn = smallButton("重试连接", true);
+        retryBtn.setOnClickListener(v -> refreshOnlineWorks(true));
+        btnRow.addView(retryBtn, new LinearLayout.LayoutParams(-2, dp(38)));
+
+        Button setIpBtn = smallButton("修改电脑 IP", false);
+        setIpBtn.setOnClickListener(v -> showEditPcIpDialog());
+        LinearLayout.LayoutParams ipParams = new LinearLayout.LayoutParams(-2, dp(38));
+        ipParams.setMargins(dp(12), 0, 0, 0);
+        btnRow.addView(setIpBtn, ipParams);
+
+        errorCard.addView(btnRow);
+        worksContainer.addView(errorCard, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void updateOnlineCategoryCounts(OnlineGalleryClient.CategoriesResult catResult, List<OnlineWorkEntry> entries) {
+        categoryBar.removeAllViews();
+        onlineCategoryButtons.clear();
+        onlineCategoryLabels.clear();
+
+        int totalCount = catResult != null ? catResult.total : entries.size();
+        String allLabel = "全部 " + totalCount;
+        Button allBtn = createOnlineCategoryButton(WorkCategory.ALL, "全部", allLabel, WorkCategory.ALL.equals(selectedOnlineCategory));
+        categoryBar.addView(allBtn);
+        onlineCategoryButtons.put(WorkCategory.ALL, allBtn);
+        onlineCategoryLabels.put(WorkCategory.ALL, "全部");
+
+        if (catResult != null && catResult.categories != null) {
+            for (OnlineGalleryClient.CategoryItem cat : catResult.categories) {
+                if (cat.count <= 0) continue;
+                if ("全部".equals(cat.name) || WorkCategory.ALL.equals(cat.name) || onlineCategoryButtons.containsKey(cat.name)) continue;
+                String displayBase = formatFolderLabel(cat.name);
+                String fullLabel = displayBase + " " + cat.count;
+                Button btn = createOnlineCategoryButton(cat.name, displayBase, fullLabel, cat.name.equals(selectedOnlineCategory));
+                categoryBar.addView(btn);
+                onlineCategoryButtons.put(cat.name, btn);
+                onlineCategoryLabels.put(cat.name, displayBase);
+            }
+        }
+    }
+
+    private Button createOnlineCategoryButton(String key, String displayBase, String buttonText, boolean isSelected) {
+        Button button = new Button(this);
+        button.setText(buttonText);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setMinHeight(dp(34));
+        button.setMinimumWidth(dp(48));
+        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setElevation(0);
+        button.setGravity(Gravity.CENTER);
+        applyOnlineCategoryButtonStyle(button, isSelected);
+
+        button.setOnClickListener(v -> selectOnlineCategory(key, true));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
+        params.setMargins(dp(2), 0, dp(2), 0);
+        button.setLayoutParams(params);
+        return button;
+    }
+
+    private void applyOnlineCategoryButtonStyle(Button button, boolean isSelected) {
+        if (isSelected) {
+            button.setBackground(round(Color.WHITE, 10));
+            button.setTextColor(Color.rgb(24, 25, 24));
+            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            button.setElevation(dp(1));
+        } else {
+            button.setBackgroundColor(Color.TRANSPARENT);
+            button.setTextColor(Color.rgb(104, 108, 106));
+            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            button.setElevation(0);
+        }
+    }
+
+    private void selectOnlineCategory(String catKey, boolean showToast) {
+        if (catKey == null || !onlineCategoryButtons.containsKey(catKey)) return;
+        selectedOnlineCategory = catKey;
+        for (Map.Entry<String, Button> item : onlineCategoryButtons.entrySet()) {
+            applyOnlineCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedOnlineCategory));
+        }
+        applyOnlineCategoryFilter(selectedOnlineCategory);
+        Button activeBtn = onlineCategoryButtons.get(catKey);
+        if (activeBtn != null && categoryScrollView != null) {
+            int scrollX = activeBtn.getLeft() - (categoryScrollView.getWidth() - activeBtn.getWidth()) / 2;
+            categoryScrollView.smoothScrollTo(Math.max(0, scrollX), 0);
+        }
+        if (showToast) {
+            String displayBase = onlineCategoryLabels.get(catKey);
+            if (displayBase == null) displayBase = catKey;
+            toast("已显示 " + displayBase);
+        }
+    }
+
+    private void applyOnlineCategoryFilter(String catKey) {
+        if (!isOnlineMode) return;
+        String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
+        String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
+
+        List<OnlineWorkEntry> filtered = new ArrayList<>();
+        for (OnlineWorkEntry work : onlineWorks) {
+            if (!WorkCategory.ALL.equals(catKey) && !"全部".equals(catKey)) {
+                boolean matchesCategory;
+                if ("待首发".equals(catKey)) {
+                    matchesCategory = (work.useCount == 0);
+                } else if ("已发1次".equals(catKey) || "已发1".equals(catKey)) {
+                    matchesCategory = (work.useCount == 1);
+                } else if ("已发2次".equals(catKey) || "已发2".equals(catKey) || "已用满".equals(catKey)) {
+                    matchesCategory = (work.useCount >= 2);
+                } else {
+                    matchesCategory = catKey.equals(work.destination) || catKey.equals(work.stage)
+                            || (work.title != null && work.title.contains(catKey))
+                            || (work.stage != null && work.stage.contains(catKey));
+                }
+                if (!matchesCategory) continue;
+            }
+            if (tokens.length > 0 && !matchesSearchTokens(work.title, work.destination, tokens)) {
+                continue;
+            }
+            filtered.add(work);
+        }
+        renderOnlineWorksCards(filtered, false);
+        if (contentScroll != null) {
+            contentScroll.scrollTo(0, 0);
+        }
+    }
+
+    public void switchToNextOnlineCategory() {
+        if (onlineCategoryButtons.size() <= 1 || !isOnlineMode) return;
+        List<String> keys = new ArrayList<>(onlineCategoryButtons.keySet());
+        int currentIndex = keys.indexOf(selectedOnlineCategory);
+        if (currentIndex < 0) currentIndex = 0;
+        int nextIndex = (currentIndex + 1) % keys.size();
+        selectOnlineCategory(keys.get(nextIndex), true);
+    }
+
+    public void switchToPreviousOnlineCategory() {
+        if (onlineCategoryButtons.size() <= 1 || !isOnlineMode) return;
+        List<String> keys = new ArrayList<>(onlineCategoryButtons.keySet());
+        int currentIndex = keys.indexOf(selectedOnlineCategory);
+        if (currentIndex < 0) currentIndex = 0;
+        int prevIndex = (currentIndex - 1 + keys.size()) % keys.size();
+        selectOnlineCategory(keys.get(prevIndex), true);
+    }
+
+    private void renderOnlineWorksCards(List<OnlineWorkEntry> entries, boolean animate) {
+        LayoutTransition transition = worksContainer.getLayoutTransition();
+        if (!animate) worksContainer.setLayoutTransition(null);
+        worksContainer.removeAllViews();
+        scannedCountText.setText(String.valueOf(entries.size()));
+        headingText.setText("");
+
+        if (entries.isEmpty()) {
+            String emptyMsg;
+            if (searchQuery != null && !searchQuery.trim().isEmpty()) {
+                emptyMsg = "电脑在线相册未找到匹配「" + searchQuery.trim() + "」的作品\n请尝试切换分类或搜索其他目的地";
+            } else {
+                emptyMsg = "当前电脑分类暂无作品";
+            }
+            TextView empty = text(emptyMsg, 14, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setTextColor(Color.GRAY);
+            empty.setPadding(dp(14), dp(28), dp(14), dp(28));
+            empty.setBackground(round(Color.WHITE, 18));
+            worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            if (!animate) worksContainer.setLayoutTransition(transition);
+            return;
+        }
+
+        for (OnlineWorkEntry work : entries) {
+            worksContainer.addView(onlineWorkCard(work), margins(0, 0, 0, dp(10)));
+        }
+        if (!animate) worksContainer.setLayoutTransition(transition);
+    }
+
+    private View onlineWorkCard(OnlineWorkEntry work) {
+        LinearLayout card = card();
+        card.setTag("online:" + work.id);
+        card.setOrientation(LinearLayout.VERTICAL);
+
+        if (work.used) {
+            card.setBackground(roundWithStroke(
+                    Color.rgb(243, 245, 243), 16, Color.rgb(218, 224, 220)));
+            card.setElevation(0);
+        }
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        // Destination badge
+        if (work.destination != null && !work.destination.isEmpty() && !"其他".equals(work.destination)) {
+            TextView destBadge = text(work.destination, 11, true);
+            destBadge.setTextColor(Color.rgb(25, 120, 80));
+            destBadge.setBackground(round(Color.rgb(228, 244, 235), 8));
+            destBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            LinearLayout.LayoutParams destParams = new LinearLayout.LayoutParams(-2, -2);
+            destParams.setMargins(0, 0, dp(6), 0);
+            titleRow.addView(destBadge, destParams);
+        }
+
+        // Usage protection status badge (clean)
+        if (work.useCount > 0) {
+            String statusText = "已使用 " + work.useCount + " 次";
+            TextView useBadge = text(statusText, 11, true);
+            useBadge.setTextColor(Color.rgb(90, 95, 92));
+            useBadge.setBackground(round(Color.rgb(235, 238, 236), 8));
+            useBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            LinearLayout.LayoutParams useBadgeParams = new LinearLayout.LayoutParams(-2, -2);
+            useBadgeParams.setMargins(0, 0, dp(6), 0);
+            titleRow.addView(useBadge, useBadgeParams);
+        }
+
+        TextView name = text(work.title, 14, true);
+        name.setMaxLines(1);
+        titleRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        card.addView(titleRow);
+
+        if (work.images != null && !work.images.isEmpty()) {
+            card.addView(onlinePreviewStrip(work), margins(0, dp(4), 0, dp(2)));
+        }
+
+        StringBuilder detail = new StringBuilder();
+        detail.append(work.imageCount).append(" 张图片 · 电脑真源");
+        if (work.useCount > 0 && work.dispatchedTo != null && !work.dispatchedTo.isEmpty()) {
+            detail.append("\n记录：").append(String.join("、", work.dispatchedTo));
+        }
+        TextView meta = text(detail.toString(), 12, false);
+        meta.setTextColor(work.useCount == 0 ? Color.rgb(75, 82, 78) : Color.rgb(115, 120, 118));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.setMargins(0, dp(3), 0, dp(5));
+        card.addView(meta, metaParams);
+
+        FlowLayout platformRow = new FlowLayout(this);
+        platformRow.setClipChildren(false);
+        platformRow.setClipToPadding(false);
+        platformRow.setHorizontalSpacing(dp(8));
+        platformRow.setVerticalSpacing(dp(8));
+
+        List<PlatformCopyParser.AvailableItem> rawPlatforms = PlatformCopyParser.parseAvailablePlatforms(work.copyText);
+        List<PlatformCopyParser.AvailableItem> platforms = enrichPlatformSuite(rawPlatforms, work.copyText, work.title);
+        for (PlatformCopyParser.AvailableItem item : platforms) {
+            String extracted = (item.copyText != null && !item.copyText.isEmpty())
+                    ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.copyText, item.platform);
+            Button btn = compactButton(item.buttonLabel, work.useCount == 0);
+            btn.setOnClickListener(v -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
+            btn.setOnLongClickListener(v -> {
+                showCopyPreviewDialog(work.title, item.buttonLabel, extracted,
+                        () -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
+                return true;
+            });
+            platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+        }
+
+        if (work.useCount > 0) {
+            Button reset = new Button(this);
+            reset.setText("重置");
+            styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
+            reset.setContentDescription("重置电脑在线作品使用记录");
+            reset.setOnClickListener(v -> confirmResetOnlineWork(work.id));
+            platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+        }
+
+        LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
+        platformRowParams.setMargins(0, dp(8), 0, dp(2));
+        card.addView(platformRow, platformRowParams);
+
+        return card;
+    }
+
+    private List<PlatformCopyParser.AvailableItem> enrichPlatformSuite(
+            List<PlatformCopyParser.AvailableItem> rawPlatforms, String rawText, String title) {
+        List<PlatformCopyParser.AvailableItem> result = new ArrayList<>();
+        PlatformCopyParser.AvailableItem douyinItem = null;
+        PlatformCopyParser.AvailableItem xhsItem = null;
+        PlatformCopyParser.AvailableItem xhs2Item = null;
+
+        if (rawPlatforms != null) {
+            for (PlatformCopyParser.AvailableItem item : rawPlatforms) {
+                if (item.platform == PlatformCopyParser.Platform.DOUYIN || "规避营销版".equals(item.buttonLabel)) {
+                    douyinItem = item;
+                } else if (item.platform == PlatformCopyParser.Platform.XHS || "种草版".equals(item.buttonLabel) || "发布".equals(item.buttonLabel)) {
+                    xhsItem = item;
+                } else if (item.platform == PlatformCopyParser.Platform.XHS_2 || "大纲方案版".equals(item.buttonLabel)) {
+                    xhs2Item = item;
+                } else {
+                    result.add(item);
+                }
+            }
+        }
+
+        String fallback = (rawText != null && !rawText.trim().isEmpty()) ? rawText.trim() : (title != null ? title : "");
+
+        // 1. 规避营销版
+        if (douyinItem != null && douyinItem.copyText != null && !douyinItem.copyText.trim().isEmpty()) {
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.DOUYIN, "规避营销版", douyinItem.copyText));
+        } else {
+            String douyinCopy = PlatformCopyParser.synthesizeDouyinCopy(fallback);
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.DOUYIN, "规避营销版", douyinCopy));
+        }
+
+        // 2. 种草版
+        if (xhsItem != null && xhsItem.copyText != null && !xhsItem.copyText.trim().isEmpty()) {
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版", xhsItem.copyText));
+        } else {
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版", fallback));
+        }
+
+        // 3. 大纲方案版
+        if (xhs2Item != null && xhs2Item.copyText != null && !xhs2Item.copyText.trim().isEmpty()) {
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS_2, "大纲方案版", xhs2Item.copyText));
+        } else {
+            String outlineCopy = PlatformCopyParser.synthesizeOutlineCopy(fallback);
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS_2, "大纲方案版", outlineCopy));
+        }
+
+        result.sort((a, b) -> {
+            int rankA = getButtonRank(a.buttonLabel);
+            int rankB = getButtonRank(b.buttonLabel);
+            return Integer.compare(rankA, rankB);
+        });
+        return result;
+    }
+
+    private static int getButtonRank(String label) {
+        if ("规避营销版".equals(label)) return 1;
+        if ("种草版".equals(label)) return 2;
+        if ("大纲方案版".equals(label)) return 3;
+        return 10;
+    }
+
+    private void confirmResetOnlineWork(String workId) {
+        new AlertDialog.Builder(this)
+                .setTitle("重置使用状态")
+                .setMessage("是否重置该电脑在线作品为待首发状态？")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("重置", (dialog, which) -> {
+                    onlineClient.resetWork(workId, new OnlineGalleryClient.Callback<Boolean>() {
+                        @Override
+                        public void onSuccess(Boolean ok) {
+                            if (ok) {
+                                toast("已重置为待首发状态");
+                                for (int i = 0; i < onlineWorks.size(); i++) {
+                                    OnlineWorkEntry old = onlineWorks.get(i);
+                                    if (old.id.equals(workId)) {
+                                        OnlineWorkEntry updated = new OnlineWorkEntry(
+                                                old.id, old.title, old.destination, old.stage,
+                                                0, old.maxUses, false, 2, "",
+                                                old.images, old.imageCount, old.copyText, old.hasCopyText,
+                                                new ArrayList<>(), System.currentTimeMillis()
+                                        );
+                                        onlineWorks.set(i, updated);
+                                        break;
+                                    }
+                                }
+                                applyOnlineCategoryFilter(selectedOnlineCategory);
+                            } else {
+                                toast("重置失败");
+                            }
+                        }
+
+                        @Override
+                        public void onError(Exception error) {
+                            toast("重置失败: " + error.getMessage());
+                        }
+                    });
+                })
+                .show();
+    }
+
+    private View onlinePreviewStrip(OnlineWorkEntry work) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+        scroll.setClipChildren(true);
+        scroll.setClipToPadding(true);
+
+        LinearLayout strip = new LinearLayout(this);
+        strip.setOrientation(LinearLayout.HORIZONTAL);
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setPadding(0, 0, dp(2), 0);
+
+        int thumbW = dp(84);
+        int thumbH = dp(112);
+
+        for (int i = 0; i < work.images.size(); i++) {
+            String imageName = work.images.get(i);
+            ImageView thumbView = new ImageView(this);
+            thumbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbView.setBackground(round(Color.rgb(230, 235, 232), 8));
+            thumbView.setClipToOutline(true);
+
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(thumbW, thumbH);
+            params.setMargins(0, 0, dp(6), 0);
+
+            String cacheKey = "online:" + work.id + ":" + imageName;
+            Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
+            if (cached != null) {
+                thumbView.setImageBitmap(cached);
+            } else {
+                thumbView.setTag(cacheKey);
+                onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                    @Override
+                    public void onSuccess(Bitmap result) {
+                        if (result != null) {
+                            THUMBNAIL_CACHE.put(cacheKey, result);
+                            if (cacheKey.equals(thumbView.getTag())) {
+                                thumbView.setImageBitmap(result);
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception error) {}
+                });
+            }
+
+            final int imgIndex = i;
+            thumbView.setOnClickListener(v -> showOnlineImageDialog(work, imgIndex));
+            strip.addView(thumbView, params);
+        }
+
+        scroll.addView(strip);
+        return scroll;
+    }
+
+    private void showOnlineImageDialog(OnlineWorkEntry work, int imageIndex) {
+        if (work.images.isEmpty() || imageIndex < 0 || imageIndex >= work.images.size()) return;
+        String imageName = work.images.get(imageIndex);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setGravity(Gravity.CENTER);
+        layout.setPadding(dp(12), dp(12), dp(12), dp(12));
+
+        TextView title = text(work.title + " (" + (imageIndex + 1) + "/" + work.images.size() + ")", 14, true);
+        title.setGravity(Gravity.CENTER);
+        layout.addView(title, margins(0, 0, 0, dp(8)));
+
+        ImageView fullView = new ImageView(this);
+        fullView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        fullView.setAdjustViewBounds(true);
+        fullView.setBackground(round(Color.rgb(20, 20, 20), 12));
+
+        int maxImgHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.65f);
+        fullView.setMaxHeight(maxImgHeight);
+
+        ProgressBar spinner = new ProgressBar(this);
+        layout.addView(spinner, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        layout.addView(fullView, new LinearLayout.LayoutParams(-1, -2));
+
+        builder.setView(layout);
+        builder.setPositiveButton("关闭", null);
+        AlertDialog dialog = builder.create();
+        dialog.show();
+
+        String cacheKey = "online:" + work.id + ":" + imageName;
+        Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
+        if (cached != null) {
+            fullView.setImageBitmap(cached);
+            spinner.setVisibility(View.GONE);
+        }
+        onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+            @Override
+            public void onSuccess(Bitmap result) {
+                spinner.setVisibility(View.GONE);
+                if (result != null) {
+                    THUMBNAIL_CACHE.put(cacheKey, result);
+                    fullView.setImageBitmap(result);
+                }
+            }
+
+            @Override
+            public void onError(Exception error) {
+                spinner.setVisibility(View.GONE);
+                toast("加载大图失败");
+            }
+        });
+    }
+
+    private void handleOnlineWorkUse(OnlineWorkEntry work, String platformCode, String label, String copyText) {
+        copyToClipboard(label, copyText);
+        toast("已复制 " + label + "，正在准备图片并打开…");
+
+        if (work.images != null && !work.images.isEmpty()) {
+            onlineClient.downloadWorkImages(work.id, work.images, new OnlineGalleryClient.Callback<List<java.io.File>>() {
+                @Override
+                public void onSuccess(List<java.io.File> files) {
+                    launchOnlineShare(work, files, copyText, platformCode);
+                }
+
+                @Override
+                public void onError(Exception error) {
+                    toast("下载图片失败: " + error.getMessage() + "，文案已在剪贴板");
+                }
+            });
+        }
+
+        onlineClient.recordUse(work.id, getDeviceName(), platformCode, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.UseResult result) {
+                if (result.ok) {
+                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses,
+                            getDeviceName() + "(" + platformCode + ")");
+                }
+            }
+
+            @Override
+            public void onError(Exception error) {
+                // Background tag update error
+            }
+        });
+    }
+
+    private void launchOnlineShare(OnlineWorkEntry work, List<java.io.File> files, String copyText, String platformCode) {
+        if (files == null || files.isEmpty()) return;
+        try {
+            ArrayList<Uri> uris = new ArrayList<>();
+            for (java.io.File f : files) {
+                Uri uri = Uri.parse("content://" + getPackageName() + ".files/online/" + work.id + "/" + f.getName());
+                uris.add(uri);
+            }
+            Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
+            send.setType("image/*");
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (copyText != null && !copyText.trim().isEmpty()) {
+                send.putExtra(Intent.EXTRA_TEXT, copyText);
+            }
+            if (uris.size() == 1) {
+                send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+            } else {
+                send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            }
+            ClipData clipData = ClipData.newUri(getContentResolver(), "作品图片", uris.get(0));
+            for (int i = 1; i < uris.size(); i++) {
+                clipData.addItem(new ClipData.Item(uris.get(i)));
+            }
+            send.setClipData(clipData);
+
+            String targetPkg = null;
+            if ("douyin".equalsIgnoreCase(platformCode)) {
+                targetPkg = "com.ss.android.ugc.aweme";
+            } else if ("xhs".equalsIgnoreCase(platformCode) || "xhs2".equalsIgnoreCase(platformCode) || "xhs3".equalsIgnoreCase(platformCode)) {
+                targetPkg = "com.xingin.xhs";
+            }
+            if (targetPkg != null && isAppInstalled(targetPkg)) {
+                send.setPackage(targetPkg);
+                for (Uri u : uris) {
+                    grantUriPermission(targetPkg, u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
+                startActivity(send);
+            } else {
+                Intent chooser = Intent.createChooser(send, "分享作品图片");
+                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(chooser);
+            }
+        } catch (Exception e) {
+            toast("打开分享失败: " + e.getMessage());
+        }
+    }
+
+    private boolean isAppInstalled(String packageName) {
+        try {
+            getPackageManager().getPackageInfo(packageName, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void updateOnlineWorkUseCount(String workId, int newCount, int remainingUses, String dispatchTag) {
+        for (int i = 0; i < onlineWorks.size(); i++) {
+            OnlineWorkEntry old = onlineWorks.get(i);
+            if (old.id.equals(workId)) {
+                List<String> newDispatched = new ArrayList<>(old.dispatchedTo);
+                newDispatched.add(dispatchTag);
+                OnlineWorkEntry updated = new OnlineWorkEntry(
+                        old.id, old.title, old.destination, old.stage,
+                        newCount, old.maxUses, true, remainingUses,
+                        newCount >= 2 ? "已发送" : "已发1次",
+                        old.images, old.imageCount, old.copyText, old.hasCopyText,
+                        newDispatched, System.currentTimeMillis()
+                );
+                onlineWorks.set(i, updated);
+                break;
+            }
+        }
+        applyOnlineCategoryFilter(selectedOnlineCategory);
+    }
+
+    private void showCopyPreviewDialog(String workTitle, String versionLabel, String copyText, Runnable onShareAction) {
+        if (isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(20), dp(18), dp(20), dp(14));
+
+        TextView titleView = text(workTitle, 16, true);
+        titleView.setMaxLines(2);
+        container.addView(titleView);
+
+        int charCount = copyText != null ? copyText.length() : 0;
+        TextView subView = text("【" + versionLabel + "】 共 " + charCount + " 字", 12, false);
+        subView.setTextColor(Color.rgb(16, 151, 99));
+        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(-1, -2);
+        subParams.setMargins(0, dp(4), 0, dp(12));
+        container.addView(subView, subParams);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackground(round(Color.rgb(244, 246, 245), 10));
+        scroll.setPadding(dp(12), dp(10), dp(12), dp(10));
+
+        TextView contentText = new TextView(this);
+        contentText.setText(copyText != null && !copyText.trim().isEmpty() ? copyText : "（暂无该版本文案）");
+        contentText.setTextSize(13.5f);
+        contentText.setTextColor(Color.rgb(40, 42, 41));
+        contentText.setLineSpacing(dp(3), 1.15f);
+        contentText.setTextIsSelectable(true);
+        scroll.addView(contentText, new FrameLayout.LayoutParams(-1, -2));
+
+        int maxHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.45f);
+        container.addView(scroll, new LinearLayout.LayoutParams(-1, maxHeight));
+
+        builder.setView(container);
+        builder.setNegativeButton("关闭", null);
+        builder.setNeutralButton("复制全文", (dialog, which) -> {
+            copyToClipboard(versionLabel, copyText);
+            toast("已复制 " + versionLabel + " 全文 (" + charCount + "字)");
+        });
+        builder.setPositiveButton("前往使用", (dialog, which) -> {
+            copyToClipboard(versionLabel, copyText);
+            toast("已复制并准备使用");
+            if (onShareAction != null) {
+                onShareAction.run();
+            }
+        });
+
+        AlertDialog dialog = builder.create();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(round(Color.WHITE, 16));
+        }
+        dialog.show();
+    }
+
+    private void copyToClipboard(String label, String text) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null && text != null) {
+            ClipData clip = ClipData.newPlainText(label, text);
+            clipboard.setPrimaryClip(clip);
+        }
+    }
+
+    private String getDeviceName() {
+        String manufacturer = Build.MANUFACTURER;
+        String model = Build.MODEL;
+        if (model != null && manufacturer != null && model.toLowerCase(Locale.ROOT).startsWith(manufacturer.toLowerCase(Locale.ROOT))) {
+            return capitalize(model);
+        } else {
+            return capitalize(manufacturer) + " " + (model != null ? model : "Device");
+        }
+    }
+
+    private static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return "";
+        char first = s.charAt(0);
+        if (Character.isUpperCase(first)) return s;
+        return Character.toUpperCase(first) + s.substring(1);
+    }
+
+    private void showEditPcIpDialog() {
+        EditText input = new EditText(this);
+        input.setHint("例如: 192.168.1.27");
+        String current = onlineClient.resolveBaseUrl().replace("http://", "").replace(":" + OnlineGalleryClient.DEFAULT_PC_PORT, "");
+        input.setText(current);
+        new AlertDialog.Builder(this)
+                .setTitle("设置电脑在线相册 IP")
+                .setMessage("请输入运行 online_gallery_service.py 的电脑局域网 IP 地址：")
+                .setView(input)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存并连接", (dialog, which) -> {
+                    String ip = input.getText().toString().trim();
+                    if (!ip.isEmpty()) {
+                        String url = "http://" + ip + ":" + OnlineGalleryClient.DEFAULT_PC_PORT;
+                        onlineClient.setCustomBaseUrl(url);
+                        toast("已设置电脑地址: " + url);
+                        refreshOnlineWorks(true);
+                    }
+                })
+                .show();
+    }
 
     private static final class FileEntry {
         final String id;

@@ -83,4 +83,25 @@ public final class PlatformCopyParserTest {
         assertEquals("发布", available.get(0).buttonLabel);
         assertEquals("旧版纯文案", available.get(0).copyText);
     }
+
+    @Test
+    public void parsesMultipleExtendedVersionsAndCustomMarkers() {
+        String source = "<<<COPY_FORMAT:3>>>\n"
+                + "<<<XHS_START>>>\n小红书文案\n<<<XHS_END>>>\n"
+                + "<<<DOUYIN_START>>>\n抖音文案\n<<<DOUYIN_END>>>\n"
+                + "<<<WECHAT_START>>>\n微信公众号详细版文案\n<<<WECHAT_END>>>\n"
+                + "<<<HR_START>>>\nHR决策版方案文案\n<<<HR_END>>>\n"
+                + "<<<VERSION_4_START>>>\n第四版备用文案\n<<<VERSION_4_END>>>";
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertEquals(5, available.size());
+        assertEquals("规避营销版", available.get(0).buttonLabel);
+        assertEquals("种草版", available.get(1).buttonLabel);
+        assertEquals("公众号版", available.get(2).buttonLabel);
+        assertEquals("HR决策版", available.get(3).buttonLabel);
+        assertEquals("版本 4", available.get(4).buttonLabel);
+        assertEquals("微信公众号详细版文案", available.get(2).copyText);
+        assertEquals("HR决策版方案文案", available.get(3).copyText);
+        assertEquals("第四版备用文案", available.get(4).copyText);
+    }
 }
