@@ -54,9 +54,11 @@ if (Test-Path -LiteralPath $defaultPyw) {
 }
 
 Write-Host "Starting Online Gallery LAN Service (Port: $Port)..."
-$proc = Start-Process -FilePath $pythonExe -ArgumentList "`"$ServiceScript`" --port $Port" -WorkingDirectory $ScriptDir -WindowStyle Hidden -PassThru
-if (-not $proc) {
-    throw "Failed to start Python process."
+$cmdLine = "`"$pythonExe`" `"$ServiceScript`" --port $Port"
+$wmi = [wmiclass]"Win32_Process"
+$res = $wmi.Create($cmdLine, $ScriptDir, $null)
+if ($res.ReturnValue -ne 0) {
+    Start-Process -FilePath $pythonExe -ArgumentList "`"$ServiceScript`" --port $Port" -WorkingDirectory $ScriptDir -WindowStyle Hidden
 }
 
 # 3. Wait for service readiness

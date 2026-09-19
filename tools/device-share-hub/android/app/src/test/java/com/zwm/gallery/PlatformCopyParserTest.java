@@ -104,4 +104,35 @@ public final class PlatformCopyParserTest {
         assertEquals("HR决策版方案文案", available.get(3).copyText);
         assertEquals("第四版备用文案", available.get(4).copyText);
     }
+
+    @Test
+    public void parsesElevenMultiVersionsWithFourCharLabels() {
+        String source = "<<<COPY_FORMAT:MULTI>>>\n"
+                + "<<<VERSION_START:数字爆款>>>\n数字爆款标题\n数字爆款正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:分天动线>>>\n分天动线标题\n分天动线正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:三箭头体>>>\n三箭头体标题\n三箭头体正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:杂志长条>>>\n杂志长条标题\n杂志长条正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:时间轴体>>>\n时间轴体标题\n时间轴体正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:原生种草>>>\n原生种草标题\n原生种草正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:决策矩阵>>>\n决策矩阵标题\n决策矩阵正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:货架明细>>>\n货架明细标题\n货架明细正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:包院私享>>>\n包院私享标题\n包院私享正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:案例背书>>>\n案例背书标题\n案例背书正文\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:抖音避坑>>>\n抖音避坑标题\n抖音避坑正文\n<<<VERSION_END>>>";
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertEquals(11, available.size());
+        assertEquals("数字爆款", available.get(0).buttonLabel);
+        assertEquals("分天动线", available.get(1).buttonLabel);
+        assertEquals("三箭头体", available.get(2).buttonLabel);
+        assertEquals("杂志长条", available.get(3).buttonLabel);
+        assertEquals("时间轴体", available.get(4).buttonLabel);
+        assertEquals("原生种草", available.get(5).buttonLabel);
+        assertEquals("决策矩阵", available.get(6).buttonLabel);
+        assertEquals("货架明细", available.get(7).buttonLabel);
+        assertEquals("包院私享", available.get(8).buttonLabel);
+        assertEquals("案例背书", available.get(9).buttonLabel);
+        assertEquals("抖音避坑", available.get(10).buttonLabel);
+        assertEquals(PlatformCopyParser.Platform.DOUYIN, available.get(10).platform);
+    }
 }

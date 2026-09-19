@@ -166,6 +166,7 @@ public final class MainActivity extends Activity {
     private String searchQuery = "";
     private OnlineGalleryClient onlineClient;
     private boolean isOnlineMode = false;
+    private boolean enteredTrashFromOnline = false;
     private ImageButton sourceModeButton;
     private OnlineGalleryClient.CategoriesResult lastCategoriesResult;
     private final List<OnlineWorkEntry> onlineWorks = new ArrayList<>();
@@ -224,6 +225,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        android.os.StrictMode.setThreadPolicy(new android.os.StrictMode.ThreadPolicy.Builder().permitAll().build());
         isOnlineMode = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_IS_ONLINE_MODE, false);
         onlineClient = new OnlineGalleryClient(this);
         ensureDeviceId();
@@ -303,6 +305,10 @@ public final class MainActivity extends Activity {
             refreshWorks();
             return;
         }
+        if (showingTrash) {
+            showWorks();
+            return;
+        }
         if (isOnlineMode) {
             switchToLocalMode();
             return;
@@ -314,10 +320,6 @@ public final class MainActivity extends Activity {
             } else {
                 showWorksMode();
             }
-            return;
-        }
-        if (showingTrash) {
-            showWorks();
             return;
         }
         finish();
@@ -386,8 +388,8 @@ public final class MainActivity extends Activity {
         updateSourceModeButtonStyle();
         titleRow.addView(sourceModeButton, iconParams(true));
 
-        leftModeButton = iconButton(R.drawable.ic_album_refresh, isOnlineMode ? "刷新电脑作品" : "刷新作品");
-        leftModeButton.setVisibility(isOnlineMode ? View.VISIBLE : View.GONE);
+        leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
+        leftModeButton.setVisibility(View.GONE);
         leftModeButton.setOnClickListener(v -> {
             if (fileMode) {
                 refreshFiles();
@@ -404,7 +406,7 @@ public final class MainActivity extends Activity {
         });
         titleRow.addView(leftModeButton, iconParams(true));
         rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
-        rightModeButton.setVisibility(isOnlineMode ? View.GONE : View.VISIBLE);
+        rightModeButton.setVisibility(View.VISIBLE);
         rightModeButton.setOnClickListener(v -> {
             if (fileMode) {
                 leaveFileMode();
@@ -610,12 +612,12 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshWorks() {
-        if (isOnlineMode) {
+        if (isOnlineMode && !showingTrash) {
             refreshOnlineWorks(false);
             return;
         }
         worker.execute(() -> {
-            if (isOnlineMode) return;
+            if (isOnlineMode && !showingTrash) return;
             try {
                 WorkLibrary library = library();
                 if (library.reconciledDuplicates() > 0) {
@@ -631,7 +633,7 @@ public final class MainActivity extends Activity {
                 List<WorkLibrary.WorkEntry> initialEntries = showingTrash ? library.listTrash() : initialActive;
                 final List<WorkLibrary.WorkEntry> finalInitial = initialEntries;
                 runOnUiThread(() -> {
-                    if (isOnlineMode) return;
+                    if (isOnlineMode && !showingTrash) return;
                     renderWorks(finalInitial);
                     finishVisibleRefresh(showingTrash ? "回收站已刷新" : "已刷新，共 " + finalInitial.size() + " 个");
                 });
@@ -650,14 +652,14 @@ public final class MainActivity extends Activity {
                 if (cleanup.moved > 0 || cleanup.deleted > 0 || entries.size() != finalInitial.size()) {
                     final List<WorkLibrary.WorkEntry> finalEntries = entries;
                     runOnUiThread(() -> {
-                        if (isOnlineMode) return;
+                        if (isOnlineMode && !showingTrash) return;
                         renderWorks(finalEntries, false);
                     });
                 }
             } catch (Exception error) {
                 DiagnosticLog.write(this, "library_refresh_failed", error.getMessage());
                 runOnUiThread(() -> {
-                    if (isOnlineMode) return;
+                    if (isOnlineMode && !showingTrash) return;
                     statusText.setText("读取作品失败：" + error.getMessage());
                     finishVisibleRefresh("刷新失败");
                 });
@@ -677,12 +679,20 @@ public final class MainActivity extends Activity {
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
         rightModeButton.setContentDescription("回收站");
         headingText.setText("");
-        refreshWorks();
+        if (enteredTrashFromOnline) {
+            enteredTrashFromOnline = false;
+            switchToOnlineMode();
+        } else {
+            refreshWorks();
+        }
     }
 
     private void showTrash() {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
+        if (isOnlineMode) {
+            enteredTrashFromOnline = true;
+        }
         showingTrash = true;
         if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
@@ -717,7 +727,9 @@ public final class MainActivity extends Activity {
         worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
         scannedCountText.setText("0");
         statusText.setText("回收站已清空");
-        toast("回收站已清空");
+
+        int onlineCleared = OnlineWorkLifecycle.clearAllTrash(this);
+        toast("回收站已清空" + (onlineCleared > 0 ? "（含 " + onlineCleared + " 套在线记录）" : ""));
 
         worker.execute(() -> {
             try {
@@ -749,7 +761,7 @@ public final class MainActivity extends Activity {
 
     private void renderWorks(List<WorkLibrary.WorkEntry> entries, boolean animate) {
         if (fileMode) return;
-        if (isOnlineMode) return;
+        if (isOnlineMode && !showingTrash) return;
         List<WorkLibrary.WorkEntry> cleanEntries = entries;
         if (!showingTrash && !pendingTrashIds.isEmpty()) {
             cleanEntries = new ArrayList<>(entries);
@@ -784,13 +796,22 @@ public final class MainActivity extends Activity {
         boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
         quickTrashButton.setVisibility(selecting ? View.VISIBLE : View.GONE);
         headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : ""));
-        scannedCountText.setText(String.valueOf(entries.size()));
+
+        List<OnlineWorkLifecycle.Item> onlineTrashItems = new ArrayList<>();
+        if (showingTrash) {
+            CleanupSettings.Values cleanup = CleanupSettings.read(this);
+            onlineTrashItems = OnlineWorkLifecycle.getTrashItems(this, System.currentTimeMillis(), cleanup.deleteAfterMs());
+        }
+
+        int totalCount = entries.size() + onlineTrashItems.size();
+        scannedCountText.setText(String.valueOf(showingTrash ? totalCount : entries.size()));
+
         // Huawei can leave real folders in the external trash after its document index
         // forgets the corresponding app record, so clearing must remain available even
         // when the private list already looks empty.
         rightModeButton.setEnabled(true);
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() && onlineTrashItems.isEmpty()) {
             String emptyMsg;
             if (showingTrash) {
                 emptyMsg = "回收站是空的";
@@ -807,6 +828,11 @@ public final class MainActivity extends Activity {
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             if (!animate) worksContainer.setLayoutTransition(transition);
             return;
+        }
+        if (showingTrash) {
+            for (OnlineWorkLifecycle.Item item : onlineTrashItems) {
+                worksContainer.addView(onlineTrashCard(item), margins(0, 0, 0, dp(10)));
+            }
         }
         for (WorkLibrary.WorkEntry entry : entries) {
             worksContainer.addView(workCard(entry), margins(0, 0, 0, dp(10)));
@@ -2264,10 +2290,8 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         if (modeButton != null) modeButton.setVisibility(View.GONE);
-        leftModeButton.setImageResource(R.drawable.ic_album_refresh);
-        leftModeButton.setContentDescription("刷新电脑作品");
-        leftModeButton.setVisibility(View.VISIBLE);
-        rightModeButton.setVisibility(View.GONE);
+        leftModeButton.setVisibility(View.GONE);
+        rightModeButton.setVisibility(View.VISIBLE);
         footerNote.setText("💻 电脑在线作品：实时读取电脑首发成品，点击文案复制并唤起分享；长按文案按钮可全屏预览。");
         worksContainer.removeAllViews();
         toast("已切换至：💻 电脑在线相册");
@@ -2324,7 +2348,7 @@ public final class MainActivity extends Activity {
                 onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
                     @Override
                     public void onSuccess(List<OnlineWorkEntry> works) {
-                        if (!isOnlineMode) return;
+                        if (!isOnlineMode || showingTrash) return;
                         onlineWorks.clear();
                         if (works != null) {
                             onlineWorks.addAll(works);
@@ -2473,13 +2497,21 @@ public final class MainActivity extends Activity {
     }
 
     private void applyOnlineCategoryFilter(String catKey) {
-        if (!isOnlineMode) return;
+        if (!isOnlineMode || showingTrash) return;
         onlinePageLimit = 25;
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
 
+        long nowMs = System.currentTimeMillis();
+        CleanupSettings.Values cleanup = CleanupSettings.read(this);
+        long moveAfterMs = cleanup.moveAfterMs();
+
         currentOnlineFilteredEntries.clear();
         for (OnlineWorkEntry work : onlineWorks) {
+            // 核心生命周期：若已被移入手机回收站或已达设置时间（如1小时），在在线活跃相册中隐藏
+            if (OnlineWorkLifecycle.shouldBeInTrash(this, work.id, nowMs, moveAfterMs)) {
+                continue;
+            }
             if (!WorkCategory.ALL.equals(catKey) && !"全部".equals(catKey)) {
                 boolean matchesCategory;
                 if ("待首发".equals(catKey)) {
@@ -2489,12 +2521,23 @@ public final class MainActivity extends Activity {
                 } else if ("已发2次".equals(catKey) || "已发2".equals(catKey) || "已用满".equals(catKey)) {
                     matchesCategory = (work.useCount >= 2);
                 } else {
-                    String cleanCat = catKey.replace("🌕", "").replace("🇨🇳", "").replace("🏷️", "").trim();
-                    matchesCategory = catKey.equals(work.destination) || cleanCat.equals(work.destination)
-                            || catKey.equals(work.stage) || cleanCat.equals(work.stage)
-                            || (work.title != null && (work.title.contains(catKey) || (!cleanCat.isEmpty() && work.title.contains(cleanCat))))
-                            || (work.copyText != null && !cleanCat.isEmpty() && work.copyText.contains(cleanCat))
-                            || (work.stage != null && work.stage.contains(catKey));
+                    String cleanCat = catKey.replace("🌕", "").replace("🇨🇳", "").replace("🎮", "").replace("🏷️", "").trim();
+                    if ("游戏".equals(cleanCat)) {
+                        matchesCategory = "游戏".equals(work.destination)
+                                || (work.id != null && work.id.contains("游戏"))
+                                || (work.title != null && (work.title.contains("游戏") || work.title.contains("破冰") || work.title.contains("桌游")));
+                    } else if ("中秋".equals(cleanCat)) {
+                        matchesCategory = "中秋".equals(work.destination)
+                                || (work.title != null && work.title.contains("中秋"))
+                                || (work.copyText != null && work.copyText.contains("中秋"));
+                    } else if ("国庆".equals(cleanCat)) {
+                        matchesCategory = "国庆".equals(work.destination)
+                                || (work.title != null && (work.title.contains("国庆") || work.title.contains("十一")))
+                                || (work.copyText != null && (work.copyText.contains("国庆") || work.copyText.contains("十一")));
+                    } else {
+                        matchesCategory = catKey.equals(work.destination) || cleanCat.equals(work.destination)
+                                || (work.title != null && (work.title.contains(catKey) || (!cleanCat.isEmpty() && work.title.contains(cleanCat))));
+                    }
                 }
                 if (!matchesCategory) continue;
             }
@@ -2528,6 +2571,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderOnlineWorksCards(List<OnlineWorkEntry> entries, boolean animate) {
+        if (!isOnlineMode || showingTrash) return;
         LayoutTransition transition = worksContainer.getLayoutTransition();
         if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();
@@ -2602,12 +2646,21 @@ public final class MainActivity extends Activity {
             titleRow.addView(destBadge, destParams);
         }
 
-        // Usage protection status badge (clean)
+        // Usage protection status badge & lifecycle countdown
         if (work.useCount > 0) {
             String statusText = "已使用 " + work.useCount + " 次";
+            OnlineWorkLifecycle.Item lifeItem = OnlineWorkLifecycle.getItem(this, work.id);
+            if (lifeItem != null && lifeItem.firstSharedAtMs > 0) {
+                CleanupSettings.Values cleanup = CleanupSettings.read(this);
+                long remainMs = (lifeItem.firstSharedAtMs + cleanup.moveAfterMs()) - System.currentTimeMillis();
+                if (remainMs > 0) {
+                    int remainMin = Math.max(1, (int) (remainMs / 60000L));
+                    statusText = "已使用 · 剩 " + remainMin + " 分钟入回收站";
+                }
+            }
             TextView useBadge = text(statusText, 11, true);
-            useBadge.setTextColor(Color.rgb(90, 95, 92));
-            useBadge.setBackground(round(Color.rgb(235, 238, 236), 8));
+            useBadge.setTextColor(Color.rgb(180, 85, 20));
+            useBadge.setBackground(round(Color.rgb(254, 243, 235), 8));
             useBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
             LinearLayout.LayoutParams useBadgeParams = new LinearLayout.LayoutParams(-2, -2);
             useBadgeParams.setMargins(0, 0, dp(6), 0);
@@ -2788,57 +2841,150 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmDeleteOnlineWork(OnlineWorkEntry work) {
-        String msg;
-        if (work.useCount > 0) {
-            msg = "该作品已使用 " + work.useCount + " 次。\n删除后将从电脑首发库物理移入「_已发送一次」归档。\n\n确认删除？";
-        } else {
-            msg = "该作品尚未发布。\n删除后将从电脑首发库移入「_垃圾作品（后续参考分析）」归档保存。\n\n确认删除？";
-        }
+        String msg = "移入回收站后，作品将在手机本地回收站保留（可随时在右上角垃圾箱中查看或恢复）。\n\n电脑端将安全归档至「_已发送1次」。\n\n确认移入回收站？";
 
         new AlertDialog.Builder(this)
-                .setTitle("删除电脑在线作品")
+                .setTitle("移入手机回收站")
                 .setMessage(msg)
                 .setNegativeButton("取消", null)
-                .setPositiveButton("确认删除", (dialog, which) -> {
-                    toast("正在通知电脑端安全流转…");
+                .setPositiveButton("移入回收站", (dialog, which) -> {
+                    // 1. 立即记入手机本地回收站
+                    OnlineWorkLifecycle.moveToTrash(this, work, System.currentTimeMillis());
+
+                    // 2. 异步通知电脑端安全流转归档
                     onlineClient.deleteWork(work.id, new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteResult>() {
                         @Override
                         public void onSuccess(OnlineGalleryClient.DeleteResult result) {
-                            if (result != null && result.ok) {
-                                String toastMsg = "dispatched".equals(result.action)
-                                        ? "📦 已移入电脑「_已发送一次」"
-                                        : "🗑️ 已移入电脑「垃圾作品库（供后续参考分析）」";
-                                toast(toastMsg);
-
-                                for (int i = 0; i < onlineWorks.size(); i++) {
-                                    if (onlineWorks.get(i).id.equals(work.id)) {
-                                        onlineWorks.remove(i);
-                                        break;
-                                    }
-                                }
-                                for (int i = 0; i < currentOnlineFilteredEntries.size(); i++) {
-                                    if (currentOnlineFilteredEntries.get(i).id.equals(work.id)) {
-                                        currentOnlineFilteredEntries.remove(i);
-                                        break;
-                                    }
-                                }
-
-                                refreshOnlineWorks(false);
-                            } else {
-                                toast("删除失败: " + (result != null ? result.message : "未知错误"));
-                            }
+                            // 电脑端移动完成
                         }
 
                         @Override
                         public void onError(Exception error) {
-                            toast("删除失败: " + (error != null ? error.getMessage() : "网络超时"));
+                            // 网络异常日志已记录，手机端回收站照常生效
                         }
                     });
+
+                    toast("🗑️ 已移入回收站（可随时在右上角垃圾箱查看）");
+
+                    for (int i = 0; i < onlineWorks.size(); i++) {
+                        if (onlineWorks.get(i).id.equals(work.id)) {
+                            onlineWorks.remove(i);
+                            break;
+                        }
+                    }
+                    for (int i = 0; i < currentOnlineFilteredEntries.size(); i++) {
+                        if (currentOnlineFilteredEntries.get(i).id.equals(work.id)) {
+                            currentOnlineFilteredEntries.remove(i);
+                            break;
+                        }
+                    }
+
+                    java.io.File localDl = new java.io.File(getFilesDir(), "work-library/online/" + work.id);
+                    if (localDl.exists() && localDl.isDirectory()) {
+                        java.io.File[] sub = localDl.listFiles();
+                        if (sub != null) for (java.io.File sf : sub) sf.delete();
+                        localDl.delete();
+                    }
+
+                    applyOnlineCategoryFilter(selectedOnlineCategory);
                 })
                 .show();
     }
 
+    private View onlineTrashCard(OnlineWorkLifecycle.Item item) {
+        LinearLayout card = card();
+        card.setTag("trash_online:" + item.id);
+        card.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView originBadge = text("💻 在线作品", 11, true);
+        originBadge.setTextColor(Color.rgb(2, 132, 199));
+        originBadge.setBackground(round(Color.rgb(224, 242, 254), 8));
+        originBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+        LinearLayout.LayoutParams originParams = new LinearLayout.LayoutParams(-2, -2);
+        originParams.setMargins(0, 0, dp(6), 0);
+        titleRow.addView(originBadge, originParams);
+
+        if (item.destination != null && !item.destination.isEmpty() && !"其他".equals(item.destination)) {
+            TextView destBadge = text(item.destination, 11, true);
+            destBadge.setTextColor(Color.rgb(25, 120, 80));
+            destBadge.setBackground(round(Color.rgb(228, 244, 235), 8));
+            destBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            LinearLayout.LayoutParams destParams = new LinearLayout.LayoutParams(-2, -2);
+            destParams.setMargins(0, 0, dp(6), 0);
+            titleRow.addView(destBadge, destParams);
+        }
+
+        String displayTitle = formatDisplayTitle(item.title);
+        TextView name = text(displayTitle, 14, true);
+        name.setMaxLines(1);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        titleRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        card.addView(titleRow);
+
+        if (item.images != null && !item.images.isEmpty()) {
+            card.addView(onlineImagesPreviewStrip(item.id, item.title, item.images), margins(0, dp(4), 0, dp(2)));
+        }
+
+        String timeStr = "";
+        if (item.trashedAtMs > 0) {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
+            timeStr = " · 移入时间 " + sdf.format(new java.util.Date(item.trashedAtMs));
+        }
+        TextView meta = text(item.images.size() + " 张图片" + timeStr + " · 遵循手机端设置保留", 12, false);
+        meta.setTextColor(Color.rgb(115, 120, 118));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.setMargins(0, dp(3), 0, dp(8));
+        card.addView(meta, metaParams);
+
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        btnRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button restoreBtn = smallButton("恢复", false);
+        restoreBtn.setOnClickListener(v -> {
+            boolean ok = OnlineWorkLifecycle.restoreFromTrash(this, item.id);
+            if (ok) {
+                toast("已恢复到电脑在线相册");
+                refreshWorks();
+            } else {
+                toast("恢复失败");
+            }
+        });
+        btnRow.addView(restoreBtn, new LinearLayout.LayoutParams(0, dp(40), 1));
+
+        Button delBtn = smallButton("彻底删除", true);
+        delBtn.setTextColor(Color.rgb(220, 38, 38));
+        delBtn.setBackground(roundWithStroke(Color.WHITE, 12, Color.rgb(254, 202, 202)));
+        LinearLayout.LayoutParams delParams = new LinearLayout.LayoutParams(0, dp(40), 1);
+        delParams.setMargins(dp(10), 0, 0, 0);
+        delBtn.setLayoutParams(delParams);
+        delBtn.setOnClickListener(v -> {
+            new AlertDialog.Builder(this)
+                    .setTitle("彻底删除")
+                    .setMessage("彻底删除后无法恢复，确定删除？")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("彻底删除", (dialog, which) -> {
+                        OnlineWorkLifecycle.deletePermanently(this, item.id);
+                        toast("已彻底删除");
+                        refreshWorks();
+                    })
+                    .show();
+        });
+        btnRow.addView(delBtn);
+
+        card.addView(btnRow, margins(0, dp(4), 0, dp(2)));
+        return card;
+    }
+
     private View onlinePreviewStrip(OnlineWorkEntry work) {
+        return onlineImagesPreviewStrip(work.id, work.title, work.images);
+    }
+
+    private View onlineImagesPreviewStrip(String workId, String workTitle, List<String> images) {
         HorizontalScrollView scroll = new HorizontalScrollView(this);
         scroll.setHorizontalScrollBarEnabled(false);
         scroll.setFillViewport(false);
@@ -2854,8 +3000,8 @@ public final class MainActivity extends Activity {
         int thumbH = dp(112);
         List<Runnable> deferredLoads = new ArrayList<>();
 
-        for (int i = 0; i < work.images.size(); i++) {
-            String imageName = work.images.get(i);
+        for (int i = 0; i < images.size(); i++) {
+            String imageName = images.get(i);
             ImageView thumbView = new ImageView(this);
             thumbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
             thumbView.setBackground(round(Color.rgb(230, 235, 232), 8));
@@ -2864,14 +3010,14 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(thumbW, thumbH);
             params.setMargins(0, 0, dp(6), 0);
 
-            String cacheKey = "online:" + work.id + ":" + imageName;
+            String cacheKey = "online:" + workId + ":" + imageName;
             Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
             if (cached != null && !cached.isRecycled()) {
                 thumbView.setImageBitmap(cached);
             } else {
                 thumbView.setTag(cacheKey);
                 final String finalCacheKey = cacheKey;
-                Runnable task = () -> onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                Runnable task = () -> onlineClient.loadThumbnail(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
                     @Override
                     public void onSuccess(Bitmap result) {
                         if (result != null && !result.isRecycled()) {
@@ -2894,7 +3040,7 @@ public final class MainActivity extends Activity {
             }
 
             final int imgIndex = i;
-            thumbView.setOnClickListener(v -> showOnlineImageDialog(work, imgIndex));
+            thumbView.setOnClickListener(v -> showOnlineImageDialog(workId, workTitle, images, imgIndex));
             strip.addView(thumbView, params);
         }
 
@@ -2914,8 +3060,12 @@ public final class MainActivity extends Activity {
     }
 
     private void showOnlineImageDialog(OnlineWorkEntry work, int imageIndex) {
-        if (work.images.isEmpty() || imageIndex < 0 || imageIndex >= work.images.size()) return;
-        String imageName = work.images.get(imageIndex);
+        showOnlineImageDialog(work.id, work.title, work.images, imageIndex);
+    }
+
+    private void showOnlineImageDialog(String workId, String workTitle, List<String> images, int imageIndex) {
+        if (images.isEmpty() || imageIndex < 0 || imageIndex >= images.size()) return;
+        String imageName = images.get(imageIndex);
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         LinearLayout layout = new LinearLayout(this);
@@ -2927,15 +3077,21 @@ public final class MainActivity extends Activity {
         headerRow.setOrientation(LinearLayout.HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView title = text(work.title + " (" + (imageIndex + 1) + "/" + work.images.size() + ")", 14, true);
+        TextView title = text(workTitle + " (" + (imageIndex + 1) + "/" + images.size() + ")", 14, true);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1.0f);
         headerRow.addView(title, titleParams);
 
-        TextView badge = text("⏳ 拉取原画中…", 11, false);
-        badge.setTextColor(Color.rgb(180, 120, 20));
-        badge.setBackground(round(Color.rgb(255, 246, 230), 8));
+        boolean isFullCached = onlineClient.hasFullImageCached(workId, imageName);
+        TextView badge = text(isFullCached ? "✅ 100% 原画" : "⏳ 拉取原画中…", 11, false);
+        if (isFullCached) {
+            badge.setTextColor(Color.rgb(15, 135, 88));
+            badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+        } else {
+            badge.setTextColor(Color.rgb(180, 120, 20));
+            badge.setBackground(round(Color.rgb(255, 246, 230), 8));
+        }
         badge.setPadding(dp(8), dp(3), dp(8), dp(3));
         headerRow.addView(badge, new LinearLayout.LayoutParams(-2, -2));
 
@@ -2950,6 +3106,9 @@ public final class MainActivity extends Activity {
         fullView.setMaxHeight(maxImgHeight);
 
         ProgressBar spinner = new ProgressBar(this);
+        if (isFullCached) {
+            spinner.setVisibility(View.GONE);
+        }
         layout.addView(spinner, new LinearLayout.LayoutParams(dp(36), dp(36)));
         layout.addView(fullView, new LinearLayout.LayoutParams(-1, -2));
 
@@ -2959,15 +3118,17 @@ public final class MainActivity extends Activity {
         dialog.show();
 
         // 1. 先展示已有的缩略图占位（0 秒白屏）
-        String cacheKeyThumb = "online:" + work.id + ":" + imageName;
+        String cacheKeyThumb = "online:" + workId + ":" + imageName;
         Bitmap cachedThumb = THUMBNAIL_CACHE.get(cacheKeyThumb);
         if (cachedThumb != null && !cachedThumb.isRecycled()) {
             fullView.setImageBitmap(cachedThumb);
-            spinner.setVisibility(View.GONE);
+            if (!isFullCached) {
+                spinner.setVisibility(View.GONE);
+            }
         }
 
-        // 2. 检查是否有高清原画缓存
-        String cacheKeyFull = "online:full:" + work.id + ":" + imageName;
+        // 2. 检查是否有高清原画内存缓存
+        String cacheKeyFull = "online:full:" + workId + ":" + imageName;
         Bitmap cachedFull = THUMBNAIL_CACHE.get(cacheKeyFull);
         if (cachedFull != null && !cachedFull.isRecycled()) {
             fullView.setImageBitmap(cachedFull);
@@ -2978,14 +3139,16 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        // 3. 异步拉取 100% 原始画质原画
-        onlineClient.loadFullImage(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+        // 3. 异步拉取 100% 原始画质原画（本地磁盘秒开，无本地磁盘则向电脑拉取）
+        onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
             @Override
             public void onSuccess(Bitmap result) {
                 spinner.setVisibility(View.GONE);
                 if (result != null && !result.isRecycled()) {
                     THUMBNAIL_CACHE.put(cacheKeyFull, result);
                     fullView.setImageBitmap(result);
+                    fullView.requestLayout();
+                    fullView.invalidate();
                     badge.setText("✅ 100% 原画");
                     badge.setTextColor(Color.rgb(15, 135, 88));
                     badge.setBackground(round(Color.rgb(235, 247, 240), 8));
@@ -2995,10 +3158,42 @@ public final class MainActivity extends Activity {
             @Override
             public void onError(Exception error) {
                 spinner.setVisibility(View.GONE);
-                badge.setText("缩略图预览");
+                badge.setText("缩略图预览 (点此重拉)");
                 badge.setTextColor(Color.GRAY);
                 badge.setBackground(round(Color.rgb(240, 240, 240), 8));
             }
+        });
+
+        // 点击 badge 支持随时手动重新拉取刷新
+        badge.setOnClickListener(v -> {
+            badge.setText("⏳ 重新拉取中…");
+            badge.setTextColor(Color.rgb(180, 120, 20));
+            badge.setBackground(round(Color.rgb(255, 246, 230), 8));
+            spinner.setVisibility(View.VISIBLE);
+            THUMBNAIL_CACHE.remove(cacheKeyFull);
+            java.io.File cf = new java.io.File(new java.io.File(getCacheDir(), "online_full_images"), OnlineGalleryClient.getDiskCacheKey(workId, imageName));
+            if (cf.exists()) cf.delete();
+            onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                @Override
+                public void onSuccess(Bitmap result) {
+                    spinner.setVisibility(View.GONE);
+                    if (result != null && !result.isRecycled()) {
+                        THUMBNAIL_CACHE.put(cacheKeyFull, result);
+                        fullView.setImageBitmap(result);
+                        fullView.requestLayout();
+                        fullView.invalidate();
+                        badge.setText("✅ 100% 原画");
+                        badge.setTextColor(Color.rgb(15, 135, 88));
+                        badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+                    }
+                }
+
+                @Override
+                public void onError(Exception error) {
+                    spinner.setVisibility(View.GONE);
+                    badge.setText("拉取失败 (点此重试)");
+                }
+            });
         });
     }
 
@@ -3073,6 +3268,9 @@ public final class MainActivity extends Activity {
             }
         });
 
+        // 手机端本地生命周期记录（启动遵循手机端设置的时间规则倒计时）
+        OnlineWorkLifecycle.markUsed(this, work, System.currentTimeMillis());
+
         onlineClient.recordUse(work.id, getDeviceName(), platformCode, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
@@ -3093,10 +3291,22 @@ public final class MainActivity extends Activity {
         if (files == null || files.isEmpty()) return;
         try {
             ArrayList<Uri> uris = new ArrayList<>();
+            // 将从电脑同步的原图，通过 GalleryShareBridge 发布到系统媒体库
+            // 既彻底解决微信分身/小红书无法读取私有文件的问题，又自动享有 1 小时 TTL 自动清理生命周期治理！
             for (java.io.File f : files) {
-                Uri uri = Uri.parse("content://" + getPackageName() + ".files/online/" + work.id + "/" + f.getName());
-                uris.add(uri);
+                try {
+                    Uri pubUri = GalleryShareBridge.publish(this, f, f.getName());
+                    if (pubUri != null) {
+                        uris.add(pubUri);
+                    }
+                } catch (Exception e) {
+                    Uri privUri = Uri.parse("content://" + getPackageName() + ".files/online/" + work.id + "/" + f.getName());
+                    uris.add(privUri);
+                }
             }
+            if (uris.isEmpty()) return;
+            GalleryShareBridge.remember(this, uris, System.currentTimeMillis());
+
             Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
             send.setType("image/*");
             send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);

@@ -10,10 +10,13 @@ import java.util.regex.Pattern;
 final class PlatformCopyParser {
     private static final String HEADER_V2 = "<<<COPY_FORMAT:2>>>";
     private static final String HEADER_V3 = "<<<COPY_FORMAT:3>>>";
+    private static final String HEADER_MULTI = "<<<COPY_FORMAT:MULTI>>>";
     private PlatformCopyParser() { }
 
     private static final Pattern GENERIC_BLOCK_PATTERN =
             Pattern.compile("(?s)<<<([A-Za-z0-9_\u4e00-\u9fa5]+)_START>>>[\\r\\n]*(.*?)[\\r\\n]*<<<\\1_END>>>");
+    private static final Pattern VERSION_BLOCK_PATTERN =
+            Pattern.compile("(?s)<<<VERSION_START:\\s*([^>\\r\\n]+?)\\s*>>>[\\r\\n]*(.*?)[\\r\\n]*<<<VERSION_END>>>");
 
     enum Platform {
         DOUYIN("规避营销版", "DOUYIN", "douyin", "规避营销版"),
@@ -56,17 +59,21 @@ final class PlatformCopyParser {
 
     static String friendlyLabelForMarker(String marker) {
         if (marker == null || marker.trim().isEmpty()) return "参考文案";
-        String upper = marker.trim().toUpperCase(java.util.Locale.ROOT);
+        String trimmed = marker.trim();
+        String upper = trimmed.toUpperCase(java.util.Locale.ROOT);
         if ("XHS_3".equals(upper)) return "短文精选版";
         if ("WECHAT".equals(upper)) return "公众号版";
         if ("HR".equals(upper)) return "HR决策版";
         if (upper.startsWith("VERSION_") || upper.startsWith("V_")) {
             return "版本 " + upper.substring(upper.indexOf('_') + 1);
         }
-        if (marker.endsWith("版")) {
-            return marker;
+        if (trimmed.length() <= 4) {
+            return trimmed;
         }
-        return marker + "版";
+        if (trimmed.endsWith("版") && trimmed.length() == 5) {
+            return trimmed.substring(0, 4);
+        }
+        return trimmed.length() > 4 ? trimmed.substring(0, 4) : trimmed;
     }
 
     static List<AvailableItem> parseAvailablePlatforms(String source) {
@@ -75,9 +82,26 @@ final class PlatformCopyParser {
         }
         String text = stripBom(source);
         boolean isProtocol = text.contains(HEADER_V2) || text.contains(HEADER_V3)
+                || text.contains(HEADER_MULTI) || text.contains("<<<VERSION_START:")
                 || text.contains("_START>>>");
         if (!isProtocol) {
             return Collections.singletonList(new AvailableItem(Platform.XHS, "发布", text.trim()));
+        }
+
+        // Priority 1: Multi-version syntax (<<<VERSION_START:4字版本名>>> ... <<<VERSION_END>>>)
+        List<AvailableItem> multiItems = new ArrayList<>();
+        Matcher vMatcher = VERSION_BLOCK_PATTERN.matcher(text);
+        while (vMatcher.find()) {
+            String vname = vMatcher.group(1).trim();
+            String content = stripOuterLineBreaks(vMatcher.group(2));
+            if (!content.trim().isEmpty()) {
+                String label = friendlyLabelForMarker(vname);
+                Platform plat = ("抖音避坑".equals(label) || label.contains("抖音")) ? Platform.DOUYIN : Platform.GENERAL;
+                multiItems.add(new AvailableItem(plat, label, content));
+            }
+        }
+        if (!multiItems.isEmpty()) {
+            return multiItems;
         }
 
         List<AvailableItem> items = new ArrayList<>();

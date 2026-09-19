@@ -13,6 +13,8 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -29,7 +31,7 @@ import java.util.concurrent.Executors;
  */
 public final class OnlineGalleryClient {
     public static final int DEFAULT_PC_PORT = 45835;
-    private static final int TIMEOUT_MS = 4000;
+    private static final int TIMEOUT_MS = 15000;
     private final Context context;
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -88,6 +90,7 @@ public final class OnlineGalleryClient {
         if (cachedBaseUrl != null && !cachedBaseUrl.isEmpty()) {
             return cachedBaseUrl;
         }
+
         SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
         String custom = prefs.getString("customPcServerUrl", "").trim();
         if (!custom.isEmpty()) {
@@ -95,29 +98,10 @@ public final class OnlineGalleryClient {
             return custom;
         }
 
-        // Check discovered peers in OnlineService
-        List<PeerDevice> peers = OnlineService.peers();
-        for (PeerDevice peer : peers) {
-            if (peer.id.startsWith("windows-") || "Windows PC".equals(peer.model)) {
-                String candidate = "http://" + peer.ip + ":" + DEFAULT_PC_PORT;
-                cachedBaseUrl = candidate;
-                return candidate;
-            }
-        }
-
-        // Check last known PC from incoming transmissions
-        String lastKnown = prefs.getString("lastKnownPcServer", "");
-        if (!lastKnown.isEmpty()) {
-            try {
-                URL u = new URL(lastKnown);
-                String candidate = "http://" + u.getHost() + ":" + DEFAULT_PC_PORT;
-                cachedBaseUrl = candidate;
-                return candidate;
-            } catch (Exception ignored) { }
-        }
-
-        // Fallback default LAN address
-        return "http://192.168.1.27:" + DEFAULT_PC_PORT;
+        // 默认优先使用本地回环 127.0.0.1:45835 (针对 ADB reverse 极速通道，零延迟免 Wi-Fi 防火墙阻拦)
+        String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+        cachedBaseUrl = loopback;
+        return loopback;
     }
 
     public void setCustomBaseUrl(String url) {
@@ -128,20 +112,34 @@ public final class OnlineGalleryClient {
 
     public void checkConnection(Callback<Boolean> callback) {
         executor.execute(() -> {
-            try {
-                String baseUrl = resolveBaseUrl();
-                URL url = new URL(baseUrl + "/api/online/status");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(2500);
-                conn.setReadTimeout(2500);
-                int code = conn.getResponseCode();
-                boolean ok = (code == 200);
-                conn.disconnect();
-                mainHandler.post(() -> callback.onSuccess(ok));
-            } catch (Exception e) {
-                mainHandler.post(() -> callback.onError(e));
+            String baseUrl = resolveBaseUrl();
+            if (ping(baseUrl)) {
+                mainHandler.post(() -> callback.onSuccess(true));
+                return;
             }
+            // 自动回退探测 ADB reverse 回环端口 (127.0.0.1:45835)
+            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+            if (!loopback.equals(baseUrl) && ping(loopback)) {
+                setCustomBaseUrl(loopback);
+                mainHandler.post(() -> callback.onSuccess(true));
+                return;
+            }
+            mainHandler.post(() -> callback.onSuccess(false));
         });
+    }
+
+    private boolean ping(String baseUrl) {
+        try {
+            URL url = new URL(baseUrl + "/api/online/status");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            return code == 200;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public void fetchCategories(Callback<CategoriesResult> callback) {
@@ -252,9 +250,48 @@ public final class OnlineGalleryClient {
         });
     }
 
+    public static String getDiskCacheKey(String workId, String fileName) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+            byte[] hash = md.digest((workId + "::" + fileName).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString() + ".jpg";
+        } catch (Exception e) {
+            return Math.abs((workId + "_" + fileName).hashCode()) + ".jpg";
+        }
+    }
+
+    public boolean hasFullImageCached(String workId, String fileName) {
+        File cacheDir = new File(context.getCacheDir(), "online_full_images");
+        File diskFile = new File(cacheDir, getDiskCacheKey(workId, fileName));
+        return diskFile.exists() && diskFile.length() > 1024;
+    }
+
     public void loadFullImage(String workId, String fileName, Callback<Bitmap> callback) {
         executor.execute(() -> {
+            // 1. 优先从本地磁盘持久化缓存读取（秒开原画，绝不重复拉取）
+            File cacheDir = new File(context.getCacheDir(), "online_full_images");
+            if (!cacheDir.exists()) cacheDir.mkdirs();
+            File diskFile = new File(cacheDir, getDiskCacheKey(workId, fileName));
+
+            if (diskFile.exists() && diskFile.length() > 1024) {
+                try {
+                    BitmapFactory.Options opts = new BitmapFactory.Options();
+                    opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                    Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
+                    if (bmp != null) {
+                        mainHandler.post(() -> callback.onSuccess(bmp));
+                        return;
+                    }
+                } catch (Throwable ignored) {}
+            }
+
+            // 2. 本地无缓存或损坏，从电脑在线服务拉取并原子安全落盘
             HttpURLConnection conn = null;
+            File tempFile = new File(cacheDir, getDiskCacheKey(workId, fileName) + ".tmp");
             try {
                 String baseUrl = resolveBaseUrl();
                 String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
@@ -269,20 +306,28 @@ public final class OnlineGalleryClient {
                     throw new Exception("HTTP " + code);
                 }
                 InputStream in = new BufferedInputStream(conn.getInputStream());
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                FileOutputStream fos = new FileOutputStream(tempFile);
                 byte[] buf = new byte[8192];
                 int len;
                 while ((len = in.read(buf)) != -1) {
-                    baos.write(buf, 0, len);
+                    fos.write(buf, 0, len);
                 }
+                fos.flush();
+                fos.close();
                 in.close();
-                byte[] imgBytes = baos.toByteArray();
+
+                if (tempFile.length() > 1024) {
+                    if (diskFile.exists()) diskFile.delete();
+                    tempFile.renameTo(diskFile);
+                }
+
                 BitmapFactory.Options opts = new BitmapFactory.Options();
                 opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-                Bitmap bmp = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length, opts);
-                if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
+                Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
+                if (bmp == null) throw new Exception("Failed to decode saved bitmap");
                 mainHandler.post(() -> callback.onSuccess(bmp));
             } catch (Exception e) {
+                if (tempFile.exists()) tempFile.delete();
                 Log.w("OnlineGalleryClient", "loadFullImage failed for " + workId + " / " + fileName + ": " + e.getMessage());
                 mainHandler.post(() -> callback.onError(e));
             } finally {
@@ -450,7 +495,25 @@ public final class OnlineGalleryClient {
         });
     }
 
-    private static String httpGet(URL url) throws Exception {
+    private String httpGet(URL url) throws Exception {
+        try {
+            return rawHttpGet(url);
+        } catch (Exception e) {
+            String uStr = url.toString();
+            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+            if (!uStr.startsWith(loopback)) {
+                try {
+                    String fallback = uStr.replaceFirst("^https?://[^/]+", loopback);
+                    String res = rawHttpGet(new URL(fallback));
+                    cachedBaseUrl = loopback;
+                    return res;
+                } catch (Exception ignored) {}
+            }
+            throw e;
+        }
+    }
+
+    private static String rawHttpGet(URL url) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         conn.setConnectTimeout(TIMEOUT_MS);
@@ -471,7 +534,25 @@ public final class OnlineGalleryClient {
         return out.toString(StandardCharsets.UTF_8.name());
     }
 
-    private static String httpPost(URL url, String jsonBody) throws Exception {
+    private String httpPost(URL url, String jsonBody) throws Exception {
+        try {
+            return rawHttpPost(url, jsonBody);
+        } catch (Exception e) {
+            String uStr = url.toString();
+            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+            if (!uStr.startsWith(loopback)) {
+                try {
+                    String fallback = uStr.replaceFirst("^https?://[^/]+", loopback);
+                    String res = rawHttpPost(new URL(fallback), jsonBody);
+                    cachedBaseUrl = loopback;
+                    return res;
+                } catch (Exception ignored) {}
+            }
+            throw e;
+        }
+    }
+
+    private static String rawHttpPost(URL url, String jsonBody) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setConnectTimeout(TIMEOUT_MS);

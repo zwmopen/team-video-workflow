@@ -112,7 +112,7 @@ final class GalleryShareBridge {
         if (removed > 0) DiagnosticLog.write(context, "share_media_cleanup", "removed=" + removed);
     }
 
-    private static Uri publish(Context context, File source, String requestedName) throws Exception {
+    static Uri publish(Context context, File source, String requestedName) throws Exception {
         if (!source.isFile()) throw new IllegalStateException("图片不存在：" + requestedName);
         ContentResolver resolver = context.getContentResolver();
         String mime = mimeType(requestedName);
@@ -188,7 +188,7 @@ final class GalleryShareBridge {
         return result;
     }
 
-    private static void remember(Context context, List<Uri> uris, long createdAtMs) {
+    static void remember(Context context, List<Uri> uris, long createdAtMs) {
         SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         HashSet<String> stored = new HashSet<>(preferences.getStringSet(KEY_ITEMS, Collections.emptySet()));
         for (Uri uri : uris) stored.add(uri + SEPARATOR + createdAtMs);

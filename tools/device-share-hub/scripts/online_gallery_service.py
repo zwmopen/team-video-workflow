@@ -16,21 +16,34 @@ Online Gallery LAN Service for Device Share Hub & Mobile Gallery
 import os
 import sys
 
-if sys.stdout is None:
-    try:
-        sys.stdout = open(os.path.join(os.path.dirname(__file__), "online_gallery_service.log"), "a", encoding="utf-8")
-    except Exception:
-        sys.stdout = open(os.devnull, "w", encoding="utf-8")
-elif hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+def _setup_streams():
+    log_dir = os.path.dirname(__file__)
+    for stream_name, log_name in [("stdout", "online_gallery_service.log"), ("stderr", "online_gallery_service_err.log")]:
+        stream = getattr(sys, stream_name, None)
+        needs_redirect = False
+        if stream is None:
+            needs_redirect = True
+        else:
+            try:
+                # 在 pythonw 下 fileno 探测会抛出 io.UnsupportedOperation 或返回负数
+                stream.write("")
+                stream.flush()
+            except Exception:
+                needs_redirect = True
+        if needs_redirect:
+            try:
+                f = open(os.path.join(log_dir, log_name), "a", encoding="utf-8", buffering=1)
+                setattr(sys, stream_name, f)
+            except Exception:
+                setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))
+        else:
+            if hasattr(stream, "reconfigure"):
+                try:
+                    stream.reconfigure(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
 
-if sys.stderr is None:
-    try:
-        sys.stderr = open(os.path.join(os.path.dirname(__file__), "online_gallery_service_err.log"), "a", encoding="utf-8")
-    except Exception:
-        sys.stderr = open(os.devnull, "w", encoding="utf-8")
-elif hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+_setup_streams()
 
 import json
 import time
@@ -40,9 +53,10 @@ import hashlib
 import urllib.parse
 import re
 import shutil
+import subprocess
 from io import BytesIO
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 try:
     from PIL import Image
@@ -53,12 +67,14 @@ except ImportError:
 DEFAULT_PORT = 45835
 DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
 DESTINATIONS = [
+    # 专题与游戏类优先
+    "游戏", "中秋", "国庆",
     # 具体目的地与景区优先检测
     "舟山", "嵊泗", "安吉", "莫干山", "千岛湖", "桐庐", "象山", "临安",
     "余杭", "溧阳", "宜兴", "乌镇", "黄山", "崇明", "阳澄湖", "西山岛",
     "宁波", "绍兴", "温州", "台州", "金华", "义乌", "南京", "无锡", "湖州",
     # 核心大城市及宏观主题
-    "苏州", "杭州", "上海", "中秋", "国庆", "江浙沪"
+    "苏州", "杭州", "上海", "江浙沪"
 ]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
@@ -80,12 +96,25 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 
-def detect_destination(title: str) -> str:
-    """从作品标题检测所属目的地（剔除公司名称前缀干扰，优先具体风景点）"""
+def is_game_work(title: str, dir_path: str = "") -> bool:
+    """精准判断是否属于游戏/破冰/桌游专题"""
+    norm_p = dir_path.replace("\\", "/")
+    if "/团建游戏" in norm_p:
+        return True
+    game_keywords = ["小游戏", "破冰游戏", "聚会游戏", "年会游戏", "惩罚小游戏", "桌游", "晨会小游戏", "团建游戏", "互动游戏", "暖场小游戏", "爆笑小游戏", "无道具游戏"]
+    return any(k in title for k in game_keywords)
+
+
+def detect_destination(title: str, dir_path: str = "") -> str:
+    """从作品标题或目录路径检测所属目的地/主题（剔除公司名称前缀干扰，优先具体风景点与游戏主题）"""
+    if is_game_work(title, dir_path):
+        return "游戏"
     cleaned = title
     for comp in ["杭州聚吧", "杭州聚米", "杭州聚航", "上海手工", "宣宋沙龙", "嗨森创意", "知合团建", "企星团建", "知旅团建", "趣定制", "翠羊湾"]:
         cleaned = cleaned.replace(comp, "")
     for dest in DESTINATIONS:
+        if dest in ("游戏", "中秋", "国庆"):
+            continue
         if dest in cleaned:
             return dest
     return "其他"
@@ -105,13 +134,31 @@ class WorkScanner:
         self._lock = threading.Lock()
         self._cached_works: List[Dict[str, Any]] = []
         self._works_by_id: Dict[str, Dict[str, Any]] = {}
+        self._moved_works: Dict[str, Dict[str, Any]] = {}
         self._last_scan_time = 0.0
 
     def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             if not self._works_by_id:
                 self.scan()
-            return self._works_by_id.get(work_id)
+            work = self._works_by_id.get(work_id)
+            if work and os.path.exists(work.get("path", "")):
+                return work
+            if work_id in self._moved_works:
+                mw = self._moved_works[work_id]
+                if os.path.exists(mw.get("path", "")):
+                    return mw
+            # 兜底到 _已发送1次（微信公众号可发）查找
+            stage1_dir = os.path.join(self.root, "_已发送1次（微信公众号可发）")
+            if os.path.isdir(stage1_dir):
+                for sub in os.listdir(stage1_dir):
+                    sub_p = os.path.join(stage1_dir, sub)
+                    if os.path.isdir(sub_p):
+                        w = self._inspect_work_dir(sub_p, sub, "已发送1次", 1)
+                        if w and w.get("id") == work_id:
+                            self._moved_works[work_id] = w
+                            return w
+            return None
 
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
@@ -137,8 +184,8 @@ class WorkScanner:
                     if not os.path.isdir(full_path):
                         continue
 
-                    # 处理作品集子目录（如 作品集_099 下面的作品）
-                    if entry.startswith("作品集"):
+                    # 处理作品集子目录（如 作品集_099）以及 团建游戏 子目录
+                    if entry.startswith("作品集") or entry in ("团建游戏", "游戏", "游戏类"):
                         try:
                             sub_entries = os.listdir(full_path)
                             for sub in sub_entries:
@@ -273,7 +320,7 @@ class WorkScanner:
             dispatched = distribution.get("dispatchedTo", [])
             use_count = len(dispatched) if dispatched else default_count
 
-        destination = detect_destination(folder_name)
+        destination = detect_destination(folder_name, dir_path)
 
         # 优雅标题清洗：剥离时间戳与机器流水线前缀，让手机端直显方案名
         clean_title = folder_name
@@ -328,12 +375,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
     def send_json(self, status: int, data: Any):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            pass
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -373,20 +423,23 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 dest = w.get("destination", "其他")
                 counts[dest] = counts.get(dest, 0) + 1
 
-            # 节日时令专题聚合（中秋、国庆优先置顶）
+            # 节日时令专题聚合（中秋、国庆优先置顶）与游戏专题
             mid_autumn_count = sum(1 for w in works if "中秋" in (w.get("rawTitle", "") + " " + w.get("copyText", "")))
             national_day_count = sum(1 for w in works if ("国庆" in (w.get("rawTitle", "") + " " + w.get("copyText", "")) or "十一" in (w.get("rawTitle", "") + " " + w.get("copyText", ""))))
+            game_count = sum(1 for w in works if is_game_work(w.get("rawTitle", ""), w.get("path", "")))
 
-            # 纯净分类聚合：节日专题置顶，其余按数量倒序的目的地
+            # 纯净分类聚合：节日专题置顶，游戏专题同级别优先展示，其余按数量倒序的目的地
             categories = []
             if mid_autumn_count > 0:
                 categories.append({"name": "🌕 中秋", "count": mid_autumn_count})
             if national_day_count > 0:
                 categories.append({"name": "🇨🇳 国庆", "count": national_day_count})
+            if game_count > 0:
+                categories.append({"name": "🎮 游戏", "count": game_count})
 
             dest_categories = []
             for d in DESTINATIONS:
-                if d in ("中秋", "国庆"):
+                if d in ("中秋", "国庆", "游戏"):
                     continue
                 if d in counts and counts[d] > 0:
                     dest_categories.append({"name": d, "count": counts[d]})
@@ -408,7 +461,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             filtered = []
             for w in works:
-                # 分类过滤（支持专题分类与地域分类）
+                # 分类过滤（支持专题分类、游戏与地域分类）
                 if category and category != "全部":
                     if category in ("🌕 中秋", "中秋"):
                         if "中秋" not in (w.get("rawTitle", "") + " " + w.get("copyText", "")):
@@ -416,6 +469,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     elif category in ("🇨🇳 国庆", "国庆"):
                         blob = w.get("rawTitle", "") + " " + w.get("copyText", "")
                         if "国庆" not in blob and "十一" not in blob:
+                            continue
+                    elif category in ("🎮 游戏", "游戏"):
+                        if not is_game_work(w.get("rawTitle", ""), w.get("path", "")):
                             continue
                     elif category == "待首发" and w.get("useCount", 0) != 0:
                         continue
@@ -514,6 +570,62 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
+    def _move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str, action_type: str = "dispatched") -> Tuple[bool, str, str]:
+        src_path = target_work["path"]
+        folder_name = os.path.basename(src_path)
+        use_count = target_work.get("useCount", 0)
+        work_id = target_work.get("id", "")
+
+        root_dir = self.scanner.root
+        dest_base = os.path.join(root_dir, "_已发送1次（微信公众号可发）")
+        os.makedirs(dest_base, exist_ok=True)
+
+        target_dest = os.path.join(dest_base, folder_name)
+        if os.path.exists(target_dest) and os.path.abspath(target_dest) != os.path.abspath(src_path):
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
+
+        if os.path.abspath(target_dest) == os.path.abspath(src_path):
+            return True, target_dest, "作品已位于「_已发送1次（微信公众号可发）」"
+
+        move_err = None
+        for attempt in range(3):
+            try:
+                shutil.move(src_path, target_dest)
+                move_err = None
+                break
+            except Exception as e:
+                move_err = e
+                time.sleep(0.3)
+
+        if move_err is not None:
+            try:
+                shutil.copytree(src_path, target_dest, dirs_exist_ok=True)
+                shutil.rmtree(src_path, ignore_errors=True)
+                move_err = None
+            except Exception as e2:
+                move_err = e2
+
+        if move_err is not None:
+            return False, "", f"物理移动失败: {str(move_err)}"
+
+        target_work["path"] = target_dest
+        self.scanner._moved_works[work_id] = target_work
+
+        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+        try:
+            header_needed = not os.path.exists(log_file)
+            with open(log_file, "a", encoding="utf-8-sig") as fp:
+                if header_needed:
+                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
+                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{src_path},{target_dest},{use_count},{action_type}\n")
+        except Exception:
+            pass
+
+        return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
+
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -535,8 +647,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Missing workId")
                 return
 
-            works = self.scanner.scan()
-            target_work = next((w for w in works if w["id"] == work_id), None)
+            target_work = self.scanner.get_work(work_id)
             if not target_work:
                 self.send_error(404, f"Work {work_id} not found")
                 return
@@ -567,14 +678,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             dist["lastDispatchedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
             dist["status"] = f"已使用{new_count}次"
 
-            # 保存更新作品标签.json
             try:
                 with open(tag_file, "w", encoding="utf-8") as fp:
                     json.dump(tag_data, fp, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] Failed to write tag file: {e}")
 
-            # 写入设备使用日志 (device-usage-log.csv)
             log_file = os.path.join(self.scanner.root, "device-usage-log.csv")
             try:
                 exists = os.path.exists(log_file)
@@ -585,19 +694,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Warn] Failed to write usage log: {e}")
 
-            # 核心业务铁律：使用次数 < 2 时绝对不物理移动文件夹，保留在原地！
-            remaining = max(0, 2 - new_count)
-            msg = f"已成功记录第 {new_count} 次使用"
+            # 核心业务铁律：只要手机端点击分享并使用过一次，电脑端后台自动将该作品物理移入「_已发送1次（微信公众号可发）」
+            moved = False
+            target_dest_path = ""
+            if new_count >= 1:
+                ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
+                moved = ok
 
-            # 强制刷新扫描缓存
+            msg = f"已成功记录第 {new_count} 次使用" + ("，电脑端已自动移入「_已发送1次」" if moved else "")
+
             self.scanner.scan(force=True)
 
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
                 "useCount": new_count,
-                "remainingUses": remaining,
-                "moved": False,
+                "remainingUses": 0,
+                "moved": moved,
+                "targetPath": target_dest_path,
                 "message": msg,
                 "dispatchedTo": dispatched_list
             })
@@ -613,8 +727,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             work_id = req.get("workId", "").strip()
-            works = self.scanner.scan()
-            target_work = next((w for w in works if w["id"] == work_id), None)
+            target_work = self.scanner.get_work(work_id)
             if not target_work:
                 self.send_error(404, "Work not found")
                 return
@@ -655,85 +768,22 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Missing workId")
                 return
 
-            works = self.scanner.scan()
-            target_work = next((w for w in works if w["id"] == work_id), None)
+            target_work = self.scanner.get_work(work_id)
             if not target_work:
                 self.send_error(404, "Work not found")
                 return
 
-            src_path = target_work["path"]
-            folder_name = os.path.basename(src_path)
-            use_count = target_work.get("useCount", 0)
-
-            # 确定目标目录
-            root_dir = self.scanner.root
-            if use_count > 0:
-                # 发过的作品：移动到 _已发送1次（微信公众号可发）
-                cand_dirs = [
-                    os.path.join(root_dir, "_已发送1次（微信公众号可发）"),
-                    os.path.join(root_dir, "_已发送一次"),
-                    os.path.join(root_dir, "已发送1次（微信公众号可发）"),
-                ]
-                dest_base = None
-                for cd in cand_dirs:
-                    if os.path.exists(cd):
-                        dest_base = cd
-                        break
-                if not dest_base:
-                    dest_base = cand_dirs[0]
-                    os.makedirs(dest_base, exist_ok=True)
-                action_type = "dispatched"
-                action_desc = "已移入「_已发送一次」"
-            else:
-                # 没用过的作品：移动到垃圾作品/负面样本库，作为后续参考分析
-                cand_dirs = [
-                    os.path.join(root_dir, "_垃圾作品（后续参考分析）"),
-                    os.path.join(root_dir, "_不合格成品合集"),
-                    os.path.join(root_dir, "已废弃-负面样本库"),
-                ]
-                dest_base = None
-                for cd in cand_dirs:
-                    if os.path.exists(cd):
-                        dest_base = cd
-                        break
-                if not dest_base:
-                    dest_base = cand_dirs[0]
-                    os.makedirs(dest_base, exist_ok=True)
-                action_type = "trash"
-                action_desc = "已移入「垃圾作品库（供后续参考分析）」"
-
-            # 目标文件夹路径（若已存在同名文件夹，附加时间戳避免覆盖冲突）
-            target_dest = os.path.join(dest_base, folder_name)
-            if os.path.exists(target_dest):
-                ts = time.strftime("%Y%m%d_%H%M%S")
-                target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
-
-            try:
-                shutil.move(src_path, target_dest)
-            except Exception as e:
-                self.send_json(500, {"ok": False, "error": f"物理移动失败: {str(e)}"})
+            ok, target_dest, action_desc = self._move_work_to_stage1(target_work, device_name, "manual_delete")
+            if not ok:
+                self.send_json(200, {"ok": False, "error": action_desc})
                 return
 
-            # 记录删除流转审计日志
-            log_dir = os.path.join(root_dir, "_portfolio_move_logs")
-            os.makedirs(log_dir, exist_ok=True)
-            log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-            try:
-                header_needed = not os.path.exists(log_file)
-                with open(log_file, "a", encoding="utf-8-sig") as fp:
-                    if header_needed:
-                        fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
-                    fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{src_path},{target_dest},{use_count},{action_type}\n")
-            except Exception:
-                pass
-
-            # 强制刷新扫描缓存
             self.scanner.scan(force=True)
 
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
-                "action": action_type,
+                "action": "dispatched",
                 "message": action_desc,
                 "targetPath": target_dest,
                 "remainingWorks": len(self.scanner.scan())
@@ -743,7 +793,55 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
 
-def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_ROOT):
+def start_adb_reverse_daemon(port: int):
+    """
+    后台静默守护线程：为所有已连接的 Android 设备自动配置 adb reverse tcp:port tcp:port。
+    严格使用 0x08000000 (CREATE_NO_WINDOW)，100% 绝对无任何黑色 CMD 控制台窗口，纯静默安全执行。
+    """
+    import threading
+    CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+    def _daemon_loop():
+        adb_candidates = [
+            r"D:\Program Files\scrcpy-win32-v3.1\platform-tools\adb.exe",
+            r"C:\Users\z\AppData\Local\Android\Sdk\platform-tools\adb.exe",
+            "adb"
+        ]
+        adb_bin = "adb"
+        for c in adb_candidates:
+            if os.path.exists(c):
+                adb_bin = c
+                break
+
+        while True:
+            try:
+                res = subprocess.run(
+                    [adb_bin, "devices"],
+                    capture_output=True,
+                    text=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    timeout=5
+                )
+                lines = res.stdout.strip().splitlines()
+                for line in lines[1:]:
+                    parts = line.strip().split()
+                    if len(parts) >= 2 and parts[1] == "device":
+                        dev_id = parts[0]
+                        subprocess.run(
+                            [adb_bin, "-s", dev_id, "reverse", f"tcp:{port}", f"tcp:{port}"],
+                            capture_output=True,
+                            creationflags=CREATE_NO_WINDOW,
+                            timeout=5
+                        )
+            except Exception:
+                pass
+            time.sleep(20)
+
+    t = threading.Thread(target=_daemon_loop, daemon=True, name="AdbReverseDaemon")
+    t.start()
+
+
+def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_ROOT, enable_adb: bool = False):
     scanner = WorkScanner(library_root)
     OnlineGalleryHandler.scanner = scanner
 
@@ -755,6 +853,9 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     print(f"📂 作品真源目录: {library_root}")
     print(f"🛡️ 纯净首发保障: 仅限「已发送0次」与根目录直出成品，排除忽略项")
     print(f"================================================================")
+
+    # 启动纯静默 ADB 隧道守护（0 弹窗 0 黑框）
+    start_adb_reverse_daemon(port)
 
     # 首次预热扫描
     works = scanner.scan(force=True)
@@ -782,8 +883,9 @@ if __name__ == "__main__":
     parser.add_argument("pos_root", nargs="?", type=str, default=None, help="Library root (positional)")
     parser.add_argument("--port", type=int, default=None, help="Port")
     parser.add_argument("--root", type=str, default=None, help="Library root")
+    parser.add_argument("--enable-adb", action="store_true", default=False, help="Enable legacy ADB reverse daemon")
     args = parser.parse_args()
 
     target_port = args.port or args.pos_port or DEFAULT_PORT
     target_root = args.root or args.pos_root or DEFAULT_LIBRARY_ROOT
-    run_service(target_port, target_root)
+    run_service(target_port, target_root, enable_adb=args.enable_adb)
