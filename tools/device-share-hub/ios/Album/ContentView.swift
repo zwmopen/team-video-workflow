@@ -93,22 +93,29 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         updateModeButtonStyle()
 
         let modeItem = UIBarButtonItem(customView: modeButton)
-        let folderItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
+        let planeItem = toolbarItem(.plane, label: "传送文件", action: #selector(openTransfer))
+        let trashItem = toolbarItem(.trash, label: "回收站", action: #selector(openTrash))
+        let settingsItem = toolbarItem(.settings, label: "设置", action: #selector(openSettings))
 
-        navigationItem.leftBarButtonItems = [modeItem, folderItem]
-        navigationItem.rightBarButtonItems = [
-            toolbarItem(.settings, label: "设置", action: #selector(openSettings)),
-            toolbarItem(.trash, label: "回收站", action: #selector(openTrash)),
-            toolbarItem(.plane, label: "传送文件", action: #selector(openTransfer))
-        ]
+        navigationItem.leftBarButtonItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
+        // iOS 中 rightBarButtonItems 顺序是从右往左，最右侧是 modeItem（正好在 planeItem 右侧）
+        navigationItem.rightBarButtonItems = [modeItem, planeItem, trashItem, settingsItem]
     }
 
     private func updateModeButtonStyle() {
-        let tint = isOnlineMode ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1) : view.tintColor
-        modeButton.backgroundColor = tint?.withAlphaComponent(isOnlineMode ? 0.22 : 0.11)
-        let symbol: AlbumToolbarSymbol = isOnlineMode ? .computer : .phone
-        modeButton.setImage(AlbumToolbarIcon.image(symbol, color: tint ?? .systemGreen), for: .normal)
-        modeButton.accessibilityLabel = isOnlineMode ? "当前为电脑在线相册，点击切回手机本地" : "当前为手机本地相册，点击切换到电脑在线相册"
+        if !isOnlineMode {
+            let fg = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
+            let bg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+            modeButton.backgroundColor = bg
+            modeButton.setImage(AlbumToolbarIcon.image(.phone, color: fg), for: .normal)
+            modeButton.accessibilityLabel = "当前为手机本地作品，点击切换到电脑在线"
+        } else {
+            let fg = UIColor(red: 2/255, green: 132/255, blue: 199/255, alpha: 1)
+            let bg = UIColor(red: 224/255, green: 242/255, blue: 254/255, alpha: 1)
+            modeButton.backgroundColor = bg
+            modeButton.setImage(AlbumToolbarIcon.image(.computer, color: fg), for: .normal)
+            modeButton.accessibilityLabel = "当前为电脑在线作品，点击切换到手机本地"
+        }
     }
 
     @objc private func toggleMode() {
@@ -784,18 +791,28 @@ enum AlbumToolbarIcon {
             path.addLine(to: CGPoint(x: 19.2, y: 18.6)); path.addLine(to: CGPoint(x: 3.8, y: 18.6))
             path.close(); path.stroke()
         case .phone:
-            let rect = CGRect(x: 5, y: 2, width: 13, height: 19)
-            let phonePath = UIBezierPath(roundedRect: rect, cornerRadius: 2.5)
-            phonePath.stroke()
-            let home = UIBezierPath(ovalIn: CGRect(x: 10.5, y: 17.5, width: 2, height: 2))
+            let body = UIBezierPath(roundedRect: CGRect(x: 5, y: 2, width: 13, height: 19), cornerRadius: 2.8)
+            body.lineWidth = 1.6
+            body.stroke()
+            let screen = UIBezierPath(roundedRect: CGRect(x: 6.8, y: 4.8, width: 9.4, height: 12.5), cornerRadius: 1)
+            screen.lineWidth = 1.0
+            screen.stroke()
+            let home = UIBezierPath(ovalIn: CGRect(x: 10.6, y: 18.2, width: 1.8, height: 1.8))
             home.fill()
         case .computer:
-            let screen = CGRect(x: 3, y: 3, width: 17, height: 12)
-            let screenPath = UIBezierPath(roundedRect: screen, cornerRadius: 1.5)
-            screenPath.stroke()
-            path.move(to: CGPoint(x: 11.5, y: 15)); path.addLine(to: CGPoint(x: 11.5, y: 19))
-            path.move(to: CGPoint(x: 7.5, y: 19)); path.addLine(to: CGPoint(x: 15.5, y: 19))
-            path.stroke()
+            let monitor = UIBezierPath(roundedRect: CGRect(x: 2.5, y: 3, width: 18, height: 12.5), cornerRadius: 2)
+            monitor.lineWidth = 1.6
+            monitor.stroke()
+            let innerScreen = UIBezierPath(rect: CGRect(x: 4.5, y: 5, width: 14, height: 8.5))
+            innerScreen.lineWidth = 1.0
+            innerScreen.stroke()
+            let stand = UIBezierPath()
+            stand.move(to: CGPoint(x: 11.5, y: 15.5))
+            stand.addLine(to: CGPoint(x: 11.5, y: 18.5))
+            stand.lineWidth = 1.8
+            stand.stroke()
+            let base = UIBezierPath(roundedRect: CGRect(x: 7.5, y: 18.5, width: 8, height: 1.8), cornerRadius: 0.9)
+            base.fill()
         }
         return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
