@@ -13,9 +13,23 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var filterStackView: UIStackView!
     private var filterButtons: [String: UIButton] = [:]
 
+    // MARK: - 在线相册状态
+    private var isOnlineMode: Bool = false
+    private var onlineWorks: [OnlineWorkEntry] = []
+    private var onlineCategories: [OnlineCategoryItem] = []
+    private var selectedOnlineCategory: String = "全部"
+    private var modeButton: UIButton!
+    private let prefOnlineModeKey = "pref_is_online_mode"
+
     private var filteredWorks: [WorkItem] {
         guard selectedCategory != WorkCategory.all else { return library.works }
         return library.works.filter { $0.folderName == selectedCategory }
+    }
+
+    private var filteredOnlineWorks: [OnlineWorkEntry] {
+        let active = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
+        guard selectedOnlineCategory != "全部" else { return active }
+        return active.filter { $0.destination == selectedOnlineCategory }
     }
 
     init(library: WorkLibrary) {
@@ -27,13 +41,22 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        isOnlineMode = UserDefaults.standard.bool(forKey: prefOnlineModeKey)
         view.backgroundColor = AppColors.background
         configureNavigation()
         configureFilterBar()
         configureCollection()
         configureEmptyView()
-        library.onChange = { [weak self] in self?.render() }
-        render()
+        library.onChange = { [weak self] in
+            guard let self = self, !self.isOnlineMode else { return }
+            self.render()
+        }
+
+        if isOnlineMode {
+            loadOnlineData()
+        } else {
+            render()
+        }
     }
 
     @objc private func openTransfer() {
@@ -42,26 +65,91 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        render()
+        if isOnlineMode {
+            loadOnlineData(silent: true)
+        } else {
+            render()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        showInitialFolderPromptIfNeeded()
+        if !isOnlineMode {
+            showInitialFolderPromptIfNeeded()
+        }
     }
 
     private func configureNavigation() {
-        // 首页没有文字标题时，系统会把二级页面的返回按钮显示成默认的 “Back”。
-        // 明确指定中文，确保设置页等页面始终显示“返回”。
         navigationItem.backBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)
         navigationItem.titleView = nil
-        navigationItem.leftBarButtonItem = toolbarItem(
-            .folder, label: "切换到文件浏览", action: #selector(openFiles))
+
+        modeButton = UIButton(type: .system)
+        modeButton.frame = CGRect(x: 0, y: 0, width: 34, height: 34)
+        modeButton.layer.cornerRadius = 11
+        modeButton.imageView?.contentMode = .scaleAspectFit
+        modeButton.addTarget(self, action: #selector(toggleMode), for: .touchUpInside)
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(configureServerUrl))
+        modeButton.addGestureRecognizer(longPress)
+        updateModeButtonStyle()
+
+        let modeItem = UIBarButtonItem(customView: modeButton)
+        let folderItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
+
+        navigationItem.leftBarButtonItems = [modeItem, folderItem]
         navigationItem.rightBarButtonItems = [
             toolbarItem(.settings, label: "设置", action: #selector(openSettings)),
             toolbarItem(.trash, label: "回收站", action: #selector(openTrash)),
             toolbarItem(.plane, label: "传送文件", action: #selector(openTransfer))
         ]
+    }
+
+    private func updateModeButtonStyle() {
+        let tint = isOnlineMode ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1) : view.tintColor
+        modeButton.backgroundColor = tint?.withAlphaComponent(isOnlineMode ? 0.22 : 0.11)
+        let symbol: AlbumToolbarSymbol = isOnlineMode ? .computer : .phone
+        modeButton.setImage(AlbumToolbarIcon.image(symbol, color: tint ?? .systemGreen), for: .normal)
+        modeButton.accessibilityLabel = isOnlineMode ? "当前为电脑在线相册，点击切回手机本地" : "当前为手机本地相册，点击切换到电脑在线相册"
+    }
+
+    @objc private func toggleMode() {
+        isOnlineMode.toggle()
+        UserDefaults.standard.set(isOnlineMode, forKey: prefOnlineModeKey)
+        updateModeButtonStyle()
+        if isOnlineMode {
+            showToast("已切换到：💻 电脑在线相册")
+            loadOnlineData()
+        } else {
+            showToast("已切换到：📱 手机本地相册")
+            render()
+        }
+    }
+
+    @objc private func configureServerUrl() {
+        let currentUrl = OnlineGalleryClient.shared.resolveBaseUrl()
+        let alert = UIAlertController(title: "电脑在线相册服务设置",
+                                      message: "当前连接服务器：\n\(currentUrl)\n默认端口 45835",
+                                      preferredStyle: .alert)
+        alert.addTextField { tf in
+            tf.placeholder = "如: http://192.168.0.106:45835"
+            tf.text = currentUrl
+            tf.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "探测测试", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let url = alert.textFields?.first?.text ?? ""
+            OnlineGalleryClient.shared.setCustomBaseUrl(url)
+            OnlineGalleryClient.shared.checkConnection { ok in
+                self.showToast(ok ? "✅ 连接电脑相册服务成功" : "❌ 无法连接，请确认电脑端口 45835 是否开启")
+            }
+        })
+        alert.addAction(UIAlertAction(title: "保存并刷新", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let url = alert.textFields?.first?.text ?? ""
+            OnlineGalleryClient.shared.setCustomBaseUrl(url)
+            if self.isOnlineMode { self.loadOnlineData() }
+        })
+        present(alert, animated: true)
     }
 
     private func toolbarItem(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIBarButtonItem {
@@ -119,12 +207,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func filterButtonTapped(_ sender: CategoryFilterButton) {
-        guard selectedCategory != sender.folderKey else { return }
-        selectedCategory = sender.folderKey
-        for (key, btn) in filterButtons {
-            applyFilterButtonStyle(btn, isSelected: key == selectedCategory)
+        if isOnlineMode {
+            guard selectedOnlineCategory != sender.folderKey else { return }
+            selectedOnlineCategory = sender.folderKey
+            for (key, btn) in filterButtons {
+                applyFilterButtonStyle(btn, isSelected: key == selectedOnlineCategory)
+            }
+            renderOnlineUI()
+        } else {
+            guard selectedCategory != sender.folderKey else { return }
+            selectedCategory = sender.folderKey
+            for (key, btn) in filterButtons {
+                applyFilterButtonStyle(btn, isSelected: key == selectedCategory)
+            }
+            render()
         }
-        render()
     }
 
     private func configureCollection() {
@@ -185,8 +282,77 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         ])
     }
 
+    // MARK: - 在线数据加载与渲染
+    private func loadOnlineData(silent: Bool = false) {
+        if !silent {
+            // 可做轻量 loading 提示
+        }
+        OnlineGalleryClient.shared.fetchCategories { [weak self] catResult in
+            guard let self = self else { return }
+            if case .success(let catData) = catResult {
+                self.onlineCategories = catData.categories
+            }
+            OnlineGalleryClient.shared.fetchWorks { [weak self] workResult in
+                guard let self = self else { return }
+                self.collectionView.refreshControl?.endRefreshing()
+                switch workResult {
+                case .success(let works):
+                    self.onlineWorks = works
+                    self.renderOnlineUI()
+                case .failure(let err):
+                    if !silent { self.showError("拉取在线相册失败：\(err.localizedDescription)\n请确认电脑在线服务是否启动且与手机在同一 Wi-Fi。") }
+                    self.renderOnlineUI()
+                }
+            }
+        }
+    }
+
+    private func renderOnlineUI() {
+        guard isViewLoaded, isOnlineMode else { return }
+        updateOnlineFilterTitles()
+        collectionView.reloadData()
+        let items = filteredOnlineWorks
+        emptyStack.isHidden = !items.isEmpty
+        collectionView.isHidden = items.isEmpty
+        if items.isEmpty {
+            emptyDetail.text = "电脑在线相册没有匹配作品。\n可下拉刷新或长按左上角电脑图标检查连接。"
+        }
+    }
+
+    private func updateOnlineFilterTitles() {
+        for subview in filterStackView.arrangedSubviews {
+            filterStackView.removeArrangedSubview(subview)
+            subview.removeFromSuperview()
+        }
+        filterButtons.removeAll()
+
+        let activeWorks = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
+        var counts: [String: Int] = [:]
+        for w in activeWorks {
+            counts[w.destination, default: 0] += 1
+        }
+
+        // 1. 全部
+        let allTitle = "全部 \(activeWorks.count)"
+        let allBtn = createFilterButton(key: "全部", display: "全部", fullTitle: allTitle, isSelected: selectedOnlineCategory == "全部")
+        filterStackView.addArrangedSubview(allBtn)
+        filterButtons["全部"] = allBtn
+
+        // 2. 目的地下拉分类
+        for cat in onlineCategories {
+            let cnt = counts[cat.name] ?? cat.count
+            let disp = Self.formatFolderLabel(cat.name)
+            let fullTitle = "\(disp) \(cnt)"
+            let isSelected = selectedOnlineCategory == cat.name
+            let btn = createFilterButton(key: cat.name, display: disp, fullTitle: fullTitle, isSelected: isSelected)
+            filterStackView.addArrangedSubview(btn)
+            filterButtons[cat.name] = btn
+        }
+    }
+
+    // MARK: - 本地模式渲染
     private func render() {
-        guard isViewLoaded else { return }
+        guard isViewLoaded, !isOnlineMode else { return }
         updateFilterTitles()
         collectionView.reloadData()
         collectionView.refreshControl?.endRefreshing()
@@ -289,11 +455,26 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return filteredWorks.count
+        return isOnlineMode ? filteredOnlineWorks.count : filteredWorks.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
+        if isOnlineMode {
+            let entry = filteredOnlineWorks[indexPath.item]
+            cell.configureOnline(entry)
+            cell.onOnlineShare = { [weak self, weak cell] platform in
+                self?.shareOnline(entry, platform: platform, source: cell)
+            }
+            cell.onOnlinePreview = { [weak self] index in
+                self?.openOnlinePreview(entry: entry, initialIndex: index)
+            }
+            cell.onOnlineDelete = { [weak self] in
+                self?.confirmDeleteOnline(entry)
+            }
+            return cell
+        }
+
         let work = filteredWorks[indexPath.item]
         cell.configure(work)
         cell.onShare = { [weak self, weak cell] platform in self?.share(work, platform: platform, source: cell) }
@@ -319,8 +500,76 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let work = filteredWorks[indexPath.item]
-        navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
+        if isOnlineMode {
+            let entry = filteredOnlineWorks[indexPath.item]
+            openOnlinePreview(entry: entry, initialIndex: 0)
+        } else {
+            let work = filteredWorks[indexPath.item]
+            navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
+        }
+    }
+
+    // MARK: - 在线分享与流转
+    private func shareOnline(_ entry: OnlineWorkEntry, platform: String, source: UIView?) {
+        // 复制对应平台文案
+        if !entry.copyText.isEmpty {
+            let available = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
+            let matching = available.first(where: { $0.platform == platform }) ?? available.first
+            let textToCopy = matching?.cleanText ?? entry.copyText
+            UIPasteboard.general.string = textToCopy
+            showToast("已复制：\(matching?.label ?? "文案")")
+        }
+
+        // 异步下载第一张或全部图片供分享
+        guard let firstImg = entry.images.first else {
+            showError("该在线作品没有图片可供分享。")
+            return
+        }
+
+        OnlineGalleryClient.shared.loadImage(path: firstImg, isThumbnail: false) { [weak self] image in
+            guard let self = self, let img = image else {
+                self?.showError("图片加载失败，无法拉起分享")
+                return
+            }
+            let activity = UIActivityViewController(activityItems: [img], applicationActivities: nil)
+            activity.popoverPresentationController?.sourceView = source
+            activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                if completed {
+                    // 1. 通知电脑端物理归档移动至 _已发送1次
+                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: platform)
+                    // 2. 本地记录生命周期打标
+                    OnlineWorkLifecycle.markUsed(work: entry)
+                    self?.showToast("🚀 分享完成，电脑端已自动归档")
+                    self?.loadOnlineData(silent: true)
+                }
+            }
+            self.present(activity, animated: true)
+        }
+    }
+
+    private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int) {
+        guard !entry.images.isEmpty else { return }
+        let vc = OnlineImagePreviewController(entry: entry, initialIndex: initialIndex)
+        vc.modalPresentationStyle = .fullScreen
+        vc.modalTransitionStyle = .crossDissolve
+        present(vc, animated: true)
+    }
+
+    private func confirmDeleteOnline(_ entry: OnlineWorkEntry) {
+        let alert = UIAlertController(title: "移入回收站？",
+                                      message: "确定将《\(entry.title)》移入手机回收站？\n电脑端将自动安全归档至「_已发送1次」。",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "移入回收站", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            // 1. 电脑端安全物理流转
+            OnlineGalleryClient.shared.deleteWork(workId: entry.id)
+            // 2. 手机端移入本地回收站记录
+            OnlineWorkLifecycle.moveToTrash(work: entry)
+            self.showToast("已移入回收站，电脑端已归档")
+            self.renderOnlineUI()
+        })
+        present(alert, animated: true)
     }
 
     private func share(_ work: WorkItem, platform: CopyPlatform, source: UIView?) {
@@ -331,8 +580,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             controller.popoverPresentationController?.sourceView = source
             present(controller, animated: true)
         } catch {
-            // The cell applies an optimistic gray state on tap. Re-render if preparing
-            // the share failed so the button reflects the persisted count again.
             render()
             showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
@@ -379,16 +626,27 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) {
-        CopyParserCache.clear()
-        ThumbnailLoader.shared.clearCache()
-        library.refresh()
+        if isOnlineMode {
+            loadOnlineData()
+        } else {
+            CopyParserCache.clear()
+            ThumbnailLoader.shared.clearCache()
+            library.refresh()
+        }
     }
+
     @objc private func emptyAction() {
-        library.supportsExternalFolderSelection ? presentFolderPicker() : presentImportPicker()
+        if isOnlineMode {
+            loadOnlineData()
+        } else {
+            library.supportsExternalFolderSelection ? presentFolderPicker() : presentImportPicker()
+        }
     }
+
     @objc private func openTrash() {
         navigationController?.pushViewController(TrashViewController(library: library), animated: true)
     }
+
     @objc private func openSettings() {
         navigationController?.pushViewController(SettingsViewController(library: library), animated: true)
     }
@@ -464,7 +722,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 }
 
-enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder }
+enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder, phone, computer }
 
 enum AlbumToolbarIcon {
     static func image(_ symbol: AlbumToolbarSymbol, color: UIColor) -> UIImage {
@@ -525,6 +783,19 @@ enum AlbumToolbarIcon {
             path.addLine(to: CGPoint(x: 10.7, y: 9.2)); path.addLine(to: CGPoint(x: 20.5, y: 9.2))
             path.addLine(to: CGPoint(x: 19.2, y: 18.6)); path.addLine(to: CGPoint(x: 3.8, y: 18.6))
             path.close(); path.stroke()
+        case .phone:
+            let rect = CGRect(x: 5, y: 2, width: 13, height: 19)
+            let phonePath = UIBezierPath(roundedRect: rect, cornerRadius: 2.5)
+            phonePath.stroke()
+            let home = UIBezierPath(ovalIn: CGRect(x: 10.5, y: 17.5, width: 2, height: 2))
+            home.fill()
+        case .computer:
+            let screen = CGRect(x: 3, y: 3, width: 17, height: 12)
+            let screenPath = UIBezierPath(roundedRect: screen, cornerRadius: 1.5)
+            screenPath.stroke()
+            path.move(to: CGPoint(x: 11.5, y: 15)); path.addLine(to: CGPoint(x: 11.5, y: 19))
+            path.move(to: CGPoint(x: 7.5, y: 19)); path.addLine(to: CGPoint(x: 15.5, y: 19))
+            path.stroke()
         }
         return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
@@ -537,7 +808,7 @@ private final class ThumbnailLoader {
 
     private init() {
         cache.countLimit = 400
-        cache.totalCostLimit = 80 * 1024 * 1024 // 80MB 最大内存预算
+        cache.totalCostLimit = 80 * 1024 * 1024
     }
 
     func loadThumbnail(at url: URL, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
@@ -579,6 +850,7 @@ private final class ThumbnailLoader {
 private final class ThumbnailButton: UIButton {
     let imageViewWidget = UIImageView()
     var currentURL: URL?
+    var currentOnlinePath: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -606,9 +878,20 @@ private final class ThumbnailButton: UIButton {
 
     func load(url: URL) {
         currentURL = url
+        currentOnlinePath = nil
         imageViewWidget.image = nil
         ThumbnailLoader.shared.loadThumbnail(at: url, maxPixel: 200) { [weak self] image in
             guard let self = self, self.currentURL == url else { return }
+            self.imageViewWidget.image = image
+        }
+    }
+
+    func loadOnline(path: String) {
+        currentOnlinePath = path
+        currentURL = nil
+        imageViewWidget.image = nil
+        OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: true, maxPixel: 200) { [weak self] image in
+            guard let self = self, self.currentOnlinePath == path else { return }
             self.imageViewWidget.image = image
         }
     }
@@ -656,10 +939,15 @@ private final class WorkCell: UICollectionViewCell {
     private let platformContainer = UIStackView()
     private let platformRow1 = UIStackView()
     private let platformRow2 = UIStackView()
+
     var onShare: ((CopyPlatform) -> Void)?
     var onPreview: ((Int) -> Void)?
     var onReset: (() -> Void)?
     var onDelete: (() -> Void)?
+
+    var onOnlineShare: ((String) -> Void)?
+    var onOnlinePreview: ((Int) -> Void)?
+    var onOnlineDelete: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -723,12 +1011,126 @@ private final class WorkCell: UICollectionViewCell {
         onPreview = nil
         onReset = nil
         onDelete = nil
+        onOnlineShare = nil
+        onOnlinePreview = nil
+        onOnlineDelete = nil
         for view in previewStack.arrangedSubviews {
             if let tb = view as? ThumbnailButton {
                 tb.currentURL = nil
+                tb.currentOnlinePath = nil
                 tb.imageViewWidget.image = nil
             }
         }
+    }
+
+    func configureOnline(_ entry: OnlineWorkEntry) {
+        contentView.backgroundColor = AppColors.secondaryBackground
+        contentView.layer.borderColor = UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 0.25).cgColor
+
+        name.text = "[\(entry.destination)] \(entry.title)"
+        let record = OnlineWorkLifecycle.getRecord(id: entry.id)
+        let usedCount = record?.useCount ?? entry.useCount
+        if usedCount > 0 {
+            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 已使用 \(usedCount) 次"
+            detail.textColor = UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
+        } else {
+            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 未使用"
+            detail.textColor = AppColors.secondaryText
+        }
+
+        renderOnlinePreviews(entry.images)
+        configureOnlineButtons(entry)
+    }
+
+    private func renderOnlinePreviews(_ paths: [String]) {
+        let currentViews = previewStack.arrangedSubviews.compactMap { $0 as? ThumbnailButton }
+        if currentViews.count > paths.count {
+            for v in currentViews[paths.count...] {
+                previewStack.removeArrangedSubview(v)
+                v.removeFromSuperview()
+            }
+        }
+        for (index, path) in paths.enumerated() {
+            let button: ThumbnailButton
+            if index < currentViews.count {
+                button = currentViews[index]
+            } else {
+                button = ThumbnailButton(type: .custom)
+                button.addTarget(self, action: #selector(onlineThumbnailTapped(_:)), for: .touchUpInside)
+                previewStack.addArrangedSubview(button)
+            }
+            button.tag = index
+            button.loadOnline(path: path)
+        }
+    }
+
+    @objc private func onlineThumbnailTapped(_ sender: ThumbnailButton) {
+        onOnlinePreview?(sender.tag)
+    }
+
+    private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
+        platformRow1.arrangedSubviews.forEach { platformRow1.removeArrangedSubview($0); $0.removeFromSuperview() }
+        platformRow2.arrangedSubviews.forEach { platformRow2.removeArrangedSubview($0); $0.removeFromSuperview() }
+
+        let platforms = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
+        let count = platforms.count
+
+        if count <= 1 {
+            let p1 = platforms.first?.label ?? "小红书"
+            xhsButton.setTitle(p1, for: .normal)
+            applyPlatformStyle(xhsButton, isOptimistic: false)
+            platformRow1.addArrangedSubview(xhsButton)
+            platformRow1.addArrangedSubview(deleteButton)
+            platformRow2.isHidden = true
+        } else if count == 2 {
+            xhsButton.setTitle(platforms[0].label, for: .normal)
+            xhs2Button.setTitle(platforms[1].label, for: .normal)
+            applyPlatformStyle(xhsButton, isOptimistic: false)
+            applyPlatformStyle(xhs2Button, isOptimistic: false)
+            platformRow1.addArrangedSubview(xhsButton)
+            platformRow1.addArrangedSubview(xhs2Button)
+            platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.isHidden = false
+        } else {
+            xhsButton.setTitle(platforms[0].label, for: .normal)
+            xhs2Button.setTitle(platforms[1].label, for: .normal)
+            douyinButton.setTitle(platforms[2].label, for: .normal)
+            applyPlatformStyle(xhsButton, isOptimistic: false)
+            applyPlatformStyle(xhs2Button, isOptimistic: false)
+            applyPlatformStyle(douyinButton, isOptimistic: false)
+            platformRow1.addArrangedSubview(xhsButton)
+            platformRow1.addArrangedSubview(xhs2Button)
+            platformRow2.addArrangedSubview(douyinButton)
+            platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.isHidden = false
+        }
+
+        xhsButton.removeTarget(nil, action: nil, for: .allEvents)
+        xhs2Button.removeTarget(nil, action: nil, for: .allEvents)
+        douyinButton.removeTarget(nil, action: nil, for: .allEvents)
+        deleteButton.removeTarget(nil, action: nil, for: .allEvents)
+
+        xhsButton.addTarget(self, action: #selector(onlineXhsTapped), for: .touchUpInside)
+        xhs2Button.addTarget(self, action: #selector(onlineXhs2Tapped), for: .touchUpInside)
+        douyinButton.addTarget(self, action: #selector(onlineDouyinTapped), for: .touchUpInside)
+        deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
+    }
+
+    @objc private func onlineXhsTapped() { onOnlineShare?("xhs") }
+    @objc private func onlineXhs2Tapped() { onOnlineShare?("xhs2") }
+    @objc private func onlineDouyinTapped() { onOnlineShare?("douyin") }
+    @objc private func onlineDeleteTapped() { onOnlineDelete?() }
+
+    func configure(_ work: WorkItem) {
+        contentView.backgroundColor = AppColors.secondaryBackground
+        contentView.layer.borderColor = AppColors.separator.cgColor
+
+        name.text = work.name
+        detail.text = "\(work.imageURLs.count) 图"
+        detail.textColor = AppColors.secondaryText
+
+        renderPreviews(work.imageURLs)
+        configureButtons(work)
     }
 
     private func renderPreviews(_ urls: [URL]) {
@@ -750,153 +1152,213 @@ private final class WorkCell: UICollectionViewCell {
                 previewStack.addArrangedSubview(button)
             }
             button.tag = index
-            button.accessibilityLabel = "预览第 \(index + 1) 张图片"
             button.load(url: url)
         }
     }
 
+    @objc private func thumbnailTapped(_ sender: ThumbnailButton) {
+        onPreview?(sender.tag)
+    }
+
+    private func configureButtons(_ work: WorkItem) {
+        platformRow1.arrangedSubviews.forEach { platformRow1.removeArrangedSubview($0); $0.removeFromSuperview() }
+        platformRow2.arrangedSubviews.forEach { platformRow2.removeArrangedSubview($0); $0.removeFromSuperview() }
+
+        let platforms = CopyParserCache.platforms(for: work.textURL)
+        let count = platforms.count
+
+        if count <= 1 {
+            let p1 = platforms.first?.label ?? "发布"
+            xhsButton.setTitle(p1, for: .normal)
+            applyPlatformStyle(xhsButton, isOptimistic: work.shareCount > 0)
+            platformRow1.addArrangedSubview(xhsButton)
+            if work.shareCount > 0 { platformRow1.addArrangedSubview(resetButton) }
+            platformRow1.addArrangedSubview(deleteButton)
+            platformRow2.isHidden = true
+        } else if count == 2 {
+            xhsButton.setTitle(platforms[0].label, for: .normal)
+            xhs2Button.setTitle(platforms[1].label, for: .normal)
+            applyPlatformStyle(xhsButton, isOptimistic: work.xhsShareCount > 0)
+            applyPlatformStyle(xhs2Button, isOptimistic: work.shareCount > 0 && work.xhsShareCount == 0)
+            platformRow1.addArrangedSubview(xhsButton)
+            platformRow1.addArrangedSubview(xhs2Button)
+            if work.shareCount > 0 { platformRow2.addArrangedSubview(resetButton) }
+            platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.isHidden = false
+        } else {
+            xhsButton.setTitle(platforms[0].label, for: .normal)
+            xhs2Button.setTitle(platforms[1].label, for: .normal)
+            douyinButton.setTitle(platforms[2].label, for: .normal)
+            applyPlatformStyle(xhsButton, isOptimistic: work.xhsShareCount > 0)
+            applyPlatformStyle(xhs2Button, isOptimistic: false)
+            applyPlatformStyle(douyinButton, isOptimistic: work.douyinShareCount > 0)
+            platformRow1.addArrangedSubview(xhsButton)
+            platformRow1.addArrangedSubview(xhs2Button)
+            platformRow2.addArrangedSubview(douyinButton)
+            if work.shareCount > 0 { platformRow2.addArrangedSubview(resetButton) }
+            platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.isHidden = false
+        }
+
+        xhsButton.removeTarget(nil, action: nil, for: .allEvents)
+        xhs2Button.removeTarget(nil, action: nil, for: .allEvents)
+        douyinButton.removeTarget(nil, action: nil, for: .allEvents)
+        resetButton.removeTarget(nil, action: nil, for: .allEvents)
+        deleteButton.removeTarget(nil, action: nil, for: .allEvents)
+
+        xhsButton.addTarget(self, action: #selector(xhsTapped), for: .touchUpInside)
+        xhs2Button.addTarget(self, action: #selector(xhs2Tapped), for: .touchUpInside)
+        douyinButton.addTarget(self, action: #selector(douyinTapped), for: .touchUpInside)
+        resetButton.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
+        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+    }
+
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
         button.setTitle(title, for: .normal)
-        button.titleLabel?.font = .boldSystemFont(ofSize: 11)
-        button.titleLabel?.adjustsFontSizeToFitWidth = true
-        button.titleLabel?.minimumScaleFactor = 0.75
-        button.layer.cornerRadius = 10
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
-        button.heightAnchor.constraint(equalToConstant: 38).isActive = true
-        button.accessibilityLabel = platform.shortLabel
-        applyPlatformButtonState(button, clicked: false)
-        let action: Selector
-        switch platform {
-        case .xhs: action = #selector(xhsTapped)
-        case .xhs2: action = #selector(xhs2Tapped)
-        case .douyin: action = #selector(douyinTapped)
-        }
-        button.addTarget(self, action: action, for: .touchUpInside)
+        button.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        button.layer.cornerRadius = 8
+        button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
     private func configureResetButton() {
         resetButton.setTitle("重置", for: .normal)
-        resetButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
-        resetButton.setTitleColor(AppColors.secondaryText, for: .normal)
-        resetButton.backgroundColor = .white
-        resetButton.layer.cornerRadius = 10
-        resetButton.layer.borderWidth = 1
-        resetButton.layer.borderColor = AppColors.separator.cgColor
-        resetButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
-        resetButton.heightAnchor.constraint(equalToConstant: 38).isActive = true
-        resetButton.accessibilityLabel = "重置分享状态并取消自动删除"
-        resetButton.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
+        resetButton.setTitleColor(UIColor(red: 0.85, green: 0.55, blue: 0.1, alpha: 1), for: .normal)
+        resetButton.backgroundColor = UIColor(red: 1, green: 0.96, blue: 0.88, alpha: 1)
+        resetButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        resetButton.layer.cornerRadius = 8
+        resetButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        resetButton.translatesAutoresizingMaskIntoConstraints = false
+        resetButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
-
-    @objc private func resetTapped() { onReset?() }
 
     private func configureDeleteButton() {
         deleteButton.setTitle("删除", for: .normal)
-        deleteButton.titleLabel?.font = .boldSystemFont(ofSize: 11)
-        deleteButton.setTitleColor(UIColor(red: 0.74, green: 0.22, blue: 0.20, alpha: 1), for: .normal)
-        deleteButton.backgroundColor = .white
-        deleteButton.layer.cornerRadius = 10
-        deleteButton.layer.borderWidth = 1
-        deleteButton.layer.borderColor = UIColor(red: 0.89, green: 0.67, blue: 0.64, alpha: 1).cgColor
-        deleteButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
-        deleteButton.heightAnchor.constraint(equalToConstant: 38).isActive = true
-        deleteButton.accessibilityLabel = "删除作品，移到回收站"
-        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        deleteButton.setTitleColor(UIColor(red: 0.8, green: 0.25, blue: 0.25, alpha: 1), for: .normal)
+        deleteButton.backgroundColor = UIColor(red: 1, green: 0.92, blue: 0.92, alpha: 1)
+        deleteButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        deleteButton.layer.cornerRadius = 8
+        deleteButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        deleteButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
-    private func applyPlatformButtonState(_ button: UIButton, clicked: Bool) {
-        button.backgroundColor = clicked ? AppColors.sharedBackground : tintColor
-        button.setTitleColor(clicked ? AppColors.secondaryText : .white, for: .normal)
-        button.layer.borderWidth = clicked ? 1 : 0
-        button.layer.borderColor = clicked ? AppColors.separator.cgColor : UIColor.clear.cgColor
-    }
-
-    private func markPlatformButtonClicked(_ platform: CopyPlatform) {
-        switch platform {
-        case .xhs: applyPlatformButtonState(xhsButton, clicked: true)
-        case .xhs2: applyPlatformButtonState(xhs2Button, clicked: true)
-        case .douyin: applyPlatformButtonState(douyinButton, clicked: true)
-        }
-    }
-
-    @objc private func thumbnailTapped(_ sender: UIButton) { onPreview?(sender.tag) }
-    @objc private func xhsTapped() {
-        markPlatformButtonClicked(.xhs)
-        onShare?(.xhs)
-    }
-    @objc private func xhs2Tapped() {
-        markPlatformButtonClicked(.xhs2)
-        onShare?(.xhs2)
-    }
-    @objc private func douyinTapped() {
-        markPlatformButtonClicked(.douyin)
-        onShare?(.douyin)
-    }
-    @objc private func deleteTapped() { onDelete?() }
-
-    private func updatePlatformRow(_ work: WorkItem) {
-        [platformRow1, platformRow2].forEach { row in
-            row.arrangedSubviews.forEach { view in
-                row.removeArrangedSubview(view)
-                view.removeFromSuperview()
-            }
-        }
-        let available = CopyParserCache.platforms(for: work.textURL)
-        var buttons: [UIButton] = []
-        for item in available {
-            switch item.platform {
-            case .douyin:
-                douyinButton.setTitle(item.buttonLabel, for: .normal)
-                applyPlatformButtonState(douyinButton, clicked: work.douyinShareCount > 0)
-                douyinButton.accessibilityValue = "已点击 \(work.douyinShareCount) 次"
-                buttons.append(douyinButton)
-            case .xhs:
-                xhsButton.setTitle(item.buttonLabel, for: .normal)
-                applyPlatformButtonState(xhsButton, clicked: work.xhsShareCount > 0)
-                xhsButton.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
-                buttons.append(xhsButton)
-            case .xhs2:
-                xhs2Button.setTitle(item.buttonLabel, for: .normal)
-                applyPlatformButtonState(xhs2Button, clicked: work.xhsShareCount > 0)
-                xhs2Button.accessibilityValue = "已点击 \(work.xhsShareCount) 次"
-                buttons.append(xhs2Button)
-            }
-        }
-        if work.shareCount > 0 {
-            buttons.append(resetButton)
-        }
-        buttons.append(deleteButton)
-
-        if buttons.count > 3 {
-            let half = (buttons.count + 1) / 2
-            for (index, button) in buttons.enumerated() {
-                if index < half {
-                    platformRow1.addArrangedSubview(button)
-                } else {
-                    platformRow2.addArrangedSubview(button)
-                }
-            }
-            platformRow2.isHidden = false
+    private func applyPlatformStyle(_ button: UIButton, isOptimistic: Bool) {
+        if isOptimistic {
+            button.setTitleColor(AppColors.secondaryText, for: .normal)
+            button.backgroundColor = AppColors.separator.withAlphaComponent(0.3)
         } else {
-            for button in buttons {
-                platformRow1.addArrangedSubview(button)
-            }
-            platformRow2.isHidden = true
+            button.setTitleColor(UIColor(red: 0.12, green: 0.52, blue: 0.32, alpha: 1), for: .normal)
+            button.backgroundColor = UIColor(red: 0.9, green: 0.97, blue: 0.93, alpha: 1)
         }
     }
 
-    func configure(_ work: WorkItem) {
-        let shared = work.used
-        icon.text = shared ? "✓" : "▣"
-        icon.textColor = shared ? AppColors.secondaryText : tintColor
-        count.text = shared ? "×\(work.shareCount)  ·  \(work.imageURLs.count) 图" : "\(work.imageURLs.count) 图"
-        name.text = shared ? "📌 \(work.name)" : work.name
-        detail.text = shared ? "小红书 \(work.xhsShareCount) · 抖音 \(work.douyinShareCount)" : "选择平台后复制文案并分享图片"
-        contentView.backgroundColor = shared ? AppColors.sharedBackground : AppColors.secondaryBackground
-        contentView.layer.borderColor = (shared ? AppColors.separator : tintColor.withAlphaComponent(0.22)).cgColor
-        name.textColor = shared ? AppColors.secondaryText : AppColors.text
-        renderPreviews(work.imageURLs)
-        detail.text = shared ? "首次使用后按清理设置自动回收" : "点白色卡片查看内容"
-        updatePlatformRow(work)
+    @objc private func xhsTapped() { onShare?(.xhs) }
+    @objc private func xhs2Tapped() { onShare?(.xhs2) }
+    @objc private func douyinTapped() { onShare?(.douyin) }
+    @objc private func resetTapped() { onReset?() }
+    @objc private func deleteTapped() { onDelete?() }
+}
+
+final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate {
+    private let entry: OnlineWorkEntry
+    private var currentIndex: Int
+    private let scrollView = UIScrollView()
+    private let counterLabel = UILabel()
+    private let imageView = UIImageView()
+
+    init(entry: OnlineWorkEntry, initialIndex: Int) {
+        self.entry = entry
+        self.currentIndex = initialIndex
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        scrollView.frame = view.bounds
+        scrollView.delegate = self
+        scrollView.maximumZoomScale = 3.0
+        scrollView.minimumZoomScale = 1.0
+        view.addSubview(scrollView)
+
+        imageView.frame = scrollView.bounds
+        imageView.contentMode = .scaleAspectFit
+        scrollView.addSubview(imageView)
+
+        counterLabel.textAlignment = .center
+        counterLabel.textColor = .white
+        counterLabel.font = .boldSystemFont(ofSize: 14)
+        counterLabel.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        counterLabel.layer.cornerRadius = 14
+        counterLabel.clipsToBounds = true
+        counterLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(counterLabel)
+
+        let closeBtn = UIButton(type: .system)
+        closeBtn.setTitle("✕", for: .normal)
+        closeBtn.setTitleColor(.white, for: .normal)
+        closeBtn.titleLabel?.font = .systemFont(ofSize: 22, weight: .medium)
+        closeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        closeBtn.layer.cornerRadius = 18
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        closeBtn.addTarget(self, action: #selector(close), for: .touchUpInside)
+        view.addSubview(closeBtn)
+
+        NSLayoutConstraint.activate([
+            closeBtn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            closeBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            closeBtn.widthAnchor.constraint(equalToConstant: 36),
+            closeBtn.heightAnchor.constraint(equalToConstant: 36),
+
+            counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            counterLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            counterLabel.widthAnchor.constraint(equalToConstant: 100),
+            counterLabel.heightAnchor.constraint(equalToConstant: 28)
+        ])
+
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(nextImage))
+        swipeLeft.direction = .left
+        view.addGestureRecognizer(swipeLeft)
+
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(prevImage))
+        swipeRight.direction = .right
+        view.addGestureRecognizer(swipeRight)
+
+        loadCurrent()
+    }
+
+    @objc private func close() {
+        dismiss(animated: true)
+    }
+
+    @objc private func nextImage() {
+        if currentIndex < entry.images.count - 1 {
+            currentIndex += 1
+            loadCurrent()
+        }
+    }
+
+    @objc private func prevImage() {
+        if currentIndex > 0 {
+            currentIndex -= 1
+            loadCurrent()
+        }
+    }
+
+    private func loadCurrent() {
+        guard currentIndex >= 0, currentIndex < entry.images.count else { return }
+        counterLabel.text = "\(currentIndex + 1) / \(entry.images.count)"
+        let path = entry.images[currentIndex]
+        OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: false) { [weak self] img in
+            self?.imageView.image = img
+        }
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        return imageView
     }
 }
