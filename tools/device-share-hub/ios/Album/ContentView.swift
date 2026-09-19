@@ -514,10 +514,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         // 复制对应平台文案
         if !entry.copyText.isEmpty {
             let available = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
-            let matching = available.first(where: { $0.platform == platform }) ?? available.first
-            let textToCopy = matching?.cleanText ?? entry.copyText
+            let matching = available.first(where: { $0.platform.rawValue == platform }) ?? available.first
+            let textToCopy = matching?.copyText ?? entry.copyText
             UIPasteboard.general.string = textToCopy
-            showToast("已复制：\(matching?.label ?? "文案")")
+            showToast("已复制：\(matching?.buttonLabel ?? "文案")")
         }
 
         // 异步下载第一张或全部图片供分享
@@ -1076,15 +1076,15 @@ private final class WorkCell: UICollectionViewCell {
         let count = platforms.count
 
         if count <= 1 {
-            let p1 = platforms.first?.label ?? "小红书"
+            let p1 = platforms.first?.buttonLabel ?? "小红书"
             xhsButton.setTitle(p1, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: false)
             platformRow1.addArrangedSubview(xhsButton)
             platformRow1.addArrangedSubview(deleteButton)
             platformRow2.isHidden = true
         } else if count == 2 {
-            xhsButton.setTitle(platforms[0].label, for: .normal)
-            xhs2Button.setTitle(platforms[1].label, for: .normal)
+            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
+            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: false)
             applyPlatformStyle(xhs2Button, isOptimistic: false)
             platformRow1.addArrangedSubview(xhsButton)
@@ -1092,9 +1092,9 @@ private final class WorkCell: UICollectionViewCell {
             platformRow2.addArrangedSubview(deleteButton)
             platformRow2.isHidden = false
         } else {
-            xhsButton.setTitle(platforms[0].label, for: .normal)
-            xhs2Button.setTitle(platforms[1].label, for: .normal)
-            douyinButton.setTitle(platforms[2].label, for: .normal)
+            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
+            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
+            douyinButton.setTitle(platforms[2].buttonLabel, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: false)
             applyPlatformStyle(xhs2Button, isOptimistic: false)
             applyPlatformStyle(douyinButton, isOptimistic: false)
@@ -1168,7 +1168,7 @@ private final class WorkCell: UICollectionViewCell {
         let count = platforms.count
 
         if count <= 1 {
-            let p1 = platforms.first?.label ?? "发布"
+            let p1 = platforms.first?.buttonLabel ?? "发布"
             xhsButton.setTitle(p1, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: work.shareCount > 0)
             platformRow1.addArrangedSubview(xhsButton)
@@ -1176,8 +1176,8 @@ private final class WorkCell: UICollectionViewCell {
             platformRow1.addArrangedSubview(deleteButton)
             platformRow2.isHidden = true
         } else if count == 2 {
-            xhsButton.setTitle(platforms[0].label, for: .normal)
-            xhs2Button.setTitle(platforms[1].label, for: .normal)
+            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
+            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: work.xhsShareCount > 0)
             applyPlatformStyle(xhs2Button, isOptimistic: work.shareCount > 0 && work.xhsShareCount == 0)
             platformRow1.addArrangedSubview(xhsButton)
@@ -1186,9 +1186,9 @@ private final class WorkCell: UICollectionViewCell {
             platformRow2.addArrangedSubview(deleteButton)
             platformRow2.isHidden = false
         } else {
-            xhsButton.setTitle(platforms[0].label, for: .normal)
-            xhs2Button.setTitle(platforms[1].label, for: .normal)
-            douyinButton.setTitle(platforms[2].label, for: .normal)
+            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
+            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
+            douyinButton.setTitle(platforms[2].buttonLabel, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: work.xhsShareCount > 0)
             applyPlatformStyle(xhs2Button, isOptimistic: false)
             applyPlatformStyle(douyinButton, isOptimistic: work.douyinShareCount > 0)
