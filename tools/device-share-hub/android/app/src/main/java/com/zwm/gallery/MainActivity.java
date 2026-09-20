@@ -2342,6 +2342,54 @@ public final class MainActivity extends Activity {
     private boolean autoDiscovering = false;
     private boolean autoDiscoveredOnce = false;
 
+    /**
+     * 电脑端会把已使用的作品物理移走到对应次数文件夹，但手机端已同步到本地，
+     * 因此这里把本地仍存活的「已发送N次」副本合并回列表并置顶，展示到倒计时结束为止。
+     */
+    private void mergeLocalSentWorks() {
+        long nowMs = System.currentTimeMillis();
+        CleanupSettings.Values cleanup = CleanupSettings.read(this);
+        List<OnlineWorkLifecycle.Item> usedItems =
+                OnlineWorkLifecycle.getActiveUsedItems(this, nowMs, cleanup.moveAfterMs());
+        if (usedItems == null || usedItems.isEmpty()) return;
+
+        for (OnlineWorkLifecycle.Item item : usedItems) {
+            boolean present = false;
+            for (OnlineWorkEntry w : onlineWorks) {
+                if (w.id.equals(item.id)) {
+                    present = true;
+                    break;
+                }
+            }
+            if (present) continue;
+            List<String> images = item.images == null ? new ArrayList<String>() : new ArrayList<>(item.images);
+            String copyText = item.copyText == null ? "" : item.copyText;
+            String stage = "已发送" + item.useCount + "次";
+            onlineWorks.add(new OnlineWorkEntry(
+                    item.id, item.title, item.destination, stage,
+                    item.useCount, 2, true, Math.max(0, 2 - item.useCount), stage,
+                    images, images.size(), copyText, !copyText.trim().isEmpty(),
+                    new ArrayList<String>(), item.firstSharedAtMs));
+        }
+
+        // 置顶：已发送过的排在最前（按最近使用时间倒序），未使用的保持原顺序
+        final java.util.Map<String, Long> usedAt = new java.util.HashMap<>();
+        for (OnlineWorkLifecycle.Item item : usedItems) {
+            usedAt.put(item.id, item.firstSharedAtMs);
+        }
+        java.util.Collections.sort(onlineWorks, new java.util.Comparator<OnlineWorkEntry>() {
+            @Override
+            public int compare(OnlineWorkEntry a, OnlineWorkEntry b) {
+                boolean au = usedAt.containsKey(a.id);
+                boolean bu = usedAt.containsKey(b.id);
+                if (au && bu) return Long.compare(usedAt.get(b.id), usedAt.get(a.id));
+                if (au) return -1;
+                if (bu) return 1;
+                return 0;
+            }
+        });
+    }
+
     private void refreshOnlineWorks(boolean userInitiated) {
         statusText.setText("正在连接电脑在线相册…");
         onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
@@ -2356,6 +2404,7 @@ public final class MainActivity extends Activity {
                         if (works != null) {
                             onlineWorks.addAll(works);
                         }
+                        mergeLocalSentWorks();
                         updateOnlineCategoryCounts(catResult, onlineWorks);
                         applyOnlineCategoryFilter(selectedOnlineCategory);
                         statusText.setText("💻 已连接电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");

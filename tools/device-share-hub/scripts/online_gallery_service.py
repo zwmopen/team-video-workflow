@@ -149,12 +149,17 @@ class WorkScanner:
                 if os.path.exists(mw.get("path", "")):
                     return mw
             # 兜底到 _已发送1次（微信公众号可发）查找
-            stage1_dir = os.path.join(self.root, "_已发送1次（微信公众号可发）")
-            if os.path.isdir(stage1_dir):
-                for sub in os.listdir(stage1_dir):
-                    sub_p = os.path.join(stage1_dir, sub)
+            for folder, stage, base_count in (
+                ("_已发送1次（微信公众号可发）", "已发送1次", 1),
+                ("_垃圾作品（后续参考分析）", "已废弃-垃圾", 0),
+            ):
+                fallback_dir = os.path.join(self.root, folder)
+                if not os.path.isdir(fallback_dir):
+                    continue
+                for sub in os.listdir(fallback_dir):
+                    sub_p = os.path.join(fallback_dir, sub)
                     if os.path.isdir(sub_p):
-                        w = self._inspect_work_dir(sub_p, sub, "已发送1次", 1)
+                        w = self._inspect_work_dir(sub_p, sub, stage, base_count)
                         if w and w.get("id") == work_id:
                             self._moved_works[work_id] = w
                             return w
@@ -869,6 +874,21 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             target_work = self.scanner.get_work(work_id)
             if not target_work:
                 self.send_error(404, "Work not found")
+                return
+
+            # 已使用过的作品不是垃圾：电脑端早已按次数归档到对应文件夹，
+            # 手机端删除只清理本地记录，绝不写入垃圾样本库与垃圾元数据。
+            if int(target_work.get("useCount", 0) or 0) > 0:
+                self.scanner.scan(force=True)
+                self.send_json(200, {
+                    "ok": True,
+                    "workId": work_id,
+                    "action": "already_archived",
+                    "message": "该作品已发送过，电脑端早已归档到对应次数文件夹，未标记为垃圾",
+                    "targetPath": target_work.get("path", ""),
+                    "remark": remark,
+                    "remainingWorks": len(self.scanner.scan())
+                })
                 return
 
             ok, target_dest, action_desc = self._move_work_to_garbage(target_work, device_name, remark)

@@ -175,7 +175,7 @@ public final class OnlineGalleryClient {
      */
     public void discoverPcServer(Callback<String> callback) {
         executor.execute(() -> {
-            LinkedHashSet<String> candidates = new LinkedHashSet<>();
+            java.util.LinkedHashSet<String> candidates = new java.util.LinkedHashSet<>();
 
             // 1) 优先尝试已发现的对端设备（含电脑端信标）
             try {

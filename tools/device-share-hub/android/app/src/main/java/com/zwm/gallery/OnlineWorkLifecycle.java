@@ -9,6 +9,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -181,6 +182,39 @@ public final class OnlineWorkLifecycle {
             if (it.id.equals(workId)) return it;
         }
         return null;
+    }
+
+    /**
+     * 获取「已发送过但仍需继续保留在在线相册顶部」的本地副本：
+     * 电脑端会把用过的作品物理移走到对应文件夹，但手机端已同步到本地，
+     * 因此必须继续展示并置顶（标记「已发送N次」），直到倒计时结束才自动移入回收站。
+     */
+    public static synchronized List<Item> getActiveUsedItems(Context context, long nowMs, long moveAfterMs) {
+        List<Item> list = loadAll(context);
+        List<Item> active = new ArrayList<>();
+        boolean modified = false;
+        for (Item item : list) {
+            if (item.useCount <= 0) continue;
+            if (item.trashedAtMs > 0) continue;
+            if (item.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= item.firstSharedAtMs + moveAfterMs) {
+                // 倒计时结束：自动转入回收站（与本地作品同一种清理策略）
+                item.trashedAtMs = item.firstSharedAtMs + moveAfterMs;
+                modified = true;
+                continue;
+            }
+            active.add(item);
+        }
+        if (modified) {
+            saveAll(context, list);
+        }
+        // 最近使用的排在最前
+        Collections.sort(active, new Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return Long.compare(b.firstSharedAtMs, a.firstSharedAtMs);
+            }
+        });
+        return active;
     }
 
     /** 获取所有当前在手机本地回收站中的在线作品 */
