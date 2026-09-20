@@ -66,6 +66,38 @@ try:
 except ImportError:
     HAS_PIL = False
 
+# ── 代码新鲜度自检（2026-09-20 新增）────────────────────────────────────────
+# 事故背景：服务进程启动于 06:58，而脚本在 14:44 被改过 —— 进程一直在跑旧代码，
+# thumb=1 被静默忽略成原图，手机端在线回收站直接卡死，而没有任何信号提示这件事。
+# 现在把「进程启动时刻」与「脚本文件 mtime/sha」一起暴露到 /api/online/status，
+# 只要脚本比进程新，就说明该重启服务了（staleCode=true）。
+SCRIPT_PATH = os.path.abspath(__file__)
+try:
+    SCRIPT_MTIME = os.path.getmtime(SCRIPT_PATH)
+except Exception:
+    SCRIPT_MTIME = 0.0
+try:
+    with open(SCRIPT_PATH, "rb") as _fp:
+        SCRIPT_SHA = hashlib.sha1(_fp.read()).hexdigest()[:12]
+except Exception:
+    SCRIPT_SHA = ""
+PROCESS_STARTED_AT = time.time()
+PROCESS_STARTED_STR = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(PROCESS_STARTED_AT))
+
+
+def code_freshness() -> Dict[str, Any]:
+    """判断「正在跑的进程」是否落后于磁盘上的脚本。"""
+    stale = bool(SCRIPT_MTIME and SCRIPT_MTIME > PROCESS_STARTED_AT + 1.0)
+    return {
+        "startedAt": PROCESS_STARTED_STR,
+        "uptimeSeconds": int(time.time() - PROCESS_STARTED_AT),
+        "scriptMtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(SCRIPT_MTIME)) if SCRIPT_MTIME else "",
+        "scriptSha": SCRIPT_SHA,
+        "scriptPath": SCRIPT_PATH,
+        "staleCode": stale,
+        "hint": "脚本比进程新：正在运行的是旧代码，请重启在线相册服务" if stale else "",
+    }
+
 # 手机端「使用次数」回读同步 + 局域网手机在线探测（见 phone_sync.py 顶部注释）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import phone_sync  # noqa: E402
@@ -900,6 +932,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 # thumb=1 静默回落成几 MB 原图，手机端在线回收站直接卡死。此字段让运维
                 # 一条命令就能看出缩略图是否真的在生效，不再靠用户体感发现。
                 "thumbnail": thumbnail_health(),
+                # 代码新鲜度：一眼看出「正在跑的进程」有没有落后于磁盘上的脚本
+                "code": code_freshness(),
             }
             self.send_json(200, data)
             return
