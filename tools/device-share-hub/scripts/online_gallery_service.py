@@ -126,8 +126,56 @@ try:
 except Exception:
     pass
 
+def read_garbage_meta(dir_path: str) -> Dict[str, Any]:
+    """读取作品的垃圾标记信息。
+
+    优先取 quality_tag.json（全渠道硬拦截标记），为空时回退到 manifest.json 的 garbage 块。
+    两个文件都由 _move_work_to_garbage() 在手机端判垃圾时写入。
+    """
+    info: Dict[str, Any] = {"marked": False, "remark": "", "markedBy": "", "markedAt": ""}
+    qt = os.path.join(dir_path, "quality_tag.json")
+    if os.path.exists(qt):
+        try:
+            with open(qt, "r", encoding="utf-8", errors="ignore") as fp:
+                data = json.load(fp)
+            if isinstance(data, dict):
+                info["marked"] = bool(data.get("garbage"))
+                info["remark"] = (data.get("garbage_remark") or "").strip()
+                info["markedBy"] = data.get("marked_by") or ""
+                info["markedAt"] = data.get("marked_at") or ""
+        except Exception:
+            pass
+
+    mf = os.path.join(dir_path, "manifest.json")
+    if os.path.exists(mf) and (not info["remark"] or not info["marked"]):
+        try:
+            with open(mf, "r", encoding="utf-8", errors="ignore") as fp:
+                data = json.load(fp)
+            g = data.get("garbage") if isinstance(data, dict) else None
+            if isinstance(g, dict):
+                info["marked"] = info["marked"] or bool(g.get("marked"))
+                info["remark"] = info["remark"] or (g.get("remark") or "").strip()
+                info["markedBy"] = info["markedBy"] or (g.get("markedBy") or "")
+                info["markedAt"] = info["markedAt"] or (g.get("markedAt") or "")
+        except Exception:
+            pass
+    return info
+
+
 class WorkScanner:
-    """负责扫描成品库作品与元数据（覆盖已发送0次、已发送1次、已发送2次及根目录直出合法成品）"""
+    """负责扫描成品库「可发布」作品与元数据。
+
+    注意：真正的在线相册列表只包含「已发送0次（抖音小红书可发）」与根目录直出成品；
+    「已发送1次」「已发送2次」「_垃圾作品」都被 IGNORED_NAMES 排除，只能通过
+    在线回收站接口（list_stage_works）按阶段库单独读取。
+    """
+
+    # 三个阶段库的物理目录名（与成品库实际结构一致）
+    STAGE0_FOLDER = "已发送0次（抖音小红书可发）"
+    STAGE1_FOLDER = "_已发送1次（微信公众号可发）"
+    GARBAGE_FOLDER = "_垃圾作品（后续参考分析）"
+    # 需要下钻一层的中间目录前缀（作品集/游戏类会在阶段库里再套一层）
+    NESTED_PREFIXES = ("作品集", "团建游戏", "游戏", "游戏类")
 
     def __init__(self, root: str):
         self.root = os.path.abspath(root)
@@ -136,6 +184,91 @@ class WorkScanner:
         self._works_by_id: Dict[str, Dict[str, Any]] = {}
         self._moved_works: Dict[str, Dict[str, Any]] = {}
         self._last_scan_time = 0.0
+        # 在线回收站各 Tab 的列表缓存：{folder: (时间戳, 作品列表)}
+        # 阶段库作品数可达 500+，每条都要读文案文件，不缓存的话手机每次切 Tab 都要等 1.5s+
+        self._stage_cache: Dict[str, Any] = {}
+
+    def _iter_work_dirs(self, base: str):
+        """遍历某个阶段库下的作品目录，兼容「作品集_xxx[转]」这类中间层。
+
+        与 scan() 中「已发送0次」的层级规则保持一致：遇到作品集/游戏类目录再下钻一层。
+        不做下钻的话，_已发送1次 里嵌套的作品会既列不出来、也拉不到缩略图。
+        """
+        try:
+            entries = os.listdir(base)
+        except Exception:
+            return
+        for entry in entries:
+            if entry.startswith(".") or entry.startswith("_"):
+                continue
+            full = os.path.join(base, entry)
+            if not os.path.isdir(full):
+                continue
+            if entry.startswith(self.NESTED_PREFIXES):
+                try:
+                    subs = os.listdir(full)
+                except Exception:
+                    continue
+                for sub in subs:
+                    if sub.startswith(".") or sub.startswith("_"):
+                        continue
+                    sub_p = os.path.join(full, sub)
+                    if os.path.isdir(sub_p):
+                        yield sub, sub_p
+            else:
+                yield entry, full
+
+    def list_stage_works(self, folder_name: str, stage_name: str, default_count: int,
+                         force: bool = False) -> List[Dict[str, Any]]:
+        """列出指定阶段库下的全部作品（在线回收站的两个 Tab 用）。
+
+        结果缓存 5 秒：手机端在「已使用 / 已标记垃圾」之间来回切 Tab 时秒开。
+        force=True（手机下拉刷新）时绕过缓存。
+        """
+        now = time.time()
+        with self._lock:
+            cached = self._stage_cache.get(folder_name)
+            if cached and not force and (now - cached[0] < 5.0):
+                return cached[1]
+
+        base = os.path.join(self.root, folder_name)
+        out: List[Dict[str, Any]] = []
+        for name, full in self._iter_work_dirs(base):
+            w = self._inspect_work_dir(full, name, stage_name, default_count)
+            if not w:
+                continue
+            w["folder"] = folder_name
+            # 登记到 _moved_works，保证 /api/online/image 能按 id 找回嵌套作品的原图
+            self._moved_works[w["id"]] = w
+            out.append(w)
+        out.sort(key=lambda w: w.get("updatedAt", 0), reverse=True)
+
+        with self._lock:
+            self._stage_cache[folder_name] = (now, out)
+        return out
+
+    def resolve_stage_work(self, work_id: str) -> Optional[Dict[str, Any]]:
+        """在三个阶段库（已发送0次 / _已发送1次 / _垃圾作品）里按 id 定位作品。"""
+        work_id = (work_id or "").strip()
+        if not work_id:
+            return None
+        for folder, stage, base_count in (
+            (self.STAGE1_FOLDER, "已发送1次", 1),
+            (self.GARBAGE_FOLDER, "已废弃-垃圾", 0),
+            (self.STAGE0_FOLDER, "已发送0次", 0),
+        ):
+            base = os.path.join(self.root, folder)
+            if not os.path.isdir(base):
+                continue
+            for name, full in self._iter_work_dirs(base):
+                if name != work_id:
+                    continue
+                w = self._inspect_work_dir(full, name, stage, base_count)
+                if w:
+                    w["folder"] = folder
+                    self._moved_works[w["id"]] = w
+                    return w
+        return None
 
     def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -148,21 +281,21 @@ class WorkScanner:
                 mw = self._moved_works[work_id]
                 if os.path.exists(mw.get("path", "")):
                     return mw
-            # 兜底到 _已发送1次（微信公众号可发）查找
+            # 兜底到 _已发送1次 / _垃圾作品 查找（必须下钻作品集中间层）
             for folder, stage, base_count in (
-                ("_已发送1次（微信公众号可发）", "已发送1次", 1),
-                ("_垃圾作品（后续参考分析）", "已废弃-垃圾", 0),
+                (self.STAGE1_FOLDER, "已发送1次", 1),
+                (self.GARBAGE_FOLDER, "已废弃-垃圾", 0),
             ):
-                fallback_dir = os.path.join(self.root, folder)
-                if not os.path.isdir(fallback_dir):
+                base = os.path.join(self.root, folder)
+                if not os.path.isdir(base):
                     continue
-                for sub in os.listdir(fallback_dir):
-                    sub_p = os.path.join(fallback_dir, sub)
-                    if os.path.isdir(sub_p):
-                        w = self._inspect_work_dir(sub_p, sub, stage, base_count)
-                        if w and w.get("id") == work_id:
-                            self._moved_works[work_id] = w
-                            return w
+                for name, full in self._iter_work_dirs(base):
+                    if name != work_id:
+                        continue
+                    w = self._inspect_work_dir(full, name, stage, base_count)
+                    if w:
+                        self._moved_works[work_id] = w
+                        return w
             return None
 
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
@@ -504,6 +637,46 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/online/recycle":
+            # 在线回收站：顶部两个 Tab —— 已使用（_已发送1次）/ 已标记垃圾（_垃圾作品）
+            tab_raw = (query.get("tab", ["sent"])[0] or "sent").strip().lower()
+            is_garbage = tab_raw in ("garbage", "trash", "已标记垃圾", "垃圾")
+            force = query.get("refresh", ["0"])[0] == "1"
+
+            if is_garbage:
+                folder, stage, base_count = self.scanner.GARBAGE_FOLDER, "已废弃-垃圾", 0
+                tab, label = "garbage", "已标记垃圾"
+            else:
+                folder, stage, base_count = self.scanner.STAGE1_FOLDER, "已发送1次", 1
+                tab, label = "sent", "已使用"
+
+            works = self.scanner.list_stage_works(folder, stage, base_count, force=force)
+            for w in works:
+                w["garbage"] = read_garbage_meta(w.get("path", ""))
+
+            # 另一个 Tab 也列一遍（垃圾库很小，代价可忽略），
+            # 让两个 Tab 的角标数字与各自列表的 total 严格一致。
+            if is_garbage:
+                other = self.scanner.list_stage_works(
+                    self.scanner.STAGE1_FOLDER, "已发送1次", 1, force=force)
+                counts = {"sent": len(other), "garbage": len(works)}
+            else:
+                other = self.scanner.list_stage_works(
+                    self.scanner.GARBAGE_FOLDER, "已废弃-垃圾", 0, force=force)
+                counts = {"sent": len(works), "garbage": len(other)}
+
+            self.send_json(200, {
+                "ok": True,
+                "tab": tab,
+                "label": label,
+                "folder": folder,
+                "total": len(works),
+                "counts": counts,
+                "works": works,
+                "refreshed": force,
+            })
+            return
+
         if path == "/api/online/image":
             work_id = query.get("id", [""])[0]
             file_name = query.get("file", [""])[0]
@@ -728,6 +901,182 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             msg += f"（备注：{remark}）"
         return True, target_dest, msg
 
+    def _log_stage_move(self, root_dir: str, device_name: str, work_id: str,
+                        src_path: str, dest_path: str, use_count: int,
+                        action_type: str, remark: str = "") -> None:
+        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+            header_needed = not os.path.exists(log_file)
+            with open(log_file, "a", encoding="utf-8-sig") as fp:
+                if header_needed:
+                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注\n")
+                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},"
+                         f"{src_path},{dest_path},{use_count},{action_type},{remark}\n")
+        except Exception:
+            pass
+
+    def _restore_work_to_stage0(self, target_work: Dict[str, Any], device_name: str) -> Tuple[bool, str, str]:
+        """在线回收站「恢复」：移回「已发送0次（抖音小红书可发）」、使用次数归零、撤销垃圾标记。
+
+        已与用户确认口径：两个 Tab（已使用 / 已标记垃圾）的「恢复」都是这个语义 ——
+        让作品重新变回可发手机的全新作品。
+        """
+        src_path = target_work["path"]
+        folder_name = os.path.basename(src_path)
+        work_id = target_work.get("id", "")
+        was_garbage = target_work.get("folder") == self.scanner.GARBAGE_FOLDER
+        root_dir = self.scanner.root
+        dest_base = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
+        os.makedirs(dest_base, exist_ok=True)
+
+        target_dest = os.path.join(dest_base, folder_name)
+        if os.path.exists(target_dest) and os.path.abspath(target_dest) != os.path.abspath(src_path):
+            target_dest = os.path.join(dest_base, f"{folder_name}_{time.strftime('%Y%m%d_%H%M%S')}")
+
+        if os.path.abspath(target_dest) != os.path.abspath(src_path):
+            move_err = None
+            for _ in range(3):
+                try:
+                    shutil.move(src_path, target_dest)
+                    move_err = None
+                    break
+                except Exception as e:
+                    move_err = e
+                    time.sleep(0.3)
+            if move_err is not None:
+                try:
+                    shutil.copytree(src_path, target_dest, dirs_exist_ok=True)
+                    shutil.rmtree(src_path, ignore_errors=True)
+                    move_err = None
+                except Exception as e2:
+                    move_err = e2
+            if move_err is not None:
+                return False, "", f"物理移动失败: {move_err}"
+
+        restored_at = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 1) 作品标签.json：使用次数归零，重回「待发手机」
+        tag_file = os.path.join(target_dest, "作品标签.json")
+        if os.path.exists(tag_file):
+            try:
+                with open(tag_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    tag = json.load(fp)
+                if isinstance(tag, dict):
+                    dist = tag.get("distribution")
+                    if not isinstance(dist, dict):
+                        dist = {}
+                        tag["distribution"] = dist
+                    dist["useCount"] = 0
+                    dist["dispatchedTo"] = []
+                    dist["status"] = "待发手机"
+                    dist["restoredAt"] = restored_at
+                    with open(tag_file, "w", encoding="utf-8") as fp:
+                        json.dump(tag, fp, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[Warn] restore tag write failed: {e}")
+
+        # 2) manifest.json：清 shareCount、摘掉 garbage 块并留档
+        manifest_file = os.path.join(target_dest, "manifest.json")
+        try:
+            manifest = {}
+            if os.path.exists(manifest_file):
+                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    manifest = json.load(fp)
+            if isinstance(manifest, dict):
+                old = manifest.pop("garbage", None)
+                if isinstance(old, dict):
+                    manifest.setdefault("restore_history", []).append({
+                        "at": restored_at,
+                        "by": device_name,
+                        "from": target_work.get("stage", ""),
+                        "previousRemark": old.get("remark", ""),
+                    })
+                manifest["shareCount"] = 0
+                with open(manifest_file, "w", encoding="utf-8") as fp:
+                    json.dump(manifest, fp, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[Warn] restore manifest write failed: {e}")
+
+        # 3) quality_tag.json：撤销全渠道垃圾硬拦截
+        quality_file = os.path.join(target_dest, "quality_tag.json")
+        needs_quality_write = was_garbage or os.path.exists(quality_file)
+        if needs_quality_write:
+            try:
+                quality: Dict[str, Any] = {}
+                if os.path.exists(quality_file):
+                    with open(quality_file, "r", encoding="utf-8", errors="ignore") as fp:
+                        loaded = json.load(fp)
+                    if isinstance(loaded, dict):
+                        quality = loaded
+                quality["usable_for_wechat"] = True
+                quality["usable_for_other_platforms"] = True
+                quality["garbage"] = False
+                quality["restored_at"] = restored_at
+                quality["restored_by"] = device_name
+                with open(quality_file, "w", encoding="utf-8") as fp:
+                    json.dump(quality, fp, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[Warn] restore quality write failed: {e}")
+
+        self._log_stage_move(root_dir, device_name, work_id, src_path, target_dest,
+                             int(target_work.get("useCount", 0) or 0), "restore_to_stage0")
+
+        self.scanner._moved_works.pop(work_id, None)
+        target_work["path"] = target_dest
+        target_work["stage"] = "已发送0次"
+        target_work["useCount"] = 0
+        target_work["folder"] = self.scanner.STAGE0_FOLDER
+
+        label = "垃圾样本库" if was_garbage else "已发送1次"
+        return True, target_dest, f"已从「{label}」恢复：移回「已发送0次（抖音小红书可发）」，使用次数归零，可重新发布"
+
+    def _annotate_garbage(self, target_work: Dict[str, Any], remark: str, device_name: str) -> Tuple[bool, str]:
+        """给垃圾作品写/改人工判断备注（quality_tag.json + manifest.json 同时落盘）。"""
+        dir_path = target_work["path"]
+        remark = (remark or "").strip()
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        quality_file = os.path.join(dir_path, "quality_tag.json")
+        try:
+            quality: Dict[str, Any] = {}
+            if os.path.exists(quality_file):
+                with open(quality_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    loaded = json.load(fp)
+                if isinstance(loaded, dict):
+                    quality = loaded
+            if not quality.get("garbage"):
+                quality.setdefault("garbage", True)
+                quality.setdefault("usable_for_wechat", False)
+                quality.setdefault("usable_for_other_platforms", False)
+            quality["garbage_remark"] = remark
+            quality["remark_updated_at"] = ts
+            quality["remark_updated_by"] = device_name
+            with open(quality_file, "w", encoding="utf-8") as fp:
+                json.dump(quality, fp, ensure_ascii=False, indent=2)
+        except Exception as e:
+            return False, f"写入 quality_tag.json 失败: {e}"
+
+        manifest_file = os.path.join(dir_path, "manifest.json")
+        if os.path.exists(manifest_file):
+            try:
+                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    manifest = json.load(fp)
+                if isinstance(manifest, dict):
+                    g = manifest.get("garbage")
+                    if not isinstance(g, dict):
+                        g = {"marked": True, "markedAt": ts, "markedBy": device_name}
+                    g["remark"] = remark
+                    g["remarkUpdatedAt"] = ts
+                    manifest["garbage"] = g
+                    with open(manifest_file, "w", encoding="utf-8") as fp:
+                        json.dump(manifest, fp, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[Warn] annotate manifest write failed: {e}")
+
+        return True, ("已记录垃圾备注" if remark else "已清空垃圾备注")
+
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -932,6 +1281,69 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "targetPath": target_dest,
                 "remark": remark,
                 "remainingWorks": len(self.scanner.scan())
+            })
+            return
+
+        if path == "/api/online/restore":
+            # 在线回收站「恢复」：两个 Tab 都适用，移回「已发送0次」+ 次数归零 + 撤销垃圾标记
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body)
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+
+            work_id = (req.get("workId") or "").strip()
+            device_name = (req.get("device") or "手机端在线回收站").strip()
+            target_work = self.scanner.resolve_stage_work(work_id)
+            if not target_work:
+                self.send_json(404, {"ok": False, "workId": work_id,
+                                     "message": "作品不存在（可能已被恢复或移走），请刷新后重试"})
+                return
+
+            ok, target_dest, msg = self._restore_work_to_stage0(target_work, device_name)
+            self.scanner.scan(force=True)
+            self.send_json(200 if ok else 500, {
+                "ok": ok,
+                "workId": work_id,
+                "action": "restore",
+                "message": msg,
+                "targetPath": target_dest,
+                "useCount": 0,
+            })
+            return
+
+        if path == "/api/online/remark-garbage":
+            # 允许对垃圾特点标注人工判断（写入 quality_tag.json + manifest.json）
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body)
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+
+            work_id = (req.get("workId") or "").strip()
+            remark = (req.get("remark") or "").strip()
+            device_name = (req.get("device") or "手机端在线回收站").strip()
+            target_work = self.scanner.resolve_stage_work(work_id)
+            if not target_work:
+                self.send_json(404, {"ok": False, "workId": work_id, "message": "作品不存在，请刷新后重试"})
+                return
+
+            ok, msg = self._annotate_garbage(target_work, remark, device_name)
+            if ok:
+                self._log_stage_move(self.scanner.root, device_name, work_id,
+                                     target_work["path"], target_work["path"],
+                                     int(target_work.get("useCount", 0) or 0),
+                                     "remark_garbage", remark)
+            self.send_json(200 if ok else 500, {
+                "ok": ok,
+                "workId": work_id,
+                "action": "remark_garbage",
+                "remark": remark,
+                "message": msg,
             })
             return
 
