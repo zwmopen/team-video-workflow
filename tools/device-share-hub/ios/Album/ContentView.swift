@@ -98,8 +98,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let settingsItem = toolbarItem(.settings, label: "设置", action: #selector(openSettings))
 
         navigationItem.leftBarButtonItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
-        // iOS 中 rightBarButtonItems 顺序是从右往左，最右侧是 modeItem（正好在 planeItem 右侧）
-        navigationItem.rightBarButtonItems = [modeItem, planeItem, trashItem, settingsItem]
+        // 与安卓顶栏严格一致（从左到右）：文件浏览 → 传送文件 → 回收站 → 设置 → 在线相册模式按钮（最右）
+        // 注意：rightBarButtonItems 数组首个元素显示在最右侧
+        navigationItem.rightBarButtonItems = [modeItem, settingsItem, trashItem, planeItem]
     }
 
     private func updateModeButtonStyle() {
@@ -563,20 +564,44 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func confirmDeleteOnline(_ entry: OnlineWorkEntry) {
-        let alert = UIAlertController(title: "移入回收站？",
-                                      message: "确定将《\(entry.title)》移入手机回收站？\n电脑端将自动安全归档至「_已发送1次」。",
+        let alert = UIAlertController(title: "删除未发送作品？",
+                                      message: "《\(entry.title)》\n\n手机端：移入回收站（右上角垃圾箱可随时恢复）\n电脑端：移入垃圾样本库并在元数据标记为垃圾（全渠道硬拦截）\n\n选择「备注并删除」可先填写垃圾原因备注。",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "移入回收站", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            // 1. 电脑端安全物理流转
-            OnlineGalleryClient.shared.deleteWork(workId: entry.id)
-            // 2. 手机端移入本地回收站记录
-            OnlineWorkLifecycle.moveToTrash(work: entry)
-            self.showToast("已移入回收站，电脑端已归档")
-            self.renderOnlineUI()
+        alert.addAction(UIAlertAction(title: "备注并删除", style: .default) { [weak self] _ in
+            self?.promptRemarkThenDeleteOnline(entry)
+        })
+        alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            self?.performDeleteOnline(entry, remark: nil)
         })
         present(alert, animated: true)
+    }
+
+    private func promptRemarkThenDeleteOnline(_ entry: OnlineWorkEntry) {
+        let alert = UIAlertController(title: "垃圾备注（随作品写入元数据）",
+                                      message: "例如：文案公文味重 / 图片 AI 味浓 / 选题不合适",
+                                      preferredStyle: .alert)
+        alert.addTextField { tf in
+            tf.placeholder = "填写垃圾原因备注"
+            tf.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "确认删除", style: .destructive) { [weak self] _ in
+            let remark = alert.textFields?.first?.text ?? ""
+            self?.performDeleteOnline(entry, remark: remark)
+        })
+        present(alert, animated: true)
+    }
+
+    private func performDeleteOnline(_ entry: OnlineWorkEntry, remark: String?) {
+        // 1. 电脑端移入垃圾样本库并标记垃圾元数据
+        OnlineGalleryClient.shared.deleteWork(workId: entry.id, remark: remark)
+        // 2. 手机端移入本地回收站记录
+        OnlineWorkLifecycle.moveToTrash(work: entry)
+        let trimmed = (remark ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        showToast(trimmed.isEmpty ? "已删除：手机回收站 + 电脑垃圾样本库"
+                                  : "已删除并备注：手机回收站 + 电脑垃圾样本库")
+        renderOnlineUI()
     }
 
     private func share(_ work: WorkItem, platform: CopyPlatform, source: UIView?) {

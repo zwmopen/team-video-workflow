@@ -303,7 +303,7 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
-    public func deleteWork(workId: String, completion: ((Bool, String) -> Void)? = nil) {
+    public func deleteWork(workId: String, remark: String? = nil, completion: ((Bool, String) -> Void)? = nil) {
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/delete-work") else {
             completion?(false, "URL 错误")
@@ -312,7 +312,10 @@ public final class OnlineGalleryClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: Any] = ["workId": workId]
+        var payload: [String: Any] = ["workId": workId, "deviceName": UIDevice.current.model]
+        if let remark = remark, !remark.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["remark"] = remark.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         session.dataTask(with: request) { data, _, _ in
