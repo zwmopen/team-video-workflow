@@ -112,9 +112,10 @@ public enum OnlineListCache {
         guard let dir = cacheDir() else { return nil }
         let url = dir.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path))?
-            [.modificationDate] as? Date
-        if let m = mtime {
+        // 【0.8.43 修】先把 attrs 拆成 optional，dict 访问 + 强转 Date 都做在 if let 里，
+        // 避开 "optional chain has no effect / cannot convert [FileAttributeKey:Any] to Date" 三个编译错。
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let m = attrs[FileAttributeKey.modificationDate] as? Date {
             let ageMs = Int64(Date().timeIntervalSince(m) * 1000)
             if ageMs > maxAgeMs {
                 NSLog("[OnlineListCache] 快照已过期（%lld 小时），忽略", ageMs / 3600000)

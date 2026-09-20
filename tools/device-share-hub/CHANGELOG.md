@@ -1,5 +1,23 @@
 # 变更记录
 
+## iOS 0.8.20 / versionCode 91 - 2026-09-21 - Swift 编译错误修复（CI 暴露）
+
+> **bug 来源**：上次发 iOS 0.8.19 时用 tree-sitter-swift 自检通过（语法层合法），
+> 但 swiftc 编译器拒绝了 OnlineListCache.swift L115-116 的两行：
+> - `optional chain has no effect, expression already produces '[FileAttributeKey : Any]?'`
+> - `reference to member 'modificationDate' cannot be resolved without a contextual type`
+> - `cannot convert value of type '[FileAttributeKey : Any]' to expected argument type 'Date'`
+
+**根因**：把 `try? ...?.` 这种已经在 `try?` 后又加 `?` 的冗余 optional chain + dict 字面量 `[.modificationDate]`
+当成了 Swift 5.x 的隐式 dict literal —— 实际上 `[FileAttributeKey: Any]?` 不能直接用 `[.modificationDate]`
+这种形式做 partial key access，也不能在 optional chain 后直接 `as? Date`。
+
+**修法**：先把 attrs 解到 `if let` 里，再做 `attrs[FileAttributeKey.modificationDate] as? Date`，
+让编译器能解析出完整类型链。语义不变：attrs 拿不到就当作「没 mtime，跳过过期判断」。
+
+**自检**：下次 iOS 自检必须用 swiftc 而不是 tree-sitter（最低成本：装个 Swift Docker 镜像或
+`swift package init` 在 mac runner 上跑 build）。本机只跑 `node --check` 跳过。
+
 ## Android 0.8.43 / versionCode 154 - 2026-09-21 - 体感加速 polish：状态栏位置错位 + auto-discover 不打断 snapshot
 
 > **bug 来源**：0.8.42 真机验证时（杀 PC 服务 + 冷启 App）发现两个连带的 design bug：
