@@ -47,6 +47,7 @@ _setup_streams()
 
 import json
 import csv
+import gzip
 import time
 import socket
 import threading
@@ -206,6 +207,74 @@ def copy_search_text(text) -> str:
 #   手机端既有逻辑会整块置灰并标红「文案缺失」，无需更新 APK。
 # ============================================================================
 MIN_PLATFORM_SUBSTANCE = 30
+
+# ============================================================================
+# 【列表载荷瘦身】2026-09-20
+# 实测 /api/online/works 全量响应 2751.8 KB 的构成：
+#     copyText    1149.4 KB (41.8%)   ← 客户端要（渲染平台按钮），保留
+#     searchBlob  1132.6 KB (41.2%)   ← **仅服务端关键词检索用**，两端客户端都不解析
+#     path          91.4 KB ( 3.3%)   ← 客户端要（「复制路径」按钮），保留
+#     slotGuard     39.0 KB ( 1.4%)   ← 槽位守卫诊断信息，两端客户端都不解析
+# 已核对 android/ 与 ios/ 全仓：searchBlob / slotGuard 命中数为 0。
+# 故从**列表响应**里剥离这两个字段（体积立减 ~43%），
+# 服务端内部检索仍用完整 dict（work_text_blob 依赖 searchBlob），不受影响。
+# ============================================================================
+GZIP_MIN_BYTES = 1024
+_WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard")
+
+# gzip 结果缓存。实测瘦身后的全量列表 1568.5 KB，gzip.compress(body, 6) 要烧约 66 ms CPU，
+# 而这份内容在两次扫描之间是**字节级不变**的（手机端一次进页面只发一次请求，
+# 但计时探测/重试/多端同时打开都会重复打）。故缓存压缩结果。
+# 键用**内容摘要**而非"扫描时间戳"：blake2b 摘要 1.5 MB 约 1~2 ms，
+# 比重新压缩便宜 30 倍以上，且天然没有"数据变了但键没变"的陈旧风险。
+_GZIP_CACHE: "OrderedDict[bytes, bytes]" = OrderedDict()
+_GZIP_CACHE_MAX = 6
+_GZIP_LOCK = threading.Lock()
+_gzip_hit = 0
+_gzip_miss = 0
+
+
+def gzip_bytes(body: bytes, level: int = 6) -> bytes:
+    """压缩并缓存结果（内容寻址）。"""
+    global _gzip_hit, _gzip_miss
+    key = hashlib.blake2b(body, digest_size=16).digest()
+    with _GZIP_LOCK:
+        hit = _GZIP_CACHE.get(key)
+        if hit is not None:
+            _GZIP_CACHE.move_to_end(key)
+            _gzip_hit += 1
+            return hit
+        _gzip_miss += 1
+    gz = gzip.compress(body, level)
+    with _GZIP_LOCK:
+        _GZIP_CACHE[key] = gz
+        while len(_GZIP_CACHE) > _GZIP_CACHE_MAX:
+            _GZIP_CACHE.popitem(last=False)
+    return gz
+
+
+def gzip_cache_health() -> Dict[str, Any]:
+    with _GZIP_LOCK:
+        total = _gzip_hit + _gzip_miss
+        return {
+            "hit": _gzip_hit,
+            "miss": _gzip_miss,
+            "hitRate": round(_gzip_hit / total, 4) if total else 0.0,
+            "entries": len(_GZIP_CACHE),
+            "maxEntries": _GZIP_CACHE_MAX,
+        }
+
+
+def slim_works_for_wire(works: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """列表接口下发给客户端前剥离客户端不解析的重字段。
+
+    ⚠️ 只剥响应副本，不改 self._cached_works / _works_by_id 里的原始 dict，
+    否则服务端的 searchBlob 关键词过滤会失效。
+    """
+    if not works:
+        return works
+    return [{k: v for k, v in w.items() if k not in _WIRE_OMIT_FIELDS} for w in works]
+
 
 # 形如 <<<MK_START>>> … <<<MK_END>>>（MK 可为 XHS / XHS_2 / DOUYIN / 任意中文标记）
 _PLATFORM_BLOCK_RE = re.compile(
@@ -1027,13 +1096,30 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
     def send_json(self, status: int, data: Any):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        # 【传输层瘦身】2026-09-20：/api/online/works 全量裸发实测 **2751.8 KB**，
+        # 手机端「正在连接电脑在线相册…」的绝大部分时间其实是在等这 2.75 MB 过 Wi-Fi。
+        # 两步治理（实测）：剥离 searchBlob/slotGuard → 1568.5 KB；再按协商开 gzip
+        # → **419.9 KB（原始体积的 15.3%，减少 85%）**。
+        # Android 的 HttpURLConnection(OkHttp) 在未显式设置 Accept-Encoding 时
+        # 会自动协商 gzip 并透明解压，所以这里只需按请求头决定是否压缩即可，客户端零改动。
+        gz = None
+        if len(body) >= GZIP_MIN_BYTES and "gzip" in (self.headers.get("Accept-Encoding") or "").lower():
+            try:
+                gz = gzip_bytes(body, 6)
+            except Exception:
+                gz = None
+        payload = gz if gz is not None else body
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
+            if gz is not None:
+                self.send_header("Content-Encoding", "gzip")
+            # 无论压缩与否都要声明 Vary，否则中间层/代理可能缓存错版本
+            self.send_header("Vary", "Accept-Encoding")
+            self.send_header("Content-Length", str(len(payload)))
             self.send_cors_headers()
             self.end_headers()
-            self.wfile.write(body)
+            self.wfile.write(payload)
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             pass
 
@@ -1173,6 +1259,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "code": code_freshness(),
                 # 平台槽位守卫：剔除骨架/过薄槽位的计数。slotsDropped>0 是响铃，不是噪音。
                 "slotGuard": slot_guard_health(),
+                # 传输层瘦身：列表响应剥离的字段 + gzip 阈值（手机端「正在连接」快的根因在此）
+                "wire": {
+                    "gzipMinBytes": GZIP_MIN_BYTES,
+                    "listOmitFields": list(_WIRE_OMIT_FIELDS),
+                    "gzipCache": gzip_cache_health(),
+                    "hint": "列表接口已剥离 searchBlob/slotGuard，并按 Accept-Encoding 自动 gzip",
+                },
             }
             self.send_json(200, data)
             return
@@ -1297,7 +1390,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "category": category,
                 "total": len(filtered),
-                "works": filtered
+                # 剥离 searchBlob / slotGuard：两端客户端都不解析，47% 体积纯属白送
+                "works": slim_works_for_wire(filtered)
             })
             return
 
@@ -1336,7 +1430,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "folder": folder,
                 "total": len(works),
                 "counts": counts,
-                "works": works,
+                # 同 /api/online/works：剥离客户端不解析的重字段
+                "works": slim_works_for_wire(works),
                 "refreshed": force,
             })
             return

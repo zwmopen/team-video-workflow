@@ -32,6 +32,7 @@ import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.util.LruCache;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -181,6 +182,10 @@ public final class MainActivity extends Activity {
     private boolean enteredTrashFromOnline = false;
     private ImageButton sourceModeButton;
     private OnlineGalleryClient.CategoriesResult lastCategoriesResult;
+    /** 当前 onlineWorks 是否来自磁盘快照（用于状态栏标注「本地快照」） */
+    private boolean onlineListFromSnapshot = false;
+    /** 磁盘快照的落盘时间（0 = 非快照来源） */
+    private long onlineSnapshotAtMs = 0L;
     private final List<OnlineWorkEntry> onlineWorks = new ArrayList<>();
     private String selectedOnlineCategory = WorkCategory.ALL;
     private final Map<String, Button> onlineCategoryButtons = new LinkedHashMap<>();
@@ -272,6 +277,10 @@ public final class MainActivity extends Activity {
         UpdateChecker.checkOnLaunch(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
         submitToWorker(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
+        // 【体感加速】用户点进「电脑在线相册」是必然动作，所以开机就预热：
+        // 先读本地快照（本地读，几十毫秒级），再后台静默拉最新。
+        // 这样点进去大概率是瞬时渲染，而不是先看到「正在连接电脑在线相册…」。
+        primeOnlineWorksInBackground();
         getWindow().getDecorView().post(() -> {
             showInitialFolderPromptIfNeeded();
         });
@@ -2560,21 +2569,153 @@ public final class MainActivity extends Activity {
             if (lastCategoriesResult != null) {
                 updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
             }
+            // 秒开：先把已有数据（内存或开机预热好的磁盘快照）直接铺满屏幕，
+            // 状态栏只说「正在后台刷新…」，不再出现阻塞感的「正在连接…」
             applyOnlineCategoryFilter(selectedOnlineCategory);
-            statusText.setText("💻 电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");
+            statusText.setText(onlineStatusLine("正在刷新…"));
             refreshOnlineWorks(false);
         } else {
             refreshOnlineWorks(true);
         }
     }
 
+    /** 在线模式下状态栏左侧的统一前缀（「💻 电脑在线相册 (url)」）。 */
+    private String onlineSourceLabel() {
+        return "💻 电脑在线相册 (" + onlineClient.resolveBaseUrl() + ")";
+    }
+
+    /**
+     * 状态栏里的「数据来源后缀」。
+     * 当前展示的是本地快照时，明确告诉用户数据新鲜度 ——
+     * 否则「秒开」会被误读成「电脑已经连上了」，电脑真关机时反而更像故障。
+     */
+    private String onlineDataSuffix() {
+        if (!onlineListFromSnapshot) return "";
+        String age = snapshotAgeText();
+        return age != null ? "（本地快照 · " + age + "）" : "（本地快照）";
+    }
+
+    /**
+     * 在线列表状态栏的统一起草：`💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）`。
+     * @param tail 追加在末尾的短语（如「正在刷新…」），可为 null。
+     */
+    private String onlineStatusLine(String tail) {
+        StringBuilder sb = new StringBuilder(onlineSourceLabel())
+                .append(" · 共 ").append(onlineWorks.size()).append(" 套")
+                .append(onlineDataSuffix());
+        if (tail != null) sb.append(" · ").append(tail);
+        return sb.toString();
+    }
+
+    /**
+     * 【体感加速】开机预热：不做任何 UI 阻塞。
+     *
+     * 两段式：
+     *   1) 读磁盘快照 → 立刻进内存（离线也能秒开，且能顶住「电脑关机 / 换网」）；
+     *   2) 后台静默拉一次最新列表 + 分类，成功即覆盖快照。
+     *
+     * 为什么值得在开机就做：在线相册的入口是用户**必然**要点的一次操作，
+     * 与其等他点完再等网络，不如在他还没点的时候就把这段时间花掉。
+     * 代价是开机后台多一次几 KB~几百 KB 的请求，失败也不打扰用户。
+     */
+    private void primeOnlineWorksInBackground() {
+        submitToWorker(() -> {
+            final String cachedWorks = OnlineListCache.loadWorks(this);
+            final String cachedCats = OnlineListCache.loadCategories(this);
+            final long snapAt = OnlineListCache.snapshotAtMs(this);
+            if (cachedWorks == null) return;
+            List<OnlineWorkEntry> parsed;
+            OnlineGalleryClient.CategoriesResult cats = null;
+            try {
+                parsed = OnlineGalleryClient.parseWorks(cachedWorks);
+                if (cachedCats != null) cats = OnlineGalleryClient.parseCategories(cachedCats);
+            } catch (Exception e) {
+                // 快照损坏：直接丢掉，下次成功请求会重写。
+                // 注意这里不能只 log 不清理，否则每个冷启动都要白解析一次坏文件。
+                Log.w("MainActivity", "在线列表快照解析失败，已丢弃: " + e.getMessage());
+                OnlineListCache.clear(this);
+                return;
+            }
+            if (parsed == null || parsed.isEmpty()) return;
+            final List<OnlineWorkEntry> list = parsed;
+            final OnlineGalleryClient.CategoriesResult catsFinal = cats;
+            uiHandler.post(() -> {
+                // 已有更新的数据就别用旧快照盖掉（例如 onStart 里刚刷完）
+                if (!onlineWorks.isEmpty()) return;
+                onlineWorks.addAll(list);
+                mergeLocalSentWorks();
+                if (catsFinal != null) lastCategoriesResult = catsFinal;
+                onlineListFromSnapshot = true;
+                onlineSnapshotAtMs = snapAt;
+                if (isOnlineMode) {
+                    applyOnlineCategoryFilter(selectedOnlineCategory);
+                    statusText.setText(onlineStatusLine("正在后台刷新…"));
+                }
+            });
+        });
+        silentPrefetchOnlineWorks();
+    }
+
+    /**
+     * 后台静默预热：拉一次最新的全量列表与分类。
+     * 失败**不打扰用户**（此时用户可能还在手机本地相册里，弹错只会莫名其妙）。
+     */
+    private void silentPrefetchOnlineWorks() {
+        onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.CategoriesResult result) {
+                lastCategoriesResult = result;
+                if (isOnlineMode) updateOnlineCategoryCounts(result, onlineWorks);
+            }
+
+            @Override
+            public void onError(Exception error) {
+                Log.i("MainActivity", "在线分类预热失败（静默）: " + error.getMessage());
+            }
+        });
+        onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
+            @Override
+            public void onSuccess(List<OnlineWorkEntry> works) {
+                if (works == null) return;
+                // 在线模式下由 refreshOnlineWorks 统一负责，避免两条路径同时写 onlineWorks
+                if (isOnlineMode) return;
+                onlineWorks.clear();
+                onlineWorks.addAll(works);
+                mergeLocalSentWorks();
+                onlineListFromSnapshot = false;
+            }
+
+            @Override
+            public void onError(Exception error) {
+                Log.i("MainActivity", "在线列表预热失败（静默）: " + error.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 本地快照年龄的人话描述。
+     * @return 例：「3 分钟前」；无快照时返回 null（调用方自行省略该行）。
+     */
+    private String snapshotAgeText() {
+        long at = onlineSnapshotAtMs > 0 ? onlineSnapshotAtMs : OnlineListCache.snapshotAtMs(this);
+        if (at <= 0) return null;
+        long min = Math.max(0, (System.currentTimeMillis() - at) / 60_000L);
+        if (min < 1) return "刚刚";
+        if (min < 60) return min + " 分钟前";
+        long hour = min / 60;
+        if (hour < 48) return hour + " 小时前";
+        return (hour / 24) + " 天前";
+    }
+
     private void showOnlineStatusOrConfigDialog() {
         String modeStr = isOnlineMode ? "💻 电脑在线模式" : "📱 手机本地模式";
         String serverUrl = onlineClient.resolveBaseUrl();
         int count = onlineWorks.size();
+        String age = snapshotAgeText();
+        String snapLine = age != null ? "\n本地快照：" + age + "（离线也能秒开）" : "";
         new AlertDialog.Builder(this)
                 .setTitle("在线相册网络状态")
-                .setMessage("当前状态：" + modeStr + "\n电脑服务：" + serverUrl + "\n在线作品缓存：" + count + " 套\n\n提示：点击小图标可直接在手机与电脑之间秒切。")
+                .setMessage("当前状态：" + modeStr + "\n电脑服务：" + serverUrl + "\n在线作品缓存：" + count + " 套" + snapLine + "\n\n提示：点击小图标可直接在手机与电脑之间秒切。")
                 .setNegativeButton("关闭", null)
                 .setNeutralButton("修改电脑 IP", (dialog, which) -> showEditPcIpDialog())
                 .setPositiveButton("重测连接", (dialog, which) -> {
@@ -2651,42 +2792,75 @@ public final class MainActivity extends Activity {
         });
     }
 
+    /**
+     * 刷新在线作品列表。
+     *
+     * 2026-09-20 体感改造三点：
+     * 1. **两个请求并行**。原来是 `fetchCategories` 成功之后才发 `fetchWorks`，
+     *    白白多一个网络往返（手机 Wi-Fi 下每个往返都是实打实的几百毫秒）。
+     *    现在分类和列表同时发出，列表先到就先渲染。
+     * 2. **有数据就不阻塞**。已经有列表（内存或本地快照）时，状态栏只说「正在刷新…」，
+     *    而不是把「正在连接电脑在线相册…」摆在用户面前。
+     * 3. **失败不清屏**。已经有快照数据时，刷新失败只做软提示并保留列表；
+     *    原来无论有没有数据都会 `handleOnlineError` 把容器清空换成错误卡片 ——
+     *    电脑关机时用户连上次的内容都看不到。
+     */
     private void refreshOnlineWorks(boolean userInitiated) {
-        statusText.setText("正在连接电脑在线相册…");
+        final boolean hadData = !onlineWorks.isEmpty();
+        if (hadData) {
+            statusText.setText(onlineStatusLine("正在刷新…"));
+        } else {
+            statusText.setText("正在连接电脑在线相册…");
+        }
+
         onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.CategoriesResult catResult) {
+                if (!isOnlineMode || showingTrash) return;
                 lastCategoriesResult = catResult;
-                onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
-                    @Override
-                    public void onSuccess(List<OnlineWorkEntry> works) {
-                        // 连通成功：记住这条可用地址，下次直接复用
-                        onlineClient.markBaseUrlGood(onlineClient.resolveBaseUrl());
-                        if (!isOnlineMode || showingTrash) return;
-                        onlineWorks.clear();
-                        if (works != null) {
-                            onlineWorks.addAll(works);
-                        }
-                        mergeLocalSentWorks();
-                        updateOnlineCategoryCounts(catResult, onlineWorks);
-                        applyOnlineCategoryFilter(selectedOnlineCategory);
-                        statusText.setText("💻 已连接电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");
-                        finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
-                    }
+                updateOnlineCategoryCounts(catResult, onlineWorks);
+                if (!onlineWorks.isEmpty()) applyOnlineCategoryFilter(selectedOnlineCategory);
+            }
 
-                    @Override
-                    public void onError(Exception error) {
-                        if (!isOnlineMode) return;
-                        handleOnlineError("读取作品列表失败", error);
-                        tryAutoDiscoverPc();
-                    }
-                });
+            @Override
+            public void onError(Exception error) {
+                // 分类失败不致命：列表照样能看，只有分类数字会缺
+                Log.i("MainActivity", "在线分类刷新失败: " + error.getMessage());
+            }
+        });
+
+        onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
+            @Override
+            public void onSuccess(List<OnlineWorkEntry> works) {
+                // 连通成功：记住这条可用地址，下次直接复用
+                onlineClient.markBaseUrlGood(onlineClient.resolveBaseUrl());
+                if (!isOnlineMode || showingTrash) return;
+                onlineWorks.clear();
+                if (works != null) {
+                    onlineWorks.addAll(works);
+                }
+                mergeLocalSentWorks();
+                onlineListFromSnapshot = false;
+                onlineSnapshotAtMs = 0L;
+                if (lastCategoriesResult != null) {
+                    updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
+                }
+                applyOnlineCategoryFilter(selectedOnlineCategory);
+                statusText.setText("💻 已连接电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");
+                finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
             }
 
             @Override
             public void onError(Exception error) {
                 if (!isOnlineMode) return;
-                handleOnlineError("连接电脑相册服务失败", error);
+                if (!onlineWorks.isEmpty()) {
+                    // 有快照/旧数据：保留用户已经看到的列表，只做软提示
+                    String msg = error != null && error.getMessage() != null ? error.getMessage() : "网络超时";
+                    statusText.setText("💻 离线快照 · 共 " + onlineWorks.size() + " 套 · 刷新失败：" + msg);
+                    finishVisibleRefresh("已保留本地快照（刷新失败）");
+                } else {
+                    handleOnlineError("读取作品列表失败", error);
+                }
                 tryAutoDiscoverPc();
             }
         });

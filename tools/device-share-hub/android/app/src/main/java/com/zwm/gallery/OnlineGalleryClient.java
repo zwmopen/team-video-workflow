@@ -42,6 +42,18 @@ public final class OnlineGalleryClient {
     /** 信标地址保鲜期：超过该时长视为陈旧，需重新确认 */
     private static final long BEACON_FRESH_MS = 5 * 60 * 1000L;
     private static final int TIMEOUT_MS = 15000;
+    /**
+     * 列表/分类请求专用超时（2026-09-20）。
+     *
+     * 原来和通用请求共用 {@link #TIMEOUT_MS}=15000，含义是：电脑端 IP 一旦过期/电脑关机，
+     * 用户要盯着「正在连接电脑在线相册…」最多 **15 秒**（失败后还会再去试回环地址，
+     * 合计最长可达 30 秒）。服务端实测：列表请求本地 42 ms、冷扫 1.0 s —— 用不上 15 秒。
+     * 这里收紧为「连接 4 s / 读 12 s」：
+     *   - 4 s 足够在局域网里建立连接，失败也能快速失败并转「本地快照」展示；
+     *   - 12 s 是给「服务端刚被 restart、需要冷扫 384 套」留的余量（实测 1.0 s，10 倍冗余）。
+     */
+    private static final int LIST_CONNECT_TIMEOUT_MS = 4000;
+    private static final int LIST_READ_TIMEOUT_MS = 12000;
     private final Context context;
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
     /**
@@ -81,11 +93,18 @@ public final class OnlineGalleryClient {
         public final List<CategoryItem> categories;
         public final List<CategoryItem> stages;
         public final int total;
+        /** 服务端原始响应体，供 {@link OnlineListCache} 原样落盘（避免二次序列化失真） */
+        public final String rawJson;
 
         public CategoriesResult(List<CategoryItem> categories, List<CategoryItem> stages, int total) {
+            this(categories, stages, total, null);
+        }
+
+        public CategoriesResult(List<CategoryItem> categories, List<CategoryItem> stages, int total, String rawJson) {
             this.categories = categories;
             this.stages = stages;
             this.total = total;
+            this.rawJson = rawJson;
         }
     }
 
@@ -595,35 +614,63 @@ public final class OnlineGalleryClient {
         return null;
     }
 
+    /**
+     * 解析 `/api/online/categories` 响应。
+     *
+     * 抽成 public static 的唯一目的：让 {@link OnlineListCache} 的本地快照
+     * 能走**完全同一条**解析路径。缓存另写一套解析 = 迟早与网络路径行为不一致。
+     */
+    public static CategoriesResult parseCategories(String resp) throws Exception {
+        JSONObject json = new JSONObject(resp);
+        List<CategoryItem> categories = new ArrayList<>();
+        JSONArray catArr = json.optJSONArray("categories");
+        if (catArr != null) {
+            for (int i = 0; i < catArr.length(); i++) {
+                JSONObject obj = catArr.optJSONObject(i);
+                if (obj != null) {
+                    categories.add(new CategoryItem(obj.optString("name", ""), obj.optInt("count", 0)));
+                }
+            }
+        }
+        List<CategoryItem> stages = new ArrayList<>();
+        JSONArray stageArr = json.optJSONArray("stages");
+        if (stageArr != null) {
+            for (int i = 0; i < stageArr.length(); i++) {
+                JSONObject obj = stageArr.optJSONObject(i);
+                if (obj != null) {
+                    stages.add(new CategoryItem(obj.optString("name", ""), obj.optInt("count", 0)));
+                }
+            }
+        }
+        return new CategoriesResult(categories, stages, json.optInt("total", 0), resp);
+    }
+
+    /** 解析 `/api/online/works` 响应（与本地快照共用同一条路径）。 */
+    public static List<OnlineWorkEntry> parseWorks(String resp) throws Exception {
+        JSONObject json = new JSONObject(resp);
+        List<OnlineWorkEntry> list = new ArrayList<>();
+        JSONArray arr = json.optJSONArray("works");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject wObj = arr.optJSONObject(i);
+                if (wObj != null) {
+                    OnlineWorkEntry entry = OnlineWorkEntry.fromJson(wObj);
+                    if (entry != null) list.add(entry);
+                }
+            }
+        }
+        return list;
+    }
+
     public void fetchCategories(Callback<CategoriesResult> callback) {
         executor.execute(() -> {
             try {
                 String baseUrl = resolveBaseUrl();
                 URL url = new URL(baseUrl + "/api/online/categories");
-                String resp = httpGet(url);
-                JSONObject json = new JSONObject(resp);
-                List<CategoryItem> categories = new ArrayList<>();
-                JSONArray catArr = json.optJSONArray("categories");
-                if (catArr != null) {
-                    for (int i = 0; i < catArr.length(); i++) {
-                        JSONObject obj = catArr.optJSONObject(i);
-                        if (obj != null) {
-                            categories.add(new CategoryItem(obj.optString("name", ""), obj.optInt("count", 0)));
-                        }
-                    }
-                }
-                List<CategoryItem> stages = new ArrayList<>();
-                JSONArray stageArr = json.optJSONArray("stages");
-                if (stageArr != null) {
-                    for (int i = 0; i < stageArr.length(); i++) {
-                        JSONObject obj = stageArr.optJSONObject(i);
-                        if (obj != null) {
-                            stages.add(new CategoryItem(obj.optString("name", ""), obj.optInt("count", 0)));
-                        }
-                    }
-                }
-                int total = json.optInt("total", 0);
-                CategoriesResult result = new CategoriesResult(categories, stages, total);
+                String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
+                CategoriesResult result = parseCategories(resp);
+                // 成功即落盘快照：下次进页面/离线时可直接渲染
+                OnlineListCache.saveCategories(context, resp);
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(e));
@@ -632,6 +679,8 @@ public final class OnlineGalleryClient {
     }
 
     public void fetchWorks(String category, String query, Callback<List<OnlineWorkEntry>> callback) {
+        final boolean fullList = (category == null || category.isEmpty())
+                && (query == null || query.isEmpty());
         executor.execute(() -> {
             try {
                 String baseUrl = resolveBaseUrl();
@@ -643,18 +692,11 @@ public final class OnlineGalleryClient {
                     sb.append("query=").append(URLEncoder.encode(query, "UTF-8")).append("&");
                 }
                 URL url = new URL(sb.toString());
-                String resp = httpGet(url);
-                JSONObject json = new JSONObject(resp);
-                List<OnlineWorkEntry> list = new ArrayList<>();
-                JSONArray arr = json.optJSONArray("works");
-                if (arr != null) {
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject wObj = arr.optJSONObject(i);
-                        if (wObj != null) {
-                            list.add(OnlineWorkEntry.fromJson(wObj));
-                        }
-                    }
-                }
+                String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
+                List<OnlineWorkEntry> list = parseWorks(resp);
+                // 只有「全量列表」才值得做快照：带分类/关键词的响应是子集，
+                // 存下去会让下次秒开时看到一个不完整的列表。
+                if (fullList) OnlineListCache.saveWorks(context, resp);
                 mainHandler.post(() -> callback.onSuccess(list));
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(e));
@@ -1231,10 +1273,18 @@ public final class OnlineGalleryClient {
     }
 
     private static String rawHttpGet(URL url) throws Exception {
+        return rawHttpGet(url, TIMEOUT_MS, TIMEOUT_MS);
+    }
+
+    /**
+     * 带超时参数的 GET。列表/分类走 {@link #LIST_CONNECT_TIMEOUT_MS} 等更短的值，
+     * 其余调用沿用原来的 {@link #TIMEOUT_MS}，行为不变。
+     */
+    private static String rawHttpGet(URL url, int connectTimeoutMs, int readTimeoutMs) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
-        conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS);
+        conn.setConnectTimeout(connectTimeoutMs);
+        conn.setReadTimeout(readTimeoutMs);
         int code = conn.getResponseCode();
         if (code < 200 || code >= 300) {
             throw new Exception("HTTP " + code + " " + conn.getResponseMessage());
