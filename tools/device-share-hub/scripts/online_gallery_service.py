@@ -626,6 +626,103 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
 
+    def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "") -> Tuple[bool, str, str]:
+        """
+        未发送作品的人工判定删除：物理移入垃圾样本库「_垃圾作品（后续参考分析）」，
+        并在元数据（manifest.json + quality_tag.json）永久标记为垃圾，全渠道分发引擎硬拦截。
+        """
+        src_path = target_work["path"]
+        folder_name = os.path.basename(src_path)
+        work_id = target_work.get("id", "")
+        remark = (remark or "").strip()
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        root_dir = self.scanner.root
+        dest_base = os.path.join(root_dir, "_垃圾作品（后续参考分析）")
+        os.makedirs(dest_base, exist_ok=True)
+
+        target_dest = os.path.join(dest_base, folder_name)
+        if os.path.exists(target_dest) and os.path.abspath(target_dest) != os.path.abspath(src_path):
+            ts_suffix = time.strftime("%Y%m%d_%H%M%S")
+            target_dest = os.path.join(dest_base, f"{folder_name}_{ts_suffix}")
+
+        if os.path.abspath(target_dest) == os.path.abspath(src_path):
+            return True, target_dest, "作品已位于垃圾样本库「_垃圾作品（后续参考分析）」"
+
+        move_err = None
+        for attempt in range(3):
+            try:
+                shutil.move(src_path, target_dest)
+                move_err = None
+                break
+            except Exception as e:
+                move_err = e
+                time.sleep(0.3)
+
+        if move_err is not None:
+            try:
+                shutil.copytree(src_path, target_dest, dirs_exist_ok=True)
+                shutil.rmtree(src_path, ignore_errors=True)
+                move_err = None
+            except Exception as e2:
+                move_err = e2
+
+        if move_err is not None:
+            return False, "", f"物理移动失败: {str(move_err)}"
+
+        # 1) quality_tag.json：全渠道硬拦截标记
+        try:
+            quality = {
+                "usable_for_wechat": False,
+                "usable_for_other_platforms": False,
+                "garbage": True,
+                "garbage_remark": remark,
+                "marked_by": device_name,
+                "marked_at": ts,
+                "source_stage": "已发送0次（手机端在线相册人工判定删除）",
+            }
+            with open(os.path.join(target_dest, "quality_tag.json"), "w", encoding="utf-8") as fp:
+                json.dump(quality, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        # 2) manifest.json：写入 garbage 块
+        try:
+            manifest_file = os.path.join(target_dest, "manifest.json")
+            if os.path.exists(manifest_file):
+                with open(manifest_file, "r", encoding="utf-8") as fp:
+                    manifest = json.load(fp)
+                manifest["garbage"] = {
+                    "marked": True,
+                    "remark": remark,
+                    "markedBy": device_name,
+                    "markedAt": ts,
+                }
+                with open(manifest_file, "w", encoding="utf-8") as fp:
+                    json.dump(manifest, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        target_work["path"] = target_dest
+        self.scanner._moved_works[work_id] = target_work
+
+        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+        try:
+            header_needed = not os.path.exists(log_file)
+            with open(log_file, "a", encoding="utf-8-sig") as fp:
+                if header_needed:
+                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注\n")
+                fp.write(f"{ts},{device_name},{work_id},{src_path},{target_dest},0,garbage_delete,{remark}\n")
+        except Exception:
+            pass
+
+        msg = "已移入垃圾样本库「_垃圾作品（后续参考分析）」并在元数据标记为垃圾"
+        if remark:
+            msg += f"（备注：{remark}）"
+        return True, target_dest, msg
+
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -763,6 +860,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             work_id = req.get("workId") or req.get("id") or ""
             work_id = work_id.strip()
             device_name = req.get("deviceName", "移动相册客户端")
+            remark = str(req.get("remark", "") or "").strip()
 
             if not work_id:
                 self.send_error(400, "Missing workId")
@@ -773,7 +871,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Work not found")
                 return
 
-            ok, target_dest, action_desc = self._move_work_to_stage1(target_work, device_name, "manual_delete")
+            ok, target_dest, action_desc = self._move_work_to_garbage(target_work, device_name, remark)
             if not ok:
                 self.send_json(200, {"ok": False, "error": action_desc})
                 return
@@ -783,9 +881,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
-                "action": "dispatched",
+                "action": "garbage_deleted",
                 "message": action_desc,
                 "targetPath": target_dest,
+                "remark": remark,
                 "remainingWorks": len(self.scanner.scan())
             })
             return

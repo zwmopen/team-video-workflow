@@ -400,6 +400,10 @@ public final class OnlineGalleryClient {
     }
 
     public void deleteWork(String workId, Callback<DeleteResult> callback) {
+        deleteWork(workId, "", callback);
+    }
+
+    public void deleteWork(String workId, String remark, Callback<DeleteResult> callback) {
         executor.execute(() -> {
             try {
                 String baseUrl = resolveBaseUrl();
@@ -407,6 +411,9 @@ public final class OnlineGalleryClient {
                 JSONObject body = new JSONObject();
                 body.put("workId", workId);
                 body.put("deviceName", android.os.Build.MODEL != null ? android.os.Build.MODEL : "移动端");
+                if (remark != null && !remark.trim().isEmpty()) {
+                    body.put("remark", remark.trim());
+                }
                 String resp = httpPost(url, body.toString());
                 JSONObject json = new JSONObject(resp);
                 DeleteResult res = new DeleteResult(

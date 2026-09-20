@@ -2841,54 +2841,80 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmDeleteOnlineWork(OnlineWorkEntry work) {
-        String msg = "移入回收站后，作品将在手机本地回收站保留（可随时在右上角垃圾箱中查看或恢复）。\n\n电脑端将安全归档至「_已发送1次」。\n\n确认移入回收站？";
+        String msg = "手机端：移入回收站（右上角垃圾箱可随时恢复）\n\n电脑端：移入垃圾样本库并在元数据标记为垃圾（全渠道硬拦截）\n\n选择「备注并删除」可先填写垃圾原因备注。";
 
         new AlertDialog.Builder(this)
-                .setTitle("移入手机回收站")
+                .setTitle("删除未发送作品")
                 .setMessage(msg)
                 .setNegativeButton("取消", null)
-                .setPositiveButton("移入回收站", (dialog, which) -> {
-                    // 1. 立即记入手机本地回收站
-                    OnlineWorkLifecycle.moveToTrash(this, work, System.currentTimeMillis());
-
-                    // 2. 异步通知电脑端安全流转归档
-                    onlineClient.deleteWork(work.id, new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteResult>() {
-                        @Override
-                        public void onSuccess(OnlineGalleryClient.DeleteResult result) {
-                            // 电脑端移动完成
-                        }
-
-                        @Override
-                        public void onError(Exception error) {
-                            // 网络异常日志已记录，手机端回收站照常生效
-                        }
-                    });
-
-                    toast("🗑️ 已移入回收站（可随时在右上角垃圾箱查看）");
-
-                    for (int i = 0; i < onlineWorks.size(); i++) {
-                        if (onlineWorks.get(i).id.equals(work.id)) {
-                            onlineWorks.remove(i);
-                            break;
-                        }
-                    }
-                    for (int i = 0; i < currentOnlineFilteredEntries.size(); i++) {
-                        if (currentOnlineFilteredEntries.get(i).id.equals(work.id)) {
-                            currentOnlineFilteredEntries.remove(i);
-                            break;
-                        }
-                    }
-
-                    java.io.File localDl = new java.io.File(getFilesDir(), "work-library/online/" + work.id);
-                    if (localDl.exists() && localDl.isDirectory()) {
-                        java.io.File[] sub = localDl.listFiles();
-                        if (sub != null) for (java.io.File sf : sub) sf.delete();
-                        localDl.delete();
-                    }
-
-                    applyOnlineCategoryFilter(selectedOnlineCategory);
-                })
+                .setNeutralButton("备注并删除", (dialog, which) -> promptRemarkThenDeleteOnlineWork(work))
+                .setPositiveButton("删除", (dialog, which) -> doDeleteOnlineWork(work, ""))
                 .show();
+    }
+
+    private void promptRemarkThenDeleteOnlineWork(OnlineWorkEntry work) {
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("例如：文案公文味重 / 图片 AI 味浓 / 选题不合适");
+        input.setSingleLine(false);
+        input.setMaxLines(3);
+        android.widget.FrameLayout holder = new android.widget.FrameLayout(this);
+        android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        lp.setMargins(pad, pad, pad, 0);
+        holder.addView(input, lp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("垃圾备注（随作品写入元数据）")
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认删除", (dialog, which) -> doDeleteOnlineWork(work, input.getText().toString()))
+                .show();
+    }
+
+    private void doDeleteOnlineWork(OnlineWorkEntry work, String remark) {
+        // 1. 立即记入手机本地回收站
+        OnlineWorkLifecycle.moveToTrash(this, work, System.currentTimeMillis());
+
+        // 2. 异步通知电脑端移入垃圾样本库并标记垃圾元数据
+        onlineClient.deleteWork(work.id, remark, new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.DeleteResult result) {
+                // 电脑端移动完成
+            }
+
+            @Override
+            public void onError(Exception error) {
+                // 网络异常日志已记录，手机端回收站照常生效
+            }
+        });
+
+        toast(remark == null || remark.trim().isEmpty()
+                ? "🗑️ 已删除：手机回收站 + 电脑垃圾样本库"
+                : "🗑️ 已删除并备注：手机回收站 + 电脑垃圾样本库");
+
+        for (int i = 0; i < onlineWorks.size(); i++) {
+            if (onlineWorks.get(i).id.equals(work.id)) {
+                onlineWorks.remove(i);
+                break;
+            }
+        }
+        for (int i = 0; i < currentOnlineFilteredEntries.size(); i++) {
+            if (currentOnlineFilteredEntries.get(i).id.equals(work.id)) {
+                currentOnlineFilteredEntries.remove(i);
+                break;
+            }
+        }
+
+        java.io.File localDl = new java.io.File(getFilesDir(), "work-library/online/" + work.id);
+        if (localDl.exists() && localDl.isDirectory()) {
+            java.io.File[] sub = localDl.listFiles();
+            if (sub != null) for (java.io.File sf : sub) sf.delete();
+            localDl.delete();
+        }
+
+        applyOnlineCategoryFilter(selectedOnlineCategory);
     }
 
     private View onlineTrashCard(OnlineWorkLifecycle.Item item) {
