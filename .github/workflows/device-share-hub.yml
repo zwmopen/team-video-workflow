@@ -7,11 +7,24 @@ on:
     paths:
       - 'tools/device-share-hub/**'
       - '.github/workflows/device-share-hub.yml'
+      # 纯文档/忽略规则的改动不触发五连构建与产物发布：
+      # 既省跑批，也避免仅改文档就把别人刚发出去的同一版本产物 --clobber 覆盖掉。
+      - '!tools/device-share-hub/*.md'
+      - '!tools/device-share-hub/**/*.md'
+      - '!tools/device-share-hub/.gitignore'
   pull_request:
     branches: [main]
     paths:
       - 'tools/device-share-hub/**'
       - '.github/workflows/device-share-hub.yml'
+      - '!tools/device-share-hub/*.md'
+      - '!tools/device-share-hub/**/*.md'
+      - '!tools/device-share-hub/.gitignore'
+
+# 同一分支只保留最新一次构建，避免两次 push 的 publish-gallery-updates 并发 clobber 同一 tag 产物。
+concurrency:
+  group: device-share-hub-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   remote-relay-check:
