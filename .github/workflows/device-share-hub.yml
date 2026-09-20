@@ -465,7 +465,9 @@ jobs:
 
           current_json=$(curl --fail --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
+          update_notes="相册 Android ${version_name}（versionCode ${version_code}）/ iOS ${ios_version_name}（build ${ios_build}）；源码提交 ${GITHUB_SHA}"
           updated_json=$(printf '%s' "$current_json" | jq \
+            --arg notes "$update_notes" \
             --arg version_name "$version_name" \
             --argjson version_code "$version_code" \
             --arg sha256 "$sha256" \
@@ -479,6 +481,7 @@ jobs:
             --arg ios_ipa_name "$ios_ipa_name" \
             --arg ios_release_url "$release_url" \
             '.version_name=$version_name
+             | .notes=$notes
              | .version_code=$version_code
              | .versionName=$version_name
              | .versionCode=$version_code

@@ -56,6 +56,7 @@ import re
 import shutil
 import subprocess
 from io import BytesIO
+from collections import OrderedDict
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -135,10 +136,141 @@ DESTINATIONS = [
 ]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
-# 内存缩略图缓存 (path+thumb -> bytes)
-THUMB_CACHE: Dict[str, bytes] = {}
+# 内存缩略图缓存 (cache_key -> bytes)，带 LRU 淘汰。
+# ⚠️ 2026-09-20 修复：此前 THUMB_CACHE 只有声明、从未被读取（死代码），
+#    每个缩略图请求都要读磁盘、冷缓存时还要跑 PIL，是手机端「一直在读取」的放大器。
+THUMB_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 THUMB_CACHE_LOCK = threading.Lock()
 MAX_CACHE_ENTRIES = 500
+
+# 同一张图并发生成去重：手机端一屏会同时要几十张图，无去重时会同时对同一文件跑 PIL（CPU 密集）
+THUMB_INFLIGHT: Dict[str, threading.Lock] = {}
+THUMB_INFLIGHT_LOCK = threading.Lock()
+
+# 缩略图链路健康计数（供 /api/online/status 一眼诊断，避免同类静默失败再次发生）
+THUMB_STATS: Dict[str, int] = {"memoryHit": 0, "diskHit": 0, "generated": 0, "fallbackOriginal": 0}
+THUMB_STATS_LOCK = threading.Lock()
+
+
+def _thumb_stat(key: str, delta: int = 1) -> None:
+    with THUMB_STATS_LOCK:
+        THUMB_STATS[key] = THUMB_STATS.get(key, 0) + delta
+
+
+def thumb_cache_get(key: str) -> Optional[bytes]:
+    """取内存缩略图缓存（命中即刷新 LRU 位置）。"""
+    with THUMB_CACHE_LOCK:
+        data = THUMB_CACHE.get(key)
+        if data is not None:
+            THUMB_CACHE.move_to_end(key)
+        return data
+
+
+def thumb_cache_put(key: str, data: bytes) -> None:
+    """写内存缩略图缓存，超限按 LRU 淘汰。"""
+    with THUMB_CACHE_LOCK:
+        THUMB_CACHE[key] = data
+        THUMB_CACHE.move_to_end(key)
+        while len(THUMB_CACHE) > MAX_CACHE_ENTRIES:
+            THUMB_CACHE.popitem(last=False)
+
+
+def _inflight_lock(key: str) -> threading.Lock:
+    """取某个缓存键的专属互斥锁（保证同一张图只被生成一次）。"""
+    with THUMB_INFLIGHT_LOCK:
+        lock = THUMB_INFLIGHT.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            THUMB_INFLIGHT[key] = lock
+        return lock
+
+
+def build_thumbnail_bytes(img_path: str, mtime: float) -> Optional[bytes]:
+    """生成 320×320 缩略图字节（内存 → 磁盘 → PIL 三级，同级并发去重）。
+
+    返回 None 表示「本机无法生成缩略图」（通常是 Pillow 缺失），调用方据此走显式降级，
+    而不是静默把几 MB 的原图当成缩略图发出去。
+    """
+    cache_key = hashlib.md5(f"{img_path}_{mtime}".encode("utf-8")).hexdigest()
+
+    data = thumb_cache_get(cache_key)
+    if data is not None:
+        _thumb_stat("memoryHit")
+        return data
+
+    disk_path = os.path.join(DISK_THUMB_DIR, cache_key + ".jpg")
+    if os.path.isfile(disk_path):
+        try:
+            with open(disk_path, "rb") as fp:
+                data = fp.read()
+            thumb_cache_put(cache_key, data)
+            _thumb_stat("diskHit")
+            return data
+        except Exception:
+            pass
+
+    if not HAS_PIL:
+        _thumb_stat("fallbackOriginal")
+        return None
+
+    # 单飞：并发的同一张图只让一个线程真正跑 PIL，其余等结果
+    with _inflight_lock(cache_key):
+        data = thumb_cache_get(cache_key)          # 等锁期间别人可能已经生成好了
+        if data is not None:
+            _thumb_stat("memoryHit")
+            return data
+        if os.path.isfile(disk_path):
+            try:
+                with open(disk_path, "rb") as fp:
+                    data = fp.read()
+                thumb_cache_put(cache_key, data)
+                _thumb_stat("diskHit")
+                return data
+            except Exception:
+                pass
+        try:
+            with Image.open(img_path) as im:
+                im.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                buf = BytesIO()
+                im.convert("RGB").save(buf, format="JPEG", quality=82)
+                data = buf.getvalue()
+        except Exception as e:
+            print(f"[Thumb] 生成失败 {img_path}: {e}")
+            _thumb_stat("fallbackOriginal")
+            return None
+
+        thumb_cache_put(cache_key, data)
+        try:
+            with open(disk_path, "wb") as fp:
+                fp.write(data)
+        except Exception:
+            pass
+        _thumb_stat("generated")
+        return data
+
+
+def thumbnail_health() -> Dict[str, Any]:
+    """缩略图链路健康快照（/api/online/status 暴露，供运维与手机端自检）。"""
+    try:
+        disk_files = len(os.listdir(DISK_THUMB_DIR))
+    except Exception:
+        disk_files = -1
+    with THUMB_STATS_LOCK:
+        stats = dict(THUMB_STATS)
+    with THUMB_CACHE_LOCK:
+        mem_entries = len(THUMB_CACHE)
+    return {
+        "ok": bool(HAS_PIL),
+        "pil": bool(HAS_PIL),
+        "pilVersion": getattr(Image, "__version__", "") if HAS_PIL else "",
+        "thumbSize": 320,
+        "memoryCacheEntries": mem_entries,
+        "memoryCacheLimit": MAX_CACHE_ENTRIES,
+        "diskCacheDir": DISK_THUMB_DIR,
+        "diskCacheFiles": disk_files,
+        "stats": stats,
+        "hint": "" if HAS_PIL else "Pillow 未安装：thumb=1 会降级返回原图，请在该服务的解释器里 pip install Pillow",
+    }
 
 
 def get_local_ip() -> str:
@@ -244,6 +376,8 @@ class WorkScanner:
         # 在线回收站各 Tab 的列表缓存：{folder: (时间戳, 作品列表)}
         # 阶段库作品数可达 500+，每条都要读文案文件，不缓存的话手机每次切 Tab 都要等 1.5s+
         self._stage_cache: Dict[str, Any] = {}
+        # 「文件名 -> 绝对路径」索引：兼容 iOS 旧契约 /api/online/image?path=<文件名>
+        self._image_name_index: Optional[Dict[str, str]] = None
 
     def _iter_work_dirs(self, base: str):
         """遍历某个阶段库下的作品目录，兼容「作品集_xxx[转]」这类中间层。
@@ -326,6 +460,56 @@ class WorkScanner:
                     self._moved_works[w["id"]] = w
                     return w
         return None
+
+    def resolve_image_path(self, raw: str) -> Optional[str]:
+        """把客户端传来的图片定位信息解析成本机绝对路径。
+
+        支持三种形态（按 iOS 旧契约兼容，2026-09-20 补）：
+        1. 绝对路径（必须在成品库根目录内，防目录穿越）；
+        2. 相对成品库根目录的路径，如「_已发送1次（微信公众号可发）/xxx/P1.png」；
+        3. 裸文件名，如「P1_封面.png」——回退到作品库文件名索引里查。
+
+        返回 None 表示无法定位或不安全。
+        """
+        raw = (raw or "").strip().replace("\\", "/")
+        if not raw:
+            return None
+        root = os.path.realpath(self.root)
+
+        def _inside(p: str) -> bool:
+            rp = os.path.realpath(p)
+            return rp == root or rp.startswith(root + os.sep)
+
+        cand = raw if os.path.isabs(raw) else os.path.join(root, raw)
+        if _inside(cand) and os.path.isfile(cand):
+            return os.path.realpath(cand)
+
+        # 裸文件名 → 作品库索引
+        if "/" not in raw:
+            hit = self.image_name_index().get(raw)
+            if hit and os.path.isfile(hit):
+                return hit
+        return None
+
+    def image_name_index(self, rebuild: bool = False) -> Dict[str, str]:
+        """构建「文件名 -> 绝对路径」索引（只读快照，供路径兜底解析用）。
+
+        数据源是已扫描到的作品表（_works_by_id + _moved_works），因此调用前必须先拉过
+        作品列表——这正好是手机端取图的真实时序。同名文件只保留首个命中。
+        """
+        with self._lock:
+            if self._image_name_index is None or rebuild:
+                idx: Dict[str, str] = {}
+                for w in list(self._works_by_id.values()) + list(self._moved_works.values()):
+                    base = w.get("path") or ""
+                    if not base:
+                        continue
+                    for fn in (w.get("images") or []):
+                        fp = os.path.join(base, fn)
+                        if fn not in idx and os.path.isfile(fp):
+                            idx[fn] = fp
+                self._image_name_index = idx
+            return dict(self._image_name_index)
 
     def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -712,6 +896,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 ],
                 "phoneSyncApi": "/api/online/sync-phone-counts",
                 "phonePanelApi": "/api/online/phones",
+                # 缩略图链路自检：2026-09-20 曾因「进程跑的是旧代码 / Pillow 缺失」导致
+                # thumb=1 静默回落成几 MB 原图，手机端在线回收站直接卡死。此字段让运维
+                # 一条命令就能看出缩略图是否真的在生效，不再靠用户体感发现。
+                "thumbnail": thumbnail_health(),
             }
             self.send_json(200, data)
             return
@@ -883,19 +1071,28 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/api/online/image":
             work_id = query.get("id", [""])[0]
             file_name = query.get("file", [""])[0]
+            raw_path = query.get("path", [""])[0]
             thumb = query.get("thumb", ["0"])[0] == "1"
 
-            if not work_id or not file_name:
-                self.send_error(400, "Missing id or file")
+            img_path = ""
+            if work_id and file_name:
+                target_work = self.scanner.get_work(work_id)
+                if not target_work:
+                    self.send_error(404, "Work not found")
+                    return
+                img_path = os.path.join(target_work["path"], file_name)
+            elif raw_path:
+                # iOS 旧契约：只带 ?path=（裸文件名 / 相对 / 绝对路径）
+                img_path = self.scanner.resolve_image_path(raw_path) or ""
+                if not img_path:
+                    # 索引可能还没建全（未先拉列表），重建一次再试
+                    self.scanner.image_name_index(rebuild=True)
+                    img_path = self.scanner.resolve_image_path(raw_path) or ""
+            else:
+                self.send_error(400, "Missing id+file or path")
                 return
 
-            target_work = self.scanner.get_work(work_id)
-            if not target_work:
-                self.send_error(404, "Work not found")
-                return
-
-            img_path = os.path.join(target_work["path"], file_name)
-            if not os.path.exists(img_path):
+            if not img_path or not os.path.isfile(img_path):
                 self.send_error(404, "Image file not found")
                 return
 
@@ -906,29 +1103,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             data = None
             mime = "image/jpeg"
+            degraded = False
 
             if thumb:
-                cache_file_name = hashlib.md5(f"{img_path}_{mtime}".encode("utf-8")).hexdigest() + ".jpg"
-                cache_file_path = os.path.join(DISK_THUMB_DIR, cache_file_name)
-                if os.path.isfile(cache_file_path):
-                    try:
-                        with open(cache_file_path, "rb") as fp:
-                            data = fp.read()
-                    except Exception:
-                        data = None
-
-                if data is None and HAS_PIL:
-                    try:
-                        with Image.open(img_path) as im:
-                            im.thumbnail((320, 320), Image.Resampling.LANCZOS)
-                            buf = BytesIO()
-                            rgb_im = im.convert("RGB")
-                            rgb_im.save(buf, format="JPEG", quality=82)
-                            data = buf.getvalue()
-                        with open(cache_file_path, "wb") as fp:
-                            fp.write(data)
-                    except Exception:
-                        data = None
+                data = build_thumbnail_bytes(img_path, mtime)
+                if data is None:
+                    # 本机无法生成缩略图（通常是 Pillow 缺失）：显式降级为原图 + 明确标记，
+                    # 客户端与运维都能一眼看出「缩略图链路挂了」，不会再静默发几 MB 原图。
+                    degraded = True
+                    print(f"[Thumb] !! 缩略图不可用，已降级返回原图：{img_path}")
 
             if data is None:
                 try:
@@ -944,6 +1127,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "public, max-age=86400")
             self.send_header("Connection", "close")
+            if thumb:
+                # 健康标记：手机端可据此提示「电脑端缩略图未启用」；X-Thumb-Fallback=1 表示发的是原图
+                self.send_header("X-Thumb", "fallback" if degraded else "ok")
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(data)

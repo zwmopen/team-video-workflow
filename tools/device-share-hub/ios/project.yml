@@ -28,8 +28,8 @@ targets:
         # via CFBundleDisplayName, avoiding IPA ZIP filename encoding failures.
         PRODUCT_NAME: Album
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 87
-        MARKETING_VERSION: 0.8.16
+        CURRENT_PROJECT_VERSION: 88
+        MARKETING_VERSION: 0.8.17
         SWIFT_OBJC_BRIDGING_HEADER: Album/Album-Bridging-Header.h
         OTHER_LDFLAGS: "$(inherited) -lz"
     info:

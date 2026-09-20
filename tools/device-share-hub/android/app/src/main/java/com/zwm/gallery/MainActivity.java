@@ -89,6 +89,17 @@ public final class MainActivity extends Activity {
         thread.setPriority(Thread.MIN_PRIORITY);
         return thread;
     });
+
+    // ── 在线缩略图「整页调度器」────────────────────────────────────────────
+    // 2026-09-20：在线列表一屏几百张卡片，旧实现每张卡片前 4 张图立刻发请求
+    // （382 作品 → 1500+ 请求同时压进 4 线程池），手机端直接卡在「正在读取…」。
+    // 现在整页只给固定「首发预算」，其余入队按节拍渐进放行，UI 先出骨架再补图。
+    private static final int ONLINE_THUMB_BURST_BUDGET = 18;
+    private static final int ONLINE_THUMB_DRAIN_STEP = 6;
+    private static final long ONLINE_THUMB_DRAIN_INTERVAL_MS = 260L;
+    private final ArrayDeque<Runnable> onlineThumbPending = new ArrayDeque<>();
+    private int onlineThumbBurst = ONLINE_THUMB_BURST_BUDGET;
+    private boolean onlineThumbDraining = false;
     private final Set<String> pendingTrashIds = Collections.synchronizedSet(new HashSet<>());
     private static final String PREFS = "device_share";
     private static final String PREF_TREE_URI = "libraryTreeUri";
@@ -2969,6 +2980,7 @@ public final class MainActivity extends Activity {
 
     private void renderOnlineRecycleCards() {
         if (!isOnlineMode || !showingOnlineRecycle) return;
+        resetOnlineThumbScheduler();
         worksContainer.removeAllViews();
         scannedCountText.setText(String.valueOf(onlineRecycleWorks.size()));
 
@@ -3277,6 +3289,7 @@ public final class MainActivity extends Activity {
 
     private void renderOnlineWorksCards(List<OnlineWorkEntry> entries, boolean animate) {
         if (!isOnlineMode || showingTrash || showingOnlineRecycle) return;
+        resetOnlineThumbScheduler();
         LayoutTransition transition = worksContainer.getLayoutTransition();
         if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();
@@ -3760,7 +3773,6 @@ public final class MainActivity extends Activity {
 
         int thumbW = dp(84);
         int thumbH = dp(112);
-        List<Runnable> deferredLoads = new ArrayList<>();
 
         for (int i = 0; i < images.size(); i++) {
             String imageName = images.get(i);
@@ -3779,7 +3791,7 @@ public final class MainActivity extends Activity {
             } else {
                 thumbView.setTag(cacheKey);
                 final String finalCacheKey = cacheKey;
-                Runnable task = () -> onlineClient.loadThumbnail(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                scheduleOnlineThumb(() -> onlineClient.loadThumbnail(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
                     @Override
                     public void onSuccess(Bitmap result) {
                         if (result != null && !result.isRecycled()) {
@@ -3792,13 +3804,7 @@ public final class MainActivity extends Activity {
 
                     @Override
                     public void onError(Exception error) {}
-                });
-
-                if (i < 4) {
-                    task.run();
-                } else {
-                    deferredLoads.add(task);
-                }
+                }));
             }
 
             final int imgIndex = i;
@@ -3806,19 +3812,43 @@ public final class MainActivity extends Activity {
             strip.addView(thumbView, params);
         }
 
-        if (!deferredLoads.isEmpty()) {
-            scroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                if (scrollX > dp(20)) {
-                    scroll.setOnScrollChangeListener(null);
-                    for (Runnable task : deferredLoads) {
-                        task.run();
-                    }
-                }
-            });
-        }
-
         scroll.addView(strip);
         return scroll;
+    }
+
+    /** 整页渲染开始时重置首发预算：只让最先出现的少量缩略图立刻加载。 */
+    private void resetOnlineThumbScheduler() {
+        onlineThumbBurst = ONLINE_THUMB_BURST_BUDGET;
+    }
+
+    /** 提交一个在线缩略图加载任务：预算内立即执行，超出则入队按节拍渐进放行。 */
+    private void scheduleOnlineThumb(Runnable task) {
+        if (onlineThumbBurst > 0) {
+            onlineThumbBurst--;
+            task.run();
+            return;
+        }
+        onlineThumbPending.add(task);
+        if (!onlineThumbDraining) {
+            onlineThumbDraining = true;
+            uiHandler.postDelayed(this::drainOnlineThumbs, ONLINE_THUMB_DRAIN_INTERVAL_MS);
+        }
+    }
+
+    /** 每拍放行少量任务，既不压死线程池，也能在不滚动时把整页图片补完。 */
+    private void drainOnlineThumbs() {
+        int n = 0;
+        while (n < ONLINE_THUMB_DRAIN_STEP && !onlineThumbPending.isEmpty()) {
+            Runnable task = onlineThumbPending.poll();
+            if (task == null) break;
+            task.run();
+            n++;
+        }
+        if (!onlineThumbPending.isEmpty()) {
+            uiHandler.postDelayed(this::drainOnlineThumbs, ONLINE_THUMB_DRAIN_INTERVAL_MS);
+        } else {
+            onlineThumbDraining = false;
+        }
     }
 
     private void showOnlineImageDialog(OnlineWorkEntry work, int imageIndex) {

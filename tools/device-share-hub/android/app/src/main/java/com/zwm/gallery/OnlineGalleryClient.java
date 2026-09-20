@@ -44,6 +44,28 @@ public final class OnlineGalleryClient {
     private static final int TIMEOUT_MS = 15000;
     private final Context context;
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    /**
+     * 缩略图专用线程池（2026-09-20 新增）：
+     * 旧实现把缩略图与列表/分类/操作请求塞进同一个 4 线程池，几百张缩略图一进来，
+     * 列表请求就排在它们后面，界面长时间卡在「正在读取…」。
+     */
+    private final ExecutorService thumbExecutor = Executors.newFixedThreadPool(8, r -> {
+        Thread t = new Thread(r, "online-thumb");
+        t.setDaemon(true);
+        return t;
+    });
+    /** 在途缩略图请求去重：(workId::fileName) -> 等待回调列表，同一张图只发一次网络请求 */
+    private final java.util.concurrent.ConcurrentHashMap<String, List<Callback<Bitmap>>> inflightThumbs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final Object thumbLock = new Object();
+    /** 缩略图磁盘缓存目录名：二次进入在线列表几乎零流量 */
+    private static final String THUMB_CACHE_DIR = "online_thumbs";
+    /** 缩略图体积上限：超过这个大小说明服务端没生成缩略图（降级发了原图），不写进缩略图缓存 */
+    private static final int THUMB_MAX_BYTES = 512 * 1024;
+    private static final int THUMB_CONNECT_TIMEOUT_MS = 4000;
+    private static final int THUMB_READ_TIMEOUT_MS = 8000;
+    /** 缩略图解码目标边长（px）：卡片显示约 84×112dp，3x 屏约 336px，取 384 留余量 */
+    private static final int THUMB_TARGET_PX = 384;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile String cachedBaseUrl = null;
 
@@ -637,45 +659,155 @@ public final class OnlineGalleryClient {
         });
     }
 
-    public void loadThumbnail(String workId, String fileName, Callback<Bitmap> callback) {
-        executor.execute(() -> {
-            HttpURLConnection conn = null;
-            try {
-                String baseUrl = resolveBaseUrl();
-                String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
-                        + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=1";
-                URL url = new URL(uStr);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestProperty("Connection", "close");
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(8000);
-                int code = conn.getResponseCode();
-                if (code != 200) {
-                    throw new Exception("HTTP " + code);
-                }
-                InputStream in = new BufferedInputStream(conn.getInputStream());
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                byte[] buf = new byte[8192];
-                int len;
-                while ((len = in.read(buf)) != -1) {
-                    baos.write(buf, 0, len);
-                }
-                in.close();
-                byte[] imgBytes = baos.toByteArray();
-                BitmapFactory.Options opts = new BitmapFactory.Options();
-                opts.inPreferredConfig = Bitmap.Config.RGB_565;
-                Bitmap bmp = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length, opts);
+    /**
+     * 拉取在线缩略图（三级取图：磁盘缓存 → 网络；同一张图的在途请求自动合并）。
+     *
+     * 2026-09-20 改造要点：
+     * 1. 走独立的 thumbExecutor（8 线程），不再和列表请求抢同一个 4 线程池；
+     * 2. 新增磁盘缓存，二次进入在线列表不再重复下载；
+     * 3. 同一 (workId, fileName) 并发只发一次请求，结果广播给所有等待者；
+     * 4. 解码按目标尺寸降采样，避免服务端降级发原图时把内存打爆。
+     */
+    public void loadThumbnail(final String workId, final String fileName, final Callback<Bitmap> callback) {
+        final String key = workId + "::" + fileName;
+        synchronized (thumbLock) {
+            List<Callback<Bitmap>> waiters = inflightThumbs.get(key);
+            if (waiters != null) {
+                waiters.add(callback);
+                return;
+            }
+            List<Callback<Bitmap>> list = new ArrayList<>();
+            list.add(callback);
+            inflightThumbs.put(key, list);
+        }
+        thumbExecutor.execute(() -> doLoadThumbnail(key, workId, fileName));
+    }
+
+    private void doLoadThumbnail(String key, String workId, String fileName) {
+        Bitmap bmp = null;
+        Exception err = null;
+        File diskFile = new File(thumbCacheDir(), getDiskCacheKey(workId, fileName));
+        try {
+            // 1) 磁盘缓存
+            if (diskFile.exists() && diskFile.length() > 512) {
+                bmp = decodeThumbFile(diskFile);
+            }
+            // 2) 网络
+            if (bmp == null) {
+                byte[] imgBytes = downloadThumb(workId, fileName, diskFile);
+                bmp = decodeThumbBytes(imgBytes);
                 if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
-                mainHandler.post(() -> callback.onSuccess(bmp));
-            } catch (Exception e) {
-                Log.w("OnlineGalleryClient", "loadThumbnail failed for " + workId + " / " + fileName + ": " + e.getMessage());
-                mainHandler.post(() -> callback.onError(e));
-            } finally {
-                if (conn != null) {
-                    try { conn.disconnect(); } catch (Throwable ignored) {}
+            }
+        } catch (Exception e) {
+            err = e;
+            Log.w("OnlineGalleryClient", "loadThumbnail failed for " + workId + " / " + fileName + ": " + e.getMessage());
+        }
+
+        final Bitmap result = bmp;
+        final Exception error = err;
+        List<Callback<Bitmap>> waiters;
+        synchronized (thumbLock) {
+            waiters = inflightThumbs.remove(key);
+        }
+        if (waiters == null) return;
+        for (final Callback<Bitmap> cb : waiters) {
+            mainHandler.post(() -> {
+                if (result != null) cb.onSuccess(result);
+                else cb.onError(error != null ? error : new Exception("thumbnail unavailable"));
+            });
+        }
+    }
+
+    /** 下载缩略图字节；确实是缩略图（体积合理）才写入磁盘缓存，避免把降级原图写进缓存。 */
+    private byte[] downloadThumb(String workId, String fileName, File diskFile) throws Exception {
+        HttpURLConnection conn = null;
+        try {
+            String baseUrl = resolveBaseUrl();
+            String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
+                    + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=1";
+            conn = (HttpURLConnection) new URL(uStr).openConnection();
+            conn.setRequestProperty("Connection", "close");
+            conn.setConnectTimeout(THUMB_CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(THUMB_READ_TIMEOUT_MS);
+            int code = conn.getResponseCode();
+            if (code != 200) throw new Exception("HTTP " + code);
+            String thumbState = conn.getHeaderField("X-Thumb");
+            if ("fallback".equals(thumbState)) {
+                // 服务端缩略图链路不可用（例如缺 Pillow），正在发原图。只提示不阻断，方便定位。
+                Log.w("OnlineGalleryClient", "服务端缩略图未启用，已降级返回原图（X-Thumb=fallback）");
+            }
+            InputStream in = new BufferedInputStream(conn.getInputStream());
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) != -1) {
+                baos.write(buf, 0, len);
+            }
+            in.close();
+            byte[] imgBytes = baos.toByteArray();
+            if (imgBytes.length > 0 && imgBytes.length <= THUMB_MAX_BYTES && diskFile != null) {
+                try {
+                    File dir = diskFile.getParentFile();
+                    if (dir != null && !dir.exists()) dir.mkdirs();
+                    FileOutputStream out = new FileOutputStream(diskFile);
+                    try {
+                        out.write(imgBytes);
+                    } finally {
+                        out.close();
+                    }
+                } catch (Exception ignored) {
                 }
             }
-        });
+            return imgBytes;
+        } finally {
+            if (conn != null) {
+                try { conn.disconnect(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private File thumbCacheDir() {
+        File dir = new File(context.getCacheDir(), THUMB_CACHE_DIR);
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    private Bitmap decodeThumbFile(File file) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
+            opts.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, THUMB_TARGET_PX);
+            return BitmapFactory.decodeFile(file.getAbsolutePath(), opts);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private Bitmap decodeThumbBytes(byte[] bytes) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
+            opts.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, THUMB_TARGET_PX);
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 按目标边长算 2 的幂降采样，保证解码出来的位图贴近显示尺寸（卡片缩略图约 84×112dp）。 */
+    private static int sampleSize(int width, int height, int targetPx) {
+        int sample = 1;
+        if (width <= 0 || height <= 0) return sample;
+        while (width / (sample * 2) >= targetPx && height / (sample * 2) >= targetPx) {
+            sample *= 2;
+        }
+        return sample;
     }
 
     public static String getDiskCacheKey(String workId, String fileName) {
