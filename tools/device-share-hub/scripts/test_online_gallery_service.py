@@ -215,6 +215,28 @@ class TestCodeFreshness(unittest.TestCase):
         )
         self.assertEqual(out["scriptShaRunning"], out["scriptShaOnDisk"])
 
+    def test_judgement_is_immune_to_line_ending_changes(self):
+        """行尾符从 LF 变 CRLF（代码内容没变）→ 不得报 stale。
+
+        本仓库 core.autocrlf=true，一次 git checkout / git pull 就会把工作区文件
+        从 LF 改写成 CRLF。若不归一化行尾就做内容哈希，staleCode 会因这种
+        纯字节差异误报并一直亮着，久而久之就没人看这个信号了。
+        实测：checkout 后原样 sha=ec52055b6144，归一化后=212f2a86b697（与 HEAD 一致）。
+        """
+        with open(self.src, "rb") as fp:
+            body = fp.read().replace(b"\r\n", b"\n")
+        self.assertIn(b"\n", body)
+        crlf = body.replace(b"\n", b"\r\n")
+        with open(self.dst, "wb") as fp:
+            fp.write(crlf)                       # 只改行尾，不改任何代码内容
+
+        out = self.mod.code_freshness()
+        self.assertFalse(
+            out["staleCode"],
+            "仅行尾符不同就报 staleCode=True —— 会产生长期噪声，等于又造一道假闸门",
+        )
+        self.assertEqual(out["scriptShaRunning"], out["scriptShaOnDisk"])
+
     def test_fingerprint_helper_degrades_safely(self):
         """指纹函数对不存在的路径必须安全降级，不能抛异常。"""
         mtime, sha = self.mod._script_fingerprint(

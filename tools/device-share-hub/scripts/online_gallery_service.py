@@ -75,14 +75,25 @@ SCRIPT_PATH = os.path.abspath(__file__)
 
 
 def _script_fingerprint(path: str) -> "tuple[float, str]":
-    """取脚本指纹 (mtime, sha12)；读不到时返回 (0.0, "")。"""
+    """取脚本指纹 (mtime, sha12)；读不到时返回 (0.0, "")。
+
+    ⚠️ 计算 sha 前**必须归一化行尾符**（CRLF -> LF）。
+    本仓库 `core.autocrlf=true`，git 把工作区文件写成 CRLF、对象库存 LF，
+    一次 `git checkout` / `git pull` 就会在**代码内容完全没变**的情况下改变文件字节。
+    不归一化的话，staleCode 会因这种纯行尾差异误报并一直亮着，
+    久而久之就没人再看这个信号了 —— 等于又造了一道噪声闸门。
+
+    实测证据（2026-09-20）：`git checkout` 后磁盘文件原样 sha = ec52055b6144，
+    归一化 LF 后 = 212f2a86b697，与 HEAD 内容 / 服务启动快照完全一致。
+    """
     try:
         mtime = os.path.getmtime(path)
     except Exception:
         mtime = 0.0
     try:
         with open(path, "rb") as _fp:
-            sha = hashlib.sha1(_fp.read()).hexdigest()[:12]
+            raw = _fp.read().replace(b"\r\n", b"\n")     # 归一化行尾，见上方说明
+        sha = hashlib.sha1(raw).hexdigest()[:12]
     except Exception:
         sha = ""
     return mtime, sha
