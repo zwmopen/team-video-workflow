@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 import zlib
+import csv
 
 DEFAULT_BASE = "http://127.0.0.1:45835"
 DEFAULT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
@@ -28,6 +29,9 @@ GARBAGE = "_垃圾作品（后续参考分析）"
 FIX_PREFIX = "ZZ_回收站回归测试"
 FIX_GARBAGE = FIX_PREFIX + "_垃圾"
 FIX_SENT = FIX_PREFIX + "_已使用"
+# 合集场景：作品原本住在「已发送0次/作品集_ZZ回归测试」里
+ALBUM_PREFIX = "作品集_ZZ回归测试"
+FIX_ALBUM_WORK = FIX_PREFIX + "_合集内作品"
 
 
 def _png_bytes(w=8, h=8):
@@ -75,6 +79,46 @@ def make_fixture(root, stage_folder, name, use_count, garbage=False, remark=""):
     return path
 
 
+def make_album_fixture(root, work_name, use_count=0):
+    """造一个原本住在「已发送0次/作品集_xxx」合集里的作品，并模拟被移到 _已发送1次。
+
+    同时补一条移动日志 —— 「恢复」靠它反查原位，才能把作品放回自己的合集，
+    而不是抖到 已发送0次 根目录。
+    """
+    album = os.path.join(root, STAGE0, ALBUM_PREFIX)
+    work_path = os.path.join(album, work_name)
+    if os.path.isdir(work_path):
+        shutil.rmtree(work_path)
+    os.makedirs(work_path)
+    with open(os.path.join(work_path, "01.png"), "wb") as fp:
+        fp.write(_png_bytes())
+    with open(os.path.join(work_path, "文案.txt"), "w", encoding="utf-8") as fp:
+        fp.write("合集内作品回归测试文案，测试结束自动清理。")
+    with open(os.path.join(work_path, "manifest.json"), "w", encoding="utf-8") as fp:
+        json.dump({"id": work_name, "title": work_name}, fp, ensure_ascii=False, indent=2)
+    with open(os.path.join(work_path, "作品标签.json"), "w", encoding="utf-8") as fp:
+        json.dump({"distribution": {"useCount": use_count, "dispatchedTo": ["dev"] * use_count,
+                                    "status": "已使用%d次" % use_count}},
+                  fp, ensure_ascii=False, indent=2)
+
+    sent_path = os.path.join(root, STAGE1, work_name)
+    if os.path.isdir(sent_path):
+        shutil.rmtree(sent_path)
+    shutil.move(work_path, sent_path)
+
+    log_dir = os.path.join(root, "_portfolio_move_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "delete_move_log_%s.csv" % time.strftime("%Y%m"))
+    header_needed = not os.path.exists(log_file)
+    with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
+        writer = csv.writer(fp)
+        if header_needed:
+            writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型"])
+        writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), "regression-test", work_name,
+                         work_path, sent_path, use_count, "use_auto_dispatched"])
+    return work_path, sent_path
+
+
 def cleanup(root):
     """删掉所有回归测试夹具（含恢复后落到「已发送0次」的副本）。"""
     removed = []
@@ -83,8 +127,13 @@ def cleanup(root):
         if not os.path.isdir(base):
             continue
         for entry in os.listdir(base):
-            if entry.startswith(FIX_PREFIX):
-                target = os.path.join(base, entry)
+            target = os.path.join(base, entry)
+            if entry.startswith(FIX_PREFIX) or entry.startswith(ALBUM_PREFIX):
+                shutil.rmtree(target, ignore_errors=True)
+                removed.append(target)
+                continue
+            # 合集本身也要清（里面的夹具已被上一轮删掉，可能剩空壳）
+            if entry.startswith(ALBUM_PREFIX) and os.path.isdir(target):
                 shutil.rmtree(target, ignore_errors=True)
                 removed.append(target)
     return removed
@@ -140,6 +189,7 @@ def run(base=DEFAULT_BASE, root=DEFAULT_ROOT, verbose=True):
         cleanup(root)
         make_fixture(root, GARBAGE, FIX_GARBAGE, 0, garbage=True, remark="初始夹具备注")
         make_fixture(root, STAGE1, FIX_SENT, 3)
+        album_home, album_sent = make_album_fixture(root, FIX_ALBUM_WORK, 1)
 
         log("[1] 已标记垃圾 Tab 列表 + 备注读取")
         status, data = api.recycle("garbage", refresh=True)
@@ -216,6 +266,17 @@ def run(base=DEFAULT_BASE, root=DEFAULT_ROOT, verbose=True):
         log("[7] 不存在的作品应返回 404")
         status, data = api.call("/api/online/restore", {"workId": "ZZ_不存在的作品_xyz"})
         check(status == 404 and not data.get("ok"), "恢复不存在作品返回 404")
+
+        log("[8] 合集内作品的「恢复」应放回原作品集（而非抖到根目录）")
+        status, data = api.call("/api/online/restore", {"workId": FIX_ALBUM_WORK, "device": "regression-test"})
+        check(status == 200 and data.get("ok"), "恢复接口返回 ok")
+        check(os.path.isdir(album_home), "作品已回到原作品集合集 %s" % ALBUM_PREFIX)
+        check(not os.path.isdir(album_sent), "已从「已发送1次」移出")
+        check("原作品集合集" in (data.get("message") or ""), "返回信息说明了放回合集")
+        if os.path.isdir(album_home):
+            with open(os.path.join(album_home, "作品标签.json"), encoding="utf-8") as fp:
+                dist = json.load(fp).get("distribution", {})
+            check(int(dist.get("useCount", -1)) == 0, "合集内作品使用次数同样归零")
 
     finally:
         removed = cleanup(root)

@@ -46,6 +46,7 @@ def _setup_streams():
 _setup_streams()
 
 import json
+import csv
 import time
 import socket
 import threading
@@ -901,6 +902,54 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             msg += f"（备注：{remark}）"
         return True, target_dest, msg
 
+    def _original_parent_dir(self, work_id: str) -> Optional[str]:
+        """从移动日志里反查作品搬家前的父目录（供「恢复」放回原位）。
+
+        _已发送1次 里的作品可能原本住在「已发送0次/作品集_xxx」这类合集子目录里；
+        若直接恢复到 已发送0次 根目录，会把作品从它的合集里抖出来、破坏成品库结构。
+        _move_work_to_stage1() 会把原路径写进 _portfolio_move_logs/delete_move_log_*.csv，
+        这里反查最近一次「移出发布池」记录的原路径，取它的父目录。
+        """
+        if not work_id:
+            return None
+        log_dir = os.path.join(self.scanner.root, "_portfolio_move_logs")
+        if not os.path.isdir(log_dir):
+            return None
+        try:
+            files = [f for f in os.listdir(log_dir)
+                     if f.startswith("delete_move_log_") and f.lower().endswith(".csv")]
+        except Exception:
+            return None
+        files.sort(reverse=True)   # 文件名带年月，倒序即最新优先
+        for name in files:
+            try:
+                with open(os.path.join(log_dir, name), "r", encoding="utf-8-sig",
+                          errors="ignore", newline="") as fp:
+                    rows = list(csv.DictReader(fp))
+            except Exception:
+                continue
+            for row in reversed(rows):
+                if (row.get("作品ID") or "").strip() != work_id:
+                    continue
+                if (row.get("动作类型") or "").strip() not in ("use_auto_dispatched", "dispatched"):
+                    continue
+                src = (row.get("原路径") or "").strip()
+                parent = os.path.dirname(src) if src else ""
+                if parent:
+                    return parent
+        return None
+
+    def _is_album_dir_under_stage0(self, path: str) -> bool:
+        """path 是否为「已发送0次」下面的合集子目录（只允许恢复到这一类原位）。"""
+        try:
+            stage0 = os.path.abspath(os.path.join(self.scanner.root, self.scanner.STAGE0_FOLDER))
+            target = os.path.abspath(path)
+            if target == stage0:
+                return False
+            return os.path.commonpath([target, stage0]) == stage0
+        except Exception:
+            return False
+
     def _log_stage_move(self, root_dir: str, device_name: str, work_id: str,
                         src_path: str, dest_path: str, use_count: int,
                         action_type: str, remark: str = "") -> None:
@@ -929,6 +978,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         was_garbage = target_work.get("folder") == self.scanner.GARBAGE_FOLDER
         root_dir = self.scanner.root
         dest_base = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
+        # 若作品原本住在「已发送0次/作品集_xxx」合集里，优先放回原位，
+        # 否则会把作品从它的合集里抖到根目录，破坏成品库结构。
+        restored_to_album = False
+        home = self._original_parent_dir(work_id)
+        if home and os.path.isdir(home) and self._is_album_dir_under_stage0(home):
+            dest_base = home
+            restored_to_album = True
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -978,26 +1034,29 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 print(f"[Warn] restore tag write failed: {e}")
 
         # 2) manifest.json：清 shareCount、摘掉 garbage 块并留档
+        #    注意：不要给本来就没有 manifest.json 的作品凭空造一个，
+        #    否则会给成品库塞进只有 shareCount 的空壳，干扰其它脚本。
         manifest_file = os.path.join(target_dest, "manifest.json")
-        try:
-            manifest = {}
-            if os.path.exists(manifest_file):
-                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
-                    manifest = json.load(fp)
-            if isinstance(manifest, dict):
-                old = manifest.pop("garbage", None)
-                if isinstance(old, dict):
-                    manifest.setdefault("restore_history", []).append({
-                        "at": restored_at,
-                        "by": device_name,
-                        "from": target_work.get("stage", ""),
-                        "previousRemark": old.get("remark", ""),
-                    })
-                manifest["shareCount"] = 0
-                with open(manifest_file, "w", encoding="utf-8") as fp:
-                    json.dump(manifest, fp, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"[Warn] restore manifest write failed: {e}")
+        if os.path.exists(manifest_file) or was_garbage:
+            try:
+                manifest = {}
+                if os.path.exists(manifest_file):
+                    with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                        manifest = json.load(fp)
+                if isinstance(manifest, dict):
+                    old = manifest.pop("garbage", None)
+                    if isinstance(old, dict):
+                        manifest.setdefault("restore_history", []).append({
+                            "at": restored_at,
+                            "by": device_name,
+                            "from": target_work.get("stage", ""),
+                            "previousRemark": old.get("remark", ""),
+                        })
+                    manifest["shareCount"] = 0
+                    with open(manifest_file, "w", encoding="utf-8") as fp:
+                        json.dump(manifest, fp, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[Warn] restore manifest write failed: {e}")
 
         # 3) quality_tag.json：撤销全渠道垃圾硬拦截
         quality_file = os.path.join(target_dest, "quality_tag.json")
@@ -1030,7 +1089,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["folder"] = self.scanner.STAGE0_FOLDER
 
         label = "垃圾样本库" if was_garbage else "已发送1次"
-        return True, target_dest, f"已从「{label}」恢复：移回「已发送0次（抖音小红书可发）」，使用次数归零，可重新发布"
+        where = "原作品集合集" if restored_to_album else "「已发送0次（抖音小红书可发）」"
+        return True, target_dest, f"已从「{label}」恢复：移回{where}，使用次数归零，可重新发布"
 
     def _annotate_garbage(self, target_work: Dict[str, Any], remark: str, device_name: str) -> Tuple[bool, str]:
         """给垃圾作品写/改人工判断备注（quality_tag.json + manifest.json 同时落盘）。"""
