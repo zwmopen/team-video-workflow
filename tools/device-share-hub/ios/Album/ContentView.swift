@@ -19,6 +19,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var onlineCategories: [OnlineCategoryItem] = []
     private var selectedOnlineCategory: String = "全部"
     private var modeButton: UIButton!
+    private var folderItem: UIBarButtonItem?
     private let prefOnlineModeKey = "pref_is_online_mode"
     /// 自动发现节流：用「15 秒冷却」代替「一次性开关」，失败后可反复重试
     private var autoDiscovering = false
@@ -95,15 +96,53 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         modeButton.addGestureRecognizer(longPress)
         updateModeButtonStyle()
 
-        let modeItem = UIBarButtonItem(customView: modeButton)
-        let planeItem = toolbarItem(.plane, label: "传送文件", action: #selector(openTransfer))
-        let trashItem = toolbarItem(.trash, label: "回收站", action: #selector(openTrash))
-        let settingsItem = toolbarItem(.settings, label: "设置", action: #selector(openSettings))
+        // 顶栏右侧：与安卓严格一致，从左到右依次为
+        // 传送文件 → 来源模式(手机本地/电脑在线) → 回收站 → 设置
+        // 这里用 UIStackView 显式排布，而不是 rightBarButtonItems 数组 ——
+        // 后者「数组顺序 ↔ 屏幕左右顺序」的语义容易搞反，无法在本机验证 iOS 渲染，
+        // 用 StackView 可以确保与安卓逐像素对齐。
+        modeButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            modeButton.widthAnchor.constraint(equalToConstant: 34),
+            modeButton.heightAnchor.constraint(equalToConstant: 34)
+        ])
+        let rightRow = UIStackView(arrangedSubviews: [
+            toolbarButton(.plane, label: "传送文件", action: #selector(openTransfer)),
+            modeButton,
+            toolbarButton(.trash, label: "回收站", action: #selector(openTrash)),
+            toolbarButton(.settings, label: "设置", action: #selector(openSettings))
+        ])
+        rightRow.axis = .horizontal
+        rightRow.spacing = 8
+        rightRow.alignment = .center
+        rightRow.distribution = .fill
 
-        navigationItem.leftBarButtonItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
-        // 与安卓顶栏严格一致（从左到右）：文件浏览 → 传送文件 → 回收站 → 设置 → 在线相册模式按钮（最右）
-        // 注意：rightBarButtonItems 数组首个元素显示在最右侧
-        navigationItem.rightBarButtonItems = [modeItem, settingsItem, trashItem, planeItem]
+        let folderItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
+        self.folderItem = folderItem
+        navigationItem.leftBarButtonItem = folderItem
+        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: rightRow)
+        updateFolderItemVisibility()
+    }
+
+    /// 与安卓一致：在线相册模式下隐藏「文件浏览」入口
+    private func updateFolderItemVisibility() {
+        folderItem?.customView?.isHidden = isOnlineMode
+    }
+
+    private func toolbarButton(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = view.tintColor.withAlphaComponent(0.11)
+        button.layer.cornerRadius = 11
+        button.setImage(AlbumToolbarIcon.image(symbol, color: view.tintColor), for: .normal)
+        button.imageView?.contentMode = .scaleAspectFit
+        button.accessibilityLabel = label
+        button.addTarget(self, action: action, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 34),
+            button.heightAnchor.constraint(equalToConstant: 34)
+        ])
+        return button
     }
 
     private func updateModeButtonStyle() {
@@ -126,6 +165,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         isOnlineMode.toggle()
         UserDefaults.standard.set(isOnlineMode, forKey: prefOnlineModeKey)
         updateModeButtonStyle()
+        updateFolderItemVisibility()
         if isOnlineMode {
             showToast("已切换到：💻 电脑在线相册")
             loadOnlineData()
