@@ -65,6 +65,10 @@ try:
 except ImportError:
     HAS_PIL = False
 
+# 手机端「使用次数」回读同步 + 局域网手机在线探测（见 phone_sync.py 顶部注释）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import phone_sync  # noqa: E402
+
 DEFAULT_PORT = 45835
 DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
 
@@ -547,6 +551,12 @@ class WorkScanner:
 
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
     scanner: WorkScanner = None
+    # 手机在线发现缓存（30s TTL）：面板与「顺手回读」共用，避免每次请求都全量扫网段
+    phone_cache = phone_sync.DiscoverCache()
+    # 「顺手回读」每台手机的冷却时间，防止手机每次轮询都触发一次同步
+    _phone_sync_lock = threading.Lock()
+    _phone_sync_last: Dict[str, float] = {}
+    PHONE_SYNC_COOLDOWN = 300.0
 
     def log_message(self, format, *args):
         # 彻底静默 HTTP 高频请求日志（如大量缩略图拉取），杜绝控制台刷屏与I/O开销
@@ -574,6 +584,104 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             pass
 
+    # ── 手机次数回读同步 / 在线探测（见 phone_sync.py）─────────────────
+    def _computer_works_index(self, force: bool = False) -> Dict[str, Dict[str, Any]]:
+        """电脑端全部作品的 id -> work 索引（三个阶段库都收进来）。
+
+        在线相册只暴露 stage0，但回读同步要能覆盖「已发送1次 / 垃圾样本库」，
+        否则手机端对已发送作品追加的分享次数会被判成「找不到对应作品」而丢失。
+        """
+        index: Dict[str, Dict[str, Any]] = {}
+        s = self.scanner
+        try:
+            for w in s.scan(force=force):
+                if w.get("id"):
+                    index.setdefault(w["id"], w)
+        except Exception:
+            pass
+        for folder, stage, base in (
+            (s.STAGE1_FOLDER, "已发送1次", 1),
+            (s.GARBAGE_FOLDER, "已废弃-垃圾", 0),
+        ):
+            try:
+                for w in s.list_stage_works(folder, stage, base, force=force):
+                    if w.get("id"):
+                        index.setdefault(w["id"], w)
+            except Exception:
+                pass
+        return index
+
+    def _run_phone_sync(self, hosts: List[str], dry_run: bool = False) -> Dict[str, Any]:
+        """对给定手机列表执行「次数回读同步」（只补次数，绝不搬文件）。"""
+        index = self._computer_works_index()
+        log_dir = os.path.join(self.scanner.root, "_portfolio_move_logs")
+        results: List[Dict[str, Any]] = []
+        total_applied = 0
+
+        for host in hosts:
+            ip, port = phone_sync.normalize_host(host)
+            label = f"{ip}:{port}"
+            ok, works, err = phone_sync.fetch_phone_works(ip, port)
+            if not ok:
+                results.append({
+                    "phone": label, "ok": False,
+                    "error": err or "手机相册服务不可达（确认同网段且相册 App 在前台）",
+                    "appliedCount": 0,
+                })
+                continue
+            rep = phone_sync.sync_phone_counts(
+                index, works, phone_label=label, dry_run=dry_run, log_dir=log_dir)
+            rep["ok"] = True
+            results.append(rep)
+            total_applied += rep.get("appliedCount", 0)
+
+        if total_applied and not dry_run:
+            self.scanner.scan(force=True)
+
+        return {
+            "ok": True,
+            "dryRun": bool(dry_run),
+            "phoneCount": len(hosts),
+            "appliedCount": total_applied,
+            "results": results,
+        }
+
+    def _maybe_background_phone_sync(self, client_ip: str):
+        """手机一联上 45835，就顺手回读它的本地分享次数（后台线程 + 冷却）。
+
+        这是「上帝视角」的关键一环：不需要手机端新增任何按钮，也不需要用户记得
+        手动点同步 —— 只要手机来读在线相册，电脑就自动把两端次数对齐。
+        """
+        ip = (client_ip or "").strip()
+        if not ip or ip.startswith("127.") or ip.startswith("169.254."):
+            return
+        now = time.time()
+        with OnlineGalleryHandler._phone_sync_lock:
+            if now - OnlineGalleryHandler._phone_sync_last.get(ip, 0.0) < self.PHONE_SYNC_COOLDOWN:
+                return
+            OnlineGalleryHandler._phone_sync_last[ip] = now
+
+        scanner = self.scanner
+
+        def _worker():
+            try:
+                ok, works, _err = phone_sync.fetch_phone_works(ip)
+                if not ok:
+                    return
+                index = self._computer_works_index()
+                rep = phone_sync.sync_phone_counts(
+                    index, works,
+                    phone_label=f"{ip}:{phone_sync.PHONE_ALBUM_PORT}",
+                    log_dir=os.path.join(scanner.root, "_portfolio_move_logs"),
+                )
+                if rep.get("appliedCount"):
+                    scanner.scan(force=True)
+                    print(f"[PhoneSync] {ip} 自动回读补记 {rep['appliedCount']} 个作品的使用次数")
+            except Exception as e:
+                print(f"[PhoneSync] {ip} 自动回读失败：{e}")
+
+        threading.Thread(target=_worker, name=f"phone-sync-{ip}", daemon=True).start()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -582,6 +690,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/" or path == "/api/online/status":
             works = self.scanner.scan()
             ip = get_local_ip()
+            # 手机每次联上来都顺手回读一次它的本地分享次数（后台线程，不拖慢响应）
+            self._maybe_background_phone_sync(self.client_address[0] if self.client_address else "")
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
@@ -590,9 +700,48 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "port": self.server.server_port,
                 "totalWorks": len(works),
                 "libraryRoot": self.scanner.root,
-                "timestamp": int(time.time())
+                "timestamp": int(time.time()),
+                # 能力清单：手机端可据此决定是否显示「同步次数 / 在线状态」等入口，
+                # 老版本电脑端没有这个字段，手机端按「不存在即不支持」降级即可。
+                "features": [
+                    "onlineRecycle",      # 在线回收站双 Tab（已使用 / 已标记垃圾）
+                    "garbageRemark",      # 垃圾样本备注
+                    "workPath",           # 作品文件夹路径（复制路径按钮）
+                    "phoneCountSync",     # 手机本地分享次数回读电脑
+                    "phoneDiscovery",     # 电脑主动扫描在线手机
+                ],
+                "phoneSyncApi": "/api/online/sync-phone-counts",
+                "phonePanelApi": "/api/online/phones",
             }
             self.send_json(200, data)
+            return
+
+        if path == "/api/online/phones":
+            # 在线状态面板：主动扫本机所在 /24 网段探 45833，命中即算「此刻在线」。
+            # 不依赖手机端广播，跨网段/手机切后台都能看见。
+            force = query.get("refresh", ["0"])[0] == "1"
+            try:
+                devices = self.phone_cache.get(force=force)
+            except Exception as e:
+                devices = []
+                print(f"[PhoneProbe] 扫描失败：{e}")
+
+            for d in devices:
+                d["lastSeen"] = d.get("lastSeen") or time.strftime("%Y-%m-%d %H:%M:%S")
+
+            verified = [d for d in devices if d.get("verified")]
+            self.send_json(200, {
+                "ok": True,
+                "ip": get_local_ip(),
+                "port": self.server.server_port,
+                "scannedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "subnets": phone_sync.candidate_subnets(),
+                "onlineCount": len(verified),
+                "totalResponded": len(devices),
+                "devices": devices,
+                "phonePort": phone_sync.PHONE_ALBUM_PORT,
+                "ttlSeconds": phone_sync.DISCOVER_TTL,
+            })
             return
 
         if path == "/api/online/categories":
@@ -647,6 +796,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             works = self.scanner.scan(force=force_refresh)
             tokens = search_query.split() if search_query else []
+
+            # 手机打开在线相册（拉列表）也顺手回读一次本地分享次数
+            self._maybe_background_phone_sync(self.client_address[0] if self.client_address else "")
 
             filtered = []
             for w in works:
@@ -1190,6 +1342,50 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/online/sync-phone-counts":
+            # 手动/预演入口：手机在本地相册分享过的次数回写到电脑元数据。
+            # 只补次数不搬文件；不传 host 时自动用刚扫出来的在线手机。
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body.strip() else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return
+            if not isinstance(req, dict):
+                req = {}
+
+            dry_run = bool(req.get("dryRun", False))
+
+            hosts = req.get("hosts")
+            if not isinstance(hosts, list) or not hosts:
+                single = str(req.get("host", "") or "").strip()
+                hosts = [single] if single else []
+            if not hosts:
+                try:
+                    devices = self.phone_cache.get(force=True)
+                except Exception:
+                    devices = []
+                hosts = [
+                    f"{d['ip']}:{d.get('port', phone_sync.PHONE_ALBUM_PORT)}"
+                    for d in devices if d.get("ip")
+                ]
+            if not hosts:
+                self.send_json(200, {
+                    "ok": False,
+                    "error": "未发现在线手机；可显式传 host（例如 192.168.1.200）",
+                    "appliedCount": 0,
+                })
+                return
+
+            report = self._run_phone_sync(hosts, dry_run=dry_run)
+            report["message"] = (
+                f"共回写 {report['appliedCount']} 个作品的使用次数"
+                + ("（预演，未落盘）" if dry_run else "")
+            )
+            self.send_json(200, report)
+            return
 
         if path == "/api/online/use-work":
             content_length = int(self.headers.get("Content-Length", 0))
