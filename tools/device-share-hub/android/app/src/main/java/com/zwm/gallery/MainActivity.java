@@ -608,7 +608,9 @@ public final class MainActivity extends Activity {
         statusText.setGravity(Gravity.CENTER);
         statusText.setBackground(round(Color.rgb(231, 239, 233), 16));
         statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
-        root.addView(statusText, margins(0, dp(18), 0, dp(8)));
+        // 【0.8.43 修】statusText 不再 add 到滚动 root 末尾（之前会被作品列表推到底部屏幕外），
+        // 改为由 buildUi() 末尾的 frozenLayout.addView 统一加到 titleRow 之下，
+        // 做真正的 sticky 顶部状态栏。
 
         footerNote = text("点击平台按钮会复制对应文案并打开图片分享。首次使用后按现有清理设置自动回收；两个平台共用一个作品生命周期。", 12, false);
         footerNote.setTextColor(Color.GRAY);
@@ -679,6 +681,11 @@ public final class MainActivity extends Activity {
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(Color.rgb(248, 249, 248));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+        // 【0.8.43 修】把 statusText 提到顶栏下方做 sticky 状态栏：不再被作品列表推到底部屏幕外。
+        // 文案里始终带「💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）」，离线时也保留 snapshot 年龄。
+        LinearLayout.LayoutParams statusBarParams = new LinearLayout.LayoutParams(-1, -2);
+        statusBarParams.setMargins(dp(12), dp(4), dp(12), dp(4));
+        frozenLayout.addView(statusText, statusBarParams);
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(38));
         searchParams.setMargins(dp(12), 0, dp(12), dp(8));
         frozenLayout.addView(searchBar, searchParams);
@@ -2890,6 +2897,12 @@ public final class MainActivity extends Activity {
      */
     private void tryAutoDiscoverPc() {
         if (autoDiscovering) return;
+        // 【0.8.43 修】已有本地快照就别打断用户：snapshot 秒开体验 > auto-discover 的修复率。
+        // 用户手动点「重试连接」依然会走自动搜索（不经过 tryAutoDiscoverPc）。
+        if (onlineListFromSnapshot && onlineWorks != null && !onlineWorks.isEmpty()) {
+            String age = snapshotAgeText();
+            if (age != null) return;
+        }
         long now = System.currentTimeMillis();
         if (now - lastAutoDiscoverAtMs < 15000L) return;
         lastAutoDiscoverAtMs = now;
@@ -2908,7 +2921,13 @@ public final class MainActivity extends Activity {
             public void onError(Exception error) {
                 autoDiscovering = false;
                 if (!isOnlineMode) return;
-                statusText.setText("暂未搜索到电脑在线相册，可稍后点「重试连接」再次搜索");
+                // 【0.8.43 修】不再覆盖 snapshot 状态条；改成在底部悄悄提示，让顶部状态栏继续显示「本地快照 · X 分钟前」。
+                String snapNote = snapshotAgeText();
+                if (snapNote != null) {
+                    toast("⚠️ 暂时连不上电脑（本地快照 · " + snapNote + " 仍可秒开）");
+                } else {
+                    statusText.setText("暂未搜索到电脑在线相册，可稍后点「重试连接」再次搜索");
+                }
             }
         });
     }

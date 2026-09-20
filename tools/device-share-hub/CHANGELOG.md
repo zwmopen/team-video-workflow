@@ -1,5 +1,38 @@
 # 变更记录
 
+## Android 0.8.43 / versionCode 154 - 2026-09-21 - 体感加速 polish：状态栏位置错位 + auto-discover 不打断 snapshot
+
+> **bug 来源**：0.8.42 真机验证时（杀 PC 服务 + 冷启 App）发现两个连带的 design bug：
+> 1. 状态栏文字「💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）」在 UI 上看不到
+>    —— uiautomator dump 里完全找不到这个 TextView，要滚到列表最底部才看到。
+> 2. PC 不可达时 `tryAutoDiscoverPc()` 连续两次 `setText("正在自动搜索…" → "暂未搜索到…")`，
+>    把 `primeOnlineWorksInBackground()` 设的 snapshot 状态条**覆盖**了。
+>    用户感受：「明明 App 里有 388 套作品秒开，但顶部只看到『暂未搜索到电脑在线相册』」。
+
+**根因**：
+1. `MainActivity.java` 的 layout 拓扑把 `statusText` `addView` 到了**滚动 root 的末尾**
+   （`root.addView(worksContainer)` → `root.addView(statusText)` → `root.addView(footerNote)`），
+   所以 statusText 被作品列表推到了屏幕外。
+   而真正的 sticky 顶栏是 `frozenLayout`（`titleRow` + `searchBar` + `categorySelector` + `contentFrame`），
+   statusText 根本不在那个 sticky 容器里。
+2. `tryAutoDiscoverPc()` 是「连接失败就自动搜索局域网」，逻辑没问题，
+   但它 setText 时**没考虑**用户已经能从本地 snapshot 秒开，
+   应该静默而不是抢顶部状态条。
+
+**修法（两处）**：
+1. **statusText 改挂 frozenLayout**：从 `root.addView(statusText, ...)` 删掉，
+   改为 `frozenLayout.addView(statusText, ...)`（在 `titleRow` 下面、`searchBar` 上面），
+   做真正的 sticky 顶部状态栏。margin 调到 `(dp(12), dp(4), dp(12), dp(4))`。
+2. **tryAutoDiscoverPc 加 snapshot 守护**：
+   - 进入函数第一行判 `if (onlineListFromSnapshot && !onlineWorks.isEmpty() && snapshotAgeText() != null) return;`
+     —— 已有 snapshot 就别打断用户。
+   - 即便要走搜索，失败时不再覆盖 statusText：
+     - 有 snapshot → `toast("⚠️ 暂时连不上电脑（本地快照 · X 分钟前 仍可秒开）")`
+     - 没 snapshot → 保持原 setText「暂未搜索到电脑在线相册…」
+
+**自检**：javalang 解析 OK；本次不发版前必须跑真机「杀 45835 + 冷启 App」测试，
+  验证 uiautomator dump 在 y < 600 区域能看到 `💻 电脑在线相册... (本地快照 ...)`。
+
 ## Android 0.8.42 / versionCode 153 - 2026-09-21 - 体感加速 bugfix：snapshot 路径下分类条空了
 
 > **bug 来源**：上一轮 0.8.41 部署后，用户实测发现杀 PC 服务 + 冷启动 App 后，
