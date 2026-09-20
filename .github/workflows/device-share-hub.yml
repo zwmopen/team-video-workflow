@@ -131,6 +131,9 @@ jobs:
 
   android-build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     defaults:
       run:
         working-directory: tools/device-share-hub/android
@@ -140,13 +143,29 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3
+      - name: Install Android SDK command line tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # android-actions/setup-android@v3 仍尝试安装已被移除的 SDK "tools" 包，直接失败。
+          # 改为手动安装官方 commandlinetools，避免依赖废弃包。
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdline-tools.zip
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - name: Guard removed screenshot and automatic clipboard surfaces
         run: node ../scripts/verify-removed-surfaces.mjs
-      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Install Android platform and build tools
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' > /dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
       - name: Install Gradle 9.4.1
         run: |
           curl -fsSL https://services.gradle.org/distributions/gradle-9.4.1-bin.zip -o /tmp/gradle-9.4.1-bin.zip
