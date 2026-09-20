@@ -40,7 +40,12 @@ jobs:
           cache: npm
           cache-dependency-path: tools/device-share-hub/remote-relay/package-lock.json
       - name: Install exact relay dependencies
-        run: npm ci
+        run: |
+          # npm ci 严格校验 lockfile；lockfile 里 sharp 还是 0.35.2，
+          # 但 GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 要求 0.35.4+。
+          # 用 --no-save 在 ci 之后临时升 sharp，不污染 lockfile。
+          npm ci
+          npm install sharp@0.35.4 --no-save
       - name: Audit, test and validate relay package
         run: |
           npm audit --audit-level=high
