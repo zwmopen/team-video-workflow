@@ -2339,6 +2339,9 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
+    private boolean autoDiscovering = false;
+    private boolean autoDiscoveredOnce = false;
+
     private void refreshOnlineWorks(boolean userInitiated) {
         statusText.setText("正在连接电脑在线相册…");
         onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
@@ -2363,6 +2366,7 @@ public final class MainActivity extends Activity {
                     public void onError(Exception error) {
                         if (!isOnlineMode) return;
                         handleOnlineError("读取作品列表失败", error);
+                        tryAutoDiscoverPc();
                     }
                 });
             }
@@ -2371,6 +2375,30 @@ public final class MainActivity extends Activity {
             public void onError(Exception error) {
                 if (!isOnlineMode) return;
                 handleOnlineError("连接电脑相册服务失败", error);
+                tryAutoDiscoverPc();
+            }
+        });
+    }
+
+    /** 连接失败时自动在局域网搜索电脑在线相册服务，避免纯 Wi-Fi 设备（无 ADB 隧道）读不到电脑作品 */
+    private void tryAutoDiscoverPc() {
+        if (autoDiscovering || autoDiscoveredOnce) return;
+        autoDiscovering = true;
+        statusText.setText("正在自动搜索局域网内的电脑在线相册…");
+        onlineClient.discoverPcServer(new OnlineGalleryClient.Callback<String>() {
+            @Override
+            public void onSuccess(String baseUrl) {
+                autoDiscovering = false;
+                autoDiscoveredOnce = true;
+                if (!isOnlineMode) return;
+                toast("✅ 已自动发现电脑相册服务 " + baseUrl);
+                refreshOnlineWorks(false);
+            }
+
+            @Override
+            public void onError(Exception error) {
+                autoDiscovering = false;
+                autoDiscoveredOnce = true;
             }
         });
     }

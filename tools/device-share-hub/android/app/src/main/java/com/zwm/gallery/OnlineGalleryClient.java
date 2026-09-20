@@ -142,6 +142,114 @@ public final class OnlineGalleryClient {
         }
     }
 
+    /** 快速探测：仅校验目标是否为电脑在线相册服务（返回体含 server 字段） */
+    private boolean probeGalleryServer(String host, int port) {
+        try {
+            URL url = new URL("http://" + host + ":" + port + "/api/online/status");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(700);
+            conn.setReadTimeout(900);
+            int code = conn.getResponseCode();
+            if (code != 200) {
+                conn.disconnect();
+                return false;
+            }
+            java.io.InputStream in = conn.getInputStream();
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[2048];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            in.close();
+            conn.disconnect();
+            String body = new String(bos.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+            return body.contains("DeviceShareHub-OnlineGallery");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 自动发现局域网内的电脑在线相册服务（端口 45835）。
+     * 用于没有任何 ADB reverse 隧道、也从未手工配置过电脑 IP 的设备（例如纯 Wi-Fi 的 vivo）。
+     * 命中后立即写入 customPcServerUrl，后续无需再次扫描。
+     */
+    public void discoverPcServer(Callback<String> callback) {
+        executor.execute(() -> {
+            LinkedHashSet<String> candidates = new LinkedHashSet<>();
+
+            // 1) 优先尝试已发现的对端设备（含电脑端信标）
+            try {
+                List<com.zwm.gallery.PeerDevice> peers = OnlineService.peers();
+                if (peers != null) {
+                    for (com.zwm.gallery.PeerDevice p : peers) {
+                        if (p != null && p.ip != null && !p.ip.trim().isEmpty()) {
+                            candidates.add(p.ip.trim());
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // 2) 兜底：本机所在网段的 /24 全量并发探测
+            try {
+                java.util.Enumeration<java.net.NetworkInterface> nis = java.net.NetworkInterface.getNetworkInterfaces();
+                while (nis.hasMoreElements()) {
+                    java.net.NetworkInterface ni = nis.nextElement();
+                    if (!ni.isUp() || ni.isLoopback()) continue;
+                    for (java.net.InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                        java.net.InetAddress addr = ia.getAddress();
+                        if (addr == null || addr.isLoopbackAddress() || !(addr instanceof java.net.Inet4Address)) continue;
+                        byte[] b = addr.getAddress();
+                        String prefix = (b[0] & 0xFF) + "." + (b[1] & 0xFF) + "." + (b[2] & 0xFF) + ".";
+                        for (int i = 1; i <= 254; i++) candidates.add(prefix + i);
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            if (candidates.isEmpty()) {
+                mainHandler.post(() -> callback.onError(new IllegalStateException("未找到可探测的局域网地址")));
+                return;
+            }
+
+            java.util.List<String> list = new ArrayList<>(candidates);
+            java.util.Collections.shuffle(list);
+            // 已发现对端优先，其次本网段
+            java.util.concurrent.atomic.AtomicReference<String> found = new java.util.concurrent.atomic.AtomicReference<>(null);
+            int threads = Math.min(48, list.size());
+            java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(threads);
+            int chunk = (list.size() + threads - 1) / threads;
+            for (int t = 0; t < threads; t++) {
+                final int from = t * chunk;
+                final int to = Math.min(list.size(), from + chunk);
+                new Thread(() -> {
+                    try {
+                        for (int i = from; i < to; i++) {
+                            if (found.get() != null) break;
+                            String host = list.get(i);
+                            if (probeGalleryServer(host, DEFAULT_PC_PORT)) {
+                                found.compareAndSet(null, host);
+                                break;
+                            }
+                        }
+                    } finally {
+                        latch.countDown();
+                    }
+                }).start();
+            }
+            try {
+                latch.await(12, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {}
+
+            String host = found.get();
+            if (host == null) {
+                mainHandler.post(() -> callback.onError(new IllegalStateException("局域网未发现电脑在线相册服务")));
+                return;
+            }
+            String base = "http://" + host + ":" + DEFAULT_PC_PORT;
+            setCustomBaseUrl(base);
+            mainHandler.post(() -> callback.onSuccess(base));
+        });
+    }
+
     public void fetchCategories(Callback<CategoriesResult> callback) {
         executor.execute(() -> {
             try {
