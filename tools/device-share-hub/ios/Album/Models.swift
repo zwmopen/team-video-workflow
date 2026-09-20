@@ -50,8 +50,15 @@ struct TrashItem: Identifiable, Hashable {
     let folderURL: URL
     let shareCount: Int
     let trashedDate: Date?
+    /// 本地「备注并删除」写入的垃圾原因（手机本地元数据；与在线版 quality_tag.json 语义对齐）
+    let garbageRemark: String?
 
     var id: String { key }
+
+    /// 是否已被「备注并删除」标记为垃圾样本（垃圾备注非空）。
+    var isGarbage: Bool {
+        !(garbageRemark ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 struct LibraryState: Codable {
@@ -82,6 +89,8 @@ struct WorkState: Codable {
     var trashedAtMs: Double?
     var originalRelativePath: String?
     var trashFolderName: String?
+    /// 本地作品「备注并删除」写入的垃圾原因（手机本地元数据；与在线版 quality_tag.json 语义对齐）
+    var garbageRemark: String?
 
     init() { }
 
@@ -98,6 +107,7 @@ struct WorkState: Codable {
         trashedAtMs = try container.decodeIfPresent(Double.self, forKey: .trashedAtMs)
         originalRelativePath = try container.decodeIfPresent(String.self, forKey: .originalRelativePath)
         trashFolderName = try container.decodeIfPresent(String.self, forKey: .trashFolderName)
+        garbageRemark = try container.decodeIfPresent(String.self, forKey: .garbageRemark)
         used = (try container.decodeIfPresent(Bool.self, forKey: .used)) ?? (shareCount > 0)
         if firstUsedAtMs == nil { firstUsedAtMs = firstSharedAtMs }
     }

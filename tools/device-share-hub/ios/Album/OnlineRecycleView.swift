@@ -50,14 +50,31 @@ final class OnlineRecycleViewController: UITableViewController {
 
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "刷新", style: .plain,
                                                             target: self, action: #selector(refreshTapped))
-        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "📱 本地回收站", style: .plain,
-                                                           target: self, action: #selector(openLocalTrash))
 
         let refresh = UIRefreshControl()
         refresh.addTarget(self, action: #selector(loadData), for: .valueChanged)
         refreshControl = refresh
 
-        tableView.tableFooterView = UIView()
+        tableView.tableFooterView = makeLocalTrashFooter()
+    }
+
+    /// 与 Android 在线回收站页面底部的「📱 打开手机本地回收站」入口 1:1 对齐。
+    /// 放在列表底部（而不是覆盖导航栏左侧），保证系统返回按钮可用。
+    private func makeLocalTrashFooter() -> UIView {
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 72))
+        let button = UIButton(type: .system)
+        button.setTitle("📱 打开手机本地回收站", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        button.setTitleColor(UIColor(red: 0.35, green: 0.38, blue: 0.36, alpha: 1), for: .normal)
+        button.backgroundColor = .white
+        button.layer.cornerRadius = 14
+        button.layer.borderWidth = 1
+        button.layer.borderColor = UIColor(red: 0.84, green: 0.86, blue: 0.85, alpha: 1).cgColor
+        button.frame = CGRect(x: 16, y: 4, width: 288, height: 44)
+        button.autoresizingMask = [.flexibleWidth]
+        button.addTarget(self, action: #selector(openLocalTrash), for: .touchUpInside)
+        container.addSubview(button)
+        return container
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -73,6 +90,10 @@ final class OnlineRecycleViewController: UITableViewController {
             header.frame = CGRect(origin: .zero, size: target)
             segmented.frame = CGRect(x: 16, y: 11, width: max(0, target.width - 32), height: 34)
             tableView.tableHeaderView = header
+        }
+        if let footer = tableView.tableFooterView, footer.bounds.width != tableView.bounds.width {
+            footer.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 72)
+            tableView.tableFooterView = footer
         }
     }
 

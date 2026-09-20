@@ -347,7 +347,7 @@ final class WorkLibrary {
         return moved
     }
 
-    func moveWorkToTrash(_ work: WorkItem) throws {
+    func moveWorkToTrash(_ work: WorkItem, remark: String? = nil) throws {
         guard let root = rootURL else { throw LibraryError.noFolder }
         let source = work.folderURL.standardizedFileURL
         guard FileManager.default.fileExists(atPath: source.path) else {
@@ -366,6 +366,8 @@ final class WorkLibrary {
         record.trashedAtMs = now.timeIntervalSince1970 * 1000
         record.originalRelativePath = work.relativePath
         record.trashFolderName = destination.lastPathComponent
+        let trimmedRemark = (remark ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedRemark.isEmpty { record.garbageRemark = trimmedRemark }
         if record.firstSharedAtMs == nil && record.firstUsedAtMs == nil {
             record.firstSharedAtMs = record.trashedAtMs
         }
@@ -377,7 +379,7 @@ final class WorkLibrary {
             try? FileManager.default.moveItem(at: destination, to: source)
             throw error
         }
-        message = "已移到回收站：\(work.name)"
+        message = trimmedRemark.isEmpty ? "已移到回收站：\(work.name)" : "已移到回收站并备注：\(work.name)"
         refresh(showConfirmation: false)
     }
 
@@ -448,6 +450,8 @@ final class WorkLibrary {
             record.firstSharedAtMs = nil
             record.trashedAtMs = nil
             record.trashFolderName = nil
+            // 与在线回收站 restore 语义对齐：恢复即撤销垃圾标记
+            record.garbageRemark = nil
             record.originalRelativePath = item.originalRelativePath
             state.works[item.key] = record
             do { try saveState(to: root) }
@@ -462,6 +466,25 @@ final class WorkLibrary {
             errorMessage = "恢复失败，原文件仍保留在回收站。"
             notify()
         }
+    }
+
+    /// 本地回收站「备注」：把垃圾原因写入手机本地元数据（与在线版 quality_tag.json 语义 1:1 对齐）。
+    /// 传空串即清除垃圾标记。与「移到回收站 / 恢复」共用同一份 WorkState。
+    func updateTrashRemark(_ item: TrashItem, remark: String) throws {
+        guard let root = rootURL else { throw LibraryError.noFolder }
+        var record = state.works[item.key] ?? WorkState()
+        let previous = record
+        let trimmed = remark.trimmingCharacters(in: .whitespacesAndNewlines)
+        record.garbageRemark = trimmed.isEmpty ? nil : trimmed
+        state.works[item.key] = record
+        do {
+            try saveState(to: root)
+        } catch {
+            state.works[item.key] = previous
+            throw error
+        }
+        message = trimmed.isEmpty ? "已清除垃圾备注：\(item.name)" : "已写入垃圾备注：\(item.name)"
+        refresh(showConfirmation: false)
     }
 
     func clearTrash() throws {
@@ -546,7 +569,8 @@ final class WorkLibrary {
             return TrashItem(key: key, name: URL(fileURLWithPath: original).lastPathComponent,
                              originalRelativePath: original, folderURL: folder,
                              shareCount: record.shareCount,
-                             trashedDate: record.trashedDate.flatMap { Self.dayFormatter.date(from: $0) })
+                             trashedDate: record.trashedDate.flatMap { Self.dayFormatter.date(from: $0) },
+                             garbageRemark: record.garbageRemark)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 

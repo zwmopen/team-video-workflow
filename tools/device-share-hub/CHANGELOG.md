@@ -1,5 +1,31 @@
 # 变更记录
 
+## Android 0.8.35 / iOS 0.8.13 - 本地 ↔ 在线「按钮与回收站细节」强制 1:1 对等
+
+> 规则来源：本地相册与在线相册必须一样的按钮数量 —— 不能「你有『备注并删除』我没有、你有回收站细节我没有」。
+
+- **本地作品删除补齐「备注并删除」（两端）**：
+  - 修复前：本地作品删除只有「取消 / 移到回收站」两选项，而在线作品早有「取消 / 备注并删除 / 删除」三选项；
+  - 现在：本地与在线**同一条对话框形态**，先填垃圾原因再删除，备注随作品写入手机本地元数据。
+- **备注落盘链路（两端新增）**：
+  - Android：`WorkLibrary.moveToTrash(id, trashedAtMs, garbageRemark)` 写入 `.meta` 的 `garbageRemark`；
+    `WorkEntry.garbageRemark` + `WorkEntry.isGarbage()` 读回；
+  - iOS：`WorkState.garbageRemark`（Codable）；`WorkLibrary.moveWorkToTrash(_:remark:)` 落盘；`TrashItem.garbageRemark` + `isGarbage` 读回；
+  - 语义与在线版 `quality_tag.json` 的垃圾备注**逐字对齐**。
+- **本地回收站补齐与在线回收站同规格的条目操作（3 项对 3 项）**：
+  - 修复前：本地回收站条目只有「恢复」，在线回收站条目有「恢复 / 删除(或备注) / 复制路径」；
+  - 现在：**本地回收站条目 = 恢复（点行/按钮）+ 备注 + 复制路径**，与在线回收站条目操作数严格一致；
+  - 新增 `WorkLibrary.updateTrashRemark(...)`（两端）：本地回收站可直接补写/改写垃圾备注，传空串即清除标记；
+  - 新增本地回收站条目的「复制路径」：复制**手机上**该作品（回收站内）文件夹的绝对路径。
+- **「恢复」即撤销垃圾标记（与在线语义对齐）**：Android `WorkLibrary.restore` / `rollbackTrashMove`
+  与 iOS `WorkLibrary.restore(_:)` 恢复时一并清除 `garbageRemark`。
+- **iOS 在线回收站的返回按钮修复 + 入口与 Android 对齐**：
+  - 修复前：在线回收站把「📱 本地回收站」放在 `navigationItem.leftBarButtonItem`，**顶掉了系统返回按钮**；
+  - 现在：入口改为**列表底部按钮**（与 Android 页面底部同名入口同位置），系统返回按钮恢复可用。
+- **本地回收站条目展示垃圾备注**：已标记为垃圾样本的本地作品，在卡片/行副标题里直接显示
+  `🗑️ 垃圾样本 / 备注：…`，与在线回收站垃圾 Tab 的展示形态一致。
+- **版本号**：Android versionCode 146 / versionName 0.8.35；iOS CURRENT_PROJECT_VERSION 84 / MARKETING_VERSION 0.8.13。
+
 ## Android 0.8.34 / iOS 0.8.12 - 作品「复制路径」按钮 + iOS 在线相册发现修复
 
 - **修复 iOS「读不到电脑在线相册」的根因（`LanDiscovery.swift`）**：

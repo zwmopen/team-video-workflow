@@ -545,6 +545,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             cell.onOnlineDelete = { [weak self] in
                 self?.confirmDeleteOnline(entry)
             }
+            cell.onOnlineReset = { [weak self] in
+                self?.confirmResetOnline(entry)
+            }
             cell.onOnlineCopyPath = { [weak self] in
                 self?.copyOnlineWorkPath(entry)
             }
@@ -632,6 +635,27 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         present(vc, animated: true)
     }
 
+    /// 「重置」（在线）：与 Android `confirmResetOnlineWork` 交互 1:1 对齐。
+    private func confirmResetOnline(_ entry: OnlineWorkEntry) {
+        let alert = UIAlertController(title: "重置使用状态",
+                                      message: "是否重置该电脑在线作品为待首发状态？",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "重置", style: .default) { [weak self] _ in
+            OnlineGalleryClient.shared.resetWork(workId: entry.id) { ok, _ in
+                DispatchQueue.main.async {
+                    if ok {
+                        self?.showToast("已重置为待首发状态")
+                        self?.loadOnlineData(silent: true)
+                    } else {
+                        self?.showError("重置失败，请稍后重试")
+                    }
+                }
+            }
+        })
+        present(alert, animated: true)
+    }
+
     private func confirmDeleteOnline(_ entry: OnlineWorkEntry) {
         let alert = UIAlertController(title: "删除未发送作品？",
                                       message: "《\(entry.title)》\n\n手机端：移入回收站（右上角垃圾箱可随时恢复）\n电脑端：移入垃圾样本库并在元数据标记为垃圾（全渠道硬拦截）\n\n选择「备注并删除」可先填写垃圾原因备注。",
@@ -711,19 +735,44 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func confirmMoveToTrash(_ work: WorkItem) {
         let alert = UIAlertController(title: "移到回收站？",
-                                      message: "作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。",
+                                      message: "《\(work.name)》\n\n作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。\n\n选择「备注并删除」可先填写垃圾原因备注（随作品写入手机本地元数据）。",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "备注并删除", style: .default) { [weak self] _ in
+            self?.promptRemarkThenMoveToTrash(work)
+        })
         alert.addAction(UIAlertAction(title: "移到回收站", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            do {
-                try self.library.moveWorkToTrash(work)
-                self.render()
-            } catch {
-                self.showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
-            }
+            self?.performMoveToTrash(work, remark: nil)
         })
         present(alert, animated: true)
+    }
+
+    /// 「备注并删除」（本地）：与在线 `promptRemarkThenDeleteOnline` 交互 1:1 对齐。
+    private func promptRemarkThenMoveToTrash(_ work: WorkItem) {
+        let alert = UIAlertController(title: "垃圾备注（随作品写入元数据）",
+                                      message: "例如：文案公文味重 / 图片 AI 味浓 / 选题不合适",
+                                      preferredStyle: .alert)
+        alert.addTextField { tf in
+            tf.placeholder = "填写垃圾原因备注"
+            tf.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "确认删除", style: .destructive) { [weak self] _ in
+            let remark = alert.textFields?.first?.text ?? ""
+            self?.performMoveToTrash(work, remark: remark)
+        })
+        present(alert, animated: true)
+    }
+
+    private func performMoveToTrash(_ work: WorkItem, remark: String?) {
+        let trimmed = (remark ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try library.moveWorkToTrash(work, remark: remark)
+            showToast(trimmed.isEmpty ? "已移到回收站" : "已移到回收站并备注")
+            render()
+        } catch {
+            showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
     }
 
     /// 「复制路径」（本地）：复制手机上该作品文件夹的绝对路径。
@@ -1089,6 +1138,7 @@ private final class WorkCell: UICollectionViewCell {
     var onOnlineShare: ((String) -> Void)?
     var onOnlinePreview: ((Int) -> Void)?
     var onOnlineDelete: (() -> Void)?
+    var onOnlineReset: (() -> Void)?
     /// 在线作品：复制电脑成品库里的作品文件夹路径
     var onOnlineCopyPath: (() -> Void)?
 
@@ -1158,6 +1208,7 @@ private final class WorkCell: UICollectionViewCell {
         onOnlineShare = nil
         onOnlinePreview = nil
         onOnlineDelete = nil
+        onOnlineReset = nil
         for view in previewStack.arrangedSubviews {
             if let tb = view as? ThumbnailButton {
                 tb.currentURL = nil
@@ -1224,6 +1275,7 @@ private final class WorkCell: UICollectionViewCell {
             xhsButton.setTitle(p1, for: .normal)
             applyPlatformStyle(xhsButton, isOptimistic: false)
             platformRow1.addArrangedSubview(xhsButton)
+            if entry.useCount > 0 { platformRow1.addArrangedSubview(resetButton) }
             platformRow1.addArrangedSubview(deleteButton)
             platformRow1.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = true
@@ -1234,6 +1286,7 @@ private final class WorkCell: UICollectionViewCell {
             applyPlatformStyle(xhs2Button, isOptimistic: false)
             platformRow1.addArrangedSubview(xhsButton)
             platformRow1.addArrangedSubview(xhs2Button)
+            if entry.useCount > 0 { platformRow2.addArrangedSubview(resetButton) }
             platformRow2.addArrangedSubview(deleteButton)
             platformRow2.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = false
@@ -1247,6 +1300,7 @@ private final class WorkCell: UICollectionViewCell {
             platformRow1.addArrangedSubview(xhsButton)
             platformRow1.addArrangedSubview(xhs2Button)
             platformRow2.addArrangedSubview(douyinButton)
+            if entry.useCount > 0 { platformRow2.addArrangedSubview(resetButton) }
             platformRow2.addArrangedSubview(deleteButton)
             platformRow2.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = false
@@ -1255,15 +1309,19 @@ private final class WorkCell: UICollectionViewCell {
         xhsButton.removeTarget(nil, action: nil, for: .allEvents)
         xhs2Button.removeTarget(nil, action: nil, for: .allEvents)
         douyinButton.removeTarget(nil, action: nil, for: .allEvents)
+        resetButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
         copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
         xhsButton.addTarget(self, action: #selector(onlineXhsTapped), for: .touchUpInside)
         xhs2Button.addTarget(self, action: #selector(onlineXhs2Tapped), for: .touchUpInside)
         douyinButton.addTarget(self, action: #selector(onlineDouyinTapped), for: .touchUpInside)
+        resetButton.addTarget(self, action: #selector(onlineResetTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
         copyPathButton.addTarget(self, action: #selector(onlineCopyPathTapped), for: .touchUpInside)
     }
+
+    @objc private func onlineResetTapped() { onOnlineReset?() }
 
     @objc private func onlineXhsTapped() { onOnlineShare?("xhs") }
     @objc private func onlineXhs2Tapped() { onOnlineShare?("xhs2") }

@@ -984,6 +984,10 @@ public final class MainActivity extends Activity {
 
         card.addView(previewStrip(work), margins(0, dp(2), 0, dp(2)));
         String detail = work.images.size() + " 张图片";
+        if (showingTrash && work.isGarbage()) {
+            // 与在线回收站垃圾条目对齐：展示已写入手机本地元数据的垃圾备注
+            detail += " · 🗑️ 垃圾样本\n垃圾备注：" + work.garbageRemark;
+        }
         if (work.used) {
             detail += "\n✓ 小红书 " + work.xhsShareCount + " · 抖音 " + work.douyinShareCount;
             detail += "\n" + deleteCountdown(work);
@@ -1020,7 +1024,34 @@ public final class MainActivity extends Activity {
         name.setOnLongClickListener(select);
         meta.setOnLongClickListener(select);
         action.setOnLongClickListener(select);
-        if (selecting || showingTrash) {
+        if (showingTrash) {
+            // 与在线回收站卡片严格对齐：恢复 / 备注 / 复制路径 三项按钮
+            FlowLayout trashRow = new FlowLayout(this);
+            trashRow.setClipChildren(false);
+            trashRow.setClipToPadding(false);
+            trashRow.setHorizontalSpacing(dp(8));
+            trashRow.setVerticalSpacing(dp(8));
+
+            Button restoreBtn = compactButton("恢复", true);
+            restoreBtn.setContentDescription("恢复作品到列表");
+            restoreBtn.setOnClickListener(v -> restore(work.id));
+            trashRow.addView(restoreBtn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+
+            Button remarkBtn = new Button(this);
+            remarkBtn.setText(work.isGarbage() ? "改备注" : "备注");
+            styleNeumorphicButton(remarkBtn, STYLE_MUTED_GRAY);
+            remarkBtn.setContentDescription("填写垃圾备注，写入手机本地元数据");
+            remarkBtn.setOnClickListener(v -> promptRemarkLocalTrash(work));
+            trashRow.addView(remarkBtn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+
+            String trashPath = work.directory != null ? work.directory.getAbsolutePath() : "";
+            trashRow.addView(copyPathButton(trashPath, "手机本地作品"),
+                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+
+            LinearLayout.LayoutParams trashRowParams = new LinearLayout.LayoutParams(-1, -2);
+            trashRowParams.setMargins(0, dp(8), 0, dp(2));
+            card.addView(trashRow, trashRowParams);
+        } else if (selecting) {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
             FlowLayout platformRow = new FlowLayout(this);
@@ -1370,12 +1401,79 @@ public final class MainActivity extends Activity {
     private void confirmMoveWorkToTrash(String id) {
         new AlertDialog.Builder(this)
                 .setTitle("移到回收站？")
-                .setMessage("作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
+                .setMessage("作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。\n\n选择「备注并删除」可先填写垃圾原因备注（随作品写入手机本地元数据）。")
                 .setNegativeButton("取消", null)
+                .setNeutralButton("备注并删除", (dialog, which) -> promptRemarkThenMoveToTrash(id))
                 .setPositiveButton("移到回收站", (dialog, which) -> {
                     LinkedHashSet<String> ids = new LinkedHashSet<>();
                     ids.add(id);
                     moveSelectedToTrash(ids);
+                })
+                .show();
+    }
+
+    /** 「备注并删除」（本地）：与在线 `promptRemarkThenDeleteOnlineWork` 交互 1:1 对齐。 */
+    private void promptRemarkThenMoveToTrash(String id) {
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("例如：文案公文味重 / 图片 AI 味浓 / 选题不合适");
+        input.setSingleLine(false);
+        input.setMaxLines(3);
+        android.widget.FrameLayout holder = new android.widget.FrameLayout(this);
+        android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        lp.setMargins(pad, pad, pad, 0);
+        holder.addView(input, lp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("垃圾备注（随作品写入元数据）")
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认删除", (dialog, which) -> {
+                    LinkedHashSet<String> ids = new LinkedHashSet<>();
+                    ids.add(id);
+                    moveSelectedToTrash(ids, input.getText().toString());
+                })
+                .show();
+    }
+
+    /**
+     * 本地回收站「备注」：写入手机本地元数据（与在线回收站 promptRemarkOnlineRecycle 同构）。
+     * 直接复用已删除作品的 id，不需要电脑端 workId —— 本地作品备注落在手机本地 .meta。
+     */
+    private void promptRemarkLocalTrash(WorkLibrary.WorkEntry work) {
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("例如：文案公文味重 / 图片 AI 味浓 / 选题不合适");
+        input.setText(work.garbageRemark == null ? "" : work.garbageRemark);
+        input.setSingleLine(false);
+        input.setMaxLines(3);
+        android.widget.FrameLayout holder = new android.widget.FrameLayout(this);
+        android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        lp.setMargins(pad, pad, pad, 0);
+        holder.addView(input, lp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("垃圾备注（写入手机本地元数据）")
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存备注", (dialog, which) -> {
+                    String remark = input.getText().toString();
+                    final String workId = work.id;
+                    worker.execute(() -> {
+                        try {
+                            library().updateTrashRemark(workId, remark);
+                            runOnUiThread(() -> {
+                                toast(remark.trim().isEmpty() ? "已清除垃圾备注" : "✅ 已写入垃圾备注");
+                                refreshWorks();
+                            });
+                        } catch (Exception error) {
+                            runOnUiThread(() -> toast("写入失败：" + error.getMessage()));
+                        }
+                    });
                 })
                 .show();
     }
@@ -1691,10 +1789,17 @@ public final class MainActivity extends Activity {
     }
 
     private void moveSelectedToTrash(Set<String> ids) {
+        moveSelectedToTrash(ids, null);
+    }
+
+    /// 带垃圾备注的「备注并删除」（本地）：与在线作品流程 1:1 对齐。
+    private void moveSelectedToTrash(Set<String> ids, String garbageRemark) {
         if (ids == null || ids.isEmpty()) return;
         final LinkedHashSet<String> targets = new LinkedHashSet<>(ids);
+        final String remark = garbageRemark == null ? "" : garbageRemark.trim();
         pendingTrashIds.addAll(targets);
-        String msg = targets.size() > 1 ? "已移到回收站 " + targets.size() + " 个" : "已移到回收站";
+        String suffix = targets.size() > 1 ? " " + targets.size() + " 个" : "";
+        String msg = remark.isEmpty() ? "已移到回收站" + suffix : "已移到回收站并备注" + suffix;
 
         optimisticRemoveWorks(targets, msg);
 
@@ -1703,7 +1808,7 @@ public final class MainActivity extends Activity {
             for (String id : targets) {
                 try {
                     WorkLibrary library = library();
-                    WorkLibrary.WorkEntry entry = library.moveToTrash(id, LocalDate.now());
+                    WorkLibrary.WorkEntry entry = library.moveToTrash(id, System.currentTimeMillis(), remark);
                     Uri tree = selectedTree();
                     ExternalTrashManager.Result moved = ExternalTrashManager.moveTrashedSource(
                             getContentResolver(), tree, tree == null ? null : legacyRoot(tree), library, entry);

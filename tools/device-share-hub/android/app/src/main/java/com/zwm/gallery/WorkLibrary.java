@@ -547,6 +547,21 @@ public final class WorkLibrary {
         return readEntry(destination);
     }
 
+    /** 「备注并删除」（本地）：与在线作品的垃圾备注语义 1:1 对齐，写入手机本地 .meta。 */
+    public synchronized WorkEntry moveToTrash(String id, long trashedAtMs, String garbageRemark) throws IOException {
+        WorkEntry entry = requireEntry(activeRoot, id);
+        Properties meta = loadMeta(entry.directory);
+        meta.setProperty("trashedDate",
+                Instant.ofEpochMilli(trashedAtMs).atZone(BEIJING).toLocalDate().toString());
+        meta.setProperty("trashedAtMs", Long.toString(trashedAtMs));
+        String trimmed = garbageRemark == null ? "" : garbageRemark.trim();
+        if (!trimmed.isEmpty()) meta.setProperty("garbageRemark", trimmed);
+        saveMeta(entry.directory, meta);
+        File destination = child(trashRoot, entry.id);
+        moveDirectory(entry.directory, destination);
+        return readEntry(destination);
+    }
+
     public synchronized void rollbackTrashMove(String id) throws IOException {
         WorkEntry entry = requireEntry(trashRoot, id);
         File destination = child(activeRoot, id);
@@ -555,6 +570,7 @@ public final class WorkLibrary {
         meta.remove("trashedDate");
         meta.remove("trashDocumentId");
         meta.remove("externalTrashName");
+        meta.remove("garbageRemark");
         saveMeta(entry.directory, meta);
         moveDirectory(entry.directory, destination);
     }
@@ -684,8 +700,27 @@ public final class WorkLibrary {
         meta.remove("trashedDate");
         meta.remove("firstSharedAtMs");
         meta.remove("trashedAtMs");
+        // 与在线回收站 restore 语义对齐：恢复即撤销垃圾标记
+        meta.remove("garbageRemark");
         saveMeta(entry.directory, meta);
         moveDirectory(entry.directory, destination);
+    }
+
+    /**
+     * 本地回收站「备注」：把垃圾原因写入手机本地元数据（与在线版 quality_tag.json 语义 1:1 对齐）。
+     * 传空串即清除垃圾标记。与「移到回收站」「恢复」共用同一份 .meta。
+     */
+    public synchronized WorkEntry updateTrashRemark(String id, String remark) throws IOException {
+        WorkEntry entry = requireEntry(trashRoot, id);
+        Properties meta = loadMeta(entry.directory);
+        String trimmed = remark == null ? "" : remark.trim();
+        if (trimmed.isEmpty()) {
+            meta.remove("garbageRemark");
+        } else {
+            meta.setProperty("garbageRemark", trimmed);
+        }
+        saveMeta(entry.directory, meta);
+        return readEntry(entry.directory);
     }
 
     public synchronized void clearTrash() throws IOException {
@@ -1012,6 +1047,7 @@ public final class WorkLibrary {
                 meta.getProperty("externalTrashName", ""),
                 normalizeCategory(meta.getProperty("category",
                         WorkCategory.fromPath(meta.getProperty("sourceRelativePath", "")))),
+                meta.getProperty("garbageRemark", ""),
                 directory.getCanonicalFile());
     }
 
@@ -1189,6 +1225,8 @@ public final class WorkLibrary {
         public final String trashDocumentId;
         public final String externalTrashName;
         public final String category;
+        /** 本地「备注并删除」写入的垃圾原因（手机本地 .meta；与在线版 quality_tag.json 语义对齐） */
+        public final String garbageRemark;
         public final File directory;
 
         private WorkEntry(String id, String name, String text, String warning,
@@ -1199,6 +1237,7 @@ public final class WorkLibrary {
                           String sourceDocumentId, String sourceParentDocumentId,
                           String sourceRelativePath, String trashDocumentId, String externalTrashName,
                           String category,
+                          String garbageRemark,
                           File directory) {
             this.id = id;
             this.name = name;
@@ -1221,7 +1260,13 @@ public final class WorkLibrary {
             this.trashDocumentId = trashDocumentId;
             this.externalTrashName = externalTrashName;
             this.category = category;
+            this.garbageRemark = garbageRemark == null ? "" : garbageRemark;
             this.directory = directory;
+        }
+
+        /** 是否已被「备注并删除」标记为垃圾样本（本地元数据 garbageRemark 非空）。 */
+        public boolean isGarbage() {
+            return garbageRemark != null && !garbageRemark.trim().isEmpty();
         }
 
         public String getFolderName() {
