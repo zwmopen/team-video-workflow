@@ -166,7 +166,7 @@ final class OnlineRecycleViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return "\(currentTab.title)（\(works.count)）· 电脑在线真源"
+        return "\(currentTab.title)（\(works.count)）· 电脑"
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
@@ -182,7 +182,7 @@ final class OnlineRecycleViewController: UITableViewController {
         cell.textLabel?.text = work.title
         cell.textLabel?.font = .boldSystemFont(ofSize: 16)
 
-        var detail = "💻 电脑真源 · \(work.imageCount) 张图片"
+        var detail = "💻 电脑 · \(work.imageCount) 张图片"
         if currentTab == .garbage {
             let remark = work.garbageRemark
             detail += " · 🗑️ 垃圾样本\n备注：\(remark.isEmpty ? "（未填写）" : remark)"

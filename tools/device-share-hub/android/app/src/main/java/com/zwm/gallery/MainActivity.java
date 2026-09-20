@@ -3071,7 +3071,7 @@ public final class MainActivity extends Activity {
         }
 
         StringBuilder detail = new StringBuilder();
-        detail.append(work.imageCount).append(" 张图片 · 电脑真源");
+        detail.append(work.imageCount).append(" 张图片 · 电脑");
         String timeBadge = extractTimestampBadge(work.id);
         if (timeBadge.isEmpty()) timeBadge = extractTimestampBadge(work.title);
         if (!timeBadge.isEmpty()) detail.append(" · ").append(timeBadge);
@@ -3384,7 +3384,7 @@ public final class MainActivity extends Activity {
         }
 
         StringBuilder detail = new StringBuilder();
-        detail.append(work.imageCount).append(" 张图片 · 电脑真源");
+        detail.append(work.imageCount).append(" 张图片 · 电脑");
         String timeBadge = extractTimestampBadge(work.id);
         if (timeBadge.isEmpty()) {
             timeBadge = extractTimestampBadge(work.title);
@@ -4044,7 +4044,7 @@ public final class MainActivity extends Activity {
         dlTitle.setTextColor(Color.rgb(24, 25, 24));
         dlLayout.addView(dlTitle);
 
-        TextView dlStatus = text("准备连接电脑真源拉取 " + work.images.size() + " 张原图…", 12, false);
+        TextView dlStatus = text("准备连接电脑拉取 " + work.images.size() + " 张原图…", 12, false);
         dlStatus.setTextColor(Color.rgb(104, 108, 106));
         dlLayout.addView(dlStatus, margins(0, dp(6), 0, dp(12)));
 
