@@ -67,6 +67,58 @@ except ImportError:
 
 DEFAULT_PORT = 45835
 DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+
+# ============================================================================
+# 【空壳文案守卫】判定真源优先复用 copy_formatter.assert_copy_usable 的阈值体系；
+# 该服务以 pythonw 常驻运行，跨盘导入失败时退回本地等效实现，保证永不因缺依赖而放行空壳。
+# 与 Android 端 MainActivity.isCopySubstanceMissing（阈值 30）严格一致。
+# ============================================================================
+MIN_COPY_DISTRIBUTABLE = 30
+_COPY_MARKER_RE = re.compile(r"<<<[^>\n]*>>>")
+_COPY_INVISIBLE_RE = re.compile(r"[\s\u2800\u200b\u200c\u200d\ufeff]+")
+
+
+def _load_copy_formatter():
+    try:
+        fdir = r"d:\AICode\.agents\skills\copy-collab-distributor\scripts"
+        if fdir not in sys.path:
+            sys.path.insert(0, fdir)
+        import copy_formatter  # type: ignore
+        return copy_formatter
+    except Exception:
+        return None
+
+
+_COPY_FORMATTER = _load_copy_formatter()
+
+
+def copy_substance_len(text) -> int:
+    """剔除全部 <<<...>>> 标记、空白与盲文/零宽占位符后的实质字数。"""
+    if not text:
+        return 0
+    s = str(text)
+    if _COPY_FORMATTER is not None:
+        try:
+            return len(_COPY_FORMATTER.copy_substance(s))
+        except Exception:
+            pass
+    return len(_COPY_INVISIBLE_RE.sub("", _COPY_MARKER_RE.sub("", s)))
+
+
+def copy_search_text(text) -> str:
+    """搜索专用正文：仅剥离 <<<...>>> 协议标记，保留真实文字（含薄文案），供关键词检索。"""
+    if not text:
+        return ""
+    return _COPY_MARKER_RE.sub(" ", str(text))
+
+
+def work_text_blob(w: dict, with_title: bool = True) -> str:
+    """作品的关键词匹配文本：标题/目的地 + 搜索专用正文（回退 copyText）。"""
+    blob = (w.get("searchBlob") or w.get("copyText") or "")
+    if with_title:
+        return (w.get("rawTitle", "") or w.get("title", "")) + " " + blob
+    return (w.get("title", "") or "") + " " + (w.get("destination", "") or "") + " " + blob
+
 DESTINATIONS = [
     # 专题与游戏类优先
     "游戏", "中秋", "国庆",
@@ -388,8 +440,9 @@ class WorkScanner:
 
         images.sort()
 
-        # 读取文案（优先多平台文案，检查内容是否实质非空，空时回退到原料目录或根据标题合成）
+        # 读取文案（优先多平台文案；【空壳守卫】按实质字数判定，杜绝标记齐全但正文全空）
         copy_text = ""
+        copy_search_blob = ""   # 搜索专用：即使判定为缺失也保留原文，避免空壳/薄文案失去关键词可检索性
         txt_candidates = [f for f in files if f.lower().endswith(".txt")]
         priority = {'三平台文案.txt': 0, '文案.txt': 1, '小红书文案.txt': 2, '全量生成记录.txt': 3}
         txt_candidates.sort(key=lambda x: priority.get(x, 10))
@@ -398,12 +451,9 @@ class WorkScanner:
             try:
                 with open(os.path.join(dir_path, f), "r", encoding="utf-8", errors="ignore") as fp:
                     raw_c = fp.read().strip()
-                clean = raw_c.replace("<<<COPY_FORMAT:2>>>", "").replace("<<<COPY_FORMAT:3>>>", "")
-                clean = clean.replace("<<<XHS_START>>>", "").replace("<<<XHS_END>>>", "")
-                clean = clean.replace("<<<XHS_2_START>>>", "").replace("<<<XHS_2_END>>>", "")
-                clean = clean.replace("<<<DOUYIN_START>>>", "").replace("<<<DOUYIN_END>>>", "")
-                clean = clean.strip()
-                if len(clean) > 15:
+                if not copy_search_blob:
+                    copy_search_blob = copy_search_text(raw_c)
+                if copy_substance_len(raw_c) >= MIN_COPY_DISTRIBUTABLE:
                     copy_text = raw_c
                     break
             except Exception:
@@ -416,7 +466,7 @@ class WorkScanner:
             try:
                 with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
                     manifest_data = json.load(fp)
-                if not copy_text and manifest_data.get("copy_content"):
+                if not copy_text and copy_substance_len(manifest_data.get("copy_content", "")) >= MIN_COPY_DISTRIBUTABLE:
                     copy_text = manifest_data.get("copy_content", "").strip()
                 if not copy_text and manifest_data.get("rawMaterialPath"):
                     raw_p = manifest_data["rawMaterialPath"]
@@ -426,7 +476,9 @@ class WorkScanner:
                                 try:
                                     with open(os.path.join(raw_p, rf), "r", encoding="utf-8", errors="ignore") as rfp:
                                         rc = rfp.read().strip()
-                                    if len(rc) > 15:
+                                    if not copy_search_blob:
+                                        copy_search_blob = copy_search_text(rc)
+                                    if copy_substance_len(rc) >= MIN_COPY_DISTRIBUTABLE:
                                         copy_text = rc
                                         break
                                 except Exception:
@@ -434,13 +486,9 @@ class WorkScanner:
             except Exception:
                 pass
 
-        # 兜底：若全无文案，根据作品标题合成基础大纲文案
-        if not copy_text:
-            clean_title = folder_name
-            for prefix in ["202609", "202608", "202607", "网页CDP-", "Codex-", "CodexAPI-"]:
-                clean_title = clean_title.replace(prefix, "")
-            clean_title = clean_title.lstrip("0123456789_ -")
-            copy_text = f"{clean_title}\n\n江浙沪周边游/公司团建必看！逃离城市喧嚣，开启山野度假模式。\n特色活动、打卡拍照、互动玩法全攻略~"
+        # 【文案缺失显式化】不再伪造通用文案：全无文案时保持 copy_text 为空，
+        # 并以 copyMissing=true 通知手机端置灰文案按钮，杜绝空壳作品冒充有文案混进分发。
+        copy_missing = not copy_text
 
         # 读取作品标签.json
         tag_file = os.path.join(dir_path, "作品标签.json")
@@ -490,7 +538,9 @@ class WorkScanner:
             "imageCount": len(images),
             "images": images,
             "copyText": copy_text,
-            "hasCopyText": bool(copy_text),
+            "hasCopyText": copy_substance_len(copy_text) >= MIN_COPY_DISTRIBUTABLE,
+            "copyMissing": bool(copy_missing),
+            "searchBlob": copy_search_blob,
             "updatedAt": os.path.getmtime(dir_path)
         }
 
@@ -563,8 +613,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 counts[dest] = counts.get(dest, 0) + 1
 
             # 节日时令专题聚合（中秋、国庆优先置顶）与游戏专题
-            mid_autumn_count = sum(1 for w in works if "中秋" in (w.get("rawTitle", "") + " " + w.get("copyText", "")))
-            national_day_count = sum(1 for w in works if ("国庆" in (w.get("rawTitle", "") + " " + w.get("copyText", "")) or "十一" in (w.get("rawTitle", "") + " " + w.get("copyText", ""))))
+            mid_autumn_count = sum(1 for w in works if "中秋" in work_text_blob(w))
+            national_day_count = sum(1 for w in works if ("国庆" in work_text_blob(w) or "十一" in work_text_blob(w)))
             game_count = sum(1 for w in works if is_game_work(w.get("rawTitle", ""), w.get("path", "")))
 
             # 纯净分类聚合：节日专题置顶，游戏专题同级别优先展示，其余按数量倒序的目的地
@@ -603,10 +653,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 # 分类过滤（支持专题分类、游戏与地域分类）
                 if category and category != "全部":
                     if category in ("🌕 中秋", "中秋"):
-                        if "中秋" not in (w.get("rawTitle", "") + " " + w.get("copyText", "")):
+                        if "中秋" not in work_text_blob(w):
                             continue
                     elif category in ("🇨🇳 国庆", "国庆"):
-                        blob = w.get("rawTitle", "") + " " + w.get("copyText", "")
+                        blob = work_text_blob(w)
                         if "国庆" not in blob and "十一" not in blob:
                             continue
                     elif category in ("🎮 游戏", "游戏"):
@@ -624,7 +674,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
                 # 搜索关键词过滤
                 if tokens:
-                    text_blob = (w.get("title", "") + " " + w.get("destination", "") + " " + w.get("copyText", "")).lower()
+                    text_blob = work_text_blob(w, with_title=False).lower()
                     if not all(token in text_blob for token in tokens):
                         continue
 

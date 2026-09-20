@@ -3202,7 +3202,22 @@ public final class MainActivity extends Activity {
 
         List<PlatformCopyParser.AvailableItem> rawPlatforms = PlatformCopyParser.parseAvailablePlatforms(work.copyText);
         List<PlatformCopyParser.AvailableItem> platforms = enrichPlatformSuite(rawPlatforms, work.copyText, work.title);
-        for (PlatformCopyParser.AvailableItem item : platforms) {
+        // 【文案缺失守卫】剔除 <<<...>>> 标记后实质字数不足 = 空壳作品：
+        // 不渲染任何可点击文案按钮（防止合成兜底冒充真实文案），置灰标红提示。
+        boolean copyMissing = isCopySubstanceMissing(work.copyText);
+        if (copyMissing) {
+            Button missing = new Button(this);
+            missing.setText("⚠️ 文案缺失（空壳作品，不可分发）");
+            missing.setEnabled(false);
+            missing.setAlpha(0.55f);
+            missing.setTextSize(12);
+            styleNeumorphicButton(missing, STYLE_MUTED_GRAY);
+            missing.setTextColor(Color.rgb(178, 34, 34));
+            missing.setContentDescription("该在线作品文案缺失，已禁止分发");
+            platformRow.addView(missing, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+        }
+        for (PlatformCopyParser.AvailableItem item : (copyMissing
+                ? new ArrayList<PlatformCopyParser.AvailableItem>() : platforms)) {
             String extracted = (item.copyText != null && !item.copyText.isEmpty())
                     ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.copyText, item.platform);
             Button btn = compactButton(item.buttonLabel, work.useCount == 0);
@@ -3297,6 +3312,18 @@ public final class MainActivity extends Activity {
         if ("种草版".equals(label)) return 2;
         if ("大纲方案版".equals(label)) return 3;
         return 10;
+    }
+
+    /** 剔除 <<<...>>> 协议标记、空白与盲文空格（U+2800）后的文案实质内容。 */
+    private static String copySubstance(String text) {
+        if (text == null) return "";
+        String s = text.replaceAll("<<<[^>]*>>>", "");
+        return s.replaceAll("[\\s\\u2800]", "");
+    }
+
+    /** 空壳作品判定：文案实质字数不足 30 字视为缺失，禁止合成兜底冒充真实文案。 */
+    private static boolean isCopySubstanceMissing(String copyText) {
+        return copySubstance(copyText).length() < 30;
     }
 
     private void confirmResetOnlineWork(String workId) {
@@ -3782,6 +3809,11 @@ public final class MainActivity extends Activity {
     }
 
     private void handleOnlineWorkUse(OnlineWorkEntry work, String platformCode, String label, String copyText) {
+        // 深度防御：即便被绕过，也绝不复制空壳作品的合成文案
+        if (isCopySubstanceMissing(copyText)) {
+            toast("⚠️ 该作品文案缺失（空壳作品），已阻止分发");
+            return;
+        }
         copyToClipboard(label, copyText);
 
         if (work.images == null || work.images.isEmpty()) {
