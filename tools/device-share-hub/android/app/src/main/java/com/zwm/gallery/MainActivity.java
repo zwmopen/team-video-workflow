@@ -230,6 +230,8 @@ public final class MainActivity extends Activity {
         onlineClient = new OnlineGalleryClient(this);
         ensureDeviceId();
         setContentView(ScreenInsets.protect(buildUi()));
+        // 恢复上次的在线模式时，立刻开始接收电脑端信标（无需扫描即可拿到地址）
+        if (isOnlineMode) startOnlineBeaconListener();
         startReceiver();
         requestLegacyStoragePermission();
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
@@ -252,6 +254,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
         if (isOnlineMode) {
+            startOnlineBeaconListener();   // 回到前台重新开始接收电脑信标
             refreshOnlineWorks(false);
         } else if (fileMode) {
             openSelectedTreeForBrowsing(false);
@@ -268,12 +271,14 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         isVisible = false;
+        onlineClient.stopBeaconListener();   // 退到后台停掉信标监听，回到前台会重新开启
         try { unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) { }
         super.onStop();
     }
 
     @Override
     protected void onDestroy() {
+        onlineClient.stopBeaconListener();
         worker.shutdownNow();
         super.onDestroy();
     }
@@ -2270,6 +2275,7 @@ public final class MainActivity extends Activity {
 
     private void switchToLocalMode() {
         isOnlineMode = false;
+        onlineClient.stopBeaconListener();   // 退出在线模式即停掉信标监听，避免后台耗电
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_IS_ONLINE_MODE, false).apply();
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
@@ -2285,6 +2291,7 @@ public final class MainActivity extends Activity {
 
     private void switchToOnlineMode() {
         isOnlineMode = true;
+        startOnlineBeaconListener();
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_IS_ONLINE_MODE, true).apply();
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
@@ -2340,7 +2347,8 @@ public final class MainActivity extends Activity {
     }
 
     private boolean autoDiscovering = false;
-    private boolean autoDiscoveredOnce = false;
+    /** 上次自动发现的时间戳：用「冷却」代替「一次性开关」，保证失败后可反复重试 */
+    private long lastAutoDiscoverAtMs = 0L;
 
     /**
      * 电脑端会把已使用的作品物理移走到对应次数文件夹，但手机端已同步到本地，
@@ -2399,6 +2407,8 @@ public final class MainActivity extends Activity {
                 onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
                     @Override
                     public void onSuccess(List<OnlineWorkEntry> works) {
+                        // 连通成功：记住这条可用地址，下次直接复用
+                        onlineClient.markBaseUrlGood(onlineClient.resolveBaseUrl());
                         if (!isOnlineMode || showingTrash) return;
                         onlineWorks.clear();
                         if (works != null) {
@@ -2429,16 +2439,35 @@ public final class MainActivity extends Activity {
         });
     }
 
-    /** 连接失败时自动在局域网搜索电脑在线相册服务，避免纯 Wi-Fi 设备（无 ADB 隧道）读不到电脑作品 */
+    /**
+     * 启动局域网信标监听：电脑端每 2 秒广播一次自身地址，手机被动接收即可，
+     * 不必自己扫描。收到「新地址」时自动切过去并刷新 —— 在线相册稳定可读的关键。
+     */
+    private void startOnlineBeaconListener() {
+        onlineClient.startBeaconListener(() -> {
+            if (!isOnlineMode || statusText == null) return;
+            statusText.setText("📡 已同步电脑新地址 " + onlineClient.resolveBaseUrl());
+            refreshOnlineWorks(false);
+        });
+    }
+
+    /**
+     * 连接失败时自动在局域网搜索电脑在线相册服务。
+     * 修复要点：早期版本用「一次性开关」，一旦首次搜索失败就永久放弃，
+     * 导致纯 Wi-Fi 设备（vivo/华为）整个进程都卡在 127.0.0.1 读不到作品。
+     * 现在改为 15 秒冷却，失败后可反复重试。
+     */
     private void tryAutoDiscoverPc() {
-        if (autoDiscovering || autoDiscoveredOnce) return;
+        if (autoDiscovering) return;
+        long now = System.currentTimeMillis();
+        if (now - lastAutoDiscoverAtMs < 15000L) return;
+        lastAutoDiscoverAtMs = now;
         autoDiscovering = true;
         statusText.setText("正在自动搜索局域网内的电脑在线相册…");
         onlineClient.discoverPcServer(new OnlineGalleryClient.Callback<String>() {
             @Override
             public void onSuccess(String baseUrl) {
                 autoDiscovering = false;
-                autoDiscoveredOnce = true;
                 if (!isOnlineMode) return;
                 toast("✅ 已自动发现电脑相册服务 " + baseUrl);
                 refreshOnlineWorks(false);
@@ -2447,7 +2476,8 @@ public final class MainActivity extends Activity {
             @Override
             public void onError(Exception error) {
                 autoDiscovering = false;
-                autoDiscoveredOnce = true;
+                if (!isOnlineMode) return;
+                statusText.setText("暂未搜索到电脑在线相册，可稍后点「重试连接」再次搜索");
             }
         });
     }
@@ -3168,7 +3198,6 @@ public final class MainActivity extends Activity {
 
     private void showOnlineImageDialog(String workId, String workTitle, List<String> images, int imageIndex) {
         if (images.isEmpty() || imageIndex < 0 || imageIndex >= images.size()) return;
-        String imageName = images.get(imageIndex);
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         LinearLayout layout = new LinearLayout(this);
@@ -3180,21 +3209,13 @@ public final class MainActivity extends Activity {
         headerRow.setOrientation(LinearLayout.HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView title = text(workTitle + " (" + (imageIndex + 1) + "/" + images.size() + ")", 14, true);
+        TextView title = text("", 14, true);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1.0f);
         headerRow.addView(title, titleParams);
 
-        boolean isFullCached = onlineClient.hasFullImageCached(workId, imageName);
-        TextView badge = text(isFullCached ? "✅ 100% 原画" : "⏳ 拉取原画中…", 11, false);
-        if (isFullCached) {
-            badge.setTextColor(Color.rgb(15, 135, 88));
-            badge.setBackground(round(Color.rgb(235, 247, 240), 8));
-        } else {
-            badge.setTextColor(Color.rgb(180, 120, 20));
-            badge.setBackground(round(Color.rgb(255, 246, 230), 8));
-        }
+        TextView badge = text("", 11, false);
         badge.setPadding(dp(8), dp(3), dp(8), dp(3));
         headerRow.addView(badge, new LinearLayout.LayoutParams(-2, -2));
 
@@ -3209,76 +3230,70 @@ public final class MainActivity extends Activity {
         fullView.setMaxHeight(maxImgHeight);
 
         ProgressBar spinner = new ProgressBar(this);
-        if (isFullCached) {
-            spinner.setVisibility(View.GONE);
-        }
         layout.addView(spinner, new LinearLayout.LayoutParams(dp(36), dp(36)));
         layout.addView(fullView, new LinearLayout.LayoutParams(-1, -2));
+
+        // 左右切图控制条：支持点击按钮或直接左右滑动整张图
+        LinearLayout navRow = new LinearLayout(this);
+        navRow.setOrientation(LinearLayout.HORIZONTAL);
+        navRow.setGravity(Gravity.CENTER);
+        Button prevBtn = smallButton("‹ 上一张", false);
+        Button nextBtn = smallButton("下一张 ›", true);
+        navRow.addView(prevBtn, new LinearLayout.LayoutParams(-2, dp(38)));
+        navRow.addView(nextBtn, new LinearLayout.LayoutParams(-2, dp(38)));
+        LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(-1, -2);
+        navParams.setMargins(0, dp(10), 0, 0);
+        layout.addView(navRow, navParams);
+
+        TextView navHint = text("提示：左右滑动图片即可切换上一张 / 下一张", 11, false);
+        navHint.setTextColor(Color.rgb(120, 125, 122));
+        navHint.setGravity(Gravity.CENTER);
+        layout.addView(navHint, margins(0, dp(6), 0, 0));
 
         builder.setView(layout);
         builder.setPositiveButton("关闭", null);
         AlertDialog dialog = builder.create();
         dialog.show();
 
-        // 1. 先展示已有的缩略图占位（0 秒白屏）
-        String cacheKeyThumb = "online:" + workId + ":" + imageName;
-        Bitmap cachedThumb = THUMBNAIL_CACHE.get(cacheKeyThumb);
-        if (cachedThumb != null && !cachedThumb.isRecycled()) {
-            fullView.setImageBitmap(cachedThumb);
-            if (!isFullCached) {
-                spinner.setVisibility(View.GONE);
-            }
-        }
+        final int[] currentIndex = new int[]{imageIndex};
 
-        // 2. 检查是否有高清原画内存缓存
-        String cacheKeyFull = "online:full:" + workId + ":" + imageName;
-        Bitmap cachedFull = THUMBNAIL_CACHE.get(cacheKeyFull);
-        if (cachedFull != null && !cachedFull.isRecycled()) {
-            fullView.setImageBitmap(cachedFull);
-            badge.setText("✅ 100% 原画");
-            badge.setTextColor(Color.rgb(15, 135, 88));
-            badge.setBackground(round(Color.rgb(235, 247, 240), 8));
-            spinner.setVisibility(View.GONE);
-            return;
-        }
+        final Runnable[] renderHolder = new Runnable[1];
+        renderHolder[0] = () -> {
+            String imageName = images.get(currentIndex[0]);
+            title.setText(workTitle + " (" + (currentIndex[0] + 1) + "/" + images.size() + ")");
+            boolean isFullCached = onlineClient.hasFullImageCached(workId, imageName);
+            badge.setText(isFullCached ? "✅ 100% 原画" : "⏳ 拉取原画中…");
+            badge.setTextColor(isFullCached ? Color.rgb(15, 135, 88) : Color.rgb(180, 120, 20));
+            badge.setBackground(round(isFullCached ? Color.rgb(235, 247, 240) : Color.rgb(255, 246, 230), 8));
+            if (!isFullCached) spinner.setVisibility(View.VISIBLE);
 
-        // 3. 异步拉取 100% 原始画质原画（本地磁盘秒开，无本地磁盘则向电脑拉取）
-        onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
-            @Override
-            public void onSuccess(Bitmap result) {
+            prevBtn.setEnabled(currentIndex[0] > 0);
+            prevBtn.setAlpha(currentIndex[0] > 0 ? 1f : 0.4f);
+            nextBtn.setEnabled(currentIndex[0] < images.size() - 1);
+            nextBtn.setAlpha(currentIndex[0] < images.size() - 1 ? 1f : 0.4f);
+
+            // 1. 先展示缩略图占位（0 秒白屏）
+            String cacheKeyThumb = "online:" + workId + ":" + imageName;
+            Bitmap cachedThumb = THUMBNAIL_CACHE.get(cacheKeyThumb);
+            fullView.setImageBitmap(cachedThumb != null && !cachedThumb.isRecycled() ? cachedThumb : null);
+
+            // 2. 高清原画内存缓存
+            String cacheKeyFull = "online:full:" + workId + ":" + imageName;
+            Bitmap cachedFull = THUMBNAIL_CACHE.get(cacheKeyFull);
+            if (cachedFull != null && !cachedFull.isRecycled()) {
+                fullView.setImageBitmap(cachedFull);
                 spinner.setVisibility(View.GONE);
-                if (result != null && !result.isRecycled()) {
-                    THUMBNAIL_CACHE.put(cacheKeyFull, result);
-                    fullView.setImageBitmap(result);
-                    fullView.requestLayout();
-                    fullView.invalidate();
-                    badge.setText("✅ 100% 原画");
-                    badge.setTextColor(Color.rgb(15, 135, 88));
-                    badge.setBackground(round(Color.rgb(235, 247, 240), 8));
-                }
+                badge.setText("✅ 100% 原画");
+                badge.setTextColor(Color.rgb(15, 135, 88));
+                badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+                return;
             }
 
-            @Override
-            public void onError(Exception error) {
-                spinner.setVisibility(View.GONE);
-                badge.setText("缩略图预览 (点此重拉)");
-                badge.setTextColor(Color.GRAY);
-                badge.setBackground(round(Color.rgb(240, 240, 240), 8));
-            }
-        });
-
-        // 点击 badge 支持随时手动重新拉取刷新
-        badge.setOnClickListener(v -> {
-            badge.setText("⏳ 重新拉取中…");
-            badge.setTextColor(Color.rgb(180, 120, 20));
-            badge.setBackground(round(Color.rgb(255, 246, 230), 8));
-            spinner.setVisibility(View.VISIBLE);
-            THUMBNAIL_CACHE.remove(cacheKeyFull);
-            java.io.File cf = new java.io.File(new java.io.File(getCacheDir(), "online_full_images"), OnlineGalleryClient.getDiskCacheKey(workId, imageName));
-            if (cf.exists()) cf.delete();
+            // 3. 异步拉取 100% 原始画质（本地磁盘秒开，无本地磁盘则向电脑拉取）
             onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
                 @Override
                 public void onSuccess(Bitmap result) {
+                    if (currentIndex[0] >= images.size() || !images.get(currentIndex[0]).equals(imageName)) return;
                     spinner.setVisibility(View.GONE);
                     if (result != null && !result.isRecycled()) {
                         THUMBNAIL_CACHE.put(cacheKeyFull, result);
@@ -3294,10 +3309,85 @@ public final class MainActivity extends Activity {
                 @Override
                 public void onError(Exception error) {
                     spinner.setVisibility(View.GONE);
-                    badge.setText("拉取失败 (点此重试)");
+                    badge.setText("缩略图预览 (点此重拉)");
+                    badge.setTextColor(Color.GRAY);
+                    badge.setBackground(round(Color.rgb(240, 240, 240), 8));
                 }
             });
+
+            // 点击 badge 支持随时手动重新拉取刷新
+            badge.setOnClickListener(v -> {
+                badge.setText("⏳ 重新拉取中…");
+                badge.setTextColor(Color.rgb(180, 120, 20));
+                badge.setBackground(round(Color.rgb(255, 246, 230), 8));
+                spinner.setVisibility(View.VISIBLE);
+                THUMBNAIL_CACHE.remove(cacheKeyFull);
+                java.io.File cf = new java.io.File(new java.io.File(getCacheDir(), "online_full_images"), OnlineGalleryClient.getDiskCacheKey(workId, imageName));
+                if (cf.exists()) cf.delete();
+                onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                    @Override
+                    public void onSuccess(Bitmap result) {
+                        if (currentIndex[0] >= images.size() || !images.get(currentIndex[0]).equals(imageName)) return;
+                        spinner.setVisibility(View.GONE);
+                        if (result != null && !result.isRecycled()) {
+                            THUMBNAIL_CACHE.put(cacheKeyFull, result);
+                            fullView.setImageBitmap(result);
+                            badge.setText("✅ 100% 原画");
+                            badge.setTextColor(Color.rgb(15, 135, 88));
+                            badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+                        spinner.setVisibility(View.GONE);
+                        badge.setText("拉取失败 (点此重试)");
+                    }
+                });
+            });
+        };
+
+        Runnable stepPrev = () -> {
+            if (currentIndex[0] > 0) {
+                currentIndex[0]--;
+                renderHolder[0].run();
+            }
+        };
+        Runnable stepNext = () -> {
+            if (currentIndex[0] < images.size() - 1) {
+                currentIndex[0]++;
+                renderHolder[0].run();
+            }
+        };
+
+        prevBtn.setOnClickListener(v -> stepPrev.run());
+        nextBtn.setOnClickListener(v -> stepNext.run());
+
+        // 图片上左右滑动切图（右滑看下一张，与手机相册习惯一致）
+        final float[] downX = new float[]{0f};
+        final float[] downY = new float[]{0f};
+        fullView.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    downX[0] = event.getX();
+                    downY[0] = event.getY();
+                    return true;
+                case android.view.MotionEvent.ACTION_UP:
+                    float dx = event.getX() - downX[0];
+                    float dy = event.getY() - downY[0];
+                    float threshold = dp(45);
+                    if (Math.abs(dx) > threshold && Math.abs(dx) > Math.abs(dy)) {
+                        if (dx < 0) stepNext.run();   // 左滑 → 下一张
+                        else stepPrev.run();          // 右滑 → 上一张
+                        return true;
+                    }
+                    return false;
+                default:
+                    return false;
+            }
         });
+
+        renderHolder[0].run();
     }
 
     private void handleOnlineWorkUse(OnlineWorkEntry work, String platformCode, String label, String copyText) {
@@ -3572,7 +3662,8 @@ public final class MainActivity extends Activity {
                     String ip = input.getText().toString().trim();
                     if (!ip.isEmpty()) {
                         String url = "http://" + ip + ":" + OnlineGalleryClient.DEFAULT_PC_PORT;
-                        onlineClient.setCustomBaseUrl(url);
+                        // 走「手工指定」通道：明确表达意图，不会被自动信标悄悄改掉
+                        onlineClient.setManualBaseUrl(url);
                         toast("已设置电脑地址: " + url);
                         refreshOnlineWorks(true);
                     }

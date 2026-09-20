@@ -20,6 +20,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var selectedOnlineCategory: String = "全部"
     private var modeButton: UIButton!
     private let prefOnlineModeKey = "pref_is_online_mode"
+    /// 自动发现节流：用「15 秒冷却」代替「一次性开关」，失败后可反复重试
+    private var autoDiscovering = false
+    private var lastAutoDiscoverAt: Date = .distantPast
 
     private var filteredWorks: [WorkItem] {
         guard selectedCategory != WorkCategory.all else { return library.works }
@@ -138,7 +141,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                                       message: "当前连接服务器：\n\(currentUrl)\n默认端口 45835",
                                       preferredStyle: .alert)
         alert.addTextField { tf in
-            tf.placeholder = "如: http://192.168.0.106:45835"
+            tf.placeholder = "如: http://192.168.1.27:45835"
             tf.text = currentUrl
             tf.clearButtonMode = .whileEditing
         }
@@ -146,7 +149,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         alert.addAction(UIAlertAction(title: "探测测试", style: .default) { [weak self] _ in
             guard let self = self else { return }
             let url = alert.textFields?.first?.text ?? ""
-            OnlineGalleryClient.shared.setCustomBaseUrl(url)
+            OnlineGalleryClient.shared.setManualBaseUrl(url)
             OnlineGalleryClient.shared.checkConnection { ok in
                 self.showToast(ok ? "✅ 连接电脑相册服务成功" : "❌ 无法连接，请确认电脑端口 45835 是否开启")
             }
@@ -154,7 +157,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         alert.addAction(UIAlertAction(title: "保存并刷新", style: .default) { [weak self] _ in
             guard let self = self else { return }
             let url = alert.textFields?.first?.text ?? ""
-            OnlineGalleryClient.shared.setCustomBaseUrl(url)
+            // 手工指定通道：不会被后续的自动发现悄悄改掉
+            OnlineGalleryClient.shared.setManualBaseUrl(url)
             if self.isOnlineMode { self.loadOnlineData() }
         })
         present(alert, animated: true)
@@ -308,9 +312,30 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     self.onlineWorks = works
                     self.renderOnlineUI()
                 case .failure(let err):
-                    if !silent { self.showError("拉取在线相册失败：\(err.localizedDescription)\n请确认电脑在线服务是否启动且与手机在同一 Wi-Fi。") }
+                    if !silent { self.showError("拉取在线相册失败：\(err.localizedDescription)\n正在自动搜索局域网内的电脑在线相册…") }
                     self.renderOnlineUI()
+                    self.tryAutoDiscoverPc()
                 }
+            }
+        }
+    }
+
+    /// 连接失败时自动在局域网搜索电脑在线相册服务。
+    /// 带 15 秒冷却，可反复重试 —— 不会像旧逻辑那样一次失败就永久放弃。
+    private func tryAutoDiscoverPc() {
+        if autoDiscovering { return }
+        if Date().timeIntervalSince(lastAutoDiscoverAt) < 15 { return }
+        lastAutoDiscoverAt = Date()
+        autoDiscovering = true
+        LanDiscovery.shared.discover { [weak self] found in
+            guard let self = self else { return }
+            self.autoDiscovering = false
+            guard self.isOnlineMode else { return }
+            if let url = found {
+                self.showToast("✅ 已自动发现电脑相册服务 \(url)")
+                self.loadOnlineData(silent: false)
+            } else {
+                self.showToast("暂未搜索到电脑在线相册，可稍后再试")
             }
         }
     }

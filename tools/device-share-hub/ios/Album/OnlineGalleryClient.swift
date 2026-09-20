@@ -91,6 +91,14 @@ public final class OnlineGalleryClient {
     public static let defaultPort = 45835
     private let prefs = UserDefaults.standard
     private let prefCustomUrlKey = "customPcServerUrl"
+    /// 局域网信标：电脑端每 2 秒广播一次自身地址
+    static let beaconPort: UInt16 = 45832
+    static let prefManualUrlKey = "manualPcServerUrl"
+    static let prefBeaconUrlKey = "beaconPcServerUrl"
+    static let prefBeaconAtKey = "beaconPcServerAtMs"
+    static let prefLastGoodKey = "lastGoodPcServerUrl"
+    /// 信标地址保鲜期：超过该时长视为陈旧
+    static let beaconFreshMs: Double = 5 * 60 * 1000
     private var cachedBaseUrl: String?
 
     private let session: URLSession
@@ -112,38 +120,144 @@ public final class OnlineGalleryClient {
         imageCache.totalCostLimit = 60 * 1024 * 1024 // 60MB 内存缓存
     }
 
+    /// 回环地址：只有存在 USB / ADB 转发隧道时才可达，纯 Wi-Fi 下必然失败
+    public static func isLoopback(_ url: String) -> Bool {
+        url.contains("127.0.0.1") || url.contains("localhost")
+    }
+
+    /// 地址选路优先级：
+    /// 1) 用户手填或已自动发现的局域网地址（非回环才认）
+    /// 2) 局域网信标地址（电脑主动广播，5 分钟内新鲜）
+    /// 3) 最近一次成功连通的地址
+    /// 4) 回环兜底（仅 USB 隧道有效）
+    /// 修复：旧版把电脑 IP 写死成 192.168.0.106，换网络后 iPhone 永远读不到在线相册。
     public func resolveBaseUrl() -> String {
         if let cached = cachedBaseUrl, !cached.isEmpty {
             return cached
         }
-        if let custom = prefs.string(forKey: prefCustomUrlKey), !custom.trimmingCharacters(in: .whitespaces).isEmpty {
-            let trimmed = custom.trimmingCharacters(in: .whitespaces)
-            cachedBaseUrl = trimmed
-            return trimmed
+        // 1) 用户在设置里手工填写的地址：优先级最高
+        if let manual = prefs.string(forKey: Self.prefManualUrlKey)?.trimmingCharacters(in: .whitespaces),
+           !manual.isEmpty, !Self.isLoopback(manual) {
+            cachedBaseUrl = manual
+            return manual
         }
-        // 默认优先直连电脑端局域网 IP
-        let defaultUrl = "http://192.168.0.106:\(Self.defaultPort)"
-        cachedBaseUrl = defaultUrl
-        return defaultUrl
+        // 2) 局域网信标地址（5 分钟内新鲜）
+        if let beacon = prefs.string(forKey: Self.prefBeaconUrlKey)?.trimmingCharacters(in: .whitespaces),
+           !beacon.isEmpty {
+            let at = prefs.double(forKey: Self.prefBeaconAtKey)
+            let nowMs = Date().timeIntervalSince1970 * 1000
+            if at > 0, nowMs - at <= Self.beaconFreshMs {
+                cachedBaseUrl = beacon
+                return beacon
+            }
+        }
+        // 3) 自动发现 / 上次成功过的地址
+        if let custom = prefs.string(forKey: prefCustomUrlKey)?.trimmingCharacters(in: .whitespaces),
+           !custom.isEmpty, !Self.isLoopback(custom) {
+            cachedBaseUrl = custom
+            return custom
+        }
+        if let lastGood = prefs.string(forKey: Self.prefLastGoodKey)?.trimmingCharacters(in: .whitespaces),
+           !lastGood.isEmpty, !Self.isLoopback(lastGood) {
+            cachedBaseUrl = lastGood
+            return lastGood
+        }
+        // 4) 最后兜底：回环（仅 USB 隧道有效）
+        let loopback = "http://127.0.0.1:\(Self.defaultPort)"
+        cachedBaseUrl = loopback
+        return loopback
     }
 
+    /// 自动发现命中的地址（允许被更新的信标覆盖）
     public func setCustomBaseUrl(_ urlString: String) {
         let trimmed = urlString.trimmingCharacters(in: .whitespaces)
         prefs.set(trimmed, forKey: prefCustomUrlKey)
         cachedBaseUrl = trimmed.isEmpty ? nil : trimmed
     }
 
+    /// 用户在设置里手工指定的地址：视为明确意图，不被自动发现覆盖
+    public func setManualBaseUrl(_ urlString: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespaces)
+        prefs.set(trimmed, forKey: Self.prefManualUrlKey)
+        prefs.set(trimmed, forKey: prefCustomUrlKey)
+        cachedBaseUrl = trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// 任意一次请求成功后调用：记住「最近可用地址」，下次直接复用
+    public func markBaseUrlGood(_ urlString: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        prefs.set(trimmed, forKey: Self.prefLastGoodKey)
+    }
+
+    /// 信标命中：更新缓存与"最近可用"，供界面立即刷新
+    public func applyBeaconUrl(_ urlString: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        cachedBaseUrl = trimmed
+        prefs.set(trimmed, forKey: Self.prefLastGoodKey)
+    }
+
+    /// 当前地址已失效，强制下次重新选路
+    public func invalidateBaseUrl() {
+        cachedBaseUrl = nil
+    }
+
+    /// 自检并自动切换：依次尝试「当前地址 → 信标地址 → 最近可用 → 回环」，
+    /// 全部失败时清掉失效的手填局域网地址，避免陈旧 IP 永久卡死。
     public func checkConnection(completion: @escaping (Bool) -> Void) {
-        let baseUrl = resolveBaseUrl()
-        guard let url = URL(string: "\(baseUrl)/api/online/status") else {
+        var candidates: [String] = [resolveBaseUrl()]
+        if let beacon = prefs.string(forKey: Self.prefBeaconUrlKey),
+           !beacon.trimmingCharacters(in: .whitespaces).isEmpty {
+            candidates.append(beacon)
+        }
+        if let lastGood = prefs.string(forKey: Self.prefLastGoodKey),
+           !lastGood.trimmingCharacters(in: .whitespaces).isEmpty {
+            candidates.append(lastGood)
+        }
+        candidates.append("http://127.0.0.1:\(Self.defaultPort)")
+
+        var seen = Set<String>()
+        let unique = candidates.filter { !$0.isEmpty && seen.insert($0).inserted }
+
+        tryCandidates(unique, index: 0) { [weak self] ok in
+            guard let self = self else { return }
+            if !ok {
+                let manual = self.prefs.string(forKey: Self.prefManualUrlKey)?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                if let custom = self.prefs.string(forKey: self.prefCustomUrlKey)?
+                    .trimmingCharacters(in: .whitespaces),
+                   !custom.isEmpty, !Self.isLoopback(custom), custom != manual {
+                    // 清掉失效的「自动发现」地址；用户手填的地址保留（尊重明确意图）
+                    self.prefs.set("", forKey: self.prefCustomUrlKey)
+                }
+                self.cachedBaseUrl = nil
+            }
+            DispatchQueue.main.async { completion(ok) }
+        }
+    }
+
+    private func tryCandidates(_ list: [String], index: Int, completion: @escaping (Bool) -> Void) {
+        guard index < list.count else {
             completion(false)
+            return
+        }
+        let baseUrl = list[index]
+        guard let url = URL(string: "\(baseUrl)/api/online/status") else {
+            tryCandidates(list, index: index + 1, completion: completion)
             return
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 3
-        session.dataTask(with: request) { _, response, _ in
+        session.dataTask(with: request) { [weak self] _, response, _ in
             let ok = (response as? HTTPURLResponse)?.statusCode == 200
-            DispatchQueue.main.async { completion(ok) }
+            if ok {
+                self?.cachedBaseUrl = baseUrl
+                self?.markBaseUrlGood(baseUrl)
+                completion(true)
+            } else {
+                self?.tryCandidates(list, index: index + 1, completion: completion)
+            }
         }.resume()
     }
 

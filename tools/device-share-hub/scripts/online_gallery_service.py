@@ -986,6 +986,111 @@ def start_adb_reverse_daemon(port: int):
     t.start()
 
 
+# ============================ 局域网信标（手机零扫描秒级发现） ============================
+BEACON_PORT = 45832
+BEACON_MAGIC = "ZWMDS2_GALLERY_DISCOVER"
+BEACON_INTERVAL = 2.0
+
+
+def get_all_local_ips() -> List[str]:
+    """枚举本机所有非回环 IPv4 地址"""
+    ips: List[str] = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    primary = get_local_ip()
+    if primary and not primary.startswith("127.") and primary not in ips:
+        ips.insert(0, primary)
+    return ips
+
+
+def get_broadcast_targets() -> List[str]:
+    """本机所有网段的广播地址 + 全局广播"""
+    targets = ["255.255.255.255"]
+    for ip in get_all_local_ips():
+        parts = ip.split(".")
+        if len(parts) == 4:
+            b = ".".join(parts[:3] + ["255"])
+            if b not in targets:
+                targets.append(b)
+    return targets
+
+
+def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
+    """
+    后台线程：向局域网周期广播「在线相册服务」信标（UDP 45832），
+    同时应答手机端主动探测。
+
+    价值：
+    - 手机端不必再全 /24 端口扫描，2 秒内即可拿到电脑地址；
+    - 电脑 IP 变化后手机会自动跟随，在线相册读取稳定不掉线；
+    - 不依赖 ADB 隧道，纯 Wi-Fi 设备（vivo / 华为 / 苹果）同样可用。
+    """
+    def _payload(ip: str) -> bytes:
+        return json.dumps({
+            "service": "DeviceShareHub-OnlineGallery",
+            "type": "beacon",
+            "v": 1,
+            "port": port,
+            "url": f"http://{ip}:{port}",
+            "ip": ip,
+            "ts": int(time.time() * 1000),
+        }, ensure_ascii=False).encode("utf-8")
+
+    def _loop():
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.bind(("0.0.0.0", beacon_port))
+            sock.settimeout(1.0)
+        except Exception as exc:
+            print(f"⚠️ 局域网信标启动失败（端口 {beacon_port}）：{exc}")
+            return
+
+        broadcast_targets = get_broadcast_targets()
+        ip_cache = get_local_ip()
+        last_broadcast = 0.0
+        last_refresh = time.time()
+        print(f"📣 局域网信标已启动：UDP {beacon_port} → {broadcast_targets}（每 {BEACON_INTERVAL:.0f}s 一次）")
+
+        while True:
+            now = time.time()
+            # 每 30 秒刷新一次本机 IP 与广播目标（切换网络/IP 变化时自动跟上）
+            if now - last_refresh > 30:
+                ip_cache = get_local_ip()
+                broadcast_targets = get_broadcast_targets()
+                last_refresh = now
+
+            if now - last_broadcast >= BEACON_INTERVAL:
+                data = _payload(ip_cache)
+                for target in broadcast_targets:
+                    try:
+                        sock.sendto(data, (target, beacon_port))
+                    except Exception:
+                        pass
+                last_broadcast = now
+
+            # 应答手机主动探测（广播被路由器拦截时的兜底通路）
+            try:
+                packet, addr = sock.recvfrom(2048)
+                text = packet.decode("utf-8", "ignore")
+                upper = text.upper()
+                if BEACON_MAGIC in text or "GALLERY" in upper or "ZWMDS2" in upper:
+                    sock.sendto(_payload(ip_cache), addr)
+            except socket.timeout:
+                pass
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_loop, daemon=True, name="LanBeacon")
+    t.start()
+
+
 def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_ROOT, enable_adb: bool = False):
     scanner = WorkScanner(library_root)
     OnlineGalleryHandler.scanner = scanner
@@ -1001,6 +1106,9 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
 
     # 启动纯静默 ADB 隧道守护（0 弹窗 0 黑框）
     start_adb_reverse_daemon(port)
+
+    # 启动局域网信标广播：手机端零扫描、秒级发现，IP 变化自动跟随
+    start_lan_beacon(port)
 
     # 首次预热扫描
     works = scanner.scan(force=True)

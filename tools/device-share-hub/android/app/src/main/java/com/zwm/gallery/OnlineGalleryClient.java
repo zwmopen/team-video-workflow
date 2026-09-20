@@ -17,7 +17,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +36,11 @@ import java.util.concurrent.Executors;
  */
 public final class OnlineGalleryClient {
     public static final int DEFAULT_PC_PORT = 45835;
+    /** 局域网信标端口：电脑端在此端口周期广播自身地址，手机被动接收 */
+    public static final int BEACON_PORT = 45832;
+    private static final String BEACON_MAGIC = "ZWMDS2_GALLERY_DISCOVER";
+    /** 信标地址保鲜期：超过该时长视为陈旧，需重新确认 */
+    private static final long BEACON_FRESH_MS = 5 * 60 * 1000L;
     private static final int TIMEOUT_MS = 15000;
     private final Context context;
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
@@ -86,46 +96,303 @@ public final class OnlineGalleryClient {
         this.context = context.getApplicationContext();
     }
 
+    /** 判断是否为回环地址（仅 ADB reverse 隧道在场时才可达，纯 Wi-Fi 设备必然失败） */
+    public static boolean isLoopbackUrl(String url) {
+        if (url == null) return false;
+        return url.contains("127.0.0.1") || url.contains("localhost");
+    }
+
+    /**
+     * 地址选路优先级（修复 vivo/华为「同一 Wi-Fi 只有红米能读」）：
+     * 1) 用户手填或已自动发现的局域网地址（非回环才认）
+     * 2) 局域网信标地址（电脑主动广播，5 分钟内新鲜）
+     * 3) 最近一次成功连通的地址
+     * 4) 回环 127.0.0.1（最后兜底，只有 ADB reverse 隧道才有效）
+     */
     public String resolveBaseUrl() {
         if (cachedBaseUrl != null && !cachedBaseUrl.isEmpty()) {
             return cachedBaseUrl;
         }
 
         SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
+
+        // 1) 用户在设置里手填的地址：优先级最高，明确表达意图
+        String manual = prefs.getString("manualPcServerUrl", "").trim();
+        if (!manual.isEmpty() && !isLoopbackUrl(manual)) {
+            cachedBaseUrl = manual;
+            return manual;
+        }
+
+        // 2) 局域网信标（电脑主动广播，5 分钟内新鲜）—— 电脑换 IP 也能自动跟上
+        String beacon = prefs.getString("beaconPcServerUrl", "").trim();
+        long beaconAt = prefs.getLong("beaconPcServerAtMs", 0L);
+        if (!beacon.isEmpty() && System.currentTimeMillis() - beaconAt <= BEACON_FRESH_MS) {
+            cachedBaseUrl = beacon;
+            return beacon;
+        }
+
+        // 3) 自动发现/上次成功过的局域网地址
         String custom = prefs.getString("customPcServerUrl", "").trim();
-        if (!custom.isEmpty()) {
+        if (!custom.isEmpty() && !isLoopbackUrl(custom)) {
             cachedBaseUrl = custom;
             return custom;
         }
 
-        // 默认优先使用本地回环 127.0.0.1:45835 (针对 ADB reverse 极速通道，零延迟免 Wi-Fi 防火墙阻拦)
+        String lastGood = prefs.getString("lastGoodPcServerUrl", "").trim();
+        if (!lastGood.isEmpty() && !isLoopbackUrl(lastGood)) {
+            cachedBaseUrl = lastGood;
+            return lastGood;
+        }
+
+        // 4) 最后兜底：回环（仅 ADB reverse / USB 隧道有效）
         String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
         cachedBaseUrl = loopback;
         return loopback;
     }
 
+    /** 自动发现或信标命中的地址（非用户手填，允许被更新的信标覆盖） */
     public void setCustomBaseUrl(String url) {
         this.cachedBaseUrl = url;
         context.getSharedPreferences("device_share", Context.MODE_PRIVATE).edit()
                 .putString("customPcServerUrl", url == null ? "" : url).apply();
     }
 
+    /** 用户在设置里手工指定的地址：视为明确意图，不被信标自动覆盖 */
+    public void setManualBaseUrl(String url) {
+        String cleaned = url == null ? "" : url.trim();
+        this.cachedBaseUrl = cleaned.isEmpty() ? null : cleaned;
+        context.getSharedPreferences("device_share", Context.MODE_PRIVATE).edit()
+                .putString("manualPcServerUrl", cleaned)
+                .putString("customPcServerUrl", cleaned)
+                .apply();
+    }
+
+    /** 任意一次请求成功后调用：记录「最近可用地址」，供下次直接复用 */
+    public void markBaseUrlGood(String baseUrl) {
+        if (baseUrl == null || baseUrl.isEmpty()) return;
+        context.getSharedPreferences("device_share", Context.MODE_PRIVATE).edit()
+                .putString("lastGoodPcServerUrl", baseUrl).apply();
+    }
+
+    /** 当前地址已失效：清空内存缓存，强制下一次重新选路 */
+    public void invalidateBaseUrl() {
+        this.cachedBaseUrl = null;
+    }
+
+    /**
+     * 连接自检：依次尝试「当前地址 → 信标地址 → 最近可用 → 回环」。
+     * 全部失败时清理掉已经失效的手填局域网地址，避免陈旧 IP 永久卡死。
+     */
     public void checkConnection(Callback<Boolean> callback) {
         executor.execute(() -> {
-            String baseUrl = resolveBaseUrl();
-            if (ping(baseUrl)) {
-                mainHandler.post(() -> callback.onSuccess(true));
-                return;
+            SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
+            java.util.LinkedHashSet<String> candidates = new java.util.LinkedHashSet<>();
+            candidates.add(resolveBaseUrl());
+
+            String beacon = prefs.getString("beaconPcServerUrl", "").trim();
+            if (!beacon.isEmpty()) candidates.add(beacon);
+            String lastGood = prefs.getString("lastGoodPcServerUrl", "").trim();
+            if (!lastGood.isEmpty()) candidates.add(lastGood);
+            candidates.add("http://127.0.0.1:" + DEFAULT_PC_PORT);
+
+            for (String candidate : candidates) {
+                if (candidate == null || candidate.isEmpty()) continue;
+                if (ping(candidate)) {
+                    cachedBaseUrl = candidate;
+                    markBaseUrlGood(candidate);
+                    mainHandler.post(() -> callback.onSuccess(true));
+                    return;
+                }
+                if (candidate.equals(cachedBaseUrl)) cachedBaseUrl = null;
             }
-            // 自动回退探测 ADB reverse 回环端口 (127.0.0.1:45835)
-            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
-            if (!loopback.equals(baseUrl) && ping(loopback)) {
-                setCustomBaseUrl(loopback);
-                mainHandler.post(() -> callback.onSuccess(true));
-                return;
+
+            // 全部不通：清掉失效的「自动发现」地址，让信标/扫描重新接管；
+            // 用户手填的地址保留（尊重明确意图），但下一次请求仍会走信标优先的兜底链路。
+            String custom = prefs.getString("customPcServerUrl", "").trim();
+            String manual = prefs.getString("manualPcServerUrl", "").trim();
+            if (!custom.isEmpty() && !isLoopbackUrl(custom) && !custom.equals(manual)) {
+                prefs.edit().putString("customPcServerUrl", "").apply();
             }
+            cachedBaseUrl = null;
             mainHandler.post(() -> callback.onSuccess(false));
         });
+    }
+
+    // ==================== 局域网信标监听（电脑主动广播，手机被动接收） ====================
+
+    private volatile boolean beaconRunning = false;
+    private volatile Thread beaconThread = null;
+    private volatile DatagramSocket beaconSocket = null;
+    private volatile android.net.wifi.WifiManager.MulticastLock beaconMulticastLock = null;
+
+    /**
+     * Wi-Fi 驱动默认会过滤广播/组播报文（省电策略），部分机型（如 vivo）因此收不到电脑信标。
+     * 持有 MulticastLock 可放行这些报文，是在线相册稳定可读的关键一步。
+     */
+    private void acquireBeaconMulticastLock() {
+        try {
+            android.net.wifi.WifiManager manager = (android.net.wifi.WifiManager)
+                    context.getSystemService(Context.WIFI_SERVICE);
+            if (manager == null) return;
+            android.net.wifi.WifiManager.MulticastLock lock = manager.createMulticastLock("zwm-online-gallery-beacon");
+            lock.setReferenceCounted(false);
+            lock.acquire();
+            beaconMulticastLock = lock;
+        } catch (Exception ignored) {
+            // 部分平台不支持组播控制，缺少该锁仍可尝试接收
+        }
+    }
+
+    private void releaseBeaconMulticastLock() {
+        android.net.wifi.WifiManager.MulticastLock lock = beaconMulticastLock;
+        beaconMulticastLock = null;
+        if (lock == null) return;
+        try {
+            if (lock.isHeld()) lock.release();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * 启动信标监听（UDP 45832）。电脑端每 2 秒广播一次自身地址，
+     * 手机被动收包即可秒级拿到地址，不必全 /24 扫描；电脑换 IP 也能自动跟随。
+     * 同时每 30 秒主动补发一次探测，覆盖路由器丢弃广播的情况。
+     */
+    public void startBeaconListener(final Runnable onAddressChanged) {
+        if (beaconRunning) return;
+        beaconRunning = true;
+        beaconThread = new Thread(() -> {
+            acquireBeaconMulticastLock();
+            DatagramSocket sock;
+            try {
+                sock = new DatagramSocket(null);
+                sock.setReuseAddress(true);
+                sock.setBroadcast(true);
+                sock.bind(new java.net.InetSocketAddress("0.0.0.0", BEACON_PORT));
+                sock.setSoTimeout(15000);
+                beaconSocket = sock;
+            } catch (Exception e) {
+                beaconRunning = false;
+                releaseBeaconMulticastLock();
+                return;
+            }
+
+            try {
+                sendBeaconProbe(sock);
+                byte[] buf = new byte[2048];
+                int idleRounds = 0;
+                while (beaconRunning) {
+                    try {
+                        DatagramPacket pkt = new DatagramPacket(buf, buf.length);
+                        sock.receive(pkt);
+                        idleRounds = 0;
+                        String text = new String(pkt.getData(), 0, pkt.getLength(), StandardCharsets.UTF_8);
+                        String url = parseBeaconUrl(text);
+                        if (url != null && !url.isEmpty()) {
+                            applyBeaconUrl(url, onAddressChanged);
+                        }
+                    } catch (SocketTimeoutException te) {
+                        idleRounds++;
+                        if (idleRounds % 2 == 0) sendBeaconProbe(sock);
+                    } catch (Exception ignored) {
+                        if (!beaconRunning) break;
+                    }
+                }
+            } finally {
+                try { sock.close(); } catch (Exception ignored) {}
+                if (beaconSocket == sock) beaconSocket = null;
+                releaseBeaconMulticastLock();
+            }
+        }, "LanBeaconListener");
+        beaconThread.setDaemon(true);
+        beaconThread.start();
+    }
+
+    public void stopBeaconListener() {
+        beaconRunning = false;
+        DatagramSocket sock = beaconSocket;
+        if (sock != null) {
+            try { sock.close(); } catch (Exception ignored) {}
+        }
+        beaconThread = null;
+        beaconSocket = null;
+    }
+
+    /** 收到信标：持久化，并在地址变化时通知界面刷新 */
+    private void applyBeaconUrl(String url, Runnable onAddressChanged) {
+        SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
+        String prev = prefs.getString("beaconPcServerUrl", "").trim();
+        boolean changed = !url.equals(prev);
+
+        prefs.edit()
+                .putString("beaconPcServerUrl", url)
+                .putLong("beaconPcServerAtMs", System.currentTimeMillis())
+                .apply();
+
+        // 仅当用户「手工指定」了地址时才不让信标接管；
+        // 自动发现的地址必须允许被信标更新，否则电脑换 IP 后手机会一直连旧地址。
+        String manual = prefs.getString("manualPcServerUrl", "").trim();
+        boolean userPinned = !manual.isEmpty() && !isLoopbackUrl(manual);
+
+        if (!userPinned) {
+            String current = cachedBaseUrl;
+            if (changed || current == null || !url.equals(current)) {
+                cachedBaseUrl = url;
+                markBaseUrlGood(url);
+                if (changed && onAddressChanged != null) {
+                    mainHandler.post(onAddressChanged);
+                }
+            }
+        }
+    }
+
+    private String parseBeaconUrl(String text) {
+        if (text == null) return null;
+        String t = text.trim();
+        if (!t.startsWith("{")) return null;
+        try {
+            JSONObject obj = new JSONObject(t);
+            String url = obj.optString("url", "").trim();
+            if (url.isEmpty()) {
+                String ip = obj.optString("ip", "").trim();
+                int port = obj.optInt("port", DEFAULT_PC_PORT);
+                if (!ip.isEmpty()) url = "http://" + ip + ":" + port;
+            }
+            return url.isEmpty() ? null : url;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 主动广播探测报文，电脑收到会立刻单播回信标 */
+    private void sendBeaconProbe(DatagramSocket sock) {
+        try {
+            byte[] data = BEACON_MAGIC.getBytes(StandardCharsets.UTF_8);
+            for (String target : localBroadcastTargets()) {
+                try {
+                    sock.send(new DatagramPacket(data, data.length, InetAddress.getByName(target), BEACON_PORT));
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private List<String> localBroadcastTargets() {
+        List<String> targets = new ArrayList<>();
+        targets.add("255.255.255.255");
+        try {
+            java.util.Enumeration<NetworkInterface> nis = NetworkInterface.getNetworkInterfaces();
+            while (nis.hasMoreElements()) {
+                NetworkInterface ni = nis.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                for (java.net.InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                    InetAddress b = ia.getBroadcast();
+                    if (b == null) continue;
+                    String s = b.getHostAddress();
+                    if (s != null && !s.isEmpty() && !targets.contains(s)) targets.add(s);
+                }
+            }
+        } catch (Exception ignored) {}
+        return targets;
     }
 
     private boolean ping(String baseUrl) {
@@ -177,6 +444,15 @@ public final class OnlineGalleryClient {
         executor.execute(() -> {
             java.util.LinkedHashSet<String> candidates = new java.util.LinkedHashSet<>();
 
+            // 0) 最快通路：局域网信标（电脑 2 秒一播，通常几十毫秒即可拿到地址）
+            String beaconUrl = probeBeaconOnce(3500);
+            if (beaconUrl != null) {
+                setCustomBaseUrl(beaconUrl);
+                markBaseUrlGood(beaconUrl);
+                mainHandler.post(() -> callback.onSuccess(beaconUrl));
+                return;
+            }
+
             // 1) 优先尝试已发现的对端设备（含电脑端信标）
             try {
                 List<com.zwm.gallery.PeerDevice> peers = OnlineService.peers();
@@ -188,6 +464,7 @@ public final class OnlineGalleryClient {
                     }
                 }
             } catch (Exception ignored) {}
+            final int peerCount = candidates.size();
 
             // 2) 兜底：本机所在网段的 /24 全量并发探测
             try {
@@ -210,9 +487,16 @@ public final class OnlineGalleryClient {
                 return;
             }
 
-            java.util.List<String> list = new ArrayList<>(candidates);
-            java.util.Collections.shuffle(list);
-            // 已发现对端优先，其次本网段
+            // 已发现对端保持原顺序优先探测，本网段地址随机打散以尽快命中
+            java.util.List<String> list = new ArrayList<>();
+            java.util.List<String> rest = new ArrayList<>();
+            int idx = 0;
+            for (String c : candidates) {
+                if (idx++ < peerCount) list.add(c);
+                else rest.add(c);
+            }
+            java.util.Collections.shuffle(rest);
+            list.addAll(rest);
             java.util.concurrent.atomic.AtomicReference<String> found = new java.util.concurrent.atomic.AtomicReference<>(null);
             int threads = Math.min(48, list.size());
             java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(threads);
@@ -246,8 +530,44 @@ public final class OnlineGalleryClient {
             }
             String base = "http://" + host + ":" + DEFAULT_PC_PORT;
             setCustomBaseUrl(base);
+            markBaseUrlGood(base);
             mainHandler.post(() -> callback.onSuccess(base));
         });
+    }
+
+    /**
+     * 一次性信标探测：广播探测报文并等待电脑回信。
+     * 命中即返回 http://ip:45835，超时返回 null（随后再走扫描兜底）。
+     */
+    private String probeBeaconOnce(long waitMs) {
+        DatagramSocket sock = null;
+        try {
+            sock = new DatagramSocket();
+            sock.setBroadcast(true);
+            sock.setSoTimeout(700);
+            sendBeaconProbe(sock);
+            long deadline = System.currentTimeMillis() + waitMs;
+            byte[] buf = new byte[2048];
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    DatagramPacket pkt = new DatagramPacket(buf, buf.length);
+                    sock.receive(pkt);
+                    String text = new String(pkt.getData(), 0, pkt.getLength(), StandardCharsets.UTF_8);
+                    String url = parseBeaconUrl(text);
+                    if (url != null && !url.isEmpty()) return url;
+                } catch (SocketTimeoutException te) {
+                    sendBeaconProbe(sock);
+                } catch (Exception ignored) {
+                    return null;
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (sock != null) {
+                try { sock.close(); } catch (Exception ignored) {}
+            }
+        }
+        return null;
     }
 
     public void fetchCategories(Callback<CategoriesResult> callback) {
