@@ -751,7 +751,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             target_work = self.scanner.get_work(work_id)
             if not target_work:
-                self.send_error(404, f"Work {work_id} not found")
+                # 注意：HTTP 状态行按 latin-1 编码，中文作品名直接放进 reason 会抛
+                # UnicodeEncodeError 并把请求打成 500，因此这里只回 ASCII 文案。
+                self.send_error(404, "Work not found")
                 return
 
             dir_path = target_work["path"]
@@ -849,6 +851,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"Error resetting tags: {e}")
 
+            # 同步归零 manifest.json，确保扫描器与手机端看到的「使用次数」一致为 0，
+            # 这样「用过 → 重置 → 再删除」才能被正确判定为人工垃圾样本。
+            manifest_file = os.path.join(dir_path, "manifest.json")
+            if os.path.exists(manifest_file):
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as fp:
+                        manifest = json.load(fp)
+                    manifest["useCount"] = 0
+                    manifest["used"] = False
+                    if isinstance(manifest.get("distribution"), dict):
+                        manifest["distribution"]["useCount"] = 0
+                        manifest["distribution"]["dispatchedTo"] = []
+                    manifest["resetAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    with open(manifest_file, "w", encoding="utf-8") as fp:
+                        json.dump(manifest, fp, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"Error resetting manifest: {e}")
+
             self.scanner.scan(force=True)
             self.send_json(200, {"ok": True, "workId": work_id, "useCount": 0, "message": "已重置为待首发状态"})
             return
@@ -876,21 +896,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Work not found")
                 return
 
-            # 已使用过的作品不是垃圾：电脑端早已按次数归档到对应文件夹，
-            # 手机端删除只清理本地记录，绝不写入垃圾样本库与垃圾元数据。
-            if int(target_work.get("useCount", 0) or 0) > 0:
-                self.scanner.scan(force=True)
-                self.send_json(200, {
-                    "ok": True,
-                    "workId": work_id,
-                    "action": "already_archived",
-                    "message": "该作品已发送过，电脑端早已归档到对应次数文件夹，未标记为垃圾",
-                    "targetPath": target_work.get("path", ""),
-                    "remark": remark,
-                    "remainingWorks": len(self.scanner.scan())
-                })
-                return
-
+            # 判定权在手机端：只要手机点了删除（含「用过 → 重置 → 再删除」），
+            # 一律视为人工判定垃圾：物理移入「_垃圾作品（后续参考分析）」永久保留，
+            # 并在元数据写死垃圾标记（全渠道硬拦截）。电脑端绝不自动清理该样本库。
             ok, target_dest, action_desc = self._move_work_to_garbage(target_work, device_name, remark)
             if not ok:
                 self.send_json(200, {"ok": False, "error": action_desc})
