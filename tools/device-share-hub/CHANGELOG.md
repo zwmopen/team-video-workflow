@@ -46,6 +46,13 @@
   - 开机自启脚本 `DeviceShareHub-OnlineGallery.vbs` 由「直连 pythonw」改为「调用启动器 `-Restart`」——
     旧写法在已有进程占着 45835 时仍会再起一个，两个进程并存正是静默事故的温床。
     （该文件在系统启动目录，不入库；原文件已备份到交付工作区。）
+- **iOS 版本号单一源修复（本轮 CI 抓出的真实缺陷）**：
+  iOS 产物在 `ios/project.yml` 里有**两处**版本声明 —— `settings.base` 的 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`
+  与 `info.properties` 里**硬编码**的 `CFBundleShortVersionString` / `CFBundleVersion`。
+  升版本只改前者时，xcodegen 会用后者覆盖生成的 Info.plist，打出的 IPA 版本与 CI 断言不一致
+  → `Package AltStore IPA` 步骤断言失败、iOS 产物发不出去（而 android-build 是绿的，极易误判成「iOS 环境抖动」）。
+  现改为引用构建设置（`"$(MARKETING_VERSION)"` / `"$(CURRENT_PROJECT_VERSION)"`），版本号回到**单一源**，
+  这类「改一处忘一处」的失败从此不可能再发生。
 - **对照基线**：服务端自带单测 5 项中 2 项失败（`test_two_uses_protection_rule` / `test_works_search_and_filter`），
   已用 `git archive HEAD` 取原版测试确认**同为失败**，属历史遗留，与本次改动无关。
 

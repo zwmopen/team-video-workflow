@@ -37,8 +37,12 @@ targets:
       properties:
         CFBundleDisplayName: 相册
         CFBundleName: Album
-        CFBundleShortVersionString: "0.8.16"
-        CFBundleVersion: "87"
+        # ⚠️ 单一版本源：这两个值必须引用上面的 MARKETING_VERSION / CURRENT_PROJECT_VERSION，
+        # 不要再硬编码字面量。2026-09-20 踩过坑：settings 里升到 0.8.17/88，这里还留着
+        # 硬编码的 "0.8.16"/"87"，xcodegen 用它覆盖了 Info.plist，打出来的 IPA 版本与
+        # CI 断言不一致，iOS 产物直接发不出去（android-build 却是绿的，极易误判）。
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSLocalNetworkUsageDescription: 用于让同一 Wi-Fi 的素材投送中控自动发现这台 iPhone，并把文件直接传入所选作品文件夹。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
