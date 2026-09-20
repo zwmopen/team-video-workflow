@@ -58,8 +58,17 @@ public final class LanDiscovery {
             }
         }
 
-        // 2) 当前所在网段的 /24 全量
-        for localIP in Self.localIPv4Addresses() {
+        // 2) 真实局域网网段的 /24 全量
+        //
+        // 【关键修复】原实现把 getifaddrs 返回的**所有**非回环 IPv4 都拿来做 /24 扫描，
+        // 其中包含蜂窝接口（pdp_ip0，运营商大内网 10.x/172.x/100.64.x）。
+        // 结果是：手机同时开着 Wi-Fi 和蜂窝时，候选地址会翻倍到 500+ 个，
+        // 而扫描有 12 秒总预算 —— 一旦先扫到蜂窝那个 /24，12 秒会在
+        // 254 个不可达地址上耗尽，**Wi-Fi 网段根本还没轮到**就 break，
+        // discover() 返回 nil，表现就是「iPhone 读不到电脑在线相册」。
+        // 现在按接口名剔除蜂窝/隧道类接口，只扫真实局域网。
+        let lanAddresses = Self.lanIPv4Addresses()
+        for localIP in lanAddresses {
             let parts = localIP.split(separator: ".")
             guard parts.count == 4 else { continue }
             let prefix = "\(parts[0]).\(parts[1]).\(parts[2])."
@@ -76,7 +85,8 @@ public final class LanDiscovery {
         var found: String? = nil
         let group = DispatchGroup()
         let slots = DispatchSemaphore(value: 48)
-        let deadline = Date().addingTimeInterval(12)
+        // 单个 /24 在 48 并发 + 1.6s 超时下约需 8~9 秒；给到 20 秒覆盖多网段与慢 Wi-Fi
+        let deadline = Date().addingTimeInterval(20)
 
         for host in candidates {
             resultLock.lock()
@@ -105,7 +115,7 @@ public final class LanDiscovery {
             }
         }
 
-        _ = group.wait(timeout: .now() + 14)
+        _ = group.wait(timeout: .now() + 24)
         resultLock.lock()
         let final = found
         resultLock.unlock()
@@ -146,9 +156,35 @@ public final class LanDiscovery {
         return s.isEmpty ? nil : s
     }
 
-    /// 枚举本机所有非回环 IPv4 地址（Wi-Fi 与蜂窝均在内）
-    private static func localIPv4Addresses() -> [String] {
-        var addresses: [String] = []
+    /// 枚举本机**真实局域网**的 IPv4 地址，按「最可能是家庭/公司 LAN」排序。
+    ///
+    /// 与 `localIPv4Addresses()` 的区别：只保留 `en*`（Wi-Fi / 以太网）接口，
+    /// 剔除蜂窝（`pdp_ip*`）、VPN/隧道（`utun*` / `ipsec*`）、AirDrop P2P（`awdl*` / `llw*`）
+    /// 与网桥（`bridge*`）—— 这些网段的 /24 扫描纯属浪费扫描预算，会把 Wi-Fi 网段挤掉。
+    private static func lanIPv4Addresses() -> [String] {
+        let all = localIPv4Addresses()
+
+        // 优先 192.168.x（家庭/小型办公最常见），其次 10.x，再次 172.16-31.x，最后其它
+        func rank(_ ip: String) -> Int {
+            if ip.hasPrefix("192.168.") { return 0 }
+            if ip.hasPrefix("10.") { return 1 }
+            if ip.hasPrefix("172.") {
+                let second = Int(ip.split(separator: ".").dropFirst().first.map(String.init) ?? "") ?? 0
+                if (16...31).contains(second) { return 2 }
+            }
+            if ip.hasPrefix("100.64.") || ip.hasPrefix("100.65.") { return 9 } // 运营商 CGNAT，最后扫
+            return 5
+        }
+
+        return all
+            .filter { !$0.ip.hasPrefix("169.254.") }   // 链路本地，无意义
+            .sorted { rank($0.ip) < rank($1.ip) }
+            .map { $0.ip }
+    }
+
+    /// 枚举本机所有非回环 IPv4 地址及其所属接口名（Wi-Fi、蜂窝、隧道均在内）
+    private static func localIPv4Addresses() -> [(name: String, ip: String)] {
+        var addresses: [(name: String, ip: String)] = []
         var ifaddrPtr: UnsafeMutablePointer<ifaddrs>? = nil
         guard getifaddrs(&ifaddrPtr) == 0, let first = ifaddrPtr else { return addresses }
 
@@ -156,6 +192,7 @@ public final class LanDiscovery {
         while true {
             let ifa = ptr.pointee
             if let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) {
+                let name = String(cString: ifa.ifa_name)
                 var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 let nameInfoResult = getnameinfo(
                     addr, socklen_t(addr.pointee.sa_len),
@@ -164,8 +201,9 @@ public final class LanDiscovery {
                 )
                 if nameInfoResult == 0 {
                     let ip = String(cString: hostname)
-                    if !ip.isEmpty, !ip.hasPrefix("127."), !addresses.contains(ip) {
-                        addresses.append(ip)
+                    if !ip.isEmpty, !ip.hasPrefix("127."),
+                       !addresses.contains(where: { $0.ip == ip }) {
+                        addresses.append((name: name, ip: ip))
                     }
                 }
             }
@@ -173,6 +211,7 @@ public final class LanDiscovery {
             ptr = next
         }
         freeifaddrs(ifaddrPtr)
-        return addresses
+        // 只保留 Wi-Fi / 以太网接口（iOS 上 Wi-Fi 是 en0），剔除蜂窝与隧道
+        return addresses.filter { $0.name.hasPrefix("en") }
     }
 }
