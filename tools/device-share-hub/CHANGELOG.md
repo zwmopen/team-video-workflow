@@ -1,5 +1,20 @@
 # 变更记录
 
+## iOS 0.8.19 / versionCode 90 - 2026-09-21 - 与 Android 0.8.41 对齐（顶栏 + 体感）
+
+> **新 IPA 已发布到 gallery-updates**，iPhone App 内更新即可。
+
+把 Android 0.8.41 这一波体感加速在 iOS 上的 4 处遗漏补齐：
+
+1. **顶栏新增「刷新作品」按钮** —— 顶栏顺序：传送文件 → 来源模式 → **刷新作品** → 回收站 → 设置（与 Android `titleRow` 排列 1:1 对齐）
+2. **loadOnlineData 改为并行请求** —— 分类与列表同时发出，列表先到先渲染；旧实现是串行白白多一个网络往返
+3. **失败不清屏（与 Android 一致）** —— 已有快照/旧数据时，刷新失败不发错误、不 auto-discover，只弹一条轻量 toast 保留用户看到的内容
+4. **模式按钮 accessibilityLabel 改用 Android 同款文案** —— "当前：手机本地作品 (点击切换到电脑在线)" / "当前：电脑在线作品 (点击切换到手机本地)"（iOS 旧版用的是 "为..."、"..." 与 Android 不一致）
+
+self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? default` 的已知误报（与第二十一节注释一致）。
+
+---
+
 ## iOS 0.8.18 / versionCode 89 - 2026-09-20 - 在线相册本地快照秒开（对齐 Android）
 
 > **新 IPA 已发布到 gallery-updates**，iPhone App 内更新即可。

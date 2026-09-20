@@ -100,7 +100,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         updateModeButtonStyle()
 
         // 顶栏右侧：与安卓严格一致，从左到右依次为
-        // 传送文件 → 来源模式(手机本地/电脑在线) → 回收站 → 设置
+        // 传送文件 → 来源模式(手机本地/电脑在线) → 刷新作品 → 回收站 → 设置
         // 这里用 UIStackView 显式排布，而不是 rightBarButtonItems 数组 ——
         // 后者「数组顺序 ↔ 屏幕左右顺序」的语义容易搞反，无法在本机验证 iOS 渲染，
         // 用 StackView 可以确保与安卓逐像素对齐。
@@ -112,6 +112,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let rightRow = UIStackView(arrangedSubviews: [
             toolbarButton(.plane, label: "传送文件", action: #selector(openTransfer)),
             modeButton,
+            toolbarButton(.refresh, label: "刷新作品", action: #selector(refreshCurrent)),
             toolbarButton(.trash, label: "回收站", action: #selector(openTrash)),
             toolbarButton(.settings, label: "设置", action: #selector(openSettings))
         ])
@@ -149,18 +150,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func updateModeButtonStyle() {
+        // 与安卓严格一致：contentDescription 既说「当前状态」也说「点击会发生什么」
         if !isOnlineMode {
             let fg = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
             let bg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
             modeButton.backgroundColor = bg
             modeButton.setImage(AlbumToolbarIcon.image(.phone, color: fg), for: .normal)
-            modeButton.accessibilityLabel = "当前为手机本地作品，点击切换到电脑在线"
+            modeButton.accessibilityLabel = "当前：手机本地作品 (点击切换到电脑在线)"
         } else {
             let fg = UIColor(red: 2/255, green: 132/255, blue: 199/255, alpha: 1)
             let bg = UIColor(red: 224/255, green: 242/255, blue: 254/255, alpha: 1)
             modeButton.backgroundColor = bg
             modeButton.setImage(AlbumToolbarIcon.image(.computer, color: fg), for: .normal)
-            modeButton.accessibilityLabel = "当前为电脑在线作品，点击切换到手机本地"
+            modeButton.accessibilityLabel = "当前：电脑在线作品 (点击切换到手机本地)"
         }
     }
 
@@ -175,6 +177,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         } else {
             showToast("已切换到：📱 手机本地相册")
             render()
+        }
+    }
+
+    /// 与安卓一致：顶栏「刷新作品」按钮 —— 在线模式触发在线刷新，本地模式触发本地重扫。
+    @objc private func refreshCurrent() {
+        if isOnlineMode {
+            showToast("正在刷新电脑作品…")
+            loadOnlineData(silent: false)
+        } else {
+            showToast("正在刷新作品")
+            library.refresh(showConfirmation: true)
         }
     }
 
@@ -382,27 +395,56 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         self.renderOnlineUI()
     }
 
+    /// 与安卓 0.8.41 对齐（2026-09-20 体感加速三件套）：
+    /// ① 分类与列表**并行**发出 —— 之前是串行，多一个网络往返；
+    /// ② 已有数据时失败**不清屏、不弹错**，只发一条轻量 toast，保留快照；
+    /// ③ 完全没有数据（首次冷启动 / 快照丢失）才走「错误 + auto-discover」老路径。
     private func loadOnlineData(silent: Bool = false) {
-        if !silent {
-            // 可做轻量 loading 提示
+        let hadData = !onlineWorks.isEmpty
+
+        let group = DispatchGroup()
+        var catResult: Result<OnlineCategoriesResult, Error>? = nil
+        var workResult: Result<[OnlineWorkEntry], Error>? = nil
+
+        group.enter()
+        OnlineGalleryClient.shared.fetchCategories { result in
+            catResult = result
+            group.leave()
         }
-        OnlineGalleryClient.shared.fetchCategories { [weak self] catResult in
+        group.enter()
+        OnlineGalleryClient.shared.fetchWorks { result in
+            workResult = result
+            group.leave()
+        }
+
+        group.notify(queue: .main) { [weak self] in
             guard let self = self else { return }
+            self.collectionView.refreshControl?.endRefreshing()
+
             if case .success(let catData) = catResult {
                 self.onlineCategories = catData.categories
             }
-            OnlineGalleryClient.shared.fetchWorks { [weak self] workResult in
-                guard let self = self else { return }
-                self.collectionView.refreshControl?.endRefreshing()
-                switch workResult {
-                case .success(let works):
-                    self.onlineWorks = works
+
+            switch workResult {
+            case .success(let works)?:
+                self.onlineWorks = works
+                self.renderOnlineUI()
+            case .failure(let err)?:
+                if hadData {
+                    // 有快照 / 旧数据：保留用户已经看到的列表，只做软提示 —— 与安卓「失败不清屏」一致
+                    let msg = err.localizedDescription.isEmpty ? "网络超时" : err.localizedDescription
+                    self.showToast("⚠️ 刷新失败：\(msg)（已保留上次内容）")
                     self.renderOnlineUI()
-                case .failure(let err):
-                    if !silent { self.showError("拉取在线相册失败：\(err.localizedDescription)\n正在自动搜索局域网内的电脑在线相册…") }
+                } else {
+                    // 完全没有数据（首次冷启动或快照损坏）：走老路径弹错误并 auto-discover
+                    if !silent {
+                        self.showError("拉取在线相册失败：\(err.localizedDescription)\n正在自动搜索局域网内的电脑在线相册…")
+                    }
                     self.renderOnlineUI()
                     self.tryAutoDiscoverPc()
                 }
+            case .none:
+                break
             }
         }
     }
