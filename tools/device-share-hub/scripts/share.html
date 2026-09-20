@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>设备分发 · Device Share Hub</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --primary: #2d8cf0;
+    --danger: #e74c3c;
+    --success: #27ae60;
+    --warn: #f39c12;
+    --text: #2c3e50;
+    --muted: #7f8c8d;
+    --border: #e6e8eb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px 16px;
+    line-height: 1.5;
+  }
+  .container { max-width: 880px; margin: 0 auto; }
+  h1 { margin: 0 0 8px; font-size: 24px; }
+  .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 14px; }
+  .card {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .card h2 { margin: 0 0 12px; font-size: 16px; }
+  .info-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 8px 16px;
+    font-size: 14px;
+  }
+  .info-grid .label { color: var(--muted); }
+  .info-grid .value code {
+    background: #f0f3f7;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  .mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #f8f9fb;
+    border-radius: 6px;
+    margin-top: 12px;
+  }
+  .mode-toggle .switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .mode-toggle .switch input { display: none; }
+  .mode-toggle .slider {
+    position: absolute; inset: 0;
+    background: #cfd4da;
+    border-radius: 24px;
+    cursor: pointer;
+    transition: 0.2s;
+  }
+  .mode-toggle .slider::before {
+    content: "";
+    position: absolute;
+    left: 3px; top: 3px;
+    width: 18px; height: 18px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.2s;
+  }
+  .mode-toggle .switch input:checked + .slider { background: var(--primary); }
+  .mode-toggle .switch input:checked + .slider::before { transform: translateX(20px); }
+  .mode-toggle .hint { font-size: 13px; color: var(--muted); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: #f8f9fb; font-weight: 600; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  td.device-id {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 13px;
+    transition: 0.15s;
+  }
+  button.danger { background: var(--danger); color: white; }
+  button.danger:hover { background: #c0392b; }
+  button.primary { background: var(--primary); color: white; }
+  button.primary:hover { background: #1f6fcf; }
+  .empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    background: #ecf0f1;
+    color: var(--muted);
+  }
+  .badge.new { background: #e8f5e9; color: var(--success); }
+  .status-bar {
+    position: fixed; bottom: 16px; right: 16px;
+    background: var(--text); color: white;
+    padding: 8px 14px; border-radius: 4px;
+    font-size: 13px;
+    opacity: 0; transform: translateY(8px);
+    transition: 0.2s;
+    pointer-events: none;
+  }
+  .status-bar.show { opacity: 1; transform: translateY(0); }
+  .status-bar.ok { background: var(--success); }
+  .status-bar.err { background: var(--danger); }
+  .footer-hint {
+    margin-top: 24px;
+    padding: 12px 16px;
+    background: #fffbea;
+    border-left: 3px solid var(--warn);
+    border-radius: 4px;
+    font-size: 13px;
+    color: #7a6520;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📡 设备分发中心</h1>
+  <div class="subtitle">同一 Wi-Fi 下，手机/平板访问下方 IP 即可秒开在线相册</div>
+
+  <!-- 基础信息卡 -->
+  <div class="card">
+    <h2>本机信息</h2>
+    <div class="info-grid">
+      <div class="label">访问地址</div>
+      <div class="value"><code id="serviceUrl">加载中…</code></div>
+      <div class="label">IP 地址</div>
+      <div class="value"><code id="serviceIp">-</code></div>
+      <div class="label">端口</div>
+      <div class="value"><code id="servicePort">-</code></div>
+      <div class="label">在线相册</div>
+      <div class="value" id="libraryRoot">-</div>
+      <div class="label">成品数量</div>
+      <div class="value" id="totalWorks">-</div>
+    </div>
+    <div class="mode-toggle">
+      <label class="switch">
+        <input type="checkbox" id="strictMode" />
+        <span class="slider"></span>
+      </label>
+      <div>
+        <div><strong>严格模式</strong> <span class="badge">可选</span></div>
+        <div class="hint">开启后，新设备首次连接会在下方"待确认"列表出现，需要你手动点"放行"。关闭时新设备直接进入白名单（下载即用）。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 待确认设备（严格模式开启时显示） -->
+  <div class="card" id="pendingCard" style="display:none;">
+    <h2>⏳ 待确认设备 <span class="badge new" id="pendingCount">0</span></h2>
+    <div id="pendingBody"></div>
+  </div>
+
+  <!-- 已授权设备 -->
+  <div class="card">
+    <h2>✅ 已授权设备 <span class="badge" id="deviceCount">0</span></h2>
+    <div id="deviceList"></div>
+  </div>
+
+  <div class="footer-hint">
+    💡 <strong>提示：</strong>点击设备右侧的"移除"按钮，该设备将立即失去访问权限。需要重新连接时，请在此页面再点"放行"。
+  </div>
+</div>
+
+<div class="status-bar" id="statusBar"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const statusBar = $("statusBar");
+
+  function showStatus(msg, kind = "ok") {
+    statusBar.textContent = msg;
+    statusBar.className = "status-bar show " + kind;
+    setTimeout(() => statusBar.classList.remove("show"), 2200);
+  }
+
+  function fmtTs(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts * 1000);
+    const now = Date.now() / 1000;
+    const diff = now - ts;
+    if (diff < 60) return "刚刚";
+    if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+    if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
+    return Math.floor(diff / 86400) + " 天前";
+  }
+
+  async function fetchJSON(url, opts) {
+    const r = await fetch(url, opts);
+    if (!r.ok) throw new Error(url + " -> HTTP " + r.status);
+    return r.json();
+  }
+
+  async function refreshStatus() {
+    try {
+      const s = await fetchJSON("/api/online/status");
+      $("serviceIp").textContent = s.lanIp || s.ip || "—";
+      $("servicePort").textContent = s.port || "—";
+      const url = `http://${s.lanIp || s.ip}:${s.port || ""}`;
+      $("serviceUrl").textContent = url;
+      $("libraryRoot").textContent = s.libraryRoot || "—";
+      $("totalWorks").textContent = (s.totalWorks != null) ? s.totalWorks : "—";
+    } catch (e) {
+      console.warn("status:", e);
+    }
+  }
+
+  async function refreshDevices() {
+    try {
+      const d = await fetchJSON("/api/online/authorized-devices");
+      const tbody = $("deviceList");
+      const devices = d.devices || [];
+      $("deviceCount").textContent = devices.length;
+      if (devices.length === 0) {
+        tbody.innerHTML = '<div class="empty">还没有设备接入。手机打开 App 后会自动出现在这里。</div>';
+        return;
+      }
+      tbody.innerHTML = `
+        <table>
+          <thead>
+            <tr><th>设备名</th><th>最近活跃</th><th>IP</th><th>授权时间</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${devices.map(x => `
+              <tr>
+                <td><strong>${escapeHtml(x.device_name || "未命名")}</strong></td>
+                <td>${fmtTs(x.last_seen_at)}</td>
+                <td><code>${escapeHtml(x.last_seen_ip || "—")}</code></td>
+                <td>${fmtTs(x.allowed_at)}</td>
+                <td><button class="danger" data-id="${escapeHtml(x.device_id)}">移除</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+      tbody.querySelectorAll("button.danger").forEach(btn => {
+        btn.onclick = async () => {
+          if (!confirm(`确认移除设备「${btn.closest("tr").querySelector("strong").textContent}」？\n移除后该设备需要再次授权才能访问。`)) return;
+          try {
+            await fetchJSON(`/api/online/authorized-devices/${btn.dataset.id}/revoke`, { method: "POST" });
+            showStatus("已移除", "ok");
+            refreshDevices();
+          } catch (e) { showStatus("移除失败: " + e.message, "err"); }
+        };
+      });
+    } catch (e) {
+      $("deviceList").innerHTML = '<div class="empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  // 严格模式开关（前端记忆；后端用环境变量控制实际行为）
+  const strictMode = $("strictMode");
+  strictMode.addEventListener("change", () => {
+    showStatus(strictMode.checked ? "已开启严格模式（前端记忆）" : "已关闭严格模式", "ok");
+    // 注：实际严格模式需在 online_gallery_service.py 启动前设置环境变量
+    //   WHITELIST_REQUIRE_PC_CONFIRM=1
+    // 此 UI 仅作提示用途
+  });
+
+  refreshStatus();
+  refreshDevices();
+  setInterval(refreshDevices, 5000);
+</script>
+</body>
+</html>

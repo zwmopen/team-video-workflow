@@ -145,6 +145,42 @@ DEFAULT_PORT = 45835
 DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
 
 # ============================================================================
+# 已授权设备白名单（用户最终决定：默认放行所有设备，无需扫码/弹框）
+# 设计目标：
+#   1) 任何手机首次连上 → 直接 allow + 写白名单（不弹框不扫码）
+#   2) 白名单持久化（重启 PC 不丢），换电脑配置都在
+#   3) PC 端 share.html 能列出所有已授权设备 + 单台移除
+# ============================================================================
+AUTHORIZED_DEVICES_FILE = os.path.join(
+    os.path.expanduser("~"), ".device-share-hub-authorized-devices.json"
+)
+AUTHORIZED_DEVICES_LOCK = threading.Lock()
+
+
+def load_authorized_devices() -> Dict[str, Dict[str, Any]]:
+    """从磁盘读取已授权设备列表。文件不存在或损坏返回空 dict，不抛。"""
+    try:
+        with open(AUTHORIZED_DEVICES_FILE, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        if isinstance(data, dict):
+            return data
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def save_authorized_devices(devices: Dict[str, Dict[str, Any]]) -> None:
+    """原子写已授权设备列表到磁盘：tmp + rename，掉电不残留半截文件。"""
+    AUTHORIZED_DEVICES_FILE_DIR = os.path.dirname(AUTHORIZED_DEVICES_FILE)
+    os.makedirs(AUTHORIZED_DEVICES_FILE_DIR, exist_ok=True)
+    tmp_path = AUTHORIZED_DEVICES_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fp:
+        json.dump(devices, fp, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp_path, AUTHORIZED_DEVICES_FILE)
+
+# ============================================================================
 # 【空壳文案守卫】判定真源优先复用 copy_formatter.assert_copy_usable 的阈值体系；
 # 该服务以 pythonw 常驻运行，跨盘导入失败时退回本地等效实现，保证永不因缺依赖而放行空壳。
 # 与 Android 端 MainActivity.isCopySubstanceMissing（阈值 30）严格一致。
@@ -1503,6 +1539,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
+        # ===== 已授权设备白名单列表（GET · share.html 用）=====
+        if path == "/api/online/authorized-devices":
+            return self._handle_authorized_devices_get(query)
+
+        # ===== 静态资源：share.html（PC 端分发页 · GET）=====
+        if path == "/share.html" or path == "/share":
+            return self._handle_share_html()
+
         self.send_error(404, "Not Found")
 
     def _move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str, action_type: str = "dispatched") -> Tuple[bool, str, str]:
@@ -2193,7 +2237,143 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # ===== 设备注册（直接白名单 · 下载即用）=====
+        if path == "/api/online/device-register":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body.strip() else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return
+            return self._handle_device_register(req)
+
+        # ===== PC 端 revoke 设备（POST · share.html 触发）=====
+        if path.startswith("/api/online/authorized-devices/") and path.endswith("/revoke"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body.strip() else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+            device_id = path.split("/")[4]
+            return self._handle_revoke(device_id, req)
+
         self.send_error(404, "Not Found")
+
+    # ========================================================================
+    # 设备注册 / 白名单管理（默认放行所有设备 · Phase 3 简化版）
+    # ========================================================================
+    # 设计决定（用户最终拍板）：
+    #   - 不扫码 / 不弹框 / 不轮询；新设备首次连接时直接加入白名单
+    #   - 后续同一 device_id 来访自动放行 + 更新 last_seen
+    #   - PC 端 share.html 可查看白名单 + 单台 revoke
+    #   - 白名单持久化到 ~/.device-share-hub-authorized-devices.json
+    # ========================================================================
+
+    def _handle_device_register(self, req: Dict[str, Any]) -> None:
+        """POST /api/online/device-register {device_id, device_name} →
+        默认放行所有设备：写入/更新白名单，立即返回 ok。
+        后续移动端只需在首次启动时 POST 一次，之后凭 device_id 自动续期。
+        """
+        device_id = (req.get("device_id") or "").strip()
+        device_name = (req.get("device_name") or "未命名设备").strip()
+        if not device_id or len(device_id) < 8:
+            self.send_json(400, {"ok": False, "message": "device_id 缺失或过短"})
+            return
+
+        client_ip = self.client_address[0] if self.client_address else ""
+        now = int(time.time())
+
+        with AUTHORIZED_DEVICES_LOCK:
+            devices = load_authorized_devices()
+            existing = devices.get(device_id)
+            if existing:
+                # 已知设备 → 更新 last_seen + ip
+                existing["last_seen_at"] = now
+                existing["last_seen_ip"] = client_ip
+                # 如果 device_name 变了（用户改了手机名）也更新一下
+                if existing.get("device_name") != device_name and device_name:
+                    existing["device_name"] = device_name
+                devices[device_id] = existing
+                is_new = False
+            else:
+                # 新设备 → 直接写入白名单（无需用户操作）
+                devices[device_id] = {
+                    "device_name": device_name,
+                    "allowed_at": now,
+                    "last_seen_at": now,
+                    "last_seen_ip": client_ip,
+                }
+                is_new = True
+            save_authorized_devices(devices)
+
+        if is_new:
+            print(f"✅ [whitelist] 新设备已自动放行：{device_name} ({device_id[:8]}…) 来自 {client_ip}")
+        else:
+            print(f"🔄 [whitelist] 已知设备续期：{device_name} ({device_id[:8]}…) 来自 {client_ip}")
+
+        self.send_json(200, {
+            "ok": True,
+            "device_id": device_id,
+            "device_name": device_name,
+            "authorized": True,
+            "is_new": is_new,
+            "message": "已自动加入授权名单" if is_new else "欢迎回来，已在名单中",
+        })
+
+    def _handle_authorized_devices_get(self, query: Dict[str, List[str]]) -> None:
+        """GET /api/online/authorized-devices → 列出已授权设备（share.html 用）。
+        本机访问校验，避免被局域网外人枚举。"""
+        client_ip = self.client_address[0] if self.client_address else ""
+        if client_ip not in ("127.0.0.1", "::1", get_local_ip()):
+            self.send_json(403, {"ok": False, "message": "仅允许本机访问"})
+            return
+        with AUTHORIZED_DEVICES_LOCK:
+            devices = load_authorized_devices()
+        # 排序：最近活跃优先
+        ordered = sorted(
+            [{"device_id": did, **info} for did, info in devices.items()],
+            key=lambda x: x.get("last_seen_at", 0),
+            reverse=True,
+        )
+        self.send_json(200, {"ok": True, "devices": ordered})
+
+    def _handle_revoke(self, device_id: str, req: Dict[str, Any]) -> None:
+        """POST /api/online/authorized-devices/{id}/revoke → 从白名单移除。"""
+        client_ip = self.client_address[0] if self.client_address else ""
+        if client_ip not in ("127.0.0.1", "::1", get_local_ip()):
+            self.send_json(403, {"ok": False, "message": "仅允许本机访问"})
+            return
+        with AUTHORIZED_DEVICES_LOCK:
+            devices = load_authorized_devices()
+            removed = devices.pop(device_id, None)
+            if removed:
+                save_authorized_devices(devices)
+                print(f"🚫 [whitelist] 移除已授权设备：{removed.get('device_name', device_id[:8])} ({device_id[:8]}…)")
+        self.send_json(200, {"ok": True, "removed": removed is not None, "device_id": device_id})
+
+    def _handle_share_html(self) -> None:
+        """GET /share.html → 返回 PC 端分发页（设备列表 + revoke）"""
+        share_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "share.html")
+        if not os.path.exists(share_path):
+            self.send_error(503, "share.html not deployed")
+            return
+        try:
+            with open(share_path, "r", encoding="utf-8") as fp:
+                html = fp.read()
+        except OSError:
+            self.send_error(500, "share.html read failed")
+            return
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
 
 def start_adb_reverse_daemon(port: int):

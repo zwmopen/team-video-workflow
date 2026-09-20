@@ -209,6 +209,34 @@ public final class OnlineGalleryClient {
         let trimmed = urlString.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         prefs.set(trimmed, forKey: Self.prefLastGoodKey)
+        // 顺手把本机登记到 PC 端白名单：首次连接 → 直接放行 + 记 last_seen；
+        // 后续每次成功 ping 都续期一次。Server 端幂等，无任何阻拦（满足"下载即用"铁律）。
+        ensureDeviceRegistered(baseUrl: trimmed)
+    }
+
+    /// 向 PC 端登记本机（device_id + device_name）→ 直接进入白名单。
+    /// 用 DeviceIdentity.id 作为稳定 device_id（同一次安装永远一致）。
+    /// Server 端行为：新设备直接白名单 + 返回 ok；已知设备只更新 last_seen，无任何 UI/弹框。
+    public func ensureDeviceRegistered(baseUrl: String) {
+        let deviceId = DeviceIdentity.id
+        let deviceName = DeviceIdentity.name
+        guard let url = URL(string: "\(baseUrl)/api/online/device-register") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 5
+        let body: [String: Any] = ["device_id": deviceId, "device_name": deviceName]
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            return
+        }
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            // 静默：白名单是辅助能力，断网/PC 未启动/超时都忽略，不影响主流程。
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                NSLog("[DeviceRegister] OK (%@)", deviceId.prefix(8).description)
+            }
+        }.resume()
     }
 
     /// 信标命中：更新缓存与"最近可用"，供界面立即刷新

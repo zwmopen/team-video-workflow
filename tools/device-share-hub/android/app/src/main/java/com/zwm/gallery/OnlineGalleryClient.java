@@ -216,6 +216,34 @@ public final class OnlineGalleryClient {
         if (baseUrl == null || baseUrl.isEmpty()) return;
         context.getSharedPreferences("device_share", Context.MODE_PRIVATE).edit()
                 .putString("lastGoodPcServerUrl", baseUrl).apply();
+        // 顺手把本机登记到 PC 端白名单：首次连接 → 直接放行 + 记 last_seen；
+        // 后续每次成功 ping 都续期一次。Server 端幂等，无任何阻拦（满足"下载即用"铁律）。
+        ensureDeviceRegistered(baseUrl);
+    }
+
+    /**
+     * 向 PC 端登记本机（device_id + device_name）→ 直接进入白名单。
+     * 用 Settings.Secure.ANDROID_ID 作为稳定 device_id（卸载/重装后会变，但同一次安装永远一致）。
+     * Server 端行为：新设备直接白名单 + 返回 ok；已知设备只更新 last_seen，无任何 UI/弹框。
+     */
+    private void ensureDeviceRegistered(String baseUrl) {
+        executor.execute(() -> {
+            try {
+                String deviceId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                if (deviceId == null || deviceId.isEmpty()) {
+                    deviceId = "android-" + UUID.randomUUID().toString();
+                }
+                String deviceName = android.os.Build.MODEL != null && !android.os.Build.MODEL.isEmpty()
+                        ? android.os.Build.MODEL : "Android 设备";
+                JSONObject body = new JSONObject();
+                body.put("device_id", deviceId);
+                body.put("device_name", deviceName);
+                URL url = new URL(baseUrl + "/api/online/device-register");
+                rawHttpPost(url, body.toString());
+            } catch (Exception ignored) {
+                // 注册失败不影响主流程：白名单是辅助能力，断网/PС未启动时跳过即可。
+            }
+        });
     }
 
     /** 当前地址已失效：清空内存缓存，强制下一次重新选路 */
