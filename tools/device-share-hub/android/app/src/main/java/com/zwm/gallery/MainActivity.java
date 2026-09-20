@@ -74,6 +74,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public final class MainActivity extends Activity {
     private static final int THUMBNAIL_CACHE_SIZE = (int) Math.max(16 * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8);
@@ -259,7 +260,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
         UpdateChecker.checkOnLaunch(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
-        worker.execute(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
+        submitToWorker(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
         getWindow().getDecorView().post(() -> {
             showInitialFolderPromptIfNeeded();
         });
@@ -694,7 +695,7 @@ public final class MainActivity extends Activity {
             refreshOnlineWorks(false);
             return;
         }
-        worker.execute(() -> {
+        submitToWorker(() -> {
             if (isOnlineMode && !showingTrash) return;
             try {
                 WorkLibrary library = library();
@@ -820,7 +821,7 @@ public final class MainActivity extends Activity {
         int onlineCleared = OnlineWorkLifecycle.clearAllTrash(this);
         toast("回收站已清空" + (onlineCleared > 0 ? "（含 " + onlineCleared + " 套在线记录）" : ""));
 
-        worker.execute(() -> {
+        submitToWorker(() -> {
             try {
                 DiagnosticLog.write(this, "trash_clear_started", "user confirmed");
                 WorkLibrary library = library();
@@ -1519,7 +1520,7 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("保存备注", (dialog, which) -> {
                     String remark = input.getText().toString();
                     final String workId = work.id;
-                    worker.execute(() -> {
+                    submitToWorker(() -> {
                         try {
                             library().updateTrashRemark(workId, remark);
                             runOnUiThread(() -> {
@@ -1544,7 +1545,7 @@ public final class MainActivity extends Activity {
     }
 
     private void resetWork(String id) {
-        worker.execute(() -> {
+        submitToWorker(() -> {
             try {
                 library().resetShare(id);
                 uiHandler.post(() -> {
@@ -1624,7 +1625,7 @@ public final class MainActivity extends Activity {
         if (!fileMode || fileTree == null || filePath.isEmpty()) return;
         String current = filePath.peek();
         statusText.setText("正在读取文件…");
-        worker.execute(() -> {
+        submitToWorker(() -> {
             try {
                 List<FileEntry> entries = readFileChildren(current);
                 runOnUiThread(() -> {
@@ -1859,7 +1860,7 @@ public final class MainActivity extends Activity {
 
         optimisticRemoveWorks(targets, msg);
 
-        worker.execute(() -> {
+        submitToWorker(() -> {
             ArrayList<String> failures = new ArrayList<>();
             for (String id : targets) {
                 try {
@@ -1939,7 +1940,7 @@ public final class MainActivity extends Activity {
             return;
         }
         statusText.setText("正在读取 Lark 文件夹…");
-        worker.execute(() -> {
+        submitToWorker(() -> {
             try {
                 Uri selected = Uri.parse(stored);
                 File legacy = legacyRoot(selected);
@@ -2067,7 +2068,7 @@ public final class MainActivity extends Activity {
         ids.add(id);
         optimisticRemoveWorks(ids, "已恢复");
 
-        worker.execute(() -> {
+        submitToWorker(() -> {
             try {
                 WorkLibrary library = library();
                 WorkLibrary.WorkEntry entry = library.getTrash(id);
@@ -2086,6 +2087,25 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    /**
+     * 线程池兜底提交：onDestroy 会 shutdownNow 掉 worker，此时**已经排进主线程队列**的回调
+     * （典型：后台扫描完成后 runOnUiThread 里再调 refreshWorks）仍会执行，
+     * 直接 worker.execute(...) 会在 UI 线程抛 RejectedExecutionException 造成 FATAL 崩溃。
+     * 真机复现：0.8.36 红米13，切换来源模式后刷新作品，崩于 refreshWorks 内的 worker.execute。
+     */
+    private boolean submitToWorker(Runnable task) {
+        if (isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed()) || worker.isShutdown()) {
+            return false;
+        }
+        try {
+            worker.execute(task);
+            return true;
+        } catch (RejectedExecutionException error) {
+            DiagnosticLog.write(this, "worker_task_rejected", error.getClass().getSimpleName());
+            return false;
+        }
     }
 
     private WorkLibrary library() throws Exception { return new WorkLibrary(new File(getFilesDir(), "work-library")); }

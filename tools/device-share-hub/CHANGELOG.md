@@ -1,5 +1,31 @@
 # 变更记录
 
+## Android 0.8.37 / iOS 0.8.15 - 真机复现并修复「切换来源模式后刷新作品」FATAL 崩溃
+
+> 来源：0.8.36 装机到红米13（23124RN87C）后，用 adb 真机端到端验证时在 logcat 抓到 FATAL 异常。
+
+- **崩溃现象**：切换来源模式（电脑在线 ↔ 手机本地）后刷新作品，App 直接挂掉：
+  ```
+  FATAL EXCEPTION: main
+  java.util.concurrent.RejectedExecutionException:
+    Task ...MainActivity$$ExternalSyntheticLambda47 rejected from
+    ThreadPoolExecutor@... [Terminated, pool size = 0, active threads = 0]
+      at com.zwm.gallery.MainActivity.refreshWorks(MainActivity.java:697)
+      at com.zwm.gallery.MainActivity.lambda$importSelectedTree$69(MainActivity.java:2056)
+  ```
+- **根因**：`onDestroy()` 里 `worker.shutdownNow()` 关掉线程池，但**已经排进主线程队列**的
+  后台任务回调仍会执行 —— 典型是 `importSelectedTree` 扫完文件夹后在 `runOnUiThread` 里再调
+  `refreshWorks()`，此时 `worker` 已终止，`worker.execute(...)` 在 UI 线程抛
+  `RejectedExecutionException`，无人接管 → FATAL。
+- **修复**：新增 `submitToWorker(Runnable)` 兜底提交 —— 前置判断
+  `isFinishing() || isDestroyed() || worker.isShutdown()`，并 catch `RejectedExecutionException`
+  记一条 `worker_task_rejected` 诊断日志后静默丢弃（不再让 UI 线程崩）。
+  MainActivity 里 **9 处 `worker.execute(...)` 全部改为 `submitToWorker(...)`**，
+  覆盖刷新作品、恢复、重置、清空回收站、移动回收站、导入文件夹、备份清理等所有后台入口。
+- **验证**：修复前 `logcat` 稳定复现；修复后同路径反复切换模式/进出回收站，`logcat` 无
+  `FATAL` / `AndroidRuntime.*com.zwm.gallery` 记录（过滤必须锚定自己包名，国产 ROM 系统进程会刷噪音）。
+- **版本号**：Android versionCode 148 / versionName 0.8.37；iOS CURRENT_PROJECT_VERSION 86 / MARKETING_VERSION 0.8.15。
+
 ## Android 0.8.36 / iOS 0.8.14 - 本地 ↔ 在线「按钮与回收站细节」强制 1:1 对等
 
 > 规则来源：本地相册与在线相册必须一样的按钮数量 —— 不能「你有『备注并删除』我没有、你有回收站细节我没有」。
