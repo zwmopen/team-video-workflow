@@ -684,7 +684,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "garbage_remark": remark,
                 "marked_by": device_name,
                 "marked_at": ts,
-                "source_stage": "已发送0次（手机端在线相册人工判定删除）",
+                "source_stage": f"{target_work.get('stage', '未发送')}（手机端在线相册人工判定删除）",
             }
             with open(os.path.join(target_dest, "quality_tag.json"), "w", encoding="utf-8") as fp:
                 json.dump(quality, fp, ensure_ascii=False, indent=2)
@@ -850,6 +850,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         json.dump(tag_data, fp, ensure_ascii=False, indent=2)
                 except Exception as e:
                     print(f"Error resetting tags: {e}")
+
+            # 同步归零 manifest.json 的分发计数，确保「用过 → 重置 → 再删除」
+            # 这条路径能稳定被判定为垃圾并移入垃圾样本库。
+            manifest_file = os.path.join(dir_path, "manifest.json")
+            if os.path.exists(manifest_file):
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as fp:
+                        manifest = json.load(fp)
+                    if isinstance(manifest, dict):
+                        manifest["useCount"] = 0
+                        if isinstance(manifest.get("distribution"), dict):
+                            manifest["distribution"]["useCount"] = 0
+                            manifest["distribution"]["dispatchedTo"] = []
+                            manifest["distribution"]["status"] = "待发手机"
+                        with open(manifest_file, "w", encoding="utf-8") as fp:
+                            json.dump(manifest, fp, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"Error resetting manifest: {e}")
 
             # 同步归零 manifest.json，确保扫描器与手机端看到的「使用次数」一致为 0，
             # 这样「用过 → 重置 → 再删除」才能被正确判定为人工垃圾样本。
