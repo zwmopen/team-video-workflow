@@ -69,33 +69,60 @@ except ImportError:
 # ── 代码新鲜度自检（2026-09-20 新增）────────────────────────────────────────
 # 事故背景：服务进程启动于 06:58，而脚本在 14:44 被改过 —— 进程一直在跑旧代码，
 # thumb=1 被静默忽略成原图，手机端在线回收站直接卡死，而没有任何信号提示这件事。
-# 现在把「进程启动时刻」与「脚本文件 mtime/sha」一起暴露到 /api/online/status，
-# 只要脚本比进程新，就说明该重启服务了（staleCode=true）。
+# 现在把「进程启动时的脚本指纹」与「磁盘上脚本的实时指纹」一起暴露到 /api/online/status，
+# 两者不一致就说明该重启服务了（staleCode=true）。
 SCRIPT_PATH = os.path.abspath(__file__)
-try:
-    SCRIPT_MTIME = os.path.getmtime(SCRIPT_PATH)
-except Exception:
-    SCRIPT_MTIME = 0.0
-try:
-    with open(SCRIPT_PATH, "rb") as _fp:
-        SCRIPT_SHA = hashlib.sha1(_fp.read()).hexdigest()[:12]
-except Exception:
-    SCRIPT_SHA = ""
+
+
+def _script_fingerprint(path: str) -> "tuple[float, str]":
+    """取脚本指纹 (mtime, sha12)；读不到时返回 (0.0, "")。"""
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        mtime = 0.0
+    try:
+        with open(path, "rb") as _fp:
+            sha = hashlib.sha1(_fp.read()).hexdigest()[:12]
+    except Exception:
+        sha = ""
+    return mtime, sha
+
+
+def _fmt_ts(ts: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else ""
+
+
+# 「进程启动那一刻」的脚本指纹快照，只在导入时取一次。
+SCRIPT_MTIME_AT_START, SCRIPT_SHA_AT_START = _script_fingerprint(SCRIPT_PATH)
 PROCESS_STARTED_AT = time.time()
 PROCESS_STARTED_STR = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(PROCESS_STARTED_AT))
 
 
 def code_freshness() -> Dict[str, Any]:
-    """判断「正在跑的进程」是否落后于磁盘上的脚本。"""
-    stale = bool(SCRIPT_MTIME and SCRIPT_MTIME > PROCESS_STARTED_AT + 1.0)
+    """判断「正在跑的进程」是否落后于磁盘上的脚本。
+
+    ⚠️ 2026-09-20 二次修复：初版拿「启动时快照的 mtime」去和「启动时刻」比，
+    而那个条件在启动瞬间必然不成立（文件肯定早于进程存在），staleCode 恒为 False
+    —— 是一道**假闸门**，比没有更危险。
+    正确判据是「磁盘上脚本的当前内容」 vs 「启动时的脚本内容」：
+    内容不一致 ⇒ 磁盘上的代码已经不是正在跑的那份 ⇒ 该重启。
+    用内容 SHA 而不是 mtime：mtime 会被 checkout / 复制 / 时区干扰，内容哈希不会。
+    """
+    disk_mtime, disk_sha = _script_fingerprint(SCRIPT_PATH)      # ← 实时读盘，不是快照
+    if disk_sha and SCRIPT_SHA_AT_START:
+        stale = disk_sha != SCRIPT_SHA_AT_START
+    else:
+        stale = False
     return {
         "startedAt": PROCESS_STARTED_STR,
         "uptimeSeconds": int(time.time() - PROCESS_STARTED_AT),
-        "scriptMtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(SCRIPT_MTIME)) if SCRIPT_MTIME else "",
-        "scriptSha": SCRIPT_SHA,
         "scriptPath": SCRIPT_PATH,
+        "scriptShaRunning": SCRIPT_SHA_AT_START,      # 正在跑的代码（启动快照）
+        "scriptShaOnDisk": disk_sha,                  # 磁盘上的代码（实时）
+        "scriptMtime": _fmt_ts(disk_mtime),           # 磁盘当前 mtime
+        "scriptMtimeAtStart": _fmt_ts(SCRIPT_MTIME_AT_START),
         "staleCode": stale,
-        "hint": "脚本比进程新：正在运行的是旧代码，请重启在线相册服务" if stale else "",
+        "hint": "磁盘上的脚本已改动（内容 sha 不一致）：正在运行的是旧代码，请重启在线相册服务" if stale else "",
     }
 
 # 手机端「使用次数」回读同步 + 局域网手机在线探测（见 phone_sync.py 顶部注释）

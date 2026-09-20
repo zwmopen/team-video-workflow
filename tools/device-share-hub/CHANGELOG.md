@@ -43,12 +43,27 @@
     现改为整页**首发预算 18 张**，其余入队按 260ms/6 张的节拍渐进放行 → UI 先出骨架再补图。
 - **范围**：未改动任何在线回收站按钮结构、数据字段与文案；纯性能与可靠性加固。
 - **防复发（代码新鲜度自检）**：本次真凶是「进程跑着旧代码」，所以补了两道闸：
-  - `/api/online/status` 新增 `code` 块（`startedAt` / `uptimeSeconds` / `scriptMtime` / `scriptSha` / `staleCode` / `hint`）——
-    只要脚本文件比进程新，`staleCode=true` 并直接给出「请重启在线相册服务」的提示；
-    已单测三态（脚本早于进程 / 脚本比进程新 / 进程比脚本新）全部符合预期；
+  - `/api/online/status` 新增 `code` 块（`startedAt` / `scriptShaRunning` / `scriptShaOnDisk` /
+    `scriptMtime` / `staleCode` / `hint`）——`staleCode=true` 时直接给出「请重启在线相册服务」的提示；
   - 开机自启脚本 `DeviceShareHub-OnlineGallery.vbs` 由「直连 pythonw」改为「调用启动器 `-Restart`」——
     旧写法在已有进程占着 45835 时仍会再起一个，两个进程并存正是静默事故的温床。
     （该文件在系统启动目录，不入库；原文件已备份到交付工作区。）
+  - ⚠️ **该自检的初版实现是无效的，已二次修复（教训）**：初版写的是
+    `SCRIPT_MTIME = os.path.getmtime(SCRIPT_PATH)`（导入时取一次快照）
+    再去比 `SCRIPT_MTIME > PROCESS_STARTED_AT`——而脚本肯定早于进程存在，
+    这个条件**在启动瞬间必然不成立**，`staleCode` 恒为 `False`。
+    也就是说，这道"防复发闸门"本身是一道**安静失效的假闸门**，给的是虚假安全感。
+    现改为「启动时的脚本内容 SHA」 vs 「实时读盘的脚本内容 SHA」做对比：
+    内容不一致 ⇒ 磁盘上的代码已不是正在跑的那份 ⇒ `staleCode=true`。
+    用内容哈希而非 mtime，mtime 会被 checkout / 复制 / 时区干扰，内容哈希不会。
+    并补了**真实场景回归测试**（`TestCodeFreshness`，4 项）：测试必须**真的去改磁盘文件**再断言，
+    否则又会漏掉——已用「还原成旧实现」的副本验证过该测试确实会 FAIL 并抓出此 bug。
+- **服务端（缩略图磁盘缓存无上限）**：磁盘缓存 key 是「图片路径 + mtime」，图片一改就生成新条目、
+  旧条目永不失效，而此前只有内存 LRU 有 500 条上限，磁盘缓存没有任何上限
+  （现实体量 890 个文件 / 26.0 MB，图库长到万张级会累积到约 300 MB 且不自动回收）。
+  现加 `MAX_DISK_ENTRIES = 2000` 上限，超限时按 mtime 删最旧的一批、只保留 90%；
+  **低频触发**（每 200 次写盘才真扫一次目录，且只在超限时才排序）⇒ 不在取图热路径上引入抖动。
+  `/api/online/status` 的 `thumbnail` 块新增 `diskCacheLimit`，`stats` 新增 `diskEvicted`。
 - **iOS 版本号单一源修复（本轮 CI 抓出的真实缺陷）**：
   iOS 产物在 `ios/project.yml` 里有**两处**版本声明 —— `settings.base` 的 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`
   与 `info.properties` 里**硬编码**的 `CFBundleShortVersionString` / `CFBundleVersion`。
@@ -56,8 +71,14 @@
   → `Package AltStore IPA` 步骤断言失败、iOS 产物发不出去（而 android-build 是绿的，极易误判成「iOS 环境抖动」）。
   现改为引用构建设置（`"$(MARKETING_VERSION)"` / `"$(CURRENT_PROJECT_VERSION)"`），版本号回到**单一源**，
   这类「改一处忘一处」的失败从此不可能再发生。
-- **对照基线**：服务端自带单测 5 项中 2 项失败（`test_two_uses_protection_rule` / `test_works_search_and_filter`），
+- **CI 验证结论（本轮）**：run `35515813427`（源码提交 `95e5d47`）——
+  `android-build` ✅ / `ios-altstore-build` ✅ / `windows-portable` ✅ / `publish-gallery-updates` ✅，
+  仅 `remote-relay-check` ❌（长期已知红点，与本次改动无关）。
+  iOS 版本单一源修复**验证通过**：`album-iOS-v0.8.17-altstore.ipa`（21.3 MB）已随 `v0.8.39` release 正常发布；
+  线上 `latest.json` 已刷新为 Android `0.8.39` / versionCode `150`、iOS `0.8.17` / build `88`。
+- **对照基线**：服务端自带单测 9 项中 2 项失败（`test_two_uses_protection_rule` / `test_works_search_and_filter`），
   已用 `git archive HEAD` 取原版测试确认**同为失败**，属历史遗留，与本次改动无关。
+  新增的 `TestCodeFreshness` 4 项全绿。
 
 ## Android 0.8.38 / iOS 0.8.16 - 在线卡片副标文案去掉「真源」二字
 

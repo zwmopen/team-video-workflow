@@ -143,5 +143,86 @@ class TestOnlineGalleryService(unittest.TestCase):
         self.assertTrue(os.path.exists(self.work1_dir))
 
 
+class TestCodeFreshness(unittest.TestCase):
+    """代码新鲜度自检的真实场景测试。
+
+    ⚠️ 这个类存在的唯一理由，就是防止「假闸门」再次出现。
+
+    初版实现是：
+        SCRIPT_MTIME = os.path.getmtime(SCRIPT_PATH)   # 导入时取的一次性快照
+        PROCESS_STARTED_AT = time.time()
+        stale = SCRIPT_MTIME > PROCESS_STARTED_AT + 1.0
+    这个条件在启动瞬间**必然不成立**（脚本肯定早于进程存在），
+    所以 staleCode 永远是 False —— 一道安静失效的闸门，比没有更危险。
+
+    因此这里**必须真的去改磁盘上的文件内容**再断言。
+    任何「构造场景 / monkeypatch 常量 / 只查字段存在」的测法都会漏掉这个 bug。
+    """
+
+    def setUp(self):
+        self.scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        self.src = os.path.join(self.scripts_dir, "online_gallery_service.py")
+        self.tmp = tempfile.mkdtemp(prefix="test_code_freshness_")
+        self.dst = os.path.join(self.tmp, "online_gallery_service.py")
+        shutil.copy2(self.src, self.dst)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ogs_freshness_probe", self.dst)
+        self.mod = importlib.util.module_from_spec(spec)
+        sys.modules["ogs_freshness_probe"] = self.mod
+        spec.loader.exec_module(self.mod)
+
+    def tearDown(self):
+        sys.modules.pop("ogs_freshness_probe", None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_not_stale_right_after_import(self):
+        """刚导入时磁盘内容 == 启动快照 → 不该报 stale（判据不能反向）。"""
+        out = self.mod.code_freshness()
+        self.assertFalse(out["staleCode"], "刚启动就报 staleCode=True，说明判据方向反了")
+        self.assertEqual(out["hint"], "")
+        self.assertEqual(out["scriptShaRunning"], out["scriptShaOnDisk"])
+
+    def test_stale_detected_after_script_content_changed(self):
+        """服务运行期间有人改了脚本 → 必须报 stale（这条就是防假闸门的）。"""
+        with open(self.dst, "a", encoding="utf-8") as fp:
+            fp.write("\n# 模拟：有人在服务运行期间改了脚本，但没重启\n")
+        out = self.mod.code_freshness()
+        self.assertTrue(
+            out["staleCode"],
+            "磁盘脚本已改，staleCode 仍为 False —— 闸门失效，这正是本次要防的 bug",
+        )
+        self.assertNotEqual(out["scriptShaRunning"], out["scriptShaOnDisk"])
+        self.assertIn("重启", out["hint"])
+
+    def test_judgement_is_content_based_not_mtime(self):
+        """把内容改回去（mtime 已变）→ 指纹重新一致 → 不再报 stale。
+
+        这条证明判据是**内容哈希**而不是 mtime：若退化成 mtime 比较，
+        mtime 已被追加写改过，就会误报 stale。
+        """
+        with open(self.dst, "a", encoding="utf-8") as fp:
+            fp.write("\n# 临时改动\n")
+        self.assertTrue(self.mod.code_freshness()["staleCode"])
+
+        with open(self.src, "rb") as fp:
+            original = fp.read()
+        with open(self.dst, "wb") as fp:
+            fp.write(original)
+
+        out = self.mod.code_freshness()
+        self.assertFalse(
+            out["staleCode"], "内容已恢复一致却仍报 stale，说明判据退化成 mtime 比较了"
+        )
+        self.assertEqual(out["scriptShaRunning"], out["scriptShaOnDisk"])
+
+    def test_fingerprint_helper_degrades_safely(self):
+        """指纹函数对不存在的路径必须安全降级，不能抛异常。"""
+        mtime, sha = self.mod._script_fingerprint(
+            os.path.join(self.tmp, "不存在的文件.py")
+        )
+        self.assertEqual(mtime, 0.0)
+        self.assertEqual(sha, "")
+
+
 if __name__ == "__main__":
     unittest.main()
