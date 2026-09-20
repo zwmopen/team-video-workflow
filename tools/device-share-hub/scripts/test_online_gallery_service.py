@@ -18,6 +18,11 @@ import threading
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from online_gallery_service import WorkScanner, ThreadingHTTPServer, OnlineGalleryHandler, detect_destination
 
+# Minimal 1x1 PNG（用作样例作品的封面，避免依赖外部图片文件）
+PNG_1PX = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+           b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00"
+           b"\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+
 
 class TestOnlineGalleryService(unittest.TestCase):
     @classmethod
@@ -97,10 +102,48 @@ class TestOnlineGalleryService(unittest.TestCase):
             self.assertIn("安吉", data["works"][0]["title"])
 
     def test_two_uses_protection_rule(self):
-        work_id = "20260918_100000_安吉2天1夜秋季团建大爆款"
-        url = f"http://127.0.0.1:{self.port}/api/online/use-work"
+        """首次使用后：计数 +1、物理移入「_已发送1次」、stage0 视角剩余次数归零。
 
-        # First use (sendCount: 0 -> 1)
+        ⚠️ 本用例长期红灯，原因不是实现坏了，而是**它还在断言已经被替换掉的旧业务规则**：
+          旧规则（此断言写就时）：首次使用「不移动」，remainingUses=1
+          现行规则（代码注释标注为「核心业务铁律」）：只要手机端使用过一次，
+          电脑后台就**物理移入**「_已发送1次（微信公众号可发）」，因此 stage0 视角
+          remainingUses=0、moved=True。
+        长期红的套件会训练人无视红色 —— 本身就是一种坏闸门。这里改为断言现行规则。
+
+        另外：本用例会**真的移动目录**（共享扫描根），必须自带清理，
+        否则按字母序后跑的 test_works_search_and_filter 会搜不到作品而误报失败
+        （这正是它此前失败的第二个原因：用例之间互相污染）。
+        """
+        work_id = "20260918_110000_安吉2天1夜秋季团建保护规则"
+        work_dir = os.path.join(self.stage0, work_id)
+        os.makedirs(work_dir, exist_ok=True)
+        with open(os.path.join(work_dir, "P1_封面.png"), "wb") as f:
+            f.write(PNG_1PX)
+        with open(os.path.join(work_dir, "文案.txt"), "w", encoding="utf-8") as f:
+            f.write("安吉秋日团建攻略：HR直接抄作业！请确保两次分发保护规则生效。")
+
+        def _cleanup():
+            shutil.rmtree(work_dir, ignore_errors=True)
+            for base in (os.path.join(self.temp_dir, "_已发送1次（微信公众号可发）"),
+                         os.path.join(self.temp_dir, "已发送1次（微信公众号可发）"),
+                         os.path.join(self.temp_dir, "_垃圾作品（后续参考分析）"),
+                         os.path.join(self.temp_dir, "_不合格成品合集")):
+                if not os.path.isdir(base):
+                    continue
+                for name in os.listdir(base):
+                    if work_id in name:
+                        shutil.rmtree(os.path.join(base, name), ignore_errors=True)
+            try:
+                self.scanner.scan(force=True)
+            except Exception:
+                pass
+        self.addCleanup(_cleanup)
+
+        # 新建的目录必须让扫描器重新扫一次，否则 get_work 在 5s 缓存里找不到它
+        self.scanner.scan(force=True)
+
+        url = f"http://127.0.0.1:{self.port}/api/online/use-work"
         req_data = json.dumps({
             "workId": work_id,
             "device": "红米 13C 5G",
@@ -111,21 +154,25 @@ class TestOnlineGalleryService(unittest.TestCase):
             data = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data["ok"])
             self.assertEqual(data["useCount"], 1)
-            self.assertEqual(data["remainingUses"], 1)
-            self.assertFalse(data["moved"])  # MUST NOT MOVE!
+            # stage0 视角：作品已被移出，剩余次数为 0（现行铁律）
+            self.assertEqual(data["remainingUses"], 0)
+            self.assertTrue(data["moved"], "现行规则是首次使用即物理移入 _已发送1次")
+            self.assertTrue(data["targetPath"], "移动成功必须回报落点路径，否则无从核对")
 
-        # Verify folder STILL exists in stage 0 (NOT moved!)
-        self.assertTrue(os.path.exists(self.work1_dir))
+        # 已从 stage0 移出（这是现行铁律的物理证据）
+        self.assertFalse(os.path.exists(work_dir),
+                         "首次使用后作品应已物理移出 stage0")
 
-        # Check tag file was updated
-        tag_file = os.path.join(self.work1_dir, "作品标签.json")
-        self.assertTrue(os.path.exists(tag_file))
+        # 标签文件随作品一起被搬走，且计数已落盘
+        moved_dir = data["targetPath"]
+        tag_file = os.path.join(moved_dir, "作品标签.json")
+        self.assertTrue(os.path.exists(tag_file), f"移动后的目录里没有标签文件：{moved_dir}")
         with open(tag_file, "r", encoding="utf-8") as fp:
             tags = json.load(fp)
             self.assertEqual(tags["distribution"]["useCount"], 1)
             self.assertTrue(any("红米 13C 5G" in r for r in tags["distribution"]["dispatchedTo"]))
 
-        # Second use (sendCount: 1 -> 2)
+        # ── 第二次使用（1 -> 2）──
         req_data2 = json.dumps({
             "workId": work_id,
             "device": "华为 P30",
@@ -135,12 +182,25 @@ class TestOnlineGalleryService(unittest.TestCase):
         with urllib.request.urlopen(req2) as resp:
             data2 = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data2["ok"])
-            self.assertEqual(data2["useCount"], 2)
+            self.assertEqual(data2["useCount"], 2, "同一作品可用两次（小红书 + 公众号/抖音）")
             self.assertEqual(data2["remainingUses"], 0)
-            self.assertFalse(data2["moved"])  # Still not abruptly moved!
+            # _move_work_to_stage1 对已在目标位置的目录是**幂等**的：
+            # 返回 (True, 同路径, "作品已位于…")。所以 moved=True 表示「已就位」，
+            # 不代表又挪了一次 —— 真正该守的不变量是「没有产生重复目录」。
+            self.assertTrue(data2["moved"])
+            self.assertEqual(os.path.abspath(data2["targetPath"]),
+                             os.path.abspath(moved_dir),
+                             "第二次使用不得产生新的目标目录（移动必须幂等）")
 
-        # Folder remains intact
-        self.assertTrue(os.path.exists(self.work1_dir))
+        dup = [n for n in os.listdir(os.path.join(self.temp_dir, "_已发送1次（微信公众号可发）"))
+               if work_id in n]
+        self.assertEqual(len(dup), 1, f"「_已发送1次」下出现了重复目录：{dup}")
+
+        # 第二次使用同样必须落盘（不能再被当成 1 次）
+        with open(tag_file, "r", encoding="utf-8") as fp:
+            tags2 = json.load(fp)
+        self.assertEqual(tags2["distribution"]["useCount"], 2)
+        self.assertTrue(any("华为 P30" in r for r in tags2["distribution"]["dispatchedTo"]))
 
 
 class TestCodeFreshness(unittest.TestCase):
@@ -244,6 +304,129 @@ class TestCodeFreshness(unittest.TestCase):
         )
         self.assertEqual(mtime, 0.0)
         self.assertEqual(sha, "")
+
+
+SKELETON_COPY = (
+    "<<<COPY_FORMAT:3>>>\n\n"
+    "<<<DOUYIN_START>>>\n抖音短平快口播脚本，痛点切入+亮点+留资号召\n<<<DOUYIN_END>>>\n\n"
+    "<<<XHS_START>>>\n小红书主标题\n\n"
+    "[小红书种草正文，带两日详细行程排期、亮点提炼与真实避坑，拒绝空话]\n\n"
+    "[12个同行热门话题标签]\n<<<XHS_END>>>\n\n"
+    "<<<XHS_2_START>>>\nHR方案决策版大纲，包含方案名称、适用对象、预算参考、决策亮点与服务保障\n<<<XHS_2_END>>>"
+)
+
+REAL_COPY = (
+    "<<<COPY_FORMAT:3>>>\n\n"
+    "<<<DOUYIN_START>>>\n" + ("真实抖音口播脚本正文，痛点切入。" * 20) + "\n<<<DOUYIN_END>>>\n\n"
+    "<<<XHS_START>>>\n" + ("真实小红书种草正文，含两日行程排期与避坑提示。" * 30) + "\n<<<XHS_END>>>"
+)
+
+
+class TestPlatformSlotGuard(unittest.TestCase):
+    """平台槽位守卫的真实场景测试（第三层空壳守卫）。
+
+    ⚠️ 事故背景：8 套作品躺在「已发送0次（抖音小红书可发）」里，文案是**未填充的模板骨架**，
+    整段实质 107 字 >= MIN_COPY_DISTRIBUTABLE(30)，被整段口径的守卫直接放行；
+    而手机端 PlatformCopyParser 是**按槽位**独立出按钮的，
+    于是用户点「规避营销版」拿到的就是那句「抖音短平快口播脚本，痛点切入+亮点+留资号召」。
+
+    根因与 staleCode 那次同源：**闸门测的粒度（整段）和用户消费的粒度（单个槽位）不在同一层**。
+    所以这里的关键断言**必须走完整链路** `WorkScanner._inspect_work_dir()`，
+    只测 sanitize_platform_copy() 这个 helper 是不够的——
+    上一轮假闸门正是栽在「只测 helper、不测真实路径」上。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="test_slot_guard_")
+        self.scanner = WorkScanner(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_work(self, name, copy_text, n_images=3):
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d, exist_ok=True)
+        for i in range(n_images):
+            with open(os.path.join(d, f"{i:02d}.jpg"), "wb") as fp:
+                fp.write(b"\xff\xd8\xff\xe0fake-jpeg")
+        with open(os.path.join(d, "三平台文案.txt"), "w", encoding="utf-8") as fp:
+            fp.write(copy_text)
+        return d
+
+    # ---- 1. 端到端：骨架作品必须被判为缺失 ----
+    def test_skeleton_work_is_flagged_missing_end_to_end(self):
+        d = self._make_work("骨架作品", SKELETON_COPY)
+        w = self.scanner._inspect_work_dir(d, "骨架作品", "已发送0次", 0)
+        self.assertIsNotNone(w)
+        self.assertEqual(
+            w["slotGuard"]["droppedCount"], 3,
+            "三个槽位全是占位骨架，应全部剔除",
+        )
+        self.assertTrue(
+            w["copyMissing"],
+            "整段 107 字 >= 30 被放行 —— 用户点平台按钮会拿到占位说明文字，"
+            "这就是守卫被自己的靶子骗过去的原始事故",
+        )
+        self.assertFalse(w["hasCopyText"])
+        self.assertEqual(w["copyText"].strip(), "<<<COPY_FORMAT:3>>>",
+                         "骨架槽位应从下发载荷中剔除")
+
+    # ---- 2. 端到端：真实文案不得被误伤 ----
+    def test_real_work_passes_untouched_end_to_end(self):
+        d = self._make_work("正常作品", REAL_COPY)
+        w = self.scanner._inspect_work_dir(d, "正常作品", "已发送0次", 0)
+        self.assertEqual(w["slotGuard"]["droppedCount"], 0)
+        self.assertFalse(w["copyMissing"])
+        self.assertTrue(w["hasCopyText"])
+        self.assertEqual(w["copyText"], REAL_COPY, "真实文案必须原样下发，一个字节都不许动")
+
+    # ---- 3. 混合：真槽位保留、占位槽位剔除（不能一刀切整块置灰）----
+    def test_mixed_work_keeps_real_slots_only(self):
+        mixed = REAL_COPY + (
+            "\n\n<<<XHS_2_START>>>\n"
+            "HR方案决策版大纲，包含方案名称、适用对象、预算参考、决策亮点与服务保障\n<<<XHS_2_END>>>"
+        )
+        d = self._make_work("混合作品", mixed)
+        w = self.scanner._inspect_work_dir(d, "混合作品", "已发送0次", 0)
+        self.assertEqual(w["slotGuard"]["droppedMarkers"], ["XHS_2"])
+        self.assertIn("<<<XHS_START>>>", w["copyText"], "真实种草版槽位必须保留")
+        self.assertNotIn("<<<XHS_2_START>>>", w["copyText"], "占位大纲槽位必须剔除")
+        self.assertFalse(w["copyMissing"], "还有真实槽位，不能整块置灰")
+        self.assertEqual(w["slotGuard"]["keptCount"], 2)
+
+    # ---- 4. 空槽位与零字节文案 ----
+    def test_empty_slot_and_empty_copy(self):
+        empty_slot = ("<<<COPY_FORMAT:3>>>\n\n<<<DOUYIN_START>>><<<DOUYIN_END>>>\n\n"
+                      "<<<XHS_START>>>\n" + ("真实正文内容" * 30) + "\n<<<XHS_END>>>")
+        d = self._make_work("空槽位作品", empty_slot)
+        w = self.scanner._inspect_work_dir(d, "空槽位作品", "已发送0次", 0)
+        self.assertEqual(w["slotGuard"]["droppedMarkers"], ["DOUYIN"])
+        self.assertIn("<<<XHS_START>>>", w["copyText"])
+        self.assertFalse(w["copyMissing"])
+
+        d2 = self._make_work("零字节作品", "")
+        w2 = self.scanner._inspect_work_dir(d2, "零字节作品", "已发送0次", 0)
+        self.assertTrue(w2["copyMissing"])
+        self.assertEqual(w2["slotGuard"]["droppedCount"], 0)
+
+    # ---- 5. 守卫自身不能是死代码：函数必须真的被下发链路调用 ----
+    def test_guard_is_wired_into_payload_not_dead_code(self):
+        """只声明常量/函数却不接进链路 = 假闸门的另一种形态。这里断言字段真的出现在载荷里。"""
+        d = self._make_work("接线检查", REAL_COPY)
+        w = self.scanner._inspect_work_dir(d, "接线检查", "已发送0次", 0)
+        self.assertIn("slotGuard", w, "slotGuard 诊断字段未出现在下发载荷中 —— 守卫没接线")
+        for key in ("droppedCount", "droppedMarkers", "keptCount",
+                    "rawSubstance", "servedSubstance"):
+            self.assertIn(key, w["slotGuard"])
+
+    # ---- 6. 搜索可检索性不因守卫丢失 ----
+    def test_search_blob_survives_sanitization(self):
+        """被剔除的骨架作品，其原文仍应可被关键词搜到，否则等于把内容从库里抹掉。"""
+        d = self._make_work("检索检查", SKELETON_COPY)
+        w = self.scanner._inspect_work_dir(d, "检索检查", "已发送0次", 0)
+        self.assertTrue(w["copyMissing"])
+        self.assertIn("小红书主标题", w["searchBlob"],
+                      "searchBlob 用的是未净化原文，剔除槽位不能连带丢掉可检索性")
 
 
 if __name__ == "__main__":

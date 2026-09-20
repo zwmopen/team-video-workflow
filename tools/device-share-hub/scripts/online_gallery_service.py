@@ -187,6 +187,95 @@ def copy_search_text(text) -> str:
     return _COPY_MARKER_RE.sub(" ", str(text))
 
 
+# ============================================================================
+# 【平台槽位守卫】2026-09-20 新增 —— 第三层空壳守卫，与 MIN_COPY_DISTRIBUTABLE 并列
+#
+# 事故：8 套作品躺在「已发送0次（抖音小红书可发）」里，文案是**未填充的模板骨架**：
+#     <<<DOUYIN_START>>>  抖音短平快口播脚本，痛点切入+亮点+留资号召  <<<DOUYIN_END>>>
+#     <<<XHS_START>>>     小红书主标题 / [小红书种草正文，带两日详细行程排期…]  <<<XHS_END>>>
+#     <<<XHS_2_START>>>   HR方案决策版大纲，包含方案名称、适用对象、预算参考…  <<<XHS_2_END>>>
+#   整段实质 107 字 >= 30，被 MIN_COPY_DISTRIBUTABLE 放行 ——
+#   而该守卫第 147 行注释明写它的目的正是「杜绝标记齐全但正文全空」。
+#
+# 根因：**守卫的粒度是「整段」，用户消费的粒度是「单个平台槽位」**，两者不在同一层级。
+#   手机端 `PlatformCopyParser.parseAvailablePlatforms` 是按槽位独立出按钮的，
+#   于是用户点「规避营销版」拿到的就是那句说明文字。与 staleCode 那次同源：闸门测错了对象。
+#
+# 修法：按槽位判定，下发前把「占位骨架 / 实质不足」的槽位从文案里剔除（仅作用于下发载荷，
+#   不动磁盘上的原始文件）。若剔除后已无真实槽位，整段实质字数自然 < 30，
+#   手机端既有逻辑会整块置灰并标红「文案缺失」，无需更新 APK。
+# ============================================================================
+MIN_PLATFORM_SUBSTANCE = 30
+
+# 形如 <<<MK_START>>> … <<<MK_END>>>（MK 可为 XHS / XHS_2 / DOUYIN / 任意中文标记）
+_PLATFORM_BLOCK_RE = re.compile(
+    r"<<<([A-Za-z0-9_\u4e00-\u9fa5]+)_START>>>[\r\n]*(.*?)[\r\n]*<<<\1_END>>>",
+    re.S,
+)
+
+# 模板占位语特征：产线只落了骨架、没跑填充步骤时出现的「指令式说明」，不是真实文案。
+# 注意必须作用在**带括号的原文**上（占位语常被 [] 包裹）。
+_PLACEHOLDER_SLOT_RE = re.compile(
+    r"抖音短平快口播脚本"
+    r"|痛点切入\s*[+＋]\s*亮点\s*[+＋]\s*留资号召"
+    r"|小红书主标题"
+    r"|\[小红书种草正文"
+    r"|\[?\s*\d{1,3}\s*个?同行热门话题标签\s*\]?"
+    r"|HR方案决策版大纲"
+    r"|包含方案名称、适用对象、预算参考"
+    r"|拒绝空话\]"
+    r"|待补充|此处填写|请填写|【待填】|\bTODO\b"
+)
+
+
+def is_placeholder_slot(text: str) -> bool:
+    """槽位正文是否为「模板占位说明」而非真实文案。"""
+    return bool(text) and bool(_PLACEHOLDER_SLOT_RE.search(str(text)))
+
+
+def audit_platform_slots(copy_text: str) -> Dict[str, Any]:
+    """逐槽位体检（只读，不改文案）。用于 /status 诊断与测试断言。"""
+    out = {"slots": [], "dropped": [], "keptCount": 0, "droppedCount": 0}
+    if not copy_text:
+        return out
+    for m in _PLATFORM_BLOCK_RE.finditer(copy_text):
+        marker, body = m.group(1), m.group(2)
+        n = copy_substance_len(body)
+        bad = (n < MIN_PLATFORM_SUBSTANCE) or is_placeholder_slot(body)
+        rec = {"marker": marker, "substance": n,
+               "head": body.strip()[:48], "placeholder": is_placeholder_slot(body)}
+        out["slots"].append(rec)
+        if bad:
+            out["dropped"].append(rec)
+        else:
+            out["keptCount"] += 1
+    out["droppedCount"] = len(out["dropped"])
+    return out
+
+
+def sanitize_platform_copy(copy_text: str) -> "tuple[str, Dict[str, Any]]":
+    """剔除占位/过薄槽位，返回 (净化后文案, 诊断)。
+
+    用「按 span 删除」而不是「按块重建」，这样可原样保留头部标记
+    (`<<<COPY_FORMAT:n>>>`) 以及 `<<<VERSION_START:名>>>` 这类本函数不解析的块。
+    """
+    diag = audit_platform_slots(copy_text)
+    if not copy_text or not diag["dropped"]:
+        return copy_text, diag
+
+    spans = []
+    for m in _PLATFORM_BLOCK_RE.finditer(copy_text):
+        body = m.group(2)
+        if (copy_substance_len(body) < MIN_PLATFORM_SUBSTANCE) or is_placeholder_slot(body):
+            spans.append(m.span())
+
+    out = copy_text
+    for s, e in reversed(spans):          # 从后往前删，避免下标位移
+        out = out[:s] + out[e:]
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out, diag
+
+
 def work_text_blob(w: dict, with_title: bool = True) -> str:
     """作品的关键词匹配文本：标题/目的地 + 搜索专用正文（回退 copyText）。"""
     blob = (w.get("searchBlob") or w.get("copyText") or "")
@@ -231,6 +320,21 @@ THUMB_STATS: Dict[str, int] = {
     "fallbackOriginal": 0, "diskEvicted": 0,
 }
 THUMB_STATS_LOCK = threading.Lock()
+
+# 【平台槽位守卫】计数：本轮扫描中有多少作品/槽位被净化（/api/online/status 暴露）
+_SLOT_GUARD_STATS: Dict[str, int] = {"worksAffected": 0, "slotsDropped": 0}
+_SLOT_GUARD_LOCK = threading.Lock()
+
+
+def _slot_guard_reset() -> None:
+    with _SLOT_GUARD_LOCK:
+        _SLOT_GUARD_STATS["worksAffected"] = 0
+        _SLOT_GUARD_STATS["slotsDropped"] = 0
+
+
+def _slot_guard_stat(key: str, delta: int = 1) -> None:
+    with _SLOT_GUARD_LOCK:
+        _SLOT_GUARD_STATS[key] = _SLOT_GUARD_STATS.get(key, 0) + delta
 
 
 def _thumb_stat(key: str, delta: int = 1) -> None:
@@ -392,6 +496,24 @@ def thumbnail_health() -> Dict[str, Any]:
         "diskCacheLimit": MAX_DISK_ENTRIES,
         "stats": stats,
         "hint": "" if HAS_PIL else "Pillow 未安装：thumb=1 会降级返回原图，请在该服务的解释器里 pip install Pillow",
+    }
+
+
+def slot_guard_health() -> Dict[str, Any]:
+    """平台槽位守卫健康快照（/api/online/status 暴露）。
+
+    slotsDropped>0 说明有作品文案是「骨架未填充」，必须回流产线重生成——
+    这是一条**响铃**，不是正常状态，不要当成噪音调低日志等级。
+    """
+    with _SLOT_GUARD_LOCK:
+        stats = dict(_SLOT_GUARD_STATS)
+    return {
+        "minPlatformSubstance": MIN_PLATFORM_SUBSTANCE,
+        "minWholeTextSubstance": MIN_COPY_DISTRIBUTABLE,
+        "scanWorksAffected": stats.get("worksAffected", 0),
+        "scanSlotsDropped": stats.get("slotsDropped", 0),
+        "hint": ("本轮扫描剔除了占位/过薄槽位：文案骨架未填充，请回流产线重生成"
+                 if stats.get("slotsDropped", 0) else ""),
     }
 
 
@@ -669,6 +791,7 @@ class WorkScanner:
 
             results = []
             seen_ids = set()
+            _slot_guard_reset()   # 槽位守卫计数按「本轮扫描」统计，避免累积值误导
 
             # 1. 严格只扫描「已发送0次（抖音小红书可发）」目录
             stage0_dir = os.path.join(self.root, "已发送0次（抖音小红书可发）")
@@ -800,6 +923,22 @@ class WorkScanner:
         # 并以 copyMissing=true 通知手机端置灰文案按钮，杜绝空壳作品冒充有文案混进分发。
         copy_missing = not copy_text
 
+        # 【平台槽位守卫】下发前剔除占位骨架/过薄槽位。
+        # 只作用于下发载荷，不动磁盘原始文件；搜索仍用未净化的 copy_search_blob，
+        # 保证「被剔除」的作品照样能被关键词搜到（可检索性不因守卫而丢失）。
+        copy_raw = copy_text
+        copy_text, slot_diag = sanitize_platform_copy(copy_raw)
+        if slot_diag["droppedCount"]:
+            _slot_guard_stat("worksAffected")
+            _slot_guard_stat("slotsDropped", slot_diag["droppedCount"])
+            print(f"[SlotGuard] 剔除 {slot_diag['droppedCount']} 个占位/过薄槽位："
+                  f"{[d['marker'] for d in slot_diag['dropped']]} <- {folder_name[:52]}")
+        # 净化后若已无真实槽位，视为「骨架作品」：按缺失下发，手机端自动置灰标红
+        if copy_raw and not copy_text.strip():
+            copy_missing = True
+        elif copy_raw and copy_substance_len(copy_text) < MIN_COPY_DISTRIBUTABLE:
+            copy_missing = True
+
         # 读取作品标签.json
         tag_file = os.path.join(dir_path, "作品标签.json")
         tag_data = {}
@@ -850,6 +989,14 @@ class WorkScanner:
             "copyText": copy_text,
             "hasCopyText": copy_substance_len(copy_text) >= MIN_COPY_DISTRIBUTABLE,
             "copyMissing": bool(copy_missing),
+            # 【平台槽位守卫】诊断：哪些槽位被判为占位/过薄并被剔除
+            "slotGuard": {
+                "droppedCount": slot_diag["droppedCount"],
+                "droppedMarkers": [d["marker"] for d in slot_diag["dropped"]],
+                "keptCount": slot_diag["keptCount"],
+                "rawSubstance": copy_substance_len(copy_raw),
+                "servedSubstance": copy_substance_len(copy_text),
+            },
             "searchBlob": copy_search_blob,
             "updatedAt": os.path.getmtime(dir_path)
         }
@@ -1024,6 +1171,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "thumbnail": thumbnail_health(),
                 # 代码新鲜度：一眼看出「正在跑的进程」有没有落后于磁盘上的脚本
                 "code": code_freshness(),
+                # 平台槽位守卫：剔除骨架/过薄槽位的计数。slotsDropped>0 是响铃，不是噪音。
+                "slotGuard": slot_guard_health(),
             }
             self.send_json(200, data)
             return
