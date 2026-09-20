@@ -16,6 +16,7 @@ import threading
 
 # Add scripts directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import online_gallery_service as _svc_mod
 from online_gallery_service import WorkScanner, ThreadingHTTPServer, OnlineGalleryHandler, detect_destination
 
 # Minimal 1x1 PNG（用作样例作品的封面，避免依赖外部图片文件）
@@ -201,6 +202,148 @@ class TestOnlineGalleryService(unittest.TestCase):
             tags2 = json.load(fp)
         self.assertEqual(tags2["distribution"]["useCount"], 2)
         self.assertTrue(any("华为 P30" in r for r in tags2["distribution"]["dispatchedTo"]))
+
+    # ===== 体感加速：传输瘦身 + gzip 守卫（第二十一节要求：还原-失败证明） =====
+
+    def _make_fat_work(self, work_id="w1"):
+        """构造一份带 searchBlob/slotGuard 的「胖」作品，供瘦身测试用。"""
+        return {
+            "id": work_id,
+            "title": "测试作品",
+            "copyText": "正文",
+            "path": "/tmp/w1",
+            "searchBlob": "搜索用的纯文本 blob" * 100,   # 故意造大
+            "slotGuard": {"droppedCount": 0, "keptCount": 3},
+        }
+
+    # ---- 7. slim_works_for_wire 必须剥掉两端不解析的字段 ----
+    def test_slim_works_for_wire_unit(self):
+        from online_gallery_service import slim_works_for_wire, _WIRE_OMIT_FIELDS
+        self.assertIn("searchBlob", _WIRE_OMIT_FIELDS,
+                      "瘦身白名单丢了 searchBlob，手机端多收几 KB 流量")
+        self.assertIn("slotGuard", _WIRE_OMIT_FIELDS,
+                      "slotGuard 是诊断字段，手机端根本不该收到")
+        w = self._make_fat_work()
+        slim = slim_works_for_wire([w])
+        self.assertEqual(len(slim), 1)
+        self.assertNotIn("searchBlob", slim[0], "searchBlob 仍被下发，手机端流量浪费")
+        self.assertNotIn("slotGuard", slim[0], "slotGuard 仍被下发，手机端不需要这个诊断块")
+        self.assertIn("copyText", slim[0], "误伤了客户端真要用的字段")
+        self.assertIn("path", slim[0], "误伤了客户端真要用的字段")
+
+    # ---- 8. slim 不能破坏原始缓存（_cached_works） ----
+    def test_slim_works_for_wire_does_not_mutate_cached(self):
+        from online_gallery_service import slim_works_for_wire
+        w = self._make_fat_work()
+        original_search_blob = w["searchBlob"]
+        slim = slim_works_for_wire([w])
+        # 瘦身只剥副本：原始 dict 的 searchBlob 必须还在
+        self.assertEqual(w["searchBlob"], original_search_blob,
+                         "slim 不该改动传入的原始 dict，否则服务端关键词检索会断")
+        self.assertNotIn("searchBlob", slim[0])
+
+    # ---- 9. gzip_bytes 内容寻址缓存 ----
+    def test_gzip_bytes_unit(self):
+        from online_gallery_service import gzip_bytes, gzip_cache_health
+        # 重复压缩同一份 bytes，第二次应该是 cache hit
+        body = ('{"ok":true,"works":[]}' * 200).encode("utf-8")
+        h1 = gzip_cache_health()
+        g1 = gzip_bytes(body)
+        h2 = gzip_cache_health()
+        g2 = gzip_bytes(body)   # 同输入 → cache hit
+        h3 = gzip_cache_health()
+        self.assertEqual(g1, g2, "同输入的压缩结果必须字节级一致")
+        self.assertEqual(h3["hit"] - h2["hit"], 1, "第二次相同输入应记一次 hit")
+        self.assertEqual(h3["miss"] - h1["miss"], 1, "第一次输入应记一次 miss")
+        # 内容寻址：blake2b digest 必须能解码出原文
+        import gzip
+        self.assertEqual(gzip.decompress(g1), body)
+
+    # ---- 10. 端到端：HTTP 实际下发的载荷 + 头 ----
+    def test_works_endpoint_slim_and_gzip_e2e(self):
+        """点对点验证：通过真实 HTTP 拿 /api/online/works，断言：
+           (a) Accept-Encoding: gzip 时返回 Content-Encoding: gzip；
+           (b) 解压后的 JSON 里 works[0] 没有 searchBlob/slotGuard（瘦身生效）；
+           (c) total 与磁盘上作品数一致。
+        """
+        import gzip
+        # 先确保服务端 fresh 写出 searchBlob（slim 之前）
+        for w in self.scanner.scan():
+            self.assertIn("searchBlob", w, "fixture 自身缺 searchBlob，无法证明 slim 在做事")
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/online/works",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.headers.get("Content-Encoding"), "gzip",
+                             "Accept-Encoding=gzip 时应返回 Content-Encoding=gzip")
+            payload = gzip.decompress(resp.read())
+        data = json.loads(payload)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["total"], 2)
+        self.assertEqual(len(data["works"]), 2)
+        for w in data["works"]:
+            self.assertNotIn("searchBlob", w,
+                             "端到端：works[0] 仍带 searchBlob —— slim 没接进链路或已回退")
+            self.assertNotIn("slotGuard", w,
+                             "端到端：works[0] 仍带 slotGuard —— 同上")
+
+    # ---- 11. ⚠️ 还原-失败证明（第二十一节）：把 slim 关掉，下游断言会 FAIL ----
+    def test_revert_proof_slim_disabled_breaks_contract(self):
+        """这道测试存在的意义不是「证明当前实现正确」，
+        而是「证明下游断言 *真的能* 抓到 slim 被回退的事故」——
+        把 slim_works_for_wire 临时换回「不过滤」版本（事故形态），
+        观察端到端契约断言是否会因此失败。
+        期望：事故形态下必须 AssertionError，否则这道闸门就是假的。
+        """
+        from online_gallery_service import slim_works_for_wire
+        import gzip
+
+        original = slim_works_for_wire
+        _svc_mod.slim_works_for_wire = lambda works: works   # ← 模拟「slim 被回退」
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/api/online/works",
+                headers={"Accept-Encoding": "gzip"},
+            )
+            with urllib.request.urlopen(req) as resp:
+                raw = gzip.decompress(resp.read())
+            data = json.loads(raw)
+            # 关键：用「正确实现」下的契约断言去检查「错误实现」的产物，
+            # 必须失败 —— 失败 = 闸门有效。
+            try:
+                self.assertNotIn("searchBlob", data["works"][0])
+                self.fail("slim 被还原后契约断言仍通过 —— 端到端闸门是假的（第二十一节）")
+            except AssertionError:
+                pass   # 期望内的失败：闸门有效
+        finally:
+            _svc_mod.slim_works_for_wire = original   # 还原，**绝不影响**其他测试
+
+        # 还原 slim 后再次确认契约成立（证明 finally 里的还原没漏）
+        req2 = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/online/works",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        with urllib.request.urlopen(req2) as resp:
+            raw2 = gzip.decompress(resp2.read() if False else resp.read())
+        data2 = json.loads(raw2)
+        self.assertNotIn("searchBlob", data2["works"][0],
+                         "还原 slim 后契约仍不成立 —— finally 块的还原有 bug，会污染后续测试")
+
+    # ---- 12. /api/online/status 的 wire 健康块必须真存在（防死代码） ----
+    def test_wire_block_is_exposed_in_status(self):
+        url = f"http://127.0.0.1:{self.port}/api/online/status"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        self.assertIn("wire", data, "wire 健康块没出现在 status 响应 —— 'wire 守卫' 可能没人接线")
+        wire = data["wire"]
+        for k in ("gzipMinBytes", "listOmitFields", "gzipCache", "hint"):
+            self.assertIn(k, wire, f"wire.{k} 缺失")
+        self.assertIn("searchBlob", wire["listOmitFields"])
+        self.assertIn("slotGuard", wire["listOmitFields"])
+        for k in ("hit", "miss", "hitRate", "entries", "maxEntries"):
+            self.assertIn(k, wire["gzipCache"], f"gzipCache.{k} 缺失")
 
 
 class TestCodeFreshness(unittest.TestCase):

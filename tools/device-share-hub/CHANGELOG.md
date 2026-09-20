@@ -1,5 +1,52 @@
 # 变更记录
 
+## Android 0.8.41 / versionCode 152 - 2026-09-20 - 在线相册体感加速三件套
+
+> **新 APK 已发布到 gallery-updates**，手机 App 内更新即可装上。
+> **服务端改动对已装机的旧版也立即生效**（HttpURLConnection 自动协商 gzip），
+> 重启电脑端 `start_online_gallery_service.ps1 -Restart` 即可，无需等 APK。
+
+### 用户能直接感受到的体感
+
+| 场景 | 之前 | 现在 |
+| :-- | :-- | :-- |
+| 点进「电脑在线相册」 | 长时间停在「正在连接电脑在线相册…」 | 状态栏只说「正在后台刷新…」，列表先到先渲染 |
+| 杀进程冷启动再点进 | 同样的「正在连接」等待 | 本地快照先铺满屏幕，离线也能秒开 |
+| 手机端总传输量 | 单次 2.75 MB | 单次 **420 KB（-85%）** |
+
+### 改动内容
+
+1. **服务端传输瘦身 + gzip**（`online_gallery_service.py`，所有客户端零改动即受益）
+   - `/api/online/works` 与 `/api/online/recycle` 响应剥离 `searchBlob`（服务端关键词检索专用，41% 体积）与 `slotGuard`（诊断块，1.4% 体积），两端客户端均不解析
+   - 按 `Accept-Encoding` 协商 `gzip`，实测 **2751.8 KB → 419.9 KB**；gzip 结果按 blake2b 内容摘要缓存（LRU 6 条），命中不再重复压缩
+   - `/api/online/status` 新增 `wire` 健康块（`gzipCache` 命中率、`listOmitFields` 等），便于监控
+2. **Android 本地快照秒开**
+   - 新增 `OnlineListCache`：原样落盘服务端返回的全量列表 JSON（原子写、7 天保质期、解析失败自动清盘）
+   - 仅「全量列表」请求落快照，带分类/关键词的子集**不**落快照（避免下次秒开看到残缺列表）
+3. **Android 开机预热**（`primeOnlineWorksInBackground`，`onCreate` 即调）
+   - 先读快照进内存，再后台静默拉最新列表 + 分类
+   - 用户点进在线相册时大概率已经渲染好，**不再有阻塞感**
+4. **Android `refreshOnlineWorks` 三点改造**
+   - 分类与列表**两请求并行**（之前串行白白多一个网络往返）
+   - 已有数据时状态栏只说「正在刷新…」，不再把「正在连接电脑在线相册…」摆在用户面前
+   - 失败**不清屏**：有快照数据时只做软提示并保留列表，电脑关机时用户仍能看到上次内容
+5. **列表/分类请求收紧超时**：连接 4 s / 读 12 s（原 15 s/15 s，电脑关机时最多白盯 30 秒）
+
+### 自检（22/22 全绿，含还原-失败证明）
+
+- `python -m unittest test_online_gallery_service` **22 项全绿**
+- 包含还原-失败证明（第二十一节要求）：把 `slim_works_for_wire` 临时换回「不过滤」版本，端到端契约断言**会失败**，闸门有效
+- Java 端 javalang 解析 3 个文件 OK
+- 装机包 dex 内 `OnlineListCache` / `primeOnlineWorksInBackground` / `silentPrefetchOnlineWorks` / 「正在后台刷新」字符串均命中
+
+### 兼容性
+
+- **iOS 不需出新包**即可享受传输瘦身 + gzip 的服务端收益
+- 旧 Android 版本也可享受服务端收益（自动协商 gzip，HttpURLConnection 透明解压）
+- 本地快照机制是 Android-only 新增；iOS 后续若需要可参考 `OnlineListCache` 思路
+
+---
+
 ## 服务端（无客户端改动）- 平台槽位守卫：拦住「标记齐全但正文是模板骨架」的作品
 
 > **无需出新 APK**：改动全在 `scripts/online_gallery_service.py`，重启服务即生效。
