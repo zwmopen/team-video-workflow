@@ -1054,6 +1054,7 @@ def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
 
         broadcast_targets = get_broadcast_targets()
         ip_cache = get_local_ip()
+        local_ips = set(get_all_local_ips())
         last_broadcast = 0.0
         last_refresh = time.time()
         print(f"📣 局域网信标已启动：UDP {beacon_port} → {broadcast_targets}（每 {BEACON_INTERVAL:.0f}s 一次）")
@@ -1063,6 +1064,7 @@ def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
             # 每 30 秒刷新一次本机 IP 与广播目标（切换网络/IP 变化时自动跟上）
             if now - last_refresh > 30:
                 ip_cache = get_local_ip()
+                local_ips = set(get_all_local_ips())
                 broadcast_targets = get_broadcast_targets()
                 last_refresh = now
 
@@ -1078,9 +1080,15 @@ def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
             # 应答手机主动探测（广播被路由器拦截时的兜底通路）
             try:
                 packet, addr = sock.recvfrom(2048)
-                text = packet.decode("utf-8", "ignore")
-                upper = text.upper()
-                if BEACON_MAGIC in text or "GALLERY" in upper or "ZWMDS2" in upper:
+                text = packet.decode("utf-8", "ignore").strip()
+                # 关键防护：信标本身是 JSON，若不排除会被误判成探测包，
+                # 导致服务给自己回信、无限自问自答形成广播风暴。
+                if text.startswith("{"):
+                    continue
+                # 同样忽略来自本机的报文（多网卡/回环场景）
+                if addr and addr[0] in local_ips:
+                    continue
+                if BEACON_MAGIC in text or "ZWMDS2" in text.upper():
                     sock.sendto(_payload(ip_cache), addr)
             except socket.timeout:
                 pass
