@@ -2,6 +2,8 @@ android/.gradle/
 android/local.properties
 android/**/build/
 android/out/
+ios/build/
+ios/out/
 windows-native/build/
 windows-native/out/
 .local-test/
@@ -10,6 +12,7 @@ devimages/
 remote-relay/node_modules/
 remote-relay/.wrangler/
 *.apk
+*.ipa
 *.exe
 
 # CI 产物下载用的临时目录（本地核验后即可删，不入版本库）
