@@ -297,6 +297,8 @@ public final class OnlineGalleryClient {
                 DispatchQueue.main.async { completion(.failure(NSError(domain: "OnlineGallery", code: -2, userInfo: [NSLocalizedDescriptionKey: "返回数据为空"]))) }
                 return
             }
+            // 成功即落盘快照：下次进页面 / 离线时可直渲染（与 Android `OnlineListCache` 同步）
+            OnlineListCache.saveCategories(data)
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                 var categories: [OnlineCategoryItem] = []
@@ -350,6 +352,12 @@ public final class OnlineGalleryClient {
             guard let data = data else {
                 DispatchQueue.main.async { completion(.success([])) }
                 return
+            }
+            // 只有「全量列表」才值得做快照：带分类/关键词的响应是子集，
+            // 存下去会让下次秒开时看到一个不完整的列表（与 Android 同步）。
+            let isFullList = (category ?? "").isEmpty && (query ?? "").isEmpty
+            if isFullList {
+                OnlineListCache.saveWorks(data)
             }
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]

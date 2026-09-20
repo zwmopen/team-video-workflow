@@ -1,5 +1,23 @@
 # 变更记录
 
+## iOS 0.8.18 / versionCode 89 - 2026-09-20 - 在线相册本地快照秒开（对齐 Android）
+
+> **新 IPA 已发布到 gallery-updates**，iPhone App 内更新即可。
+> **服务端改动对已装机的旧版也立即生效**（URLSession 自动协商 gzip）。
+
+把 Android `OnlineListCache` 的思路搬到 iOS：
+
+- 新增 `OnlineListCache.swift`（Documents/online_cache/，原子写 + 7 天保质期，只缓存全量列表 JSON Data，解析失败自动清盘）
+- `OnlineGalleryClient.fetchWorks` 成功后，仅「全量列表」请求落快照（带分类/关键词的子集**不**落，避免下次秒开看到残缺列表）
+- `OnlineGalleryClient.fetchCategories` 成功后落快照
+- `ContentView.viewDidLoad` 在 `loadOnlineData()` 之前先调 `primeOnlineDataFromSnapshot()`：
+  存在快照就把 UI 直接铺满，再让后台静默拉最新；
+  网络失败时也保留上次的内容（电脑关机也能看到）
+
+自检：tree-sitter 解析三个 Swift 文件，3 处 ERROR 均为 `as? T ?? default` 的已知误报（第二十一节注释一致）。
+
+---
+
 ## Android 0.8.41 / versionCode 152 - 2026-09-20 - 在线相册体感加速三件套
 
 > **新 APK 已发布到 gallery-updates**，手机 App 内更新即可装上。

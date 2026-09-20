@@ -57,6 +57,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
 
         if isOnlineMode {
+            // 【体感加速】先读本地快照进内存（几十毫秒级），再后台拉最新；
+            // 这样从本地相册切到在线相册是「秒开」而不是「正在连接」。
+            primeOnlineDataFromSnapshot()
             loadOnlineData()
         } else {
             render()
@@ -335,6 +338,50 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     // MARK: - 在线数据加载与渲染
+
+    /// 【体感加速】开机 / 回到前台时，用上次成功的快照先把 UI 填上。
+    /// 失败 / 过期 / 解析失败一律静默 —— 后台的 `loadOnlineData()` 仍然会拉一次最新，
+    /// 快照只负责「不让用户看到空白的等待」。
+    private func primeOnlineDataFromSnapshot() {
+        guard let worksData = OnlineListCache.loadWorks() else { return }
+        var parsed: [OnlineWorkEntry] = []
+        do {
+            let json = try JSONSerialization.jsonObject(with: worksData) as? [String: Any] ?? [:]
+            if let arr = json["works"] as? [[String: Any]] {
+                for w in arr {
+                    if let entry = OnlineWorkEntry.from(dict: w) {
+                        parsed.append(entry)
+                    }
+                }
+            }
+        } catch {
+            // 快照损坏：丢掉，下次成功请求会重写。
+            NSLog("[ContentView] 在线列表快照解析失败，已丢弃: %@",
+                  String(describing: error))
+            OnlineListCache.clear()
+            return
+        }
+        if parsed.isEmpty { return }
+
+        // 已经有更新的数据就别用旧快照盖掉（例如 viewWillAppear 里刚刷完）
+        if !self.onlineWorks.isEmpty { return }
+
+        self.onlineWorks = parsed
+        if let catsData = OnlineListCache.loadCategories() {
+            if let json = try? JSONSerialization.jsonObject(with: catsData) as? [String: Any],
+               let arr = json["categories"] as? [[String: Any]] {
+                var cats: [OnlineCategoryItem] = []
+                for item in arr {
+                    if let n = item["name"] as? String, let c = item["count"] as? Int {
+                        cats.append(OnlineCategoryItem(name: n, count: c))
+                    }
+                }
+                if !cats.isEmpty { self.onlineCategories = cats }
+            }
+        }
+        self.renderOnlineUI()
+    }
+
     private func loadOnlineData(silent: Bool = false) {
         if !silent {
             // 可做轻量 loading 提示
