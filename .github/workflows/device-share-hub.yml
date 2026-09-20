@@ -44,15 +44,20 @@ jobs:
           # npm ci 严格校验 lockfile；lockfile 里 sharp 还是 0.35.2，
           # 但 GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 要求 0.35.4+。
           # 用 package.json overrides 强制 sharp 0.35.4，再 npm install 自动重写 lockfile + 装 nested sharp。
+          # github-actions[bot] 默认没 push 到 main 的权限（403），改成把新 lockfile 上传成 artifact，
+          # 本机下载 commit 后再触发新 run。
           npm install --no-audit --no-fund
-          # 把 npm install 生成的新 lockfile 提交回去（用内置 GITHUB_TOKEN）
           if ! git diff --exit-code --quiet package-lock.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add package-lock.json
-            git commit -m "ci(relay): npm install overrides 同步 lockfile (sharp 0.35.4)"
-            git push
+            mkdir -p relay-lockfile-out
+            cp package-lock.json relay-lockfile-out/package-lock.json
+            echo "lockfile changed — uploading as artifact for manual commit"
           fi
+      - name: Upload regenerated lockfile (only when changed)
+        if: hashFiles('tools/device-share-hub/remote-relay/relay-lockfile-out/package-lock.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-lockfile
+          path: tools/device-share-hub/remote-relay/relay-lockfile-out/package-lock.json
       - name: Audit, test and validate relay package
         run: |
           npm audit --audit-level=high
