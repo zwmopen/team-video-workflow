@@ -66,6 +66,9 @@ public final class OnlineGalleryClient {
     private static final int THUMB_READ_TIMEOUT_MS = 8000;
     /** 缩略图解码目标边长（px）：卡片显示约 84×112dp，3x 屏约 336px，取 384 留余量 */
     private static final int THUMB_TARGET_PX = 384;
+    /** 缩略图失败重试次数与重试间隔：冷缓存大图偶发读超时用，重试基本能命中服务端已生成的缓存 */
+    private static final int THUMB_MAX_ATTEMPTS = 2;
+    private static final long THUMB_RETRY_DELAY_MS = 900L;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile String cachedBaseUrl = null;
 
@@ -687,20 +690,36 @@ public final class OnlineGalleryClient {
         Bitmap bmp = null;
         Exception err = null;
         File diskFile = new File(thumbCacheDir(), getDiskCacheKey(workId, fileName));
-        try {
-            // 1) 磁盘缓存
-            if (diskFile.exists() && diskFile.length() > 512) {
-                bmp = decodeThumbFile(diskFile);
+        // 冷缓存时服务端要现场跑 PIL 生成缩略图，个别几 MB 的大图在并发下可能超过读超时。
+        // 这种超时的本质是「客户端先放弃、服务端其实还在生成」——稍等重试一次基本就命中缓存了，
+        // 否则那几张图会永久停在灰色占位块。（真机实测：231 次取图里曾出现 7 次此类超时）
+        for (int attempt = 1; attempt <= THUMB_MAX_ATTEMPTS && bmp == null; attempt++) {
+            try {
+                // 1) 磁盘缓存
+                if (diskFile.exists() && diskFile.length() > 512) {
+                    bmp = decodeThumbFile(diskFile);
+                }
+                // 2) 网络
+                if (bmp == null) {
+                    byte[] imgBytes = downloadThumb(workId, fileName, diskFile);
+                    bmp = decodeThumbBytes(imgBytes);
+                    if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
+                }
+            } catch (Exception e) {
+                err = e;
+                if (attempt < THUMB_MAX_ATTEMPTS) {
+                    Log.w("OnlineGalleryClient", "loadThumbnail 第 " + attempt + " 次失败，稍后重试 "
+                            + workId + " / " + fileName + ": " + e.getMessage());
+                    try {
+                        Thread.sleep(THUMB_RETRY_DELAY_MS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                } else {
+                    Log.w("OnlineGalleryClient", "loadThumbnail failed for " + workId + " / " + fileName + ": " + e.getMessage());
+                }
             }
-            // 2) 网络
-            if (bmp == null) {
-                byte[] imgBytes = downloadThumb(workId, fileName, diskFile);
-                bmp = decodeThumbBytes(imgBytes);
-                if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
-            }
-        } catch (Exception e) {
-            err = e;
-            Log.w("OnlineGalleryClient", "loadThumbnail failed for " + workId + " / " + fileName + ": " + e.getMessage());
         }
 
         final Bitmap result = bmp;
