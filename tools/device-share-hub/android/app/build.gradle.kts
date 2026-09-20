@@ -20,6 +20,9 @@ android {
             storePassword = "gallerydev"
             keyAlias = "gallery-debug"
             keyPassword = "gallerydev"
+            // 老机型（华为 P30 / Android 10）只能通过 v1 (JAR) 签名读取安装包签名，
+            // v2-only 包会被 UpdatePackageValidator 判定为「安装包没有签名」而拒绝更新。
+            enableV1Signing = true
         }
     }
 
