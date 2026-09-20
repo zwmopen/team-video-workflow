@@ -176,6 +176,19 @@ public final class MainActivity extends Activity {
     private int onlinePageLimit = 25;
     private final List<OnlineWorkEntry> currentOnlineFilteredEntries = new ArrayList<>();
 
+    // ---- 在线回收站（电脑端 45835）：已使用 / 已标记垃圾 双 Tab ----
+    /** 是否正停靠在「在线回收站」页面（与本地回收站 showingTrash 互斥） */
+    private boolean showingOnlineRecycle = false;
+    /** 当前 Tab：sent=已使用（_已发送1次） / garbage=已标记垃圾（_垃圾作品） */
+    private String onlineRecycleTab = "sent";
+    private int onlineRecycleSentCount = 0;
+    private int onlineRecycleGarbageCount = 0;
+    private final List<OnlineWorkEntry> onlineRecycleWorks = new ArrayList<>();
+    private LinearLayout onlineRecycleTabBar;
+    private Button onlineRecycleSentTabButton;
+    private Button onlineRecycleGarbageTabButton;
+    private int onlineRecyclePageLimit = 25;
+
     static boolean matchesSearchTokens(String name, String folder, String[] tokens) {
         if (tokens == null || tokens.length == 0) return true;
         String cleanName = name != null ? name.toLowerCase(Locale.ROOT) : "";
@@ -310,6 +323,10 @@ public final class MainActivity extends Activity {
             refreshWorks();
             return;
         }
+        if (showingOnlineRecycle) {
+            showWorks();
+            return;
+        }
         if (showingTrash) {
             showWorks();
             return;
@@ -399,7 +416,7 @@ public final class MainActivity extends Activity {
             if (fileMode) {
                 refreshFiles();
                 toast("正在刷新文件");
-            } else if (showingTrash) {
+            } else if (showingOnlineRecycle || showingTrash) {
                 showWorks();
             } else if (isOnlineMode) {
                 toast("正在刷新电脑作品…");
@@ -417,8 +434,14 @@ public final class MainActivity extends Activity {
                 leaveFileMode();
                 toast("回收站");
                 showTrash();
+            } else if (showingOnlineRecycle) {
+                toast("正在刷新在线回收站…");
+                loadOnlineRecycle(onlineRecycleTab, true);
             } else if (showingTrash) confirmClearTrash();
-            else {
+            else if (isOnlineMode) {
+                toast("在线回收站");
+                showOnlineRecycle("sent");
+            } else {
                 toast("回收站");
                 showTrash();
             }
@@ -513,6 +536,20 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams sClearParams = new LinearLayout.LayoutParams(dp(32), dp(32));
         searchBar.addView(clearSearchButton, sClearParams);
 
+        // ---- 在线回收站双 Tab（已使用 / 已标记垃圾）：默认隐藏，点顶栏「回收站」才出现 ----
+        onlineRecycleTabBar = new LinearLayout(this);
+        onlineRecycleTabBar.setOrientation(LinearLayout.HORIZONTAL);
+        onlineRecycleTabBar.setGravity(Gravity.CENTER_VERTICAL);
+        onlineRecycleTabBar.setVisibility(View.GONE);
+        onlineRecycleSentTabButton = recycleTabButton("已使用");
+        onlineRecycleSentTabButton.setOnClickListener(v -> selectOnlineRecycleTab("sent"));
+        onlineRecycleTabBar.addView(onlineRecycleSentTabButton, new LinearLayout.LayoutParams(0, dp(36), 1));
+        onlineRecycleGarbageTabButton = recycleTabButton("已标记垃圾");
+        onlineRecycleGarbageTabButton.setOnClickListener(v -> selectOnlineRecycleTab("garbage"));
+        LinearLayout.LayoutParams garbageTabParams = new LinearLayout.LayoutParams(0, dp(36), 1);
+        garbageTabParams.setMargins(dp(8), 0, 0, 0);
+        onlineRecycleTabBar.addView(onlineRecycleGarbageTabButton, garbageTabParams);
+
         worksContainer = new LinearLayout(this);
         worksContainer.setClipChildren(false);
         worksContainer.setClipToPadding(false);
@@ -536,11 +573,13 @@ public final class MainActivity extends Activity {
         contentScroll = new SpringScrollView(this);
         contentScroll.setSwipeListener(new SpringScrollView.SwipeListener() {
             @Override public void onSwipeLeft() {
-                if (isOnlineMode) switchToNextOnlineCategory();
+                if (showingOnlineRecycle) selectOnlineRecycleTab("garbage");
+                else if (isOnlineMode) switchToNextOnlineCategory();
                 else switchToNextCategory();
             }
             @Override public void onSwipeRight() {
-                if (isOnlineMode) switchToPreviousOnlineCategory();
+                if (showingOnlineRecycle) selectOnlineRecycleTab("sent");
+                else if (isOnlineMode) switchToPreviousOnlineCategory();
                 else switchToPreviousCategory();
             }
         });
@@ -552,6 +591,7 @@ public final class MainActivity extends Activity {
             @Override public void onRefresh() {
                 beginVisibleRefresh();
                 if (fileMode) refreshFiles();
+                else if (showingOnlineRecycle) loadOnlineRecycle(onlineRecycleTab, true);
                 else if (showingTrash) refreshWorks();
                 else if (isOnlineMode) refreshOnlineWorks(true);
                 else importSelectedTree(true);
@@ -598,6 +638,9 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(38));
         searchParams.setMargins(dp(12), 0, dp(12), dp(8));
         frozenLayout.addView(searchBar, searchParams);
+        LinearLayout.LayoutParams recycleTabParams = new LinearLayout.LayoutParams(-1, dp(40));
+        recycleTabParams.setMargins(dp(12), 0, dp(12), dp(4));
+        frozenLayout.addView(onlineRecycleTabBar, recycleTabParams);
         LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(40));
         categoryParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(categorySelector, categoryParams);
@@ -617,6 +660,10 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshWorks() {
+        if (showingOnlineRecycle) {
+            loadOnlineRecycle(onlineRecycleTab, false);
+            return;
+        }
         if (isOnlineMode && !showingTrash) {
             refreshOnlineWorks(false);
             return;
@@ -676,6 +723,9 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
+        showingOnlineRecycle = false;
+        onlineRecycleWorks.clear();
+        if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
         categorySelector.setVisibility(View.VISIBLE);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
@@ -695,6 +745,8 @@ public final class MainActivity extends Activity {
     private void showTrash() {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
+        showingOnlineRecycle = false;
+        if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (isOnlineMode) {
             enteredTrashFromOnline = true;
         }
@@ -2296,6 +2348,9 @@ public final class MainActivity extends Activity {
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
+        showingTrash = false;
+        showingOnlineRecycle = false;
+        if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (modeButton != null) modeButton.setVisibility(View.GONE);
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
@@ -2603,8 +2658,344 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // ==================================================================
+    // 在线回收站（电脑端 45835）：已使用 / 已标记垃圾 双 Tab
+    // ------------------------------------------------------------------
+    // 电脑端阶段库：
+    //   已使用   -> _已发送1次（微信公众号可发）  ：点过平台按钮、useCount>=1
+    //   已标记垃圾 -> _垃圾作品（后续参考分析）   ：手机端点删除判定为垃圾，永久保留
+    // 「恢复」两个 Tab 通用：移回「已发送0次」+ 次数归零 + 撤销垃圾标记。
+    // ==================================================================
+
+    private Button recycleTabButton(String label) {
+        Button btn = new Button(this);
+        styleOnlineRecycleTab(btn, label, false, 0);
+        return btn;
+    }
+
+    private void styleOnlineRecycleTab(Button btn, String label, boolean selected, int count) {
+        if (btn == null) return;
+        String text = (label == null ? "" : label) + (count > 0 ? " " + count : "");
+        btn.setText(text);
+        btn.setAllCaps(false);
+        btn.setTextSize(13);
+        btn.setTypeface(null, selected ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+        btn.setPadding(dp(8), 0, dp(8), 0);
+        if (selected) {
+            btn.setTextColor(Color.WHITE);
+            btn.setBackground(round(Color.rgb(15, 135, 88), 11));
+        } else {
+            btn.setTextColor(Color.rgb(70, 78, 74));
+            btn.setBackground(round(Color.rgb(232, 234, 233), 11));
+        }
+    }
+
+    private void refreshOnlineRecycleTabStyles() {
+        styleOnlineRecycleTab(onlineRecycleSentTabButton, "已使用",
+                "sent".equals(onlineRecycleTab), onlineRecycleSentCount);
+        styleOnlineRecycleTab(onlineRecycleGarbageTabButton, "已标记垃圾",
+                "garbage".equals(onlineRecycleTab), onlineRecycleGarbageCount);
+    }
+
+    private void selectOnlineRecycleTab(String tab) {
+        String want = "garbage".equals(tab) ? "garbage" : "sent";
+        onlineRecycleTab = want;
+        onlineRecyclePageLimit = 25;
+        refreshOnlineRecycleTabStyles();
+        loadOnlineRecycle(want, true);
+    }
+
+    /** 进入在线回收站（顶栏「回收站」按钮在在线模式下走这里，不再错进本地回收站）。 */
+    private void showOnlineRecycle(String tab) {
+        selectedWorkIds.clear();
+        quickTrashButton.setVisibility(View.GONE);
+        showingTrash = false;
+        enteredTrashFromOnline = false;
+        showingOnlineRecycle = true;
+        onlineRecycleTab = "garbage".equals(tab) ? "garbage" : "sent";
+        onlineRecyclePageLimit = 25;
+        onlineRecycleWorks.clear();
+
+        if (searchBar != null) searchBar.setVisibility(View.GONE);
+        categorySelector.setVisibility(View.GONE);
+        if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.VISIBLE);
+        refreshOnlineRecycleTabStyles();
+
+        leftModeButton.setImageResource(R.drawable.ic_album_back);
+        leftModeButton.setContentDescription("返回在线作品");
+        leftModeButton.setVisibility(View.VISIBLE);
+        rightModeButton.setImageResource(R.drawable.ic_album_refresh);
+        rightModeButton.setContentDescription("刷新在线回收站");
+        headingText.setText("在线回收站");
+        footerNote.setText("♻️ 在线回收站：读取电脑端「_已发送1次」与「_垃圾作品」两个阶段库。"
+                + "点「恢复」即移回「已发送0次」并归零次数、撤销垃圾标记；垃圾样本库电脑端永久保留，不会自动清理。");
+        worksContainer.removeAllViews();
+        scannedCountText.setText("0");
+
+        loadOnlineRecycle(onlineRecycleTab, false);
+    }
+
+    private void loadOnlineRecycle(String tab, boolean userInitiated) {
+        final String want = "garbage".equals(tab) ? "garbage" : "sent";
+        statusText.setText("正在读取电脑在线回收站…");
+        onlineClient.fetchRecycle(want, new OnlineGalleryClient.Callback<OnlineGalleryClient.RecycleResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.RecycleResult result) {
+                if (!isOnlineMode || !showingOnlineRecycle) return;
+                // 两个 Tab 的角标数字用同一份 counts，保证与各自列表 total 严格一致
+                onlineRecycleSentCount = result.sentCount;
+                onlineRecycleGarbageCount = result.garbageCount;
+                refreshOnlineRecycleTabStyles();
+                if (!want.equals(onlineRecycleTab)) return; // 期间用户切了 Tab，丢弃过期结果
+                onlineRecycleWorks.clear();
+                onlineRecycleWorks.addAll(result.works);
+                renderOnlineRecycleCards();
+                statusText.setText("♻️ 在线回收站 · 已使用 " + onlineRecycleSentCount
+                        + " · 已标记垃圾 " + onlineRecycleGarbageCount);
+                finishVisibleRefresh("在线回收站已刷新");
+            }
+
+            @Override
+            public void onError(Exception error) {
+                if (!isOnlineMode || !showingOnlineRecycle) return;
+                String msg = error != null && error.getMessage() != null ? error.getMessage() : "网络超时";
+                statusText.setText("读取在线回收站失败 (" + msg + ")");
+                finishVisibleRefresh("读取失败");
+            }
+        });
+    }
+
+    private void renderOnlineRecycleCards() {
+        if (!isOnlineMode || !showingOnlineRecycle) return;
+        worksContainer.removeAllViews();
+        scannedCountText.setText(String.valueOf(onlineRecycleWorks.size()));
+
+        if (onlineRecycleWorks.isEmpty()) {
+            String emptyMsg = "garbage".equals(onlineRecycleTab)
+                    ? "电脑端「_垃圾作品」暂为空\n手机端判定删除的作品会永久保留在这里，供后续参考分析"
+                    : "电脑端「_已发送1次」暂为空\n点过平台按钮的作品会自动进入这里";
+            TextView empty = text(emptyMsg, 14, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setTextColor(Color.GRAY);
+            empty.setPadding(dp(14), dp(28), dp(14), dp(28));
+            empty.setBackground(round(Color.WHITE, 18));
+            worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            worksContainer.addView(recycleLocalTrashEntry(), margins(0, dp(10), 0, dp(18)));
+            return;
+        }
+
+        int showCount = Math.min(onlineRecycleWorks.size(), onlineRecyclePageLimit);
+        for (int i = 0; i < showCount; i++) {
+            worksContainer.addView(onlineRecycleCard(onlineRecycleWorks.get(i)), margins(0, 0, 0, dp(10)));
+        }
+
+        if (onlineRecycleWorks.size() > showCount) {
+            Button loadMoreBtn = new Button(this);
+            loadMoreBtn.setText("加载更多 (已显示 " + showCount + " / " + onlineRecycleWorks.size() + " 套)");
+            loadMoreBtn.setAllCaps(false);
+            loadMoreBtn.setTextSize(13);
+            loadMoreBtn.setTextColor(Color.rgb(15, 135, 88));
+            loadMoreBtn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(200, 230, 215)));
+            loadMoreBtn.setPadding(dp(16), dp(10), dp(16), dp(10));
+            loadMoreBtn.setOnClickListener(v -> {
+                onlineRecyclePageLimit += 30;
+                renderOnlineRecycleCards();
+            });
+            LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(-1, dp(44));
+            btnParams.setMargins(dp(12), dp(8), dp(12), dp(12));
+            worksContainer.addView(loadMoreBtn, btnParams);
+        }
+
+        worksContainer.addView(recycleLocalTrashEntry(), margins(0, dp(6), 0, dp(18)));
+    }
+
+    /** 在线回收站底部保留「手机本地回收站」入口，避免在线模式再也进不去本地回收站。 */
+    private View recycleLocalTrashEntry() {
+        Button btn = new Button(this);
+        btn.setText("📱 打开手机本地回收站");
+        btn.setAllCaps(false);
+        btn.setTextSize(13);
+        btn.setTextColor(Color.rgb(90, 96, 93));
+        btn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(214, 219, 216)));
+        btn.setPadding(dp(14), dp(10), dp(14), dp(10));
+        btn.setContentDescription("打开手机本地回收站");
+        btn.setOnClickListener(v -> {
+            toast("手机本地回收站");
+            showTrash();
+        });
+        return btn;
+    }
+
+    private View onlineRecycleCard(OnlineWorkEntry work) {
+        LinearLayout card = card();
+        card.setTag("online_recycle:" + work.id);
+        card.setOrientation(LinearLayout.VERTICAL);
+        if (work.garbage) {
+            card.setBackground(roundWithStroke(Color.rgb(250, 246, 245), 16, Color.rgb(233, 216, 212)));
+            card.setElevation(0);
+        }
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        String badgeText = work.garbage ? "🗑️ 垃圾样本" : ("✅ 已使用 " + Math.max(1, work.useCount) + " 次");
+        TextView stageBadge = text(badgeText, 11, true);
+        stageBadge.setTextColor(work.garbage ? Color.rgb(168, 62, 52) : Color.rgb(180, 85, 20));
+        stageBadge.setBackground(round(work.garbage ? Color.rgb(250, 232, 229) : Color.rgb(254, 243, 235), 8));
+        stageBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+        LinearLayout.LayoutParams stageParams = new LinearLayout.LayoutParams(-2, -2);
+        stageParams.setMargins(0, 0, dp(6), 0);
+        titleRow.addView(stageBadge, stageParams);
+
+        if (work.destination != null && !work.destination.isEmpty() && !"其他".equals(work.destination)) {
+            TextView destBadge = text(work.destination, 11, true);
+            destBadge.setTextColor(Color.rgb(25, 120, 80));
+            destBadge.setBackground(round(Color.rgb(228, 244, 235), 8));
+            destBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            LinearLayout.LayoutParams destParams = new LinearLayout.LayoutParams(-2, -2);
+            destParams.setMargins(0, 0, dp(6), 0);
+            titleRow.addView(destBadge, destParams);
+        }
+
+        TextView name = text(formatDisplayTitle(work.title), 14, true);
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        card.addView(titleRow);
+
+        if (work.images != null && !work.images.isEmpty()) {
+            card.addView(onlinePreviewStrip(work), margins(0, dp(4), 0, dp(2)));
+        }
+
+        StringBuilder detail = new StringBuilder();
+        detail.append(work.imageCount).append(" 张图片 · 电脑真源");
+        String timeBadge = extractTimestampBadge(work.id);
+        if (timeBadge.isEmpty()) timeBadge = extractTimestampBadge(work.title);
+        if (!timeBadge.isEmpty()) detail.append(" · ").append(timeBadge);
+        if (work.dispatchedTo != null && !work.dispatchedTo.isEmpty()) {
+            detail.append("\n记录：").append(String.join("、", work.dispatchedTo));
+        }
+        if (work.garbage) {
+            detail.append("\n垃圾备注：").append(work.garbageRemark.isEmpty() ? "（未填写）" : work.garbageRemark);
+        }
+        TextView meta = text(detail.toString(), 12, false);
+        meta.setTextColor(Color.rgb(75, 82, 78));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.setMargins(0, dp(3), 0, dp(5));
+        card.addView(meta, metaParams);
+
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
+        actionRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button restore = compactButton("恢复", true);
+        restore.setContentDescription("恢复回已发送0次");
+        restore.setOnClickListener(v -> confirmRestoreOnlineRecycleWork(work));
+        actionRow.addView(restore, new LinearLayout.LayoutParams(-2, dp(36)));
+
+        Button second = new Button(this);
+        LinearLayout.LayoutParams secondParams = new LinearLayout.LayoutParams(-2, dp(36));
+        secondParams.setMargins(dp(8), 0, 0, 0);
+        if (work.garbage) {
+            second.setText("备注");
+            styleNeumorphicButton(second, STYLE_MUTED_GRAY);
+            second.setContentDescription("填写垃圾备注");
+            second.setOnClickListener(v -> promptRemarkOnlineRecycle(work));
+        } else {
+            second.setText("删除");
+            styleNeumorphicButton(second, STYLE_DANGER_WHITE);
+            second.setContentDescription("判定为垃圾并移入垃圾样本库");
+            second.setOnClickListener(v -> confirmDeleteOnlineWork(work));
+        }
+        actionRow.addView(second, secondParams);
+
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, -2);
+        actionParams.setMargins(0, dp(8), 0, dp(2));
+        card.addView(actionRow, actionParams);
+        return card;
+    }
+
+    private void confirmRestoreOnlineRecycleWork(OnlineWorkEntry work) {
+        String tail = "garbage".equals(onlineRecycleTab)
+                ? "，并撤销垃圾标记。" : "，使用次数归零。";
+        new AlertDialog.Builder(this)
+                .setTitle("恢复作品")
+                .setMessage("将把该作品移回电脑端「已发送0次（抖音小红书可发）」" + tail
+                        + "\n\n恢复后它会重新出现在在线相册里。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("恢复", (dialog, which) ->
+                        onlineClient.restoreWork(work.id, new OnlineGalleryClient.Callback<OnlineGalleryClient.ActionResult>() {
+                            @Override
+                            public void onSuccess(OnlineGalleryClient.ActionResult result) {
+                                if (!showingOnlineRecycle) return;
+                                toast(result.ok
+                                        ? "♻️ 已恢复：" + (result.message.isEmpty() ? "回到已发送0次" : result.message)
+                                        : "恢复失败：" + result.message);
+                                if (result.ok) {
+                                    removeFromOnlineRecycle(work.id);
+                                    loadOnlineRecycle(onlineRecycleTab, false);
+                                }
+                            }
+
+                            @Override
+                            public void onError(Exception error) {
+                                toast("恢复失败：" + (error != null ? error.getMessage() : "网络异常"));
+                            }
+                        }))
+                .show();
+    }
+
+    private void promptRemarkOnlineRecycle(OnlineWorkEntry work) {
+        final EditText input = new EditText(this);
+        input.setHint("例如：文案公文味重 / 图片 AI 味浓 / 选题不合适");
+        input.setText(work.garbageRemark);
+        input.setSingleLine(false);
+        input.setMaxLines(3);
+        FrameLayout holder = new FrameLayout(this);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        int pad = dp(16);
+        lp.setMargins(pad, pad, pad, 0);
+        holder.addView(input, lp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("垃圾备注（写入作品元数据）")
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存备注", (dialog, which) -> {
+                    String remark = input.getText().toString().trim();
+                    onlineClient.remarkGarbage(work.id, remark,
+                            new OnlineGalleryClient.Callback<OnlineGalleryClient.ActionResult>() {
+                                @Override
+                                public void onSuccess(OnlineGalleryClient.ActionResult result) {
+                                    toast(result.ok ? "✅ 已写入垃圾备注" : "写入失败：" + result.message);
+                                    if (result.ok && showingOnlineRecycle) {
+                                        loadOnlineRecycle(onlineRecycleTab, false);
+                                    }
+                                }
+
+                                @Override
+                                public void onError(Exception error) {
+                                    toast("写入失败：" + (error != null ? error.getMessage() : "网络异常"));
+                                }
+                            });
+                })
+                .show();
+    }
+
+    private void removeFromOnlineRecycle(String workId) {
+        for (int i = 0; i < onlineRecycleWorks.size(); i++) {
+            if (onlineRecycleWorks.get(i).id.equals(workId)) {
+                onlineRecycleWorks.remove(i);
+                break;
+            }
+        }
+        renderOnlineRecycleCards();
+    }
+
     private void applyOnlineCategoryFilter(String catKey) {
-        if (!isOnlineMode || showingTrash) return;
+        if (!isOnlineMode || showingTrash || showingOnlineRecycle) return;
         onlinePageLimit = 25;
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
@@ -2678,7 +3069,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderOnlineWorksCards(List<OnlineWorkEntry> entries, boolean animate) {
-        if (!isOnlineMode || showingTrash) return;
+        if (!isOnlineMode || showingTrash || showingOnlineRecycle) return;
         LayoutTransition transition = worksContainer.getLayoutTransition();
         if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();

@@ -741,7 +741,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func openTrash() {
-        navigationController?.pushViewController(TrashViewController(library: library), animated: true)
+        // 与 Android 严格对齐：在线模式下的「回收站」= 电脑端在线回收站（已使用 / 已标记垃圾），
+        // 不再错进手机本地回收站；本地回收站在在线回收站页左侧「📱 本地回收站」里仍然可达。
+        if isOnlineMode {
+            navigationController?.pushViewController(OnlineRecycleViewController(library: library), animated: true)
+        } else {
+            navigationController?.pushViewController(TrashViewController(library: library), animated: true)
+        }
     }
 
     @objc private func openSettings() {

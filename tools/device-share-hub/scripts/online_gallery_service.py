@@ -1260,8 +1260,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"Error resetting tags: {e}")
 
-            # 同步归零 manifest.json 的分发计数，确保「用过 → 重置 → 再删除」
-            # 这条路径能稳定被判定为垃圾并移入垃圾样本库。
+            # 同步归零 manifest.json，确保扫描器与手机端看到的「使用次数」一致为 0，
+            # 这样「用过 → 重置 → 再删除」才能被正确判定为人工垃圾样本。
+            # 注意：此项与上面的「作品标签.json」归零必须同时写入 useCount / used /
+            # distribution / dispatchedTo / status，缺一项都会让扫描器读到非 0 次数。
             manifest_file = os.path.join(dir_path, "manifest.json")
             if os.path.exists(manifest_file):
                 try:
@@ -1269,30 +1271,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         manifest = json.load(fp)
                     if isinstance(manifest, dict):
                         manifest["useCount"] = 0
+                        manifest["used"] = False
                         if isinstance(manifest.get("distribution"), dict):
                             manifest["distribution"]["useCount"] = 0
                             manifest["distribution"]["dispatchedTo"] = []
                             manifest["distribution"]["status"] = "待发手机"
+                        manifest["resetAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
                         with open(manifest_file, "w", encoding="utf-8") as fp:
                             json.dump(manifest, fp, ensure_ascii=False, indent=2)
-                except Exception as e:
-                    print(f"Error resetting manifest: {e}")
-
-            # 同步归零 manifest.json，确保扫描器与手机端看到的「使用次数」一致为 0，
-            # 这样「用过 → 重置 → 再删除」才能被正确判定为人工垃圾样本。
-            manifest_file = os.path.join(dir_path, "manifest.json")
-            if os.path.exists(manifest_file):
-                try:
-                    with open(manifest_file, "r", encoding="utf-8") as fp:
-                        manifest = json.load(fp)
-                    manifest["useCount"] = 0
-                    manifest["used"] = False
-                    if isinstance(manifest.get("distribution"), dict):
-                        manifest["distribution"]["useCount"] = 0
-                        manifest["distribution"]["dispatchedTo"] = []
-                    manifest["resetAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    with open(manifest_file, "w", encoding="utf-8") as fp:
-                        json.dump(manifest, fp, ensure_ascii=False, indent=2)
                 except Exception as e:
                     print(f"Error resetting manifest: {e}")
 

@@ -25,12 +25,26 @@ public final class OnlineWorkEntry {
     public final boolean hasCopyText;
     public final List<String> dispatchedTo;
     public final long updatedAt;
+    /** 在线回收站专用：是否已被标记为垃圾样本 */
+    public final boolean garbage;
+    /** 在线回收站专用：人工垃圾备注（来自 quality_tag.json / manifest.json） */
+    public final String garbageRemark;
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
                            int useCount, int maxUses, boolean used, int remainingUses,
                            String statusLabel, List<String> images, int imageCount,
                            String copyText, boolean hasCopyText, List<String> dispatchedTo,
                            long updatedAt) {
+        this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
+                statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
+                updatedAt, false, "");
+    }
+
+    public OnlineWorkEntry(String id, String title, String destination, String stage,
+                           int useCount, int maxUses, boolean used, int remainingUses,
+                           String statusLabel, List<String> images, int imageCount,
+                           String copyText, boolean hasCopyText, List<String> dispatchedTo,
+                           long updatedAt, boolean garbage, String garbageRemark) {
         this.id = id;
         this.title = title == null ? "" : title;
         this.destination = destination == null ? "其他" : destination;
@@ -46,6 +60,8 @@ public final class OnlineWorkEntry {
         this.hasCopyText = hasCopyText || !this.copyText.trim().isEmpty();
         this.dispatchedTo = dispatchedTo == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(dispatchedTo));
         this.updatedAt = updatedAt;
+        this.garbage = garbage;
+        this.garbageRemark = garbageRemark == null ? "" : garbageRemark;
     }
 
     public static OnlineWorkEntry fromJson(JSONObject json) {
@@ -82,8 +98,18 @@ public final class OnlineWorkEntry {
         }
         long updatedAt = json.optLong("updatedAt", System.currentTimeMillis());
 
+        // 在线回收站接口会在每套作品上挂一个 garbage 对象：
+        // {"marked": bool, "remark": str, "markedBy": str, "markedAt": str}
+        boolean garbage = false;
+        String garbageRemark = "";
+        JSONObject garbageObj = json.optJSONObject("garbage");
+        if (garbageObj != null) {
+            garbage = garbageObj.optBoolean("marked", false);
+            garbageRemark = garbageObj.optString("remark", "").trim();
+        }
+
         return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
-                hasCopyText, dispatchedTo, updatedAt);
+                hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark);
     }
 }

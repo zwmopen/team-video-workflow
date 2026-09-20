@@ -809,6 +809,137 @@ public final class OnlineGalleryClient {
         });
     }
 
+    // ------------------------------------------------------------------
+    // 在线回收站：已使用（_已发送1次）/ 已标记垃圾（_垃圾作品）
+    // ------------------------------------------------------------------
+
+    public static class RecycleResult {
+        public final boolean ok;
+        public final String tab;
+        public final String label;
+        public final int total;
+        public final int sentCount;
+        public final int garbageCount;
+        public final List<OnlineWorkEntry> works;
+
+        public RecycleResult(boolean ok, String tab, String label, int total,
+                             int sentCount, int garbageCount, List<OnlineWorkEntry> works) {
+            this.ok = ok;
+            this.tab = tab == null ? "sent" : tab;
+            this.label = label == null ? "" : label;
+            this.total = total;
+            this.sentCount = sentCount;
+            this.garbageCount = garbageCount;
+            this.works = works == null ? new ArrayList<OnlineWorkEntry>() : works;
+        }
+    }
+
+    /** 拉取在线回收站某个 Tab 的列表；counts 里同时带有两个 Tab 的角标数字。 */
+    public void fetchRecycle(String tab, Callback<RecycleResult> callback) {
+        final String wantTab = (tab == null || tab.trim().isEmpty()) ? "sent" : tab.trim();
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                URL url = new URL(baseUrl + "/api/online/recycle?tab="
+                        + URLEncoder.encode(wantTab, "UTF-8") + "&refresh=1");
+                String resp = httpGet(url);
+                JSONObject json = new JSONObject(resp);
+
+                List<OnlineWorkEntry> list = new ArrayList<>();
+                JSONArray arr = json.optJSONArray("works");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject o = arr.optJSONObject(i);
+                        if (o == null) continue;
+                        OnlineWorkEntry entry = OnlineWorkEntry.fromJson(o);
+                        if (entry != null) list.add(entry);
+                    }
+                }
+
+                JSONObject counts = json.optJSONObject("counts");
+                int sentCount = counts != null ? counts.optInt("sent", 0) : 0;
+                int garbageCount = counts != null ? counts.optInt("garbage", 0) : 0;
+
+                RecycleResult res = new RecycleResult(
+                        json.optBoolean("ok", false),
+                        json.optString("tab", wantTab),
+                        json.optString("label", ""),
+                        json.optInt("total", list.size()),
+                        sentCount,
+                        garbageCount,
+                        list
+                );
+                markBaseUrlGood(baseUrl);
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
+    public static class ActionResult {
+        public final boolean ok;
+        public final String workId;
+        public final String message;
+        public final String targetPath;
+
+        public ActionResult(boolean ok, String workId, String message, String targetPath) {
+            this.ok = ok;
+            this.workId = workId == null ? "" : workId;
+            this.message = message == null ? "" : message;
+            this.targetPath = targetPath == null ? "" : targetPath;
+        }
+    }
+
+    /** 回收站「恢复」：移回「已发送0次」并归零次数、撤销垃圾标记。 */
+    public void restoreWork(String workId, Callback<ActionResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                URL url = new URL(baseUrl + "/api/online/restore");
+                JSONObject body = new JSONObject();
+                body.put("workId", workId);
+                body.put("device", android.os.Build.MODEL != null ? android.os.Build.MODEL : "移动端");
+                String resp = httpPost(url, body.toString());
+                JSONObject json = new JSONObject(resp);
+                ActionResult res = new ActionResult(
+                        json.optBoolean("ok", false),
+                        json.optString("workId", workId),
+                        json.optString("message", ""),
+                        json.optString("targetPath", "")
+                );
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
+    /** 垃圾样本库备注：写入 quality_tag.json + manifest.json。 */
+    public void remarkGarbage(String workId, String remark, Callback<ActionResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                URL url = new URL(baseUrl + "/api/online/remark-garbage");
+                JSONObject body = new JSONObject();
+                body.put("workId", workId);
+                body.put("remark", remark == null ? "" : remark);
+                body.put("device", android.os.Build.MODEL != null ? android.os.Build.MODEL : "移动端");
+                String resp = httpPost(url, body.toString());
+                JSONObject json = new JSONObject(resp);
+                ActionResult res = new ActionResult(
+                        json.optBoolean("ok", false),
+                        json.optString("workId", workId),
+                        json.optString("message", ""),
+                        ""
+                );
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
     public static class DeleteResult {
         public final boolean ok;
         public final String workId;

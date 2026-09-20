@@ -27,12 +27,16 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let hasCopyText: Bool
     public let dispatchedTo: [String]
     public let updatedAt: Double
+    /// 在线回收站专用：是否已被电脑端标记为垃圾样本
+    public let garbage: Bool
+    /// 在线回收站专用：人工垃圾备注（quality_tag.json / manifest.json）
+    public let garbageRemark: String
 
     public init(id: String, title: String, destination: String, stage: String,
                 useCount: Int, maxUses: Int, used: Bool, remainingUses: Int,
                 statusLabel: String, images: [String], imageCount: Int,
                 copyText: String, hasCopyText: Bool, dispatchedTo: [String],
-                updatedAt: Double) {
+                updatedAt: Double, garbage: Bool = false, garbageRemark: String = "") {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.destination = destination.isEmpty ? "其他" : destination
@@ -48,6 +52,8 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.hasCopyText = hasCopyText || !copyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         self.dispatchedTo = dispatchedTo
         self.updatedAt = updatedAt
+        self.garbage = garbage
+        self.garbageRemark = garbageRemark
     }
 
     public static func from(dict: [String: Any]) -> OnlineWorkEntry? {
@@ -67,12 +73,22 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let dispatchedTo = (dict["dispatchedTo"] as? [String]) ?? []
         let updatedAt = (dict["updatedAt"] as? Double) ?? Date().timeIntervalSince1970 * 1000
 
+        // 在线回收站接口在每套作品上挂一个 garbage 对象：
+        // ["marked": Bool, "remark": String, "markedBy": String, "markedAt": String]
+        var garbage = false
+        var garbageRemark = ""
+        if let garbageObj = dict["garbage"] as? [String: Any] {
+            garbage = (garbageObj["marked"] as? Bool) ?? false
+            garbageRemark = ((garbageObj["remark"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         return OnlineWorkEntry(
             id: id, title: title, destination: destination, stage: stage,
             useCount: useCount, maxUses: maxUses, used: used, remainingUses: remainingUses,
             statusLabel: statusLabel, images: images, imageCount: imageCount,
             copyText: copyText, hasCopyText: hasCopyText, dispatchedTo: dispatchedTo,
-            updatedAt: updatedAt
+            updatedAt: updatedAt, garbage: garbage, garbageRemark: garbageRemark
         )
     }
 }
@@ -454,6 +470,111 @@ public final class OnlineGalleryClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let payload: [String: Any] = ["workId": workId]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        session.dataTask(with: request) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async { completion?(false, "请求失败") }
+                return
+            }
+            let ok = (json["ok"] as? Bool) ?? false
+            let msg = (json["message"] as? String) ?? ""
+            DispatchQueue.main.async { completion?(ok, msg) }
+        }.resume()
+    }
+
+    // ==================================================================
+    // 在线回收站（与安卓严格对齐）：已使用 / 已标记垃圾 双 Tab
+    //   已使用    -> _已发送1次（微信公众号可发）
+    //   已标记垃圾 -> _垃圾作品（后续参考分析），永久保留
+    // ==================================================================
+
+    public struct OnlineRecycleResult {
+        public let ok: Bool
+        public let tab: String
+        public let label: String
+        public let total: Int
+        public let sentCount: Int
+        public let garbageCount: Int
+        public let works: [OnlineWorkEntry]
+    }
+
+    /// 拉取在线回收站某个 Tab 的列表；counts 里同时带两个 Tab 的角标数字。
+    public func fetchRecycle(tab: String, completion: @escaping (Result<OnlineRecycleResult, Error>) -> Void) {
+        let baseUrl = resolveBaseUrl()
+        let wantTab = tab.isEmpty ? "sent" : tab
+        var components = URLComponents(string: "\(baseUrl)/api/online/recycle")
+        components?.queryItems = [
+            URLQueryItem(name: "tab", value: wantTab),
+            URLQueryItem(name: "refresh", value: "1")
+        ]
+        guard let url = components?.url else {
+            completion(.failure(NSError(domain: "OnlineGallery", code: -1,
+                                        userInfo: [NSLocalizedDescriptionKey: "URL 构造失败"])))
+            return
+        }
+        session.dataTask(with: url) { data, _, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(domain: "OnlineGallery", code: -2,
+                                                userInfo: [NSLocalizedDescriptionKey: "响应解析失败"])))
+                }
+                return
+            }
+            var works: [OnlineWorkEntry] = []
+            if let arr = json["works"] as? [[String: Any]] {
+                for dict in arr {
+                    if let entry = OnlineWorkEntry.from(dict: dict) { works.append(entry) }
+                }
+            }
+            let counts = json["counts"] as? [String: Any]
+            let result = OnlineRecycleResult(
+                ok: (json["ok"] as? Bool) ?? false,
+                tab: (json["tab"] as? String) ?? wantTab,
+                label: (json["label"] as? String) ?? "",
+                total: (json["total"] as? Int) ?? works.count,
+                sentCount: (counts?["sent"] as? Int) ?? 0,
+                garbageCount: (counts?["garbage"] as? Int) ?? 0,
+                works: works
+            )
+            self.markBaseUrlGood(baseUrl)
+            DispatchQueue.main.async { completion(.success(result)) }
+        }.resume()
+    }
+
+    /// 回收站「恢复」：移回「已发送0次」+ 次数归零 + 撤销垃圾标记。
+    public func restoreWork(workId: String, completion: ((Bool, String) -> Void)? = nil) {
+        postWorkAction(path: "/api/online/restore",
+                       payload: ["workId": workId, "device": UIDevice.current.model],
+                       completion: completion)
+    }
+
+    /// 垃圾样本库备注：写入 quality_tag.json + manifest.json。
+    public func remarkGarbage(workId: String, remark: String, completion: ((Bool, String) -> Void)? = nil) {
+        postWorkAction(path: "/api/online/remark-garbage",
+                       payload: ["workId": workId,
+                                 "remark": remark,
+                                 "device": UIDevice.current.model],
+                       completion: completion)
+    }
+
+    private func postWorkAction(path: String,
+                                payload: [String: Any],
+                                completion: ((Bool, String) -> Void)?) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)\(path)") else {
+            completion?(false, "URL 错误")
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         session.dataTask(with: request) { data, _, _ in
