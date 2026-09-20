@@ -10,8 +10,8 @@ android {
         applicationId = "com.zwm.gallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 150
-        versionName = "0.8.39"
+        versionCode = 151
+        versionName = "0.8.40"
     }
 
     signingConfigs {

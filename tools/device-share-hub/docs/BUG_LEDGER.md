@@ -2,6 +2,44 @@
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。
 
+> **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
+> 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。本条目起恢复记录，
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。
+
+## DSH-076 在线回收站长期卡「正在读取」＋ 缩略图链路静默降级（Android 0.8.40 / versionCode 151；iOS 0.8.17 / build 88）
+
+- **现象**：
+  1. 手机端进入「在线相册 → 回收站」，界面长时间停在「正在读取电脑在线回收站…」，卡片迟迟不渲染；
+  2. `logcat` 中 `OnlineGalleryClient: loadThumbnail failed ... timeout` 持续刷屏；
+  3. 电脑端 `/api/online/image` 的 `thumb=0` 与 `thumb=1` **没有区别**，返回的都是原图。
+- **环境**：Windows 中控（Python 3.11.4 + `pythonw` 常驻，端口 45835）＋ Android 0.8.39 真机（Redmi 13C，同一 Wi-Fi）；作品库 383 套，单张作品图最大 3–4 MB PNG。
+- **根因**（一条主因 + 两个独立缺陷）：
+  1. **主因｜服务进程跑着旧代码**：`online_gallery_service.py` 在 14:44 被改过并加入了缩略图链路，但常驻进程启动于 06:58 —— 进程里根本没有那段代码，`thumb=1` 参数被**静默忽略**并回落成原图，全程零报错、零日志。手机端于是为几百张卡片拉 GB 级原图，4 线程 + 8s 超时 ⇒ 大面积超时 + 原图解码 GC 风暴 ⇒ UI 冻结。
+     铁证：`%TEMP%\gallery_thumb_cache` 目录**不存在**（而该目录在 import 时就会被创建）⇒ 进程里没有缩略图代码；进程 PID 启动时刻 06:58:54 vs 脚本 mtime 14:44。
+  2. **独立缺陷 A｜iOS 图片契约缺失**：`/api/online/image` 只认 `id`+`file` 参数，而 iOS 端一直用 `?path=` ⇒ iOS 在线图片**一直 HTTP 400**。
+  3. **独立缺陷 B｜iOS 版本号双源**：`ios/project.yml` 里版本号有**两处**（`settings.base` 与 `info.properties` 硬编码），升版本只改前者时 xcodegen 用后者覆盖生成的 Info.plist ⇒ IPA 版本与 CI 断言不一致 ⇒ iOS 产物**发不出去**，而 `android-build` 却是绿的，极易误判为「iOS 环境抖动」。
+- **修复**：
+  1. **缩略图链路整形（服务端）**：复活「只声明从未使用」的内存缓存（`THUMB_CACHE` 死代码）为带 LRU 淘汰的真实缓存；新增同图并发生成单飞锁；三级取图「内存 → 磁盘 → PIL」；Pillow 缺失/生成失败时打印明确日志并在响应头下发 `X-Thumb: fallback`（**杜绝静默降级**）；`/api/online/status` 新增 `thumbnail` 健康块。
+  2. **补齐 iOS 旧契约**：`/api/online/image` 支持 `path` 的三种形态（绝对路径 / 相对成品库路径 / 裸文件名经索引解析），并做目录穿越防护（越界一律 404）。
+  3. **客户端调度整形（Android）**：缩略图改用独立 8 线程池；新增磁盘缓存与在途请求去重；按 384px 目标边长降采样解码；新增失败重试一次（900ms）；
+     在线列表缩略图由「每卡片前 4 张立即发请求」（382 作品 ⇒ 1500+ 请求齐压线程池）改为**整页调度**（首发预算 18 张 + 260ms/6 张渐进放行）。
+  4. **代码新鲜度自检（防复发闸门）**：`/api/online/status` 新增 `code` 块，用「启动时脚本内容 SHA」对比「实时读盘脚本内容 SHA」，不一致即 `staleCode=true` 并提示重启服务；开机自启脚本由「直连 pythonw」改为「调用启动器 `-Restart`」，杜绝新旧进程并存。
+  5. **iOS 版本号回到单一源**：`info.properties` 改为引用 `"$(MARKETING_VERSION)"` / `"$(CURRENT_PROJECT_VERSION)"`。
+  6. **缩略图磁盘缓存加上限**：磁盘缓存以「路径+mtime」为 key、旧条目永不失效，此前无任何上限；现加 `MAX_DISK_ENTRIES = 2000`，超限按 mtime 淘汰最旧的一批、只留 90%，且低频触发（每 200 次写盘才真扫一次目录）。
+- **证据**（修前 → 修后）：
+  1. 单张「缩略图」体积 2,678.7 KB → **37.1 KB**；400 张总耗时（并发 8）10.79 s → **0.53 s**；P95 0.164 s → **0.021 s**；吞吐 37 → **754 张/s**。
+  2. 真机（Redmi 13C / 0.8.39）一次进页取图 **1500+ → 231 次**，`loadThumbnail failed` 刷屏 → **0**，「正在读取」约 5.8 s 消失。
+  3. CI run `35515813427`（源码提交 `95e5d47`）：`android-build` ✅ / `ios-altstore-build` ✅ / `windows-portable` ✅ / `publish-gallery-updates` ✅；`album-iOS-v0.8.17-altstore.ipa`（21.3 MB）已随 `v0.8.39` release 正常发布；线上 `latest.json` 已刷新。
+  4. 仅 `remote-relay-check` ❌（长期已知红点，与本次改动无关）。
+  5. 服务端自带单测 9 项 2 败（`test_two_uses_protection_rule` / `test_works_search_and_filter`），已用 `git archive HEAD` 取原版测试确认**同为失败**，属历史遗留。
+- **回归要求**：
+  1. 手机端进入在线回收站必须在数秒内渲染出卡片，「正在读取」不得长时间停留；
+  2. 一次进页取图次数应稳定在数百次量级，不得回到 1500+；
+  3. `/api/online/status` 的 `code.staleCode` 必须为 `false`（为 true 即说明服务在跑旧代码，需重启）；
+  4. 改完服务端脚本后**必须重启服务**，重启后 `staleCode` 应回到 `false`；
+  5. `git checkout` / `git pull` 造成的纯行尾符变化**不得**触发 `staleCode`（已单测锁定）；
+  6. 发布前核对 EXE/APK/IPA、源码提交、Release、Android 更新索引与 SHA-256 一致。
+
 ## DSH-075 跨平台已用作品临时浮动置顶与【重置】误触回滚（Android 0.8.12 / iOS 0.8.5）
 
 - **现象**：
