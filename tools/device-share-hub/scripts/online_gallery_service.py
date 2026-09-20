@@ -175,12 +175,23 @@ THUMB_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 THUMB_CACHE_LOCK = threading.Lock()
 MAX_CACHE_ENTRIES = 500
 
+# 磁盘缓存的 key 是「路径 + mtime」，图片一改就生成新条目、旧条目永不失效。
+# 不加上限的话，图库长到万张级会累积到几百 MB（且不会自动回收）。
+# 2026-09-20 补：低频检查 + 超限时按 mtime 淘汰最旧的一批（只留 90%，避免刚淘汰完又立刻再触发）。
+MAX_DISK_ENTRIES = 2000
+DISK_EVICT_CHECK_EVERY = 200      # 每 N 次写盘才检查一次，避免每次写盘都全目录 stat
+_disk_write_count = 0
+DISK_EVICT_LOCK = threading.Lock()
+
 # 同一张图并发生成去重：手机端一屏会同时要几十张图，无去重时会同时对同一文件跑 PIL（CPU 密集）
 THUMB_INFLIGHT: Dict[str, threading.Lock] = {}
 THUMB_INFLIGHT_LOCK = threading.Lock()
 
 # 缩略图链路健康计数（供 /api/online/status 一眼诊断，避免同类静默失败再次发生）
-THUMB_STATS: Dict[str, int] = {"memoryHit": 0, "diskHit": 0, "generated": 0, "fallbackOriginal": 0}
+THUMB_STATS: Dict[str, int] = {
+    "memoryHit": 0, "diskHit": 0, "generated": 0,
+    "fallbackOriginal": 0, "diskEvicted": 0,
+}
 THUMB_STATS_LOCK = threading.Lock()
 
 
@@ -205,6 +216,45 @@ def thumb_cache_put(key: str, data: bytes) -> None:
         THUMB_CACHE.move_to_end(key)
         while len(THUMB_CACHE) > MAX_CACHE_ENTRIES:
             THUMB_CACHE.popitem(last=False)
+
+
+def evict_disk_cache_if_needed() -> int:
+    """磁盘缩略图缓存上限淘汰：超过 MAX_DISK_ENTRIES 时按 mtime 删掉最旧的一批。
+
+    低频触发（每 DISK_EVICT_CHECK_EVERY 次写盘才真扫目录），且只在超限时才排序，
+    正常使用下这个函数几乎零开销。
+    """
+    global _disk_write_count
+    with DISK_EVICT_LOCK:
+        _disk_write_count += 1
+        if _disk_write_count % DISK_EVICT_CHECK_EVERY != 0:
+            return 0
+        try:
+            names = os.listdir(DISK_THUMB_DIR)
+        except Exception:
+            return 0
+        if len(names) <= MAX_DISK_ENTRIES:
+            return 0
+        entries = []
+        for n in names:
+            p = os.path.join(DISK_THUMB_DIR, n)
+            try:
+                entries.append((os.path.getmtime(p), p))
+            except OSError:
+                pass
+        entries.sort()                              # 最旧在前
+        keep = int(MAX_DISK_ENTRIES * 0.9)
+        removed = 0
+        for _, p in entries[: max(0, len(entries) - keep)]:
+            try:
+                os.remove(p)
+                removed += 1
+            except OSError:
+                pass
+        if removed:
+            _thumb_stat("diskEvicted", removed)
+            print(f"[Thumb] 磁盘缓存淘汰 {removed} 个（{len(entries)} -> {len(entries) - removed}，上限 {MAX_DISK_ENTRIES}）")
+        return removed
 
 
 def _inflight_lock(key: str) -> threading.Lock:
@@ -275,6 +325,7 @@ def build_thumbnail_bytes(img_path: str, mtime: float) -> Optional[bytes]:
         try:
             with open(disk_path, "wb") as fp:
                 fp.write(data)
+            evict_disk_cache_if_needed()
         except Exception:
             pass
         _thumb_stat("generated")
@@ -300,6 +351,7 @@ def thumbnail_health() -> Dict[str, Any]:
         "memoryCacheLimit": MAX_CACHE_ENTRIES,
         "diskCacheDir": DISK_THUMB_DIR,
         "diskCacheFiles": disk_files,
+        "diskCacheLimit": MAX_DISK_ENTRIES,
         "stats": stats,
         "hint": "" if HAS_PIL else "Pillow 未安装：thumb=1 会降级返回原图，请在该服务的解释器里 pip install Pillow",
     }
