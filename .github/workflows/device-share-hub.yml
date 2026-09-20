@@ -43,9 +43,11 @@ jobs:
         run: |
           # npm ci 严格校验 lockfile；lockfile 里 sharp 还是 0.35.2，
           # 但 GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 要求 0.35.4+。
-          # 用 --no-save 在 ci 之后临时升 sharp，不污染 lockfile。
-          npm ci
-          npm install sharp@0.35.4 --no-save
+          # 用 package.json overrides 强制 sharp 0.35.4，再 npm install 自动重写 lockfile + 装 nested sharp。
+          # 加 --package-lock-only=false (默认) 让它真下载；audit 闸门才能看到 0.35.4。
+          npm install --no-audit --no-fund
+          git diff --exit-code package-lock.json || \
+            (echo "lockfile 与仓库不一致，请把生成的 package-lock.json 提交后重跑"; exit 1)
       - name: Audit, test and validate relay package
         run: |
           npm audit --audit-level=high
