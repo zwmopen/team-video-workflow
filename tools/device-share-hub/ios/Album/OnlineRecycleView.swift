@@ -188,19 +188,37 @@ final class OnlineRecycleViewController: UITableViewController {
     override func tableView(_ tableView: UITableView,
                             trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         let work = works[indexPath.row]
+        // 「复制路径」与 Android 保持一致：排在「删除 / 备注」之后
+        let copyPath = UIContextualAction(style: .normal, title: "复制路径") { [weak self] _, _, done in
+            done(true)
+            self?.copyWorkFolderPath(work)
+        }
+        copyPath.backgroundColor = UIColor(red: 0.42, green: 0.47, blue: 0.44, alpha: 1)
+
         if currentTab == .garbage {
             let remark = UIContextualAction(style: .normal, title: "备注") { [weak self] _, _, done in
                 done(true)
                 self?.promptRemark(work)
             }
             remark.backgroundColor = UIColor(red: 0.20, green: 0.45, blue: 0.62, alpha: 1)
-            return UISwipeActionsConfiguration(actions: [remark])
+            return UISwipeActionsConfiguration(actions: [remark, copyPath])
         }
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             done(true)
             self?.confirmDelete(work)
         }
-        return UISwipeActionsConfiguration(actions: [delete])
+        return UISwipeActionsConfiguration(actions: [delete, copyPath])
+    }
+
+    /// 复制电脑上该作品文件夹的绝对路径（回收站作品同样可用）。
+    private func copyWorkFolderPath(_ work: OnlineWorkEntry) {
+        let trimmed = work.path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            showToast("⚠️ 该作品没有可复制的文件夹路径")
+            return
+        }
+        UIPasteboard.general.string = trimmed
+        showToast("📋 已复制电脑作品文件夹路径")
     }
 
     // MARK: - 恢复 / 删除 / 备注

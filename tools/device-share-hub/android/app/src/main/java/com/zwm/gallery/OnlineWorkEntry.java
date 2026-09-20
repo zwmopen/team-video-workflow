@@ -29,6 +29,8 @@ public final class OnlineWorkEntry {
     public final boolean garbage;
     /** 在线回收站专用：人工垃圾备注（来自 quality_tag.json / manifest.json） */
     public final String garbageRemark;
+    /** 电脑端作品文件夹的绝对路径（用于「复制路径」按钮） */
+    public final String path;
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
                            int useCount, int maxUses, boolean used, int remainingUses,
@@ -45,6 +47,16 @@ public final class OnlineWorkEntry {
                            String statusLabel, List<String> images, int imageCount,
                            String copyText, boolean hasCopyText, List<String> dispatchedTo,
                            long updatedAt, boolean garbage, String garbageRemark) {
+        this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
+                statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
+                updatedAt, garbage, garbageRemark, "");
+    }
+
+    public OnlineWorkEntry(String id, String title, String destination, String stage,
+                           int useCount, int maxUses, boolean used, int remainingUses,
+                           String statusLabel, List<String> images, int imageCount,
+                           String copyText, boolean hasCopyText, List<String> dispatchedTo,
+                           long updatedAt, boolean garbage, String garbageRemark, String path) {
         this.id = id;
         this.title = title == null ? "" : title;
         this.destination = destination == null ? "其他" : destination;
@@ -62,6 +74,7 @@ public final class OnlineWorkEntry {
         this.updatedAt = updatedAt;
         this.garbage = garbage;
         this.garbageRemark = garbageRemark == null ? "" : garbageRemark;
+        this.path = path == null ? "" : path;
     }
 
     public static OnlineWorkEntry fromJson(JSONObject json) {
@@ -110,6 +123,7 @@ public final class OnlineWorkEntry {
 
         return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
-                hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark);
+                hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark,
+                json.optString("path", ""));
     }
 }

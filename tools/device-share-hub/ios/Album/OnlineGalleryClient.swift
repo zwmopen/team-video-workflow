@@ -31,12 +31,15 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let garbage: Bool
     /// 在线回收站专用：人工垃圾备注（quality_tag.json / manifest.json）
     public let garbageRemark: String
+    /// 电脑端作品文件夹的绝对路径（用于「复制路径」按钮）
+    public let path: String
 
     public init(id: String, title: String, destination: String, stage: String,
                 useCount: Int, maxUses: Int, used: Bool, remainingUses: Int,
                 statusLabel: String, images: [String], imageCount: Int,
                 copyText: String, hasCopyText: Bool, dispatchedTo: [String],
-                updatedAt: Double, garbage: Bool = false, garbageRemark: String = "") {
+                updatedAt: Double, garbage: Bool = false, garbageRemark: String = "",
+                path: String = "") {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.destination = destination.isEmpty ? "其他" : destination
@@ -54,6 +57,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.updatedAt = updatedAt
         self.garbage = garbage
         self.garbageRemark = garbageRemark
+        self.path = path
     }
 
     public static func from(dict: [String: Any]) -> OnlineWorkEntry? {
@@ -88,7 +92,8 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
             useCount: useCount, maxUses: maxUses, used: used, remainingUses: remainingUses,
             statusLabel: statusLabel, images: images, imageCount: imageCount,
             copyText: copyText, hasCopyText: hasCopyText, dispatchedTo: dispatchedTo,
-            updatedAt: updatedAt, garbage: garbage, garbageRemark: garbageRemark
+            updatedAt: updatedAt, garbage: garbage, garbageRemark: garbageRemark,
+            path: (dict["path"] as? String) ?? ""
         )
     }
 }

@@ -1073,6 +1073,11 @@ public final class MainActivity extends Activity {
             delete.setContentDescription("删除作品，移到回收站");
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
             platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+
+            // 「复制路径」紧跟在「删除」之后：本地作品复制手机上的作品文件夹路径
+            String localPath = work.directory != null ? work.directory.getAbsolutePath() : "";
+            platformRow.addView(copyPathButton(localPath, "手机本地作品"),
+                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
             platformRowParams.setMargins(0, dp(8), 0, dp(2));
             card.addView(platformRow, platformRowParams);
@@ -2910,6 +2915,11 @@ public final class MainActivity extends Activity {
         }
         actionRow.addView(second, secondParams);
 
+        // 「复制路径」紧跟在第二个按钮之后：回收站里的作品同样复制电脑成品库路径
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(-2, dp(36));
+        copyParams.setMargins(dp(8), 0, 0, 0);
+        actionRow.addView(copyPathButton(work.path, work.garbage ? "垃圾样本" : "电脑在线作品"), copyParams);
+
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, -2);
         actionParams.setMargins(0, dp(8), 0, dp(2));
         card.addView(actionRow, actionParams);
@@ -3245,6 +3255,10 @@ public final class MainActivity extends Activity {
         delete.setContentDescription("删除电脑在线作品");
         delete.setOnClickListener(v -> confirmDeleteOnlineWork(work));
         platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+
+        // 「复制路径」紧跟在「删除」之后：在线作品复制电脑成品库里的作品文件夹路径
+        platformRow.addView(copyPathButton(work.path, "电脑在线作品"),
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
 
         LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
         platformRowParams.setMargins(0, dp(8), 0, dp(2));
@@ -4052,6 +4066,30 @@ public final class MainActivity extends Activity {
             ClipData clip = ClipData.newPlainText(label, text);
             clipboard.setPrimaryClip(clip);
         }
+    }
+
+    /**
+     * 「复制路径」：复制该作品文件夹的绝对路径。
+     * 本地模式复制手机上的文件夹；在线模式复制电脑成品库里的文件夹 —— 每个作品独一无二。
+     */
+    private void copyWorkFolderPath(String path, String originLabel) {
+        String trimmed = path == null ? "" : path.trim();
+        if (trimmed.isEmpty()) {
+            toast("⚠️ 该作品没有可复制的文件夹路径");
+            return;
+        }
+        copyToClipboard("作品文件夹路径", trimmed);
+        toast("📋 已复制" + originLabel + "文件夹路径");
+    }
+
+    /** 统一的「复制路径」按钮（放在「删除」按钮之后）。 */
+    private Button copyPathButton(String path, String originLabel) {
+        Button copy = new Button(this);
+        copy.setText("复制路径");
+        styleNeumorphicButton(copy, STYLE_MUTED_GRAY);
+        copy.setContentDescription("复制" + originLabel + "文件夹路径");
+        copy.setOnClickListener(v -> copyWorkFolderPath(path, originLabel));
+        return copy;
     }
 
     private String getDeviceName() {

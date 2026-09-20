@@ -545,6 +545,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             cell.onOnlineDelete = { [weak self] in
                 self?.confirmDeleteOnline(entry)
             }
+            cell.onOnlineCopyPath = { [weak self] in
+                self?.copyOnlineWorkPath(entry)
+            }
             return cell
         }
 
@@ -569,6 +572,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
         cell.onReset = { [weak self] in self?.confirmResetWork(work) }
         cell.onDelete = { [weak self] in self?.confirmMoveToTrash(work) }
+        cell.onCopyPath = { [weak self] in self?.copyLocalWorkPath(work) }
         return cell
     }
 
@@ -720,6 +724,26 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             }
         })
         present(alert, animated: true)
+    }
+
+    /// 「复制路径」（本地）：复制手机上该作品文件夹的绝对路径。
+    private func copyLocalWorkPath(_ work: WorkItem) {
+        copyFolderPath(work.folderURL.path, origin: "手机本地作品")
+    }
+
+    /// 「复制路径」（在线）：复制电脑成品库中该作品文件夹的绝对路径。
+    private func copyOnlineWorkPath(_ entry: OnlineWorkEntry) {
+        copyFolderPath(entry.path, origin: "电脑在线作品")
+    }
+
+    private func copyFolderPath(_ path: String, origin: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            showToast("⚠️ 该作品没有可复制的文件夹路径")
+            return
+        }
+        UIPasteboard.general.string = trimmed
+        showToast("📋 已复制\(origin)文件夹路径")
     }
 
     @objc private func refreshPulled(_ sender: UIRefreshControl) {
@@ -1049,6 +1073,8 @@ private final class WorkCell: UICollectionViewCell {
     private let douyinButton = UIButton(type: .system)
     private let resetButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
+    /// 「复制路径」：紧跟在「删除」之后，复制该作品文件夹的绝对路径
+    private let copyPathButton = UIButton(type: .system)
     private let platformContainer = UIStackView()
     private let platformRow1 = UIStackView()
     private let platformRow2 = UIStackView()
@@ -1057,10 +1083,14 @@ private final class WorkCell: UICollectionViewCell {
     var onPreview: ((Int) -> Void)?
     var onReset: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// 本地作品：复制手机上的作品文件夹路径
+    var onCopyPath: (() -> Void)?
 
     var onOnlineShare: ((String) -> Void)?
     var onOnlinePreview: ((Int) -> Void)?
     var onOnlineDelete: (() -> Void)?
+    /// 在线作品：复制电脑成品库里的作品文件夹路径
+    var onOnlineCopyPath: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1090,6 +1120,7 @@ private final class WorkCell: UICollectionViewCell {
         configurePlatformButton(douyinButton, title: "规避营销版", platform: .douyin)
         configureResetButton()
         configureDeleteButton()
+        configureCopyPathButton()
         platformRow1.axis = .horizontal
         platformRow1.spacing = 6
         platformRow1.alignment = .fill
@@ -1194,6 +1225,7 @@ private final class WorkCell: UICollectionViewCell {
             applyPlatformStyle(xhsButton, isOptimistic: false)
             platformRow1.addArrangedSubview(xhsButton)
             platformRow1.addArrangedSubview(deleteButton)
+            platformRow1.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = true
         } else if count == 2 {
             xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
@@ -1203,6 +1235,7 @@ private final class WorkCell: UICollectionViewCell {
             platformRow1.addArrangedSubview(xhsButton)
             platformRow1.addArrangedSubview(xhs2Button)
             platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = false
         } else {
             xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
@@ -1215,6 +1248,7 @@ private final class WorkCell: UICollectionViewCell {
             platformRow1.addArrangedSubview(xhs2Button)
             platformRow2.addArrangedSubview(douyinButton)
             platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = false
         }
 
@@ -1222,17 +1256,20 @@ private final class WorkCell: UICollectionViewCell {
         xhs2Button.removeTarget(nil, action: nil, for: .allEvents)
         douyinButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
+        copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
         xhsButton.addTarget(self, action: #selector(onlineXhsTapped), for: .touchUpInside)
         xhs2Button.addTarget(self, action: #selector(onlineXhs2Tapped), for: .touchUpInside)
         douyinButton.addTarget(self, action: #selector(onlineDouyinTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
+        copyPathButton.addTarget(self, action: #selector(onlineCopyPathTapped), for: .touchUpInside)
     }
 
     @objc private func onlineXhsTapped() { onOnlineShare?("xhs") }
     @objc private func onlineXhs2Tapped() { onOnlineShare?("xhs2") }
     @objc private func onlineDouyinTapped() { onOnlineShare?("douyin") }
     @objc private func onlineDeleteTapped() { onOnlineDelete?() }
+    @objc private func onlineCopyPathTapped() { onOnlineCopyPath?() }
 
     func configure(_ work: WorkItem) {
         contentView.backgroundColor = AppColors.secondaryBackground
@@ -1287,6 +1324,7 @@ private final class WorkCell: UICollectionViewCell {
             platformRow1.addArrangedSubview(xhsButton)
             if work.shareCount > 0 { platformRow1.addArrangedSubview(resetButton) }
             platformRow1.addArrangedSubview(deleteButton)
+            platformRow1.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = true
         } else if count == 2 {
             xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
@@ -1297,6 +1335,7 @@ private final class WorkCell: UICollectionViewCell {
             platformRow1.addArrangedSubview(xhs2Button)
             if work.shareCount > 0 { platformRow2.addArrangedSubview(resetButton) }
             platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = false
         } else {
             xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
@@ -1310,6 +1349,7 @@ private final class WorkCell: UICollectionViewCell {
             platformRow2.addArrangedSubview(douyinButton)
             if work.shareCount > 0 { platformRow2.addArrangedSubview(resetButton) }
             platformRow2.addArrangedSubview(deleteButton)
+            platformRow2.addArrangedSubview(copyPathButton)
             platformRow2.isHidden = false
         }
 
@@ -1318,12 +1358,14 @@ private final class WorkCell: UICollectionViewCell {
         douyinButton.removeTarget(nil, action: nil, for: .allEvents)
         resetButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
+        copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
         xhsButton.addTarget(self, action: #selector(xhsTapped), for: .touchUpInside)
         xhs2Button.addTarget(self, action: #selector(xhs2Tapped), for: .touchUpInside)
         douyinButton.addTarget(self, action: #selector(douyinTapped), for: .touchUpInside)
         resetButton.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        copyPathButton.addTarget(self, action: #selector(copyPathTapped), for: .touchUpInside)
     }
 
     private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
@@ -1357,6 +1399,19 @@ private final class WorkCell: UICollectionViewCell {
         deleteButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
+    /// 与 Android 的「复制路径」按钮同色系（拟态灰底灰字），紧跟「删除」之后。
+    private func configureCopyPathButton() {
+        copyPathButton.setTitle("复制路径", for: .normal)
+        copyPathButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
+        copyPathButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
+        copyPathButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        copyPathButton.layer.cornerRadius = 8
+        copyPathButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        copyPathButton.translatesAutoresizingMaskIntoConstraints = false
+        copyPathButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        copyPathButton.accessibilityLabel = "复制作品文件夹路径"
+    }
+
     private func applyPlatformStyle(_ button: UIButton, isOptimistic: Bool) {
         if isOptimistic {
             button.setTitleColor(AppColors.secondaryText, for: .normal)
@@ -1372,6 +1427,7 @@ private final class WorkCell: UICollectionViewCell {
     @objc private func douyinTapped() { onShare?(.douyin) }
     @objc private func resetTapped() { onReset?() }
     @objc private func deleteTapped() { onDelete?() }
+    @objc private func copyPathTapped() { onCopyPath?() }
 }
 
 final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate {
