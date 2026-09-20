@@ -189,6 +189,15 @@ public final class MainActivity extends Activity {
     private Button onlineRecycleGarbageTabButton;
     private int onlineRecyclePageLimit = 25;
 
+    // ---- 手机本地回收站双 Tab（已删除 / 已标记垃圾）：与在线回收站双 Tab 结构 1:1 对齐 ----
+    /** 本地回收站当前 Tab：deleted=已删除（未写垃圾备注） / garbage=已标记垃圾（garbageRemark 非空） */
+    private String localTrashTab = "deleted";
+    private int localTrashDeletedCount = 0;
+    private int localTrashGarbageCount = 0;
+    private LinearLayout localTrashTabBar;
+    private Button localTrashDeletedTabButton;
+    private Button localTrashGarbageTabButton;
+
     static boolean matchesSearchTokens(String name, String folder, String[] tokens) {
         if (tokens == null || tokens.length == 0) return true;
         String cleanName = name != null ? name.toLowerCase(Locale.ROOT) : "";
@@ -550,6 +559,20 @@ public final class MainActivity extends Activity {
         garbageTabParams.setMargins(dp(8), 0, 0, 0);
         onlineRecycleTabBar.addView(onlineRecycleGarbageTabButton, garbageTabParams);
 
+        // ---- 手机本地回收站双 Tab（已删除 / 已标记垃圾）：与在线回收站同结构，默认隐藏 ----
+        localTrashTabBar = new LinearLayout(this);
+        localTrashTabBar.setOrientation(LinearLayout.HORIZONTAL);
+        localTrashTabBar.setGravity(Gravity.CENTER_VERTICAL);
+        localTrashTabBar.setVisibility(View.GONE);
+        localTrashDeletedTabButton = recycleTabButton("已删除");
+        localTrashDeletedTabButton.setOnClickListener(v -> selectLocalTrashTab("deleted"));
+        localTrashTabBar.addView(localTrashDeletedTabButton, new LinearLayout.LayoutParams(0, dp(36), 1));
+        localTrashGarbageTabButton = recycleTabButton("已标记垃圾");
+        localTrashGarbageTabButton.setOnClickListener(v -> selectLocalTrashTab("garbage"));
+        LinearLayout.LayoutParams localGarbageParams = new LinearLayout.LayoutParams(0, dp(36), 1);
+        localGarbageParams.setMargins(dp(8), 0, 0, 0);
+        localTrashTabBar.addView(localTrashGarbageTabButton, localGarbageParams);
+
         worksContainer = new LinearLayout(this);
         worksContainer.setClipChildren(false);
         worksContainer.setClipToPadding(false);
@@ -641,6 +664,9 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams recycleTabParams = new LinearLayout.LayoutParams(-1, dp(40));
         recycleTabParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(onlineRecycleTabBar, recycleTabParams);
+        LinearLayout.LayoutParams localTrashTabParams = new LinearLayout.LayoutParams(-1, dp(40));
+        localTrashTabParams.setMargins(dp(12), 0, dp(12), dp(4));
+        frozenLayout.addView(localTrashTabBar, localTrashTabParams);
         LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(40));
         categoryParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(categorySelector, categoryParams);
@@ -726,6 +752,7 @@ public final class MainActivity extends Activity {
         showingOnlineRecycle = false;
         onlineRecycleWorks.clear();
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
+        if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
         if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
         categorySelector.setVisibility(View.VISIBLE);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
@@ -747,6 +774,8 @@ public final class MainActivity extends Activity {
         quickTrashButton.setVisibility(View.GONE);
         showingOnlineRecycle = false;
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
+        // 本地回收站与在线回收站同构：进入即展示「已删除 / 已标记垃圾」双 Tab
+        if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.VISIBLE);
         if (isOnlineMode) {
             enteredTrashFromOnline = true;
         }
@@ -776,6 +805,9 @@ public final class MainActivity extends Activity {
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
         worksContainer.removeAllViews();
+        localTrashDeletedCount = 0;
+        localTrashGarbageCount = 0;
+        refreshLocalTrashTabStyles();
         TextView empty = text("回收站是空的", 14, false);
         empty.setGravity(Gravity.CENTER);
         empty.setTextColor(Color.GRAY);
@@ -845,6 +877,28 @@ public final class MainActivity extends Activity {
         LayoutTransition transition = worksContainer.getLayoutTransition();
         if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();
+
+        // 本地回收站双 Tab 过滤（已删除 / 已标记垃圾），与在线回收站双 Tab 结构 1:1 对齐。
+        // 判据即「是否写过垃圾备注」—— 与在线版 quality_tag.json 的垃圾标记语义同一套。
+        List<WorkLibrary.WorkEntry> shownEntries = entries;
+        if (showingTrash) {
+            int deleted = 0;
+            int garbage = 0;
+            for (WorkLibrary.WorkEntry entry : entries) {
+                if (entry.isGarbage()) garbage++;
+                else deleted++;
+            }
+            localTrashDeletedCount = deleted;
+            localTrashGarbageCount = garbage;
+            refreshLocalTrashTabStyles();
+            boolean wantGarbage = "garbage".equals(localTrashTab);
+            List<WorkLibrary.WorkEntry> picked = new ArrayList<>();
+            for (WorkLibrary.WorkEntry entry : entries) {
+                if (entry.isGarbage() == wantGarbage) picked.add(entry);
+            }
+            shownEntries = picked;
+        }
+
         LinkedHashSet<String> visibleIds = new LinkedHashSet<>();
         for (WorkLibrary.WorkEntry entry : entries) {
             visibleIds.add(entry.id);
@@ -855,12 +909,12 @@ public final class MainActivity extends Activity {
         headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : ""));
 
         List<OnlineWorkLifecycle.Item> onlineTrashItems = new ArrayList<>();
-        if (showingTrash) {
+        if (showingTrash && !"garbage".equals(localTrashTab)) {
             CleanupSettings.Values cleanup = CleanupSettings.read(this);
             onlineTrashItems = OnlineWorkLifecycle.getTrashItems(this, System.currentTimeMillis(), cleanup.deleteAfterMs());
         }
 
-        int totalCount = entries.size() + onlineTrashItems.size();
+        int totalCount = shownEntries.size() + onlineTrashItems.size();
         scannedCountText.setText(String.valueOf(showingTrash ? totalCount : entries.size()));
 
         // Huawei can leave real folders in the external trash after its document index
@@ -868,10 +922,12 @@ public final class MainActivity extends Activity {
         // when the private list already looks empty.
         rightModeButton.setEnabled(true);
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
-        if (entries.isEmpty() && onlineTrashItems.isEmpty()) {
+        if (totalCount == 0) {
             String emptyMsg;
             if (showingTrash) {
-                emptyMsg = "回收站是空的";
+                emptyMsg = "garbage".equals(localTrashTab)
+                        ? "本地「已标记垃圾」暂为空\n左滑或点卡片「备注」填写垃圾原因的作品会归到这里。"
+                        : "回收站是空的";
             } else if (searchQuery != null && !searchQuery.trim().isEmpty()) {
                 emptyMsg = "未找到匹配「" + searchQuery.trim() + "」的作品\n请尝试搜索其他标题或文件夹关键字";
             } else {
@@ -891,7 +947,7 @@ public final class MainActivity extends Activity {
                 worksContainer.addView(onlineTrashCard(item), margins(0, 0, 0, dp(10)));
             }
         }
-        for (WorkLibrary.WorkEntry entry : entries) {
+        for (WorkLibrary.WorkEntry entry : shownEntries) {
             worksContainer.addView(workCard(entry), margins(0, 0, 0, dp(10)));
         }
         if (!animate) worksContainer.setLayoutTransition(transition);
@@ -2461,6 +2517,7 @@ public final class MainActivity extends Activity {
         showingTrash = false;
         showingOnlineRecycle = false;
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
+        if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
         if (modeButton != null) modeButton.setVisibility(View.GONE);
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
@@ -2807,6 +2864,20 @@ public final class MainActivity extends Activity {
                 "garbage".equals(onlineRecycleTab), onlineRecycleGarbageCount);
     }
 
+    private void refreshLocalTrashTabStyles() {
+        styleOnlineRecycleTab(localTrashDeletedTabButton, "已删除",
+                "deleted".equals(localTrashTab), localTrashDeletedCount);
+        styleOnlineRecycleTab(localTrashGarbageTabButton, "已标记垃圾",
+                "garbage".equals(localTrashTab), localTrashGarbageCount);
+    }
+
+    /** 切换手机本地回收站 Tab（已删除 / 已标记垃圾），与在线回收站的 selectOnlineRecycleTab 同构。 */
+    private void selectLocalTrashTab(String tab) {
+        localTrashTab = "garbage".equals(tab) ? "garbage" : "deleted";
+        refreshLocalTrashTabStyles();
+        refreshWorks();
+    }
+
     private void selectOnlineRecycleTab(String tab) {
         String want = "garbage".equals(tab) ? "garbage" : "sent";
         onlineRecycleTab = want;
@@ -2829,6 +2900,7 @@ public final class MainActivity extends Activity {
         if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.VISIBLE);
+        if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
         refreshOnlineRecycleTabStyles();
 
         leftModeButton.setImageResource(R.drawable.ic_album_back);

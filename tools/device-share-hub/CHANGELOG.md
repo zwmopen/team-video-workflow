@@ -1,6 +1,6 @@
 # 变更记录
 
-## Android 0.8.35 / iOS 0.8.13 - 本地 ↔ 在线「按钮与回收站细节」强制 1:1 对等
+## Android 0.8.36 / iOS 0.8.14 - 本地 ↔ 在线「按钮与回收站细节」强制 1:1 对等
 
 > 规则来源：本地相册与在线相册必须一样的按钮数量 —— 不能「你有『备注并删除』我没有、你有回收站细节我没有」。
 
@@ -22,9 +22,17 @@
 - **iOS 在线回收站的返回按钮修复 + 入口与 Android 对齐**：
   - 修复前：在线回收站把「📱 本地回收站」放在 `navigationItem.leftBarButtonItem`，**顶掉了系统返回按钮**；
   - 现在：入口改为**列表底部按钮**（与 Android 页面底部同名入口同位置），系统返回按钮恢复可用。
-- **本地回收站条目展示垃圾备注**：已标记为垃圾样本的本地作品，在卡片/行副标题里直接显示
+- **本地回收站也有双 Tab（与在线回收站结构同构）**：
+  - 修复前：在线回收站有「已使用 / 已标记垃圾」两枚 Tab 按钮，本地回收站一枚都没有（顶栏只有「清空」）；
+  - 现在：本地回收站同样两枚 Tab —— **「已删除」/「已标记垃圾」**，判据与在线版垃圾标记同一套（垃圾备注是否为空）；
+  - Android：`localTrashTabBar` + `localTrashDeletedTabButton` / `localTrashGarbageTabButton`，
+    `selectLocalTrashTab` / `refreshLocalTrashTabStyles`，`renderWorksCards` 内按 Tab 过滤并刷新角标；
+  - iOS：`TrashViewController` 挂 `UISegmentedControl`（沿用在线回收站的 `AppColors.groupedTableStyle` + 56pt header 方案），
+    分区标题随 Tab 变为「📱 本地已删除 / 📱 本地已标记垃圾」；
+  - 两个 Tab 的角标数字与各自列表 total 严格一致，不会出现「角标 N、列表 M」。
+- **本地回收站条目亦展示垃圾备注**：已标记为垃圾样本的本地作品，卡片/行副标题直接显示
   `🗑️ 垃圾样本 / 备注：…`，与在线回收站垃圾 Tab 的展示形态一致。
-- **版本号**：Android versionCode 146 / versionName 0.8.35；iOS CURRENT_PROJECT_VERSION 84 / MARKETING_VERSION 0.8.13。
+- **版本号**：Android versionCode 147 / versionName 0.8.36；iOS CURRENT_PROJECT_VERSION 85 / MARKETING_VERSION 0.8.14。
 
 ## Android 0.8.34 / iOS 0.8.12 - 作品「复制路径」按钮 + iOS 在线相册发现修复
 

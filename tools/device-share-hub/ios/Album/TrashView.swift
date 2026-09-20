@@ -1,22 +1,34 @@
 import UIKit
 
 // ==================================================================
-// 手机本地回收站（与在线回收站 OnlineRecycleViewController 行操作 1:1 对齐）
-//   点某一行   -> 恢复（移回作品列表，并撤销垃圾标记）
+// 手机本地回收站（与在线回收站 OnlineRecycleViewController 结构 1:1 对齐）
+//   双 Tab      -> 「已删除」/「已标记垃圾」（判据：是否写过垃圾备注）
+//   点某一行    -> 恢复（移回作品列表，并撤销垃圾标记）
 //   左滑「备注」-> 填写/修改垃圾原因，写入手机本地元数据（对应在线版 quality_tag.json）
 //   左滑「复制路径」-> 复制手机作品文件夹的绝对路径
-//   右上「清空」  -> 彻底清空（本地 + 在线本地镜像）
+//   右上「清空」-> 彻底清空（本地 + 在线本地镜像）
 //
-// 页面里同时镜像展示「💻 在线作品回收站」条目（历史形态，保持不丢能力）；
+// 「已删除」Tab 下额外镜像展示「💻 在线作品回收站」条目（历史形态，保持不丢能力）；
 // 其完整操作（备注 / 复制路径 / 判定垃圾）在在线模式下的「在线回收站」页里。
 // ==================================================================
 final class TrashViewController: UITableViewController {
+
+    private enum LocalTab: Int {
+        case deleted = 0
+        case garbage = 1
+
+        var title: String { self == .deleted ? "已删除" : "已标记垃圾" }
+    }
+
     private let library: WorkLibrary
+    private let segmented: UISegmentedControl
+    private var currentTab: LocalTab = .deleted
     private var onlineTrashItems: [OnlineWorkLifecycle.Item] = []
     private var toastView: UIView?
 
     init(library: WorkLibrary) {
         self.library = library
+        self.segmented = UISegmentedControl(items: [LocalTab.deleted.title, LocalTab.garbage.title])
         super.init(style: AppColors.groupedTableStyle)
         title = "回收站"
     }
@@ -25,6 +37,15 @@ final class TrashViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        segmented.selectedSegmentIndex = LocalTab.deleted.rawValue
+        segmented.addTarget(self, action: #selector(tabChanged), for: .valueChanged)
+        segmented.autoresizingMask = [.flexibleWidth]
+
+        let header = UIView()
+        header.addSubview(segmented)
+        tableView.tableHeaderView = header
+
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "清空", style: .plain,
                                                             target: self, action: #selector(confirmClear))
         tableView.tableFooterView = UIView()
@@ -36,28 +57,64 @@ final class TrashViewController: UITableViewController {
         loadData()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard let header = tableView.tableHeaderView else { return }
+        let target = CGSize(width: tableView.bounds.width, height: 56)
+        if header.frame.size != target {
+            header.frame = CGRect(origin: .zero, size: target)
+            segmented.frame = CGRect(x: 16, y: 11, width: max(0, target.width - 32), height: 34)
+            tableView.tableHeaderView = header
+        }
+    }
+
     private func loadData() {
         onlineTrashItems = OnlineWorkLifecycle.getTrashItems()
+        updateSegmentTitles()
         render()
     }
 
-    private var totalCount: Int {
-        return library.trash.count + onlineTrashItems.count
+    /// 当前 Tab 对应的手机本地回收站条目（判据与在线版垃圾标记同一套：垃圾备注是否为空）。
+    private var localItems: [TrashItem] {
+        let wantGarbage = currentTab == .garbage
+        return library.trash.filter { $0.isGarbage == wantGarbage }
     }
 
-    /// section 0 是否为「💻 在线作品回收站」区；与 numberOfSections 保持同一判据。
+    /// 在线作品回收站镜像只在「已删除」Tab 展示，避免和在线回收站页重复计数。
+    private var showsOnlineSection: Bool {
+        return !onlineTrashItems.isEmpty && currentTab == .deleted
+    }
+
     private func isOnlineSection(_ section: Int) -> Bool {
-        return !onlineTrashItems.isEmpty && section == 0
+        return showsOnlineSection && section == 0
+    }
+
+    private var totalCount: Int {
+        return localItems.count + (showsOnlineSection ? onlineTrashItems.count : 0)
+    }
+
+    private func updateSegmentTitles() {
+        let deleted = library.trash.filter { !$0.isGarbage }.count
+        let garbage = library.trash.count - deleted
+        segmented.setTitle(deleted > 0 ? "已删除 \(deleted)" : "已删除", forSegmentAt: 0)
+        segmented.setTitle(garbage > 0 ? "已标记垃圾 \(garbage)" : "已标记垃圾", forSegmentAt: 1)
+    }
+
+    @objc private func tabChanged() {
+        currentTab = LocalTab(rawValue: segmented.selectedSegmentIndex) ?? .deleted
+        render()
     }
 
     private func render() {
         navigationItem.rightBarButtonItem?.isEnabled = totalCount > 0
         if totalCount == 0 {
             let label = UILabel()
-            label.text = "回收站是空的\n\n已删除的作品会移动到这里；\n左滑可填写垃圾备注或复制文件夹路径。"
             label.numberOfLines = 0
             label.textAlignment = .center
             label.textColor = AppColors.secondaryText
+            label.text = currentTab == .garbage
+                ? "本地「已标记垃圾」暂为空\n\n点卡片或左滑「备注」填写垃圾原因的作品会归到这里，电脑端永久保留不自动清理。"
+                : "回收站是空的\n\n已删除的作品会移动到这里；\n左滑可填写垃圾备注或复制文件夹路径。"
             tableView.backgroundView = label
         } else {
             tableView.backgroundView = nil
@@ -65,15 +122,19 @@ final class TrashViewController: UITableViewController {
         tableView.reloadData()
     }
 
+    // MARK: - 列表
+
     override func numberOfSections(in tableView: UITableView) -> Int {
-        return (onlineTrashItems.isEmpty ? 0 : 1) + (library.trash.isEmpty ? 0 : 1)
+        return (showsOnlineSection ? 1 : 0) + (localItems.isEmpty ? 0 : 1)
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         if isOnlineSection(section) {
             return "💻 在线作品回收站 (\(onlineTrashItems.count))"
         }
-        return "📱 手机本地回收站 (\(library.trash.count))"
+        return currentTab == .garbage
+            ? "📱 本地已标记垃圾 (\(localItems.count))"
+            : "📱 本地已删除 (\(localItems.count))"
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
@@ -87,7 +148,7 @@ final class TrashViewController: UITableViewController {
         if isOnlineSection(section) {
             return onlineTrashItems.count
         }
-        return library.trash.count
+        return localItems.count
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -103,7 +164,7 @@ final class TrashViewController: UITableViewController {
             return cell
         }
 
-        let item = library.trash[indexPath.row]
+        let item = localItems[indexPath.row]
         cell.textLabel?.text = item.name
         cell.textLabel?.font = .boldSystemFont(ofSize: 16)
         var detail = "已打开分享 \(item.shareCount) 次"
@@ -128,7 +189,7 @@ final class TrashViewController: UITableViewController {
             loadData()
             return
         }
-        library.restore(library.trash[indexPath.row])
+        library.restore(localItems[indexPath.row])
         loadData()
     }
 
@@ -136,7 +197,7 @@ final class TrashViewController: UITableViewController {
     override func tableView(_ tableView: UITableView,
                             trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         guard !isOnlineSection(indexPath.section) else { return nil }
-        let item = library.trash[indexPath.row]
+        let item = localItems[indexPath.row]
 
         let remark = UIContextualAction(style: .normal, title: item.isGarbage ? "改备注" : "备注") { [weak self] _, _, done in
             done(true)
