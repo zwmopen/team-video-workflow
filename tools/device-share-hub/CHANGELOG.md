@@ -1,5 +1,30 @@
 # 变更记录
 
+## Android 0.8.42 / versionCode 153 - 2026-09-21 - 体感加速 bugfix：snapshot 路径下分类条空了
+
+> **bug 来源**：上一轮 0.8.41 部署后，用户实测发现杀 PC 服务 + 冷启动 App 后，
+> 作品列表正常（snapshot 生效），但**分类条整个空白、状态栏看不到「本地快照」字样**。
+> 上一轮的 release 跑在真机上时才暴露（模拟器看不出，因为模拟器总能正常连服务）。
+
+**根因**：
+1. `applyOnlineCategoryFilter()` 只筛作品 + 渲染卡片，**不重建分类条**；
+   `updateOnlineCategoryCounts()` 只在「用户主动切模式 / 刷新」时被调用，
+   snapshot 路径（`primeOnlineDataFromSnapshot`）里**完全没调**，
+   导致分类条一直是空的。
+2. `updateOnlineCategoryCounts()` 在 `catResult == null` 时连「全部 N」之外的
+   派生分类按钮都不画——双重 bug：哪怕有了 works snapshot，没有 cats snapshot 也只显示「全部 N」。
+
+**修法（两处）**：
+1. `primeOnlineDataFromSnapshot()` 在 `applyOnlineCategoryFilter` 之前显式
+   `updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks)`；
+2. `updateOnlineCategoryCounts()` 新增 **catResult 缺失时的 fallback**：
+   从 `onlineWorks` 的 `destination` 字段派生目的地计数，生成可点的分类按钮。
+   即使首次冷启动 + 网络不通 + 无 cats 快照，用户至少能看到「全部 N / 安吉 / 莫干山 / 千岛湖 …」并点击筛选。
+
+自检：javalang 解析 OK（211818 B）。
+
+---
+
 ## iOS 0.8.19 / versionCode 90 - 2026-09-21 - 与 Android 0.8.41 对齐（顶栏 + 体感）
 
 > **新 IPA 已发布到 gallery-updates**，iPhone App 内更新即可。

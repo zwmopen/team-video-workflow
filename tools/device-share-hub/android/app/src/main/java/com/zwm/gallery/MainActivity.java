@@ -2648,6 +2648,10 @@ public final class MainActivity extends Activity {
                 onlineListFromSnapshot = true;
                 onlineSnapshotAtMs = snapAt;
                 if (isOnlineMode) {
+                    // 【体感加速 bugfix】applyOnlineCategoryFilter 只筛作品，
+                    // 不重建分类条；如果不显式 rebuild，分类条会一直空着，
+                    // 离线或 categories 快照缺失时用户连「全部 N」都看不到。
+                    updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
                     applyOnlineCategoryFilter(selectedOnlineCategory);
                     statusText.setText(onlineStatusLine("正在后台刷新…"));
                 }
@@ -2975,6 +2979,30 @@ public final class MainActivity extends Activity {
                 onlineCategoryButtons.put(cat.name, btn);
                 onlineCategoryLabels.put(cat.name, displayBase);
             }
+            return;
+        }
+
+        // 【体感加速 fallback】没有 categories 快照（首次冷启动 / 快照里只有作品没分类），
+        // 从 onlineWorks 派生目的地计数。这样用户哪怕离线、没拿到服务端分类，
+        // 也能点「全部 N」之外的常用目的地按钮做筛选。
+        java.util.Map<String, Integer> destCounts = new java.util.LinkedHashMap<>();
+        for (OnlineWorkEntry w : entries) {
+            String dest = w.destination;
+            if (dest == null || dest.trim().isEmpty()) continue;
+            dest = dest.trim();
+            if (WorkCategory.ALL.equals(dest) || "全部".equals(dest)) continue;
+            if ("待首发".equals(dest) || "已发1次".equals(dest) || "已发2次".equals(dest)) continue;
+            destCounts.put(dest, destCounts.getOrDefault(dest, 0) + 1);
+        }
+        for (java.util.Map.Entry<String, Integer> item : destCounts.entrySet()) {
+            if (item.getValue() <= 0) continue;
+            if (onlineCategoryButtons.containsKey(item.getKey())) continue;
+            String displayBase = formatFolderLabel(item.getKey());
+            String fullLabel = displayBase + " " + item.getValue();
+            Button btn = createOnlineCategoryButton(item.getKey(), displayBase, fullLabel, item.getKey().equals(selectedOnlineCategory));
+            categoryBar.addView(btn);
+            onlineCategoryButtons.put(item.getKey(), btn);
+            onlineCategoryLabels.put(item.getKey(), displayBase);
         }
     }
 
