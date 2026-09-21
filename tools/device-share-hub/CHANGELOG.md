@@ -1,5 +1,72 @@
 # 变更记录
 
+## iOS 0.8.25 / build 96 - 2026-09-21 - 在线相册两处真机缺陷：**文案解析没跟上安卓**（11 个版本塌成 1 个「乱码」按钮）+ **只发第一张图**
+
+> **来源**：0.8.24 装到真机后，用户在 iOS 在线相册里点文案按钮实测反馈三句话：
+> ① 「文案同步过去了，但是**乱码**，没有分隔开」；
+> ② 「界面**没有其他版本按钮**」；
+> ③ 「点击发布居然去其他 APP 发现**只有一张图**，没有像安卓一样全部拉取发送」。
+>
+> 三句对应两个根因（文案解析落后 / 只发首图），都在本轮修掉。
+
+### 缺陷 1：`PlatformCopyParser.swift` 落后于 Android —— 文案塌成一个「乱码」按钮
+
+**现象**：在线作品卡片只出现**一个**按钮（兜底文案「发布」），点它复制到的是
+**含全部 `<<<VERSION_START:…>>>` 标记的整段原文**，即用户看到的「乱码、没分隔」。
+
+**根因**：Android `PlatformCopyParser.java` 早已支持三套协议 ——
+`<<<COPY_FORMAT:MULTI>>>` + `<<<VERSION_START:名>>>` 多版本、`COPY_FORMAT:2/3` 固定平台、
+以及任意自定义标记，并且有 **7 个平台**；而 iOS 只认 `COPY_FORMAT:2/3` 与
+`DOUYIN/XHS/XHS_2` **三个平台**。V4.5 的 11 版本文案头部是 `<<<COPY_FORMAT:MULTI>>>`
+⇒ iOS 判定「不是协议格式」⇒ 落进兜底分支返回 `[发布, 整段原文]`。
+**不是漏了一个版本，是一个都没认出来。**
+
+**修法**：把 iOS 解析器重写为 Android 行为的 1:1 移植 —— `MULTI` 头、
+`VERSION_START/END` 逐版本块、7 平台枚举（新增短文精选版 / 公众号版 / HR决策版 / 参考文案）、
+`friendlyLabelForMarker` 版本短标签、通用动态标记扫描（跳过已知固定平台）。
+原有 `parse()` 的三段式语义与 `ok` / `missing` / `unreadable` 状态**保持不变**。
+
+**顺带修掉一个「点哪个版本都一样」的坑**：MULTI 的 11 个版本里有 10 个 `platform` 都是
+`.general`，若分享时按 platform 回查文案会**永远命中第一条**。因此
+`onShare` / `onOnlineShare` 的回调契约由「传平台」改为**直接传被点的那一条
+`AvailableCopyPlatform`**；`WorkLibrary` 新增 `prepareShare(..., copyText:)` 重载承接显式文案。
+
+### 缺陷 2：卡片只写死三个平台按钮 —— 11 个版本也只显示得下 3 个
+
+**现象**：即使解析正确，旧布局也只能显示前 3 个版本。
+
+**修法**：`WorkCell` 的平台按钮区由「3 个写死按钮 + `fillEqually`」改为
+**按解析结果动态创建 + 横向滚动**（`platformScroll` + 内容自适应 `platformRow`），
+按钮数量不设上限；「重置 / 删除 / 复制路径」独立成固定操作行。卡片高度 172 → 196
+（按钮再多也不增高，靠横向滚动）。与 Android `FlowLayout` 的动态渲染对齐。
+
+### 缺陷 3：`shareOnline` 只发第一张图
+
+**现象**：点发布跳到小红书 / 抖音，**只有一张图**。
+
+**根因**：函数里的注释写着「异步下载第一张或全部图片供分享」，
+但实现只取 `entry.images.first` 就端出 `UIActivityViewController(activityItems: [img])`。
+
+**修法**：新增 `downloadAllImages(paths:onProgress:completion:)`，
+**按电脑端给出的顺序依次拉取全部原图**，期间用进度弹窗显示
+「正在下载：<文件名>（n/N 张）」，全部到齐后再唤起分享 ——
+与 Android `handleOnlineWorkUse` / `downloadWorkImages` 的流程对齐。
+空文案时**直接拦住并提示**，不再拿空文案去分享。
+
+### 验证
+
+- **本地（算法级，Windows 上无法编译 Swift）**：把新解析逻辑等价移植成 Python，
+  跑 Android 既有测试向量 + V4.5 真实形状，**四项闸门全部通过**：
+  ① 旧实现在 MULTI 上确实退化成「1 个按钮 + 含标记的整段原文」（缺陷已复现）；
+  ② 新实现出 11 个按钮；③ 按钮正文不含任何 `<<<` 标记；④「抖音避坑」正确归到抖音平台。
+  另有 11 项新老行为差异对照（Format2/3、扩展平台、自定义标记、旧版纯文案）。
+- **单测**：`ios/AlbumTests/PlatformCopyParserTests.swift` 新增 3 个用例
+  （扩展平台与自定义标记 5 按钮、MULTI 11 版本、多版本文案互不串台），
+  与 Android `PlatformCopyParserTest` 的同名向量逐条对齐。
+- **待办复核项**：Swift 编译与 XCTest 结果以 CI `ios-altstore-build` job 为准；
+  **真机验收尚未执行**（需 iPhone 在线 + Sideloadly 侧载 0.8.25 后复测
+  「11 个版本按钮是否逐个出现」「点发布是否带入全部图片」）。
+
 ## iOS 0.8.24 / build 95 - 2026-09-21 - 补上 0.8.23 的漏：**有缓存数据时也必须自愈**（否则从「弹窗」变成「静默卡死」）
 
 > **来源**：0.8.23 装到真机后，用「把 `customPcServerUrl` 写成旧网段地址再冷启动」复现原始故障场景时实测发现：

@@ -677,8 +677,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if isOnlineMode {
             let entry = filteredOnlineWorks[indexPath.item]
             cell.configureOnline(entry)
-            cell.onOnlineShare = { [weak self, weak cell] platform in
-                self?.shareOnline(entry, platform: platform, source: cell)
+            cell.onOnlineShare = { [weak self, weak cell] item in
+                self?.shareOnline(entry, item: item, source: cell)
             }
             cell.onOnlinePreview = { [weak self] index in
                 self?.openOnlinePreview(entry: entry, initialIndex: index)
@@ -697,7 +697,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         let work = filteredWorks[indexPath.item]
         cell.configure(work)
-        cell.onShare = { [weak self, weak cell] platform in self?.share(work, platform: platform, source: cell) }
+        cell.onShare = { [weak self, weak cell] item in self?.share(work, item: item, source: cell) }
         cell.onPreview = { [weak self] index in
             guard let self = self else { return }
             let preview = ImagePreviewController(workName: work.name, urls: work.imageURLs, initialIndex: index) { [weak self] targetURL in
@@ -731,41 +731,81 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     // MARK: - 在线分享与流转
-    private func shareOnline(_ entry: OnlineWorkEntry, platform: String, source: UIView?) {
-        // 复制对应平台文案
-        if !entry.copyText.isEmpty {
-            let available = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
-            let matching = available.first(where: { $0.platform.rawValue == platform }) ?? available.first
-            let textToCopy = matching?.copyText ?? entry.copyText
-            UIPasteboard.general.string = textToCopy
-            showToast("已复制：\(matching?.buttonLabel ?? "文案")")
+    /// 在线作品分享。
+    ///
+    /// 两处历史缺陷（2026-09-21 修复）：
+    /// 1. 文案取「被点的那一条」——多版本文案（`<<<COPY_FORMAT:MULTI>>>`）里 11 个版本有 10 个
+    ///    `platform` 都是 `.general`，按 platform 回查会永远拿到第一条；
+    /// 2. 图片**全部拉取**后再唤起分享，与 Android `handleOnlineWorkUse` 对齐。
+    ///    旧实现只 `entry.images.first`，导致跳到小红书/抖音后只有一张图。
+    private func shareOnline(_ entry: OnlineWorkEntry, item: AvailableCopyPlatform, source: UIView?) {
+        let textToCopy = item.copyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !textToCopy.isEmpty else {
+            showError("该在线作品文案缺失，已禁止分发。")
+            return
         }
+        UIPasteboard.general.string = textToCopy
+        showToast("已复制：\(item.buttonLabel)")
 
-        // 异步下载第一张或全部图片供分享
-        guard let firstImg = entry.images.first else {
-            showError("该在线作品没有图片可供分享。")
+        guard !entry.images.isEmpty else {
+            showToast("已复制 \(item.buttonLabel)（无图片作品）")
             return
         }
 
-        OnlineGalleryClient.shared.loadImage(path: firstImg, isThumbnail: false) { [weak self] image in
-            guard let self = self, let img = image else {
-                self?.showError("图片加载失败，无法拉起分享")
-                return
-            }
-            let activity = UIActivityViewController(activityItems: [img], applicationActivities: nil)
-            activity.popoverPresentationController?.sourceView = source
-            activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                if completed {
+        let total = entry.images.count
+        let progress = UIAlertController(title: "正在从电脑同步原图到手机…",
+                                         message: "准备连接电脑拉取 \(total) 张原图…",
+                                         preferredStyle: .alert)
+        progress.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(progress, animated: true)
+
+        downloadAllImages(paths: entry.images, onProgress: { [weak progress] done, count, name in
+            progress?.message = "正在下载：\(name)（\(done)/\(count) 张）"
+        }, completion: { [weak self] images in
+            guard let self = self else { return }
+            progress.dismiss(animated: true) {
+                guard !images.isEmpty else {
+                    self.showError("图片加载失败，无法拉起分享；文案已在剪贴板")
+                    return
+                }
+                self.showToast("✅ 原图已全部同步到手机，正在唤起分享…")
+                let activity = UIActivityViewController(activityItems: images, applicationActivities: nil)
+                activity.popoverPresentationController?.sourceView = source
+                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                    guard completed, let self = self else { return }
                     // 1. 通知电脑端物理归档移动至 _已发送1次
-                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: platform)
+                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.platform.code)
                     // 2. 本地记录生命周期打标
                     OnlineWorkLifecycle.markUsed(work: entry)
-                    self?.showToast("🚀 分享完成，电脑端已自动归档")
-                    self?.loadOnlineData(silent: true)
+                    self.showToast("🚀 分享完成，电脑端已自动归档")
+                    self.loadOnlineData(silent: true)
                 }
+                self.present(activity, animated: true)
             }
-            self.present(activity, animated: true)
+        })
+    }
+
+    /// 按电脑端给出的顺序**依次**拉取全部原图（`loadImage` 的回调保证在主线程）。
+    private func downloadAllImages(paths: [String],
+                                   onProgress: @escaping (Int, Int, String) -> Void,
+                                   completion: @escaping ([UIImage]) -> Void) {
+        var collected = [UIImage?](repeating: nil, count: paths.count)
+        let total = paths.count
+
+        func step(_ index: Int) {
+            guard index < total else {
+                completion(collected.compactMap { $0 })
+                return
+            }
+            let path = paths[index]
+            onProgress(index + 1, total, (path as NSString).lastPathComponent)
+            OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: false) { image in
+                collected[index] = image
+                step(index + 1)
+            }
         }
+
+        step(0)
     }
 
     private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int) {
@@ -838,10 +878,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         renderOnlineUI()
     }
 
-    private func share(_ work: WorkItem, platform: CopyPlatform, source: UIView?) {
+    private func share(_ work: WorkItem, item: AvailableCopyPlatform, source: UIView?) {
         do {
             let controller = UIActivityViewController(activityItems: try library.prepareShare(
-                work, images: work.imageURLs, platform: platform),
+                work, images: work.imageURLs, platform: item.platform, copyText: item.copyText),
                                                       applicationActivities: nil)
             controller.popoverPresentationController?.sourceView = source
             present(controller, animated: true)
@@ -854,7 +894,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        return CGSize(width: width, height: 172)
+        // 196：平台按钮区改为「1 行可滚动 + 1 行操作按钮」后，卡片内容高度约 194，
+        // 旧的 172 会挤压标题/详情行。按钮再多也不增高（靠横向滚动）。
+        return CGSize(width: width, height: 196)
     }
 
     private func confirmResetWork(_ work: WorkItem) {
@@ -1258,25 +1300,35 @@ private final class WorkCell: UICollectionViewCell {
     private let previewScroll = UIScrollView()
     private let previewStack = UIStackView()
     private let detail = UILabel()
-    private let xhsButton = UIButton(type: .system)
-    private let xhs2Button = UIButton(type: .system)
-    private let douyinButton = UIButton(type: .system)
     private let resetButton = UIButton(type: .system)
     private let deleteButton = UIButton(type: .system)
     /// 「复制路径」：紧跟在「删除」之后，复制该作品文件夹的绝对路径
     private let copyPathButton = UIButton(type: .system)
+    /// 平台按钮区（可横向滚动）。
+    /// 按钮**数量由解析结果决定**：V4.5 多版本文案（`<<<COPY_FORMAT:MULTI>>>`）会解析出
+    /// 11 个版本，因此不能像旧版那样写死三个按钮 —— 与 Android 的动态渲染对齐。
+    private let platformScroll = UIScrollView()
+    private let platformRow = UIStackView()
+    /// 操作行：重置 / 删除 / 复制路径。数量固定，不随平台数变化。
+    private let actionRow = UIStackView()
     private let platformContainer = UIStackView()
-    private let platformRow1 = UIStackView()
-    private let platformRow2 = UIStackView()
+    /// 当前卡片上每个平台按钮对应的解析结果，下标 = `button.tag`。
+    /// 分享时必须用它取「被点的这一条」的正文：MULTI 格式下 11 个版本里有 10 个
+    /// `platform` 都是 `.general`，若按 platform 回查会全部命中第一条。
+    private var platformItems: [AvailableCopyPlatform] = []
+    /// 本卡片当前渲染的是「在线作品」还是「手机本地作品」——决定平台按钮走哪个回调。
+    private var isOnlineCard = false
 
-    var onShare: ((CopyPlatform) -> Void)?
+    /// 本地作品：回调直接携带「被点的那一条」（按钮文案 + 正文），不再只传平台。
+    var onShare: ((AvailableCopyPlatform) -> Void)?
     var onPreview: ((Int) -> Void)?
     var onReset: (() -> Void)?
     var onDelete: (() -> Void)?
     /// 本地作品：复制手机上的作品文件夹路径
     var onCopyPath: (() -> Void)?
 
-    var onOnlineShare: ((String) -> Void)?
+    /// 在线作品：同上，携带「被点的那一条」。
+    var onOnlineShare: ((AvailableCopyPlatform) -> Void)?
     var onOnlinePreview: ((Int) -> Void)?
     var onOnlineDelete: (() -> Void)?
     var onOnlineReset: (() -> Void)?
@@ -1306,24 +1358,36 @@ private final class WorkCell: UICollectionViewCell {
             previewStack.bottomAnchor.constraint(equalTo: previewScroll.contentLayoutGuide.bottomAnchor),
             previewStack.heightAnchor.constraint(equalTo: previewScroll.frameLayoutGuide.heightAnchor)
         ])
-        configurePlatformButton(xhsButton, title: "发布", platform: .xhs)
-        configurePlatformButton(xhs2Button, title: "大纲方案版", platform: .xhs2)
-        configurePlatformButton(douyinButton, title: "规避营销版", platform: .douyin)
         configureResetButton()
         configureDeleteButton()
         configureCopyPathButton()
-        platformRow1.axis = .horizontal
-        platformRow1.spacing = 6
-        platformRow1.alignment = .fill
-        platformRow1.distribution = .fillEqually
-        platformRow2.axis = .horizontal
-        platformRow2.spacing = 6
-        platformRow2.alignment = .fill
-        platformRow2.distribution = .fillEqually
+
+        platformRow.axis = .horizontal
+        platformRow.spacing = 6
+        platformRow.alignment = .fill
+        // 内容自适应宽度（不是 fillEqually）：版本多时靠横向滚动查看，
+        // 避免 11 个版本被均分成极窄的按钮。
+        platformRow.distribution = .fill
+        platformScroll.showsHorizontalScrollIndicator = false
+        platformScroll.alwaysBounceHorizontal = true
+        platformScroll.addSubview(platformRow)
+        platformRow.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            platformRow.leadingAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.leadingAnchor),
+            platformRow.trailingAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.trailingAnchor),
+            platformRow.topAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.topAnchor),
+            platformRow.bottomAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.bottomAnchor),
+            platformRow.heightAnchor.constraint(equalTo: platformScroll.frameLayoutGuide.heightAnchor)
+        ])
+
+        actionRow.axis = .horizontal
+        actionRow.spacing = 6
+        actionRow.alignment = .fill
+        actionRow.distribution = .fillEqually
         platformContainer.axis = .vertical
         platformContainer.spacing = 6
-        platformContainer.addArrangedSubview(platformRow1)
-        platformContainer.addArrangedSubview(platformRow2)
+        platformContainer.addArrangedSubview(platformScroll)
+        platformContainer.addArrangedSubview(actionRow)
         let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformContainer])
         stack.axis = .vertical
         stack.spacing = 5
@@ -1334,6 +1398,7 @@ private final class WorkCell: UICollectionViewCell {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             previewScroll.heightAnchor.constraint(equalToConstant: 64),
+            platformScroll.heightAnchor.constraint(equalToConstant: 28),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
         ])
     }
@@ -1360,6 +1425,7 @@ private final class WorkCell: UICollectionViewCell {
     }
 
     func configureOnline(_ entry: OnlineWorkEntry) {
+        isOnlineCard = true
         contentView.backgroundColor = AppColors.secondaryBackground
         contentView.layer.borderColor = UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 0.25).cgColor
 
@@ -1405,72 +1471,73 @@ private final class WorkCell: UICollectionViewCell {
     }
 
     private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
-        platformRow1.arrangedSubviews.forEach { platformRow1.removeArrangedSubview($0); $0.removeFromSuperview() }
-        platformRow2.arrangedSubviews.forEach { platformRow2.removeArrangedSubview($0); $0.removeFromSuperview() }
-
         let platforms = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
-        let count = platforms.count
+        // 在线作品不做「乐观置灰」：使用次数只决定是否出现「重置」按钮。
+        rebuildPlatformButtons(platforms, isOptimistic: { _ in false },
+                               action: #selector(platformButtonTapped(_:)))
+        rebuildActionRow()
+        if entry.useCount > 0 { actionRow.addArrangedSubview(resetButton) }
+        actionRow.addArrangedSubview(deleteButton)
+        actionRow.addArrangedSubview(copyPathButton)
 
-        if count <= 1 {
-            let p1 = platforms.first?.buttonLabel ?? "小红书"
-            xhsButton.setTitle(p1, for: .normal)
-            applyPlatformStyle(xhsButton, isOptimistic: false)
-            platformRow1.addArrangedSubview(xhsButton)
-            if entry.useCount > 0 { platformRow1.addArrangedSubview(resetButton) }
-            platformRow1.addArrangedSubview(deleteButton)
-            platformRow1.addArrangedSubview(copyPathButton)
-            platformRow2.isHidden = true
-        } else if count == 2 {
-            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
-            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
-            applyPlatformStyle(xhsButton, isOptimistic: false)
-            applyPlatformStyle(xhs2Button, isOptimistic: false)
-            platformRow1.addArrangedSubview(xhsButton)
-            platformRow1.addArrangedSubview(xhs2Button)
-            if entry.useCount > 0 { platformRow2.addArrangedSubview(resetButton) }
-            platformRow2.addArrangedSubview(deleteButton)
-            platformRow2.addArrangedSubview(copyPathButton)
-            platformRow2.isHidden = false
-        } else {
-            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
-            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
-            douyinButton.setTitle(platforms[2].buttonLabel, for: .normal)
-            applyPlatformStyle(xhsButton, isOptimistic: false)
-            applyPlatformStyle(xhs2Button, isOptimistic: false)
-            applyPlatformStyle(douyinButton, isOptimistic: false)
-            platformRow1.addArrangedSubview(xhsButton)
-            platformRow1.addArrangedSubview(xhs2Button)
-            platformRow2.addArrangedSubview(douyinButton)
-            if entry.useCount > 0 { platformRow2.addArrangedSubview(resetButton) }
-            platformRow2.addArrangedSubview(deleteButton)
-            platformRow2.addArrangedSubview(copyPathButton)
-            platformRow2.isHidden = false
-        }
-
-        xhsButton.removeTarget(nil, action: nil, for: .allEvents)
-        xhs2Button.removeTarget(nil, action: nil, for: .allEvents)
-        douyinButton.removeTarget(nil, action: nil, for: .allEvents)
         resetButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
         copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
-        xhsButton.addTarget(self, action: #selector(onlineXhsTapped), for: .touchUpInside)
-        xhs2Button.addTarget(self, action: #selector(onlineXhs2Tapped), for: .touchUpInside)
-        douyinButton.addTarget(self, action: #selector(onlineDouyinTapped), for: .touchUpInside)
         resetButton.addTarget(self, action: #selector(onlineResetTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
         copyPathButton.addTarget(self, action: #selector(onlineCopyPathTapped), for: .touchUpInside)
     }
 
-    @objc private func onlineResetTapped() { onOnlineReset?() }
+    /// 按解析结果**动态**创建平台按钮，数量不限（V4.5 多版本文案为 11 个）。
+    private func rebuildPlatformButtons(_ platforms: [AvailableCopyPlatform],
+                                        isOptimistic: (Int) -> Bool,
+                                        action: Selector) {
+        platformRow.arrangedSubviews.forEach {
+            platformRow.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        platformItems = platforms
+        for (index, item) in platforms.enumerated() {
+            let button = UIButton(type: .system)
+            button.setTitle(item.buttonLabel, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
+            button.layer.cornerRadius = 8
+            button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            button.tag = index
+            button.accessibilityLabel = item.buttonLabel
+            applyPlatformStyle(button, isOptimistic: isOptimistic(index))
+            button.addTarget(self, action: action, for: .touchUpInside)
+            platformRow.addArrangedSubview(button)
+        }
+    }
 
-    @objc private func onlineXhsTapped() { onOnlineShare?("xhs") }
-    @objc private func onlineXhs2Tapped() { onOnlineShare?("xhs2") }
-    @objc private func onlineDouyinTapped() { onOnlineShare?("douyin") }
+    private func rebuildActionRow() {
+        actionRow.arrangedSubviews.forEach {
+            actionRow.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+    }
+
+    /// 平台按钮统一入口：下标定位到「被点的那一条」，本地/在线由 `isOnlineCard` 分流。
+    @objc private func platformButtonTapped(_ sender: UIButton) {
+        guard sender.tag >= 0, sender.tag < platformItems.count else { return }
+        let item = platformItems[sender.tag]
+        if isOnlineCard {
+            onOnlineShare?(item)
+        } else {
+            onShare?(item)
+        }
+    }
+
+    @objc private func onlineResetTapped() { onOnlineReset?() }
     @objc private func onlineDeleteTapped() { onOnlineDelete?() }
     @objc private func onlineCopyPathTapped() { onOnlineCopyPath?() }
 
     func configure(_ work: WorkItem) {
+        isOnlineCard = false
         contentView.backgroundColor = AppColors.secondaryBackground
         contentView.layer.borderColor = AppColors.separator.cgColor
 
@@ -1510,70 +1577,36 @@ private final class WorkCell: UICollectionViewCell {
     }
 
     private func configureButtons(_ work: WorkItem) {
-        platformRow1.arrangedSubviews.forEach { platformRow1.removeArrangedSubview($0); $0.removeFromSuperview() }
-        platformRow2.arrangedSubviews.forEach { platformRow2.removeArrangedSubview($0); $0.removeFromSuperview() }
-
         let platforms = CopyParserCache.platforms(for: work.textURL)
         let count = platforms.count
+        // 沿用旧版「已分享过就置灰」的语义，按按钮下标映射：
+        // 只有 1 个按钮时看整体分享次数；2 个按钮时第 2 个看小红书是否已发；
+        // 3 个及以上时第 3 个看抖音次数；新增的版本按钮不做置灰。
+        rebuildPlatformButtons(platforms, isOptimistic: { index in
+            switch index {
+            case 0:
+                return count <= 1 ? work.shareCount > 0 : work.xhsShareCount > 0
+            case 1:
+                return count == 2 ? (work.shareCount > 0 && work.xhsShareCount == 0) : false
+            case 2:
+                return count >= 3 ? work.douyinShareCount > 0 : false
+            default:
+                return false
+            }
+        }, action: #selector(platformButtonTapped(_:)))
 
-        if count <= 1 {
-            let p1 = platforms.first?.buttonLabel ?? "发布"
-            xhsButton.setTitle(p1, for: .normal)
-            applyPlatformStyle(xhsButton, isOptimistic: work.shareCount > 0)
-            platformRow1.addArrangedSubview(xhsButton)
-            if work.shareCount > 0 { platformRow1.addArrangedSubview(resetButton) }
-            platformRow1.addArrangedSubview(deleteButton)
-            platformRow1.addArrangedSubview(copyPathButton)
-            platformRow2.isHidden = true
-        } else if count == 2 {
-            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
-            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
-            applyPlatformStyle(xhsButton, isOptimistic: work.xhsShareCount > 0)
-            applyPlatformStyle(xhs2Button, isOptimistic: work.shareCount > 0 && work.xhsShareCount == 0)
-            platformRow1.addArrangedSubview(xhsButton)
-            platformRow1.addArrangedSubview(xhs2Button)
-            if work.shareCount > 0 { platformRow2.addArrangedSubview(resetButton) }
-            platformRow2.addArrangedSubview(deleteButton)
-            platformRow2.addArrangedSubview(copyPathButton)
-            platformRow2.isHidden = false
-        } else {
-            xhsButton.setTitle(platforms[0].buttonLabel, for: .normal)
-            xhs2Button.setTitle(platforms[1].buttonLabel, for: .normal)
-            douyinButton.setTitle(platforms[2].buttonLabel, for: .normal)
-            applyPlatformStyle(xhsButton, isOptimistic: work.xhsShareCount > 0)
-            applyPlatformStyle(xhs2Button, isOptimistic: false)
-            applyPlatformStyle(douyinButton, isOptimistic: work.douyinShareCount > 0)
-            platformRow1.addArrangedSubview(xhsButton)
-            platformRow1.addArrangedSubview(xhs2Button)
-            platformRow2.addArrangedSubview(douyinButton)
-            if work.shareCount > 0 { platformRow2.addArrangedSubview(resetButton) }
-            platformRow2.addArrangedSubview(deleteButton)
-            platformRow2.addArrangedSubview(copyPathButton)
-            platformRow2.isHidden = false
-        }
+        rebuildActionRow()
+        if work.shareCount > 0 { actionRow.addArrangedSubview(resetButton) }
+        actionRow.addArrangedSubview(deleteButton)
+        actionRow.addArrangedSubview(copyPathButton)
 
-        xhsButton.removeTarget(nil, action: nil, for: .allEvents)
-        xhs2Button.removeTarget(nil, action: nil, for: .allEvents)
-        douyinButton.removeTarget(nil, action: nil, for: .allEvents)
         resetButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
         copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
-        xhsButton.addTarget(self, action: #selector(xhsTapped), for: .touchUpInside)
-        xhs2Button.addTarget(self, action: #selector(xhs2Tapped), for: .touchUpInside)
-        douyinButton.addTarget(self, action: #selector(douyinTapped), for: .touchUpInside)
         resetButton.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         copyPathButton.addTarget(self, action: #selector(copyPathTapped), for: .touchUpInside)
-    }
-
-    private func configurePlatformButton(_ button: UIButton, title: String, platform: CopyPlatform) {
-        button.setTitle(title, for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        button.layer.cornerRadius = 8
-        button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
     private func configureResetButton() {
@@ -1621,9 +1654,6 @@ private final class WorkCell: UICollectionViewCell {
         }
     }
 
-    @objc private func xhsTapped() { onShare?(.xhs) }
-    @objc private func xhs2Tapped() { onShare?(.xhs2) }
-    @objc private func douyinTapped() { onShare?(.douyin) }
     @objc private func resetTapped() { onReset?() }
     @objc private func deleteTapped() { onDelete?() }
     @objc private func copyPathTapped() { onCopyPath?() }

@@ -267,6 +267,17 @@ final class WorkLibrary {
         case .unreadable: throw LibraryError.unreadableCopy
         case .ok: break
         }
+        return try prepareShare(work, images: images, platform: platform, copyText: parsed.text)
+    }
+
+    /// 显式传入要复制的文案。
+    ///
+    /// 多版本文案（`<<<COPY_FORMAT:MULTI>>>`）下，按钮上显示的正文由解析器**逐版本**给出，
+    /// 不能再按 platform 回查 —— 11 个版本里有 10 个 `platform` 都是 `.general`，
+    /// 回查会永远命中第一条，点任何版本都复制到同一个内容。
+    func prepareShare(_ work: WorkItem, images: [URL], platform: CopyPlatform, copyText: String) throws -> [Any] {
+        let resolved = copyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !resolved.isEmpty else { throw LibraryError.unreadableCopy }
         let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
         let selected = images.map { $0.standardizedFileURL }.filter { allowed.contains($0) }
         guard !selected.isEmpty else { throw LibraryError.noImages(work.name) }
@@ -295,7 +306,7 @@ final class WorkLibrary {
         do { try saveState(to: root) }
         catch { throw LibraryError.stateWriteFailed }
 
-        UIPasteboard.general.string = parsed.text
+        UIPasteboard.general.string = resolved
         message = "文案已复制 · 第 \(record.shareCount) 次打开分享"
         works = (try? scanner.scan(root: root, state: state).works) ?? works
         notify()

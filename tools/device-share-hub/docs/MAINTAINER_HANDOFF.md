@@ -1,5 +1,25 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-21 iPhone v0.8.25（build 96）：在线相册文案解析对齐 Android + 在线分享拉全部原图
+
+- **版本与安装对账**：iOS `0.8.25`（build 96）。真源仍是 `ios/project.yml` 的
+  `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`，`info.properties` 用 `"$(...)"` 引用，未改硬编码。
+- **触发**：0.8.24 真机实测由用户反馈三句原话 ——
+  「文案是乱码、没有分隔开」「界面没有其他版本按钮」「点发布只有一张图，没像安卓一样全部拉取」。
+- **根因一（文案塌成一个按钮）**：iOS `PlatformCopyParser.swift` 只认 `COPY_FORMAT:2/3` 与
+  `DOUYIN/XHS/XHS_2` 三个平台，而 V4.5 多版本文案头部是 `<<<COPY_FORMAT:MULTI>>>`
+  加 11 个 `<<<VERSION_START:名>>>` 块，于是被判「非协议文本」→ 兜底分支
+  → **一个「发布」按钮 + 含全部标记的整段原文**。Android 早已支持 MULTI，属 **iOS 单边落后**。
+- **根因二（只发一张图）**：`shareOnline` 注释写「第一张或全部」，实现只取 `entry.images.first`。
+- **修法**：解析器按 Android 1:1 重写（MULTI / VERSION 块 / 7 平台 / 自定义标记）；
+  回调改为**直接传被点的那一条**（MULTI 的 11 个版本里 10 个 `platform` 都是 `.general`，
+  按 platform 回查会全部撞成第一条）；卡片按钮区改动态创建 + 横向滚动（不再限 3 个，卡片高 172→196）；
+  `shareOnline` 改走 `downloadAllImages`，按电脑端顺序拉全部原图后再唤起分享。
+- **验证边界**：本机 Windows 无 Swift 工具链，故用**等价移植到 Python 跑 Android 同名测试向量**
+  做算法级闸门（4 项全 PASS，并复现了旧实现「1 个按钮 + 带标记原文」的退化）；
+  Swift 编译与 XCTest 以 CI `ios-altstore-build` job 为准；**真机验收尚未执行**。
+- **详见** `CHANGELOG.md`「iOS 0.8.25 / build 96」与 `docs/BUG_LEDGER.md` **DSH-082**。
+
 ## 2026-09-21 iPhone v0.8.24：补上 0.8.23 的漏 —— 有缓存数据时也必须自愈（build 95）
 
 - **版本与安装对账**：iOS `0.8.24`（build 95，`ios/project.yml` 单一真源）。

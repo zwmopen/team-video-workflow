@@ -4,7 +4,58 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-081**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-082**。
+
+## DSH-082 iOS 多版本文案塌成一个「乱码」按钮 + 在线分享只带第一张图（iOS 0.8.24 及以前；0.8.25 修复）
+
+- **现象**（iPhone 真机、0.8.24 在线相册实测，用户原话三条，均当场复现）：
+  1. 点文案按钮后「文案同步过去了，但是**乱码**，没有分隔开」；
+  2. 「界面**没有其他版本按钮**」——整张卡片只出现一个按钮；
+  3. 「点击发布居然去其他 APP 发现**只有一张图**，没有像安卓一样全部拉取发送」。
+- **环境**：iPhone 13,2 / iOS 26.6；`相册` 0.8.24（build 95，AltStore 侧载）；
+  iOS 在线相册模式（读电脑端「已发送0次（抖音小红书可发）」）；
+  相关文件 `ios/Album/PlatformCopyParser.swift`、`ios/Album/ContentView.swift`
+  （`shareOnline` / `WorkCell`）、`ios/Album/WorkLibrary.swift`。
+- **根因（两条，共同点是「iOS 没跟上 Android」）**：
+  1. **文案解析器协议落后（粒度错位型缺陷）**：Android `PlatformCopyParser.java` 支持
+     `<<<COPY_FORMAT:MULTI>>>` + `<<<VERSION_START:名>>>` 多版本块（V4.5 全系 11 版）、
+     `COPY_FORMAT:2/3` 固定平台、任意自定义标记，共 **7 个平台**；
+     iOS `PlatformCopyParser.swift` 只认 `COPY_FORMAT:2/3` 与 `DOUYIN/XHS/XHS_2` **三个平台**。
+     V4.5 文案头部是 `MULTI` ⇒ `isProtocol == false` ⇒ 落进兜底分支
+     `[(.xhs, "发布", 整段原文)]` ⇒ **只有一个按钮，且正文含全部 `<<<VERSION_START:…>>>` 标记**
+     （即用户看到的「乱码」）。**不是漏掉某一版，是整个新格式类别穿透了守卫。**
+  2. **只发首图**：`shareOnline` 的注释写着「异步下载第一张或全部图片供分享」，
+     实现却是 `entry.images.first` + `UIActivityViewController(activityItems: [img])`；
+     而 Android `handleOnlineWorkUse` → `downloadWorkImages` 是**全部拉取 + 进度弹窗**后才分享。
+- **修复（客户端，iOS 0.8.25 / build 96）**：
+  1. 解析器重写为 Android 行为的 1:1 移植（`MULTI` 头、`VERSION_START/END` 逐版本块、
+     7 平台枚举、`friendlyLabelForMarker` 版本短标签、通用动态标记扫描并跳过已知固定平台），
+     **保留**原 `parse()` 的三段式语义与 `ok` / `missing` / `unreadable` 状态，旧用例不受影响；
+  2. **堵掉「点哪个版本都一样」的次级坑**：MULTI 的 11 个版本里 10 个 `platform == .general`，
+     若分享时按 platform 回查文案会**永远命中第一条** ⇒ 回调契约由「传平台」改为
+     **直接传被点的那一条 `AvailableCopyPlatform`**，`WorkLibrary` 新增
+     `prepareShare(_:images:platform:copyText:)` 重载承接显式文案；
+  3. 卡片平台按钮区由「3 个写死按钮 + `fillEqually`」改为**动态创建 + 横向滚动**
+     （数量不设上限；卡片高度 172 → 196，按钮再多也不增高），操作按钮独立成固定行；
+  4. `shareOnline` 改走 `downloadAllImages`：按电脑端给出的顺序**依次拉取全部原图**，
+     进度弹窗显示「正在下载：<文件名>（n/N 张）」，全部到齐再唤起分享；空文案直接拦住。
+- **证据**：
+  - **本地算法级闸门**（本机 Windows 无 Swift 工具链，故做等价移植验证）：把新解析逻辑移植为
+    Python 跑 Android 既有测试向量，四项闸门全部 PASS ——
+    ① 旧实现在 MULTI 上**确实**退化成「1 个按钮 + 含 `<<<VERSION_START:` 的整段原文」（缺陷复现）；
+    ② 新实现出 11 个按钮；③ 按钮正文不含任何 `<<<` 标记；④「抖音避坑」正确归到 `.douyin`。
+    另有 5 组向量做新老行为对照（Format2 / Format3 / 扩展平台+自定义标记 / MULTI / 旧版纯文案）。
+  - 单测新增 3 例（`ios/AlbumTests/PlatformCopyParserTests.swift`），与 Android 同名向量逐条对齐。
+  - **待复核项（不扩大结论）**：Swift 编译与 XCTest 结果以 CI `ios-altstore-build` job 为准；
+    真机验收（11 个版本按钮是否逐个出现、点发布是否带入全部图片）**尚未执行**。
+- **回归要求（必须保留）**：
+  1. **文案协议是两端契约**：任何一端新增解析标记，必须同时改另一端；
+     改任一端解析器前，先跑对端的同名测试向量。
+  2. **多版本文案的按钮正文必须由解析结果携带，禁止按 platform 回查** ——
+     归一化到 `.general` 的版本会全部撞成第一条。
+  3. **`<<<` 标记不得出现在用户可见正文里**；任何解析分支的返回值都要断言这一点。
+  4. **在线分享必须拉全部图片**；「只发第一张」在真机上表现为「另一个 App 里只有一张图」，
+     极易被误判成平台限制而不是本端缺陷。
 
 ## DSH-079 iOS 信标缺版本扩展字段，电脑端把「泛流量篇数」当版本号显示（iOS 0.8.21 及以前；0.8.22 修复）
 

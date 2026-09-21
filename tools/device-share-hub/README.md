@@ -1,8 +1,8 @@
-# 文件收发中控（当前源码候选：Android 0.8.3 / iPhone 0.8.3）
+# 文件收发中控（当前源码候选：Android 0.8.44 / iPhone 0.8.25）
 
-当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。本轮源码候选为 Android 0.8.3 / versionCode 114、iPhone 0.8.3 / build 74；尚未完成云端发布或实体手机验收。
+当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。本轮源码候选为 Android 0.8.44 / versionCode 155、iPhone 0.8.25 / build 96；iOS 侧改动尚未完成云端构建与实体手机验收。
 
-本轮仅修复移动端作品导入/扫描时的文案候选选择：会话追踪、生产记录等元数据不会再被当成可复制文案；不改变传送协议、作品库数据格式或现有分享按钮行为。
+本轮仅修复 iOS 在线相册的两处真机缺陷：多版本文案（`<<<COPY_FORMAT:MULTI>>>`）被当成「非协议文本」，导致 11 个版本塌成一个「乱码」按钮；以及点发布只带入第一张图。解析器已与 Android 1:1 对齐，不改变传送协议、作品库数据格式与更新协议。
 
 Android、iPhone 和 Windows 统一读取正式更新入口。为兼容仍运行旧测试通道的设备，`latest-beta.json` 与 `altstore-beta.json` 也已同步到同一正式版本，不再产生第二套包或版本。
 
