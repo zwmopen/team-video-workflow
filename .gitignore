@@ -51,3 +51,9 @@ _tmp*/
 secrets.*
 credentials.*
 token.*
+
+# 本地 CI 调试产物（下载的 artifact / 解压副本 / iOS 真机调试镜像），不应进版本库
+_ci_apk/
+_ci_apk_unzipped/
+_ci_artifacts/
+devimages/
