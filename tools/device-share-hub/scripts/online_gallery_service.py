@@ -225,6 +225,60 @@ def copy_search_text(text) -> str:
 
 
 # ============================================================================
+# 【未填模板守卫】2026-09-21 新增 —— 第四层空壳守卫（互补于「平台槽位守卫」）
+#
+# 事故：20260913_213026 等作品的文案**没有任何 <<<...>>> 标记**，长这样：
+#     【小红书文案】
+#     [小红书主标题]
+#     [小红书种草正文，带两日详细行程排期、亮点提炼与真实避坑，拒绝空话]
+#     [12个同行热门话题标签]
+#     【HR方案决策版】
+#     [HR方案决策版大纲，包含方案名称、适用对象、预算参考、决策亮点与服务保障]
+#     【抖音口播脚本】
+#     [抖音短平快口播脚本，痛点切入+亮点+留资号召]
+#   实测线上：hasCopyText=True / copyMissing=False / copyText=158 字——一字正文都没有。
+#
+# 为什么「平台槽位守卫」漏了它：那道守卫按 <<<XHS_START>>> 之类**标记**切槽位，
+#   而这份文案一个标记都没有 → 切不出槽位 → 不触发 → 整段 158 字照原样下发。
+#   两者是正交的两类：有标记的未填模板 vs 无标记的未填模板（【】/[] 骨架）。
+#
+# 修法：整段粒度判定「剔除占位脚手架后还剩多少正文」，不依赖任何标记格式。
+#   未填模板的有效正文趋近 0，而任何真实文案（数百字）几乎不受影响。
+# ============================================================================
+
+
+def copy_effective_len(text) -> int:
+    """剔除占位脚手架行后的正文长度；未填模板在此口径下为 0。"""
+    if not text:
+        return 0
+    s = str(text)
+    if _COPY_FORMATTER is not None:
+        try:
+            return len(_COPY_FORMATTER.copy_substance_effective(s))
+        except Exception:
+            pass
+    return copy_substance_len(s)
+
+
+def is_placeholder_copy(text) -> bool:
+    """整段只数得到占位指令、数不到正文 → 未填模板。"""
+    if not text:
+        return False
+    s = str(text)
+    if _COPY_FORMATTER is not None:
+        try:
+            return bool(_COPY_FORMATTER.is_placeholder_only(s))
+        except Exception:
+            pass
+    return False
+
+
+def copy_is_real(text, min_substance: int = MIN_COPY_DISTRIBUTABLE) -> bool:
+    """下发总闸：正文（不含占位脚手架）达到下限，才算真有文案。"""
+    return copy_effective_len(text) >= min_substance
+
+
+# ============================================================================
 # 【平台槽位守卫】2026-09-20 新增 —— 第三层空壳守卫，与 MIN_COPY_DISTRIBUTABLE 并列
 #
 # 事故：8 套作品躺在「已发送0次（抖音小红书可发）」里，文案是**未填充的模板骨架**：
@@ -991,7 +1045,7 @@ class WorkScanner:
                     raw_c = fp.read().strip()
                 if not copy_search_blob:
                     copy_search_blob = copy_search_text(raw_c)
-                if copy_substance_len(raw_c) >= MIN_COPY_DISTRIBUTABLE:
+                if copy_is_real(raw_c):
                     copy_text = raw_c
                     break
             except Exception:
@@ -1004,7 +1058,7 @@ class WorkScanner:
             try:
                 with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
                     manifest_data = json.load(fp)
-                if not copy_text and copy_substance_len(manifest_data.get("copy_content", "")) >= MIN_COPY_DISTRIBUTABLE:
+                if not copy_text and copy_is_real(manifest_data.get("copy_content", "")):
                     copy_text = manifest_data.get("copy_content", "").strip()
                 if not copy_text and manifest_data.get("rawMaterialPath"):
                     raw_p = manifest_data["rawMaterialPath"]
@@ -1016,7 +1070,7 @@ class WorkScanner:
                                         rc = rfp.read().strip()
                                     if not copy_search_blob:
                                         copy_search_blob = copy_search_text(rc)
-                                    if copy_substance_len(rc) >= MIN_COPY_DISTRIBUTABLE:
+                                    if copy_is_real(rc):
                                         copy_text = rc
                                         break
                                 except Exception:
@@ -1041,7 +1095,7 @@ class WorkScanner:
         # 净化后若已无真实槽位，视为「骨架作品」：按缺失下发，手机端自动置灰标红
         if copy_raw and not copy_text.strip():
             copy_missing = True
-        elif copy_raw and copy_substance_len(copy_text) < MIN_COPY_DISTRIBUTABLE:
+        elif copy_raw and not copy_is_real(copy_text):
             copy_missing = True
 
         # 读取作品标签.json
@@ -1092,7 +1146,8 @@ class WorkScanner:
             "imageCount": len(images),
             "images": images,
             "copyText": copy_text,
-            "hasCopyText": copy_substance_len(copy_text) >= MIN_COPY_DISTRIBUTABLE,
+            # 【未填模板守卫】判定口径 = 剔除占位脚手架后的正文，未填模板不再算"有文案"
+            "hasCopyText": copy_is_real(copy_text),
             "copyMissing": bool(copy_missing),
             # 【平台槽位守卫】诊断：哪些槽位被判为占位/过薄并被剔除
             "slotGuard": {
@@ -1101,6 +1156,8 @@ class WorkScanner:
                 "keptCount": slot_diag["keptCount"],
                 "rawSubstance": copy_substance_len(copy_raw),
                 "servedSubstance": copy_substance_len(copy_text),
+                "effectiveSubstance": copy_effective_len(copy_text),
+                "placeholderOnly": is_placeholder_copy(copy_raw),
             },
             "searchBlob": copy_search_blob,
             "updatedAt": os.path.getmtime(dir_path)
