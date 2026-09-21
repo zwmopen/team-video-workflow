@@ -17,6 +17,14 @@
   - 真机屏幕：`pymobiledevice3 developer dvt screenshot <out.png> --userspace`（免管理员、免越狱）；
   - 真机偏好读写：`pymobiledevice3 apps pull/push <bid> Library/Preferences/<bid>.plist`
     —— 这是构造「缓存地址失效」场景最干净的办法，不必去动电脑端服务。
+- **真机验收结果（2026-09-21，0.8.24 / build 95，iPhone13,2 / iOS 26.6）——两个判据都过**：
+  - 判据 A（屏幕）：冷启动 t+4s / t+12s / t+35s 三帧截图**只有列表（401 套）、零弹窗**；
+  - 判据 B（缓存）：38 秒后回读 plist，`customPcServerUrl` 由 `http://192.168.0.107:45835`
+    **被自愈改写为 `http://192.168.1.27:45835`** —— 静默卡死消失，这就是 0.8.24 的净收益。
+  - 旁证：服务端 `/api/online/phones` 读到 `192.168.1.154 | iPhone13,2 | 0.8.24 | 95`；
+    云端 `gallery-updates/latest.json` 已发布 iOS 0.8.24 / build 95（sha256 与 CI 产物逐字一致）。
+- **复测已脚本化**：`_v0824_verify.py`（`probe` / `run`）一条命令跑完
+  「杀 App → 写旧网段地址 → 冷启动 → 三帧截图 → 回读 plist」，**两处判据同时断言**。
 ## 2026-09-21 iPhone v0.8.23：消除换网段后的「假弹窗」（build 94）
 
 - **版本与安装对账**：iOS `0.8.23`（build 94，`ios/project.yml` 单一真源）。
