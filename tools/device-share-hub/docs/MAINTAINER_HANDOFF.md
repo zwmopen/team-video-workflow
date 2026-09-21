@@ -1,5 +1,28 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-21 iPhone v0.8.23：消除换网段后的「假弹窗」（build 94）
+
+- **版本与安装对账**：iOS `0.8.23`（build 94，`ios/project.yml` 单一真源）。
+  上一版 `0.8.22`（build 93）已 Sideloadly 侧载到真机并通过 `pymobiledevice3 apps list` 对账
+  （`com.zwm.album.TXA6HP98BX` v0.8.22 / build 93，`ALTBundleIdentifier=com.zwm.album` ⇒ 原地升级、数据保留）。
+- **本次要解决的问题（0.8.22 装好后的下一眼）**：iPhone 列表**已经显示 401 套作品**却仍弹阻塞式
+  `拉取在线相册失败：Could not connect to the server.`。详见 `docs/BUG_LEDGER.md` **DSH-081**。
+- **根因一句话**：`loadOnlineData()` 把「有没有数据」的判定（`hadData`）放在**发请求前**采样，
+  而本地快照是**异步后到**的 ⇒ 判据描述的是请求发出时刻，被描述的是回包时刻的界面，两者脱钩。
+- **修法要点（改 iOS 时必须守住）**：
+  1. 任何「有没有数据 / 是否可用」类判定，都必须在**消费它的同一时刻**采样，禁止提前缓存；
+  2. 无数据时的失败路径 = **先 toast + 立刻自愈**，只有自愈（快轨 2.5s + 慢轨 /24 扫描）也失败才弹阻塞弹窗；
+  3. 自愈因 15 秒冷却或在途而**没跑起来**时仍要弹窗（`alertOnFailure:`），不许静默吞错。
+- **验证手段（本轮新增，很好用）**：
+  - `pymobiledevice3 developer dvt screenshot <out.png> --userspace` —— **免越狱、免管理员**截 iPhone 真机屏幕；
+  - `pymobiledevice3 developer dvt launch <bundleid> --userspace` —— 从电脑侧直接拉起真机 App
+    （`--userspace` 用纯 Python 用户态网络栈建 iOS 17+ 隧道，**不需要 admin**；
+    以前误以为必须 `lockdown start-tunnel`，那条路确实要管理员，别再走）；
+  - 侧载完成后必须核对 `verify_app_installed()` 的版本号，**不能看 Sideloadly 界面文本**。
+- **侧载已知坑（本轮修掉两处技能脚本缺陷）**：Sideloadly 冷启动要先 `Initializing Anisette...`，
+  主窗口出现需 15~60s（旧脚本只等 10s ⇒ 必然误报「找不到窗口」）；
+  0.8.21→0.8.22 覆盖升级实测耗时 ~172s（旧脚本轮询上限 120s ⇒ 成功前一刻误报超时）。
+
 ## 2026-09-21 iPhone v0.8.22：换网段秒级自愈（补齐单播探测）+ 信标版本字段对齐（build 93）
 
 - **版本与安装对账**：iOS `0.8.22`（build 93，`ios/project.yml` 单一真源）。

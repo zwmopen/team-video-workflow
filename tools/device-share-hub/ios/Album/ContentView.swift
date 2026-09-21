@@ -399,9 +399,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// ① 分类与列表**并行**发出 —— 之前是串行，多一个网络往返；
     /// ② 已有数据时失败**不清屏、不弹错**，只发一条轻量 toast，保留快照；
     /// ③ 完全没有数据（首次冷启动 / 快照丢失）才走「错误 + auto-discover」老路径。
+    ///
+    /// 【DSH-081 / 0.8.23】判定「有没有数据」的时机被修正为**回包时刻**（见下方注释），
+    /// 且无数据时**先 toast + 自愈、自愈失败才弹窗**，消除电脑换网段后的假弹窗。
     private func loadOnlineData(silent: Bool = false) {
-        let hadData = !onlineWorks.isEmpty
-
         let group = DispatchGroup()
         var catResult: Result<OnlineCategoriesResult, Error>? = nil
         var workResult: Result<[OnlineWorkEntry], Error>? = nil
@@ -430,18 +431,28 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 self.onlineWorks = works
                 self.renderOnlineUI()
             case .failure(let err)?:
-                if hadData {
+                // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
+                // 冷启动时本地快照 `loadOnlineSnapshot()` 是**异步后到**的：请求发出瞬间
+                // onlineWorks 还是空的，快照随后才填上并渲染出列表。旧写法把判定提前到了
+                // 请求前，于是出现「列表已经好好显示着 401 套作品，却弹出阻塞式
+                // 拉取在线相册失败」——2026-09-21 真机复现（iPhone 12 / iOS 0.8.22）。
+                if !self.onlineWorks.isEmpty {
                     // 有快照 / 旧数据：保留用户已经看到的列表，只做软提示 —— 与安卓「失败不清屏」一致
                     let msg = err.localizedDescription.isEmpty ? "网络超时" : err.localizedDescription
                     self.showToast("⚠️ 刷新失败：\(msg)（已保留上次内容）")
                     self.renderOnlineUI()
                 } else {
-                    // 完全没有数据（首次冷启动或快照损坏）：走老路径弹错误并 auto-discover
-                    if !silent {
-                        self.showError("拉取在线相册失败：\(err.localizedDescription)\n正在自动搜索局域网内的电脑在线相册…")
-                    }
+                    // 完全没有数据（首次冷启动或快照损坏）：先走**非阻塞**提示并立刻自愈，
+                    // 只有自愈也失败才升级为阻塞弹窗 —— 电脑换网段/IP 这一常见场景从此不再弹错。
+                    let msg = err.localizedDescription.isEmpty ? "网络超时" : err.localizedDescription
                     self.renderOnlineUI()
-                    self.tryAutoDiscoverPc()
+                    if silent {
+                        // 静默刷新（viewWillAppear / 定时器）：连 toast 都不发，但自愈照跑。
+                        self.tryAutoDiscoverPc()
+                    } else {
+                        self.showToast("⚠️ 正在搜索电脑在线相册…")
+                        self.tryAutoDiscoverPc(alertOnFailure: "拉取在线相册失败：\(msg)")
+                    }
                 }
             case .none:
                 break
@@ -456,29 +467,44 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// ① `probeBeacon`：广播探测电脑信标端口（UDP 45832），电脑收到立刻单播回它**当前**的地址，
     ///    通常 1 秒内命中 —— 电脑换网段/IP 后也能秒级跟上，不再让用户长时间看「拉取失败」；
     /// ② `discover`：整段 /24 单播扫描兜底（20 秒预算），只在快轨没回应时才跑。
-    private func tryAutoDiscoverPc() {
-        if autoDiscovering { return }
-        if Date().timeIntervalSince(lastAutoDiscoverAt) < 15 { return }
+    ///
+    /// - Parameter alertOnFailure: 非 nil 时表示「这次自愈是用户可见失败的兜底」：
+    ///   自愈最终也没找到电脑、或自愈压根没跑起来（冷却/在途），才弹阻塞弹窗。
+    private func tryAutoDiscoverPc(alertOnFailure: String? = nil) {
+        // 自愈没能真正开跑（上一次还在跑 / 15 秒冷却内）时，不能把错误吞掉 —— 直接如实告知。
+        if autoDiscovering {
+            if let message = alertOnFailure { showError(message) }
+            return
+        }
+        if Date().timeIntervalSince(lastAutoDiscoverAt) < 15 {
+            if let message = alertOnFailure { showError(message) }
+            return
+        }
         lastAutoDiscoverAt = Date()
         autoDiscovering = true
         LanDiscovery.shared.probeBeacon { [weak self] probed in
             guard let self = self else { return }
             if let url = probed {
-                self.finishAutoDiscover(url: url, viaBeacon: true)
+                self.finishAutoDiscover(url: url, viaBeacon: true, alertOnFailure: alertOnFailure)
                 return
             }
             LanDiscovery.shared.discover { [weak self] found in
                 guard let self = self else { return }
-                self.finishAutoDiscover(url: found, viaBeacon: false)
+                self.finishAutoDiscover(url: found, viaBeacon: false, alertOnFailure: alertOnFailure)
             }
         }
     }
 
-    private func finishAutoDiscover(url: String?, viaBeacon: Bool) {
+    private func finishAutoDiscover(url: String?, viaBeacon: Bool, alertOnFailure: String? = nil) {
         autoDiscovering = false
         guard isOnlineMode else { return }
-        guard let url else {
-            showToast("暂未搜索到电脑在线相册，可稍后再试")
+        guard let url = url else {
+            // 只有「自愈也彻底失败」才允许弹阻塞弹窗；普通场景一律用轻量 toast。
+            if let message = alertOnFailure {
+                showError(message + "\n暂未搜索到局域网内的电脑在线相册，请确认手机与电脑在同一 Wi-Fi。")
+            } else {
+                showToast("暂未搜索到电脑在线相册，可稍后再试")
+            }
             return
         }
         showToast(viaBeacon ? "✅ 已定位电脑相册服务 \(url)" : "✅ 已自动发现电脑相册服务 \(url)")
