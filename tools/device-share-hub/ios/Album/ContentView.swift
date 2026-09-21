@@ -740,8 +740,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     ///    旧实现只 `entry.images.first`，导致跳到小红书/抖音后只有一张图。
     private func shareOnline(_ entry: OnlineWorkEntry, item: AvailableCopyPlatform, source: UIView?) {
         let textToCopy = item.copyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !textToCopy.isEmpty else {
-            showError("该在线作品文案缺失，已禁止分发。")
+        // 【深度防御】与 Android `handleOnlineWorkUse` 1:1 对齐：判据是「实质字数 < 30」，
+        // 不是 `isEmpty` —— 骨架文案（标记齐全但正文全是填写说明）也拦得住。
+        guard !PlatformCopyParser.isCopySubstanceMissing(item.copyText) else {
+            showError("⚠️ 该作品文案缺失（空壳作品），已阻止分发")
             return
         }
         UIPasteboard.general.string = textToCopy
@@ -1472,9 +1474,14 @@ private final class WorkCell: UICollectionViewCell {
 
     private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
         let platforms = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
+        // 【文案缺失守卫】与 Android `onlineWorkCard` 1:1 对齐：剔除 `<<<…>>>` 后实质
+        // 字数不足 30 视为空壳作品 —— 不渲染任何可点击文案按钮（防止骨架/兜底冒充
+        // 真实文案），改为置灰标红占位；分享入口再做一次深度防御（见 shareOnline）。
+        let copyMissing = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
         // 在线作品不做「乐观置灰」：使用次数只决定是否出现「重置」按钮。
-        rebuildPlatformButtons(platforms, isOptimistic: { _ in false },
+        rebuildPlatformButtons(copyMissing ? [] : platforms, isOptimistic: { _ in false },
                                action: #selector(platformButtonTapped(_:)))
+        if copyMissing { platformRow.addArrangedSubview(makeCopyMissingButton()) }
         rebuildActionRow()
         if entry.useCount > 0 { actionRow.addArrangedSubview(resetButton) }
         actionRow.addArrangedSubview(deleteButton)
@@ -1487,6 +1494,24 @@ private final class WorkCell: UICollectionViewCell {
         resetButton.addTarget(self, action: #selector(onlineResetTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
         copyPathButton.addTarget(self, action: #selector(onlineCopyPathTapped), for: .touchUpInside)
+    }
+
+    /// 空壳作品占位按钮：文案与 Android `onlineWorkCard` 的不可点击占位**逐字一致**，
+    /// 保证两端「有按钮 / 没按钮」的观感也一致。
+    private func makeCopyMissingButton() -> UIButton {
+        let missing = UIButton(type: .system)
+        missing.setTitle("⚠️ 文案缺失（空壳作品，不可分发）", for: .normal)
+        missing.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        missing.setTitleColor(.systemRed, for: .normal)
+        missing.isEnabled = false
+        missing.alpha = 0.55
+        missing.backgroundColor = AppColors.secondaryBackground
+        missing.layer.cornerRadius = 8
+        missing.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        missing.translatesAutoresizingMaskIntoConstraints = false
+        missing.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        missing.accessibilityLabel = "该在线作品文案缺失，已禁止分发"
+        return missing
     }
 
     /// 按解析结果**动态**创建平台按钮，数量不限（V4.5 多版本文案为 11 个）。

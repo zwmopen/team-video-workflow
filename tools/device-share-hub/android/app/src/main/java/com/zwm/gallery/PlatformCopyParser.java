@@ -11,6 +11,13 @@ final class PlatformCopyParser {
     private static final String HEADER_V2 = "<<<COPY_FORMAT:2>>>";
     private static final String HEADER_V3 = "<<<COPY_FORMAT:3>>>";
     private static final String HEADER_MULTI = "<<<COPY_FORMAT:MULTI>>>";
+    /** 匹配任意协议标记（COPY_FORMAT / _START / _END / VERSION_START 等）。
+     *
+     * <p>刻意写成 `&lt;&lt;+[^&lt;&gt;]*&gt;&gt;+`（开头 2+ 个 `&lt;`、结尾 2+ 个 `&gt;`）：
+     * 磁盘上确实存在**畸形标记** —— Codex 产线把 `&lt;&lt;&lt;DOUYIN_END&gt;&gt;&gt;` 写成了
+     * `&lt;&lt;&lt;DOUYIN_END&gt;&gt;`（少一个 `&gt;`，实测 9 份）。要求正好三个 `&gt;` 的正则识别不了它。
+     */
+    private static final Pattern ANY_MARKER_PATTERN = Pattern.compile("<<+[^<>]*>>+");
     private PlatformCopyParser() { }
 
     private static final Pattern GENERIC_BLOCK_PATTERN =
@@ -85,7 +92,9 @@ final class PlatformCopyParser {
                 || text.contains(HEADER_MULTI) || text.contains("<<<VERSION_START:")
                 || text.contains("_START>>>");
         if (!isProtocol) {
-            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布", text.trim()));
+            // 【2026-09-21 修复】兜底文案也必须剥净 `<<<…>>>`，否则非标准标记会被原样带进剪贴板。
+            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布",
+                    stripProtocolMarkers(text).trim()));
         }
 
         // Priority 1: Multi-version syntax (<<<VERSION_START:4字版本名>>> ... <<<VERSION_END>>>)
@@ -93,7 +102,7 @@ final class PlatformCopyParser {
         Matcher vMatcher = VERSION_BLOCK_PATTERN.matcher(text);
         while (vMatcher.find()) {
             String vname = vMatcher.group(1).trim();
-            String content = stripOuterLineBreaks(vMatcher.group(2));
+            String content = stripProtocolMarkers(stripOuterLineBreaks(vMatcher.group(2)));
             if (!content.trim().isEmpty()) {
                 String label = friendlyLabelForMarker(vname);
                 Platform plat = ("抖音避坑".equals(label) || label.contains("抖音")) ? Platform.DOUYIN : Platform.GENERAL;
@@ -143,7 +152,7 @@ final class PlatformCopyParser {
                     || upper.equals("XHS_3") || upper.equals("WECHAT") || upper.equals("HR")) {
                 continue;
             }
-            String content = stripOuterLineBreaks(matcher.group(2));
+            String content = stripProtocolMarkers(stripOuterLineBreaks(matcher.group(2)));
             if (!content.trim().isEmpty()) {
                 String label = friendlyLabelForMarker(marker);
                 items.add(new AvailableItem(Platform.GENERAL, label, content));
@@ -151,9 +160,41 @@ final class PlatformCopyParser {
         }
 
         if (items.isEmpty()) {
-            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布", text.trim()));
+            // 【2026-09-21 修复】Codex 产线会产出「伪协议」文案：带 `<<<COPY_FORMAT:3>>>` 头，
+            // 正文却用 `【小红书自然种草版】` 之类中文标题分节、没有任何 `<<<XHS_START>>>` 标记。
+            // 此时落到这里，原先直接 `text.trim()` ⇒ 把 `<<<COPY_FORMAT:3>>>` 原样带进剪贴板
+            // （实测 46 份作品命中）。剥净标记后再兜底。
+            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布",
+                    stripProtocolMarkers(text).trim()));
         }
         return items;
+    }
+
+    /** 文本里是否含**任意** `<<<…>>>` 协议标记。
+     *
+     * <p>用来区分「旧版纯文案」（完全无标记，可按平台原样分发）与「协议文本但缺少该平台块」
+     * ——后者必须报缺失，绝不能把整篇原文塞给用户。
+     */
+    static boolean hasAnyProtocolMarker(String source) {
+        return source != null && ANY_MARKER_PATTERN.matcher(source).find();
+    }
+
+    /** 是否含 V4.5 多版本块（`<<<COPY_FORMAT:MULTI>>>` 或 `<<<VERSION_START:…>>>`）。 */
+    static boolean hasMultiVersionBlocks(String source) {
+        if (source == null) return false;
+        return source.contains(HEADER_MULTI) || source.contains("<<<VERSION_START:");
+    }
+
+    /** 剥掉全部 `<<<…>>>` 协议标记并收紧尾部换行，供兜底文案使用。 */
+    static String stripProtocolMarkers(String source) {
+        if (source == null) return "";
+        String clean = ANY_MARKER_PATTERN.matcher(stripBom(source)).replaceAll("");
+        int end = clean.length();
+        while (end > 0) {
+            char c = clean.charAt(end - 1);
+            if (c == '\n' || c == '\r') end--; else break;
+        }
+        return clean.substring(0, end);
     }
 
     static String extractPlatformCopy(String source, Platform platform) {
@@ -164,8 +205,13 @@ final class PlatformCopyParser {
     static Result parse(String source, Platform platform) {
         if (source == null) return new Result(Status.UNREADABLE, "");
         String text = stripBom(source);
+        // 【2026-09-21 修复】此前只要不含 V2/V3 头、也不含该平台固定标记，就无条件把
+        // **整篇原文**当成该平台文案返回：V4.5 多版本（`<<<COPY_FORMAT:MULTI>>>`）正是这种
+        // 形态 ⇒ 点任何平台按钮后，剪贴板里是含全部 `<<<VERSION_START:…>>>` 标记的整份原文
+        // （实测 80 份作品命中）。现在只有「完全不含任何协议标记」的旧版纯文案才原样返回。
         if (!text.contains(HEADER_V2) && !text.contains(HEADER_V3)
-                && !text.contains("<<<" + platform.marker + "_START>>>")) {
+                && !text.contains("<<<" + platform.marker + "_START>>>")
+                && !hasAnyProtocolMarker(text)) {
             return new Result(text.trim().isEmpty() ? Status.UNREADABLE : Status.OK, text);
         }
         Matcher matcher = platform.pattern.matcher(text);
@@ -190,7 +236,10 @@ final class PlatformCopyParser {
         }
         String value = stripOuterLineBreaks(matcher.group(1));
         if (value.trim().isEmpty()) return new Result(Status.UNREADABLE, "");
-        return new Result(Status.OK, value);
+        // 【2026-09-21 修复】不能假设磁盘上的标记一定规范：已发现 Codex 产线把结束标记
+        // 写成 `<<<DOUYIN_END>>`（只有两个 `>`），会被正则当成正文吞进来。
+        // 取出的正文再净化一次，保证剪贴板里永远不出现 `<<<…>>`。
+        return new Result(Status.OK, stripProtocolMarkers(value));
     }
 
     private static String stripBom(String value) {
@@ -211,6 +260,8 @@ final class PlatformCopyParser {
         clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_START>>>", "");
         clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_END>>>", "");
         clean = clean.replace(HEADER_V2, "").replace(HEADER_V3, "");
+        // 兜底：连同 MULTI 头、VERSION_START/END、任意自定义标记一并剥净。
+        clean = ANY_MARKER_PATTERN.matcher(clean).replaceAll("");
         // Remove hashtag topic tags commonly used in XHS
         clean = clean.replaceAll("#[^\\s#]+", "");
         // Remove XHS emoji tags like [打卡R] etc
@@ -224,7 +275,8 @@ final class PlatformCopyParser {
         String clean = stripBom(source);
         clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_START>>>", "");
         clean = clean.replaceAll("(?s)<<<[A-Za-z0-9_]+_END>>>", "");
-        clean = clean.replace(HEADER_V2, "").replace(HEADER_V3, "").trim();
+        clean = clean.replace(HEADER_V2, "").replace(HEADER_V3, "");
+        clean = ANY_MARKER_PATTERN.matcher(clean).replaceAll("").trim();
         return clean.isEmpty() ? source.trim() : clean;
     }
 

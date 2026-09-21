@@ -139,7 +139,7 @@ final class TrashViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         if isOnlineSection(section) {
-            return "点某一行即恢复。完整的删除 / 备注 / 复制路径请在在线模式下的「在线回收站」里操作。"
+            return "点某一行即恢复；左滑可彻底删除该记录。完整的删除 / 备注 / 复制路径请在在线模式下的「在线回收站」里操作。"
         }
         return "点某一行即恢复（撤销垃圾标记、次数归零）。左滑可填写垃圾备注（写入手机本地元数据）或复制文件夹路径。"
     }
@@ -196,7 +196,17 @@ final class TrashViewController: UITableViewController {
     /// 与在线回收站的行操作严格对齐：恢复（点行）/ 备注 / 复制路径。
     override func tableView(_ tableView: UITableView,
                             trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard !isOnlineSection(indexPath.section) else { return nil }
+        // 在线镜像区：与 Android `onlineTrashCard` 1:1 对齐 —— 除点行恢复外，
+        // 还提供「彻底删除」（带确认弹窗）。旧实现此处直接 return nil，属功能缺口。
+        if isOnlineSection(indexPath.section) {
+            let onlineItem = onlineTrashItems[indexPath.row]
+            let purge = UIContextualAction(style: .destructive, title: "彻底删除") { [weak self] _, _, done in
+                done(true)
+                self?.confirmPurgeOnlineTrash(onlineItem)
+            }
+            purge.backgroundColor = UIColor(red: 0.72, green: 0.18, blue: 0.16, alpha: 1)
+            return UISwipeActionsConfiguration(actions: [purge])
+        }
         let item = localItems[indexPath.row]
 
         let remark = UIContextualAction(style: .normal, title: item.isGarbage ? "改备注" : "备注") { [weak self] _, _, done in
@@ -212,6 +222,21 @@ final class TrashViewController: UITableViewController {
         copyPath.backgroundColor = UIColor(red: 0.42, green: 0.47, blue: 0.44, alpha: 1)
 
         return UISwipeActionsConfiguration(actions: [remark, copyPath])
+    }
+
+    // MARK: - 在线镜像区：彻底删除
+
+    /// 镜像区「彻底删除」：确认弹窗文案与 Android `onlineTrashCard` 逐字对齐。
+    private func confirmPurgeOnlineTrash(_ item: OnlineWorkLifecycle.Item) {
+        let alert = UIAlertController(title: "彻底删除",
+                                      message: "彻底删除后无法恢复，确定删除？",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
+            OnlineWorkLifecycle.deletePermanently(id: item.id)
+            self?.loadData()
+        })
+        present(alert, animated: true)
     }
 
     // MARK: - 备注 / 复制路径

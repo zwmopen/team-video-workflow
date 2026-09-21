@@ -31,6 +31,8 @@ public final class ShareActivity extends Activity {
     public static final String EXTRA_WORK_ID = "workId";
     public static final String EXTRA_IMAGE_NAMES = "imageNames";
     public static final String EXTRA_PLATFORM = "platform";
+    /** 调用方按按钮抽好的文案；存在时优先于按 platform 回查。 */
+    public static final String EXTRA_COPY_TEXT = "copyText";
     private static final int REQUEST_SHARE = 501;
     private static final String ACTION_TARGET_CHOSEN = "com.zwm.gallery.SHARE_TARGET_CHOSEN";
     private static final long CHOSEN_CALLBACK_GRACE_MS = 1_200L;
@@ -98,7 +100,13 @@ public final class ShareActivity extends Activity {
         worker.execute(() -> {
             try {
                 PlatformCopyParser.Platform selectedPlatform = platformFor(platform);
-                PlatformCopyParser.Result parsed = PlatformCopyParser.parse(work.text, selectedPlatform);
+                // 【2026-09-21 修复】优先使用调用方已按按钮抽好的文案。
+                // 多版本文案（MULTI）下 parse() 认不出「点的是哪一版」，只能报缺失/返原文；
+                // 由 MainActivity 直传成品文案，从构造上保证「按钮标签 == 剪贴板内容」。
+                String supplied = getIntent().getStringExtra(EXTRA_COPY_TEXT);
+                PlatformCopyParser.Result parsed = (supplied != null && !supplied.trim().isEmpty())
+                        ? new PlatformCopyParser.Result(PlatformCopyParser.Status.OK, supplied)
+                        : PlatformCopyParser.parse(work.text, selectedPlatform);
                 if (parsed.status == PlatformCopyParser.Status.MISSING) {
                     throw new IllegalStateException("当前作品未找到" + selectedPlatform.displayName + "文案");
                 }

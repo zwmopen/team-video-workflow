@@ -135,4 +135,96 @@ public final class PlatformCopyParserTest {
         assertEquals("抖音避坑", available.get(10).buttonLabel);
         assertEquals(PlatformCopyParser.Platform.DOUYIN, available.get(10).platform);
     }
+
+    /// 回归（2026-09-21）：MULTI 多版本文案既无 `COPY_FORMAT:2/3` 头、也无该平台固定标记，
+    /// 此前 `parse()` 会**整篇原文**返回 ⇒ 剪贴板里塞满 `<<<VERSION_START:…>>>`。
+    /// 现在必须不再返回任何协议标记。
+    @Test
+    public void multiVersionTextNeverLeaksMarkersThroughParse() {
+        String source = "<<<COPY_FORMAT:MULTI>>>\n"
+                + "<<<VERSION_START:数字爆款>>>\n甲文案\n<<<VERSION_END>>>\n"
+                + "<<<VERSION_START:案例背书>>>\n乙文案\n<<<VERSION_END>>>";
+        for (PlatformCopyParser.Platform platform : PlatformCopyParser.Platform.values()) {
+            PlatformCopyParser.Result res = PlatformCopyParser.parse(source, platform);
+            assertTrue("platform=" + platform + " 仍把协议标记放进了文案",
+                    !res.text.contains("<<<"));
+        }
+    }
+
+    /// 旧版纯文案（完全无标记）必须仍然按原样分发到各平台。
+    @Test
+    public void legacyTextStillReturnedVerbatim() {
+        String source = "旧格式第一行\n旧格式第二行";
+        assertEquals(source, PlatformCopyParser.parse(source, PlatformCopyParser.Platform.XHS).text);
+        assertEquals(source, PlatformCopyParser.parse(source, PlatformCopyParser.Platform.GENERAL).text);
+        assertTrue(!PlatformCopyParser.hasAnyProtocolMarker(source));
+    }
+
+    /// 回归（2026-09-21）：Codex「伪协议」文案（有 `COPY_FORMAT` 头、无任何平台标记）
+    /// 以前会走「发布」兜底并把 `<<<COPY_FORMAT:3>>>` 原样带进剪贴板（实测 46 份命中）。
+    @Test
+    public void pseudoProtocolCopyNeverLeaksHeader() {
+        String source = "<<<COPY_FORMAT:3>>>\n\n【小红书自然种草版】\n正文一\n\n【抖音玩法避坑版】\n正文二";
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertEquals(1, available.size());
+        assertEquals("发布", available.get(0).buttonLabel);
+        assertTrue("兜底文案仍带协议标记", !available.get(0).copyText.contains("<<<"));
+        assertTrue(available.get(0).copyText.contains("小红书自然种草版"));
+    }
+
+    /// 回归（2026-09-21）：磁盘上存在**畸形结束标记** `<<<DOUYIN_END>>`（少一个 `>`），
+    /// 会被块正则当成正文吞进来 ⇒ 剪贴板里出现 `<<<DOUYIN_END>>`。
+    @Test
+    public void malformedEndMarkerIsStrippedFromExtractedCopy() {
+        String source = "<<<COPY_FORMAT:3>>>\n<<<DOUYIN_START>>>\n口播正文\n<<<DOUYIN_END>>\n尾巴\n<<<DOUYIN_END>>>";
+        PlatformCopyParser.Result douyin = PlatformCopyParser.parse(source, PlatformCopyParser.Platform.DOUYIN);
+        assertTrue(douyin.isOk());
+        assertTrue("畸形标记漏进正文: " + douyin.text, !douyin.text.contains("<<<"));
+        assertTrue(douyin.text.contains("口播正文"));
+    }
+
+    /// 兜底合成必须剥净 MULTI 头与 VERSION 块，不能只剥一半。
+    @Test
+    public void synthesizeStripsEveryProtocolMarker() {
+        String source = "<<<COPY_FORMAT:MULTI>>>\n"
+                + "<<<VERSION_START:数字爆款>>>\n甲文案\n<<<VERSION_END>>>\n"
+                + "<<<XHS_START>>>\n乙文案\n<<<XHS_END>>>";
+        assertTrue(PlatformCopyParser.hasMultiVersionBlocks(source));
+        assertTrue(!PlatformCopyParser.stripProtocolMarkers(source).contains("<<<"));
+        assertTrue(!PlatformCopyParser.synthesizeDouyinCopy(source).contains("<<<"));
+        assertTrue(!PlatformCopyParser.synthesizeOutlineCopy(source).contains("<<<"));
+    }
+
+    /// 回归（2026-09-21 / DSH-087）：`parseAvailablePlatforms` 是本地卡与在线卡共用的出口，
+    /// 四个 copyText 出口必须逐个净化（iOS 侧曾整批漏掉，两端移植不对齐）。
+    @Test
+    public void malformedEndMarkerIsStrippedFromAvailablePlatforms() {
+        String source = "<<<COPY_FORMAT:3>>>\n<<<DOUYIN_START>>>\n口播正文\n<<<DOUYIN_END>>\n尾巴\n<<<DOUYIN_END>>>";
+        java.util.List<PlatformCopyParser.AvailableItem> available =
+                PlatformCopyParser.parseAvailablePlatforms(source);
+        assertTrue(!available.isEmpty());
+        for (PlatformCopyParser.AvailableItem item : available) {
+            assertTrue(item.buttonLabel + " 漏标记: " + item.copyText,
+                    !item.copyText.contains("<<<"));
+        }
+    }
+
+    /// 回归（2026-09-21 / DSH-087）：自定义标记块与多版本块两条出口都不得漏标记。
+    /// 与 iOS `testCustomAndMultiBlockCopyNeverLeakMarkers` 对齐。
+    @Test
+    public void customAndMultiBlockCopyNeverLeakMarkers() {
+        String custom = "<<<COPY_FORMAT:3>>>\n<<<VERSION_4_START>>>\n备用文案\n<<<BOGUS_END>>\n尾\n<<<VERSION_4_END>>>";
+        java.util.List<PlatformCopyParser.AvailableItem> customItems =
+                PlatformCopyParser.parseAvailablePlatforms(custom);
+        assertTrue(!customItems.isEmpty());
+        for (PlatformCopyParser.AvailableItem item : customItems) {
+            assertTrue("自定义标记块漏标记: " + item.copyText, !item.copyText.contains("<<<"));
+        }
+        String multi = "<<<COPY_FORMAT:MULTI>>>\n"
+                + "<<<VERSION_START:数字爆款>>>\n甲文案\n<<<VERSION_END>>\n尾巴\n<<<VERSION_END>>>";
+        for (PlatformCopyParser.AvailableItem item : PlatformCopyParser.parseAvailablePlatforms(multi)) {
+            assertTrue("多版本块漏标记: " + item.copyText, !item.copyText.contains("<<<"));
+        }
+    }
 }

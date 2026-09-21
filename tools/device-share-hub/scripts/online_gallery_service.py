@@ -841,6 +841,15 @@ class WorkScanner:
             self._stage_cache[folder_name] = (now, out)
         return out
 
+    def invalidate_stage_cache(self) -> None:
+        """作废回收站两个 Tab 的 5 秒缓存。
+
+        任何会改变阶段库内容的入口（重置 / 删除 / 使用）改完磁盘后都应调用，
+        否则手机端紧接着的那次列表请求会拿到陈旧值。
+        """
+        with self._lock:
+            self._stage_cache.clear()
+
     def resolve_stage_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         """在三个阶段库（已发送0次 / _已发送1次 / _垃圾作品）里按 id 定位作品。"""
         work_id = (work_id or "").strip()
@@ -945,6 +954,12 @@ class WorkScanner:
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
         with self._lock:
+            if force:
+                # 【2026-09-21 修复】force 的语义是「磁盘已变，缓存一律作废」。
+                # 此前只清 _cached_works / _last_scan_time，漏了 _stage_cache
+                # （回收站两个 Tab 的 5 秒缓存）⇒ 手机端点「重置」后立刻重拉列表，
+                # 仍拿到 useCount=1 的旧值，表现为「重置失败」（5 秒后又自己好）。
+                self._stage_cache.clear()
             if not force and self._cached_works and (now - self._last_scan_time < 5.0):
                 return self._cached_works
 
@@ -1662,6 +1677,67 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
 
+    def _move_work_to_stage0(self, target_work: Dict[str, Any]) -> Tuple[bool, str, str]:
+        """把作品从「_已发送1次」移回「已发送0次」——「重置使用状态」的另一半。
+
+        【2026-09-21 修复】此前 /api/online/reset-work 只把 useCount 归零、**不移动目录**，
+        结果作品永远挂在「已使用」Tab，主页「全部」里也找不到它，与提示语
+        「重置为待首发状态」不符。失败不致命：调用方仍返回「计数已归零」。
+        """
+        src_path = target_work["path"]
+        folder_name = os.path.basename(src_path)
+        work_id = target_work.get("id", "")
+        root_dir = self.scanner.root
+        dest_base = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
+        os.makedirs(dest_base, exist_ok=True)
+
+        target_dest = os.path.join(dest_base, folder_name)
+        if os.path.abspath(target_dest) == os.path.abspath(src_path):
+            return True, src_path, "作品已位于「已发送0次（抖音小红书可发）」"
+        if os.path.exists(target_dest):
+            ts_suffix = time.strftime("%Y%m%d_%H%M%S")
+            target_dest = os.path.join(dest_base, f"{folder_name}_{ts_suffix}")
+
+        move_err = None
+        for _attempt in range(3):
+            try:
+                shutil.move(src_path, target_dest)
+                move_err = None
+                break
+            except Exception as e:
+                move_err = e
+                time.sleep(0.3)
+
+        if move_err is not None:
+            try:
+                shutil.copytree(src_path, target_dest, dirs_exist_ok=True)
+                shutil.rmtree(src_path, ignore_errors=True)
+                move_err = None
+            except Exception as e2:
+                move_err = e2
+
+        if move_err is not None:
+            return False, src_path, f"物理移动失败: {str(move_err)}"
+
+        target_work["path"] = target_dest
+        self.scanner._moved_works[work_id] = target_work
+
+        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+        try:
+            header_needed = not os.path.exists(log_file)
+            row_ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            row = f"{row_ts},(重置按钮),{work_id},{src_path},{target_dest},0,reset_to_stage0"
+            with open(log_file, "a", encoding="utf-8-sig") as fp:
+                if header_needed:
+                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
+                fp.write(row + "\n")
+        except Exception:
+            pass
+
+        return True, target_dest, "已移回「已发送0次（抖音小红书可发）」"
+
     def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "") -> Tuple[bool, str, str]:
         """
         未发送作品的人工判定删除：物理移入垃圾样本库「_垃圾作品（后续参考分析）」，
@@ -2183,8 +2259,33 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"Error resetting manifest: {e}")
 
+            # 【2026-09-21 修复②】「重置」的另一半：把作品从「_已发送1次」移回「已发送0次」。
+            # 只对确实位于「_已发送1次」的作品回迁；垃圾库/已在待发区的作品不动，避免误挪。
+            moved = False
+            move_message = ""
+            new_path = dir_path
+            try:
+                stage1_base = os.path.join(self.scanner.root, self.scanner.STAGE1_FOLDER)
+                if os.path.abspath(dir_path).startswith(os.path.abspath(stage1_base)):
+                    moved, new_path, move_message = self._move_work_to_stage0(target_work)
+                else:
+                    move_message = "作品不在「_已发送1次」，跳过回迁"
+            except Exception as move_ex:
+                move_message = f"回迁异常（计数已归零，不影响重置结果）: {move_ex}"
+
+            # 【2026-09-21 修复①】force 扫描 + 显式作废阶段库缓存：
+            # 手机端重置后会立刻重拉 /api/online/recycle，若不清 _stage_cache 会拿到
+            # 5 秒内的旧值（useCount=1）⇒ 表现为「重置失败」。
             self.scanner.scan(force=True)
-            self.send_json(200, {"ok": True, "workId": work_id, "useCount": 0, "message": "已重置为待首发状态"})
+            self.scanner.invalidate_stage_cache()
+            self.send_json(200, {
+                "ok": True,
+                "workId": work_id,
+                "useCount": 0,
+                "moved": moved,
+                "newPath": new_path,
+                "message": "已重置为待首发状态" + (f"；{move_message}" if move_message else ""),
+            })
             return
 
         if path in ("/api/online/delete-work", "/api/online/delete"):

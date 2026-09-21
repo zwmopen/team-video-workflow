@@ -116,4 +116,82 @@ final class PlatformCopyParserTests: XCTestCase {
         XCTAssertEqual(available[0].copyText, "甲文案")
         XCTAssertEqual(available[1].copyText, "乙文案")
     }
+
+    /// 回归（2026-09-21）：MULTI 多版本文案经 `parse()` 时不得再整篇原文返回，
+    /// 否则剪贴板里会塞满 `<<<VERSION_START:…>>>`（与 Android 同源缺陷）。
+    func testMultiVersionTextNeverLeaksMarkersThroughParse() {
+        let source = "<<<COPY_FORMAT:MULTI>>>\n"
+            + "<<<VERSION_START:数字爆款>>>\n甲文案\n<<<VERSION_END>>>\n"
+            + "<<<VERSION_START:案例背书>>>\n乙文案\n<<<VERSION_END>>>"
+        for platform in CopyPlatform.allCases {
+            let res = PlatformCopyParser.parse(source, platform: platform)
+            XCTAssertFalse(res.text.contains("<<<"), "\(platform) 仍把协议标记放进了文案")
+        }
+        XCTAssertTrue(PlatformCopyParser.containsProtocolMarker(source))
+    }
+
+    /// 回归（2026-09-21）：磁盘上存在**畸形结束标记** `<<<DOUYIN_END>>`（少一个 `>`），
+    /// 会被块正则当成正文吞进来 ⇒ 剪贴板里出现 `<<<DOUYIN_END>>`（实测 9 份作品命中）。
+    func testMalformedEndMarkerIsStrippedFromExtractedCopy() {
+        let source = "<<<COPY_FORMAT:3>>>\n<<<DOUYIN_START>>>\n口播正文\n<<<DOUYIN_END>>\n尾巴\n<<<DOUYIN_END>>>"
+        let douyin = PlatformCopyParser.parse(source, platform: .douyin)
+        XCTAssertTrue(douyin.isOK)
+        XCTAssertFalse(douyin.text.contains("<<<"), "畸形标记漏进正文: \(douyin.text)")
+        XCTAssertTrue(douyin.text.contains("口播正文"))
+        XCTAssertTrue(douyin.text.contains("尾巴"))
+        XCTAssertTrue(PlatformCopyParser.containsProtocolMarker(source))
+    }
+
+    /// 旧版纯文案（完全无标记）必须仍然原样返回，不得被误判成不可读。
+    func testLegacyTextStillReturnedVerbatimForEveryPlatform() {
+        let source = "旧格式第一行\n旧格式第二行"
+        for platform in CopyPlatform.allCases {
+            XCTAssertEqual(PlatformCopyParser.parse(source, platform: platform).text, source)
+        }
+        XCTAssertFalse(PlatformCopyParser.containsProtocolMarker(source))
+    }
+
+    // MARK: - DSH-087：`parseAvailablePlatforms` 出口净化
+
+    /// 回归（2026-09-21 / DSH-087）：`parseAvailablePlatforms` 是**本地卡与在线卡共用**的
+    /// 出口（ContentView:1282 `CopyParserCache` / ContentView:1474 `configureOnlineButtons`）。
+    /// 此前它的 4 个 copyText 出口一处都没过净化，而 Android 同函数全过了
+    /// ⇒ iOS 用户点文案按钮会拿到带 `<<<COPY_FORMAT:…>>>` 的文本（两端移植不对齐）。
+    func testPseudoProtocolFallbackNeverLeaksHeader() {
+        let source = "<<<COPY_FORMAT:3>>>\n\n【小红书自然种草版】\n正文一\n\n【抖音玩法避坑版】\n正文二"
+        let available = PlatformCopyParser.parseAvailablePlatforms(source)
+        XCTAssertEqual(available.count, 1)
+        XCTAssertEqual(available[0].buttonLabel, "发布")
+        XCTAssertFalse(available[0].copyText.contains("<<<"),
+                       "兜底文案仍带协议标记: \(available[0].copyText)")
+        XCTAssertTrue(available[0].copyText.contains("小红书自然种草版"))
+    }
+
+    /// 回归（2026-09-21 / DSH-087）：块正文里的**畸形标记**（`<<<DOUYIN_END>>` 少一个 `>`）
+    /// 会被块正则当成正文吞进来，`parseAvailablePlatforms` 必须再剥一道。
+    func testMalformedMarkerIsStrippedFromAvailablePlatforms() {
+        let source = "<<<COPY_FORMAT:3>>>\n<<<DOUYIN_START>>>\n口播正文\n<<<DOUYIN_END>>\n尾巴\n<<<DOUYIN_END>>>"
+        let available = PlatformCopyParser.parseAvailablePlatforms(source)
+        XCTAssertFalse(available.isEmpty)
+        for item in available {
+            XCTAssertFalse(item.copyText.contains("<<<"),
+                           "\(item.buttonLabel) 漏标记: \(item.copyText)")
+        }
+    }
+
+    /// 回归（2026-09-21 / DSH-087）：自定义标记块与多版本块两条出口都不得漏标记。
+    /// 与 Android `customAndMultiBlockCopyNeverLeakMarkers` 对齐。
+    func testCustomAndMultiBlockCopyNeverLeakMarkers() {
+        let custom = "<<<COPY_FORMAT:3>>>\n<<<VERSION_4_START>>>\n备用文案\n<<<BOGUS_END>>\n尾\n<<<VERSION_4_END>>>"
+        let customItems = PlatformCopyParser.parseAvailablePlatforms(custom)
+        XCTAssertFalse(customItems.isEmpty)
+        for item in customItems {
+            XCTAssertFalse(item.copyText.contains("<<<"), "自定义标记块漏标记: \(item.copyText)")
+        }
+        let multi = "<<<COPY_FORMAT:MULTI>>>\n"
+            + "<<<VERSION_START:数字爆款>>>\n甲文案\n<<<VERSION_END>>\n尾巴\n<<<VERSION_END>>>"
+        for item in PlatformCopyParser.parseAvailablePlatforms(multi) {
+            XCTAssertFalse(item.copyText.contains("<<<"), "多版本块漏标记: \(item.copyText)")
+        }
+    }
 }

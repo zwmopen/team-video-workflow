@@ -4,7 +4,211 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-083**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-088**。
+
+## DSH-088 三端功能对等缺口：iOS 少「空壳守卫」与「在线镜像区彻底删除」，空壳判定正则两端还写了两个版本（2026-09-21 修复）
+
+- **现象**（用户原话）：
+  「不管 iOS 还是安卓，双端的功能一定要差不多。不能只测试一个不测试另一个，或者出现一个有按钮、
+  另一个没有按钮的情况。……这块你可以再检查一下。」「至于电脑客户端，需要和手机端联动……
+  也就是所谓开发是『三端同步』。」
+  即：**同一功能集合必须三端齐**，允许布局代码不同，不允许「一端有按钮、另一端没有」。
+- **环境**：`tools/device-share-hub` 三端真源 —— Android `MainActivity.java`、
+  iOS `Album/{ContentView,TrashView,PlatformCopyParser}.swift`、
+  电脑端 `scripts/online_gallery_service.py`（端口 45835）。
+- **根因（逐项机读核查后只发现三处，全在「能力集合」层面）**：
+  1. **G1｜iOS 完全没有「空壳作品」守卫**。Android 早有
+     `isCopySubstanceMissing()`（剥协议标记与 `[\s\u2800]` 后实质字数 < 30）：
+     在线卡渲染时把平台按钮整排换成**置灰占位按钮**，分享入口 `openShare` 也拦。
+     iOS 侧 **两处都没有**：`configureOnlineButtons` 照常铺平台按钮，
+     `shareOnline` 只判 `textToCopy.isEmpty` ⇒ **空壳作品在 iPhone 上仍可点、仍可分发**。
+  2. **G2｜iOS「本地回收站·在线作品镜像区」左滑直接 `return nil`**。Android `onlineTrashCard`
+     提供「恢复 + 彻底删除（带二次确认）」，iOS 该区域**只能点行恢复**，
+     **没有彻底删除入口** ⇒ 一条错误镜像记录在 iPhone 上永远删不掉。
+  3. **G3｜空壳判定的标记正则两端写了两个版本**。Android 用 `<<<[^>]*>>>`，
+     而真库里存在把结束标记写坏成 `<<<DOUYIN_END>>`（只有两个 `>`）的文案，
+     该正则**完全匹配不到** ⇒ 两端对同一份文本会得出不同的「实质字数」。
+- **证据**：
+  1. 新增**三端对等核查器** `_parity_audit/audit_three_end_parity.py`，分三段输出：
+     【A】按函数体花括号配对抽**按钮/操作清单**；【B】**电脑端路由 vs 两端调用集合**；
+     【C】**对等契约逐字一致性闸门**（7 项字面量必须两端逐字相同）。
+  2. **闸门双向 A/B（本次补做的关键一步）**：
+     * 用 `_parity_audit/pre_fix/` 的修前副本跑（`--and-main` / `--ios-parser` /
+       `--ios-content` / `--ios-trash` 四路覆盖）：
+       **7 项契约全不一致 → FAIL，退出码 1**；
+     * 跑真源：**7 项全一致 → PASS，退出码 0**。
+     即闸门**确实会响**，不是常亮绿灯。
+  3. **正则变更不误伤取证** `_parity_audit/substance_ab.py`：对全库 **642 份** `文案.txt`
+     分别用新旧正则计算「实质字数」，**跨过 30 字判线的 = 0 份** ⇒ 修 G3 不会把任何
+     合格作品误判为空壳，也不会放过任何空壳。
+  4. **接口面（B 段）结论**：PC 提供 16 条路由；两端调用集合**完全一致**（11 个接口）；
+     仅 PC 单方的 4 条（`authorized-devices` / `delete` / `phones` / `sync-phone-counts`）
+     属管理面与工作台扫描，**不是客户端功能缺口**。此前一度以为「iOS 只调 2 条」是 grep
+     模式过窄的假象（`api/online` 宽松匹配后纠正）。
+- **修复**（iOS 0.8.28 / build 99；Android 0.8.47 / versionCode 158）：
+  - `PlatformCopyParser.swift`（+1175 B）：新增 `copySubstance(_:)` / `isCopySubstanceMissing(_:)`，
+    正则与阈值与 Android 逐字一致。
+  - `ContentView.swift`（+1851 B）：`configureOnlineButtons` 空壳时改铺
+    `makeCopyMissingButton()`（`⚠️ 文案缺失（空壳作品，不可分发）`、红色、`isEnabled=false`、`alpha=0.55`）；
+    `shareOnline` 增加 `isCopySubstanceMissing` 拦截（`⚠️ 该作品文案缺失（空壳作品），已阻止分发`）。
+  - `TrashView.swift`（+1433 B）：在线镜像区左滑返回 `[purge]`（`彻底删除`），
+    新增 `confirmPurgeOnlineTrash(_:)`（弹窗 `彻底删除` / `彻底删除后无法恢复，确定删除？` →
+    `OnlineWorkLifecycle.deletePermanently`），页脚同步补「左滑可彻底删除该记录」。
+  - `MainActivity.java`（+334 B，仅 G3）：`copySubstance()` 正则改为 `<<+[^<>]*>>+`。
+- **回归要求**：
+  1. 任何改动手机端 UI 或解析器的提交，必须跑**三端对等核查器**并确认
+     【C】段 `不一致 0 项`、退出码 0；
+  2. 新增/修改任何**两端同名能力**（按钮文案、阈值、正则、弹窗文案）必须**先改闸门的契约项、
+     再加实现**，否则等于没有闸门；
+  3. 闸门自身每次改动都要做**修前副本 A/B**（FAIL→PASS），防止退化成常亮绿灯；
+  4. 改动 `PlatformCopyParser` 仍须叠加 **DSH-087 的出口对齐检查器** 与 **Java 验证工程 32 项**。
+
+## DSH-087 iOS `parseAvailablePlatforms` 四个文案出口整批漏净化：修完 DSH-085 后，iOS 点按钮仍会带标记（2026-09-21 修复）
+
+- **现象**：DSH-085 只修了 `parse()` 与 `enrichPlatformSuite` 两条路径；**iPhone 上点文案按钮仍然可能
+  拿到带 `<<<COPY_FORMAT:3>>>` 的文本**。用户在真机上的原始主诉正是「手机在线相册点那个按钮会复制
+  很多其他标识符分割符号」。
+- **环境**：iOS `Album/PlatformCopyParser.swift::parseAvailablePlatforms`；调用方**同时**是
+  本地卡（`ContentView.swift:1282` `CopyParserCache.platforms(for:)`，读磁盘 txt）与
+  在线卡（`ContentView.swift:1474` `configureOnlineButtons(_:)`）。
+- **根因**：同一函数在两端**移植不对齐**。该函数有 4 个构造 `copyText` 的出口：
+  ①非协议文本兜底「发布」②`<<<VERSION_START:…>>>` 块正文 ③自定义标记块正文 ④伪协议「发布」兜底。
+  Android 4 个出口**全部**过 `stripProtocolMarkers(...)`；**iOS 4 个出口一处都没过**
+  ⇒ 畸形标记（`<<<X_END>>`，只有两个 `>`）与伪协议头会原样进剪贴板。
+- **证据**：
+  1. 新增**出口对齐检查器** `_parser_exit_parity/check_parser_exit_parity.py`：不翻译、不编译，直接按
+     花括号作用域解析真源文件里的 `new AvailableItem(` / `AvailableCopyPlatform(` 构造点。
+     **修前副本 FAIL：iOS 10 个出口中 4 个违规、Android 10 个出口 0 违规**；
+     **修后 PASS：两端各 10 个出口 0 违规**（`--swift pre_fix/PlatformCopyParser.swift` 可复现修前状态）。
+  2. Java 验证工程断言由 26 项扩到 **32 项**（新增「畸形标记块出口」「自定义标记块出口」「多版本块内畸形标记」），
+     真库 **642 份** `文案.txt` 驱动真代码：**32 PASS / 0 FAIL、脏 0**；
+     错误版本 `--break-guard`：**4 FAIL**（闸门确实会响）。
+  3. 真机侧核对：iPhone 12（iOS 26.6，USB）装机版本为 **0.8.25 / build 96**（不含任何本轮修复）；
+     本次改动落在 **0.8.27 / build 98**，须重新构建侧载后才能做真机验收。
+- **修复**（iOS 0.8.27 / 98；Android **无需改动**——原本已对齐）：
+  四个出口全部包一层 `strippingProtocolMarkers(...)`；两处兜底的 `text.trimmed` 改为
+  `strippingProtocolMarkers(text).trimmingCharacters(in: .whitespacesAndNewlines)`。
+  同步新增 3 个 XCTest + 2 个 JUnit 用例，两端用例名**一一对应**：
+  `testPseudoProtocolFallbackNeverLeaksHeader` /
+  `testMalformedMarkerIsStrippedFromAvailablePlatforms` /
+  `testCustomAndMultiBlockCopyNeverLeakMarkers`（JUnit 侧为 `customAndMultiBlockCopyNeverLeakMarkers`）。
+- **回归要求**：
+  1. 任何改动 `PlatformCopyParser` 的提交，必须跑**出口对齐检查器**（应 PASS）与 **Java 验证工程**
+     （应 32 PASS / 0 FAIL / 脏 0），并在**错误版本**下确认会 FAIL；
+  2. 新增任何 `copyText` 出口，必须同时给 Android 与 iOS 补净化 + 同名对应用例；
+  3. iOS 侧 Swift 单测必须在 Xcode 跑（本机无 Swift 编译器 ⇒ 检查器只能证明**结构对齐**，
+     不能替代单测与真机截图）。
+
+## DSH-086 在线相册「重置」按钮点下去像失败：5 秒缓存没清 + 作品从未移回待发区（2026-09-21 修复）
+
+- **现象**（用户原话）：「手机在线相册点击那个重置按钮会失败，BUG。」
+  实际服务端返回 `HTTP 200 {"ok":true,"useCount":0}`、磁盘计数也确实归零，
+  但用户看到的仍是「次数还是 1、重置按钮还在」，主观判定为失败。
+- **环境**：电脑端 `online_gallery_service.py`（端口 45835）+ Android `MainActivity.confirmResetOnlineWork`；
+  iOS `ContentView.confirmResetOnlineWork` 同一接口。
+- **根因（两个独立原因，用三次采样把它们分开坐实）**：
+  1. **5 秒阶段缓存未被作废**：`list_stage_works()` 有 `_stage_cache`（5 秒，回收站两个 Tab 用），
+     而 `reset-work` 末尾只调 `self.scanner.scan(force=True)`；`scan(force)` 只清
+     `_cached_works` / `_last_scan_time`，**不清 `_stage_cache`** ⇒ 手机端重置后立刻重拉
+     `/api/online/recycle`，拿到旧值 `useCount=1`。
+  2. **作品从未回迁（主因）**：重置只写 `作品标签.json` / `manifest.json` 的计数，
+     **不把作品目录从 `_已发送1次（微信公众号可发）` 移回 `已发送0次（抖音小红书可发）`**
+     ⇒ 作品永远挂在「已使用」Tab，主页「全部」（只扫「已发送0次」）里也找不到它，
+     与弹窗提示语「重置为待首发状态」不符。
+- **证据**（探针 `_probe_reset_work4.py`，测试后完整还原）：
+  `判重置前物理位置 = _已发送1次`；`POST reset -> moved=true`；
+  **不等待、不带 refresh** 查 `/api/online/recycle?tab=sent` ⇒ 该作品**已不在**列表（修复前：仍在，`useCount=1`）；
+  查 `/api/online/works` ⇒ 作品**已回到**待发区（修复前：找不到）；磁盘 `newPath` 位于「已发送0次」、原路径已消失、`作品标签.useCount=0`；
+  还原后 `totalWorks=386` / `recycle sent total=558` / `useCount>0=558` 与基线**逐项一致**。
+- **修复**：
+  1. `scan(force=True)` 连带 `self._stage_cache.clear()`（单点修复，覆盖所有变更入口）；
+  2. 新增 `WorkScanner.invalidate_stage_cache()`，`reset-work` 里显式再调一次；
+  3. 新增 `OnlineGalleryHandler._move_work_to_stage0()`（镜像既有 `_move_work_to_stage1`：
+     3 次重试 + `copytree` 兜底 + 写 `_portfolio_move_logs/delete_move_log_YYYYMM.csv`），
+     **仅当作品确实位于「_已发送1次」时才回迁**（垃圾库 / 已在待发区的不动，避免误挪）；
+  4. 返回体追加 `moved` / `newPath`，保留 `ok` / `useCount` / `message` 兼容旧客户端；
+     回迁失败不致命 —— 仍返回「计数已归零」，并在 `message` 里写明原因。
+- **回归要求**：
+  1. 任何会改变阶段库内容的入口（重置 / 删除 / 使用）改完磁盘后都必须作废阶段缓存；
+  2. 服务端改动必须走 `start_online_gallery_service.ps1 -Restart` 重启，并核对
+     `/api/online/status` 的 `code.staleCode === false`（改完不重启会继续跑旧代码且零报错）；
+  3. 三态实测（正常 / 故障 / 恢复）必须在**运行中的服务**上做，且测试后逐文件还原并复核库计数。
+
+## DSH-085 手机端点平台按钮，剪贴板里塞满 `<<<…>>>` 协议标记（Android 0.8.46 / iOS 0.8.26 修复）
+
+- **现象**（用户原话）：「手机端目前点击那个按钮会复制很多其他标识符分割符号吗？你看看这个苹果，安卓。」
+  实测确认为真：V4.5 多版本作品点按钮后，剪贴板里是**含全部 `<<<VERSION_START:名>>>` / `<<<VERSION_END>>>`** 的整份原文。
+- **环境**：Android `PlatformCopyParser.java` + `MainActivity.enrichPlatformSuite` + `ShareActivity`；
+  iOS `PlatformCopyParser.swift` + `WorkLibrary.swift`。
+- **根因（三条泄漏路径，用真库 641 份 `文案.txt` 逐份驱动真代码测得）**：
+  1. **`parse()` 提前返回**：只要文本不含 `COPY_FORMAT:2/3` 头、也不含该平台固定标记，
+     就无条件把**整篇原文**当该平台文案返回。V4.5 多版本（`<<<COPY_FORMAT:MULTI>>>`）正是这种形态
+     ⇒ 点任何平台按钮后整份原文进剪贴板，实测 **80 份**命中（Android + iOS 同源）。
+  2. **兜底按钮未剥标记**：`enrichPlatformSuite` 在多版本作品上仍会合成
+     「规避营销版 / 种草版 / 大纲方案版」三个旧版兜底按钮，其中**「种草版」的兜底内容取整篇原文**
+     （「大纲方案版」只剥了一半：`_START/_END` 剥了，`MULTI` 头与 `VERSION_START` 块还在）。
+  3. **「伪协议」文案**：Codex 产线产出「有 `<<<COPY_FORMAT:3>>>` 头、正文却用 `【小红书自然种草版】`
+     之类中文标题分节、没有任何 `<<<XHS_START>>>` 标记」的文案 ⇒ 落到「发布」兜底分支
+     `copyText = text.trim()`，把 `<<<COPY_FORMAT:3>>>` 原样带出，实测 **46 份**命中。
+     （另有 **9 份**把结束标记写坏成 `<<<DOUYIN_END>>`——**只有两个 `>`**，被块正则当成正文吞进来。）
+- **修复**：
+  1. `parse()` 的提前返回加闸门：只有**完全不含任何协议标记**的旧版纯文案才原样返回；
+  2. 新增 `hasAnyProtocolMarker` / `hasMultiVersionBlocks` / `stripProtocolMarkers` 三个静态工具（可单测）；
+  3. 标记正则改成 `<<+[^<>]*>>+`（开头 2+ 个 `<`、结尾 2+ 个 `>`）——**容忍上面那 9 份畸形标记**；
+     第一版写成 `<<<[^>]*>>>`（要求正好三个 `>`）时对 `<<<DOUYIN_END>>` 完全不动，脏作品仍是 9 份；
+  4. 所有取出的正文（`parse` / 多版本块 / 自定义标记块）与两处「发布」兜底一律再过一道 `stripProtocolMarkers`；
+  5. 多版本作品不再合成那 3 个旧版兜底按钮（保留各版本自身按钮 + 「抖音避坑」）；
+  6. `MainActivity.openShare(work, platform, copyText)` 新增重载 + `ShareActivity.EXTRA_COPY_TEXT`：
+     把按钮已抽好的文案直传过去，从构造上保证「按钮标签 == 剪贴板内容」
+     （多版本下 10 个版本的 platform 都是 GENERAL，`ShareActivity` 自己无法判断用户点的是哪一版）。
+- **证据（闸门有效性自证）**：`PlatformCopyParser.java` 是纯 Java、无 Android 依赖，
+  用 JDK 22 单独编译它 + 一个镜像 `enrichPlatformSuite` 的验证工程，跑真库 641 份：
+  **脏作品 142 → 0**；逻辑断言 **26/26 PASS**。
+  再把实现换回错误版本（`multiVersion` 恒 false + 兜底不剥标记）复跑：
+  **4 项断言 FAIL、脏作品 176** ⇒ 证明闸门真的会响，不是「绿色等于有效」。
+  另核对改动前后括号平衡：`{}` 703/703 → 708/708，`()` 4338/4340 → 4362/4364
+  （`()` 的 2 个缺口是改动前就存在的字符串字面量，非本次引入）。
+- **回归要求**：
+  1. 解析器改动必须同时改 Android(`PlatformCopyParserTest`) 与 iOS(`PlatformCopyParserTests`)，两端 1:1 对齐；
+  2. iOS 侧本机无 Swift 编译器，逻辑一致性靠同源移植 + 括号/结构核对，**最终必须以 Xcode 跑通单测为准**；
+  3. 出现新的「伪协议」或畸形标记形态时，先补进 `malformedEndMarkerIsStrippedFromExtractedCopy`
+     与 `pseudoProtocolCopyNeverLeaksHeader` 两个用例，再改实现；
+  4. **落盘侧仍应治本**：Codex 产线产出的「伪协议」文案与畸形结束标记，属于落盘口缺陷，
+     客户端净化只是兜底，不应作为「磁盘数据可以不规范」的理由。
+- **已知未做**：Android 0.8.46 / iOS 0.8.26 只改源码与升版本号，**尚未构建、未推送**
+  （用户此前指示安卓自动推 APK 先不动；且本轮不做 git 操作）。
+
+## DSH-084 带输入框的弹窗被误触关闭，已输入的备注全丢（2026-09-21 修复）
+
+- **现象**（用户原话）：「我点击删除并备注之后的弹窗，就应该只有三个地方可以点击才对——
+  对话框、输入框、按钮；之外的界面点击应该无效。现在点到外面就关了，我输入的文字就消失了，很烦。」
+  即：在「删除并备注」弹窗里打完垃圾原因，磕到弹窗外的界面，弹窗直接关闭，
+  **已输入内容全部丢失且没有任何提示。**
+- **环境**：Android 端 `MainActivity.java`；在线相册删除（`promptRemarkThenDeleteOnlineWork`）
+  与本地删除（`promptRemarkThenMoveToTrash`）两条路径都会经过该弹窗；在线回收站备注、本地回收站备注、
+  设置电脑 IP 三个弹窗同样受影响。iOS 端是标准模态 `UIAlertController(.alert)`，点外部不会关闭，**不受影响**。
+- **根因**：Android `AlertDialog` 默认 `setCanceledOnTouchOutside(true)`。
+  全项目 **19 处** `AlertDialog` 中只有 1 处（下载进度弹窗）设了防误关，其余18 处全部可被点击背景关闭；
+  其中 **5 处带输入框**，关一次就丢一次输入。
+- **修复**：
+  1. 给 5 处带输入框的弹窗加 `setCanceledOnTouchOutside(false)`；
+  2. **只禁点背景、保留返回键**（不用 `setCancelable(false)`）——保证弹窗永远有退路；
+  3. 新增守卫用例 `InputDialogProtectionTest`：静态扫描 `MainActivity`，
+     「含 `setView(` 且读 `getText()`」的弹窗必须有保护；只展示不读输入的布局不受约束；
+  4. 该用例在 CI 里真实执行（`:app:testDebugUnitTest`），不是“文件在但从不跑”。
+- **证据**：本机无 Gradle 环境，用逐字复刻判据的脚本做**三态自证**：
+  当前代码 0 处违例 / 漏掉 1 处→精确报出「第 1513 行 垃圾备注（随作品写入元数据）」 / 5 处全漏→ 5 处全报。
+- **自证过程中发现并修掉了守卫自身的两个 bug**（重点）：
+  1. 块边界初版画在 `.create();` —— 保护语句天然写在它之后，导致**已保护被判成未保护**（常亮噪声）；
+  2. `Matcher.start()` / `re.Match.start()` 返回的是**绝对下标**，被我当成相对偏移用成 `end + start()`，
+     块一路吞到文件尾 → 任何弹窗都能踩到某个保护语句 → **守卫永远不响（假闸门）**。
+- **回归要求**：
+  1. 今后新增带输入框的 `AlertDialog`，必须同步加 `setCanceledOnTouchOutside(false)`，否则 `InputDialogProtectionTest` 会红；
+  2. **不得用 `setCancelable(false)` 代替**——那会连返回键一起禁掉，弹窗卡死时没有退路；
+  3. 改守卫用例后，必须重跑三态自证（已修 / 漏 1 处 / 全漏），**不能只看“当前全绿”**；
+  4. 本机无法跑 Gradle 时，可用逐字复刻判据的脚本先自证，但 CI 里的真实用例才是权威。
+- **未修（待拍板）**：另外 13 处无输入框的确认弹窗点背景仍会关闭。丧不了内容，
+  且部分场景下「点空白处即取消」是用户习惯行为，暂不改。
 
 ## DSH-083 iOS 单测在 CI 里长期「只编译、从不执行」（假闸门，2026-09-21 修复）
 

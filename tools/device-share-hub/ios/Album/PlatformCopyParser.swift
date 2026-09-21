@@ -97,8 +97,32 @@ enum PlatformCopyParser {
         options: [.dotMatchesLineSeparators]
     )
 
+    /// 匹配任意协议标记。刻意写成 `&lt;&lt;+[^&lt;&gt;]*&gt;&gt;+`（开头 2+ 个 `&lt;`、结尾 2+ 个 `&gt;`）：
+    /// 磁盘上确实存在**畸形标记**（Codex 产线把 `&lt;&lt;&lt;DOUYIN_END&gt;&gt;&gt;` 写成 `&lt;&lt;&lt;DOUYIN_END&gt;&gt;`，
+    /// 实测 9 份），要求正好三个 `&gt;` 的正则识别不了。与 Android `ANY_MARKER_PATTERN` 对齐。
+    private static let markerRegex = try? NSRegularExpression(pattern: "<<+[^<>]*>>+")
+
     /// 已知固定平台，动态标记扫描时要跳过，避免同一块被重复出按钮。
     private static let knownMarkers: Set<String> = ["DOUYIN", "XHS", "XHS_2", "XHS_3", "WECHAT", "HR"]
+
+    /// 空壳作品判定用的「实质文本」：剥掉全部 `<<<…>>>` 协议标记与空白（含 U+2800 盲文空格）。
+    ///
+    /// **与 Android `MainActivity.copySubstance` 逐字对齐**：正则同为 `<<+[^<>]*>>+`，
+    /// 连**畸形标记**（如实测 9 份里只有两个 `>` 的 `<<<DOUYIN_END>>`）也一并剥掉。
+    /// 取证（2026-09-21）：全库 642 份 `文案.txt` 用新旧正则各算一次实质字数，
+    /// 跨过 30 字判线的 = **0 份** ⇒ 收紧正则不误伤。
+    static func copySubstance(_ text: String?) -> String {
+        guard let text else { return "" }
+        let noMarkers = text.replacingOccurrences(of: "<<+[^<>]*>>+", with: "",
+                                                 options: .regularExpression)
+        return noMarkers.replacingOccurrences(of: "[\\s\\u{2800}]", with: "",
+                                             options: .regularExpression)
+    }
+
+    /// 空壳作品：实质字数不足 30 字即视为文案缺失（阈值与 Android 一致）。
+    static func isCopySubstanceMissing(_ text: String?) -> Bool {
+        copySubstance(text).count < 30
+    }
 
     static func parseAvailablePlatforms(_ source: String?) -> [AvailableCopyPlatform] {
         guard let raw = source else { return [] }
@@ -110,15 +134,21 @@ enum PlatformCopyParser {
             || text.contains("_START>>>")
         guard isProtocol else {
             // 旧版纯文案（无任何标记）→ 单个「发布」按钮。
+            // 【2026-09-21 DSH-087】兜底也必须剥净 `<<<…>>>`：畸形标记
+            // （如只有两个 `>` 的 `<<<X_END>>`）会让 `isProtocol` 判false，
+            // 原文连同畸形标记一起进剪贴板。与 Android 同函数同位置对齐。
             return [AvailableCopyPlatform(platform: .xhs,
                                           buttonLabel: "发布",
-                                          copyText: text.trimmingCharacters(in: .whitespacesAndNewlines))]
+                                          copyText: strippingProtocolMarkers(text)
+                                              .trimmingCharacters(in: .whitespacesAndNewlines))]
         }
 
         // ---- 优先级 1：多版本语法，每个版本独立出一个按钮 ----
         var multiItems: [AvailableCopyPlatform] = []
         for (name, body) in versionBlocks(in: text) {
-            let content = stripOuterLineBreaks(body)
+            // 【2026-09-21 DSH-087】块正文里可能残留畸形/嵌套标记（实测 9 份），
+            // 取正文后再净化一道，与 Android `parseAvailablePlatforms` 对齐。
+            let content = strippingProtocolMarkers(stripOuterLineBreaks(body))
             guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let label = friendlyLabelForMarker(name)
             // 与 Android 一致：命中「抖音避坑」的版本归到抖音平台，其余按通用版本处理。
@@ -153,16 +183,21 @@ enum PlatformCopyParser {
         for (marker, body) in genericBlocks(in: text) {
             let upper = marker.uppercased()
             if knownMarkers.contains(upper) { continue }
-            let content = stripOuterLineBreaks(body)
+            // 【2026-09-21 DSH-087】同出口2，自定义标记块正文也要净化。
+            let content = strippingProtocolMarkers(stripOuterLineBreaks(body))
             guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let label = friendlyLabelForMarker(marker)
             items.append(AvailableCopyPlatform(platform: .general, buttonLabel: label, copyText: content))
         }
 
         if items.isEmpty {
+            // 【2026-09-21 DSH-087】Codex「伪协议」文案（有 `<<<COPY_FORMAT:3>>>` 头、
+            // 正文用 `【小红书自然种草版】` 分节、无任何 `<<<XHS_START>>>`）会落到这里，
+            // 原先直接 `text.trimmed` ⇒ 头标记进剪贴板（实测 46 份命中）。
             return [AvailableCopyPlatform(platform: .xhs,
                                           buttonLabel: "发布",
-                                          copyText: text.trimmingCharacters(in: .whitespacesAndNewlines))]
+                                          copyText: strippingProtocolMarkers(text)
+                                              .trimmingCharacters(in: .whitespacesAndNewlines))]
         }
         return items
     }
@@ -170,8 +205,14 @@ enum PlatformCopyParser {
     static func parse(_ source: String?, platform: CopyPlatform) -> PlatformCopyResult {
         guard var value = source else { return PlatformCopyResult(status: .unreadable, text: "") }
         if value.first == "\u{FEFF}" { value.removeFirst() }
-        guard value.contains(headerV2) || value.contains(headerV3)
-            || value.contains(platform.startMarker) else {
+        // 【2026-09-21 修复】此前只要不含 `COPY_FORMAT:2/3` 头、也不含该平台固定标记，
+        // 就把 `value` **整篇原文**当结果返回。V4.5 多版本（`<<<COPY_FORMAT:MULTI>>>`）
+        // 正是这种形态 ⇒ 剪贴板里是含全部 `<<<VERSION_START:…>>>` 标记的整份原文
+        // （与 Android `PlatformCopyParser.parse()` 同源缺陷）。
+        // 现在只有「完全不含任何协议标记」的旧版纯文案才原样返回。
+        let matchesPlatformBlock = value.contains(headerV2) || value.contains(headerV3)
+            || value.contains(platform.startMarker)
+        if !matchesPlatformBlock && !PlatformCopyParser.containsProtocolMarker(value) {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? PlatformCopyResult(status: .unreadable, text: "")
                 : PlatformCopyResult(status: .ok, text: value)
@@ -196,7 +237,29 @@ enum PlatformCopyParser {
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return PlatformCopyResult(status: .unreadable, text: "")
         }
-        return PlatformCopyResult(status: .ok, text: String(content))
+        // 【2026-09-21 修复】磁盘上的标记可能畸形（如 `<<<DOUYIN_END>>` 只有两个 `>`），
+        // 会被块正则当成正文吞进来；取出的正文再剥一道标记，剪贴板里永远不出现 `<<<…>>`。
+        return PlatformCopyResult(status: .ok, text: PlatformCopyParser.strippingProtocolMarkers(String(content)))
+    }
+
+    /// 文本里是否含**任意** `<<<…>>>` 协议标记。
+    ///
+    /// 用来区分「旧版纯文案」（完全无标记，可按平台原样分发）与「协议文本但缺少该平台块」
+    /// ——后者必须报缺失，绝不能把整篇原文塞进剪贴板。
+    static func containsProtocolMarker(_ source: String) -> Bool {
+        guard let re = markerRegex else { return false }
+        return re.firstMatch(in: source, options: [],
+                             range: NSRange(source.startIndex..<source.endIndex, in: source)) != nil
+    }
+
+    /// 剥掉全部 `<<<…>>>` 协议标记并收紧首尾换行（与 Android `stripProtocolMarkers` 对齐）。
+    static func strippingProtocolMarkers(_ source: String) -> String {
+        guard let re = markerRegex else { return source }
+        var clean = re.stringByReplacingMatches(
+            in: source, options: [],
+            range: NSRange(source.startIndex..<source.endIndex, in: source), withTemplate: "")
+        while let last = clean.last, last == "\r" || last == "\n" { clean.removeLast() }
+        return clean
     }
 
     static func extractPlatformCopy(_ source: String?, platform: CopyPlatform) -> String {

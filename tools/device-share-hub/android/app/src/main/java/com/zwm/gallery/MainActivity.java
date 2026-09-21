@@ -1159,16 +1159,16 @@ public final class MainActivity extends Activity {
                 Button btn = compactButton(item.buttonLabel, clickCount == 0);
                 btn.setContentDescription(item.buttonLabel + "，已点击 " + clickCount + " 次");
                 final int finalClickCount = clickCount;
-                btn.setOnClickListener(v -> {
-                    markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
-                    openShare(work, item.platform.code);
-                });
                 final String copyForPlatform = (item.copyText != null && !item.copyText.isEmpty())
                         ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.text, item.platform);
+                btn.setOnClickListener(v -> {
+                    markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
+                    openShare(work, item.platform.code, copyForPlatform);
+                });
                 btn.setOnLongClickListener(v -> {
                     showCopyPreviewDialog(work.name, item.buttonLabel, copyForPlatform, () -> {
                         markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
-                        openShare(work, item.platform.code);
+                        openShare(work, item.platform.code, copyForPlatform);
                     });
                     return true;
                 });
@@ -1467,9 +1467,22 @@ public final class MainActivity extends Activity {
     }
 
     private void openShare(WorkLibrary.WorkEntry work, String platform) {
-        startActivity(new Intent(this, ShareActivity.class)
+        openShare(work, platform, null);
+    }
+
+    /** 带上调用方按按钮已抽好的文案，保证「按钮标签 == 剪贴板内容」。
+     *
+     * <p>多版本文案下 `ShareActivity` 无法自己判断用户点的是哪一版（10 个版本的 platform
+     * 都是 GENERAL），只能回退成整篇原文 ⇒ 必须由这里把成品文案直传过去。
+     */
+    private void openShare(WorkLibrary.WorkEntry work, String platform, String copyText) {
+        Intent intent = new Intent(this, ShareActivity.class)
                 .putExtra(ShareActivity.EXTRA_WORK_ID, work.id)
-                .putExtra(ShareActivity.EXTRA_PLATFORM, platform));
+                .putExtra(ShareActivity.EXTRA_PLATFORM, platform);
+        if (copyText != null && !copyText.trim().isEmpty()) {
+            intent.putExtra(ShareActivity.EXTRA_COPY_TEXT, copyText);
+        }
+        startActivity(intent);
     }
 
     private void openPreview(WorkLibrary.WorkEntry work) {
@@ -1510,7 +1523,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
                 .setTitle("垃圾备注（随作品写入元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -1519,7 +1532,10 @@ public final class MainActivity extends Activity {
                     ids.add(id);
                     moveSelectedToTrash(ids, input.getText().toString());
                 })
-                .show();
+                .create();
+            // 带输入框的弹窗：禁止点击背景关闭 —— 误触一次就把打好的字全丢了（BUG_LEDGER DSH-084）。
+            protectedInputDialog.setCanceledOnTouchOutside(false);
+            protectedInputDialog.show();
     }
 
     /**
@@ -1540,7 +1556,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
                 .setTitle("垃圾备注（写入手机本地元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -1559,7 +1575,10 @@ public final class MainActivity extends Activity {
                         }
                     });
                 })
-                .show();
+                .create();
+            // 带输入框的弹窗：禁止点击背景关闭 —— 误触一次就把打好的字全丢了（BUG_LEDGER DSH-084）。
+            protectedInputDialog.setCanceledOnTouchOutside(false);
+            protectedInputDialog.show();
     }
 
     private void confirmResetWork(String id) {
@@ -3399,7 +3418,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
                 .setTitle("垃圾备注（写入作品元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -3421,7 +3440,10 @@ public final class MainActivity extends Activity {
                                 }
                             });
                 })
-                .show();
+                .create();
+            // 带输入框的弹窗：禁止点击背景关闭 —— 误触一次就把打好的字全丢了（BUG_LEDGER DSH-084）。
+            protectedInputDialog.setCanceledOnTouchOutside(false);
+            protectedInputDialog.show();
     }
 
     private void removeFromOnlineRecycle(String workId) {
@@ -3721,6 +3743,15 @@ public final class MainActivity extends Activity {
 
         String fallback = (rawText != null && !rawText.trim().isEmpty()) ? rawText.trim() : (title != null ? title : "");
 
+        // 【2026-09-21 修复】V4.5 多版本文案（MULTI）已逐版本出按钮，不再合成这 3 个旧版兜底按钮。
+        // 它们的兜底内容取的是整篇原文，点一下就把全部 `<<<…>>>` 标记复制进剪贴板
+        // （实测 111 份「已发送0次」作品命中）。多版本时只保留各版本自身按钮 + 「抖音避坑」。
+        boolean multiVersion = PlatformCopyParser.hasMultiVersionBlocks(rawText) && !result.isEmpty();
+        if (multiVersion) {
+            if (douyinItem != null && douyinItem.copyText != null && !douyinItem.copyText.trim().isEmpty()) {
+                result.add(douyinItem);
+            }
+        } else {
         // 1. 规避营销版
         if (douyinItem != null && douyinItem.copyText != null && !douyinItem.copyText.trim().isEmpty()) {
             result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.DOUYIN, "规避营销版", douyinItem.copyText));
@@ -3733,7 +3764,8 @@ public final class MainActivity extends Activity {
         if (xhsItem != null && xhsItem.copyText != null && !xhsItem.copyText.trim().isEmpty()) {
             result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版", xhsItem.copyText));
         } else {
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版", fallback));
+            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版",
+                    PlatformCopyParser.stripProtocolMarkers(fallback)));
         }
 
         // 3. 大纲方案版
@@ -3742,6 +3774,7 @@ public final class MainActivity extends Activity {
         } else {
             String outlineCopy = PlatformCopyParser.synthesizeOutlineCopy(fallback);
             result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS_2, "大纲方案版", outlineCopy));
+        }
         }
 
         result.sort((a, b) -> {
@@ -3762,7 +3795,10 @@ public final class MainActivity extends Activity {
     /** 剔除 <<<...>>> 协议标记、空白与盲文空格（U+2800）后的文案实质内容。 */
     private static String copySubstance(String text) {
         if (text == null) return "";
-        String s = text.replaceAll("<<<[^>]*>>>", "");
+        // 【2026-09-21 DSH-088】正则与 iOS `PlatformCopyParser.copySubstance` **逐字一致**：
+        // 用 `<<+[^<>]*>>+` 连畸形标记（如只有两个 `>` 的 `<<<DOUYIN_END>>`）一起剥掉。
+        // 取证：全库 642 份 `文案.txt` 新旧正则各算一次实质字数，跨过 30 字判线的 = 0 份。
+        String s = text.replaceAll("<<+[^<>]*>>+", "");
         return s.replaceAll("[\\s\\u2800]", "");
     }
 
@@ -3835,12 +3871,15 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
                 .setTitle("垃圾备注（随作品写入元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("确认删除", (dialog, which) -> doDeleteOnlineWork(work, input.getText().toString()))
-                .show();
+                .create();
+            // 带输入框的弹窗：禁止点击背景关闭 —— 误触一次就把打好的字全丢了（BUG_LEDGER DSH-084）。
+            protectedInputDialog.setCanceledOnTouchOutside(false);
+            protectedInputDialog.show();
     }
 
     private void doDeleteOnlineWork(OnlineWorkEntry work, String remark) {
@@ -4562,7 +4601,7 @@ public final class MainActivity extends Activity {
         input.setHint("例如: 192.168.1.27");
         String current = onlineClient.resolveBaseUrl().replace("http://", "").replace(":" + OnlineGalleryClient.DEFAULT_PC_PORT, "");
         input.setText(current);
-        new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
                 .setTitle("设置电脑在线相册 IP")
                 .setMessage("请输入运行 online_gallery_service.py 的电脑局域网 IP 地址：")
                 .setView(input)
@@ -4577,7 +4616,10 @@ public final class MainActivity extends Activity {
                         refreshOnlineWorks(true);
                     }
                 })
-                .show();
+                .create();
+            // 带输入框的弹窗：禁止点击背景关闭 —— 误触一次就把打好的字全丢了（BUG_LEDGER DSH-084）。
+            protectedInputDialog.setCanceledOnTouchOutside(false);
+            protectedInputDialog.show();
     }
 
     private static final class FileEntry {
