@@ -41,23 +41,16 @@ jobs:
           cache-dependency-path: tools/device-share-hub/remote-relay/package-lock.json
       - name: Install exact relay dependencies
         run: |
-          # npm ci 严格校验 lockfile；lockfile 里 sharp 还是 0.35.2，
-          # 但 GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 要求 0.35.4+。
-          # 用 package.json overrides 强制 sharp 0.35.4，再 npm install 自动重写 lockfile + 装 nested sharp。
-          # github-actions[bot] 默认没 push 到 main 的权限（403），改成把新 lockfile 上传成 artifact，
-          # 本机下载 commit 后再触发新 run。
+          # package.json 的 overrides 已强制 sharp 0.35.4（修 GHSA-g89c-p67h-r497 /
+          # GHSA-2jg2-4ch7-h545），lockfile 已在本地同版本 npm 下重生成并提交。
+          # 这里只做校验：lockfile 若与 package.json 漂移就立即失败，
+          # 而不是静默产出新 lockfile（那样 CI 永远绿、本地永远旧）。
           npm install --no-audit --no-fund
           if ! git diff --exit-code --quiet package-lock.json; then
-            mkdir -p relay-lockfile-out
-            cp package-lock.json relay-lockfile-out/package-lock.json
-            echo "lockfile changed — uploading as artifact for manual commit"
+            echo "::error::package-lock.json 已漂移 —— 请在本机 npm install 后提交新 lockfile"
+            git --no-pager diff --stat -- package-lock.json
+            exit 1
           fi
-      - name: Upload regenerated lockfile (only when changed)
-        if: hashFiles('tools/device-share-hub/remote-relay/relay-lockfile-out/package-lock.json') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: relay-lockfile
-          path: tools/device-share-hub/remote-relay/relay-lockfile-out/package-lock.json
       - name: Audit, test and validate relay package
         run: |
           npm audit --audit-level=high
