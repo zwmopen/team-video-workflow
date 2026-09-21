@@ -386,6 +386,8 @@ jobs:
           build_status=$?
           if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then status=1; else status=0; fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "----- XCTest summary (grep from the full log) -----"
+          grep -E "Executed [0-9]+ test|TEST SUCCEEDED|TEST FAILED|Failing tests|Failed tests" "$RUNNER_TEMP/device-share-ios-build.log" | tail -n 10
           tail -n 180 "$RUNNER_TEMP/device-share-ios-build.log"
           exit 0
       - name: Package AltStore IPA
