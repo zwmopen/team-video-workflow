@@ -1,5 +1,41 @@
 # 变更记录
 
+## iOS 0.8.22 / build 93 - 2026-09-21 - 换网段秒级自愈：补齐单播探测 + 修正信标版本字段错位
+
+> **bug 来源**：真机现场——电脑 Wi-Fi 换网段（`192.168.0.107` → `192.168.1.27`）后，
+> iPhone 切「电脑在线」一直弹 `拉取在线相册失败：<错误> 正在自动搜索局域网内的电脑在线相册…`，
+> 而安卓机手点一下就能读。Windows 面板同时把 iPhone 显示成 `相册 v0.8.3 (iOS 最新版 · build 11)`
+>（真机对账是 `0.8.21 / build 92`）。
+
+**两个根因，同源于「iOS 与安卓的发现协议没对齐」**：
+
+1. **信标字段错位（DSH-079）**：安卓在信标第 9~11 位发
+   `base64url(appVersion)|versionCode|base64url(updateCapability)`，作品计数放 12~14 位；
+   iOS 当时没发这三个字段，作品计数直接接在第 9 位 ⇒ 电脑端把**泛流量篇数**当成了 `versionCode`
+   （所以显示 build 11，恰好等于该机 11 篇泛流量），`workCounts` 也整块丢失。
+   前端又对 iOS 写死 `0.8.3 / build 11` 的 fallback，两个 bug 互相掩护。
+2. **缺单播探测（DSH-080）**：`applyBeaconUrl()` 零调用者、`beaconPort = 45832` 声明未用（死代码），
+   iOS 只能靠 20 秒的 /24 单播扫描兜底，而 `resolveBaseUrl()` 又优先复用旧地址 ⇒ 换 IP 后长时间失败。
+
+**修法（iOS 侧，最小改动）**：
+
+- `IncomingTransferService.beaconData()` 补齐第 9~11 位，作品计数自动落回 12~14 位；
+  `updateCapability` 用 `ipa-altstore-v1`（不复用安卓的 `apk-push-v1`，避免电脑端误判成「可推 APK」）；
+- 版本读取统一为 `IncomingTransferService.appVersion/appVersionCode`（单一真源＝`ios/project.yml`），
+  `/v2/info` 同时补上 `versionCode` / `updateCapability`；
+- 新增快轨 `LanDiscovery.probeBeacon()`：BSD UDP socket **发**广播探测（发送不需要 multicast 权限），
+  从临时端口收发，电脑端**单播**回一条含当前 `url` 的 JSON 信标 ⇒ 秒级拿到电脑当前地址；
+  只认 `DeviceShareHub-OnlineGallery` 标识，避免误认其它 45832 占用者；
+- `ContentView.tryAutoDiscoverPc()` 改为**先快轨、失败再跑慢轨** /24 扫描；
+- 网段枚举收敛到 `LanDiscovery.localBroadcastTargets()`，文件传送信标与在线相册探测共用一份实现。
+
+**自检**：本机 `node scripts/verify-auto-mobile-update.mjs` / `verify-p2p-invariants.mjs` /
+`verify-removed-surfaces.mjs` 全绿；服务端 `python -m unittest test_online_gallery_service` 全绿（16 项）。
+Swift 编译由 CI `ios-altstore-build`（macos-15）实机编译把关。
+
+**回归要求**：换网段后手机端 ≤3 秒内读到在线相册；面板卡片版本号须等于手机 `设置 → 关于` 的真实值；
+信标扩字段后必须验证 `workCounts` 仍可解析（只测版本号会漏掉字段错位）。
+
 ## iOS 0.8.20 / versionCode 91 - 2026-09-21 - Swift 编译错误修复（CI 暴露）
 
 > **bug 来源**：上次发 iOS 0.8.19 时用 tree-sitter-swift 自检通过（语法层合法），

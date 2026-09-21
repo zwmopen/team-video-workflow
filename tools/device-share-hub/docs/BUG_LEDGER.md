@@ -4,7 +4,74 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-078**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-080**。
+
+## DSH-079 iOS 信标缺版本扩展字段，电脑端把「泛流量篇数」当版本号显示（iOS 0.8.21 及以前；0.8.22 修复）
+
+- **现象**（Windows 面板实机截图，非推理）：
+  1. 苹果12 卡片永远显示 `相册 v0.8.3 (iOS 最新版 · build 11)`，而手机真机对账是 `v0.8.21 / build 92`；
+  2. 同机 `笔记` 里 `手机储备 15 个（分类未上报）` —— 而安卓机同位置能显示「精准 x · 泛 y · 未分类 z · 总计 n」；
+  3. 面板解析出的 `versionCode` 恰好等于该机 **泛流量作品数 11**（`device-presence.json` 实锤）。
+- **环境**：iPhone 13,2 / iOS 26.6；`相册` 0.8.21（build 92，AltStore 侧载）；Windows「文件分发工作台（稳定版）」`src/server.js`
+  `parseDevicePresenceBeacon`；协议见 `docs/PROTOCOL.md`「发现」。
+- **根因（协议字段错位，两端各写各的）**：
+  - 安卓 `OnlineService.sendBeacon()` 在第 9~11 位发 `base64url(appVersion)|versionCode|base64url(updateCapability)`，
+    作品计数追加在 12~14 位；
+  - iOS `IncomingTransferService.beaconData()` 当时**没有**发这三个字段，把作品计数直接接在第 9 位，
+    于是电脑端按 `appVersion/versionCode/updateCapability` 解码：
+    `parts[9]=base64url("0")` 解不出 → `appVersion` 空；`parts[10]=泛流量数` → 被当成 `versionCode`；
+    `parts[11]=未分类数` → 被当成更新能力；真正的 `workCounts` 因 `parts.length < 15` 整块丢弃；
+  - 前端 `app.js` 又对 iOS 写死 `` `相册 v${appVersion || "0.8.3"} (iOS 最新版 · build ${versionCode || 11})` ``，
+    把空值兜成假值，于是「两个 bug 互相掩护」，肉眼完全看不出是协议错位。
+- **修复（客户端，iOS 0.8.22 / build 93）**：
+  1. `beaconData()` 补齐第 9~11 位（`IncomingTransferService.appVersion` / `appVersionCode` / `updateCapability`），
+     作品计数自动落到电脑端期望的 12~14 位；
+  2. `updateCapability` 用 `ipa-altstore-v1`（**不能**复用安卓的 `apk-push-v1` ——
+     电脑端用该值判定「能否直接推送 APK 安装」，iOS 只能 AltStore 侧载，混用会导致误判）；
+  3. 顺手把 `/v2/info` 也补上 `versionCode` / `updateCapability`（原先 iOS 的 `/v2/info` 缺 `versionCode`，
+     服务端 `GET /api/online/phones` 只能显示 0）；
+  4. 版本号单一真源仍是 `ios/project.yml`（`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`），
+     Swift 侧统一经 `IncomingTransferService.appVersion/appVersionCode` 读取，不再各处复制 `Bundle.main` 取值。
+- **证据**：`device-presence.json` iOS 条目 `appVersion:"" / versionCode:11 / workCounts:null`
+  ↔ 该机泛流量作品数恰为 11；修复后同一字段应变成 `0.8.22 / 93` 且 `workCounts` 齐全。
+- **回归要求**：任何「手机 → 电脑」的发现信标字段增删，必须**三端同时改并跑一次真机对账**
+  （面板卡片显示 vs 手机 `设置 → 关于`），且**必须验证 `workCounts` 仍能被电脑端解析**——
+  只测「版本号显示对了」会漏掉字段错位这类连带伤害。
+
+## DSH-080 iOS 缺单播探测，电脑换网段后一直「拉取在线相册失败」（iOS 0.8.21 及以前；0.8.22 修复）
+
+- **现象**：电脑 Wi-Fi 换网段（`192.168.0.107` → `192.168.1.27`）后，iPhone 切换「电脑在线」弹
+  `拉取在线相册失败：<错误>`＋`正在自动搜索局域网内的电脑在线相册…`，长时间搜不到；
+  同一时刻安卓机**手点一下在线相册就能读**。
+- **环境**：`online_gallery_service.py`（端口 45835）服务侧正常（`code.staleCode=false`、`0.0.0.0:45835` 监听）；
+  白名单 `~/.device-share-hub-authorized-devices.json` 的 `last_seen_ip` 停在旧网段
+  ⇒ 换网段后**没有任何设备成功连上过**（`markBaseUrlGood` 才会登记）。
+- **根因（两端发现通路不对等）**：
+  - 安卓：**发** `ZWMDS2_GALLERY_DISCOVER` 单播/广播探测（`OnlineGalleryClient.java`），
+    电脑端信标循环收到含 `ZWMDS2` 的报文会立刻**单播回**一条 JSON 信标（含当前 `url`），
+    所以电脑一换 IP，安卓 2 秒内自愈；安卓还会监听周期性广播；
+  - iOS：既收不到广播（`com.apple.developer.networking.multicast` 需 Apple 审批，AltStore 侧载拿不到），
+    `OnlineGalleryClient.applyBeaconUrl()` **零调用者**、`beaconPort = 45832` 声明了却从未使用（死代码），
+    唯一兜底是整段 /24 单播扫描（20 秒预算、48 并发）⇒ 电脑换 IP 后体验是「长时间连不上」；
+    而 `resolveBaseUrl()` 优先复用旧的 `manual/custom/lastGood` 地址，用户看到的就是反复失败。
+- **修复（客户端，iOS 0.8.22 / build 93）**：新增快轨 `LanDiscovery.probeBeacon()`：
+  1. 用 BSD UDP socket 发广播探测（**发送不需要 multicast 权限**），目标为全局广播 + 各网段定向广播；
+  2. 从**临时端口**收发，电脑端回信是**单播**到该端口 ⇒ 收单播同样不需要权限；
+  3. 只认返回体里的服务标识 `DeviceShareHub-OnlineGallery`，避免误认其它 45832 占用者；
+  4. 命中后 `setCustomBaseUrl(url)`；`ContentView.tryAutoDiscoverPc()` 改为**先快轨、失败再跑慢轨** /24 扫描；
+  5. 网段枚举收敛为 `LanDiscovery.localBroadcastTargets()`，供文件传送信标与在线相册探测共用（原先两处各写一份）。
+- **证据**：借 adb 安卓机当**外部探针**验证「手机→电脑」通路：
+  `printf 'GET /api/online/status HTTP/1.0
+
+' | toybox nc -w 6 192.168.1.27 45835` → `HTTP/1.0 200 OK`
+  （安卓无 curl/wget，`toybox nc` 可用）；服务端 `GET /api/online/phones` 也能读到该 iPhone
+  `192.168.1.154:45833 / appVersion 0.8.21` ⇒ 网络、防火墙、服务全通，问题只在 iOS 的选路。
+- **回归要求**：
+  1. 换网段（或改电脑 IP）后，手机端必须能在 **≤3 秒**内读到在线相册，不允许长期停在「拉取失败」；
+  2. 「USB 数据线已连接」与在线相册**无关**（在线相册走 Wi-Fi HTTP 45835），
+     排查时不要把它当作变量；
+  3. 白名单**不是门禁**：读接口无鉴权，`device-register` 只是「下载即用」的辅助登记，
+     「拉取失败」不要往 403/权限方向排查。
 
 ## DSH-077 空壳守卫被自己的靶子骗过：整段口径放行「标记齐全但正文是模板骨架」的作品（服务端，无客户端改动）
 

@@ -1,13 +1,16 @@
 import Foundation
+import Darwin
 
 /// 局域网自动发现「电脑在线相册服务」（端口 45835）。
 ///
-/// 设计取舍：iPhone 侧刻意使用 **单播（unicast）网段扫描**，而不是接收 UDP 广播。
-/// 原因：iOS 14 起接收/发送广播与组播需要 `com.apple.developer.networking.multicast`
-/// 权限，而该权限需 Apple 单独审批，AltStore 个人签名侧载拿不到。
-/// 单播探测无此限制，因此在所有分发方式下都能稳定工作。
-///
-/// 命中后写入 `customPcServerUrl`，后续直接复用，不再扫描。
+/// 设计取舍：iPhone 侧**收不到**电脑周期性广播的 UDP 信标，也收不到组播 ——
+/// iOS 14 起接收/发送广播与组播需要 `com.apple.developer.networking.multicast`，
+/// 该权限需 Apple 单独审批，AltStore 个人签名侧载拿不到。
+/// 因此这里走两条**不依赖该权限**的路：
+/// 1. `probeBeacon()`：**发**全局/定向广播（发送不需要权限）到电脑信标端口 UDP 45832，
+///    电脑收到会立刻**单播**回一条 JSON 信标（含它当前 url）—— 秒级定位电脑当前地址（快轨）；
+/// 2. `discover()`：整段 /24 单播扫描（慢轨，兜底）。
+/// 命中后写入 `customPcServerUrl`，后续直接复用。
 public final class LanDiscovery {
     public static let shared = LanDiscovery()
     public static let galleryPort = 45835
@@ -15,9 +18,135 @@ public final class LanDiscovery {
 
     private let workQueue = DispatchQueue(label: "com.zwm.gallery.landiscovery", qos: .utility)
     private var isRunning = false
+    private var isProbing = false
     private let stateLock = NSLock()
 
     private init() {}
+
+    /// 主动探测报文。电脑端 `online_gallery_service.py` 的信标循环收到含 `ZWMDS2` 的报文后
+    /// 会**立刻单播回一条 JSON 信标**（含它当前的 `url`/`ip`+`port`）。
+    /// Android 侧一直靠这条通路秒级自愈（`ZWMDS2_GALLERY_DISCOVER`），iOS 此前完全没发过。
+    private static let probeMagic = "ZWMDS2_GALLERY_DISCOVER"
+
+    /// 快轨：广播探测电脑信标端口（UDP 45832），命中即拿到电脑**当前**地址。
+    ///
+    /// 为什么必须有它：iOS 拿不到 multicast 权限，收不到电脑周期性广播的信标，
+    /// 旧版唯一兜底是「20 秒 /24 单播扫描」——电脑一换网段/IP，用户就要盯着
+    /// 「拉取在线相册失败：…正在自动搜索局域网内的电脑在线相册…」很久。
+    /// 发广播 + 收**单播**回信不需要任何权限，因此这条路在所有侧载方式下都成立。
+    public func probeBeacon(timeout: TimeInterval = 2.5, completion: @escaping (String?) -> Void) {
+        stateLock.lock()
+        if isProbing {
+            stateLock.unlock()
+            completion(nil)
+            return
+        }
+        isProbing = true
+        stateLock.unlock()
+
+        workQueue.async { [weak self] in
+            guard let self = self else { return }
+            let found = self.sendProbeAndWait(timeout: timeout)
+            self.stateLock.lock()
+            self.isProbing = false
+            self.stateLock.unlock()
+
+            if let url = found {
+                OnlineGalleryClient.shared.setCustomBaseUrl(url)
+            }
+            DispatchQueue.main.async { completion(found) }
+        }
+    }
+
+    private func sendProbeAndWait(timeout: TimeInterval) -> String? {
+        let handle = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard handle >= 0 else { return nil }
+        defer { Darwin.close(handle) }
+
+        var enabled: Int32 = 1
+        guard Darwin.setsockopt(handle, SOL_SOCKET, SO_BROADCAST, &enabled,
+                                socklen_t(MemoryLayout<Int32>.size)) == 0 else { return nil }
+        // 每次 recvfrom 最多等 400ms，靠 deadline 控制总时长
+        var receiveTimeout = timeval(tv_sec: 0, tv_usec: 400_000)
+        _ = Darwin.setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout,
+                              socklen_t(MemoryLayout<timeval>.size))
+
+        let probe = Array(Self.probeMagic.utf8)
+        for target in Self.localBroadcastTargets() {
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = OnlineGalleryClient.beaconPort.bigEndian
+            address.sin_addr = target
+            probe.withUnsafeBufferPointer { buffer in
+                guard let base = buffer.baseAddress else { return }
+                withUnsafePointer(to: &address) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                        _ = Darwin.sendto(handle, UnsafeRawPointer(base), probe.count, 0, socketAddress,
+                                          socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
+                }
+            }
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var buffer = [UInt8](repeating: 0, count: 2048)
+        while Date() < deadline {
+            var from = sockaddr_in()
+            var fromLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let received = withUnsafeMutablePointer(to: &from) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                    Darwin.recvfrom(handle, &buffer, buffer.count, 0, socketAddress, &fromLength)
+                }
+            }
+            guard received > 0 else { continue }   // 超时 → 回到 while 判 deadline
+            let text = String(decoding: buffer[0..<received], as: UTF8.self)
+            // 只认服务端标识，避免把别的 45832 占用者当成电脑在线相册
+            guard text.contains(Self.serviceMarker) else { continue }
+            if let url = Self.pcUrl(fromBeaconJSON: text) { return url }
+        }
+        return nil
+    }
+
+    /// 解析信标 JSON：优先 `url`，退化用 `ip` + `port`
+    private static func pcUrl(fromBeaconJSON text: String) -> String? {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let url = (object["url"] as? String)?.trimmingCharacters(in: .whitespaces), !url.isEmpty {
+            return url
+        }
+        let ip = (object["ip"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !ip.isEmpty else { return nil }
+        let port = (object["port"] as? NSNumber)?.intValue ?? OnlineGalleryClient.defaultPort
+        return "http://\(ip):\(port)"
+    }
+
+    /// 全局广播 + 各网段定向广播（部分路由器不转发无线客户端的全局广播）
+    static func localBroadcastTargets() -> [in_addr] {
+        var result: [in_addr] = []
+        var seen = Set<UInt32>()
+        func append(_ value: UInt32) {
+            if seen.insert(value).inserted { result.append(in_addr(s_addr: value)) }
+        }
+        "255.255.255.255".withCString { append(Darwin.inet_addr($0)) }
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard Darwin.getifaddrs(&first) == 0, let start = first else { return result }
+        defer { Darwin.freeifaddrs(start) }
+        var current: UnsafeMutablePointer<ifaddrs>? = start
+        while let item = current {
+            let interface = item.pointee
+            if let rawAddress = interface.ifa_addr, let rawMask = interface.ifa_netmask,
+               rawAddress.pointee.sa_family == sa_family_t(AF_INET),
+               (interface.ifa_flags & UInt32(IFF_UP)) != 0,
+               (interface.ifa_flags & UInt32(IFF_LOOPBACK)) == 0 {
+                let address = rawAddress.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
+                let mask = rawMask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
+                append(address | ~mask)
+            }
+            current = interface.ifa_next
+        }
+        return result
+    }
 
     /// 开始扫描。命中回调 URL；未命中回调 nil。可在失败后反复调用（带内部互斥）。
     public func discover(completion: @escaping (String?) -> Void) {

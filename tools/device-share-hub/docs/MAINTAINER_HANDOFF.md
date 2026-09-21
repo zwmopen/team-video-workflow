@@ -1,5 +1,29 @@
 # 2026-08-23 Cloudflare 中继与混合传输当前真相
 
+## 2026-09-21 iPhone v0.8.22：换网段秒级自愈（补齐单播探测）+ 信标版本字段对齐（build 93）
+
+- **版本与安装对账**：iOS `0.8.22`（build 93，`ios/project.yml` 单一真源）。
+  上一版 `0.8.21`（build 92）已用 AltStore 侧载闭环验证成功（真机对账 `com.zwm.album.TXA6HP98BX`）。
+- **本次要解决的问题（真机现场）**：电脑 Wi-Fi 换网段后，iPhone 长时间「拉取在线相册失败」；
+  面板还把 iPhone 版本显示成不存在的 `0.8.3 / build 11`。详见 `docs/BUG_LEDGER.md` **DSH-079 / DSH-080**。
+- **协议侧改动（三端必须一致，别再各写各的）**：
+  - 发现信标第 9~11 位固定为 `base64url(appVersion)|versionCode|base64url(updateCapability)`，
+    作品计数必须在 12~14 位；iOS 已补齐（此前缺字段导致计数被当成版本号）。
+  - `updateCapability`：Android `apk-push-v1`；iOS `ipa-altstore-v1`（电脑端据此判断能否推 APK）。
+- **发现通路对等化**：安卓靠「发探测 + 收单播回信 + 监听广播」自愈；iOS 收不到广播（无 multicast 权限），
+  因此**必须**保留「发广播探测 → 收单播回信」快轨（`LanDiscovery.probeBeacon()`），
+  慢轨 /24 扫描仅作兜底。任何把 iOS 发现退回「只有慢轨」的改动都算回退。
+- **踩坑提醒（排查时别走弯路）**：
+  1. 在线相册是 **Wi-Fi HTTP 45835**，与 USB 数据线无关（USB 只用于侧载）；
+  2. 白名单不是门禁（读接口无鉴权），「拉取失败」不要往 403/权限方向查；
+  3. 定责最快的一步：借一台 adb 安卓机当外部探针
+     `toybox nc -w 6 <电脑IP> 45835`（安卓无 curl/wget），返回 200 即说明网络/防火墙/服务全通；
+     从电脑上 `curl <自己LAN IP>` 不算数（回环路径绕过入站过滤）。
+- **验证证据**：`GET /api/online/phones` 能读到 iPhone `192.168.1.154:45833 / appVersion 0.8.21`；
+  外部探针 `toybox nc` 返回 `HTTP/1.0 200 OK`；服务端 `code.staleCode=false`。
+- **下一步**：本次 iOS 改动走 CI 出包（`ios-altstore-build`）→ AltStore 侧载 → 换网段场景复测
+  （预期 ≤3 秒读到在线相册、面板版本号显示 `0.8.22 / build 93`）。
+
 ## 2026-09-17 Android v0.8.13：待机 CPU 300% 根治、后台与锁屏静默传输双保活（versionCode: 124）
 
 - **版本与安装对账**：Android `0.8.13`（`versionCode: 124`），已通过 ADB 覆盖安装至华为 P30（`8KE0219924003568`，`ELE-AL00`）实机运行。

@@ -27,13 +27,33 @@ ZWMDS2_HERE|2|deviceId|httpPort|base64url(name)|base64url(model)|base64url(state
 
 `workCount` 是可选的非负整数，表示手机最近一次本机扫描得到的作品数量。Windows 或旧客户端可发送 `-1` 或省略该字段；接收端必须把它显示为“未知/不显示”，不能当作 0。该字段不包含作品名称、文案、图片或路径。
 
-新版 Android 可在第 9 个字段之后继续追加三个可选发现字段：
+新版 Android 与 iOS **都必须**在第 9 个字段之后继续追加三个可选发现字段（三端统一，勿各写各的）：
 
 ```text
 |base64url(appVersion)|versionCode|base64url(updateCapability)
 ```
 
-当前更新能力值为 `apk-push-v1`。电脑端只有在收到版本信息并确认手机支持该能力后，才可以把本地已缓存的 APK 作为更新任务发送；旧客户端忽略这些扩展字段，仍可正常发现和传送。版本检查使用 `versionCode`/版本号判断是否落后，不能只根据设备型号推断。
+更新能力值分平台：Android 为 `apk-push-v1`（电脑端可直接推送已缓存的 APK 作为更新任务），
+iOS 为 `ipa-altstore-v1`（只能 AltStore 侧载，电脑端**不得**按 apk-push 处理）。
+旧客户端忽略这些扩展字段，仍可正常发现和传送。版本检查使用 `versionCode`/版本号判断是否落后，不能只根据设备型号推断。
+
+⚠️ **字段顺序是硬契约**：作品计数（`conversion|traffic|uncategorized`）必须在**第 12~14 位**。
+历史事故 DSH-079：iOS 曾跳过 9~11 位、把计数直接接在第 9 位，电脑端于是把「泛流量篇数」
+当成 `versionCode`（面板显示 build 11），`workCounts` 整块丢失。任何新增字段都必须追加在**末尾**（`net:` 之前）。
+
+## 在线相册服务发现（UDP 45832）
+
+「电脑在线相册」（端口 45835，`online_gallery_service.py`）与上面的设备发现是**两条独立通路**。
+
+- 电脑每 2 秒向全局广播与各网段定向广播地址发 JSON 信标（`service: DeviceShareHub-OnlineGallery`，含 `url` / `ip` / `port`）。
+- 手机可**主动发**探测报文 `ZWMDS2_GALLERY_DISCOVER` 到电脑 UDP 45832；
+  电脑收到含 `ZWMDS2` 的报文后会**立刻单播回**同一格式的 JSON 信标给发送方地址。
+- 两端都必须实现「主动探测」这条快轨：
+  - Android 已实现（并用它换网段后 2 秒自愈）；
+  - iOS 收不到广播/组播（`com.apple.developer.networking.multicast` 需 Apple 审批，AltStore 侧载拿不到），
+    但**发广播、收单播回信都不需要该权限** —— 因此 iOS 也必须发探测（`LanDiscovery.probeBeacon()`），
+    整段 /24 单播扫描只能作为兜底（慢轨）。
+- 事故参考 DSH-080：iOS 缺这条快轨时，电脑换 IP 会表现成长时间「拉取在线相册失败」。
 
 三端同时发送全局广播和当前子网定向广播，兼容部分路由器不转发无线客户端全局广播的情况。设备超过 15 秒没有刷新即视为离线；进入传送页和手动刷新会主动重新探测。
 

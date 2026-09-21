@@ -451,22 +451,38 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     /// 连接失败时自动在局域网搜索电脑在线相册服务。
     /// 带 15 秒冷却，可反复重试 —— 不会像旧逻辑那样一次失败就永久放弃。
+    ///
+    /// 两段式：**先快轨再慢轨**。
+    /// ① `probeBeacon`：广播探测电脑信标端口（UDP 45832），电脑收到立刻单播回它**当前**的地址，
+    ///    通常 1 秒内命中 —— 电脑换网段/IP 后也能秒级跟上，不再让用户长时间看「拉取失败」；
+    /// ② `discover`：整段 /24 单播扫描兜底（20 秒预算），只在快轨没回应时才跑。
     private func tryAutoDiscoverPc() {
         if autoDiscovering { return }
         if Date().timeIntervalSince(lastAutoDiscoverAt) < 15 { return }
         lastAutoDiscoverAt = Date()
         autoDiscovering = true
-        LanDiscovery.shared.discover { [weak self] found in
+        LanDiscovery.shared.probeBeacon { [weak self] probed in
             guard let self = self else { return }
-            self.autoDiscovering = false
-            guard self.isOnlineMode else { return }
-            if let url = found {
-                self.showToast("✅ 已自动发现电脑相册服务 \(url)")
-                self.loadOnlineData(silent: false)
-            } else {
-                self.showToast("暂未搜索到电脑在线相册，可稍后再试")
+            if let url = probed {
+                self.finishAutoDiscover(url: url, viaBeacon: true)
+                return
+            }
+            LanDiscovery.shared.discover { [weak self] found in
+                guard let self = self else { return }
+                self.finishAutoDiscover(url: found, viaBeacon: false)
             }
         }
+    }
+
+    private func finishAutoDiscover(url: String?, viaBeacon: Bool) {
+        autoDiscovering = false
+        guard isOnlineMode else { return }
+        guard let url else {
+            showToast("暂未搜索到电脑在线相册，可稍后再试")
+            return
+        }
+        showToast(viaBeacon ? "✅ 已定位电脑相册服务 \(url)" : "✅ 已自动发现电脑相册服务 \(url)")
+        loadOnlineData(silent: false)
     }
 
     private func renderOnlineUI() {

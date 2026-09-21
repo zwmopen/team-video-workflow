@@ -25,6 +25,20 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     private let pathMonitor = NWPathMonitor()
     private var currentNetworkType = "unknown"
 
+    /// 更新通道标识，与 Android `OnlineService.UPDATE_CAPABILITY` 对称。
+    /// Android 是 `apk-push-v1`（电脑端可直接推送 APK 让手机安装）；
+    /// iOS 只能走 AltStore 侧载，故给独立值，避免电脑端误判成「可推送安装包」的设备。
+    static let updateCapability = "ipa-altstore-v1"
+
+    /// 安装包版本：单一真源是 `ios/project.yml` 的 MARKETING_VERSION / CURRENT_PROJECT_VERSION
+    static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    }
+
+    static var appVersionCode: Int {
+        Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-1") ?? -1
+    }
+
     init(library: WorkLibrary) {
         self.library = library
         let presence = RemoteRelayPresence()
@@ -55,8 +69,9 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     private func remoteInventory() -> [String: Any] {
         var inventory: [String: Any] = [
             "workCount": library.advertisedWorkCount,
-            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
-            "versionCode": Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-1") ?? -1
+            "appVersion": Self.appVersion,
+            "versionCode": Self.appVersionCode,
+            "updateCapability": Self.updateCapability
         ]
         if let counts = library.advertisedWorkCounts {
             inventory["workCounts"] = counts
@@ -363,30 +378,11 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         }
     }
 
+    /// 全局广播 + 各网段定向广播。
+    /// 实现统一收敛到 `LanDiscovery.localBroadcastTargets()`，与「在线相册服务探测」
+    /// 共用同一份网段枚举，避免两处各写一遍、各自踩坑。
     private func broadcastAddresses() -> [in_addr] {
-        var result: [in_addr] = []
-        var seen = Set<UInt32>()
-        func append(_ value: UInt32) {
-            if seen.insert(value).inserted { result.append(in_addr(s_addr: value)) }
-        }
-        "255.255.255.255".withCString { append(Darwin.inet_addr($0)) }
-        var first: UnsafeMutablePointer<ifaddrs>?
-        guard Darwin.getifaddrs(&first) == 0, let start = first else { return result }
-        defer { Darwin.freeifaddrs(start) }
-        var current: UnsafeMutablePointer<ifaddrs>? = start
-        while let item = current {
-            let interface = item.pointee
-            if let rawAddress = interface.ifa_addr, let rawMask = interface.ifa_netmask,
-               rawAddress.pointee.sa_family == sa_family_t(AF_INET),
-               (interface.ifa_flags & UInt32(IFF_UP)) != 0,
-               (interface.ifa_flags & UInt32(IFF_LOOPBACK)) == 0 {
-                let address = rawAddress.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
-                let mask = rawMask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr }
-                append(address | ~mask)
-            }
-            current = interface.ifa_next
-        }
-        return result
+        LanDiscovery.localBroadcastTargets()
     }
 
     private func remoteHost(_ endpoint: NWEndpoint) -> String? {
@@ -399,6 +395,14 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         let model = Data(DeviceIdentity.model.utf8).base64URL
         let state = Data("online".utf8).base64URL
         var beacon = "ZWMDS2_HERE|2|\(DeviceIdentity.id)|\(transferHTTPPort)|\(name)|\(model)|\(state)||\(library.advertisedWorkCount)"
+        // 第 9~11 字段必须与 Android **完全对齐**：
+        // base64url(appVersion)|versionCode|base64url(updateCapability)
+        // 【2026-09-21 历史 bug】iOS 原先把 workCounts 的三个计数直接接在第 9 位，
+        // 电脑端按 appVersion/versionCode 解码 ⇒ 工作台把「泛流量篇数」当成版本号
+        // 显示成 build 11、机型版本永远是假的 0.8.3，workCounts 整块丢失。
+        beacon += "|\(Data(Self.appVersion.utf8).base64URL)"
+        beacon += "|\(Self.appVersionCode)"
+        beacon += "|\(Data(Self.updateCapability.utf8).base64URL)"
         if let counts = library.advertisedWorkCounts {
             // Optional tail fields preserve the old beacon format while
             // exposing the same precise/traffic inventory available at
@@ -479,7 +483,9 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             "name": DeviceIdentity.name,
             "model": DeviceIdentity.model,
             "iosVersion": UIDevice.current.systemVersion,
-            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "appVersion": IncomingTransferService.appVersion,
+            "versionCode": IncomingTransferService.appVersionCode,
+            "updateCapability": IncomingTransferService.updateCapability,
             "relayVersion": 1,
             "relayEnabled": true,
             "port": Int(transferHTTPPort),
