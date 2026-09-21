@@ -1,5 +1,107 @@
 # 变更记录
 
+## CI（非客户端发版）- 2026-09-21 - 修掉 iOS 单测「假闸门」：长期只编译、从未真正执行
+
+> **来源**：核对 iOS 0.8.25 的 CI 绿灯（run `35561484171`，`ios-altstore-build` success）时，
+> 没有直接采信绿灯，而是去翻 job 日志，发现它命中的是
+> `No bootable iPhone simulator on this runner; compiling the app and test bundle.`
+> + `build-for-testing` —— **只编译 app 与 test bundle，从未执行 XCTest**。
+
+### 根因：不是 runner 没模拟器，是探测脚本自己崩了
+
+```bash
+simulator_id=$(xcrun simctl list devices available -j | python3 -c '
+import json,sys
+...
+')
+```
+
+YAML 的 block scalar 会给**每一行**加缩进，这段 Python 到达解释器时每行都带前导空格，
+CPython 直接抛 `IndentationError: unexpected indent`（本机实测：exit 1、stdout 为空）。
+命令替换拿到空串 ⇒ `simulator_id` 为空 ⇒ 永远走 `else` 分支 ⇒ 永远 `build-for-testing`。
+次因是过滤条件要求 `d.get("isAvailable")`，该字段在部分 Xcode 版本上不存在，同样会漏选。
+
+**结论**：此前所有 iOS 单测（含本轮新增的 3 个 MULTI 用例）**只被编译过，从未跑过**；
+`ios-altstore-build` 的绿灯一直只证明「Swift 能编译通过」。
+（不影响 0.8.25 的功能改动本身，但**任何「测试通过」的说法此前都不成立**。）
+
+### 修法
+
+| 项 | 改前 | 改后 |
+| :-- | :-- | :-- |
+| 选择逻辑 | YAML 内联 `python3 -c` | 独立脚本 `scripts/pick_ios_simulator.py` |
+| 设备过滤 | 要求 `isAvailable`（字段可能缺失 ⇒ 漏选） | 只看 `availabilityError` |
+| 无可用设备 | 静默降级 `build-for-testing` | 取最新可用 iOS runtime，`simctl create` + `boot` 现造一个 |
+| 造不出来 | 静默通过 | `::warning::` + step summary 明写「NOT executed」 |
+| 跑过之后 | 无痕 | summary 写入 `Executed N test`；没有该行就再告警一次 |
+| 闸门自证 | 无 | `scripts/test_pick_ios_simulator.py`（9 例），CI 新增 `Verify iOS simulator picker` 步骤 |
+
+输出契约（stdout 一行）：`device:<udid>` 复用 / `create:<runtime>\t<device-type>` 现造 / 空 = 没戏。
+
+### 验证
+
+- 本机 **9/9 通过**；期间**刻意还原成错误版本**跑过一轮确认测试会 FAIL
+  （iPhone-8 排序压过 iPhone-16、`devices` 非 dict 时崩溃 —— 两条都是真实捕获，非事后编造）。
+- `python3 -c '<indented>'` ⇒ `IndentationError` 已在本机复现（exit 1、stdout 空）。
+- workflow 的 bash 片段经 `bash -n` 语法检查，并用真实字符串验证过 `case` 拆分
+  （`create:<runtime>\t<type>` 能正确拆成两个变量）。
+- **待 CI 复核**：新 run 的 `ios-altstore-build` 日志里应出现 `Executed N test`。
+
+### 待复核项（不扩大结论）
+
+- 本修复只保证「有机会真跑」；**iOS 0.8.25 的 11 版本按钮 / 全量发图仍需真机验收**。
+
+## CI（非客户端发版）- 2026-09-21 - 修掉 iOS 单测「假闸门」：长期只编译、从未真正执行
+
+> **来源**：核对 iOS 0.8.25 的 CI 绿灯（run `35561484171`，`ios-altstore-build` success）时，
+> 没有直接采信绿灯，而是去翻 job 日志，发现它命中的是
+> `No bootable iPhone simulator on this runner; compiling the app and test bundle.`
+> + `build-for-testing` —— **只编译 app 与 test bundle，从未执行 XCTest**。
+
+### 根因：不是 runner 没模拟器，是探测脚本自己崩了
+
+```bash
+simulator_id=$(xcrun simctl list devices available -j | python3 -c '
+import json,sys
+...
+')
+```
+
+YAML 的 block scalar 会给**每一行**加缩进，这段 Python 到达解释器时每行都带前导空格，
+CPython 直接抛 `IndentationError: unexpected indent`（本机实测：exit 1、stdout 为空）。
+命令替换拿到空串 ⇒ `simulator_id` 为空 ⇒ 永远走 `else` 分支 ⇒ 永远 `build-for-testing`。
+次因是过滤条件要求 `d.get("isAvailable")`，该字段在部分 Xcode 版本上不存在，同样会漏选。
+
+**结论**：此前所有 iOS 单测（含本轮新增的 3 个 MULTI 用例）**只被编译过，从未跑过**；
+`ios-altstore-build` 的绿灯一直只证明「Swift 能编译通过」。
+（并不影响 0.8.25 的功能改动本身，但**任何「测试通过」的说法此前都不成立**。）
+
+### 修法
+
+| 项 | 改前 | 改后 |
+| :-- | :-- | :-- |
+| 选择逻辑 | YAML 内联 `python3 -c` | 独立脚本 `scripts/pick_ios_simulator.py` |
+| 设备过滤 | 要求 `isAvailable`（字段可能缺失 ⇒ 漏选） | 只看 `availabilityError` |
+| 无可用设备 | 静默降级 `build-for-testing` | 取最新可用 iOS runtime，`simctl create` + `boot` 现造一个 |
+| 造不出来 | 静默通过 | `::warning::` + step summary 明写「NOT executed」 |
+| 跑过之后 | 无痕 | summary 写入 `Executed N test`；没有该行就再告警一次 |
+| 闸门自证 | 无 | `scripts/test_pick_ios_simulator.py`（9 例），CI 新增 `Verify iOS simulator picker` 步骤 |
+
+输出契约（stdout 一行）：`device:<udid>` 复用 / `create:<runtime>\t<device-type>` 现造 / 空 = 没戏。
+
+### 验证
+
+- 本机 **9/9 通过**；期间**刻意还原成错误版本**跑过一轮确认测试会 FAIL
+  （iPhone-8 排序压过 iPhone-16、`devices` 非 dict 时崩溃 —— 两条都是真实捕获，非事后编造）。
+- `python3 -c '<indented>'` ⇒ `IndentationError` 已在本机复现（exit 1、stdout 空）。
+- workflow 的 bash 片段经 `bash -n` 语法检查，并用真实字符串验证过 `case` 拆分
+  （`create:<runtime>\t<type>` 能正确拆成两个变量）。
+- **待 CI 复核**：新 run 的 `ios-altstore-build` 日志里应出现 `Executed N test`。
+
+### 待复核项（不扩大结论）
+
+- 本修复只保证「有机会真跑」；**iOS 0.8.25 的 11 版本按钮 / 全量发图仍需真机验收**。
+
 ## iOS 0.8.25 / build 96 - 2026-09-21 - 在线相册两处真机缺陷：**文案解析没跟上安卓**（11 个版本塌成 1 个「乱码」按钮）+ **只发第一张图**
 
 > **来源**：0.8.24 装到真机后，用户在 iOS 在线相册里点文案按钮实测反馈三句话：

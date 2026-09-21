@@ -282,6 +282,10 @@ jobs:
           node-version: 22
       - name: Guard removed screenshot and automatic clipboard surfaces
         run: node ../scripts/verify-removed-surfaces.mjs
+      - name: Verify iOS simulator picker
+        # 选模拟器的逻辑曾经是 YAML 里的 `python3 -c`，因缩进被当成 Python 缩进而
+        # 崩溃，导致「永远找不到模拟器 -> 永远只编译不跑测试」。闸门本身必须有测试。
+        run: python3 ../scripts/test_pick_ios_simulator.py
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
@@ -293,11 +297,37 @@ jobs:
           set +e
           marketing_version=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r\n' | xargs)
           build_version=$(awk -F': *' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | tr -d '\r\n' | xargs)
-          simulator_id=$(xcrun simctl list devices available -j | python3 -c '
-          import json,sys
-          data=json.load(sys.stdin)
-          print(next((d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and d["name"].startswith("iPhone")), ""))
-          ')
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/sim-devices.json" 2>"$RUNNER_TEMP/sim-devices.err"
+          xcrun simctl list runtimes -j > "$RUNNER_TEMP/sim-runtimes.json" 2>"$RUNNER_TEMP/sim-runtimes.err"
+          xcrun simctl list devicetypes -j > "$RUNNER_TEMP/sim-devicetypes.json" 2>"$RUNNER_TEMP/sim-devicetypes.err"
+          # 选择逻辑必须放在独立脚本里：YAML block scalar 会给每一行加缩进，
+          # 而 `python3 -c '<indented code>'` 会 IndentationError、stdout 为空
+          # —— 这正是之前「永远找不到模拟器、永远只编译不跑测试」的根因。
+          sim_plan=$(python3 ../scripts/pick_ios_simulator.py \
+            --devices "$RUNNER_TEMP/sim-devices.json" \
+            --runtimes "$RUNNER_TEMP/sim-runtimes.json" \
+            --devicetypes "$RUNNER_TEMP/sim-devicetypes.json")
+          simulator_id=""
+          case "$sim_plan" in
+            device:*)
+              simulator_id=${sim_plan#device:}
+              echo "reusing simulator: $simulator_id"
+              ;;
+            create:*)
+              create_args=${sim_plan#create:}
+              runtime_id=${create_args%%$'\t'*}
+              device_type=${create_args##*$'\t'}
+              simulator_id=$(xcrun simctl create "DSH-CI-iPhone" "$device_type" "$runtime_id")
+              echo "created simulator: $simulator_id ($device_type / $runtime_id)"
+              xcrun simctl boot "$simulator_id"
+              xcrun simctl bootstatus "$simulator_id" -b
+              ;;
+            *)
+              echo "----- simctl diagnostics (stderr of the picker) -----"
+              cat "$RUNNER_TEMP/sim-devices.err"
+              cat "$RUNNER_TEMP/sim-runtimes.err"
+              ;;
+          esac
           if [ -n "$simulator_id" ]; then
             xcodebuild \
               -project Album.xcodeproj \
@@ -309,7 +339,26 @@ jobs:
               CURRENT_PROJECT_VERSION="$build_version" \
               test > "$RUNNER_TEMP/device-share-ios-build.log" 2>&1
             test_status=$?
+            {
+              echo "### iOS unit tests: executed"
+              echo ""
+              echo "Simulator: $simulator_id"
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -E "Executed [0-9]+ test" "$RUNNER_TEMP/device-share-ios-build.log" \
+              | tail -n 5 >> "$GITHUB_STEP_SUMMARY" || true
+            if ! grep -qE "Executed [0-9]+ test" "$RUNNER_TEMP/device-share-ios-build.log"; then
+              echo "::warning::No 'Executed N test' line in the xcodebuild log - XCTest may not have run."
+              echo "**WARNING**: no 'Executed N test' line - XCTest may not have run." >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
+            echo "::warning::iOS unit tests NOT executed: no bootable iPhone simulator on this runner."
+            {
+              echo "### iOS unit tests: NOT executed"
+              echo ""
+              echo "No bootable iPhone simulator was available and none could be created, so this job"
+              echo "only compiled the app and the test bundle (build-for-testing). The green check below"
+              echo "means \"it compiles\", NOT \"the unit tests pass\"."
+            } >> "$GITHUB_STEP_SUMMARY"
             echo "No bootable iPhone simulator on this runner; compiling the app and test bundle." > "$RUNNER_TEMP/device-share-ios-build.log"
             xcodebuild \
               -project Album.xcodeproj \

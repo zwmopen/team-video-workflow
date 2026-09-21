@@ -4,7 +4,43 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-082**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-083**。
+
+## DSH-083 iOS 单测在 CI 里长期「只编译、从不执行」（假闸门，2026-09-21 修复）
+
+- **现象**：`ios-altstore-build` job 长期绿灯，日志里却是
+  `No bootable iPhone simulator on this runner; compiling the app and test bundle.` +
+  `build-for-testing`。`build-for-testing` **只编译 app 与 test bundle，不执行 XCTest**，
+  于是「iOS 单测通过」这句话此前从未被证明过 —— 包括 0.8.25 新增的 3 个 MULTI 用例。
+  是在核对 run `35561484171` 绿灯含金量时发现的（没有采信绿灯，去翻了日志）。
+- **环境**：GitHub Actions `macos-15`（`macos-15-arm64` / macOS 15.7.9 / Xcode 16.4 / iOS 18.5 SDK）；
+  `.github/workflows/device-share-hub.yml` 的 `ios-altstore-build` → `Build unsigned iPhone app` 步骤。
+- **根因（主因是脚本自己崩，不是环境缺模拟器）**：
+  1. 模拟器探测写成了 YAML block scalar 里的 `python3 -c '<多行代码>'`。
+     **block scalar 会给每一行加缩进**，Python 收到的是整体带前导空格的源码，
+     CPython 直接 `IndentationError: unexpected indent`（本机实测：exit 1、stdout 为空）。
+     命令替换因此拿到空串 ⇒ `simulator_id` 恒空 ⇒ 恒走 `else` ⇒ 恒 `build-for-testing`。
+  2. 次因：过滤条件要求 `d.get("isAvailable")`，该字段在部分 Xcode 版本不存在，即便有设备也会漏选。
+- **修复**：
+  1. 选择逻辑迁出 YAML，落成 `tools/device-share-hub/scripts/pick_ios_simulator.py`，
+     输出契约 `device:<udid>` / `create:<runtime>\t<device-type>` / 空；
+  2. 过滤只看 `availabilityError`，不再依赖 `isAvailable`；
+  3. 没有现成设备时，取**最新可用** iOS runtime 与它支持的 iPhone 型号，`simctl create` + `boot`；
+  4. 仍然造不出来就 `::warning::` + step summary 明写「NOT executed」，不再静默；
+  5. 测完把 `Executed N test` 写进 summary；**日志里没有该行就再告警一次**（防「跑了 0 个用例」）；
+  6. CI 新增 `Verify iOS simulator picker` 步骤跑 `test_pick_ios_simulator.py`。
+- **证据**：
+  - 本机复现根因：`python3 -c '<带缩进代码>'` ⇒ `IndentationError: unexpected indent`，exit 1、stdout 空。
+  - `test_pick_ios_simulator.py` **9/9 通过**；其间**刻意还原成错误版本**跑过一轮确认会 FAIL
+    （型号按字符串排序导致 iPhone-8 压过 iPhone-16；`devices` 非 dict 时抛 `AttributeError`）。
+  - workflow 的 bash 片段过 `bash -n`，并用真实字符串验证 `case` 能正确拆出 runtime / device type。
+  - 待 CI 复核：新 run 的 `ios-altstore-build` 日志应出现 `Executed N test`。
+- **回归要求（必须保留）**：
+  1. **禁止在 YAML block scalar 里写多行 `python3 -c`** —— 缩进会被当成 Python 缩进。
+     需要逻辑就落成脚本文件，并给它配测试。
+  2. **任何「检测/探测/守卫」类代码，交付前必须自证它会响**：本条目就是「静默失败被绿灯掩盖」的实例。
+  3. **降级分支必须显式发声**（`::warning::` + summary），不得静默走「看起来也成功」的路径。
+  4. 判断「测试跑过没有」要有**可 grep 的硬证据**（`Executed N test`），不能只看 job conclusion。
 
 ## DSH-082 iOS 多版本文案塌成一个「乱码」按钮 + 在线分享只带第一张图（iOS 0.8.24 及以前；0.8.25 修复）
 
