@@ -1067,7 +1067,13 @@ public final class MainActivity extends Activity {
         card.addView(nameRow);
 
         card.addView(previewStrip(work), margins(0, dp(2), 0, dp(2)));
-        String detail = work.images.size() + " 张图片";
+        int localUsedCount = work.xhsShareCount + work.douyinShareCount;
+        // 元信息统一口径（与 iOS `configure` 逐字一致）：
+        // `📱 手机本地 · N 图 · 使用态` + 日期后缀。
+        String detail = "📱 手机本地 · " + work.images.size() + " 图 · "
+                + (localUsedCount > 0 ? "已使用 " + localUsedCount + " 次" : "未使用");
+        String localDate = extractTimestampBadge(work.name);
+        if (!localDate.isEmpty()) detail += " · " + localDate;
         if (showingTrash && work.isGarbage()) {
             // 与在线回收站垃圾条目对齐：展示已写入手机本地元数据的垃圾备注
             detail += " · 🗑️ 垃圾样本\n垃圾备注：" + work.garbageRemark;
@@ -1157,7 +1163,7 @@ public final class MainActivity extends Activity {
                     clickCount = work.xhsShareCount;
                 }
                 Button btn = compactButton(item.buttonLabel, clickCount == 0);
-                btn.setContentDescription(item.buttonLabel + "，已点击 " + clickCount + " 次");
+                btn.setContentDescription(item.buttonLabel + "，已使用 " + clickCount + " 次");
                 final int finalClickCount = clickCount;
                 final String copyForPlatform = (item.copyText != null && !item.copyText.isEmpty())
                         ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.text, item.platform);
@@ -2470,7 +2476,7 @@ public final class MainActivity extends Activity {
 
     private void markPlatformButtonClicked(Button button, String label, int previousCount) {
         styleNeumorphicButton(button, STYLE_MUTED_GRAY);
-        button.setContentDescription(label + "，已点击 " + Math.max(1, previousCount + 1) + " 次");
+        button.setContentDescription(label + "，已使用 " + Math.max(1, previousCount + 1) + " 次");
         button.setEnabled(true);
     }
 
@@ -3323,7 +3329,10 @@ public final class MainActivity extends Activity {
         }
 
         StringBuilder detail = new StringBuilder();
-        detail.append(work.imageCount).append(" 张图片 · 电脑");
+        // 元信息统一口径（与 iOS `configureOnline` 逐字一致）：
+        // `💻 电脑在线 · N 图 · 使用态` + 日期后缀（日期格式见 extractTimestampBadge）。
+        detail.append("💻 电脑在线 · ").append(work.imageCount).append(" 图 · ")
+              .append(work.useCount > 0 ? "已使用 " + work.useCount + " 次" : "未使用");
         String timeBadge = extractTimestampBadge(work.id);
         if (timeBadge.isEmpty()) timeBadge = extractTimestampBadge(work.title);
         if (!timeBadge.isEmpty()) detail.append(" · ").append(timeBadge);
@@ -3640,7 +3649,10 @@ public final class MainActivity extends Activity {
         }
 
         StringBuilder detail = new StringBuilder();
-        detail.append(work.imageCount).append(" 张图片 · 电脑");
+        // 元信息统一口径（与 iOS `configureOnline` 逐字一致）：
+        // `💻 电脑在线 · N 图 · 使用态` + 日期后缀（日期格式见 extractTimestampBadge）。
+        detail.append("💻 电脑在线 · ").append(work.imageCount).append(" 图 · ")
+              .append(work.useCount > 0 ? "已使用 " + work.useCount + " 次" : "未使用");
         String timeBadge = extractTimestampBadge(work.id);
         if (timeBadge.isEmpty()) {
             timeBadge = extractTimestampBadge(work.title);

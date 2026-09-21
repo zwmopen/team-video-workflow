@@ -454,6 +454,11 @@ DESTINATIONS = [
 ]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
+# 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/` 子目录里。
+# 【2026-09-21 修】老实现只 os.listdir 看顶层 ⇒ 图在子目录的 103 套作品
+# 在手机在线相册里完全不可见（实测 totalWorks 389，磁盘实为 483）。
+IMAGE_SUBDIR_FALLBACKS = ("产出素材",)
+
 # 内存缩略图缓存 (cache_key -> bytes)，带 LRU 淘汰。
 # ⚠️ 2026-09-20 修复：此前 THUMB_CACHE 只有声明、从未被读取（死代码），
 #    每个缩略图请求都要读磁盘、冷缓存时还要跑 PIL，是手机端「一直在读取」的放大器。
@@ -896,9 +901,14 @@ class WorkScanner:
         if _inside(cand) and os.path.isfile(cand):
             return os.path.realpath(cand)
 
-        # 裸文件名 → 作品库索引
-        if "/" not in raw:
-            hit = self.image_name_index().get(raw)
+        # 作品库图片标识索引兜底：
+        # ① 完整标识（裸文件名 / 作品内相对路径 / 成品库根相对路径）直接命中；
+        # ② 再退化到 basename，兼容「作品被移库后旧路径失效」与只发裸文件名的旧客户端。
+        hit = self.image_name_index().get(raw)
+        if hit and os.path.isfile(hit):
+            return hit
+        if "/" in raw:
+            hit = self.image_name_index().get(raw.rsplit("/", 1)[-1])
             if hit and os.path.isfile(hit):
                 return hit
         return None
@@ -918,8 +928,18 @@ class WorkScanner:
                         continue
                     for fn in (w.get("images") or []):
                         fp = os.path.join(base, fn)
-                        if fn not in idx and os.path.isfile(fp):
+                        if not os.path.isfile(fp):
+                            # images 值也可能是「成品库根相对路径」（图在 产出素材/ 的作品）
+                            alt = os.path.join(self.root, fn)
+                            if os.path.isfile(alt):
+                                fp = alt
+                        if not os.path.isfile(fp):
+                            continue
+                        if fn not in idx:
                             idx[fn] = fp
+                        bn = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                        if bn and bn not in idx:
+                            idx[bn] = fp
                 self._image_name_index = idx
             return dict(self._image_name_index)
 
@@ -1035,13 +1055,47 @@ class WorkScanner:
             self._last_scan_time = now
             return results
 
+    def _collect_images(self, dir_path: str, files: List[str]) -> List[str]:
+        """收集作品成品图的客户端标识列表。
+
+        两级策略（2026-09-21 修「图在 产出素材/ 子目录 ⇒ 手机看不到」）：
+        ① 作品根目录有图 → 原样返回裸文件名（布局 A，行为完全不变）；
+        ② 根目录无图 → 回退到产线标准素材子目录（IMAGE_SUBDIR_FALLBACKS），
+           返回**成品库根相对路径**，保证全局唯一：
+             - iOS 走 `?path=`，resolve_image_path() 原生支持「相对根路径」形态；
+             - Android 走 `?id=..&file=`，/api/online/image 拼接失败后回退同一解析器。
+           若只返回作品内相对路径（`产出素材/P1.png`），103 套作品会共用同一个
+           图片标识 ⇒ iOS 端磁盘/内存缓存键与文件名索引双重串图，故必须用根相对路径。
+        """
+        top = [f for f in files if os.path.splitext(f.lower())[1] in IMAGE_EXTENSIONS]
+        if top:
+            return top
+        root_real = os.path.realpath(self.root)
+        for sub in IMAGE_SUBDIR_FALLBACKS:
+            sub_dir = os.path.join(dir_path, sub)
+            if not os.path.isdir(sub_dir):
+                continue
+            try:
+                sub_files = os.listdir(sub_dir)
+            except Exception:
+                continue
+            hits = []
+            for f in sub_files:
+                if os.path.splitext(f.lower())[1] not in IMAGE_EXTENSIONS:
+                    continue
+                rel = os.path.relpath(os.path.join(sub_dir, f), root_real)
+                hits.append(rel.replace(os.sep, "/"))
+            if hits:
+                return hits
+        return []
+
     def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int) -> Optional[Dict[str, Any]]:
         try:
             files = os.listdir(dir_path)
         except Exception:
             return None
 
-        images = [f for f in files if os.path.splitext(f.lower())[1] in IMAGE_EXTENSIONS]
+        images = self._collect_images(dir_path, files)
         if not images:
             return None
 
@@ -1557,6 +1611,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     self.send_error(404, "Work not found")
                     return
                 img_path = os.path.join(target_work["path"], file_name)
+                if not os.path.isfile(img_path):
+                    # 兜底：file 可能是「成品库根相对路径」（成品图在 产出素材/ 子目录的作品），
+                    # 直接拼作品目录必然落空，交给统一解析器。
+                    resolved = self.scanner.resolve_image_path(file_name)
+                    if resolved:
+                        img_path = resolved
             elif raw_path:
                 # iOS 旧契约：只带 ?path=（裸文件名 / 相对 / 绝对路径）
                 img_path = self.scanner.resolve_image_path(raw_path) or ""

@@ -896,9 +896,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        // 196：平台按钮区改为「1 行可滚动 + 1 行操作按钮」后，卡片内容高度约 194，
-        // 旧的 172 会挤压标题/详情行。按钮再多也不增高（靠横向滚动）。
-        return CGSize(width: width, height: 196)
+        // 212：平台按钮区与操作行按钮统一升到 36pt（对齐 Android 的 dp(36)）后，
+        // 卡片内容高度约 210；旧的 196（按钮 28pt 时代）会挤压标题/详情行。
+        // 按钮再多也不增高（靠横向滚动）。
+        return CGSize(width: width, height: 212)
     }
 
     private func confirmResetWork(_ work: WorkItem) {
@@ -1365,7 +1366,7 @@ private final class WorkCell: UICollectionViewCell {
         configureCopyPathButton()
 
         platformRow.axis = .horizontal
-        platformRow.spacing = 6
+        platformRow.spacing = 8
         platformRow.alignment = .fill
         // 内容自适应宽度（不是 fillEqually）：版本多时靠横向滚动查看，
         // 避免 11 个版本被均分成极窄的按钮。
@@ -1400,7 +1401,7 @@ private final class WorkCell: UICollectionViewCell {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             previewScroll.heightAnchor.constraint(equalToConstant: 64),
-            platformScroll.heightAnchor.constraint(equalToConstant: 28),
+            platformScroll.heightAnchor.constraint(equalToConstant: 36),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
         ])
     }
@@ -1426,6 +1427,23 @@ private final class WorkCell: UICollectionViewCell {
         }
     }
 
+    /// 卡片日期后缀：与 Android `extractTimestampBadge` 同源同格式（`MM-dd HH:mm`），
+    /// 从作品 id/title 的 `yyyyMMdd_HHmmss` 前缀解析；解析不到返回空串（调用方省略）。
+    static func cardDateSuffix(_ rawID: String, _ rawTitle: String) -> String {
+        let pattern = "^(\\d{4})(\\d{2})(\\d{2})_(\\d{2})(\\d{2})"
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return "" }
+        for raw in [rawID, rawTitle] where !raw.isEmpty {
+            let full = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+            guard let m = re.firstMatch(in: raw, range: full), m.numberOfRanges >= 6 else { continue }
+            func part(_ i: Int) -> String {
+                guard let r = Range(m.range(at: i), in: raw) else { return "" }
+                return String(raw[r])
+            }
+            return part(2) + "-" + part(3) + " " + part(4) + ":" + part(5)
+        }
+        return ""
+    }
+
     func configureOnline(_ entry: OnlineWorkEntry) {
         isOnlineCard = true
         contentView.backgroundColor = AppColors.secondaryBackground
@@ -1434,11 +1452,15 @@ private final class WorkCell: UICollectionViewCell {
         name.text = "[\(entry.destination)] \(entry.title)"
         let record = OnlineWorkLifecycle.getRecord(id: entry.id)
         let usedCount = record?.useCount ?? entry.useCount
+        // 日期后缀：与 Android `extractTimestampBadge` 同源同格式（MM-dd HH:mm），
+        // 取作品 id/title 的 `yyyyMMdd_HHmmss` 前缀；取不到就省略（不显示占位）。
+        let onlineDate = WorkCell.cardDateSuffix(entry.id, entry.title)
+        let onlineDatePart = onlineDate.isEmpty ? "" : " · " + onlineDate
         if usedCount > 0 {
-            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 已使用 \(usedCount) 次"
+            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 已使用 \(usedCount) 次" + onlineDatePart
             detail.textColor = UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
         } else {
-            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 未使用"
+            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 未使用" + onlineDatePart
             detail.textColor = AppColors.secondaryText
         }
 
@@ -1501,15 +1523,15 @@ private final class WorkCell: UICollectionViewCell {
     private func makeCopyMissingButton() -> UIButton {
         let missing = UIButton(type: .system)
         missing.setTitle("⚠️ 文案缺失（空壳作品，不可分发）", for: .normal)
-        missing.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        missing.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
         missing.setTitleColor(.systemRed, for: .normal)
         missing.isEnabled = false
         missing.alpha = 0.55
         missing.backgroundColor = AppColors.secondaryBackground
         missing.layer.cornerRadius = 8
-        missing.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        missing.contentEdgeInsets = UIEdgeInsets(top: 5, left: 15, bottom: 5, right: 15)
         missing.translatesAutoresizingMaskIntoConstraints = false
-        missing.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        missing.heightAnchor.constraint(equalToConstant: 36).isActive = true
         missing.accessibilityLabel = "该在线作品文案缺失，已禁止分发"
         return missing
     }
@@ -1526,11 +1548,11 @@ private final class WorkCell: UICollectionViewCell {
         for (index, item) in platforms.enumerated() {
             let button = UIButton(type: .system)
             button.setTitle(item.buttonLabel, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
+            button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
             button.layer.cornerRadius = 8
-            button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+            button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 15, bottom: 5, right: 15)
             button.translatesAutoresizingMaskIntoConstraints = false
-            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
             button.tag = index
             button.accessibilityLabel = item.buttonLabel
             applyPlatformStyle(button, isOptimistic: isOptimistic(index))
@@ -1567,7 +1589,11 @@ private final class WorkCell: UICollectionViewCell {
         contentView.layer.borderColor = AppColors.separator.cgColor
 
         name.text = work.name
-        detail.text = "\(work.imageURLs.count) 图"
+        var localDetail = "📱 手机本地 · \(work.imageURLs.count) 图 · "
+            + (work.shareCount > 0 ? "已使用 \(work.shareCount) 次" : "未使用")
+        let localDate = WorkCell.cardDateSuffix(work.name, work.name)
+        if !localDate.isEmpty { localDetail += " · " + localDate }
+        detail.text = localDetail
         detail.textColor = AppColors.secondaryText
 
         renderPreviews(work.imageURLs)
@@ -1638,22 +1664,22 @@ private final class WorkCell: UICollectionViewCell {
         resetButton.setTitle("重置", for: .normal)
         resetButton.setTitleColor(UIColor(red: 0.85, green: 0.55, blue: 0.1, alpha: 1), for: .normal)
         resetButton.backgroundColor = UIColor(red: 1, green: 0.96, blue: 0.88, alpha: 1)
-        resetButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        resetButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         resetButton.layer.cornerRadius = 8
         resetButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
         resetButton.translatesAutoresizingMaskIntoConstraints = false
-        resetButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        resetButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
     }
 
     private func configureDeleteButton() {
         deleteButton.setTitle("删除", for: .normal)
         deleteButton.setTitleColor(UIColor(red: 0.8, green: 0.25, blue: 0.25, alpha: 1), for: .normal)
         deleteButton.backgroundColor = UIColor(red: 1, green: 0.92, blue: 0.92, alpha: 1)
-        deleteButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        deleteButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         deleteButton.layer.cornerRadius = 8
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        deleteButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
     }
 
     /// 与 Android 的「复制路径」按钮同色系（拟态灰底灰字），紧跟「删除」之后。
@@ -1661,11 +1687,11 @@ private final class WorkCell: UICollectionViewCell {
         copyPathButton.setTitle("复制路径", for: .normal)
         copyPathButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
         copyPathButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
-        copyPathButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        copyPathButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         copyPathButton.layer.cornerRadius = 8
         copyPathButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
         copyPathButton.translatesAutoresizingMaskIntoConstraints = false
-        copyPathButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        copyPathButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
         copyPathButton.accessibilityLabel = "复制作品文件夹路径"
     }
 

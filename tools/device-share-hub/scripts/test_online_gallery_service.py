@@ -572,5 +572,73 @@ class TestPlatformSlotGuard(unittest.TestCase):
                       "searchBlob 用的是未净化原文，剔除槽位不能连带丢掉可检索性")
 
 
+class TestSubdirImages(unittest.TestCase):
+    """【闸门】作品图在子目录（产线标准 `产出素材/`）时，作品必须可见且可取图。
+
+    背景：成品库存在两种目录布局 ——
+      A. 顶层直接放成品图（`P1_封面.png`）；
+      B. 成品图放在产线标准的 `产出素材/` 子目录里（`产出素材/P1.png`）。
+    老 `_inspect_work_dir()` 只 `os.listdir(dir_path)` 看顶层，遇到布局 B 直接
+    `return None`，导致 103 套作品在手机相册里「人间蒸发」（实测 totalWorks 389 而非 483）。
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="test_subdir_img_")
+        self.stage0 = os.path.join(self.temp_dir, "已发送0次（抖音小红书可发）")
+        os.makedirs(self.stage0, exist_ok=True)
+        self.scanner = WorkScanner(self.temp_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _make_work(self, name, layout):
+        d = os.path.join(self.stage0, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "文案.txt"), "w", encoding="utf-8") as f:
+            f.write("这是一条真实作品文案，用于测试子目录取图是否可见。" * 12)
+        if layout == "subdir":
+            sub = os.path.join(d, "产出素材")
+            os.makedirs(sub, exist_ok=True)
+            for n in ("P1.png", "P2.png"):
+                with open(os.path.join(sub, n), "wb") as f:
+                    f.write(PNG_1PX)
+        elif layout == "toplevel":
+            for n in ("P1.png", "P2.png"):
+                with open(os.path.join(d, n), "wb") as f:
+                    f.write(PNG_1PX)
+        return d
+
+    def test_subdir_images_work_is_visible(self):
+        """布局 B：图在 `产出素材/` 里，作品仍必须被扫到（老实现会漏）。"""
+        self._make_work("20260915_Codex-AUTUMN_A_台州2天1晚攻略", "subdir")
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 1,
+                         "图在 产出素材/ 子目录的作品被扫描器漏掉了（布局 B 漏收）")
+        self.assertEqual(works[0]["imageCount"], 2)
+
+    def test_subdir_image_path_is_resolvable(self):
+        """布局 B 下发的 images 值必须能被 resolve_image_path 解析（iOS 走 ?path= 契约）。"""
+        self._make_work("20260915_Codex-AUTUMN_A_台州2天1晚攻略", "subdir")
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 1)
+        for fn in works[0]["images"]:
+            got = self.scanner.resolve_image_path(fn)
+            self.assertIsNotNone(got, "iOS 契约 ?path=%s 解析失败，手机端会 404" % fn)
+            self.assertTrue(os.path.isfile(got))
+
+    def test_toplevel_layout_unchanged(self):
+        """布局 A 不得被回归影响：顶层有图时优先用顶层，images 仍是裸文件名。"""
+        self._make_work("20260918_100000_安吉2天1夜秋季团建", "toplevel")
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 1)
+        self.assertEqual(sorted(works[0]["images"]), ["P1.png", "P2.png"])
+
+    def test_no_image_work_still_excluded(self):
+        """反向闸门：真·没有图的作品（子目录也没有）仍必须排除，别把空壳放进手机。"""
+        self._make_work("20260918_110000_空壳作品", "none")
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 0, "无图空壳作品被误放进了在线相册")
+
+
 if __name__ == "__main__":
     unittest.main()
