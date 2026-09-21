@@ -402,6 +402,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     ///
     /// 【DSH-081 / 0.8.23】判定「有没有数据」的时机被修正为**回包时刻**（见下方注释），
     /// 且无数据时**先 toast + 自愈、自愈失败才弹窗**，消除电脑换网段后的假弹窗。
+    /// 【0.8.24 补漏】失败即自愈，**与有没有缓存数据无关** —— 有数据只是改用软提示。
     private func loadOnlineData(silent: Bool = false) {
         let group = DispatchGroup()
         var catResult: Result<OnlineCategoriesResult, Error>? = nil
@@ -436,15 +437,24 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 // onlineWorks 还是空的，快照随后才填上并渲染出列表。旧写法把判定提前到了
                 // 请求前，于是出现「列表已经好好显示着 401 套作品，却弹出阻塞式
                 // 拉取在线相册失败」——2026-09-21 真机复现（iPhone 12 / iOS 0.8.22）。
+                let msg = err.localizedDescription.isEmpty ? "网络超时" : err.localizedDescription
                 if !self.onlineWorks.isEmpty {
-                    // 有快照 / 旧数据：保留用户已经看到的列表，只做软提示 —— 与安卓「失败不清屏」一致
-                    let msg = err.localizedDescription.isEmpty ? "网络超时" : err.localizedDescription
+                    // 有快照 / 旧数据：保留用户已经看到的列表，只做软提示 —— 与安卓「失败不清屏」一致。
+                    //
+                    // ⚠️ 【0.8.24 补漏，真机实测踩到】**自愈与「数据在不在」无关**：
+                    // 数据只决定「用 toast 还是用弹窗」，**绝不能**用它决定「要不要去找新地址」。
+                    // 只把 hadData 的采样时机改对、却不在这里补上 tryAutoDiscoverPc()，会导致
+                    // 「有快照的用户」在电脑换网段后**永远停在旧地址**（旧版是靠竞态把有数据
+                    // 误判成无数据、顺带走了一次自愈才好的）——
+                    // 等于把「看得见的弹窗」换成了「看得见的旧列表 + 静默卡死」，反而更糟。
+                    // 实测证据：把 customPcServerUrl 写成旧网段 192.168.0.107 后冷启动，
+                    // 屏幕无弹窗、列表照旧，30 秒后缓存地址**纹丝不动**。
                     self.showToast("⚠️ 刷新失败：\(msg)（已保留上次内容）")
                     self.renderOnlineUI()
+                    self.tryAutoDiscoverPc()
                 } else {
                     // 完全没有数据（首次冷启动或快照损坏）：先走**非阻塞**提示并立刻自愈，
                     // 只有自愈也失败才升级为阻塞弹窗 —— 电脑换网段/IP 这一常见场景从此不再弹错。
-                    let msg = err.localizedDescription.isEmpty ? "网络超时" : err.localizedDescription
                     self.renderOnlineUI()
                     if silent {
                         // 静默刷新（viewWillAppear / 定时器）：连 toast 都不发，但自愈照跑。
