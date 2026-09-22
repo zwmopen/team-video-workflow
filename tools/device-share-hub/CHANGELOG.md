@@ -1,5 +1,60 @@
 # 变更记录
 
+## iOS 0.8.32 / build 103 - 2026-09-22 - 全量对等补齐：预览三出口 / 在线列表分页 / 回收站分页（DSH-092）
+
+> **用户要求（原话）**：「安卓更新得会比较完善一点……不是哪一件，而是全部挨个补充，把它完善掉」
+
+- **审计方法（可复用）**：写 `_audit_ui_strings.py`，抽取两端「用户可点的 UI 文案」
+  （Android `setText/setTitle/Toast/AlertDialog` ⇄ iOS `setTitle/UIAlertAction/UIMenu/showToast`）
+  做集合差集，拿到 82 条候选，再逐条人工判定是「安卓独有模块」还是「iOS 真缺口」。
+  最终确认 3 个真缺口 + 1 条误报（C8 判据写死了文案，实际 iOS 有等价实现）。
+- **修复**（`ios/Album/ContentView.swift`、`ios/Album/OnlineRecycleView.swift`）：
+  1. **C5 文案预览补齐三出口**：Android 长按文案弹出的是「关闭 / 复制全文 / 前往使用」三按钮
+     对话框，iOS 上一轮只做了「完成」。现补齐：副标题 `【版本名】 共 N 字`
+     （字数口径与 Android 一致 —— `utf16.count`，不是 Swift 的 `count`）、
+     正文可选中、**复制全文**（不分享不计次数）、**前往使用**（复制 + 唤起分享）。
+  2. **C6 在线列表分页**：Android 首屏 30 条 + 「加载更多作品 (已显示 X / N 套)」；
+     iOS 原先一次性全渲染 —— 成品库 400+ 套时 `sizeForItemAt` 会把 400 份文案全解析一遍。
+     现加 `onlinePageLimit`（首屏 30，每次 +30）与页脚按钮，切分类/改搜索词自动回到首屏。
+  3. **C7 在线回收站分页**：同上，`recyclePageLimit`，多出一行「加载更多」。
+     ⚠️ 顺带堵一个**必崩**的坑：「加载更多」行若允许左滑，`works[indexPath.row]` 直接越界 ——
+     左滑回调已加 `guard !isLoadMoreRow`。
+- **闸门**：`tests/parity_ios_android.py` 从 5 项扩到 **9 项**。
+  新增 C5/C6/C7/C8 后先确认 **4 项 FAIL**，改完 **9/9 全 PASS**（exit 0）。
+  ⚠️ C8 是**判据写死文案**导致的误报：iOS 用的是「继续发布全部 / 继续发布」，语义同一回事。
+  已把判据改成查能力（`work.shareCount > 0` 两处拦截 + 确认按钮），不再查逐字文案。
+- ⚠️ **待真机验证**：iOS 设备未通过 USB 连接，本次三项均无截图 / 录屏证据。
+
+## iOS 0.8.31 / build 102 - 2026-09-22 - 补齐三处 iOS 缺口：长按预览文案 / 顶部搜索 / 平台使用明细（DSH-091）
+
+> **用户要求（原话）**：「还是展开吧，展开方便我去看」「在这边长按没有弹出那个文案的预览界面」「苹果顶部搜索框加了吗」「安卓和苹果功能要不缺」
+
+- **缺口盘点（源码级核实，全部 Android 有 / iOS 无）**：
+  1. **长按平台按钮 → 文案预览**：Android `MainActivity.java:1174/3700` 有
+     `btn.setOnLongClickListener`；iOS 全仓库仅 2 处长按（模式图标配地址、详情页图片多选），
+     平台按钮上没有任何手势 ⇒ 用户长按无反应。
+  2. **顶部作品搜索框**：iOS 全仓库无 `UISearchBar` / `searchBar`。
+  3. **本地卡片平台使用明细**：Android 有 `\n✓ 小红书 X · 抖音 Y`（MainActivity:1082），
+     iOS 只有「已使用 N 次」总数，没有分平台明细。
+- **修复**（`ios/Album/ContentView.swift`）：
+  1. 新增 `CopyPreviewViewController`；`WorkCell` 加 `onCopyPreview` 回调 +
+     `platformLongPress(_:)` 手势（按 `button.tag` 定位，MULTI 下多版本同名不会串）；
+     在线 / 本地两条分支都接线。**零副作用**：不写剪贴板、不调 recordUse、不移库。
+  2. 顶部加 `UISearchBar`，本地 / 在线列表共用 `searchQuery`，按作品名与合集名不区分大小写过滤。
+  3. 本地卡片已使用时追加 `\n✓ 小红书 X · 抖音 Y`，与 Android 逐字对齐。
+  4. **平台按钮换行全展开（C3）**：删掉 `platformScroll`（单行横滚），新增
+     `PlatformFlowView` —— 把 Android `FlowLayout.onMeasure/onLayout` 的数学原样搬过来
+     （横向/纵向间距 dp(8)、行高 dp(36)）。卡片高度在 `sizeForItemAt` 里按行数动态补偿：
+     1 行 = 212，每多一行 +44；本地卡多一行明细再 +14。宽度故意收窄 1pt ⇒ 宁可高估留白，
+     不低估裁切。**V4.5 的 11 个版本现在一眼看全，不用左右滑。**
+  5. **C4 生效修复**：`WorkCell.detail` 从未设置 `numberOfLines`（UILabel 默认 1），
+     第 3 条加的第二行其实被截断 —— 加了等于没加。现已设 0。
+- **闸门**：新建 `tests/parity_ios_android.py`（源码级三端对等契约，5 项）。
+  强化后改前 **2 项 FAIL**（C3 三项全 false；C4「附加行=True / 多行生效=False」）
+  → 改后 **5/5 全部 PASS**（exit 0）。
+  ⚠️ 强化前 C4 是**假 PASS** —— 只查「✓ 小红书」这串文本存在，没查它能不能显示出来。
+- ⚠️ **待真机验证**：本次四项均无真机截图/录屏证据（iOS 设备未通过 USB 连接）。
+
 ## iOS 0.8.30 / build 101 - 2026-09-22 - 在线分享到小红书不再「一堆一样的图」（DSH-090）
 
 > **用户要求（原话）**：「苹果点击分享到小红书，分享了一堆一样图片，但是预览看到的是不同的图片」

@@ -1,7 +1,7 @@
 import UIKit
 import ImageIO
 
-final class LibraryViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+final class LibraryViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UISearchBarDelegate {
     private let library: WorkLibrary
     private let emptyStack = UIStackView()
     private let emptyDetail = UILabel()
@@ -25,16 +25,47 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var autoDiscovering = false
     private var lastAutoDiscoverAt: Date = .distantPast
 
+    /// DSH-091 C2：顶部作品搜索框 —— 对齐 Android / 工作台的搜索入口。
+    private let workSearchBar = UISearchBar()
+    private var searchQuery = ""
+    /// DSH-092 C6：在线作品列表分页上限（对齐 Android `onlinePageLimit`，首屏 30 条）。
+    /// 成品库 400+ 套时，一次性渲染会让 `sizeForItemAt` 把 400 份文案全解析一遍 ——
+    /// 既卡首屏，也和 Android「加载更多」的观感不一致。
+    private var onlinePageLimit = 30
+    /// 每次「加载更多」追加的条数（与 Android 同为 30）
+    private static let onlinePageStep = 30
+
     private var filteredWorks: [WorkItem] {
-        guard selectedCategory != WorkCategory.all else { return library.works }
-        return library.works.filter { $0.folderName == selectedCategory }
+        var base = library.works
+        if selectedCategory != WorkCategory.all {
+            base = base.filter { $0.folderName == selectedCategory }
+        }
+        guard !searchQuery.isEmpty else { return base }
+        return base.filter { work in
+            work.name.localizedCaseInsensitiveContains(searchQuery)
+                || work.folderName.localizedCaseInsensitiveContains(searchQuery)
+        }
     }
 
     private var filteredOnlineWorks: [OnlineWorkEntry] {
-        let active = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
-        guard selectedOnlineCategory != "全部" else { return active }
-        return active.filter { $0.destination == selectedOnlineCategory }
+        var base = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
+        if selectedOnlineCategory != "全部" {
+            base = base.filter { $0.destination == selectedOnlineCategory }
+        }
+        guard !searchQuery.isEmpty else { return base }
+        return base.filter { entry in
+            entry.name.localizedCaseInsensitiveContains(searchQuery)
+                || entry.title.localizedCaseInsensitiveContains(searchQuery)
+        }
     }
+
+    /// 实际喂给 collectionView 的在线数据 = 过滤结果的前 `onlinePageLimit` 条。
+    private var displayedOnlineWorks: [OnlineWorkEntry] {
+        Array(filteredOnlineWorks.prefix(onlinePageLimit))
+    }
+
+    /// 还有没有更多可加载（决定要不要渲染「加载更多」页脚）
+    private var hasMoreOnline: Bool { filteredOnlineWorks.count > onlinePageLimit }
 
     init(library: WorkLibrary) {
         self.library = library
@@ -278,6 +309,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if isOnlineMode {
             guard selectedOnlineCategory != sender.folderKey else { return }
             selectedOnlineCategory = sender.folderKey
+            resetOnlinePaging()
             for (key, btn) in filterButtons {
                 applyFilterButtonStyle(btn, isSelected: key == selectedOnlineCategory)
             }
@@ -303,16 +335,62 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(WorkCell.self, forCellWithReuseIdentifier: "WorkCell")
+        collectionView.register(LoadMoreFooterView.self,
+                               forSupplementaryViewOfKind: UICollectionView.elementKindSectionFooter,
+                               withReuseIdentifier: "LoadMoreFooter")
         let refresh = UIRefreshControl()
         refresh.addTarget(self, action: #selector(refreshPulled(_:)), for: .valueChanged)
         collectionView.refreshControl = refresh
+        workSearchBar.translatesAutoresizingMaskIntoConstraints = false
+        workSearchBar.delegate = self
+        workSearchBar.placeholder = "搜索作品名"
+        workSearchBar.searchBarStyle = .minimal
+        workSearchBar.autocapitalizationType = .none
+        view.addSubview(workSearchBar)
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
+            workSearchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            workSearchBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            workSearchBar.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 2),
+            workSearchBar.heightAnchor.constraint(equalToConstant: 44),
+
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 8),
+            collectionView.topAnchor.constraint(equalTo: workSearchBar.bottomAnchor, constant: 4),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    // MARK: - DSH-092 C6 在线列表分页（对齐 Android「加载更多作品」）
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
+                        referenceSizeForFooterInSection section: Int) -> CGSize {
+        guard isOnlineMode, hasMoreOnline else { return .zero }
+        return CGSize(width: collectionView.bounds.width, height: 56)
+    }
+
+    func collectionView(_ collectionView: UICollectionView,
+                        viewForSupplementaryElementOfKind kind: String,
+                        at indexPath: IndexPath) -> UICollectionReusableView {
+        let view = collectionView.dequeueReusableSupplementaryView(
+            ofKind: kind, withReuseIdentifier: "LoadMoreFooter", for: indexPath)
+        if kind == UICollectionView.elementKindSectionFooter,
+           let footer = view as? LoadMoreFooterView {
+            let shown = min(onlinePageLimit, filteredOnlineWorks.count)
+            footer.configure(shown: shown, total: filteredOnlineWorks.count)
+            footer.onTap = { [weak self] in
+                guard let self = self else { return }
+                self.onlinePageLimit += LibraryViewController.onlinePageStep
+                self.collectionView.reloadData()
+            }
+        }
+        return view
+    }
+
+    /// 分类切换 / 搜索词变化 / 重新拉数据 —— 都要回到首屏 30 条，
+    /// 否则「翻到第 5 页再切分类」会直接显示第 5 页的 30 条。
+    private func resetOnlinePaging() {
+        onlinePageLimit = LibraryViewController.onlinePageStep
     }
 
     private func configureEmptyView() {
@@ -669,13 +747,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return isOnlineMode ? filteredOnlineWorks.count : filteredWorks.count
+        return isOnlineMode ? displayedOnlineWorks.count : filteredWorks.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
         if isOnlineMode {
-            let entry = filteredOnlineWorks[indexPath.item]
+            let entry = displayedOnlineWorks[indexPath.item]
             cell.configureOnline(entry)
             cell.onOnlineShare = { [weak self, weak cell] item in
                 self?.shareOnline(entry, item: item, source: cell)
@@ -692,12 +770,22 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             cell.onOnlineCopyPath = { [weak self] in
                 self?.copyOnlineWorkPath(entry)
             }
+            cell.onCopyPreview = { [weak self, weak cell] item in
+                self?.presentCopyPreview(item) {
+                    self?.shareOnline(entry, item: item, source: cell)
+                }
+            }
             return cell
         }
 
         let work = filteredWorks[indexPath.item]
         cell.configure(work)
         cell.onShare = { [weak self, weak cell] item in self?.share(work, item: item, source: cell) }
+        cell.onCopyPreview = { [weak self, weak cell] item in
+            self?.presentCopyPreview(item) {
+                self?.share(work, item: item, source: cell)
+            }
+        }
         cell.onPreview = { [weak self] index in
             guard let self = self else { return }
             let preview = ImagePreviewController(workName: work.name, urls: work.imageURLs, initialIndex: index) { [weak self] targetURL in
@@ -722,7 +810,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if isOnlineMode {
-            let entry = filteredOnlineWorks[indexPath.item]
+            let entry = displayedOnlineWorks[indexPath.item]
             openOnlinePreview(entry: entry, initialIndex: 0)
         } else {
             let work = filteredWorks[indexPath.item]
@@ -925,10 +1013,83 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        // 212：平台按钮区与操作行按钮统一升到 36pt（对齐 Android 的 dp(36)）后，
-        // 卡片内容高度约 210；旧的 196（按钮 28pt 时代）会挤压标题/详情行。
-        // 按钮再多也不增高（靠横向滚动）。
-        return CGSize(width: width, height: 212)
+        // DSH-091 C3：卡片高度随「平台按钮换行后的行数」自适应。
+        // 1 行 = 212（与旧版一致），每多一行 +（36 按钮 + 8 行距）。
+        // 故意把可用宽度收窄 1pt —— 宁可高估（留白）也不要低估（按钮被裁）。
+        let inner = width - 25
+        var extraDetailLines = 0
+        let labels: [String]
+        if isOnlineMode {
+            guard indexPath.item < displayedOnlineWorks.count else {
+                return CGSize(width: width, height: WorkCell.cardBaseHeight)
+            }
+            let entry = displayedOnlineWorks[indexPath.item]
+            labels = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
+                ? [WorkCell.copyMissingTitle]
+                : PlatformCopyParser.parseAvailablePlatforms(entry.copyText).map { $0.buttonLabel }
+        } else {
+            guard indexPath.item < filteredWorks.count else {
+                return CGSize(width: width, height: WorkCell.cardBaseHeight)
+            }
+            let work = filteredWorks[indexPath.item]
+            labels = CopyParserCache.platforms(for: work.textURL).map { $0.buttonLabel }
+            // C4：已使用的本地卡多一行「✓ 小红书 X · 抖音 Y」
+            if work.shareCount > 0 { extraDetailLines = 1 }
+        }
+        let rows = platformRowCount(labels: labels, width: inner)
+        let height = WorkCell.cardBaseHeight
+            + CGFloat(max(rows, 1) - 1) * (WorkCell.platformRowHeight + WorkCell.platformSpacing)
+            + CGFloat(extraDetailLines) * WorkCell.cardDetailLineStep
+        return CGSize(width: width, height: height)
+    }
+
+    /// 平台按钮在给定宽度下会排成几行 —— 与 `PlatformFlowView.measure` 同一套数学，
+    /// 保证「预估的卡片高度」与「实际渲染出来的行数」一致（不一致就会裁切或大片留白）。
+    private func platformRowCount(labels: [String], width: CGFloat) -> Int {
+        guard !labels.isEmpty, width > 0 else { return 1 }
+        let font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        var x: CGFloat = 0
+        var rows = 1
+        for label in labels {
+            let w = max(min((label as NSString).size(withAttributes: [.font: font]).width
+                            + WorkCell.platformButtonPadding, width), 1)
+            if x > 0, x + WorkCell.platformSpacing + w > width {
+                rows += 1
+                x = w
+            } else {
+                x = (x == 0 ? w : x + WorkCell.platformSpacing + w)
+            }
+        }
+        return rows
+    }
+
+    /// DSH-091 C1：长按平台按钮 → 预览该版本文案。
+    /// **零副作用**：不写剪贴板、不调用 recordUse、不移动作品 —— 与点按分享严格区分。
+    /// DSH-092 C5：`onUse` = 「前往使用」，等价于 Android 弹窗的 PositiveButton
+    /// （复制 + 唤起分享）。长按本身仍是零副作用，只有点这个按钮才算一次使用。
+    private func presentCopyPreview(_ item: AvailableCopyPlatform, onUse: @escaping () -> Void) {
+        let vc = CopyPreviewViewController(title: item.buttonLabel, text: item.copyText, onUse: onUse)
+        let nav = UINavigationController(rootViewController: vc)
+        nav.modalPresentationStyle = .pageSheet
+        present(nav, animated: true)
+    }
+
+    /// DSH-091 C2：搜索框输入回调 —— 本地 / 在线两条列表共用同一个 `searchQuery`。
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        searchQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        resetOnlinePaging()
+        if isOnlineMode { renderOnlineUI() } else { render() }
+    }
+
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        searchBar.resignFirstResponder()
+    }
+
+    func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
+        searchQuery = ""
+        searchBar.text = ""
+        searchBar.resignFirstResponder()
+        if isOnlineMode { renderOnlineUI() } else { render() }
     }
 
     private func confirmResetWork(_ work: WorkItem) {
@@ -1325,6 +1486,222 @@ private enum CopyParserCache {
     }
 }
 
+/// DSH-091 C1：长按平台按钮弹出的文案预览。
+/// DSH-092 C5：补齐 Android AlertDialog 的**三个出口** —— 关闭 / 复制全文 / 前往使用。
+/// 只复制（复制全文）仍然零副作用；「前往使用」才会复制 + 唤起分享 + 计使用次数。
+private final class CopyPreviewViewController: UIViewController {
+    private let bodyText: String
+    private let versionLabel: String
+    private let subtitle = UILabel()
+    private let textView = UITextView()
+    /// DSH-092 C5：「前往使用」—— 由外部注入，保持本类不知道分享细节。
+    var onUse: (() -> Void)?
+
+    init(title: String, text: String, onUse: (() -> Void)? = nil) {
+        self.bodyText = text
+        self.versionLabel = title
+        self.onUse = onUse
+        super.init(nibName: nil, bundle: nil)
+        self.title = title
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// 与 Android 同一口径：`copyText.length()`（UTF-16 码元数），不是 Swift 的 `count`（字形数）。
+    private var charCount: Int { bodyText.utf16.count }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+
+        subtitle.text = "【\(versionLabel)】 共 \(charCount) 字"
+        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.textColor = UIColor(red: 0.06, green: 0.59, blue: 0.39, alpha: 1)
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(subtitle)
+
+        textView.font = .systemFont(ofSize: 15)
+        textView.isEditable = false
+        // Android 是 `setTextIsSelectable(true)` —— iOS 对应允许选中拷贝。
+        textView.isSelectable = true
+        textView.text = bodyText
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(textView)
+
+        let copyButton = UIButton(type: .system)
+        copyButton.setTitle("复制全文", for: .normal)
+        copyButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        copyButton.addTarget(self, action: #selector(copyAllTapped), for: .touchUpInside)
+        let useButton = UIButton(type: .system)
+        useButton.setTitle("前往使用", for: .normal)
+        useButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        useButton.addTarget(self, action: #selector(useTapped), for: .touchUpInside)
+        let bar = UIStackView(arrangedSubviews: [copyButton, useButton])
+        bar.axis = .horizontal
+        bar.distribution = .fillEqually
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(bar)
+
+        NSLayoutConstraint.activate([
+            subtitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            subtitle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            subtitle.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+
+            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            textView.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 8),
+            textView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -8),
+
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            bar.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done,
+                                                           target: self,
+                                                           action: #selector(closeTapped))
+    }
+
+    @objc private func closeTapped() { dismiss(animated: true) }
+
+    /// 复制全文：**不分享、不计使用次数**（Android `setNeutralButton` 同语义）。
+    @objc private func copyAllTapped() {
+        UIPasteboard.general.string = bodyText
+        let toast = UILabel()
+        toast.text = "已复制 \(versionLabel) 全文 (\(charCount)字)"
+        toast.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
+        toast.textColor = .white
+        toast.font = .systemFont(ofSize: 13)
+        toast.textAlignment = .center
+        toast.layer.cornerRadius = 8
+        toast.clipsToBounds = true
+        toast.alpha = 0
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(toast)
+        NSLayoutConstraint.activate([
+            toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toast.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -70),
+            toast.heightAnchor.constraint(equalToConstant: 36)
+        ])
+        UIView.animate(withDuration: 0.2, animations: { toast.alpha = 1 }, completion: { _ in
+            UIView.animate(withDuration: 0.3, delay: 1.1, animations: { toast.alpha = 0 },
+                           completion: { _ in toast.removeFromSuperview() })
+        })
+    }
+
+    /// 前往使用：复制 + 关闭 + 交回外层唤起分享（有副作用，与长按预览的只读语义严格分开）。
+    @objc private func useTapped() {
+        UIPasteboard.general.string = bodyText
+        let handler = onUse
+        dismiss(animated: true) { handler?() }
+    }
+}
+
+/// DSH-092 C6：在线列表底部的「加载更多作品 (已显示 X / N 套)」。
+/// 文案与 Android `MainActivity:3575` 逐字对齐。
+private final class LoadMoreFooterView: UICollectionReusableView {
+    private let button = UIButton(type: .system)
+    var onTap: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        button.titleLabel?.font = .systemFont(ofSize: 13)
+        button.setTitleColor(UIColor(red: 0.06, green: 0.53, blue: 0.35, alpha: 1), for: .normal)
+        button.layer.cornerRadius = 14
+        button.layer.borderWidth = 1
+        button.layer.borderColor = UIColor(red: 0.78, green: 0.90, blue: 0.84, alpha: 1).cgColor
+        button.addTarget(self, action: #selector(tapped), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            button.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            button.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(shown: Int, total: Int) {
+        button.setTitle("加载更多作品 (已显示 \(shown) / \(total) 套)", for: .normal)
+    }
+
+    @objc private func tapped() { onTap?() }
+}
+
+/// DSH-091 C3：平台按钮的**换行容器** —— 对齐 Android `FlowLayout`（横向排满自动折行）。
+/// iOS 之前是「单行横向滚动」，V4.5 的 11 个版本要左右滑才看得全；Android 用 FlowLayout
+/// 直接换行全展开。本类把 `FlowLayout.onMeasure/onLayout` 的数学原样搬过来。
+private final class PlatformFlowView: UIView {
+    /// 对齐 Android `FlowLayout.setHorizontalSpacing(dp(8))`
+    var horizontalSpacing: CGFloat = 8
+    /// 对齐 Android `FlowLayout.setVerticalSpacing(dp(8))`
+    var verticalSpacing: CGFloat = 8
+    /// 按钮固定行高（对齐 Android `compactButton` 的 dp(36)）
+    var rowHeight: CGFloat = 36
+
+    /// 兼容 `UIStackView` 的调用面 —— `WorkCell` 里的增删代码一行都不用改。
+    var arrangedSubviews: [UIView] { subviews }
+
+    func addArrangedSubview(_ view: UIView) {
+        addSubview(view)
+        setNeedsLayout()
+        invalidateIntrinsicContentSize()
+    }
+
+    func removeArrangedSubview(_ view: UIView) { view.removeFromSuperview() }
+
+    /// 折行试算：`apply = true` 时同时写 frame。返回所需总高度。
+    private func measure(width: CGFloat, apply: Bool) -> CGFloat {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        for view in subviews where !view.isHidden {
+            let w = max(min(view.intrinsicContentSize.width, width), 1)
+            if x > 0, x + horizontalSpacing + w > width {
+                totalHeight += lineHeight + verticalSpacing
+                x = 0
+                y = totalHeight
+                lineHeight = 0
+            }
+            if apply { view.frame = CGRect(x: x, y: y, width: w, height: rowHeight) }
+            x += w + horizontalSpacing
+            lineHeight = max(lineHeight, rowHeight)
+        }
+        return totalHeight + lineHeight
+    }
+
+    /// `intrinsicContentSize` 可能在宽度确定之前被问到 —— 逐级回退，避免算成 1 行。
+    private var fallbackWidth: CGFloat {
+        if bounds.width > 0 { return bounds.width }
+        if let s = superview?.bounds.width, s > 0 { return s }
+        return UIScreen.main.bounds.width - 44
+    }
+
+    private var effectiveWidth: CGFloat { bounds.width > 0 ? bounds.width : fallbackWidth }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        _ = measure(width: effectiveWidth, apply: true)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let w = effectiveWidth
+        return CGSize(width: w, height: measure(width: w, apply: false))
+    }
+
+    /// `UIStackView` 排布时走这个入口 —— 必须按「给到的宽度」算，否则高度永远按 1 行算。
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority) -> CGSize {
+        let w = targetSize.width > 0 ? targetSize.width : fallbackWidth
+        return CGSize(width: w, height: measure(width: w, apply: false))
+    }
+}
+
 private final class WorkCell: UICollectionViewCell {
     private let icon = UILabel()
     private let count = UILabel()
@@ -1339,8 +1716,8 @@ private final class WorkCell: UICollectionViewCell {
     /// 平台按钮区（可横向滚动）。
     /// 按钮**数量由解析结果决定**：V4.5 多版本文案（`<<<COPY_FORMAT:MULTI>>>`）会解析出
     /// 11 个版本，因此不能像旧版那样写死三个按钮 —— 与 Android 的动态渲染对齐。
-    private let platformScroll = UIScrollView()
-    private let platformRow = UIStackView()
+    /// 平台按钮区（**换行全展开**，DSH-091 C3 对齐 Android FlowLayout）。
+    private let platformRow = PlatformFlowView()
     /// 操作行：重置 / 删除 / 复制路径。数量固定，不随平台数变化。
     private let actionRow = UIStackView()
     private let platformContainer = UIStackView()
@@ -1348,12 +1725,30 @@ private final class WorkCell: UICollectionViewCell {
     /// 分享时必须用它取「被点的这一条」的正文：MULTI 格式下 11 个版本里有 10 个
     /// `platform` 都是 `.general`，若按 platform 回查会全部命中第一条。
     private var platformItems: [AvailableCopyPlatform] = []
+    /// 平台按钮左右 `contentEdgeInsets` 之和（15 + 15）—— 与 `rebuildPlatformButtons` 保持一致，
+    /// `sizeForItemAt` 预估行数时要用到，两边必须同源。
+    static let platformButtonPadding: CGFloat = 30
+    /// 平台按钮间距（对齐 Android `FlowLayout` 的 dp(8)）
+    static let platformSpacing: CGFloat = 8
+    /// 平台按钮行高（对齐 Android `compactButton` 的 dp(36)）
+    static let platformRowHeight: CGFloat = 36
+    /// 卡片基准高度（平台按钮 1 行时）。多行时按 `platformRowHeight + platformSpacing` 递增。
+    static let cardBaseHeight: CGFloat = 212
+    /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度
+    static let cardDetailLineStep: CGFloat = 14
+    /// 空壳作品占位按钮文案（单一真源：`makeCopyMissingButton` 与 `sizeForItemAt` 共用）
+    static let copyMissingTitle = "⚠️ 文案缺失（空壳作品，不可分发）"
     /// 本卡片当前渲染的是「在线作品」还是「手机本地作品」——决定平台按钮走哪个回调。
     private var isOnlineCard = false
 
     /// 本地作品：回调直接携带「被点的那一条」（按钮文案 + 正文），不再只传平台。
     var onShare: ((AvailableCopyPlatform) -> Void)?
     var onPreview: ((Int) -> Void)?
+    /// DSH-091：长按平台按钮 → 预览该版本文案（零副作用：不复制、不计使用次数）。
+    /// 对齐 Android `MainActivity` 平台按钮的 `setOnLongClickListener`。—— 供 C1 契约识别。
+    var onCopyPreview: ((AvailableCopyPlatform) -> Void)?
+    /// 长按手势识别器标记名（供源码级契约 `platformLongPress` 识别）
+    private static let platformLongPressName = "platformLongPress"
     var onReset: (() -> Void)?
     var onDelete: (() -> Void)?
     /// 本地作品：复制手机上的作品文件夹路径
@@ -1375,6 +1770,9 @@ private final class WorkCell: UICollectionViewCell {
         name.numberOfLines = 1
         detail.font = .systemFont(ofSize: 11.5)
         detail.textColor = AppColors.secondaryText
+        // DSH-091 C4 生效修复：UILabel 默认 numberOfLines = 1，不设成 0 的话
+        // 「✓ 小红书 X · 抖音 Y」这行附加信息会被截断 —— 加了等于没加。
+        detail.numberOfLines = 0
         previewScroll.showsHorizontalScrollIndicator = false
         previewScroll.alwaysBounceHorizontal = false
         previewScroll.accessibilityLabel = "作品缩略图，可横向查看全部图片"
@@ -1394,23 +1792,12 @@ private final class WorkCell: UICollectionViewCell {
         configureDeleteButton()
         configureCopyPathButton()
 
-        platformRow.axis = .horizontal
-        platformRow.spacing = 8
-        platformRow.alignment = .fill
-        // 内容自适应宽度（不是 fillEqually）：版本多时靠横向滚动查看，
-        // 避免 11 个版本被均分成极窄的按钮。
-        platformRow.distribution = .fill
-        platformScroll.showsHorizontalScrollIndicator = false
-        platformScroll.alwaysBounceHorizontal = true
-        platformScroll.addSubview(platformRow)
+        // DSH-091 C3：换行参数逐项对齐 Android `FlowLayout`
+        // （horizontalSpacing = verticalSpacing = dp(8)，按钮高 dp(36)）。
+        platformRow.horizontalSpacing = WorkCell.platformSpacing
+        platformRow.verticalSpacing = WorkCell.platformSpacing
+        platformRow.rowHeight = WorkCell.platformRowHeight
         platformRow.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            platformRow.leadingAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.leadingAnchor),
-            platformRow.trailingAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.trailingAnchor),
-            platformRow.topAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.topAnchor),
-            platformRow.bottomAnchor.constraint(equalTo: platformScroll.contentLayoutGuide.bottomAnchor),
-            platformRow.heightAnchor.constraint(equalTo: platformScroll.frameLayoutGuide.heightAnchor)
-        ])
 
         actionRow.axis = .horizontal
         actionRow.spacing = 6
@@ -1418,7 +1805,7 @@ private final class WorkCell: UICollectionViewCell {
         actionRow.distribution = .fillEqually
         platformContainer.axis = .vertical
         platformContainer.spacing = 6
-        platformContainer.addArrangedSubview(platformScroll)
+        platformContainer.addArrangedSubview(platformRow)
         platformContainer.addArrangedSubview(actionRow)
         let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformContainer])
         stack.axis = .vertical
@@ -1430,7 +1817,8 @@ private final class WorkCell: UICollectionViewCell {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             previewScroll.heightAnchor.constraint(equalToConstant: 64),
-            platformScroll.heightAnchor.constraint(equalToConstant: 36),
+            // 平台区高度由 `PlatformFlowView.intrinsicContentSize` 决定（换行后自动增高），
+            // 不再写死 36 —— 卡片高度在 `sizeForItemAt` 里按行数同步补偿。
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
         ])
     }
@@ -1551,7 +1939,7 @@ private final class WorkCell: UICollectionViewCell {
     /// 保证两端「有按钮 / 没按钮」的观感也一致。
     private func makeCopyMissingButton() -> UIButton {
         let missing = UIButton(type: .system)
-        missing.setTitle("⚠️ 文案缺失（空壳作品，不可分发）", for: .normal)
+        missing.setTitle(WorkCell.copyMissingTitle, for: .normal)
         missing.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
         missing.setTitleColor(.systemRed, for: .normal)
         missing.isEnabled = false
@@ -1586,8 +1974,24 @@ private final class WorkCell: UICollectionViewCell {
             button.accessibilityLabel = item.buttonLabel
             applyPlatformStyle(button, isOptimistic: isOptimistic(index))
             button.addTarget(self, action: action, for: .touchUpInside)
+            // DSH-091 C1：长按 = 预览文案（零副作用），与 Android 对齐。
+            let lp = UILongPressGestureRecognizer(target: self,
+                                                  action: #selector(platformLongPress(_:)))
+            lp.name = WorkCell.platformLongPressName
+            lp.minimumPressDuration = 0.35
+            lp.cancelsTouchesInView = true
+            button.addGestureRecognizer(lp)
             platformRow.addArrangedSubview(button)
         }
+    }
+
+    /// DSH-091 C1：长按平台按钮 → 把「这一条」交给外层预览。
+    /// 用 `button.tag` 定位，MULTI 下 11 个版本里有多个同名 platform，不能按名字回查。
+    @objc private func platformLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let button = gesture.view as? UIButton else { return }
+        let index = button.tag
+        guard index >= 0, index < platformItems.count else { return }
+        onCopyPreview?(platformItems[index])
     }
 
     private func rebuildActionRow() {
@@ -1622,6 +2026,10 @@ private final class WorkCell: UICollectionViewCell {
             + (work.shareCount > 0 ? "已使用 \(work.shareCount) 次" : "未使用")
         let localDate = WorkCell.cardDateSuffix(work.name, work.name)
         if !localDate.isEmpty { localDetail += " · " + localDate }
+        // DSH-091 C4：与 Android 对齐 —— 本地作品已使用时追加各平台次数明细。
+        if work.shareCount > 0 {
+            localDetail += "\n✓ 小红书 \(work.xhsShareCount) · 抖音 \(work.douyinShareCount)"
+        }
         detail.text = localDetail
         detail.textColor = AppColors.secondaryText
 

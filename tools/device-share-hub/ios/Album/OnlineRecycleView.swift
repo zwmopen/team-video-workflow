@@ -24,6 +24,10 @@ final class OnlineRecycleViewController: UITableViewController {
     private let segmented: UISegmentedControl
     private var currentTab: RecycleTab = .sent
     private var works: [OnlineWorkEntry] = []
+    /// DSH-092 C7：在线回收站分页上限（对齐 Android `onlineRecyclePageLimit`，首屏 30 条）。
+    private var recyclePageLimit = 30
+    /// 每次「加载更多」追加的条数（与 Android 同为 30）
+    private static let recyclePageStep = 30
     private var sentCount = 0
     private var garbageCount = 0
     private var toastView: UIView?
@@ -129,6 +133,7 @@ final class OnlineRecycleViewController: UITableViewController {
     @objc private func tabChanged() {
         currentTab = RecycleTab(rawValue: segmented.selectedSegmentIndex) ?? .sent
         works = []
+        resetRecyclePaging()
         render()
         loadData()
     }
@@ -162,8 +167,16 @@ final class OnlineRecycleViewController: UITableViewController {
     override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return works.count
+        // 还有更多时多出一行「加载更多」（与 Android 用独立 Button 同效果）。
+        return works.count > recyclePageLimit ? recyclePageLimit + 1 : works.count
     }
+
+    /// 还有没有更多可加载
+    private var hasMoreRecycle: Bool { works.count > recyclePageLimit }
+    /// 这一行是不是「加载更多」占位行
+    private func isLoadMoreRow(_ row: Int) -> Bool { hasMoreRecycle && row == recyclePageLimit }
+
+    private func resetRecyclePaging() { recyclePageLimit = OnlineRecycleView.recyclePageStep }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         return "\(currentTab.title)（\(works.count)）· 电脑"
@@ -177,6 +190,14 @@ final class OnlineRecycleViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if isLoadMoreRow(indexPath.row) {
+            let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
+            cell.textLabel?.text = "加载更多 (已显示 \(recyclePageLimit) / \(works.count) 套)"
+            cell.textLabel?.font = .systemFont(ofSize: 13)
+            cell.textLabel?.textColor = UIColor(red: 0.06, green: 0.53, blue: 0.35, alpha: 1)
+            cell.textLabel?.textAlignment = .center
+            return cell
+        }
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         let work = works[indexPath.row]
         cell.textLabel?.text = work.title
@@ -203,11 +224,18 @@ final class OnlineRecycleViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        if isLoadMoreRow(indexPath.row) {
+            recyclePageLimit += OnlineRecycleView.recyclePageStep
+            tableView.reloadData()
+            return
+        }
         confirmRestore(works[indexPath.row])
     }
 
     override func tableView(_ tableView: UITableView,
                             trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        // 「加载更多」行不是作品：不放任何滑动操作，否则 works[indexPath.row] 直接越界崩溃。
+        guard !isLoadMoreRow(indexPath.row) else { return nil }
         let work = works[indexPath.row]
         // 「复制路径」与 Android 保持一致：排在「删除 / 备注」之后
         let copyPath = UIContextualAction(style: .normal, title: "复制路径") { [weak self] _, _, done in

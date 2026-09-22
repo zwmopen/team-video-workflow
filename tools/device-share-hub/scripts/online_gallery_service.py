@@ -1101,12 +1101,16 @@ class WorkScanner:
 
         images.sort()
 
-        # 读取文案（优先多平台文案；【空壳守卫】按实质字数判定，杜绝标记齐全但正文全空）
+        # 读取下发文案：【唯一真源 = 文案.txt】（2026-09-22 用户口径）
+        # 「软件只识别 文案.txt」—— `三平台文案.txt` 是早期 Codex 产线遗留，不是它的改名版；
+        # 实测库内 145 套两份都有、其中 32 套内容并不相同，按旧 priority 优先读它
+        # ⇒ 手机端会显示一份未经确认的历史副本。故下发只认 文案.txt；
+        # 其余历史 txt（三平台文案 / 小红书文案 / 全量生成记录…）仅供服务端关键词检索，不参与下发。
         copy_text = ""
         copy_search_blob = ""   # 搜索专用：即使判定为缺失也保留原文，避免空壳/薄文案失去关键词可检索性
         txt_candidates = [f for f in files if f.lower().endswith(".txt")]
-        priority = {'三平台文案.txt': 0, '文案.txt': 1, '小红书文案.txt': 2, '全量生成记录.txt': 3}
-        txt_candidates.sort(key=lambda x: priority.get(x, 10))
+        AUTHORITATIVE_COPY = "文案.txt"
+        txt_candidates.sort(key=lambda x: (x != AUTHORITATIVE_COPY, x))
 
         for f in txt_candidates:
             try:
@@ -1114,6 +1118,8 @@ class WorkScanner:
                     raw_c = fp.read().strip()
                 if not copy_search_blob:
                     copy_search_blob = copy_search_text(raw_c)
+                if f != AUTHORITATIVE_COPY:
+                    continue
                 if copy_is_real(raw_c):
                     copy_text = raw_c
                     break

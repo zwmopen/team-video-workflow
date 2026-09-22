@@ -492,7 +492,7 @@ class TestPlatformSlotGuard(unittest.TestCase):
         for i in range(n_images):
             with open(os.path.join(d, f"{i:02d}.jpg"), "wb") as fp:
                 fp.write(b"\xff\xd8\xff\xe0fake-jpeg")
-        with open(os.path.join(d, "三平台文案.txt"), "w", encoding="utf-8") as fp:
+        with open(os.path.join(d, "文案.txt"), "w", encoding="utf-8") as fp:
             fp.write(copy_text)
         return d
 
@@ -561,6 +561,38 @@ class TestPlatformSlotGuard(unittest.TestCase):
         for key in ("droppedCount", "droppedMarkers", "keptCount",
                     "rawSubstance", "servedSubstance"):
             self.assertIn(key, w["slotGuard"])
+
+    # ---- 5.5 契约：只读 文案.txt ----
+    def test_only_wen_an_txt_is_authoritative(self):
+        """用户口径：软件只识别 `文案.txt`。
+
+        `三平台文案.txt` 是早期 Codex 产线的遗留文件，**不是 `文案.txt` 的改名版**，
+        不得参与下发；否则手机端可能显示一份未经确认的历史副本
+        （实测库内 145 套两份都有，其中 32 套内容并不相同）。
+        """
+        name = "只认文案txt"
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d, exist_ok=True)
+        for i in range(2):
+            with open(os.path.join(d, f"{i:02d}.jpg"), "wb") as fp:
+                fp.write(b"\xff\xd8\xff\xe0fake-jpeg")
+
+        # ① 只放 三平台文案.txt（内容是充实的真文案）→ 必须判为缺失
+        with open(os.path.join(d, "三平台文案.txt"), "w", encoding="utf-8") as fp:
+            fp.write(REAL_COPY)
+        w = self.scanner._inspect_work_dir(d, name, "已发送0次", 0)
+        self.assertIsNotNone(w)
+        self.assertTrue(
+            w["copyMissing"],
+            "三平台文案.txt 不是 文案.txt 的改名 —— 只读 文案.txt 时它必须被判缺失",
+        )
+
+        # ② 补上 文案.txt 后必须原样下发
+        with open(os.path.join(d, "文案.txt"), "w", encoding="utf-8") as fp:
+            fp.write(REAL_COPY)
+        w2 = self.scanner._inspect_work_dir(d, name, "已发送0次", 0)
+        self.assertFalse(w2["copyMissing"])
+        self.assertEqual(w2["copyText"], REAL_COPY, "文案.txt 必须原样下发")
 
     # ---- 6. 搜索可检索性不因守卫丢失 ----
     def test_search_blob_survives_sanitization(self):

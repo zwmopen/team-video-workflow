@@ -4,7 +4,111 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-090**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-092**。
+
+## DSH-092 iOS 全量对等补齐：文案预览三出口 / 在线列表分页 / 回收站分页（2026-09-22 修复）
+
+**现象**：用户要求「安卓比较完善，iOS 全部挨个补齐」。此前只补齐了点名的那几件，
+属于「补丁式」，没有系统性对账。
+
+**审计方法（可复用，脚本 `_audit_ui_strings.py`）**：
+功能是靠按钮/菜单/对话框暴露给用户的。抽取两端「用户可点的 UI 文案」做集合差集：
+- Android 侧：`setText("…")` / `setTitle("…")` / `Toast.makeText(…,"…")` /
+  `setPositive|Negative|NeutralButton("…")` / `compactButton("…")`
+- iOS 侧：`setTitle("…", for:)` / `UIAlertAction(title:)` / `UIAction(title:)` /
+  `UIMenu(title:)` / `showToast("…")` / `accessibilityLabel`
+
+得到 **Android 114 条 / iOS 51 条**，差集 **82 条**。逐条人工判定后：
+大部分属于安卓独有模块（`TransferActivity` P2P 传送、`ShareImportActivity` 接收分享、
+`UpdateChecker` 自更新 —— iOS 走 AltStore，本来就没有），真缺口 3 个，另有 1 条是判据误报。
+
+**修复**（版本 0.8.32 / build 103）：
+1. **C5 文案预览只有「完成」一个出口**（Android 是三按钮对话框）。
+   - Android `MainActivity:4520` 副标题 `【版本名】 共 N 字`，`charCount = copyText.length()`
+     （Java = UTF-16 码元数）。iOS 若用 Swift `String.count` 会算成**字形数**，
+     带 emoji 的版本名/正文会对不上 ⇒ 必须用 `bodyText.utf16.count`。
+   - 补齐「复制全文」（只写剪贴板，零副作用）与「前往使用」（复制 + 关闭 + 唤起分享）。
+2. **C6 在线列表一次性全渲染**（Android 首屏 30 条 + 加载更多）。
+   成品库 400+ 套时，`sizeForItemAt` 会对每条都跑一次 `parseAvailablePlatforms`，
+   首屏解析 400 份文案。加 `onlinePageLimit`（首屏 30，每次 +30）+ 页脚
+   `LoadMoreFooterView`；切分类、改搜索词、重新拉数据都 `resetOnlinePaging()` 回首屏，
+   否则「翻到第 5 页再切分类」会直接显示第 5 页的 30 条。
+3. **C7 在线回收站分页**（Android `onlineRecyclePageLimit`）。同上。
+   ⚠️ **必崩坑**：多出来的「加载更多」行若允许左滑，`works[indexPath.row]` 越界崩溃 ——
+   `trailingSwipeActionsConfigurationForRowAt` 已加 `guard !isLoadMoreRow(indexPath.row)`。
+
+**证据**：闸门 `tests/parity_ios_android.py` 由 5 项扩到 **9 项**（新增 C5/C6/C7/C8）：
+- 加契约后先跑 = `❌ 4/9 未达标`（exit 1）
+- 改完 = `✅ 9/9 全部通过`（exit 0）
+- 服务端 `python -m unittest test_online_gallery_service` 仍 **OK**（27 项 0 败）
+- 字节级改写自检（ContentView.swift 纯 CRLF）：CRLF 2083 → 2250，**孤立 LF 恒为 0**，
+  花括号 **+24 / +24** 平衡。`OnlineRecycleView.swift` 是**纯 LF**，可直接 Edit。
+
+**回归要求**：
+1. 长按平台按钮 → 弹窗应显示 `【版本名】 共 N 字` + 两个按钮；点「复制全文」只复制不分享；
+   点「前往使用」才复制并唤起分享面板（**使用次数才 +1**）。
+2. 在线相册首屏只出 30 套，底部有「加载更多作品 (已显示 30 / N 套)」，点一次 +30；
+   切换分类或输入搜索词后回到首屏 30 套。
+3. 在线回收站同样分页；**左滑「加载更多」那一行不能崩、也不能弹出操作菜单**。
+
+## DSH-091 iOS 三处功能缺口：长按无文案预览 / 无顶部搜索 / 卡片缺平台使用明细（2026-09-22 修复）
+
+**现象**（用户 2026-09-22 现场反馈，三条均为"安卓有、苹果没有"）：
+1. 长按平台按钮不弹出文案预览界面。
+2. 苹果顶部没有作品搜索框。
+3. 卡片底部元信息只有「已使用 N 次」总数，看不到小红书 / 抖音分别发过几次。
+
+**根因**（源码级核实，不是猜测）：
+- Android 在 `MainActivity.java:1174` 与 `:3700` 给平台按钮挂了 `setOnLongClickListener`；
+  iOS 全仓库只有两处长按——模式图标（配置服务器地址，`ContentView.swift:98`）与
+  详情页图片多选（`WorkDetailView.swift:62`）——**平台按钮上从来没有手势**。
+- iOS 全仓库无 `UISearchBar` / `searchBar`，搜索能力从未实现。
+- 元信息分支不对等：Android `MainActivity.java:1082` 在本地作品已使用时追加
+  `\n✓ 小红书 X · 抖音 Y`，iOS 的 `WorkCell.configure` 只拼到「已使用 N 次」为止。
+
+**修复**（`ios/Album/ContentView.swift`，版本 0.8.31 / build 102）：
+1. 新增 `CopyPreviewViewController`（只读 UITextView + 完成按钮，包在 `UINavigationController`
+   里以 `pageSheet` 弹出）；`WorkCell` 新增 `onCopyPreview` 回调与
+   `platformLongPress(_:)` 手势处理器。**定位用 `button.tag` 而非平台名**——MULTI 协议下
+   11 个版本里有多个 `platform` 同为 `.general`，按名回查必然串到第一条。
+   在线 / 本地两条分支均已接线。**零副作用**：不写剪贴板、不调 `recordUse`、不移库，
+   与点按分享严格区分（点按才有副作用）。
+2. 顶部插入 `UISearchBar`，声明 `UISearchBarDelegate`；`filteredWorks` 与
+   `filteredOnlineWorks` 共用 `searchQuery`，按作品名 / 合集名 `localizedCaseInsensitiveContains`
+   过滤；`collectionView` 顶部约束改挂到 `workSearchBar.bottomAnchor`。
+3. 本地卡片 `shareCount > 0` 时追加 `\n✓ 小红书 X · 抖音 Y`，与 Android 逐字一致。
+4. **C3 平台按钮换行全展开**（用户原话「还是展开吧，展开方便我去看」）：
+   删除 `platformScroll`（单行横滚）与横向 `UIStackView`，新增 `PlatformFlowView`
+   ——把 Android `FlowLayout.onMeasure/onLayout` 的数学原样移植
+   （`horizontalSpacing = verticalSpacing = dp(8)`，行高 `dp(36)`）。
+   卡片高度改由 `sizeForItemAt` 按行数动态补偿：1 行 = 212，每多一行 +44；
+   本地卡多一行明细再 +14。**行数预估宽度故意收窄 1pt** ⇒ 宁可高估（留白）不低估（裁切）。
+   「预估行数」与「实际渲染行数」共用同一套数学与同一组常量
+   （`WorkCell.platformButtonPadding/platformSpacing/platformRowHeight`），避免两处漂移。
+5. **C4 生效修复**：`WorkCell.detail` 从未设置 `numberOfLines`，UILabel 默认 1 行
+   ⇒ 第 3 条追加的第二行被截断，**加了等于没加**。现已 `detail.numberOfLines = 0`。
+
+**证据**：
+- 闸门 `tests/parity_ios_android.py`（新建，源码级三端对等契约 5 项）。
+  ⚠️ 初版 C3/C4 是**弱判据**：C3 只查类名字符串、C4 只查「✓ 小红书」文本存在，
+  导致 C4 出现**假 PASS**（文本在但显示不出来）。已强化为：
+  C3 同时查 `class PlatformFlowView` + `platformScroll` 已消失 + 行高动态
+  （`platformRowCount(labels:` 与 `cardBaseHeight`）；C4 同时查附加行 + `detail.numberOfLines = 0`。
+  强化后改前 `❌ 2/5`（C3 flow=False/无横滚=False/行高动态=False；C4 附加行=True/多行生效=False）
+  → 改后 `✅ 5/5 全部通过`（exit 0）。
+- 字节级改写自检：CRLF 计数 1842 → 1916 → **2083**，**孤立 LF 始终为 0**，
+  花括号增量 **+27 / +27 平衡**（`ContentView.swift` 是纯 CRLF，禁用 Edit，
+  全部走字节替换脚本 `_patch_ios_c1c4.py` / `_patch_ios_c1_wire.py` /
+  `_patch_ios_c2.py` / `_patch_ios_c3.py`）。
+
+**回归要求**：
+1. 长按任一平台按钮 → 弹出该版本文案；确认**剪贴板未被写入、使用次数未增加**。
+2. 顶部搜索框输入关键词 → 本地 / 在线列表都应过滤；清空后恢复。
+3. 本地已使用作品 → 卡片**真的显示两行**（`✓ 小红书 X · 抖音 Y` 可见，非截断）。
+4. V4.5 作品（11 个版本）→ 按钮应**换行铺开、一眼看全**，不再需要左右滑；
+   卡片高度随行数变高，按钮不被裁切。
+5. ⚠️ **真机证据缺失**：iOS 设备未通过 USB 连接（`pymobiledevice3` 报 Device is not connected），
+   本次四项改动均无截图 / 录屏证据，需装机后人工验收。
 
 ## DSH-090 在线作品分享到小红书「一堆一样的图」：iOS 把 `[UIImage]` 直接丢给分享面板（2026-09-22 修复）
 
