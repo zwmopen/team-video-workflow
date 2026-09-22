@@ -53,9 +53,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             base = base.filter { $0.destination == selectedOnlineCategory }
         }
         guard !searchQuery.isEmpty else { return base }
+        // ⚠️ OnlineWorkEntry 没有 `name` 成员（只有 title / destination）——
+        // 上一版写成 entry.name，CI 直接编译失败。destination 对应本地的「合集名」。
         return base.filter { entry in
-            entry.name.localizedCaseInsensitiveContains(searchQuery)
-                || entry.title.localizedCaseInsensitiveContains(searchQuery)
+            entry.title.localizedCaseInsensitiveContains(searchQuery)
+                || entry.destination.localizedCaseInsensitiveContains(searchQuery)
         }
     }
 
@@ -1512,7 +1514,8 @@ private final class CopyPreviewViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        // ⚠️ `.systemBackground` 要 iOS 13+，项目 deploymentTarget 更低 ⇒ 用 AppColors 的兜底版本
+        view.backgroundColor = AppColors.background
 
         subtitle.text = "【\(versionLabel)】 共 \(charCount) 字"
         subtitle.font = .systemFont(ofSize: 12)

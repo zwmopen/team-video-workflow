@@ -176,7 +176,7 @@ final class OnlineRecycleViewController: UITableViewController {
     /// 这一行是不是「加载更多」占位行
     private func isLoadMoreRow(_ row: Int) -> Bool { hasMoreRecycle && row == recyclePageLimit }
 
-    private func resetRecyclePaging() { recyclePageLimit = OnlineRecycleView.recyclePageStep }
+    private func resetRecyclePaging() { recyclePageLimit = OnlineRecycleViewController.recyclePageStep }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         return "\(currentTab.title)（\(works.count)）· 电脑"
@@ -225,7 +225,7 @@ final class OnlineRecycleViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if isLoadMoreRow(indexPath.row) {
-            recyclePageLimit += OnlineRecycleView.recyclePageStep
+            recyclePageLimit += OnlineRecycleViewController.recyclePageStep
             tableView.reloadData()
             return
         }
