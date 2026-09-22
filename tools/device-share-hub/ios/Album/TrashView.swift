@@ -169,7 +169,8 @@ final class TrashViewController: UITableViewController {
         cell.textLabel?.font = .boldSystemFont(ofSize: 16)
         var detail = "已打开分享 \(item.shareCount) 次"
         if item.isGarbage {
-            detail += " · 🗑️ 垃圾样本\n备注：\(item.garbageRemark ?? "（未填写）")"
+            // DSH-093 C11：称呼统一 —— Android 叫「垃圾备注：」，这里原本叫「备注：」
+            detail += " · 🗑️ 垃圾样本\n垃圾备注：\(item.garbageRemark ?? "（未填写）")"
             cell.detailTextLabel?.textColor = UIColor(red: 0.66, green: 0.24, blue: 0.20, alpha: 1)
         } else {
             cell.detailTextLabel?.textColor = AppColors.secondaryText

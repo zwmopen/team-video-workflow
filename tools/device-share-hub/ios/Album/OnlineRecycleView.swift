@@ -206,7 +206,8 @@ final class OnlineRecycleViewController: UITableViewController {
         var detail = "💻 电脑 · \(work.imageCount) 张图片"
         if currentTab == .garbage {
             let remark = work.garbageRemark
-            detail += " · 🗑️ 垃圾样本\n备注：\(remark.isEmpty ? "（未填写）" : remark)"
+            // DSH-093 C11：称呼统一 —— Android 叫「垃圾备注：」，这里原本叫「备注：」
+            detail += " · 🗑️ 垃圾样本\n垃圾备注：\(remark.isEmpty ? "（未填写）" : remark)"
             cell.detailTextLabel?.textColor = UIColor(red: 0.66, green: 0.24, blue: 0.20, alpha: 1)
         } else {
             detail += " · 已使用 \(max(1, work.useCount)) 次"

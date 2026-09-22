@@ -1847,6 +1847,21 @@ private final class WorkCell: UICollectionViewCell {
         }
     }
 
+    /// DSH-093 C12：自动清理倒计时 —— 文案与 Android `deleteCountdown` 逐字一致：
+    /// 「N 分钟后自动删除」/「N 小时后自动删除」/「N 小时 M 分钟后自动删除」/「即将自动删除」。
+    /// 没设清理计划就返回空串（调用方据此整行不追加，不留空行）。
+    static func deleteCountdownText(deleteScheduledAtMs: Double?) -> String {
+        guard let ms = deleteScheduledAtMs, ms > 0 else { return "" }
+        let remaining = ms - Date().timeIntervalSince1970 * 1000
+        if remaining <= 0 { return "即将自动删除" }
+        let minutes = max(1, Int((remaining + 59_999.0) / 60_000.0))
+        if minutes < 60 { return "\(minutes) 分钟后自动删除" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? "\(hours) 小时后自动删除"
+            : "\(hours) 小时 \(rest) 分钟后自动删除"
+    }
+
     /// 卡片日期后缀：与 Android `extractTimestampBadge` 同源同格式（`MM-dd HH:mm`），
     /// 从作品 id/title 的 `yyyyMMdd_HHmmss` 前缀解析；解析不到返回空串（调用方省略）。
     static func cardDateSuffix(_ rawID: String, _ rawTitle: String) -> String {
@@ -1876,13 +1891,20 @@ private final class WorkCell: UICollectionViewCell {
         // 取作品 id/title 的 `yyyyMMdd_HHmmss` 前缀；取不到就省略（不显示占位）。
         let onlineDate = WorkCell.cardDateSuffix(entry.id, entry.title)
         let onlineDatePart = onlineDate.isEmpty ? "" : " · " + onlineDate
-        if usedCount > 0 {
-            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 已使用 \(usedCount) 次" + onlineDatePart
-            detail.textColor = UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
-        } else {
-            detail.text = "💻 电脑在线 · \(entry.imageCount) 图 · 未使用" + onlineDatePart
-            detail.textColor = AppColors.secondaryText
+        var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "
+            + (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
+        // DSH-093 C10：分发去向我们对齐 Android 在线卡 —— 安卓有这行，iOS 一直没渲染。
+        if !entry.dispatchedTo.isEmpty {
+            onlineDetail += "\n记录：" + entry.dispatchedTo.joined(separator: "、")
         }
+        // DSH-093 C11：垃圾备注。称呼统一叫「垃圾备注：」（回收站两处原本叫「备注：」）。
+        if entry.garbage {
+            onlineDetail += "\n垃圾备注：" + (entry.garbageRemark.isEmpty ? "（未填写）" : entry.garbageRemark)
+        }
+        detail.text = onlineDetail
+        detail.textColor = usedCount > 0
+            ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
+            : AppColors.secondaryText
 
         renderOnlinePreviews(entry.images)
         configureOnlineButtons(entry)
@@ -2025,13 +2047,20 @@ private final class WorkCell: UICollectionViewCell {
         contentView.layer.borderColor = AppColors.separator.cgColor
 
         name.text = work.name
+        // DSH-093 C9：计数口径对齐 Android —— 用「小红书 + 抖音」之和，不是 shareCount。
+        // 因为下面一行明细就是这两个数，总数必须等于明细之和；用 shareCount 会出现
+        // 「已使用 3 次 / ✓ 小红书 1 · 抖音 1」这种自相矛盾的显示。
+        let localUsed = work.xhsShareCount + work.douyinShareCount
         var localDetail = "📱 手机本地 · \(work.imageURLs.count) 图 · "
-            + (work.shareCount > 0 ? "已使用 \(work.shareCount) 次" : "未使用")
+            + (localUsed > 0 ? "已使用 \(localUsed) 次" : "未使用")
         let localDate = WorkCell.cardDateSuffix(work.name, work.name)
         if !localDate.isEmpty { localDetail += " · " + localDate }
         // DSH-091 C4：与 Android 对齐 —— 本地作品已使用时追加各平台次数明细。
-        if work.shareCount > 0 {
+        if localUsed > 0 {
             localDetail += "\n✓ 小红书 \(work.xhsShareCount) · 抖音 \(work.douyinShareCount)"
+            // DSH-093 C12：自动清理倒计时，文案与 Android `deleteCountdown` 逐字一致。
+            let countdown = WorkCell.deleteCountdownText(deleteScheduledAtMs: work.deleteScheduledAtMs)
+            if !countdown.isEmpty { localDetail += "\n" + countdown }
         }
         detail.text = localDetail
         detail.textColor = AppColors.secondaryText

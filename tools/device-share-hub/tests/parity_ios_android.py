@@ -125,6 +125,46 @@ def main():
         c8_guard and c8_alert,
         "两处入口都拦=%s 确认按钮=%s" % (c8_guard, c8_alert)))
 
+    # ---- DSH-093：称呼 / 口径统一（以 Android 为基准）----
+    and_main = "\n".join(t for p, t in AND_SRC if p.name == "MainActivity.java")
+
+    # C9 本地卡「已使用 N 次」的计数口径。
+    # Android 用 xhsShareCount + douyinShareCount（因为下面一行明细就是这两个数，
+    # 总数必须等于明细之和）；iOS 曾直接用 shareCount ⇒ 同一作品两端数字不一样。
+    c9_and = "localUsedCount" in and_main
+    c9_ios = "let localUsed = work.xhsShareCount + work.douyinShareCount" in cv
+    c9_no_share = "已使用 \\(work.shareCount) 次" not in cv
+    results.append(check(
+        "C9 本地卡使用次数 = 小红书+抖音（两端同口径）",
+        c9_and and c9_ios and c9_no_share,
+        "安卓基准=%s iOS改用合计数=%s 不再用shareCount=%s" % (c9_and, c9_ios, c9_no_share)))
+
+    # C10 在线卡「记录：」行（Android 在线卡拼 dispatchedTo）
+    c10_and = "记录：" in and_main
+    c10_ios = "记录：" in cv
+    results.append(check(
+        "C10 iOS 在线卡「记录：」分发去向",
+        c10_and and c10_ios,
+        "安卓有=%s iOS有=%s" % (c10_and, c10_ios)))
+
+    # C11「垃圾备注」称呼统一：安卓叫「垃圾备注：」，iOS 回收站两处曾叫「备注：」
+    tv = "\n".join(t for p, t in IOS_SRC if p.name == "TrashView.swift")
+    c11_online = "垃圾备注：" in cv
+    c11_recycle = "垃圾备注：" in orv and "\\n备注：" not in orv
+    c11_trash = "垃圾备注：" in tv and "\\n备注：" not in tv
+    results.append(check(
+        "C11「垃圾备注：」称呼三处统一",
+        c11_online and c11_recycle and c11_trash,
+        "在线卡=%s 在线回收站=%s 本地回收站=%s" % (c11_online, c11_recycle, c11_trash)))
+
+    # C12 本地卡自动清理倒计时（Android deleteCountdown：「N 分钟后自动删除」）
+    c12_and = "分钟后自动删除" in and_main
+    c12_ios = "分钟后自动删除" in cv and "即将自动删除" in cv
+    results.append(check(
+        "C12 iOS 本地卡自动清理倒计时",
+        c12_and and c12_ios,
+        "安卓有=%s iOS有=%s" % (c12_and, c12_ios)))
+
     print()
     bad = results.count(False)
     if bad:
