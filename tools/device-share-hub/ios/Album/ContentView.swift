@@ -733,11 +733,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     // MARK: - 在线分享与流转
     /// 在线作品分享。
     ///
-    /// 两处历史缺陷（2026-09-21 修复）：
-    /// 1. 文案取「被点的那一条」——多版本文案（`<<<COPY_FORMAT:MULTI>>>`）里 11 个版本有 10 个
-    ///    `platform` 都是 `.general`，按 platform 回查会永远拿到第一条；
-    /// 2. 图片**全部拉取**后再唤起分享，与 Android `handleOnlineWorkUse` 对齐。
-    ///    旧实现只 `entry.images.first`，导致跳到小红书/抖音后只有一张图。
+    /// 三处历史缺陷：
+    /// 1. 文案取「被点的那一条」（2026-09-21 修复）——多版本文案（`<<<COPY_FORMAT:MULTI>>>`）里
+    ///    11 个版本有 10 个 `platform` 都是 `.general`，按 platform 回查会永远拿到第一条；
+    /// 2. 图片**全部拉取**后再唤起分享（2026-09-21 修复），与 Android `handleOnlineWorkUse` 对齐。
+    ///    旧实现只 `entry.images.first`，导致跳到小红书/抖音后只有一张图；
+    /// 3. 分享载体改为**文件 URL**（2026-09-22 修复，DSH-090）——旧实现把 `[UIImage]` 直接交给
+    ///    `UIActivityViewController`，小红书/抖音的 share extension 会把 N 张图读成同一张
+    ///    （实测 9 张全变 1 张，而预览正常）。现与本地相册 `prepareShare` 同传 `NSURL`。
     private func shareOnline(_ entry: OnlineWorkEntry, item: AvailableCopyPlatform, source: UIView?) {
         let textToCopy = item.copyText.trimmingCharacters(in: .whitespacesAndNewlines)
         // 【深度防御】与 Android `handleOnlineWorkUse` 1:1 对齐：判据是「实质字数 < 30」，
@@ -763,17 +766,24 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         downloadAllImages(paths: entry.images, onProgress: { [weak progress] done, count, name in
             progress?.message = "正在下载：\(name)（\(done)/\(count) 张）"
-        }, completion: { [weak self] images in
+        }, completion: { [weak self] urls in
             guard let self = self else { return }
             progress.dismiss(animated: true) {
-                guard !images.isEmpty else {
+                guard !urls.isEmpty else {
                     self.showError("图片加载失败，无法拉起分享；文案已在剪贴板")
                     return
                 }
-                self.showToast("✅ 原图已全部同步到手机，正在唤起分享…")
-                let activity = UIActivityViewController(activityItems: images, applicationActivities: nil)
+                self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
+                // DSH-090：与本地相册 prepareShare 同机制 —— 传**文件 URL**（`as NSURL`），
+                // 不传内存 UIImage，否则小红书/抖音会把多张图读成同一张。
+                let activity = UIActivityViewController(activityItems: urls.map { $0 as NSURL },
+                                                        applicationActivities: nil)
                 activity.popoverPresentationController?.sourceView = source
                 activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                    // 分享面板关闭后清理临时文件（无论是否真的分享出去）
+                    if let dir = urls.first?.deletingLastPathComponent() {
+                        try? FileManager.default.removeItem(at: dir)
+                    }
                     guard completed, let self = self else { return }
                     // 1. 通知电脑端物理归档移动至 _已发送1次
                     OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.platform.code)
@@ -787,12 +797,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         })
     }
 
-    /// 按电脑端给出的顺序**依次**拉取全部原图（`loadImage` 的回调保证在主线程）。
+    /// 按电脑端给出的顺序**依次**拉取全部原图并落盘为临时文件（`loadImage` 的回调保证在主线程）。
+    ///
+    /// DSH-090：返回 `[URL]` 而非 `[UIImage]` —— 与本地相册 `WorkLibrary.prepareShare`
+    /// （`selected.map { $0 as NSURL }`）及 Android `launchOnlineShare`
+    /// （`ACTION_SEND_MULTIPLE` + `Uri`）同机制。
+    /// 把 `[UIImage]` 直接交给 `UIActivityViewController` 时，小红书/抖音的 share extension
+    /// 会把 N 张图读成同一张（实测 9 张全变 1 张），改传文件 URL 后不再串图。
     private func downloadAllImages(paths: [String],
                                    onProgress: @escaping (Int, Int, String) -> Void,
-                                   completion: @escaping ([UIImage]) -> Void) {
-        var collected = [UIImage?](repeating: nil, count: paths.count)
+                                   completion: @escaping ([URL]) -> Void) {
+        var collected = [URL?](repeating: nil, count: paths.count)
         let total = paths.count
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("online-share-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         func step(_ index: Int) {
             guard index < total else {
@@ -800,10 +819,20 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 return
             }
             let path = paths[index]
-            onProgress(index + 1, total, (path as NSString).lastPathComponent)
+            let src = (path as NSString).lastPathComponent
+            onProgress(index + 1, total, src)
             OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: false) { image in
-                collected[index] = image
-                step(index + 1)
+                defer { step(index + 1) }
+                guard let image = image else { return }
+                // 序号前缀保证分享顺序与电脑端一致，且不会因重名互相覆盖
+                let safeName = NSString(format: "%02d_%@", index + 1,
+                                        src.isEmpty ? "image.jpg" : src) as String
+                let fileURL = dir.appendingPathComponent(safeName)
+                let ext = (src as NSString).pathExtension.lowercased()
+                let data = (ext == "png") ? image.pngData() : image.jpegData(compressionQuality: 0.95)
+                guard let payload = data else { return }
+                try? payload.write(to: fileURL)
+                collected[index] = fileURL
             }
         }
 

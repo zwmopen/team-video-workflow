@@ -1,5 +1,26 @@
 # 变更记录
 
+## iOS 0.8.30 / build 101 - 2026-09-22 - 在线分享到小红书不再「一堆一样的图」（DSH-090）
+
+> **用户要求（原话）**：「苹果点击分享到小红书，分享了一堆一样图片，但是预览看到的是不同的图片」
+
+- **根因**：三端在线多图分享的**载体**本应一致，iOS 在线分支是唯一异类——
+  本地相册传 `NSURL`、Android 传 `Uri`，唯独 iOS 在线把 `[UIImage]`（内存位图数组）
+  直接交给 `UIActivityViewController`。位图经 pasteboard 交给小红书 share extension 时
+  会被读成同一张 ⇒ 分享串图；而预览走自持 UIImage 逐张加载、不经 pasteboard ⇒ 预览正常。
+- **修复**（`ios/Album/ContentView.swift`，只动在线分享一条路径）：
+  1. `downloadAllImages` 返回 `[URL]`：原图下载后写入
+     `NSTemporaryDirectory()/online-share-<UUID>/`，文件名带 `序号_` 前缀保序且不覆盖；
+  2. 分享载体改为 `urls.map { $0 as NSURL }`，与本地相册 `prepareShare` 逐字同机制；
+  3. 分享面板关闭后清理临时目录；
+  4. 修正假文案「✅ 原图已全部同步到手机」（代码里根本没有存相册动作）→「✅ 已准备 N 张原图…」。
+- **服务端清白证明**：520 件作品 `images` 数组**完全重复 0 / basename 重复 0**；
+  逐张请求 `/api/online/image?thumb=0` 算 md5，抽查 5 件（6/6/9/9/10 图）**互不相同**。
+- **闸门**：`audit_three_end_parity.py` 新增第 12 项契约「在线多图分享·载体」。
+  修前 **exit 1**（`AND=FILE_URI / iOS=UIIMAGE`），修后 **exit 0**（两端均 `FILE_URI`），前 11 项修前后均一致。
+- iOS `MARKETING_VERSION 0.8.30` / `CURRENT_PROJECT_VERSION 101`；Android 本版**未改动**。
+  iOS 本机无法编译，**须由 CI `ios-altstore-build` 验证**；装手机后要用 ≥5 图的作品实际分享到小红书复验。
+
 ## 0.8.48 - 2026-09-21 - 卡片元信息三端统一（iOS 样式 + 日期后缀）与 iOS 按钮尺寸对齐安卓
 
 > **用户要求（原话）**：「如果是在线相册，那么他们要复制的路径都是电脑文件夹所在的路径，删除也是

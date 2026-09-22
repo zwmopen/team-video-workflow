@@ -4,7 +4,51 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-089**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-090**。
+
+## DSH-090 在线作品分享到小红书「一堆一样的图」：iOS 把 `[UIImage]` 直接丢给分享面板（2026-09-22 修复）
+
+- **现象（用户原话）**：
+  「苹果点击分享到小红书，分享了一堆一样图片，但是预览看到的是不同的图片」
+  （同一作品预览 9 张各不相同，分享出去到小红书却变成 N 张相同的图）。
+
+- **根因（iOS 独有，服务端与 Android 均无罪）**：
+  三端「在线多图分享」的**载体**本应一致，但 iOS 在线分支是唯一的异类：
+  | 端 / 出口 | 传给分享面板的东西 | 结果 |
+  |---|---|---|
+  | iOS **本地**相册 `WorkLibrary.prepareShare` | `selected.map { $0 as NSURL }`（文件 URL） | ✅ 正常 |
+  | **Android** `MainActivity.launchOnlineShare` | `ACTION_SEND_MULTIPLE` + `putParcelableArrayListExtra(EXTRA_STREAM, uris)`（Uri） | ✅ 正常 |
+  | iOS **在线** `ContentView.shareOnline` | `[UIImage]`（内存位图数组） | ❌ 串图 |
+
+  传内存 `UIImage` 数组时，iOS 把 N 张图塞进 pasteboard，小红书/抖音的 share extension
+  对多图 item 处理有缺陷，会全部读成同一张；而**预览**走的是自持的 `UIImage` 逐张加载，
+  不经 pasteboard ⇒ 预览正常、分享串图，现象自洽。
+  另：`showToast("✅ 原图已全部同步到手机")` 是**假文案**——代码里根本没有存相册的动作
+  （全仓 0 处 `UIImageWriteToSavedPhotosAlbum` / `PHPhotoLibrary`）。
+
+- **修复**（`ios/Album/ContentView.swift`，只改在线分享一条路径）：
+  1. `downloadAllImages` 返回 `[URL]` 而非 `[UIImage]`：原图下载后写入
+     `NSTemporaryDirectory()/online-share-<UUID>/`，文件名带 `序号_` 前缀保证顺序与不覆盖；
+  2. 分享载体改为 `urls.map { $0 as NSURL }`，与本地相册 `prepareShare` 逐字同机制；
+  3. 分享面板关闭后清理临时目录（无论是否真的分享出去）；
+  4. 假 toast 文案改为「✅ 已准备 N 张原图，正在唤起分享…」。
+
+- **证据**：
+  - **服务端清白**：`GET /api/online/works` 520 件，`images` 数组**完全重复 0 件、
+    basename 重复 0 件**；再逐张请求 `/api/online/image?path=…&thumb=0` 算 md5，
+    抽查 5 件（6/6/9/9/10 图）**内容互不相同** ⇒ 串图不在服务端。
+  - **闸门留痕**（先加契约后改实现）：`_parity_audit/_gate_before.txt`
+    契约 **12 项，不一致 1 项，exit 1**：`在线多图分享·载体 AND=<FILE_URI> iOS=<UIIMAGE>`；
+    修后 `_gate_after.txt` **不一致 0 项，exit 0**，`AND=<FILE_URI> iOS=<FILE_URI>`。
+    前 11 项修前后均一致 ⇒ 历史修复未漂移。
+
+- **回归要求**：
+  1. 新增契约项「在线多图分享·载体」已并入 `audit_three_end_parity.py`（第 12 项），
+     以后任一端再改回传内存位图，闸门必须 FAIL。
+  2. iOS 改动本机无法编译（无 macOS），**必须由 CI `ios-altstore-build` 验证后**才算完成；
+     装到手机后要用**多图作品（≥5 张）实际分享到小红书**复验，不能只看预览。
+  3. 顺带复查：同一套图被多件作品复用（实测「溧阳天目湖」与「赞324在杭州」前 6 张 md5 完全相同），
+     属素材复用，不是串图，别混为一谈。
 
 ## DSH-089 卡片元信息与按钮尺寸两端各写一套；「只有 3 个按钮」被误当成渲染缺陷（2026-09-21 定位 + 部分修复）
 
