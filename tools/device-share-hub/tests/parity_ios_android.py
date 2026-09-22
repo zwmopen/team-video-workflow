@@ -165,6 +165,45 @@ def main():
         c12_and and c12_ios,
         "安卓有=%s iOS有=%s" % (c12_and, c12_ios)))
 
+    # C13 分平台计数要覆盖全部小红书槽位。
+    # Android 把 XHS / XHS_2 / XHS_3 都算进 xhsShareCount；iOS 枚举里有 .xhs3 也能生成按钮，
+    # 但 WorkLibrary 只判了 .xhs / .xhs2 ⇒ 点「短文精选版」分享后 iOS 不计次数，两端逐步分叉。
+    wl = "\n".join(t for p, t in IOS_SRC if p.name == "WorkLibrary.swift")
+    c13_and = "XHS_3" in and_main and "xhsShareCount" in and_main
+    c13_ios = "platform == .xhs || platform == .xhs2 || platform == .xhs3" in wl
+    results.append(check(
+        "C13 iOS 小红书三槽位都计入次数",
+        c13_and and c13_ios,
+        "安卓含XHS_3=%s iOS三槽位=%s" % (c13_and, c13_ios)))
+
+    # ---- DSH-093 反向：安卓自己的三处不合理（别把安卓当圣旨，它也会错）----
+
+    # A1 分页「首屏 = 步长」：原本首屏 25、步长 30，两个数不搭
+    a1 = "onlinePageLimit = 30" in and_main and "onlinePageLimit += 30" in and_main \
+        and "onlinePageLimit = 25" not in and_main
+    results.append(check(
+        "A1 安卓在线分页首屏与步长一致（30/+30）",
+        a1,
+        "原本首屏 25 却每次 +30，两个数不搭"))
+
+    # A2 本地卡：状态行用 localUsedCount>0，明细行原本却用 work.used ⇒ 自相矛盾
+    a2_state = "localUsedCount > 0 ?" in and_main
+    a2_detail = "if (localUsedCount > 0) {" in and_main
+    a2_bad = 'if (work.used) {\n            detail += "\\n✓ 小红书' in and_main
+    results.append(check(
+        "A2 安卓本地卡明细行与状态行同口径",
+        a2_state and a2_detail and not a2_bad,
+        "状态行=%s 明细行=%s 仍用work.used=%s" % (a2_state, a2_detail, a2_bad)))
+
+    # A3「🗑️ 垃圾样本」前缀：本地回收站有、在线卡原本没有 ⇒ 安卓自己两处不一致。
+    # ⚠️ 别只数「🗑️ 垃圾样本」出现次数 —— 它在 badge 里也出现，改前就已经是 2 次，
+    #    那样判据改前改后都 PASS，等于没有闸门。必须查在线卡那句 append 的精确形态。
+    a3 = 'detail.append(" · 🗑️ 垃圾样本\\n垃圾备注：")' in and_main
+    results.append(check(
+        "A3 安卓在线卡垃圾备注补 🗑️ 前缀",
+        a3,
+        "在线卡 append 语句里没找到「 · 🗑️ 垃圾样本\\n垃圾备注：」"))
+
     print()
     bad = results.count(False)
     if bad:

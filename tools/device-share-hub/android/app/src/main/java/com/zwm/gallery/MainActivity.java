@@ -190,7 +190,7 @@ public final class MainActivity extends Activity {
     private String selectedOnlineCategory = WorkCategory.ALL;
     private final Map<String, Button> onlineCategoryButtons = new LinkedHashMap<>();
     private final Map<String, String> onlineCategoryLabels = new LinkedHashMap<>();
-    private int onlinePageLimit = 25;
+    private int onlinePageLimit = 30;
     private final List<OnlineWorkEntry> currentOnlineFilteredEntries = new ArrayList<>();
 
     // ---- 在线回收站（电脑端 45835）：已使用 / 已标记垃圾 双 Tab ----
@@ -204,7 +204,7 @@ public final class MainActivity extends Activity {
     private LinearLayout onlineRecycleTabBar;
     private Button onlineRecycleSentTabButton;
     private Button onlineRecycleGarbageTabButton;
-    private int onlineRecyclePageLimit = 25;
+    private int onlineRecyclePageLimit = 30;
 
     // ---- 手机本地回收站双 Tab（已删除 / 已标记垃圾）：与在线回收站双 Tab 结构 1:1 对齐 ----
     /** 本地回收站当前 Tab：deleted=已删除（未写垃圾备注） / garbage=已标记垃圾（garbageRemark 非空） */
@@ -1078,7 +1078,9 @@ public final class MainActivity extends Activity {
             // 与在线回收站垃圾条目对齐：展示已写入手机本地元数据的垃圾备注
             detail += " · 🗑️ 垃圾样本\n垃圾备注：" + work.garbageRemark;
         }
-        if (work.used) {
+        // DSH-093 A2：这里原本判 work.used，与上面状态行的 localUsedCount > 0 不是一个口径，
+        // 会出现「未使用」下面挂着「✓ 小红书 0 · 抖音 0」+ 自动删除倒计时的自相矛盾显示。
+        if (localUsedCount > 0) {
             detail += "\n✓ 小红书 " + work.xhsShareCount + " · 抖音 " + work.douyinShareCount;
             detail += "\n" + deleteCountdown(work);
         }
@@ -3158,7 +3160,7 @@ public final class MainActivity extends Activity {
     private void selectOnlineRecycleTab(String tab) {
         String want = "garbage".equals(tab) ? "garbage" : "sent";
         onlineRecycleTab = want;
-        onlineRecyclePageLimit = 25;
+        onlineRecyclePageLimit = 30;
         refreshOnlineRecycleTabStyles();
         loadOnlineRecycle(want, true);
     }
@@ -3171,7 +3173,7 @@ public final class MainActivity extends Activity {
         enteredTrashFromOnline = false;
         showingOnlineRecycle = true;
         onlineRecycleTab = "garbage".equals(tab) ? "garbage" : "sent";
-        onlineRecyclePageLimit = 25;
+        onlineRecyclePageLimit = 30;
         onlineRecycleWorks.clear();
 
         if (searchBar != null) searchBar.setVisibility(View.GONE);
@@ -3340,7 +3342,8 @@ public final class MainActivity extends Activity {
             detail.append("\n记录：").append(String.join("、", work.dispatchedTo));
         }
         if (work.garbage) {
-            detail.append("\n垃圾备注：").append(work.garbageRemark.isEmpty() ? "（未填写）" : work.garbageRemark);
+            // DSH-093 A3：与本地回收站同一格式 —— 原本在线卡少了「🗑️ 垃圾样本」前缀
+            detail.append(" · 🗑️ 垃圾样本\n垃圾备注：").append(work.garbageRemark.isEmpty() ? "（未填写）" : work.garbageRemark);
         }
         TextView meta = text(detail.toString(), 12, false);
         meta.setTextColor(Color.rgb(75, 82, 78));
@@ -3467,7 +3470,7 @@ public final class MainActivity extends Activity {
 
     private void applyOnlineCategoryFilter(String catKey) {
         if (!isOnlineMode || showingTrash || showingOnlineRecycle) return;
-        onlinePageLimit = 25;
+        onlinePageLimit = 30;
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
 

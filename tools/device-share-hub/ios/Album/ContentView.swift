@@ -1899,7 +1899,7 @@ private final class WorkCell: UICollectionViewCell {
         }
         // DSH-093 C11：垃圾备注。称呼统一叫「垃圾备注：」（回收站两处原本叫「备注：」）。
         if entry.garbage {
-            onlineDetail += "\n垃圾备注：" + (entry.garbageRemark.isEmpty ? "（未填写）" : entry.garbageRemark)
+            onlineDetail += " · 🗑️ 垃圾样本\n垃圾备注：" + (entry.garbageRemark.isEmpty ? "（未填写）" : entry.garbageRemark)
         }
         detail.text = onlineDetail
         detail.textColor = usedCount > 0

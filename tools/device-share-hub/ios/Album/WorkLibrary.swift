@@ -286,7 +286,9 @@ final class WorkLibrary {
         state.history.removeValue(forKey: work.key)
         record.shareCount += 1
         record.used = true
-        if platform == .xhs || platform == .xhs2 { record.xhsShareCount += 1 }
+        // DSH-093 C13：三个小红书槽位（种草版 / 大纲方案版 / 短文精选版）都要计入，
+        // 对齐 Android 的 `XHS || XHS_2 || XHS_3`。漏了 .xhs3 会让两端数字逐步分叉。
+        if platform == .xhs || platform == .xhs2 || platform == .xhs3 { record.xhsShareCount += 1 }
         if platform == .douyin { record.douyinShareCount += 1 }
         let now = Date()
         record.lastShareDate = Self.dayFormatter.string(from: now)
