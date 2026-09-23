@@ -468,10 +468,10 @@ public final class MainActivity extends Activity {
                 toast("正在刷新在线回收站…");
                 loadOnlineRecycle(onlineRecycleTab, true);
             } else if (showingTrash) confirmClearTrash();
-            else if (isOnlineMode) {
-                toast("在线回收站");
-                showOnlineRecycle("sent");
-            } else {
+            else {
+                // DSH-094：统一回收站入口。本地/在线模式都进 showTrash() —— 同一个屏幕，
+                // 在线模式进入后顶部会追加一个「💻 电脑端回收站 → 进入」按钮跳原 OnlineRecycle
+                // （双 Tab ↔ 已使用/已标记垃圾 ↔ 服务器侧 _已发送1次 + _垃圾作品）。
                 toast("回收站");
                 showTrash();
             }
@@ -906,6 +906,13 @@ public final class MainActivity extends Activity {
         if (!animate) worksContainer.setLayoutTransition(null);
         worksContainer.removeAllViews();
 
+        // DSH-094：统一回收站入口 —— 在线模式进 showTrash 后顶部追加一个「💻 电脑端回收站」按钮
+        // 跳原 OnlineRecycle（_已发送1次 + _垃圾作品 的服务器侧双 Tab）。
+        // 本地模式直接进 trash 时不进这条（enteredTrashFromOnline 默认 false）。
+        if (showingTrash && enteredTrashFromOnline) {
+            worksContainer.addView(buildOnlineRecycleEntry(), margins(0, 0, 0, dp(10)));
+        }
+
         // 本地回收站双 Tab 过滤（已删除 / 已标记垃圾），与在线回收站双 Tab 结构 1:1 对齐。
         // 判据即「是否写过垃圾备注」—— 与在线版 quality_tag.json 的垃圾标记语义同一套。
         List<WorkLibrary.WorkEntry> shownEntries = entries;
@@ -1127,18 +1134,18 @@ public final class MainActivity extends Activity {
             Button restoreBtn = compactButton("恢复", true);
             restoreBtn.setContentDescription("恢复作品到列表");
             restoreBtn.setOnClickListener(v -> restore(work.id));
-            trashRow.addView(restoreBtn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            trashRow.addView(restoreBtn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             Button remarkBtn = new Button(this);
             remarkBtn.setText(work.isGarbage() ? "改备注" : "备注");
             styleNeumorphicButton(remarkBtn, STYLE_MUTED_GRAY);
             remarkBtn.setContentDescription("填写垃圾备注，写入手机本地元数据");
             remarkBtn.setOnClickListener(v -> promptRemarkLocalTrash(work));
-            trashRow.addView(remarkBtn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            trashRow.addView(remarkBtn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             String trashPath = work.directory != null ? work.directory.getAbsolutePath() : "";
             trashRow.addView(copyPathButton(trashPath, "手机本地作品"),
-                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             LinearLayout.LayoutParams trashRowParams = new LinearLayout.LayoutParams(-1, -2);
             trashRowParams.setMargins(0, dp(8), 0, dp(2));
@@ -1149,6 +1156,9 @@ public final class MainActivity extends Activity {
             FlowLayout platformRow = new FlowLayout(this);
             platformRow.setClipChildren(false);
             platformRow.setClipToPadding(false);
+            // 【2026-09-23】版本按钮 = 解析结果的**原始顺序**（文案.txt 里版本块的先后顺序），
+            // 不排序、不摘项。按钮的 height 用 WRAP_CONTENT：单行时由 `styleNeumorphicButton`
+            // 的 `setMinHeight(dp(36))` 兜底 36dp，需要折成两行时自动长高，不会被裁。
             platformRow.setHorizontalSpacing(dp(8));
             platformRow.setVerticalSpacing(dp(8));
             List<PlatformCopyParser.AvailableItem> rawPlatforms =
@@ -1180,7 +1190,7 @@ public final class MainActivity extends Activity {
                     });
                     return true;
                 });
-                platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+                platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             }
             if (work.shareCount > 0) {
                 Button reset = new Button(this);
@@ -1188,19 +1198,19 @@ public final class MainActivity extends Activity {
                 styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
                 reset.setContentDescription("重置作品状态为未发布");
                 reset.setOnClickListener(v -> confirmResetWork(work.id));
-                platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+                platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             }
             Button delete = new Button(this);
             delete.setText("删除");
             styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
             delete.setContentDescription("删除作品，移到回收站");
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
-            platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             // 「复制路径」紧跟在「删除」之后：本地作品复制手机上的作品文件夹路径
             String localPath = work.directory != null ? work.directory.getAbsolutePath() : "";
             platformRow.addView(copyPathButton(localPath, "手机本地作品"),
-                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
             platformRowParams.setMargins(0, dp(8), 0, dp(2));
             card.addView(platformRow, platformRowParams);
@@ -2422,9 +2432,13 @@ public final class MainActivity extends Activity {
         button.setTextSize(12.5f);
         button.setMinHeight(dp(36));
         button.setMinimumHeight(dp(36));
-        button.setPadding(dp(15), 0, dp(15), 0);
+        // 【2026-09-23 用户口径】按钮文字不再强制单行：版本名放不下时允许折成 2 行，
+        // 折行位置由外层 `FlowLayout` 决定。纵向各留 dp(6)，让两行有呼吸空间；
+        // 单行时高度仍由 `setMinHeight(dp(36))` 兜底 ⇒ 外观零变化。
+        button.setPadding(dp(15), dp(6), dp(15), dp(6));
         button.setGravity(Gravity.CENTER);
-        button.setMaxLines(1);
+        button.setSingleLine(false);
+        button.setMaxLines(2);
 
         Drawable normalBg;
         Drawable pressedBg;
@@ -3288,6 +3302,24 @@ public final class MainActivity extends Activity {
         return btn;
     }
 
+    // DSH-094：对称方向 —— 本地回收站（从在线模式进入时）顶部追加「电脑端回收站」入口，
+    // 与 recycleLocalTrashEntry 互为镜像。
+    private View buildOnlineRecycleEntry() {
+        Button btn = new Button(this);
+        btn.setText("💻 打开电脑端回收站（_已发送1次 + _垃圾作品）");
+        btn.setAllCaps(false);
+        btn.setTextSize(13);
+        btn.setTextColor(Color.rgb(2, 132, 199));
+        btn.setBackground(roundWithStroke(Color.rgb(224, 242, 254), 14, Color.rgb(186, 220, 240)));
+        btn.setPadding(dp(14), dp(10), dp(14), dp(10));
+        btn.setContentDescription("打开电脑端回收站");
+        btn.setOnClickListener(v -> {
+            toast("电脑端回收站");
+            showOnlineRecycle("sent");
+        });
+        return btn;
+    }
+
     private View onlineRecycleCard(OnlineWorkEntry work) {
         LinearLayout card = card();
         card.setTag("online_recycle:" + work.id);
@@ -3675,6 +3707,8 @@ public final class MainActivity extends Activity {
         FlowLayout platformRow = new FlowLayout(this);
         platformRow.setClipChildren(false);
         platformRow.setClipToPadding(false);
+        // 【2026-09-23】同本地作品卡：按钮顺序 = 解析结果原始顺序（文案块先后顺序），
+        // 不摘项、不 rank；高度 WRAP_CONTENT，单行靠 minHeight 兜 36dp，多行自动长高。
         platformRow.setHorizontalSpacing(dp(8));
         platformRow.setVerticalSpacing(dp(8));
 
@@ -3692,7 +3726,7 @@ public final class MainActivity extends Activity {
             styleNeumorphicButton(missing, STYLE_MUTED_GRAY);
             missing.setTextColor(Color.rgb(178, 34, 34));
             missing.setContentDescription("该在线作品文案缺失，已禁止分发");
-            platformRow.addView(missing, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            platformRow.addView(missing, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
         for (PlatformCopyParser.AvailableItem item : (copyMissing
                 ? new ArrayList<PlatformCopyParser.AvailableItem>() : platforms)) {
@@ -3705,7 +3739,7 @@ public final class MainActivity extends Activity {
                         () -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
                 return true;
             });
-            platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
         if (work.useCount > 0) {
@@ -3714,7 +3748,7 @@ public final class MainActivity extends Activity {
             styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
             reset.setContentDescription("重置电脑在线作品使用记录");
             reset.setOnClickListener(v -> confirmResetOnlineWork(work.id));
-            platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
         Button delete = new Button(this);
@@ -3722,11 +3756,11 @@ public final class MainActivity extends Activity {
         styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
         delete.setContentDescription("删除电脑在线作品");
         delete.setOnClickListener(v -> confirmDeleteOnlineWork(work));
-        platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+        platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // 「复制路径」紧跟在「删除」之后：在线作品复制电脑成品库里的作品文件夹路径
         platformRow.addView(copyPathButton(work.path, "电脑在线作品"),
-                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
         platformRowParams.setMargins(0, dp(8), 0, dp(2));
@@ -3761,12 +3795,18 @@ public final class MainActivity extends Activity {
         // 【2026-09-21 修复】V4.5 多版本文案（MULTI）已逐版本出按钮，不再合成这 3 个旧版兜底按钮。
         // 它们的兜底内容取的是整篇原文，点一下就把全部 `<<<…>>>` 标记复制进剪贴板
         // （实测 111 份「已发送0次」作品命中）。多版本时只保留各版本自身按钮 + 「抖音避坑」。
+        // 【2026-09-23 用户口径】11 个版本**平级**，按钮顺序 = `文案.txt` 里版本块出现的先后顺序
+        // （手机端跟随文件顺序，不需要任何 rank 规则）。
+        // 旧行为有两处破坏顺序：① 把「抖音」那一版从列表里摘出来、`result.add` 追加到末尾；
+        // ② 末尾 `result.sort(getButtonRank)` —— 已排在文案最前的抖音版会被甩到整行最后。
+        // 现在多版本时**原样返回**解析结果，与 iOS `if !multiItems.isEmpty { return multiItems }` 1:1 对齐。
         boolean multiVersion = PlatformCopyParser.hasMultiVersionBlocks(rawText) && !result.isEmpty();
         if (multiVersion) {
-            if (douyinItem != null && douyinItem.copyText != null && !douyinItem.copyText.trim().isEmpty()) {
-                result.add(douyinItem);
-            }
-        } else {
+            return new ArrayList<>(rawPlatforms);
+        }
+
+        // —— 以下为「旧协议（COPY_FORMAT:2/3）/ 纯文案」的兜底合成：
+        //    固定产出 规避营销版 → 种草版 → 大纲方案版 三个按钮 ——
         // 1. 规避营销版
         if (douyinItem != null && douyinItem.copyText != null && !douyinItem.copyText.trim().isEmpty()) {
             result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.DOUYIN, "规避营销版", douyinItem.copyText));
@@ -3790,8 +3830,8 @@ public final class MainActivity extends Activity {
             String outlineCopy = PlatformCopyParser.synthesizeOutlineCopy(fallback);
             result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS_2, "大纲方案版", outlineCopy));
         }
-        }
 
+        // 仅兜底三按钮路径需要 rank（多版本走上面的 early return，绝不重排）
         result.sort((a, b) -> {
             int rankA = getButtonRank(a.buttonLabel);
             int rankB = getButtonRank(b.buttonLabel);

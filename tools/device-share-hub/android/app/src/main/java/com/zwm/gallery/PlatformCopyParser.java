@@ -74,13 +74,10 @@ final class PlatformCopyParser {
         if (upper.startsWith("VERSION_") || upper.startsWith("V_")) {
             return "版本 " + upper.substring(upper.indexOf('_') + 1);
         }
-        if (trimmed.length() <= 4) {
-            return trimmed;
-        }
-        if (trimmed.endsWith("版") && trimmed.length() == 5) {
-            return trimmed.substring(0, 4);
-        }
-        return trimmed.length() > 4 ? trimmed.substring(0, 4) : trimmed;
+        // 【2026-09-23 用户口径】版本名**不再截断到 4 字**：按钮按完整名字显示
+        // （最长为「抖音无营销」5 字），一行放不下时由外层 `FlowLayout` 自动折到下一行。
+        // 与 iOS `PlatformCopyParser.friendlyLabelForMarker` 逐字对齐。
+        return trimmed;
     }
 
     static List<AvailableItem> parseAvailablePlatforms(String source) {

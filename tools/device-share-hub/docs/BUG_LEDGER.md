@@ -4,9 +4,108 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-093**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-095**。
 
-## DSH-093 称呼与口径不统一 + 安卓自身三处不合理（2026-09-23 修复）
+## DSH-095 回收站统一入口：本地/在线模式都进同一屏（Android 0.8.51/162 + iOS 0.8.35/107）
+
+> **用户口径（原话）**：「手机端我再说一次哈，回收站是本地相册和在线相册共用的，
+> 顶多再回收站里面你显示是在线还是本地，就现在的本地相册界面点击回收站那个界面可以，
+> **在线相册点击居然没进去这个界面**」
+
+**现象**：右上「回收站」按钮在线模式下点开进了**另一个屏幕**（电脑端 OnlineRecycle，
+`_已发送1次` + `_垃圾作品` 双 Tab），而不是和本地模式一样的手机本地回收站 + 标记删除列表。
+**用户期望**：两端都进同一屏幕，里面可以显示来源（在线 / 本地），电脑端回收站另放按钮。
+
+**根因**：
+- Android `MainActivity.java:471` `rightModeButton` 的 OnClickListener 在 `else if (showingTrash)` 之后
+  还有 `else if (isOnlineMode) { toast("在线回收站"); showOnlineRecycle("sent"); }` ⇒ 在线模式分流。
+- iOS `ContentView.swift:1194` `openTrash` 同样按 `isOnlineMode` 分流到两个不同的 `UIViewController`。
+- 反向入口（本地回收站 → 电脑端回收站）本来就有 `recycleLocalTrashEntry` 按钮，
+  但「电脑端 → 本地回收站」是新的。
+
+**修复**（合并 commit 同 DSH-094 + DSH-095）：
+1. **Android rightModeButton**（`MainActivity.java:471-477`）：删 `else if (isOnlineMode)` 分支，
+   统一 `showTrash()`（同本地模式那条路径）；第 800-820 行 `showTrash` 已处理
+   `if (isOnlineMode) { enteredTrashFromOnline = true; }`，第 3187 行 `showOnlineRecycle` 会把它复位。
+2. **Android renderWorksCards 顶部**（`MainActivity.java:909-915`）：在 `worksContainer.removeAllViews()`
+   之后插入 `buildOnlineRecycleEntry()` —— 一个浅蓝底按钮「💻 打开电脑端回收站
+   （_已发送1次 + _垃圾作品）」。仅在 `showingTrash && enteredTrashFromOnline` 时插入。
+3. **Android buildOnlineRecycleEntry**（`MainActivity.java:3305-3322`，与 recycleLocalTrashEntry 镜像）。
+4. **iOS openTrash**（`ContentView.swift:1194-1199`）：删 `if isOnlineMode { ... OnlineRecycleViewController ... } else { ... TrashViewController ... }` 分支，统一 push `TrashViewController`。
+5. **iOS TrashView**（`TrashView.swift`）：header 从「单 segmented」改成 `UIStackView` 装 segmented + 按钮；
+   `viewDidLayoutSubviews` 高度 56 → 108；新增 `makeOnlineRecycleEntryButton`（蓝底浅蓝边、圆角 14、
+   "💻 打开电脑端回收站（_已发送1次 + _垃圾作品）"）+ `@objc openOnlineRecycle` push `OnlineRecycleViewController`。
+
+**证据**：
+- 闸门 `tests/parity_ios_android.py` 由 20 项扩到 **22 项**（新增 C17 + A4）：
+  - **C17**：从 `ContentView.swift` 抽 `openTrash` 函数体（regex `@objc private func openTrash() { ... @objc`），判据
+    `not ("if isOnlineMode" in body) and not ("OnlineRecycleViewController" in body) and "TrashViewController" in body`。
+    改前判据会 FAIL（lambda 内确实含两个字符串）→ 改后 PASS。
+  - **A4**：从 `MainActivity.java` 抽 `rightModeButton.setOnClickListener(v -> { ... });` 的 lambda 体，判据
+    `not ("isOnlineMode" in body) and not ("showOnlineRecycle(" in body) and "showTrash()" in body`。
+    改前 FAIL → 改后 PASS。
+- `parity_ios_android.py`：**22/22 通过**；`verify-work-card-ui.mjs`：**21/21 通过**。
+- ⚠️ Android 用 JDK22 `javac` 全源集编译 **exit=0**；iOS 仍只能靠 CI 的 `xcodebuild`。
+
+**回归要求**：
+1. **在线模式**下点右上「回收站」图标，应进入**手机本地回收站屏幕**
+   （与本地模式点回收站看到的是同一屏）；屏幕上若有条目带 `enteredTrashFromOnline` 标记的
+   在线作品（`OnlineWorkLifecycle` 标记删除），仍按本地回收站的样式渲染。
+2. 顶部出现「💻 打开电脑端回收站（_已发送1次 + _垃圾作品）」按钮；点它跳原
+   `OnlineRecycleViewController`（双 Tab + 服务器侧列表）—— 即 **原 OnlineRecycle 仍可达**。
+3. **本地模式**下点右上「回收站」：行为不变（没有顶部电脑端按钮，因为 `enteredTrashFromOnline=false`）。
+4. iOS `TrashView` 顶部除了 segmented（已删除 / 已标记垃圾）外，还应有「💻 打开电脑端回收站」按钮。
+5. 两端的「回收站」按钮点击后的屏幕**完全相同**（除了「电脑端回收站」入口只在从在线模式进入时出现）。
+
+## DSH-094 老三家文案前端化：版本改名 + 重排 + 按钮完整字数（Android 0.8.51/162 + iOS 0.8.35/107）
+
+> **用户口径（原话）**：「他们是一样的文案是平级的，只是前面三个版本是我规定写在文档里面在前……
+> 手机那边就是跟随 `文案.txt` 识别」「按钮要完整字数，不要限制 4 字，然后按钮自适应换行」。
+
+**现象**：手机端按钮顺序一直由「客户端自己排」决定（Android `enrichPlatformSuite` 把抖音摘出追加末尾 +
+`result.sort(getButtonRank)`），不是由文案决定；5 字的「抖音无营销」被两端截成「抖音无营」；
+按钮被强制 `setMaxLines(1)`，长名字放不下就切。
+
+**根因**：
+- 守卫真源 `copy_formatter.py` 的 `VERSION_FAMILY` 缺三个新键（旧键保留做向后兼容）。
+- `vname_clean` 在两端分别 `substring(0, 4)` / `String(prefix(4))` 截断。
+- Android `styleNeumorphicButton` 里 `setMaxLines(1)` + 按钮高度固定 `dp(36)`。
+- Android `enrichPlatformSuite` 多版本分支的「抖音摘出 + sort」是历史排版逻辑，反向作用到了「让文案说了算」的口径上。
+
+**修复**：
+1. **版本改名（老三家）**：`原生种草 → 红书种草`、`决策矩阵 → 红书大纲`、`抖音避坑 → 抖音无营销`。
+   `copy_formatter.py` 的 `VERSION_FAMILY` 增 3 键（旧键保留向后兼容）；两处 `vname_clean` 删 `[:4]` 截断。
+2. **存量 386 套 `文案.txt` 改名 + 重排**：把这三块按「红书种草 → 红书大纲 → 抖音无营销」移到**最前**，
+   其余 8 版保持原相对顺序。**11 版平级、不做 rank**。
+   - ⚠️ `文案.txt` 换行风格并不统一：实测全库 490 套裸 LF / 184 套 CRLF / 1 套混合。
+     按 CRLF 统一写回会污染 490 套（伪全量 diff）⇒ 改成了**逐文件探测 + 原字符串切片重组**。
+   - 独立复核 4/4：前三位正确 386/386、换行零变化、前后缀零变化、块正文零丢失。
+3. **两端去 4 字截断**：`friendlyLabelForMarker` 里的 `substring(0, 4)` / `prefix(4)` 删除。
+   最长版本名 5 字「抖音无营销」，原本两端都会砍成「抖音无营」。
+4. **Android 按钮渲染**：`styleNeumorphicButton` 的 `setMaxLines(1)` → `2`、纵向 padding 0 → dp(6)、
+   平台行按钮高度 `dp(36)` → `WRAP_CONTENT`（单行仍由 `setMinHeight(dp(36))` 兜底，外观零变化）。
+5. **Android 顺序对齐 iOS（关键）**：`enrichPlatformSuite` 原本把「抖音」那一版摘出来追加到末尾，
+   末尾还有 `result.sort(getButtonRank)` ⇒ 已排在文案最前的抖音版会被甩到整行最后。
+   改为多版本时**原样返回**解析结果（`return new ArrayList<>(rawPlatforms);`）。
+   iOS 本来就没有这段（`if !multiItems.isEmpty { return multiItems }`）⇒ 这次是**安卓向 iOS 对齐**。
+
+**证据**：
+- 闸门 `tests/parity_ios_android.py` 由 17 项扩到 20 项（新增 C14 不截断 / C15 顺序=文案顺序 /
+  C16 允许折行且 iOS 行高同源）。`scripts/verify-work-card-ui.mjs` 修到当前结构（原本断言的
+  `platformRow1` 自 DSH-091 C3 起就不存在，长期为红）并扩到 **21 项**。
+- **⚠️ 这两条守卫此前从未被 CI 调用** —— 等于没有守卫。已一并接进 `windows-portable` 的步骤里
+  （`.github/workflows/device-share-hub.yml` 的两个新 step）。
+- 本地校验：Android `javac` 全源集编译 exit=0 / 127 个 class；`PlatformCopyParserTest` 18/18 通过
+  （含新增的 2 条）；`parity_ios_android.py` 22/22（含 DSH-095 的 C17/A4）；
+  `verify-work-card-ui.mjs` 21 项；另 4 个 `verify-*.mjs` 全 PASS；
+  `test_online_gallery_service` 27/27 通过。
+- iOS 端无 Xcode 工具链，**语法仍只能靠 CI 的 `xcodebuild`**。
+
+**回归要求**：
+1. 任意一个有完整 11 版 `文案.txt` 的本地作品：按钮顺序应是文案块先后顺序（红书种草/红书大纲/抖音无营销打头）。
+2. 「抖音无营销」按钮不被截成「抖音无营」。
+3. 5 字 + 2 行按钮在两端的实际渲染高度一致（iOS `platformRow.rowHeight` 用 `WorkCell.platformRowHeight`）。
+4. 切到在线相册（5 秒 TTL）后顺序也跟着改。
 
 > **用户追问**：「安卓有时候会不会有不合理的」⇒ 是的。**别把安卓当基准就无脑照抄，
 > 基准自己也会错。** 本条目前半是「iOS 对齐安卓」，后半是「修安卓自己」。

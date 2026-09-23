@@ -104,6 +104,38 @@ final class PlatformCopyParserTests: XCTestCase {
         XCTAssertFalse(available.contains { $0.copyText.contains("<<<") })
     }
 
+    /// 【2026-09-23 用户口径】版本名**不再截断到 4 字**：5 字的「抖音无营销」必须完整出按钮
+    /// （此前会被 `String(trimmed.prefix(4))` 砍成「抖音无营」）。旧名仍能解析（向后兼容）。
+    /// 与 Android `versionNameIsNoLongerTruncatedToFourChars` 对齐。
+    func testVersionNameIsNoLongerTruncatedToFourChars() {
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("抖音无营销"), "抖音无营销")
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("红书种草"), "红书种草")
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("红书大纲"), "红书大纲")
+        // 旧名向后兼容：仍解析得出来，且同样保持完整字数
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("抖音避坑"), "抖音避坑")
+        // 固定标记的短标签语义一字不改
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("发布"), "发布")
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("XHS_3"), "短文精选版")
+        XCTAssertEqual(PlatformCopyParser.friendlyLabelForMarker("VERSION_4"), "版本 4")
+    }
+
+    /// 【2026-09-23 用户口径】11 个版本**平级**，按钮顺序 = 文件里版本块出现的先后顺序。
+    /// 老三家排在 `文案.txt` 最前，解析结果必须原样保持这个顺序（解析器本身不排序）。
+    /// 与 Android `multiVersionButtonOrderFollowsFileOrder` 对齐。
+    func testMultiVersionButtonOrderFollowsFileOrder() {
+        let source = "<<<COPY_FORMAT:MULTI>>>\n"
+            + "<<<VERSION_START:红书种草>>>\n甲\n<<<VERSION_END>>>\n"
+            + "<<<VERSION_START:红书大纲>>>\n乙\n<<<VERSION_END>>>\n"
+            + "<<<VERSION_START:抖音无营销>>>\n丙\n<<<VERSION_END>>>\n"
+            + "<<<VERSION_START:数字爆款>>>\n丁\n<<<VERSION_END>>>"
+        let available = PlatformCopyParser.parseAvailablePlatforms(source)
+        XCTAssertEqual(available.count, 4)
+        XCTAssertEqual(available.map { $0.buttonLabel }, ["红书种草", "红书大纲", "抖音无营销", "数字爆款"])
+        // 抖音那一版归 douyin 平台，其余按通用版本处理（判定方式不变：名字含「抖音」）
+        XCTAssertEqual(available[2].platform, .douyin)
+        XCTAssertEqual(available[0].platform, .general)
+    }
+
     /// 多版本必须**各自独立**：11 个版本里 10 个 `platform` 都是 `.general`，
     /// 若调用方按 platform 回查文案，点任何版本都会拿到第一条。
     func testMultiVersionItemsCarryTheirOwnText() {

@@ -1192,13 +1192,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func openTrash() {
-        // 与 Android 严格对齐：在线模式下的「回收站」= 电脑端在线回收站（已使用 / 已标记垃圾），
-        // 不再错进手机本地回收站；本地回收站在在线回收站页左侧「📱 本地回收站」里仍然可达。
-        if isOnlineMode {
-            navigationController?.pushViewController(OnlineRecycleViewController(library: library), animated: true)
-        } else {
-            navigationController?.pushViewController(TrashViewController(library: library), animated: true)
-        }
+        // DSH-094：统一回收站入口（与 Android 严格对齐）。本地/在线模式都进 TrashViewController
+        // （同一屏：本地回收站条目 + OnlineWorkLifecycle 生命周期追踪的标记删除记录）；
+        // 电脑端回收站（_已发送1次 + _垃圾作品）通过 TrashView 顶部的「💻 打开电脑端回收站」按钮仍可达。
+        navigationController?.pushViewController(TrashViewController(library: library), animated: true)
     }
 
     @objc private func openSettings() {

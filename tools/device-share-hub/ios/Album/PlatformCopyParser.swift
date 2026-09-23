@@ -280,8 +280,10 @@ enum PlatformCopyParser {
         if upper.hasPrefix("VERSION_") || upper.hasPrefix("V_"), let idx = upper.firstIndex(of: "_") {
             return "版本 " + String(upper[upper.index(after: idx)...])
         }
-        if trimmed.count <= 4 { return trimmed }
-        return String(trimmed.prefix(4))
+        // 【2026-09-23 用户口径】版本名**不再截断到 4 字**：按钮按完整名字显示
+        // （最长为「抖音无营销」5 字），一行放不下时由 `PlatformFlowView` 自动折到下一行。
+        // 与 Android `PlatformCopyParser.friendlyLabelForMarker` 对齐。
+        return trimmed
     }
 
     // MARK: - 内部工具

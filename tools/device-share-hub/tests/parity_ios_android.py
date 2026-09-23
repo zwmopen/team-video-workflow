@@ -9,12 +9,42 @@
   C2 顶部作品搜索框（Android 有 / iOS 缺）
   C3 平台按钮换行全展开（Android FlowLayout / iOS 曾为单行横滚）
   C4 元信息附加行（✓ 平台明细 / 🗑️ 垃圾备注）
+2026-09-23 DSH-094 追加：
+  C14 版本名不截断到 4 字（两端；5 字「抖音无营销」曾被砍成「抖音无营」）
+  C15 多版本按钮顺序 = 文案块先后顺序（Android 曾摘「抖音」项追加末尾 + `result.sort`）
+  C16 版本按钮允许折行且 iOS 行高与卡片高度预估同源
+2026-09-23 DSH-095 追加：
+  C17 iOS openTrash 不再按 isOnlineMode 分支（统一 push TrashViewController）
+  A4  Android rightModeButton 不再按 isOnlineMode 跳 OnlineRecycle（统一调 showTrash）
 
 纪律：改实现**之前**必须先看到对应项 FAIL，改完必须 PASS。
 退出码 0 = 全通过；1 = 有未达标项。
 """
+import re
 import sys
 from pathlib import Path
+
+# ⚠️ 本脚本会打印 ✅ / ❌ 与中文。Windows runner（或任何非 UTF-8 locale 的重定向 stdout）
+# 下默认按 locale 编码（en-US 是 cp1252）输出 ⇒ 直接 `UnicodeEncodeError` 崩掉。
+# 固定 utf-8 + errors=replace，保证在任何 runner 上都不会因为「打印」而失败。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
+def _extract_open_trash_body(cv_text):
+    """从 ContentView.swift 全文抽出 openTrash 函数体（@objc 到下一个 @objc 之间）。"""
+    m = re.search(r"@objc private func openTrash\(\) \{(.*?)(?=\n    @objc)", cv_text, re.DOTALL)
+    return m.group(0) if m else ""
+
+
+def _extract_right_mode_button_lambda(and_main_text):
+    """从 MainActivity.java 全文抽出 rightModeButton.setOnClickListener 的 lambda 体。"""
+    m = re.search(
+        r"rightModeButton\.setOnClickListener\(v -> \{(.*?)\}\);",
+        and_main_text, re.DOTALL)
+    return m.group(0) if m else ""
 
 ROOT = Path(__file__).resolve().parents[1]
 IOS = ROOT / "ios" / "Album"
@@ -203,6 +233,75 @@ def main():
         "A3 安卓在线卡垃圾备注补 🗑️ 前缀",
         a3,
         "在线卡 append 语句里没找到「 · 🗑️ 垃圾样本\\n垃圾备注：」"))
+
+    # ---- DSH-094：老三家文案前端化（改名 + 重排 + 按钮完整字数）----
+    # 用户口径：「11 个版本是一样的、平级的……前面三个版本我规定写在文档里面在前，
+    #            手机那边就是跟随 文案.txt 识别」「按钮要完整字数，不要限制 4 字」。
+    and_parser = "\n".join(t for p, t in AND_SRC if p.name == "PlatformCopyParser.java")
+    ios_parser = "\n".join(t for p, t in IOS_SRC if p.name == "PlatformCopyParser.swift")
+
+    # C14 版本名不截断到 4 字（两端）。
+    # 改前实测：Android `return trimmed.length() > 4 ? trimmed.substring(0, 4) : trimmed;`、
+    #          iOS `return String(trimmed.prefix(4))` ⇒ 5 字的「抖音无营销」被砍成「抖音无营」。
+    c14_and = "substring(0, 4)" not in and_parser and "return trimmed;" in and_parser
+    c14_ios = "prefix(4)" not in ios_parser and "return trimmed" in ios_parser
+    results.append(check(
+        "C14 版本名不截断到 4 字（两端）",
+        c14_and and c14_ios,
+        "安卓已去掉截断=%s iOS已去掉截断=%s" % (c14_and, c14_ios)))
+
+    # C15 多版本按钮顺序 = 文案块先后顺序（两端都不排序、不摘项）。
+    # 改前实测：Android `enrichPlatformSuite` 把「抖音」那一版摘出来 `result.add(douyinItem)`
+    # 追加到末尾，末尾还有 `result.sort(getButtonRank)` ⇒ 已排在文案最前的抖音版被甩到整行最后；
+    # iOS 直接 `if !multiItems.isEmpty { return multiItems }`，两端顺序因此不一致。
+    c15_and = "return new ArrayList<>(rawPlatforms);" in and_main \
+        and "result.add(douyinItem)" not in and_main
+    c15_ios = "if !multiItems.isEmpty { return multiItems }" in ios_parser
+    results.append(check(
+        "C15 多版本按钮顺序 = 文案块顺序（两端不排序）",
+        c15_and and c15_ios,
+        "安卓多版本原样返回=%s iOS原样返回=%s" % (c15_and, c15_ios)))
+
+    # C16 版本按钮允许折行，且 iOS 行高与卡片高度预估同源。
+    # Android 原本 `styleNeumorphicButton` 里 `button.setMaxLines(1)` ⇒ 长名字被切；
+    # iOS 由 `PlatformFlowView` 承载，`rowHeight` 必须与 `sizeForItemAt` 用的
+    # `WorkCell.platformRowHeight` 同源，否则预估行数与实渲染不一致（裁切或大片留白）。
+    c16_and = "button.setMaxLines(1)" not in and_main and "button.setMaxLines(2)" in and_main
+    c16_ios = "platformRow.rowHeight = WorkCell.platformRowHeight" in cv
+    results.append(check(
+        "C16 版本按钮允许折行且 iOS 行高同源",
+        c16_and and c16_ios,
+        "安卓放开单行=%s iOS行高同源=%s" % (c16_and, c16_ios)))
+
+    # ---- DSH-095：回收站统一入口（本地/在线模式都进同一屏）----
+    # 用户口径：「回收站是本地相册和在线相册共用的……顶多再回收站里面你显示是在线还是本地，
+    #            现在的本地相册界面点击回收站那个界面可以，在线相册点击居然没进去这个界面」。
+    # 含义：两端都不再按 isOnlineMode 把「回收站」按钮分流到两个不同的屏幕，
+    #        电脑端回收站（_已发送1次 + _垃圾作品）从内部按钮「💻 打开电脑端回收站」再跳。
+
+    # C17 iOS openTrash 不再按 isOnlineMode 分支，统一 push TrashViewController。
+    # 改前实测：openTrash 内 `if isOnlineMode { push OnlineRecycleViewController } else { TrashView }`。
+    ios_open_trash = _extract_open_trash_body(cv)
+    c17_no_branch = "if isOnlineMode" not in ios_open_trash \
+        and "OnlineRecycleViewController" not in ios_open_trash
+    c17_trash_only = "TrashViewController" in ios_open_trash
+    results.append(check(
+        "C17 iOS openTrash 不再按 isOnlineMode 分支",
+        c17_no_branch and c17_trash_only,
+        "openTrash 仍按模式分流=%s 不再含OnlineRecycle=%s 含TrashViewController=%s"
+        % (not c17_no_branch, "OnlineRecycleViewController" not in ios_open_trash, c17_trash_only)))
+
+    # A4 Android rightModeButton 不再按 isOnlineMode 跳 OnlineRecycle，统一调 showTrash()。
+    # 改前实测：`else if (isOnlineMode) { toast("在线回收站"); showOnlineRecycle("sent"); }`。
+    and_right_btn = _extract_right_mode_button_lambda(and_main)
+    a4_no_branch = "isOnlineMode" not in and_right_btn \
+        and "showOnlineRecycle(" not in and_right_btn
+    a4_trash_only = "showTrash()" in and_right_btn
+    results.append(check(
+        "A4 Android rightModeButton 不再调 OnlineRecycle",
+        a4_no_branch and a4_trash_only,
+        "rightModeButton 仍按模式分流=%s 不再含showOnlineRecycle=%s 含showTrash=%s"
+        % (not a4_no_branch, "showOnlineRecycle(" not in and_right_btn, a4_trash_only)))
 
     print()
     bad = results.count(False)

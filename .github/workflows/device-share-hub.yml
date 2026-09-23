@@ -109,6 +109,17 @@ jobs:
         run: node tools/device-share-hub/scripts/verify-auto-mobile-update.mjs
       - name: Verify P2P ICE and ACK invariants
         run: node tools/device-share-hub/scripts/verify-p2p-invariants.mjs
+      # 【2026-09-23 新增】这条守卫此前长期为红（断言的是 DSH-091 C3 之前的旧 `platformRow1` 结构）
+      # 且**从未被 CI 调用** —— 等于没有守卫。已修到当前结构，并顺带锁定本次新增的三条不变量：
+      # ① Android 多版本原样返回解析结果（按钮顺序 = 文案块顺序，不 rank、不摘项）；
+      # ② 版本名不截断到 4 字；③ iOS 平台行 `rowHeight` 与 `sizeForItemAt` 同源。
+      - name: Verify work card UI parity
+        run: node tools/device-share-hub/scripts/verify-work-card-ui.mjs
+      # 【2026-09-23 新增】源码级两端对等契约（C1~C16 + A1~A3）。同样**此前从未被 CI 调用**。
+      # 已加 utf-8 输出兜底，Windows runner 的非 UTF-8 locale 下不会因打印 ✅ 而崩。
+      # ⚠️ 本 job 是 publish-gallery-updates 的前置：这里红 ⇒ 整条发版链断。
+      - name: Verify iOS / Android parity contract
+        run: python tools/device-share-hub/tests/parity_ios_android.py
       - name: Build native Windows panel
         id: windows_compile
         shell: pwsh
