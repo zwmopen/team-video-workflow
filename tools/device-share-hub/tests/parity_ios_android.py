@@ -16,6 +16,9 @@
 2026-09-23 DSH-095 追加：
   C17 iOS openTrash 不再按 isOnlineMode 分支（统一 push TrashViewController）
   A4  Android rightModeButton 不再按 isOnlineMode 跳 OnlineRecycle（统一调 showTrash）
+2026-09-23 DSH-095 v2 追加（iOS HIG native 重做，回应用户「太不符合直觉」）：
+  C18 iOS TrashView 用 navigationItem.titleView + rightBarButtonItems（不再用 tableHeaderView 装 UIStackView）
+  A5  Android 仍走 showTrash 同一屏（与 v2 行为对齐 —— v1+ v2 两端行为一致）
 
 纪律：改实现**之前**必须先看到对应项 FAIL，改完必须 PASS。
 退出码 0 = 全通过；1 = 有未达标项。
@@ -302,6 +305,33 @@ def main():
         a4_no_branch and a4_trash_only,
         "rightModeButton 仍按模式分流=%s 不再含showOnlineRecycle=%s 含showTrash=%s"
         % (not a4_no_branch, "showOnlineRecycle(" not in and_right_btn, a4_trash_only)))
+
+    # ---- DSH-095 v2：iOS HIG native 重做（回应用户「太不符合直觉」）----
+    # DSH-094 v1 把 segmented + 按钮塞进 tableHeaderView（Android inline header 的硬搬），
+    # iOS HIG 完全不这么做。v2 改成 navigationItem.titleView + rightBarButtonItems（iOS 标准）。
+    tv = next((t for p, t in IOS_SRC if p.name == "TrashView.swift"), "")
+
+    c18_no_header = "tableHeaderView = header" not in tv and "let header = UIView()" not in tv
+    c18_title_view = "navigationItem.titleView = segmented" in tv
+    c18_right_btns = "navigationItem.rightBarButtonItems" in tv and "openOnlineRecycle" in tv
+    results.append(check(
+        "C18 iOS TrashView 用 navigationItem.titleView + rightBarButtonItems",
+        c18_no_header and c18_title_view and c18_right_btns,
+        "无tableHeaderView=%s titleView=segmented=%s rightBarButtonItems含openOnlineRecycle=%s"
+        % (c18_no_header, c18_title_view, c18_right_btns)))
+
+    # A5 Android 仍走 showTrash 同一屏（v1+v2 两端行为一致 = 核心对等；v2 只动 iOS 表现）。
+    # 判据：A4 已验 Android 仍调 showTrash（不再调 showOnlineRecycle），v2 没改 Android 路径。
+    # 复跑 A4 的判据以"重新证明 v2 没动 Android"。
+    and_right_btn_v2 = _extract_right_mode_button_lambda(and_main)
+    a5_no_branch = "isOnlineMode" not in and_right_btn_v2 \
+        and "showOnlineRecycle(" not in and_right_btn_v2
+    a5_trash_only = "showTrash()" in and_right_btn_v2
+    results.append(check(
+        "A5 Android 仍走 showTrash 同一屏（v2 与 v1 行为一致）",
+        a5_no_branch and a5_trash_only,
+        "v2 没动 Android 路径；no_branch=%s trash_only=%s"
+        % (a5_no_branch, a5_trash_only)))
 
     print()
     bad = results.count(False)

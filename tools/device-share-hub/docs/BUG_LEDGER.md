@@ -4,7 +4,43 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-095**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-095 v2**。
+
+## DSH-095 v2 iOS HIG native 重做（iOS 0.8.36/108，2026-09-23 修复）
+
+> **用户吐槽**：「iOS 的回收站太不符合直觉了你就不能参照安卓开发吗」
+> **我的反思**：DSH-095 v1 把 segmented + 「💻 打开电脑端回收站」按钮塞进
+> `tableHeaderView` + `UIStackView`（高度 56→108），那是 **Android inline header 的硬搬**，
+> iOS HIG 完全不这么做。**iOS 标准是 `navigationItem.titleView`（标题即控制）+
+> `rightBarButtonItems`（右上按钮）**。
+
+**现象**：iOS TrashView 屏顶部 108 高度的 inline header（segmented + 蓝底长按钮"💻 打开电脑端回收站（_已发送1次 + _垃圾作品）"），滚动时随 table 一起滚，**完全不是 iOS 直觉**（iOS 用户期望标题栏固定 + segmented 在标题正中 + 按钮在右上）。
+
+**根因**：v1 走的是「tableHeaderView 装 UIStackView」方案，是直接照搬 Android 的 `MainActivity:909-915` `renderWorksCards 顶部插入 buildOnlineRecycleEntry()`。Android 的 inline header 在 `LinearLayout` 里跑得自然，但 iOS 的 `UITableViewController.tableHeaderView` 是**滚动头部**（随 cell 一起滚）+ **强制 108 高度**（卡顿、滚动跳变）。
+
+**修复**（iOS 0.8.36/108，**Android 不动**）：
+- `viewDidLoad`：
+  - 删 `tableHeaderView = UIView() + UIStackView(segmented + btn)`
+  - `navigationItem.titleView = segmented`（标题栏正中，iOS HIG「标题即控制」标准模式）
+  - `navigationItem.rightBarButtonItems = [「💻 电脑回收站」, 「清空」]`（从右到左：电脑回收站最右、清空其左）
+- `viewDidLayoutSubviews`：删 108 高度的 frame 计算（不再有自定义 header）
+- `render()`：`navigationItem.rightBarButtonItems` 全遍历按 `totalCount > 0` 控制可用性（v1 只控单 button，v2 两个按钮一起判）
+- 删 `makeOnlineRecycleEntryButton()`（蓝底浅蓝边、圆角 14 的 UIButton，v1 inline header 专用；v2 用 `UIBarButtonItem` 取代）
+- 按钮文案简化：**「💻 打开电脑端回收站（_已发送1次 + _垃圾作品）」→「💻 电脑回收站」**（标题栏不挤）
+- accessibilityLabel 保留完整描述（VoiceOver 友好）
+
+**证据**：
+- 闸门 `tests/parity_ios_android.py` 由 22 项扩到 **24 项**（新增 C18 + A5）：
+  - **C18**：从 `TrashView.swift` 全文判 `navigationItem.titleView = segmented` + `navigationItem.rightBarButtonItems` 含 `openOnlineRecycle`，且 `tableHeaderView = header` / `let header = UIView()` 不再出现
+  - **A5**：复跑 A4 判据（再抽 `rightModeButton.setOnClickListener(v -> {` lambda 体），证明 v2 没动 Android 路径
+- 跑：**24/24 PASS**；`verify-work-card-ui.mjs`：**21/21**
+- iOS 编译：CI `xcodebuild` 唯一闸门
+
+**回归要求**（**用户需手动点，pymobiledevice3 `dvt` 无 tap**）：
+1. iPhone 打开相册 App（0.8.36/108 已装）→ 在线模式 → 点回收站图标（顶部 5 个图标第 4 个）
+2. 期望看到：**标题栏正中 = segmented（已删除 / 已标记垃圾）**，**右上 = 「💻 电脑回收站」+「清空」** 两个按钮（从右到左）
+3. 点「💻 电脑回收站」→ 跳到电脑端回收站（双 Tab `_已发送1次` + `_垃圾作品`）
+4. 退出 → 切本地模式 → 再点回收站 → **行为不变**（顶部 segmented + 右上两个按钮，`enteredTrashFromOnline` 不影响 navigationItem）
 
 ## DSH-095 回收站统一入口：本地/在线模式都进同一屏（Android 0.8.51/162 + iOS 0.8.35/107）
 

@@ -42,20 +42,21 @@ final class TrashViewController: UITableViewController {
         segmented.addTarget(self, action: #selector(tabChanged), for: .valueChanged)
         segmented.autoresizingMask = [.flexibleWidth]
 
-        // DSH-094：统一回收站入口 —— 顶部增加一个「💻 打开电脑端回收站」按钮，
-        // 在 TrashViewController 内任意 Tab 都能跳原 OnlineRecycleViewController
-        // （_已发送1次 + _垃圾作品 的服务器侧双 Tab）。
-        let header = UIView()
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.addArrangedSubview(segmented)
-        stack.addArrangedSubview(makeOnlineRecycleEntryButton())
-        header.addSubview(stack)
-        tableView.tableHeaderView = header
+        // DSH-095 v2（iOS-native）：放弃 DSH-094 v1 的「tableHeaderView 装 UIStackView」方案
+        // —— 那是 Android inline header 的硬搬，iOS HIG 完全不这么做。
+        // 现在按 iOS 标准：
+        //   - 标题栏正中 = `navigationItem.titleView` 放 segmented（iOS 标准"标题即控制"模式）
+        //   - 标题栏右上 = `rightBarButtonItems` 放「💻 电脑回收站」+「清空」两个按钮
+        //     （从右到左：电脑回收站最右、清空其左；与 iOS Photos / Mail 的"次要操作在左"惯例一致）
+        //   - 取消 tableHeaderView（108 高度带来的卡顿、滚动跳变全消失）
+        navigationItem.titleView = segmented
+        let onlineRecycle = UIBarButtonItem(title: "💻 电脑回收站", style: .plain,
+                                            target: self, action: #selector(openOnlineRecycle))
+        onlineRecycle.accessibilityLabel = "打开电脑端回收站（_已发送1次 + _垃圾作品）"
+        let clearBtn = UIBarButtonItem(title: "清空", style: .plain,
+                                       target: self, action: #selector(confirmClear))
+        navigationItem.rightBarButtonItems = [onlineRecycle, clearBtn]
 
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "清空", style: .plain,
-                                                            target: self, action: #selector(confirmClear))
         tableView.tableFooterView = UIView()
         loadData()
     }
@@ -67,34 +68,12 @@ final class TrashViewController: UITableViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard let header = tableView.tableHeaderView else { return }
-        let target = CGSize(width: tableView.bounds.width, height: 108)
-        if header.frame.size != target {
-            header.frame = CGRect(origin: .zero, size: target)
-            guard let stack = header.subviews.first as? UIStackView else { return }
-            stack.frame = CGRect(x: 16, y: 11, width: max(0, target.width - 32), height: 86)
-            tableView.tableHeaderView = header
-        }
-    }
-
-    // DSH-094：头部「💻 打开电脑端回收站」按钮 —— 跳 OnlineRecycleViewController
-    // （与 Android 端 buildOnlineRecycleEntry 对称）。
-    private func makeOnlineRecycleEntryButton() -> UIButton {
-        let btn = UIButton(type: .system)
-        btn.setTitle("💻 打开电脑端回收站（_已发送1次 + _垃圾作品）", for: .normal)
-        btn.titleLabel?.font = .systemFont(ofSize: 13)
-        btn.tintColor = UIColor(red: 0.01, green: 0.52, blue: 0.78, alpha: 1)
-        btn.backgroundColor = UIColor(red: 0.88, green: 0.95, blue: 1.00, alpha: 1)
-        btn.layer.cornerRadius = 14
-        btn.layer.borderColor = UIColor(red: 0.73, green: 0.86, blue: 0.94, alpha: 1).cgColor
-        btn.layer.borderWidth = 1
-        btn.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
-        btn.addTarget(self, action: #selector(openOnlineRecycle), for: .touchUpInside)
-        btn.accessibilityLabel = "打开电脑端回收站"
-        return btn
+        // DSH-095 v2：不再有自定义 tableHeaderView；保留空 override 以防外部 subclass 误调。
     }
 
     @objc private func openOnlineRecycle() {
+        // DSH-095 v2：右上「💻 电脑回收站」按钮 —— push OnlineRecycleViewController
+        // （_已发送1次 + _垃圾作品 的服务器侧双 Tab），与 Android `showOnlineRecycle("sent")` 对称。
         navigationController?.pushViewController(OnlineRecycleViewController(library: library), animated: true)
     }
 
@@ -136,7 +115,9 @@ final class TrashViewController: UITableViewController {
     }
 
     private func render() {
-        navigationItem.rightBarButtonItem?.isEnabled = totalCount > 0
+        // DSH-095 v2：两个 rightBarButtonItem 都按 totalCount 控制可用性
+        // —— 没内容时「清空」禁用是必须的（避免误操作），「💻 电脑回收站」始终可点（跳服务器）
+        navigationItem.rightBarButtonItems?.forEach { $0.isEnabled = $0.action == #selector(openOnlineRecycle) || totalCount > 0 }
         if totalCount == 0 {
             let label = UILabel()
             label.numberOfLines = 0

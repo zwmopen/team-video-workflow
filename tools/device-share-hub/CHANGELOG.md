@@ -1,5 +1,30 @@
 # 变更记录
 
+## iOS 0.8.36 / 108 - 2026-09-23 - DSH-095 v2（iOS HIG native 重做）：TrashView 走 navigationItem.titleView + rightBarButtonItems（DSH-095 v1 的 tableHeaderView 装 UIStackView 是 Android inline header 的硬搬，iOS HIG 不这么做）
+
+> **用户原话**：「iOS 的回收站太不符合直觉了你就不能参照安卓开发吗」
+> **我的反思**：v1 把 segmented + 按钮塞进 `tableHeaderView`（高度 56→108）是 iOS 反直觉的；
+> iOS HIG 是 `navigationItem.titleView`（标题即控制）+ `rightBarButtonItems`（右上按钮）。
+> v2 改成纯 iOS-native，不再有 tableHeaderView 108 高度的卡顿、滚动跳变。
+
+- **① iOS TrashView**（`ios/Album/TrashView.swift`）：
+  - `viewDidLoad`：删 `tableHeaderView = UIView() + UIStackView(segmented + btn)`，改用
+    `navigationItem.titleView = segmented`（标题栏正中，标准 iOS 模式）
+    + `navigationItem.rightBarButtonItems = [「💻 电脑回收站」, 「清空」]`（从右到左）
+  - `viewDidLayoutSubviews`：删 108 高度的 frame 计算（不再有自定义 header）
+  - `render()`：`navigationItem.rightBarButtonItems` 全遍历按 totalCount 控制可用性（之前只控单 button）
+  - 删 `makeOnlineRecycleEntryButton()`（蓝底浅蓝边按钮，v1 inline header 专用；v2 用 UIBarButtonItem 取代）
+  - 按钮文案简化：「💻 打开电脑端回收站（_已发送1次 + _垃圾作品）」→「💻 电脑回收站」（更紧凑不挤标题栏）
+- **② Android 不动**：v2 仅 iOS HIG 重做，Android `buildOnlineRecycleEntry` 行为不变（trash2.png 已实测验过）
+- **③ 版本号**：iOS `0.8.35/107` → **`0.8.36/108`**（改客户端代码必须升版本号）
+- **④ 闸门**：`tests/parity_ios_android.py` 由 22 项扩到 **24 项**（新增 C18 + A5）
+  - **C18**：`tv = TrashView.swift` 判 `navigationItem.titleView = segmented` + `rightBarButtonItems` 含 `openOnlineRecycle`，且不再含 `tableHeaderView = header` 和 `let header = UIView()`
+  - **A5**：复跑 A4 的判据（再抽 `rightModeButton.setOnClickListener(v -> {` lambda 体），证明 v2 没动 Android
+- **⑤ 本地校验**：`parity_ios_android.py`：**24/24**；`verify-work-card-ui.mjs`：**21/21**
+- ⚠️ **待真机验证**：iOS DSH-095 v2 装机后需要手动点回收站（pymobiledevice3 `dvt` 无 tap + `wda` 不可用）
+  - 期望：标题栏正中 segmented 已删除/已标记垃圾，右上「💻 电脑回收站」+「清空」两个按钮（从右到左）
+  - 点「💻 电脑回收站」→ 跳到电脑端回收站（双 Tab）
+
 ## Android 0.8.51 / 162 + iOS 0.8.35 / 107 - 2026-09-23 - 回收站统一入口：本地/在线模式都进同一屏（DSH-095）
 
 > **用户口径（原话）**：「手机端我再说一次哈，回收站是本地相册和在线相册共用的，
