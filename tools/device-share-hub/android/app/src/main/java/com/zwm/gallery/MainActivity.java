@@ -691,9 +691,6 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams statusBarParams = new LinearLayout.LayoutParams(-1, -2);
         statusBarParams.setMargins(dp(12), dp(4), dp(12), dp(4));
         frozenLayout.addView(statusText, statusBarParams);
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(38));
-        searchParams.setMargins(dp(12), 0, dp(12), dp(8));
-        frozenLayout.addView(searchBar, searchParams);
         LinearLayout.LayoutParams recycleTabParams = new LinearLayout.LayoutParams(-1, dp(40));
         recycleTabParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(onlineRecycleTabBar, recycleTabParams);
@@ -703,6 +700,10 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(40));
         categoryParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(categorySelector, categoryParams);
+        // 【DSH-108】搜索框挪到分类按钮之下，与 iOS「分类文件夹之下才是搜索框」对齐
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(38));
+        searchParams.setMargins(dp(12), 0, dp(12), dp(8));
+        frozenLayout.addView(searchBar, searchParams);
         frozenLayout.addView(contentFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
@@ -3749,29 +3750,38 @@ public final class MainActivity extends Activity {
             platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
-        if (work.useCount > 0) {
-            Button reset = new Button(this);
-            reset.setText("重置");
-            styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
-            reset.setContentDescription("重置电脑在线作品使用记录");
-            reset.setOnClickListener(v -> confirmResetOnlineWork(work.id));
-            platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
+        // DSH-108：参考 iOS 底部三按钮布局 = 重置 → 复制路径 → 删除
+        // 三按钮从 platformRow 拆出，单独一行横排在平台按钮下方。
+        // 重置按钮 DSH-108 同步去掉 useCount>0 守卫（与 DSH-105 iOS 对齐），常驻可见。
+        Button reset = new Button(this);
+        reset.setText("重置");
+        styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
+        reset.setContentDescription("重置电脑在线作品使用记录");
+        reset.setOnClickListener(v -> confirmResetOnlineWork(work.id));
 
         Button delete = new Button(this);
         delete.setText("删除");
         styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
         delete.setContentDescription("删除电脑在线作品");
         delete.setOnClickListener(v -> confirmDeleteOnlineWork(work));
-        platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // 「复制路径」紧跟在「删除」之后：在线作品复制电脑成品库里的作品文件夹路径
-        platformRow.addView(copyPathButton(work.path, "电脑在线作品"),
-                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout bottomActionRow = new LinearLayout(this);
+        bottomActionRow.setOrientation(LinearLayout.HORIZONTAL);
+        bottomActionRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(-1, -2);
+        bottomParams.setMargins(0, dp(8), 0, dp(2));
+        // DSH-108：bottomActionRow 的子视图需要用 LinearLayout.LayoutParams 才能设置 margin
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        btnParams.setMargins(dp(6), 0, 0, 0);
+        bottomActionRow.addView(reset, btnParams);
+        bottomActionRow.addView(copyPathButton(work.path, "电脑在线作品"), btnParams);
+        bottomActionRow.addView(delete, btnParams);
 
         LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
         platformRowParams.setMargins(0, dp(8), 0, dp(2));
         card.addView(platformRow, platformRowParams);
+        card.addView(bottomActionRow, bottomParams);
 
         return card;
     }

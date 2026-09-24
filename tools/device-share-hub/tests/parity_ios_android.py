@@ -426,6 +426,77 @@ def main():
         "statusText调用中含字符串=%s 保留作品数=%s 共%d处statusText"
         % (not a6_and_no_status, a6_and_keep_count, len(status_text_calls))))
 
+    # ---- DSH-108：底部三按钮顺序统一 = 重置 → 复制 → 删除（与 iOS 对齐）----
+    # 用户口径：苹果端「按钮应该换成 重置、复制、删除」+ 安卓端「（删除、复制）放在最底下那一行」
+    # 改前实测：旧代码 iOS 与 Android 顺序都是 reset → delete → copyPath，挤在 platformRow 里没分开
+    # 改后必须：
+    #   - iOS ContentView.swift 两处 actionRow.addArrangedSubview 顺序 = reset → copyPath → delete
+    #   - Android MainActivity.java onlineWorkCard 拆出 bottomActionRow = reset → copyPath → delete
+
+    # iOS: 两处正确顺序
+    ios_pattern = re.compile(
+        r"actionRow\.addArrangedSubview\(resetButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(copyPathButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(deleteButton\)"
+    )
+    a7_ios_correct = len(ios_pattern.findall(cv)) >= 2
+    a7_ios_old_gone = not re.search(
+        r"actionRow\.addArrangedSubview\(resetButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(deleteButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(copyPathButton\)",
+        cv,
+    )
+
+    # Android: bottomActionRow 拆出 + 顺序 reset → copyPath → delete
+    # Android: 缩窗到 onlineWorkCard 函数体（line 3635~3879），排除本地 workCard 的 platformRow
+    online_card_window = and_main.split("private View onlineWorkCard", 1)
+    online_card_body = online_card_window[1].split("private void confirmResetOnlineWork", 1)[0] \
+        if len(online_card_window) > 1 else ""
+
+    a7_and_split = "bottomActionRow" in and_main
+    a7_and_order = re.search(
+        r"bottomActionRow\.addView\(reset[,\s]"
+        r".*?bottomActionRow\.addView\(copyPathButton"
+        r".*?bottomActionRow\.addView\(delete[,\s]",
+        and_main, re.DOTALL) is not None
+    # 强校验：onlineWorkCard 内的 platformRow 不再混 reset/delete/copyPathButton（已拆出）
+    # 用 split 缩到 onlineWorkCard 窗内，避免命中本地 workCard 的同名 patternRow
+    a7_and_no_mix = re.search(
+        r"platformRow\.addView\(reset\b|platformRow\.addView\(delete\b",
+        online_card_body) is None
+    results.append(check(
+        "A7 底部三按钮重置→复制→删除（iOS 顺序 + Android 拆出）（DSH-108）",
+        a7_ios_correct and a7_ios_old_gone and a7_and_split and a7_and_order and a7_and_no_mix,
+        "iOS正确顺序=%d处 iOS旧序消失=%s Android拆分=%s Android顺序=%s Android不再混=%s"
+        % (len(ios_pattern.findall(cv)), a7_ios_old_gone, a7_and_split, a7_and_order, a7_and_no_mix)))
+
+    # ---- DSH-108：Android 搜索框位置 = 分类按钮之下（与 iOS 对齐）----
+    # 用户原话：「安卓现在搜索框是在按钮之上的，现在要把它改成和苹果一样，都放在分类按钮之下」
+    # iOS 端：C2 已通过（搜索框在分类文件夹之下）。Android 端：当前 frozenLayout.addView 顺序是
+    # titleRow → statusText → searchBar → recycleTabs → categorySelector → contentFrame
+    # 期望顺序：titleRow → statusText → recycleTabs → categorySelector → searchBar → contentFrame
+    # 强校验：缩到 buildUi 内 frozenLayout 装配片段，searchBar.addView 必须出现在 categorySelector.addView 之后
+    build_window = and_main.split("LinearLayout frozenLayout = new LinearLayout(this);", 1)
+    build_tail = build_window[1].split("frame.addView(frozenLayout", 1)[0] \
+        if len(build_window) > 1 else ""
+
+    a8_and_category_pos = re.search(r"frozenLayout\.addView\(categorySelector", build_tail)
+    a8_and_search_pos = re.search(r"frozenLayout\.addView\(searchBar", build_tail)
+    a8_and_search_after_category = (
+        a8_and_category_pos is not None
+        and a8_and_search_pos is not None
+        and a8_and_search_pos.start() > a8_and_category_pos.start()
+    )
+    results.append(check(
+        "A8 Android 搜索框位置 = 分类按钮之下（DSH-108）",
+        a8_and_search_after_category,
+        "categoryPos=%s searchPos=%s searchAfterCategory=%s"
+        % (
+            "line@" + str(build_tail[:a8_and_category_pos.start()].count("\n") + 1) if a8_and_category_pos else "None",
+            "line@" + str(build_tail[:a8_and_search_pos.start()].count("\n") + 1) if a8_and_search_pos else "None",
+            a8_and_search_after_category,
+        )))
+
     print()
     bad = results.count(False)
     if bad:

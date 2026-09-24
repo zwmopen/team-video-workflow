@@ -2238,3 +2238,20 @@ self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? de
 - iOS 升 0.8.39/111 → **0.8.40/112**。
 - 客户端行为不变：未使用的卡片点重置 → 弹「该作品尚未使用」toast；已使用 → 弹原确认框。
 
+
+## [Unreleased]
+
+### Changed - DSH-108 底部三按钮顺序统一 + Android 搜索框位置（与 iOS 对齐）（2026-09-24）
+
+- **iOS** `ContentView.swift` 两处 `actionRow.addArrangedSubview` 顺序：`reset → copyPath → delete`（原 `reset → delete → copyPath`）。
+- **iOS** 闸门 `tests/test_ios_online_gallery_client.py` 新增 **B9**：检测两处顺序 = reset → copyPath → delete，且旧顺序消失。
+  - 改前：1/9 FAIL（验过）
+  - 改后：9/9 PASS（验过）
+- **Android** `MainActivity.java` `onlineWorkCard()` 函数体内：将三按钮（reset / copyPathButton / delete）从 platformRow 拆出，单独一行横排在平台按钮下方（参考 iOS 底部三按钮布局）。顺序为「reset → copyPath → delete」（不再按文案顺序筛选）。
+- **Android** `MainActivity.java` `buildUi` 内 `frozenLayout.addView` 顺序改：原顺序 `titleRow → statusText → searchBar → recycleTabs → categorySelector → contentFrame`（搜索框在分类按钮之上）→ 新顺序 `titleRow → statusText → recycleTabs → categorySelector → searchBar → contentFrame`（搜索框在分类按钮之下）。
+- **Android** 闸门 `tests/parity_ios_android.py` 新增 **A7**（底部三按钮缩窗到 onlineWorkCard 函数体内，缩窗避免误命中本地 workCard）+ **A8**（搜索框位置缩窗到 buildUi 的 frozenLayout 装配片段）。
+  - A7 改前：1/31 FAIL（验过）
+  - A7 改后：31/31 PASS（验过）
+  - A8 改前：1/32 FAIL（验过）
+  - A8 改后：32/32 PASS（验过）
+- **Android** 升 0.8.56/167 → **0.8.57/168**；iOS 升 0.8.40/112 → **0.8.41/113**（只改 ContentView 按版本号随代码上前移）。

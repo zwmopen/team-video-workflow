@@ -2274,3 +2274,47 @@ Android 零改动。
 未使用的卡片点重置 → 弹「该作品尚未使用」toast；
 已使用 → 弹原确认框（沿用 onlineResetTapped / resetTapped 既有逻辑）。
 
+
+## DSH-108 — 三端底部三按钮顺序统一 + Android 搜索框位置（2026-09-24）
+
+**症状**:
+1. iOS 底部三个按钮的顺序用户认为是「重置 → 复制 → 删除」，但代码里实际是「重置 → 删除 → 复制」。
+2. Android 端底部三按钮（重置 / 复制 / 删除）都堆在 platformRow 里，没有单独拆出一行；与 iOS「三按钮固定在底部」布局不一致。
+3. Android 端搜索框当前在「按钮之上」位置，用户要求改为「分类按钮之下」，与 iOS「分类文件夹之下才是搜索框」对齐。
+
+**根因**:
+- iOS `ContentView.swift` 两处 `actionRow.addArrangedSubview` 调用顺序按开发时的字母序排：reset → delete → copyPath（d < r 之前被想成 d < c 错了），实际用户体验上「复制」应该在「删除」之前。
+- Android `MainActivity.java` `onlineWorkCard()` 内所有按钮（平台按钮 + 重置 + 复制 + 删除）都堆在 `platformRow`（FlowLayout）里，没有「底部操作行」概念。
+- Android `MainActivity.java` `buildUi()` 内 `frozenLayout.addView` 顺序是 `titleRow → statusText → searchBar → ...`，搜索框排在分类按钮之前。
+
+**修复**:
+
+### iOS 端
+- `ContentView.swift:1991-1993`（在线模式）`actionRow.addArrangedSubview` 顺序改为 reset → copyPath → delete。
+- `ContentView.swift:2161-2163`（本地模式）同上。
+- **iOS 升 0.8.40/112 → 0.8.41/113**。
+
+### Android 端
+- `MainActivity.java` `onlineWorkCard()`（line 3635 起）：
+  - 新建 `bottomActionRow`（LinearLayout.HORIZONTAL，CENTER_VERTICAL | END）。
+  - 把 reset / copyPathButton / delete 三按钮从 `platformRow`（FlowLayout）拆出，单独放到 `bottomActionRow`。
+  - 顺序 = reset → copyPath → delete。
+  - 重置按钮 DSH-108 同步去掉 useCount>0 守卫（与 DSH-105 iOS 对齐），常驻可见。
+- `MainActivity.java` `buildUi()`（line 685 起）`frozenLayout.addView` 顺序调整：
+  - 原顺序：titleRow → statusText → searchBar → recycleTabs → categorySelector → contentFrame（搜索框在分类按钮之上）。
+  - 新顺序：titleRow → statusText → recycleTabs → categorySelector → searchBar → contentFrame（搜索框在分类按钮之下）。
+- **Android 升 0.8.56/167 → 0.8.57/168**。
+
+### 闸门
+- `tests/test_ios_online_gallery_client.py` 新增 **B9**（iOS 两处顺序 + 旧顺序消失）。
+- `tests/parity_ios_android.py` 新增 **A7**（Android 缩窗到 onlineWorkCard 函数体内，验证 bottomActionRow 拆出 + 顺序 + platformRow 不再混 reset/delete）+ **A8**（搜索框位置缩窗到 buildUi 的 frozenLayout 装配片段，验证 searchBar.addView 在 categorySelector.addView 之后）。
+- **改前**：A7 = 1/31 FAIL（验过）/ A8 = 1/32 FAIL（验过）/ B9 = 1/9 FAIL（验过）。
+- **改后**：A7 = 31/31 PASS（验过）/ A8 = 32/32 PASS（验过）/ B9 = 9/9 PASS（验过）。
+
+### 验证状态
+- [ ] iPhone 真机视觉验证（底部三按钮顺序 + 真机无回归）—— 待装机。
+- [ ] 华为 USB 真机视觉验证 —— 待装机。
+- [ ] VIVO 无线真机视觉验证 —— 待装机。
+- [ ] 红米无线真机视觉验证 —— 待装机。
+- [ ] Android 搜索框位置截图比对（按钮之下 + 分类按钮可见）—— 待装机。
+- [ ] CI 编译闸门（iOS .ipa / Android .apk）—— 待 push。

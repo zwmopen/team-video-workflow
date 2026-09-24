@@ -178,6 +178,36 @@ def main():
     results.extend(results_105)
 
     print()
+    print("=== DSH-108: iOS 底部三按钮顺序 = 重置 → 复制 → 删除（与 Android 对齐） ===")
+    print()
+    results_108 = []
+
+    # ---- B9: ContentView 两处 actionRow 顺序必须 reset → copyPath → delete ----
+    # 改前实测：旧代码 reset → delete → copyPath（顺序错）
+    # 改后必须：两处 addArrangedSubview 调用顺序都是 resetButton → copyPathButton → deleteButton
+    online_action_pattern = re.compile(
+        r"actionRow\.addArrangedSubview\(resetButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(copyPathButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(deleteButton\)"
+    )
+    online_matches = online_action_pattern.findall(cv_src)
+    b9_online_order = len(online_matches) >= 2
+    # 强校验：旧错误顺序（reset → delete → copyPath）必须消失
+    b9_no_old_order = not re.search(
+        r"actionRow\.addArrangedSubview\(resetButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(deleteButton\)\s*\n\s*"
+        r"actionRow\.addArrangedSubview\(copyPathButton\)",
+        cv_src,
+    )
+    results_108.append(check(
+        "B9 ContentView actionRow 顺序 = 重置 → 复制 → 删除（DSH-108）",
+        b9_online_order and b9_no_old_order,
+        "正确顺序匹配次数=%d(>=2) 旧错序消失=%s"
+        % (len(online_action_pattern.findall(cv_src)), b9_no_old_order)))
+
+    results.extend(results_108)
+
+    print()
     bad = results.count(False)
     if bad:
         print("FAIL %d/%d 项未达标" % (bad, len(results)))

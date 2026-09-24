@@ -1987,18 +1987,18 @@ private final class WorkCell: UICollectionViewCell {
                                action: #selector(platformButtonTapped(_:)))
         if copyMissing { platformRow.addArrangedSubview(makeCopyMissingButton()) }
         rebuildActionRow()
-        // DSH-105：与 Android MainActivity.java:1201 无 if 守卫对齐 —— 重置按钮常驻可见
+        // DSH-108：用户口径「按钮应该换成 重置、复制、删除 这 3 个」+「三按钮都放底部」
         actionRow.addArrangedSubview(resetButton)
-        actionRow.addArrangedSubview(deleteButton)
         actionRow.addArrangedSubview(copyPathButton)
+        actionRow.addArrangedSubview(deleteButton)
 
         resetButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
         copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
         resetButton.addTarget(self, action: #selector(onlineResetTapped), for: .touchUpInside)
-        deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
         copyPathButton.addTarget(self, action: #selector(onlineCopyPathTapped), for: .touchUpInside)
+        deleteButton.addTarget(self, action: #selector(onlineDeleteTapped), for: .touchUpInside)
     }
 
     /// 空壳作品占位按钮：文案与 Android `onlineWorkCard` 的不可点击占位**逐字一致**，
@@ -2157,18 +2157,18 @@ private final class WorkCell: UICollectionViewCell {
         }, action: #selector(platformButtonTapped(_:)))
 
         rebuildActionRow()
-        // DSH-105：与 Android MainActivity.java:1201 无 if 守卫对齐 —— 重置按钮常驻可见
+        // DSH-108：底部三按钮顺序统一 = 重置 → 复制 → 删除（与 Android 对齐，用户口径）
         actionRow.addArrangedSubview(resetButton)
-        actionRow.addArrangedSubview(deleteButton)
         actionRow.addArrangedSubview(copyPathButton)
+        actionRow.addArrangedSubview(deleteButton)
 
         resetButton.removeTarget(nil, action: nil, for: .allEvents)
         deleteButton.removeTarget(nil, action: nil, for: .allEvents)
         copyPathButton.removeTarget(nil, action: nil, for: .allEvents)
 
         resetButton.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
-        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         copyPathButton.addTarget(self, action: #selector(copyPathTapped), for: .touchUpInside)
+        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
     }
 
     private func configureResetButton() {

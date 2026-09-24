@@ -187,3 +187,17 @@
 - **iOS 升 0.8.39/111 → 0.8.40/112**。
 - **Android 零改动**（重置按钮本来就常驻）。
 
+
+## [Unreleased]
+
+### Changed - DSH-108 iOS 底部三按钮顺序 = 重置 → 复制 → 删除（2026-09-24）
+
+- **症状**：用户反馈「苹果端底部按钮顺序应该是 重置、复制、删除」+「三按钮都放底部」。
+- **修复**：`ContentView.swift` 两处 `actionRow.addArrangedSubview` 顺序 `reset → delete → copyPath` → `reset → copyPath → delete`。
+  - 在线模式：`ContentView.swift:1991-1993`
+  - 本地模式：`ContentView.swift:2161-2163`
+- **闸门**：`tests/test_ios_online_gallery_client.py` 新增 **B9**（检测两处顺序 + 旧顺序消失）。
+  - 改前：1/9 FAIL（验过）
+  - 改后：9/9 PASS（验过）
+- **iOS 升 0.8.40/112 → 0.8.41/113**。
+- **Android 端**：同步做相同底部三按钮布局对齐（详见 `CHANGELOG.md` DSH-108 条目），Android 升 0.8.56/167 → **0.8.57/168**。
