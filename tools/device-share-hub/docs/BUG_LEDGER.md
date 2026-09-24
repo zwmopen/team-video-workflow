@@ -47,6 +47,53 @@
 - A1~A6 同 DSH-098
 - **A7** downloadWorkImages 错误路径 Log.w(TAG) ≥ 2 + DiagnosticLog ≥ 2 + currentFileName 变量存在 + 0 处裸字符串
 
+## DSH-099 Android + iOS 在线相册错误路径补双写（Android 0.8.54/165 + iOS 0.8.38/110，2026-09-24）
+
+> **用户反馈**（两轮）：
+> ① Android K60 弹"下载图片失败..data/user..." → 定位 `MainActivity.java:4444` toast → `OnlineGalleryClient.downloadWorkImages` catch 块只 `callback.onError`，**完全没有 Log.w + DiagnosticLog 双写**，违背"debug 回传"硬约束。
+> ② 「苹果和电脑版你会同步做的对吧」→ iOS 端 `OnlineGalleryClient.loadImage` / `fetchCategories` / `fetchWorks` 三个 catch 块也是静默失败，加上 `loadImage` 磁盘缓存 `try? data.write` 吞错，**四类静默失败一次扫干净**。
+>
+> **DSH-098 漏的另一半**：DSH-098 修了 `downloadThumb`（缩略图）+ `loadFullImage` + `loadThumbnail` catch 的 Log.w(TAG) + DiagnosticLog 双写，但**漏了 `downloadWorkImages`（原图下载）catch**——属于"修了一半"。iOS 端原本就没双写，三个 catch 块全静默，与 iOS 端"在线分享"路径（`loadImage` → UIActivityViewController）直接相关。
+
+**现象**：
+- Android：用户点平台按钮下载原图 → 弹 "下载图片失败: XXX, 文案已在剪贴板" → logcat 无 Log.w / DiagnosticLog 无事件 → 离线取证不了
+- iOS：用户点平台按钮分享在线作品 → `loadImage(isThumbnail: false)` 拿不到图 → `UIActivityViewController` 拿到 nil → 静默失败 → Console 没 NSLog → 复现不到根因
+
+**根因**：
+- Android `OnlineGalleryClient.downloadWorkImages` 旧 catch 块：`mainHandler.post(() -> callback.onError(e))` 静默
+- iOS `OnlineGalleryClient.loadImage` line 435 guard else：`DispatchQueue.main.async { completion(nil) }` 静默；line 441 `try? data.write` 吞错
+- iOS `fetchCategories` line 351 / `fetchWorks` line 401 catch：只 `.failure(error)`，无 NSLog
+
+**修复**（Android 0.8.54/165 + iOS 0.8.38/110）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `OnlineGalleryClient.java:1279-1360` Android `downloadWorkImages` | 加 `final String[] currentFileName = { null };` 追踪循环中文件名 + HTTP 错误分支 1 处 Log.w(TAG) + 1 处 DiagnosticLog.write + 总 catch 出口 1 处 Log.w(TAG, ..., e) + 1 处 DiagnosticLog.write |
+| 2 | `OnlineGalleryClient.swift:434-444` iOS `loadImage` | 失败分支加 `NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d", path, isThumbnail ? 1 : 0)` + 磁盘缓存 `try? data.write` 改 `do { try data.write } catch { NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@", path, error.localizedDescription) }` |
+| 3 | `OnlineGalleryClient.swift:351` iOS `fetchCategories` catch | 加 `NSLog("[OnlineGalleryClient] fetchCategories failed: %@", error.localizedDescription)` |
+| 4 | `OnlineGalleryClient.swift:401` iOS `fetchWorks` catch | 加 `NSLog("[OnlineGalleryClient] fetchWorks failed category=%@ query=%@ error=%@", category ?? "<nil>", query ?? "<nil>", error.localizedDescription)` |
+| 5 | `tests/test_android_online_gallery_client.py` | 加 A7 闸门 + 修 extract_func_body signature 错配 |
+| 6 | `tests/test_ios_online_gallery_client.py` | 新建 4 项 iOS 闸门（B1~B4）|
+| 7 | `android/app/build.gradle.kts:13-14` | `versionCode 164 → 165`, `versionName 0.8.53 → 0.8.54` |
+| 8 | `ios/project.yml:31-32` | `CURRENT_PROJECT_VERSION 109 → 110`, `MARKETING_VERSION 0.8.37 → 0.8.38` |
+| 9 | `CHANGELOG.md` 顶部 | 加 DSH-099 Android + iOS 条目 |
+
+**证据**：
+- **Android 闸门**：HEAD 旧版 `test_android_online_gallery_client.py` = **A7 FAIL**（整体 6/7 FAIL）；工作区 = **7/7 PASS**
+- **iOS 闸门**：HEAD 旧版 `test_ios_online_gallery_client.py` = **4/4 FAIL**（B1 NSLog=0, B2 含 try?, B3 NSLog=0, B4 NSLog=0）；工作区 = **4/4 PASS**
+- **Windows 端不动**：`grep -r "downloadWorkImages\|fetchFullImage\|api/online/image" tools/device-share-hub/windows-native/` = **0 命中**，MEMORY 印证"电脑端不参加在线相册 = 架构级断点"
+
+**回归要求**：
+- Android K60 装 0.8.54 后触发"下载图片失败"，DiagnosticLog 落盘 `/Android/data/com.zwm.gallery/files/diagnostic.log`，含 `event=download_work_failed` 或 `event=download_work_http_error`，含 workId / fileName / HTTP code / 堆栈
+- iOS 0.8.38 装机后触发"图片加载失败"，Console.app / XCode device log 可看 `[OnlineGalleryClient] loadImage failed path=...` / `loadImage disk write failed ...` / `fetchCategories failed ...` / `fetchWorks failed category=... query=...` 四类错误日志
+- `tests/test_android_online_gallery_client.py` **7/7 PASS**（含 A7）+ `tests/test_ios_online_gallery_client.py` **4/4 PASS**
+- 任何后续新增的 catch 块必须同样加 Log.w/NSLog + DiagnosticLog/Console 双写（铁律）；新加的函数也必须用完整签名才能被闸门抓到（避免 wrapper 误匹配）
+
+**配套独立闸门**：
+- Android `tests/test_android_online_gallery_client.py` 7 项（A1~A7），DSH-099 增 A7
+- iOS `tests/test_ios_online_gallery_client.py` 4 项（B1~B4），DSH-099 新增
+- 跨端对等 `tests/parity_ios_android.py` 27 项（保持，未扩）
+
 ## DSH-098 Android 在线相册"获取在线相册失败"BUG（Android 0.8.53/164，2026-09-24）
 
 > **用户口径**（2026-09-24 现场）：

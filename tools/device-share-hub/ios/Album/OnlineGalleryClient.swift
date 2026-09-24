@@ -349,6 +349,7 @@ public final class OnlineGalleryClient {
                 let result = OnlineCategoriesResult(categories: categories, stages: stages, total: total)
                 DispatchQueue.main.async { completion(.success(result)) }
             } catch {
+                NSLog("[OnlineGalleryClient] fetchCategories failed: %@", error.localizedDescription)
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }.resume()
@@ -399,6 +400,8 @@ public final class OnlineGalleryClient {
                 }
                 DispatchQueue.main.async { completion(.success(entries)) }
             } catch {
+                NSLog("[OnlineGalleryClient] fetchWorks failed category=%@ query=%@ error=%@",
+                      category ?? "<nil>", query ?? "<nil>", error.localizedDescription)
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }.resume()
@@ -433,12 +436,21 @@ public final class OnlineGalleryClient {
 
         session.dataTask(with: url) { [weak self] data, _, _ in
             guard let self = self, let data = data, let image = UIImage(data: data) else {
+                // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
+                NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
+                      path, isThumbnail ? 1 : 0)
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
             // 写入内存与磁盘缓存
             self.imageCache.setObject(image, forKey: cacheKey)
-            try? data.write(to: diskURL)
+            // DSH-099 iOS 等价：磁盘缓存写失败也要 NSLog（之前 try? 吞掉全静默）
+            do {
+                try data.write(to: diskURL)
+            } catch {
+                NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
+                      path, error.localizedDescription)
+            }
             DispatchQueue.main.async { completion(image) }
         }.resume()
     }

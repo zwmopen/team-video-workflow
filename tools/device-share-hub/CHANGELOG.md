@@ -3,22 +3,39 @@
 ## Android 0.8.54 / 165 - 2026-09-24 - DSH-099：downloadWorkImages（原图下载）错误路径 Log.w + DiagnosticLog 双写（补 DSH-098 漏的双写）
 
 > **用户口径**：2026-09-24 现场反馈 K60 触发"下载图片失败..data/user..." → 定位 `MainActivity.java:4444` toast → `OnlineGalleryClient.downloadWorkImages` catch 块只 `callback.onError`，**完全没有 Log.w + DiagnosticLog 双写**，违背"debug 回传"硬约束。
+> **同步 iOS 端**：用户硬约束"苹果和电脑版你会同步做的对吧"——iOS 端 `OnlineGalleryClient.loadImage` / `fetchCategories` / `fetchWorks` 三个 catch 块也是静默失败（同样违背铁律），**iOS 等价 DSH-099 同步修**。Windows 端 `windows-native/` 零调用 `/api/online/image`（MEMORY 印证"电脑端不参加在线相册 = 架构级断点"），无需改。
 >
-> **我的反思**：DSH-098 修了 `downloadThumb`（缩略图 BAOS 累积 OOM）+ `loadFullImage` + `loadThumbnail` catch，**但漏了 `downloadWorkImages`（原图下载）catch**——属于"修了一半"。`downloadWorkImages` 自身已是流式写盘（line 1314-1317 `byte[8192]` + `out.write` 边读边写，DSH-098 没动这条），但失败时只有一行 `mainHandler.post(() -> callback.onError(e))`，静默失败，**根因拿不到**。这是 DSH-098 的回马枪，DSH-099 补上。
+> **我的反思**：DSH-098 修了 `downloadThumb`（缩略图 BAOS 累积 OOM）+ `loadFullImage` + `loadThumbnail` catch，**但漏了 `downloadWorkImages`（原图下载）catch**——属于"修了一半"。`downloadWorkImages` 自身已是流式写盘（line 1314-1317 `byte[8192]` + `out.write` 边读边写，DSH-098 没动这条），但失败时只有一行 `mainHandler.post(() -> callback.onError(e))`，静默失败，**根因拿不到**。这是 DSH-098 的回马枪，DSH-099 补上。**iOS 端本来就没双写**——三个 catch 块全静默，加上 `loadImage` 磁盘缓存 `try? data.write` 吞错，**四类静默失败一次扫干净**。
 
-- **① `OnlineGalleryClient.downloadWorkImages` 错误路径双写**（`OnlineGalleryClient.java:1279-1360`）：
+- **① Android `OnlineGalleryClient.downloadWorkImages` 错误路径双写**（`OnlineGalleryClient.java:1279-1360`）：
   - 加 `final String[] currentFileName = { null };` 在 try 之前；for 循环里 `currentFileName[0] = fileName;` 记录当前文件名（catch 块可定位到具体 fileName）
   - HTTP code != 200 分支：加 `Log.w(TAG, "downloadWorkImages HTTP ... | " + workId + "/" + fileName);` + `DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName + " | HTTP " + httpCode);` 双写
   - catch 总出口：加 `Log.w(TAG, "downloadWorkImages failed: ...", e)`（含堆栈）+ `DiagnosticLog.write(context, "download_work_failed", workId + "/" + fname + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());` 双写
   - 函数体共 **2 处 Log.w(TAG) + 2 处 DiagnosticLog.write**（HTTP 错误分支 + 总 catch 出口）
-- **② 配套闸门 A7**（`tests/test_android_online_gallery_client.py`）：
+- **② iOS `OnlineGalleryClient` 三处 catch + 一处静默磁盘写 全部 NSLog**（`OnlineGalleryClient.swift`）：
+  - **`loadImage` 失败分支**（line 434-444）：原 `guard let self = self, let data = data, let image = UIImage(data: data) else { completion(nil) }` 加 `NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d", path, isThumbnail ? 1 : 0)`
+  - **`loadImage` 磁盘缓存写**：原 `try? data.write(to: diskURL)` 改成 `do { try data.write(to: diskURL) } catch { NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@", path, error.localizedDescription) }`（`try?` 吞错铁律违反）
+  - **`fetchCategories` catch**（line 351）：加 `NSLog("[OnlineGalleryClient] fetchCategories failed: %@", error.localizedDescription)`
+  - **`fetchWorks` catch**（line 401）：加 `NSLog("[OnlineGalleryClient] fetchWorks failed category=%@ query=%@ error=%@", category ?? "<nil>", query ?? "<nil>", error.localizedDescription)`
+  - **`ensureDeviceRegistered` catch**（line 231）：**保持静默**——注释明说"白名单是辅助能力，断网/PC 未启动/超时都忽略，不影响主流程"
+- **③ Android 配套闸门 A7**（`tests/test_android_online_gallery_client.py`）：
   - **A7** `downloadWorkImages` 错误路径双写：`Log.w(TAG) ≥ 2` + `DiagnosticLog.write ≥ 2` + `currentFileName` 变量存在 + 0 处裸字符串
   - 修 `extract_func_body` signature 错配：原 `public void downloadWorkImages(` 抓到 3 参 wrapper 函数（496 字符无 Log.w），改用完整签名 `public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback)` 精确抓真身（4175 字符含双写）
   - **改前 FAIL 验证**：HEAD 旧版（DSH-099 没改）跑出 **A7 FAIL**（Log.w=0, DiagnosticLog=0, currentFileName=False），整体 **6/7 FAIL**
   - **改后 PASS 验证**：工作区跑出 **A7 PASS**，整体 **7/7 PASS**
-- **③ 版本号**：Android `0.8.53/164` → **`0.8.54/165`**（改客户端代码必须升版本号；iOS 端不动）
-- **④ 装机验证**：push 后 CI 通过 → 下 0.8.54 APK → `adb install -r` 装 K60 → 用户触发下载图片 → 失败时 DiagnosticLog 落盘 `/Android/data/com.zwm.gallery/files/diagnostic.log` → 拉到 `event=download_work_failed` / `event=download_work_http_error` 行 → 拿到 workId / fileName / HTTP code / 堆栈
-- **⑤ 与 DSH-098 协同**：0.8.53 (DSH-098) + 0.8.54 (DSH-099) 顺序装上后，所有已知错误路径都有 Log.w（含堆栈）+ DiagnosticLog.write（持久化）双写
+- **④ iOS 配套闸门 B1~B4**（`tests/test_ios_online_gallery_client.py`，新增）：
+  - **B1** `loadImage` 失败分支 NSLog（含 path / isThumbnail）
+  - **B2** `loadImage` 磁盘写失败 NSLog（替换原 `try?` 吞错）
+  - **B3** `fetchCategories` catch NSLog
+  - **B4** `fetchWorks` catch NSLog（含 category / query / error 三参）
+  - **改前 FAIL 验证**：HEAD 旧版跑出 **4/4 FAIL**（B1 NSLog标记=False / 真实NSLog=0，B2 含 try?，B3 NSLog数=0，B4 NSLog数=0）
+  - **改后 PASS 验证**：工作区跑出 **4/4 PASS**（exit=0）
+- **⑤ 版本号**：Android `0.8.53/164` → **`0.8.54/165`**；iOS `0.8.37/109` → **`0.8.38/110`**（改客户端代码必须升版本号）
+- **⑥ Windows 端**：不动（架构隔离：`tools/device-share-hub/windows-native/` 零调用 `/api/online/image`，MEMORY 印证"电脑端不参加在线相册 = 架构级断点"）
+- **⑦ 装机验证**：
+  - Android：push 后 CI 通过 → 下 0.8.54 APK → `adb install -r` 装 K60 → 用户触发下载图片 → 失败时 DiagnosticLog 落盘 `/Android/data/com.zwm.gallery/files/diagnostic.log` → 拉到 `event=download_work_failed` / `event=download_work_http_error` 行
+  - iOS：push 后 CI 通过 → iPhone 0.8.38 IPA → 用户触发分享 → 失败时 Console.app / XCode device log 可看 `[OnlineGalleryClient] loadImage failed ...` / `fetchCategories failed` / `fetchWorks failed` / `loadImage disk write failed` 四类错误日志
+- **⑧ 与 DSH-098 协同**：0.8.53 (DSH-098) + 0.8.54 (DSH-099 Android) + 0.8.38 (DSH-099 iOS) 顺序装上后，**所有已知错误路径都有 Log.w / NSLog + DiagnosticLog.write / Console 双写**
 
 ## Android 0.8.53 / 164 - 2026-09-24 - DSH-098：缩略图流式写盘 + DiagnosticLog 持久化（修 K60 "获取在线相册失败"）
 
