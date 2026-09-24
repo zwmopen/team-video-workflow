@@ -1987,7 +1987,8 @@ private final class WorkCell: UICollectionViewCell {
                                action: #selector(platformButtonTapped(_:)))
         if copyMissing { platformRow.addArrangedSubview(makeCopyMissingButton()) }
         rebuildActionRow()
-        if entry.useCount > 0 { actionRow.addArrangedSubview(resetButton) }
+        // DSH-105：与 Android MainActivity.java:1201 无 if 守卫对齐 —— 重置按钮常驻可见
+        actionRow.addArrangedSubview(resetButton)
         actionRow.addArrangedSubview(deleteButton)
         actionRow.addArrangedSubview(copyPathButton)
 
@@ -2156,7 +2157,8 @@ private final class WorkCell: UICollectionViewCell {
         }, action: #selector(platformButtonTapped(_:)))
 
         rebuildActionRow()
-        if work.shareCount > 0 { actionRow.addArrangedSubview(resetButton) }
+        // DSH-105：与 Android MainActivity.java:1201 无 if 守卫对齐 —— 重置按钮常驻可见
+        actionRow.addArrangedSubview(resetButton)
         actionRow.addArrangedSubview(deleteButton)
         actionRow.addArrangedSubview(copyPathButton)
 

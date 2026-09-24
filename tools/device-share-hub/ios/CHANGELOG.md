@@ -174,3 +174,16 @@
 - iOS 版本保持 **0.8.39/111** 不变（DSH-102 那一版），无需重装机。
 - 下次打开在线相册分类，已用过的作品自动置顶。
 
+## [Unreleased]
+
+### Changed - DSH-105 iOS 重置按钮默认展示（2026-09-24）
+
+- **症状**：用户反馈"iOS 已使用一次的时候没看到重置按钮"——iOS 仅在 useCount > 0 时才显示重置按钮，已使用 0 次的卡片根本看不到。
+- **与 Android 不一致**：Android `MainActivity.java:1201-1206` 重置按钮**无条件**添加到 platformRow；iOS ContentView.swift:1990（在线）+ `/local` 两处都有 `if entry.useCount > 0` / `if work.shareCount > 0` 守卫。
+- **修复**：去掉 iOS 两处守卫，重置按钮常驻可见，与 Android 对齐。
+- **闸门**：`tests/test_ios_online_gallery_client.py` 新增 B8。
+  - 改前：8/8 FAIL（验过）
+  - 改后：8/8 PASS（验过）
+- **iOS 升 0.8.39/111 → 0.8.40/112**。
+- **Android 零改动**（重置按钮本来就常驻）。
+

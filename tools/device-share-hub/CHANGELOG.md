@@ -2229,3 +2229,12 @@ self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? de
 - **iOS 端**：无此字段（之前就没显示），DSH-107 不需要新增 iOS 代码。
 - **客户端**：Android 升 0.8.55/166 → **0.8.56/167**。
 
+## [Unreleased]
+
+### Changed - DSH-105 iOS 重置按钮默认展示（与 Android 对齐）（2026-09-24）
+
+- iOS `ContentView.swift:1990`（在线模式）+ `ContentView.swift:2159`（本地模式）去掉 `if entry.useCount > 0` / `if work.shareCount > 0` 守卫。
+- 重置按钮现在常驻可见，与 Android `MainActivity.java:1201` 默认无条件展示对齐。
+- iOS 升 0.8.39/111 → **0.8.40/112**。
+- 客户端行为不变：未使用的卡片点重置 → 弹「该作品尚未使用」toast；已使用 → 弹原确认框。
+

@@ -156,6 +156,28 @@ def main():
     results.extend(results_102)
 
     print()
+    print("=== DSH-105: iOS 重置按钮默认展示（与 Android MainActivity.java:1201 无 if 守卫对齐） ===")
+    print()
+    results_105 = []
+
+    # ---- B8: 两处守卫必须消失（iOS 重置按钮默认无条件展示）----
+    # 旧代码 line 1990（在线）：if entry.useCount > 0 { actionRow.addArrangedSubview(resetButton) }
+    # 旧代码 line 2159（本地）：if work.shareCount > 0 { actionRow.addArrangedSubview(resetButton) }
+    # DSH-105：去掉守卫，与 Android 对齐——按钮常驻可见
+    b8_no_guard_online = "if entry.useCount > 0 { actionRow.addArrangedSubview(resetButton) }" not in cv_src
+    b8_no_guard_local = "if work.shareCount > 0 { actionRow.addArrangedSubview(resetButton) }" not in cv_src
+    # 强校验：两处都必须有"无条件 addArrangedSubview(resetButton)" —— 允许中间夹注释
+    b8_unconditional_add = re.search(
+        r"rebuildActionRow\(\)(?:[^\n]*\n){0,5}\s*actionRow\.addArrangedSubview\(resetButton\)", cv_src) is not None
+    results_105.append(check(
+        "B8 ContentView 重置按钮默认展示（去掉 useCount/shareCount 守卫）",
+        b8_no_guard_online and b8_no_guard_local and b8_unconditional_add,
+        "在线守卫消失=%s 本地守卫消失=%s rebuildActionRow后无条件add=%s"
+        % (b8_no_guard_online, b8_no_guard_local, b8_unconditional_add)))
+
+    results.extend(results_105)
+
+    print()
     bad = results.count(False)
     if bad:
         print("FAIL %d/%d 项未达标" % (bad, len(results)))

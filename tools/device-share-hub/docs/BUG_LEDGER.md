@@ -2243,3 +2243,34 @@ iOS 版本保持 0.8.39/111 不变，无需重装机。
 ### 版本
 Android 升 0.8.55/166 → **0.8.56/167**。
 
+# BUG_LEDGER
+
+## DSH-105 iOS 重置按钮仅在 useCount > 0 时显示（与 Android 不一致）
+
+**报告时间**：2026-09-24 15:43
+**报告端**：用户（iPhone）
+**真凶端**：iOS `ContentView.swift:1990`（在线）+ `ContentView.swift:2159`（本地）
+
+### 症状
+iOS 客户端已使用一次的作品看不到"重置"按钮，要手动调代码才能看到。
+
+### 根因
+iOS ContentView.swift 两处都有 `if entry.useCount > 0` / `if work.shareCount > 0` 守卫，重置按钮仅在用过时才显示。
+而 Android `MainActivity.java:1201` 重置按钮**无条件**添加到 platformRow，两端不一致。
+
+### 修复
+去掉 iOS 两处守卫，重置按钮常驻可见，与 Android 对齐。
+
+### 闸门
+- `tests/test_ios_online_gallery_client.py` 新增 B8
+- 改前：8/8 FAIL（验过）
+- 改后：8/8 PASS（验过）
+
+### 版本
+iOS 升 0.8.39/111 → **0.8.40/112**。
+Android 零改动。
+
+### 客户端行为
+未使用的卡片点重置 → 弹「该作品尚未使用」toast；
+已使用 → 弹原确认框（沿用 onlineResetTapped / resetTapped 既有逻辑）。
+
