@@ -1,5 +1,25 @@
 # 变更记录
 
+## Android 0.8.54 / 165 - 2026-09-24 - DSH-099：downloadWorkImages（原图下载）错误路径 Log.w + DiagnosticLog 双写（补 DSH-098 漏的双写）
+
+> **用户口径**：2026-09-24 现场反馈 K60 触发"下载图片失败..data/user..." → 定位 `MainActivity.java:4444` toast → `OnlineGalleryClient.downloadWorkImages` catch 块只 `callback.onError`，**完全没有 Log.w + DiagnosticLog 双写**，违背"debug 回传"硬约束。
+>
+> **我的反思**：DSH-098 修了 `downloadThumb`（缩略图 BAOS 累积 OOM）+ `loadFullImage` + `loadThumbnail` catch，**但漏了 `downloadWorkImages`（原图下载）catch**——属于"修了一半"。`downloadWorkImages` 自身已是流式写盘（line 1314-1317 `byte[8192]` + `out.write` 边读边写，DSH-098 没动这条），但失败时只有一行 `mainHandler.post(() -> callback.onError(e))`，静默失败，**根因拿不到**。这是 DSH-098 的回马枪，DSH-099 补上。
+
+- **① `OnlineGalleryClient.downloadWorkImages` 错误路径双写**（`OnlineGalleryClient.java:1279-1360`）：
+  - 加 `final String[] currentFileName = { null };` 在 try 之前；for 循环里 `currentFileName[0] = fileName;` 记录当前文件名（catch 块可定位到具体 fileName）
+  - HTTP code != 200 分支：加 `Log.w(TAG, "downloadWorkImages HTTP ... | " + workId + "/" + fileName);` + `DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName + " | HTTP " + httpCode);` 双写
+  - catch 总出口：加 `Log.w(TAG, "downloadWorkImages failed: ...", e)`（含堆栈）+ `DiagnosticLog.write(context, "download_work_failed", workId + "/" + fname + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());` 双写
+  - 函数体共 **2 处 Log.w(TAG) + 2 处 DiagnosticLog.write**（HTTP 错误分支 + 总 catch 出口）
+- **② 配套闸门 A7**（`tests/test_android_online_gallery_client.py`）：
+  - **A7** `downloadWorkImages` 错误路径双写：`Log.w(TAG) ≥ 2` + `DiagnosticLog.write ≥ 2` + `currentFileName` 变量存在 + 0 处裸字符串
+  - 修 `extract_func_body` signature 错配：原 `public void downloadWorkImages(` 抓到 3 参 wrapper 函数（496 字符无 Log.w），改用完整签名 `public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback)` 精确抓真身（4175 字符含双写）
+  - **改前 FAIL 验证**：HEAD 旧版（DSH-099 没改）跑出 **A7 FAIL**（Log.w=0, DiagnosticLog=0, currentFileName=False），整体 **6/7 FAIL**
+  - **改后 PASS 验证**：工作区跑出 **A7 PASS**，整体 **7/7 PASS**
+- **③ 版本号**：Android `0.8.53/164` → **`0.8.54/165`**（改客户端代码必须升版本号；iOS 端不动）
+- **④ 装机验证**：push 后 CI 通过 → 下 0.8.54 APK → `adb install -r` 装 K60 → 用户触发下载图片 → 失败时 DiagnosticLog 落盘 `/Android/data/com.zwm.gallery/files/diagnostic.log` → 拉到 `event=download_work_failed` / `event=download_work_http_error` 行 → 拿到 workId / fileName / HTTP code / 堆栈
+- **⑤ 与 DSH-098 协同**：0.8.53 (DSH-098) + 0.8.54 (DSH-099) 顺序装上后，所有已知错误路径都有 Log.w（含堆栈）+ DiagnosticLog.write（持久化）双写
+
 ## Android 0.8.53 / 164 - 2026-09-24 - DSH-098：缩略图流式写盘 + DiagnosticLog 持久化（修 K60 "获取在线相册失败"）
 
 > **用户反馈**：2026-09-24 用户在 K60 上触发"获取在线相册失败"BUG，怀疑是内存写入问题。同时给两条硬约束——

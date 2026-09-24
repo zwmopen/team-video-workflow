@@ -1278,6 +1278,8 @@ public final class OnlineGalleryClient {
 
     public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback) {
         executor.execute(() -> {
+            // DSH-099：记录循环中文件名，catch 块能定位到具体哪个 fileName 出错
+            final String[] currentFileName = { null };
             try {
                 String baseUrl = resolveBaseUrl();
                 java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
@@ -1288,6 +1290,7 @@ public final class OnlineGalleryClient {
                 int count = 0;
                 if (fileNames != null) {
                     for (String fileName : fileNames) {
+                        currentFileName[0] = fileName;  // DSH-099：catch 块用
                         final int progStart = count;
                         final String curName = fileName;
                         mainHandler.post(() -> callback.onProgress(progStart, total, curName));
@@ -1306,8 +1309,14 @@ public final class OnlineGalleryClient {
                         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                         conn.setConnectTimeout(TIMEOUT_MS);
                         conn.setReadTimeout(TIMEOUT_MS * 3);
-                        if (conn.getResponseCode() != 200) {
-                            throw new Exception("HTTP " + conn.getResponseCode() + " 下载 " + fileName + " 失败");
+                        int httpCode = conn.getResponseCode();
+                        if (httpCode != 200) {
+                            // DSH-099：HTTP 错误分支 —— Log.w + DiagnosticLog 双写（不抛 e 之前先留证）
+                            String detail = "HTTP " + httpCode + " 下载 " + fileName + " 失败";
+                            Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);
+                            DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName
+                                    + " | HTTP " + httpCode);
+                            throw new Exception(detail);
                         }
                         InputStream in = new BufferedInputStream(conn.getInputStream());
                         java.io.FileOutputStream out = new java.io.FileOutputStream(localFile);
@@ -1328,6 +1337,12 @@ public final class OnlineGalleryClient {
                 }
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
+                // DSH-099：总出口 —— Log.w（含堆栈）+ DiagnosticLog 双写（持久化 debug 回传铁律）
+                String fname = currentFileName[0] != null ? currentFileName[0] : "<none>";
+                Log.w(TAG, "downloadWorkImages failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()
+                        + " | " + workId + "/" + fname, e);
+                DiagnosticLog.write(context, "download_work_failed", workId + "/" + fname
+                        + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 mainHandler.post(() -> callback.onError(e));
             }
         });

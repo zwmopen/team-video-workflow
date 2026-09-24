@@ -4,7 +4,48 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-098**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-099**。
+
+## DSH-099 Android downloadWorkImages（原图下载）错误路径补双写（Android 0.8.54/165，2026-09-24）
+
+> **用户反馈**：2026-09-24 现场 K60 点平台按钮下载原图，弹 "下载图片失败..data/user..." toast（`MainActivity.java:4444`），用户明确说"下载图片失败..data/user..."。
+>
+> **DSH-098 漏的另一半**：DSH-098 修了 `downloadThumb`（缩略图）+ `loadFullImage` + `loadThumbnail` catch 的 Log.w(TAG) + DiagnosticLog 双写，但**漏了 `downloadWorkImages`（原图下载）catch**——属于"修了一半"。这条路径 catch 块只 `callback.onError`，静默失败，根因拿不到，违背用户硬约束"所有开发都要 debug 回传"。
+
+**现象**：用户点平台按钮下载原图（如小红书 / 抖音 / 微信一键分享的"先同步到手机"流程）→ 弹 "下载图片失败: XXX, 文案已在剪贴板" toast → 失败原因不明，logcat 没有 Log.w，DiagnosticLog 也没有事件 → 离线取证不了。
+
+**根因**：`OnlineGalleryClient.downloadWorkImages` 旧 catch 块：
+```java
+} catch (Exception e) {
+    mainHandler.post(() -> callback.onError(e));  // ← 静默失败
+}
+```
+完全没有 Log.w 也没有 DiagnosticLog.write，**任何失败都丢根因**。HTTP 错误分支也只是 `throw new Exception(...)` 没留证。
+
+**修复**（Android 0.8.54/165）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `OnlineGalleryClient.java:1279-1360` `downloadWorkImages` | 加 `final String[] currentFileName = { null };` 追踪循环中文件名 |
+| 2 | 同上 HTTP code != 200 分支 | 加 `Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);` + `DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName + " \| HTTP " + httpCode);` 双写 |
+| 3 | 同上 catch 总出口 | 加 `Log.w(TAG, "downloadWorkImages failed: ...", e)`（含堆栈）+ `DiagnosticLog.write(context, "download_work_failed", workId + "/" + fname + " \| " + e.getClass().getSimpleName() + ": " + e.getMessage());` 双写 |
+| 4 | `tests/test_android_online_gallery_client.py` | 加 A7 闸门 + 修 extract_func_body signature 错配（用完整签名避免抓到 wrapper）|
+| 5 | `android/app/build.gradle.kts:13-14` | `versionCode 164 → 165`, `versionName 0.8.53 → 0.8.54` |
+| 6 | `CHANGELOG.md` 顶部 | 加 DSH-099 条目 |
+
+**证据**：
+- **闸门验证纪律**：HEAD 旧版（DSH-099 没改）跑 `test_android_online_gallery_client.py` = **A7 FAIL**（`Log.w(TAG 处数=0 DiagnosticLog 处数=0 currentFileName=False`，整体 6/7 FAIL）；工作区新版 = **A7 PASS**，整体 **7/7 PASS**
+- **抓取函数探针验证**：修闸门前 `extract_func_body(src, "public void downloadWorkImages(")` 抓到 wrapper（496 字符，3 参 Callback 版，无 Log.w）；修后用完整签名 `public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback)` 抓到真身（4175 字符，含 2 处 Log.w(TAG) + 2 处 DiagnosticLog.write）
+
+**回归要求**：
+- K60 装 0.8.54 后触发"下载图片失败"，DiagnosticLog 落盘 `/Android/data/com.zwm.gallery/files/diagnostic.log`（512KB rotate）
+- 日志里有 `event=download_work_failed` 或 `event=download_work_http_error`，含 workId / fileName / HTTP code / 堆栈
+- `tests/test_android_online_gallery_client.py` **7/7 PASS**（含 A7）
+- 任何后续新增的 catch 块必须同样加 DiagnosticLog 双写（铁律）；新加的函数也必须用完整签名才能被闸门抓到（避免 wrapper 误匹配）
+
+**配套独立闸门**（`tests/test_android_online_gallery_client.py` 7 项，DSH-099 增 A7）：
+- A1~A6 同 DSH-098
+- **A7** downloadWorkImages 错误路径 Log.w(TAG) ≥ 2 + DiagnosticLog ≥ 2 + currentFileName 变量存在 + 0 处裸字符串
 
 ## DSH-098 Android 在线相册"获取在线相册失败"BUG（Android 0.8.53/164，2026-09-24）
 

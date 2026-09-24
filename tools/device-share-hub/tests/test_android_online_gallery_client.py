@@ -62,6 +62,7 @@ def main():
     src = CLIENT.read_text(encoding="utf-8", errors="replace")
     download_thumb = extract_func_body(src, "private boolean downloadThumb(")
     load_full_image = extract_func_body(src, "public void loadFullImage(")
+    download_work_images = extract_func_body(src, "public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback)")
 
     print("  downloadThumb 函数体 %d 字符 / loadFullImage 函数体 %d 字符" % (len(download_thumb), len(load_full_image)))
     print()
@@ -121,6 +122,20 @@ def main():
         a6_logw_tag_total >= 8 and a6_diag_total >= 8,
         "Log.w(TAG 总量=%d(>=8) DiagnosticLog 总量=%d(>=8)"
         % (a6_logw_tag_total, a6_diag_total)))
+
+    # ---- A7：downloadWorkImages 错误路径 Log.w(TAG)+DiagnosticLog 双写（DSH-099 引入）----
+    # DSH-099 修复：用户点平台按钮时下载原图路径 catch 块原本只 mainHandler.post(onError)，
+    # 没 Log.w 没 DiagnosticLog，违背"debug 回传"铁律。改后必须双写。
+    # 改前实测（HEAD DSH-098）：downloadWorkImages 内 DiagnosticLog.write = 0, Log.w(TAG = 0, 裸字符串 = 0（全没写过）
+    a7_logw_tag = download_work_images.count("Log.w(TAG,")
+    a7_diag = download_work_images.count("DiagnosticLog.write")
+    a7_no_bare = "Log.w(\"OnlineGalleryClient\"" not in download_work_images
+    a7_currentFile = "currentFileName" in download_work_images
+    results.append(check(
+        "A7 downloadWorkImages 错误路径 Log.w(TAG)+DiagnosticLog 双写",
+        a7_no_bare and a7_diag >= 2 and a7_logw_tag >= 2 and a7_currentFile,
+        "裸字符串残留=%s Log.w(TAG 处数=%d(>=2) DiagnosticLog 处数=%d(>=2) currentFileName=%s"
+        % (not a7_no_bare, a7_logw_tag, a7_diag, a7_currentFile)))
 
     print()
     bad = results.count(False)
