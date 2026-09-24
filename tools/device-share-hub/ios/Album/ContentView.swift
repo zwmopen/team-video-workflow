@@ -161,23 +161,27 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         updateFolderItemVisibility()
     }
 
-    /// 与安卓一致：在线相册模式下隐藏「文件浏览」入口
+    /// DSH-097：folderItem 双模式可见 —— 本地模式进本地文件分发，在线模式进回收站（_已发送1次 + _垃圾作品 = DSH-095 统一入口）。
     private func updateFolderItemVisibility() {
-        folderItem?.customView?.isHidden = isOnlineMode
+        folderItem?.customView?.isHidden = false
+        folderItem?.accessibilityLabel = isOnlineMode
+            ? "在线模式：打开电脑端回收站（_已发送1次 + _垃圾作品）"
+            : "本地模式：打开本地文件浏览"
     }
 
     private func toolbarButton(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIButton {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.backgroundColor = view.tintColor.withAlphaComponent(0.11)
-        button.layer.cornerRadius = 11
-        button.setImage(AlbumToolbarIcon.image(symbol, color: view.tintColor), for: .normal)
+        // DSH-097：顶栏按钮与安卓 ImageButton 42dp 半圆对齐 —— 34pt → 38pt、cornerRadius 11 → 19、浅绿实色 RGB(226,244,236)、图标 RGB(15,135,88) 深绿。
+        button.backgroundColor = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+        button.layer.cornerRadius = 19
+        button.setImage(AlbumToolbarIcon.image(symbol, color: UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)), for: .normal)
         button.imageView?.contentMode = .scaleAspectFit
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 34),
-            button.heightAnchor.constraint(equalToConstant: 34)
+            button.widthAnchor.constraint(equalToConstant: 38),
+            button.heightAnchor.constraint(equalToConstant: 38)
         ])
         return button
     }
@@ -255,16 +259,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func toolbarItem(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIBarButtonItem {
         let button = UIButton(type: .system)
-        button.frame = CGRect(x: 0, y: 0, width: 34, height: 34)
-        button.backgroundColor = view.tintColor.withAlphaComponent(0.11)
-        button.layer.cornerRadius = 11
-        button.setImage(AlbumToolbarIcon.image(symbol, color: view.tintColor), for: .normal)
+        button.frame = CGRect(x: 0, y: 0, width: 38, height: 38)
+        // DSH-097：与 toolbarButton 同设计 —— 38pt 半圆 + 浅绿实色 + 深绿图标。
+        button.backgroundColor = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+        button.layer.cornerRadius = 19
+        button.setImage(AlbumToolbarIcon.image(symbol, color: UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)), for: .normal)
         button.imageView?.contentMode = .scaleAspectFit
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 34),
-            button.heightAnchor.constraint(equalToConstant: 34)
+            button.widthAnchor.constraint(equalToConstant: 38),
+            button.heightAnchor.constraint(equalToConstant: 38)
         ])
         return UIBarButtonItem(customView: button)
     }
@@ -1203,6 +1208,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func openFiles() {
+        // DSH-097：folderItem 双模式分发 —— 本地进 LibraryFilesViewController，在线进回收站（DSH-095）。
+        if isOnlineMode {
+            openTrash()
+            return
+        }
         guard let root = library.receivingRootURL else {
             showError("请先在设置中选择作品文件夹。")
             return
@@ -1652,23 +1662,52 @@ private final class PlatformFlowView: UIView {
 
     func removeArrangedSubview(_ view: UIView) { view.removeFromSuperview() }
 
-    /// 折行试算：`apply = true` 时同时写 frame。返回所需总高度。
+    /// 折行试算 + 居中布局：`apply = true` 时同时写 frame。返回所需总高度。
+    /// DSH-097：每行累计可见子视图宽度 → 行末用 (width - lineWidth) / 2 当 lineXOffset，
+    /// 整行 view 加上 lineXOffset 实现居中（与 Android FlowLayout.onLayout 中的 rowXCenter 同语义）。
     private func measure(width: CGFloat, apply: Bool) -> CGFloat {
         var x: CGFloat = 0
         var y: CGFloat = 0
         var lineHeight: CGFloat = 0
+        var lineWidth: CGFloat = 0          // 当前行已用宽度（含 horizontalSpacing）
+        var lineRow: [(view: UIView, xInLine: CGFloat, width: CGFloat)] = []  // 待居中的本行视图
         var totalHeight: CGFloat = 0
         for view in subviews where !view.isHidden {
             let w = max(min(view.intrinsicContentSize.width, width), 1)
+            // 换行：先结算上一行 lineXOffset，再开新行
             if x > 0, x + horizontalSpacing + w > width {
+                if apply {
+                    let lineXOffset = max((width - (lineWidth - horizontalSpacing)) / 2, 0)
+                    for item in lineRow {
+                        item.view.frame = CGRect(x: lineXOffset + item.xInLine,
+                                                 y: y,
+                                                 width: item.width,
+                                                 height: rowHeight)
+                    }
+                }
                 totalHeight += lineHeight + verticalSpacing
                 x = 0
                 y = totalHeight
                 lineHeight = 0
+                lineWidth = 0
+                lineRow.removeAll(keepingCapacity: true)
             }
-            if apply { view.frame = CGRect(x: x, y: y, width: w, height: rowHeight) }
+            if apply {
+                lineRow.append((view, x, w))
+            }
             x += w + horizontalSpacing
+            lineWidth += w + horizontalSpacing
             lineHeight = max(lineHeight, rowHeight)
+        }
+        // 末行同样要居中
+        if apply, !lineRow.isEmpty {
+            let lineXOffset = max((width - (lineWidth - horizontalSpacing)) / 2, 0)
+            for item in lineRow {
+                item.view.frame = CGRect(x: lineXOffset + item.xInLine,
+                                         y: y,
+                                         width: item.width,
+                                         height: rowHeight)
+            }
         }
         return totalHeight + lineHeight
     }
@@ -2127,9 +2166,10 @@ private final class WorkCell: UICollectionViewCell {
     }
 
     private func configureResetButton() {
+        // DSH-097：撤销 DSH-096 高对比（橙底橙字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
         resetButton.setTitle("重置", for: .normal)
-        resetButton.setTitleColor(UIColor(red: 0.85, green: 0.55, blue: 0.1, alpha: 1), for: .normal)
-        resetButton.backgroundColor = UIColor(red: 1, green: 0.96, blue: 0.88, alpha: 1)
+        resetButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
+        resetButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
         resetButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         resetButton.layer.cornerRadius = 8
         resetButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -2138,9 +2178,10 @@ private final class WorkCell: UICollectionViewCell {
     }
 
     private func configureDeleteButton() {
+        // DSH-097：撤销 DSH-096 高对比（红底红字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
         deleteButton.setTitle("删除", for: .normal)
-        deleteButton.setTitleColor(UIColor(red: 0.8, green: 0.25, blue: 0.25, alpha: 1), for: .normal)
-        deleteButton.backgroundColor = UIColor(red: 1, green: 0.92, blue: 0.92, alpha: 1)
+        deleteButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
+        deleteButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
         deleteButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         deleteButton.layer.cornerRadius = 8
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -2148,8 +2189,9 @@ private final class WorkCell: UICollectionViewCell {
         deleteButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
     }
 
-    /// 与 Android 的「复制路径」按钮同色系（拟态灰底灰字），紧跟「删除」之后。
+    /// 与 Android 的「重置/删除/复制路径」行动行同色系（拟态灰底灰字）。
     private func configureCopyPathButton() {
+        // DSH-097：保持浅灰（与重置/删除同色），与 Android 行动行三件套统一。
         copyPathButton.setTitle("复制路径", for: .normal)
         copyPathButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
         copyPathButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)

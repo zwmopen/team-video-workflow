@@ -415,13 +415,18 @@ public final class MainActivity extends Activity {
         scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
         scannedCountText.setVisibility(View.GONE);
         modeButton = iconButton(R.drawable.ic_file_folder, "切换到文件浏览");
+        // DSH-097：folderItem 双模式分发 —— 本地模式 toggle fileMode（与历史一致），
+        // 在线模式直接调 showTrash() 跳到回收站（与 iOS ContentView.openFiles 模式分流对齐）。
         modeButton.setOnClickListener(v -> {
-            if (fileMode) showWorksMode();
-            else showFileMode();
+            if (isOnlineMode) {
+                showTrash();
+            } else if (fileMode) {
+                showWorksMode();
+            } else {
+                showFileMode();
+            }
         });
-        if (isOnlineMode) {
-            modeButton.setVisibility(View.GONE);
-        }
+        // DSH-097：folderItem 双模式可见 —— 删 isOnlineMode 隐藏，与 iOS folderItem.isHidden = false 对齐。
         titleRow.addView(modeButton, iconParams(false));
         titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
         ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");

@@ -1,5 +1,71 @@
 # 变更记录
 
+## Android 0.8.52 / 163 - 2026-09-24 - DSH-097 同步：Android `modeButton` 双模式可见 + 行为分流
+
+> **用户口径**（与 iOS 一致）：「至于那个文件夹按钮，我说的在线模式也可以留……要是本地文件分发也需要那就一起」+「确定统一2的，那就安卓苹果一起升级一起改」。
+> **我的反思**：Android `MainActivity.java` 的 `modeButton`（图标 `ic_file_folder`，line 417）原本在 `isOnlineMode` 时直接 `setVisibility(View.GONE)`，与 iOS `folderItem.isHidden = isOnlineMode` 是同一处破缺对称的入口砍掉。DSH-097 在 iOS 已把 `folderItem` 改成"双模式可见 + openFiles 模式分发"，Android 端必须同步。
+
+- **① Android `modeButton` 双模式可见**（`MainActivity.java:417-425`）：
+  - 删 `if (isOnlineMode) { modeButton.setVisibility(View.GONE); }`（与 iOS `folderItem.isHidden = false` 对齐）
+  - 删完后 `titleRow.addView(modeButton, iconParams(false))` 始终执行
+- **② Android `modeButton.setOnClickListener` 模式分发**（`MainActivity.java:418-428`）：
+  - 在线模式：调 `showTrash()`（跳到 DSH-095 统一回收站入口 = `_已发送1次 + _垃圾作品`）
+  - 本地模式 + fileMode：调 `showWorksMode()`（原有行为）
+  - 本地模式 + !fileMode：调 `showFileMode()`（原有行为）
+  - 与 iOS `openFiles` `if isOnlineMode { openTrash(); return }` 语义对齐
+- **③ Android 尺寸/颜色已对齐**（`MainActivity.java:2510-2518` `iconButton` 工厂 + `:2520-2524` `iconParams`）：
+  - 42dp × 42dp（与 iOS 38pt 视觉对齐，< 1dp 差）
+  - cornerRadius 21（半圆）
+  - 浅绿 `RGB(226,244,236)` + 深绿 `RGB(15,135,88)`
+  - 顶部按钮顺序已对齐 iOS：folder → title → plane（传送）→ sourceModeButton（切换）→ leftModeButton（刷新）→ rightModeButton（回收站）→ settings（设置）
+- **④ 版本号**：Android `0.8.51/162` → **`0.8.52/163`**（改客户端代码必须升版本号）
+- **⑤ 闸门**：`tests/parity_ios_android.py` 由 27 项**不扩**（C22/C23/C24 是 iOS-only 源码判据，Android 改动已在既有判据范围内 — 验 `updateSourceModeButtonStyle` 双态颜色 + `showTrash` 入口已存在）
+- **⑥ 本地校验**：`parity_ios_android.py`：**27/27 PASS**（保持）
+- ⚠️ **待真机验证**（`adb` + 红米 0.8.51 已发版可滚动抓 dump）：
+  - 顶部左文件夹按钮在两种模式都可见
+  - 顶右 5 按钮（传送 / 切换 / 刷新 / 回收站 / 设置）顺序与 iOS 一致
+  - 在线模式点文件夹 → 应跳到 `showTrash` 屏幕（_已发送1次 + _垃圾作品）
+  - 本地模式点文件夹 → 仍 toggle fileMode（文件浏览 ↔ 作品分享）
+
+## iOS 0.8.37 / 109 - 2026-09-24 - DSH-097：iOS 主界面 toolbar 38pt 半圆浅绿统一 + folderItem 双模式分发
+
+> **用户原话**：「顶部最左侧好像还差个文件夹按钮」+「无论本地还是在线都要有这个 界面啊这些个按钮，分类具体看本地现在已有的」+「为何你画的顶部要做作品集和在线相册几个（选 A：都不要）」
+> **我的反思**：之前 `toolbarButton` 34pt + `cornerRadius = 11` + `tintColor.withAlphaComponent(0.11)`（颜色不固定、深浅随系统 tint 变）跟 Android `ImageButton` 42dp 半圆浅绿 RGB(226,244,236) 视觉差异大；之前 `folderItem` 在线模式直接 `isHidden = isOnlineMode` 把入口砍了，违背「本地/在线 1:1 对称」需求。合并成 DSH-097。
+> **设计稿**：左文件夹 + 右 5 按钮（传送 / 切换 / 刷新 / 回收站 / 设置） + 分类滚动条 + 预览卡片 + 11 按钮 + 重置/删除/复制路径；两种模式除 `modeButton` 颜色（本地浅绿 / 在线浅蓝）外完全对称。标题栏留空（与代码 `navigationItem.titleView = nil` / `headingText.setText("")` 一致）。
+
+- **① iOS `toolbarButton` / `toolbarItem` 升级 38pt 半圆浅绿**（`ios/Album/ContentView.swift:169-184, 257-273`）：
+  - 尺寸 34pt → **38pt**（与 Android ImageButton 42dp 视觉对齐，< 1pt 差）
+  - 圆角 11 → **19**（半圆）
+  - 背景 `tintColor.withAlphaComponent(0.11)` → **`RGB(226,244,236)`** 浅绿实色
+  - 图标 `tintColor` → **`RGB(15,135,88)`** 深绿
+- **② iOS `folderItem` 双模式可见**（`ContentView.swift:164-168`）：
+  - `folderItem?.customView?.isHidden = isOnlineMode` → **`isHidden = false`**（两种模式都可见）
+  - `accessibilityLabel` 按 `isOnlineMode` 分流（在线=回收站 / 本地=本地文件浏览）
+- **③ iOS `openFiles` 模式分发**（`ContentView.swift:1212-1218`）：
+  - 在线模式：调 `openTrash()`（复用 DSH-095 的统一回收站入口 = `_已发送1次 + _垃圾作品`）
+  - 本地模式：保持原有 `LibraryFilesViewController` 入口
+- **④ iOS 撤销 DSH-096 高对比**（`ContentView.swift:2140-2171`）：
+  - `resetButton`：橙底橙字 `RGB(0.85,0.55,0.1)` + `RGB(1,0.96,0.88)` → **浅灰** `RGB(0.32,0.36,0.34)` + `RGB(0.93,0.94,0.93)`
+  - `deleteButton`：红底红字 `RGB(0.8,0.25,0.25)` + `RGB(1,0.92,0.92)` → **浅灰** 同上
+  - `copyPathButton`：原本就浅灰，现在三个按钮统一（与 Android 行动行三件套同款）
+- **⑤ iOS `PlatformFlowView` 居中布局**（`ContentView.swift:1665-1730`）：
+  - `measure(width:apply:)` 重写：每行累计 `xInLine` + 末行结算 `lineXOffset = max((width - (lineWidth - horizontalSpacing)) / 2, 0)`
+  - 行末 + 末行统一 `apply`：每个 view 的 `frame.x = lineXOffset + item.xInLine`
+  - 与 Android `FlowLayout.onLayout` 的 `rowXCenter` 同语义（行级居中）
+- **⑥ 版本号**：iOS `0.8.36/108` → **`0.8.37/109`**（改客户端代码必须升版本号）
+- **⑦ 闸门**：`tests/parity_ios_android.py` 由 24 项扩到 **27 项**（新增 C22 + C23 + C24）
+  - **C22**：iOS `widthAnchor.constraint(equalToConstant: 38)` + `layer.cornerRadius = 19` + `red: 226/255, green: 244/255, blue: 236/255` 浅绿背景 + `red: 15/255, green: 135/255, blue: 88/255` 深绿图标，且浅绿字符串出现次数 ≥ 2（=`toolbarButton` + `toolbarItem` 都改）
+  - **C23**：`lineXOffset` + `lineRow` + `xInLine` 三变量齐全 + `lineXOffset + item.xInLine` 应用 + 旧式左对齐 `view.frame = CGRect(x: x,` 已删
+  - **C24**：`folderItem?.customView?.isHidden = false` + 旧 `isHidden = isOnlineMode` 已删 + `openFiles` 内 `if isOnlineMode {\n            openTrash()\n            return` 模式分发 + `LibraryFilesViewController(rootURL: root, currentURL: root)` 入口保留
+- **⑧ 本地校验**：`parity_ios_android.py`：**27/27 PASS**（24 旧 + 3 新）
+- ⚠️ **待真机验证**（iPhone `dvt screenshot` 无 tap 能力 + WDA 不可用，必须装机手动点）：
+  - 顶部左文件夹按钮在两种模式都可见
+  - 顶部右 5 按钮（传送 / 切换 / 刷新 / 回收站 / 设置）都是 38pt 半圆浅绿
+  - 切换按钮：本地模式浅绿+手机图标 / 在线模式浅蓝+电脑图标
+  - 11 个版本按钮（数字爆款 / 分天动线 / 三箭头体 / 杂志长条 / 时间轴体 / 红书种草 / 红书大纲 / 货架明细 / 包院私享 / 案例背书 / 抖音无营销）**居中**布局（不再左对齐）
+  - 重置 / 删除 / 复制路径三个按钮统一浅灰（不再有橙红高对比）
+  - folderItem 本地模式 → `LibraryFilesViewController`，在线模式 → `TrashView`
+
 ## iOS 0.8.36 / 108 - 2026-09-23 - DSH-095 v2（iOS HIG native 重做）：TrashView 走 navigationItem.titleView + rightBarButtonItems（DSH-095 v1 的 tableHeaderView 装 UIStackView 是 Android inline header 的硬搬，iOS HIG 不这么做）
 
 > **用户原话**：「iOS 的回收站太不符合直觉了你就不能参照安卓开发吗」

@@ -4,7 +4,82 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-095 v2**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-097**。
+
+## DSH-097 Android 同步发版（Android 0.8.52/163，2026-09-24 同步 iOS 修复）
+
+> **用户口径**：「安卓苹果一起升级一起改」「要是本地文件分发也需要那就一起」。
+> **同步目标**：与 iOS `folderItem` 双模式可见 + `openFiles` 模式分发对齐；Android 端 `modeButton`（图标 `ic_file_folder`，`MainActivity.java:417`）原本在 `isOnlineMode` 时直接 `setVisibility(View.GONE)`，是同一处破缺对称的入口砍掉。
+
+**现象**：Android 主界面顶部文件夹按钮在在线模式不可见（破缺 1:1 对称），iOS `folderItem` 也有同样问题（DSH-097 iOS 已修）。
+
+**根因**：两端都按"在线模式不需要本地文件入口"的过度简化——但用户的真实需求是"本地/在线都要有这个界面"（modeButton 是统一入口，行为按模式分发）。
+
+**修复**（Android 0.8.52/163）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `MainActivity.java:417-425` modeButton | 删 `if (isOnlineMode) { modeButton.setVisibility(View.GONE); }` |
+| 2 | `MainActivity.java:418-428` modeButton.setOnClickListener | 加 `if (isOnlineMode) { showTrash(); }` 首行分支（与 iOS `openFiles` 模式分流对齐）|
+
+**无需改动**（已对齐 iOS）：
+- `MainActivity.java:2510-2518` `iconButton` 工厂函数（42dp + 浅绿 RGB(226,244,236) + 深绿 RGB(15,135,88) + cornerRadius 21）
+- `MainActivity.java:2520-2524` `iconParams` 函数（42dp 宽高 + 3dp left margin）
+- 顶部按钮顺序（folder → title → transfer → sourceModeButton → leftModeButton → rightModeButton → settings）
+
+**证据**：
+- 跑：`parity_ios_android.py`：**27/27 PASS**（保持，C22/C23/C24 是 iOS-only 源码判据）
+- Android 编译：CI `gradle build` 唯一闸门
+
+**回归要求**（**`adb` + uiautomator dump 可验证**）：
+1. 红米安装 0.8.52/163 → 在线模式 → 顶部左文件夹按钮**可见**（不再是 GONE）
+2. 在线模式点文件夹 → 跳到 `showTrash` 屏幕（_已发送1次 + _垃圾作品）
+3. 本地模式点文件夹 → 仍 toggle fileMode（文件浏览 ↔ 作品分享）
+
+---
+
+## DSH-097 iOS 主界面 toolbar 38pt 半圆浅绿 + folderItem 双模式分发（iOS 0.8.37/109，2026-09-24 修复）
+
+> **用户反馈**：
+> - 「顶部最左侧好像还差个文件夹按钮」→ iOS `folderItem` 在线模式 `isHidden` 把入口砍了，对称性破缺
+> - 「无论本地还是在线都要有这个 界面啊这些个按钮，分类具体看本地现在已有的」→ 强调本地/在线 1:1 对称
+> - 「为何你画的顶部要做作品集和在线相册几个」→ 用户否决了我凭空加的"作品集/在线相册"标题（其实两端 `navigationItem.titleView = nil` / `headingText.setText("")` 都是空的）
+>
+> **我的反思**：① 之前 `toolbarButton` 34pt + `cornerRadius = 11` + `tintColor.withAlphaComponent(0.11)` 颜色不固定（深浅随系统 tint 变），跟 Android `ImageButton` 42dp 半圆浅绿 `RGB(226,244,236)` 视觉差异大；② `folderItem` 直接 `isHidden = isOnlineMode` 把在线模式的入口砍了；③ DSH-096 给重置/删除按钮加了橙/红高对比色，跟 Android 行动行浅灰不统一。三件事合并成 DSH-097。
+
+**现象**：iOS 主界面 toolbarButton 视觉与 Android ImageButton 不一致（34pt vs 42dp、圆角 11 vs 19pt、颜色 tintColor.0.11 跟主题色变 vs 固定 RGB(226,244,236)）；在线模式点击不到 folderItem（直接隐藏）；重置/删除按钮颜色跟 Android 行动行不一样（橙红 vs 浅灰）；11 按钮居中问题未做（DSH-096 的 `navTitleLabel` + `modeSegmented` + `PlatformFlowView` 居中算法已回退）。
+
+**根因**：toolbarButton 与 Android ImageButton 是两份独立设计，没显式对齐（注释"对齐"但不写死 RGB 值）。folderItem 在线模式按"在线相册看电脑端成品列表就够"的过度简化。PlatformFlowView 的居中算法被 DSH-095 v2 一并回退（用户不要 iOS 分段控件）。
+
+**修复**（iOS 0.8.37/109，**Android 同步发版见 #313~#316**）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `ContentView.swift:169-184` toolbarButton | 38pt + cornerRadius 19 + RGB(226,244,236) 浅绿背景 + RGB(15,135,88) 深绿图标 |
+| 2 | `ContentView.swift:257-273` toolbarItem | 同 #1 贴 |
+| 3 | `ContentView.swift:164-168` updateFolderItemVisibility | `isHidden = isOnlineMode` → `isHidden = false` + accessibilityLabel 模式分流 |
+| 4 | `ContentView.swift:1212-1218` openFiles | 加 `if isOnlineMode { openTrash(); return }`（在线模式复用 DSH-095 统一入口）|
+| 5 | `ContentView.swift:2140-2157` configureResetButton / DeleteButton | 撤销 DSH-096 橙红高对比 → 浅灰 RGB(0.32,0.36,0.34) + RGB(0.93,0.94,0.93) |
+| 6 | `ContentView.swift:2161-2171` configureCopyPathButton | 保持浅灰（与 #5 统一）|
+| 7 | `ContentView.swift:1665-1730` PlatformFlowView.measure | 重写居中算法：lineRow tuple + lineXOffset 末行结算 |
+
+**证据**：
+- 闸门 `tests/parity_ios_android.py` 由 24 项扩到 **27 项**（新增 C22 + C23 + C24）：
+  - **C22**：iOS `widthAnchor.constraint(equalToConstant: 38)` + `layer.cornerRadius = 19` + `red: 226/255, green: 244/255, blue: 236/255` 浅绿背景 + `red: 15/255, green: 135/255, blue: 88/255` 深绿图标，且浅绿字符串出现次数 ≥ 2（=`toolbarButton` + `toolbarItem` 都改）
+  - **C23**：`lineXOffset` + `lineRow` + `xInLine` 三变量齐全 + `lineXOffset + item.xInLine` 应用 + 旧式左对齐 `view.frame = CGRect(x: x,` 已删
+  - **C24**：`folderItem?.customView?.isHidden = false` + 旧 `isHidden = isOnlineMode` 已删 + `openFiles` 内 `if isOnlineMode {\n            openTrash()\n            return` 模式分发 + `LibraryFilesViewController(rootURL: root, currentURL: root)` 入口保留
+- 跑：**27/27 PASS**（24 旧 + 3 新）
+- iOS 编译：CI `xcodebuild` 唯一闸门
+
+**回归要求**（**用户需手动点，pymobiledevice3 `dvt` 无 tap**）：
+1. iPhone 打开相册 App（0.8.37/109 待装）→ 本地模式 → 验：顶部左文件夹按钮可见 / 顶右 5 按钮 38pt 半圆浅绿 / 切换按钮本地浅绿+手机 / 11 按钮居中 / 重置/删除/复制路径三件套浅灰
+2. 切到在线模式 → 验：文件夹按钮**仍可见**（不再隐藏）/ 切换按钮变浅蓝+电脑 / 顶右 5 按钮全浅蓝 / 11 按钮仍居中
+3. 在线模式点文件夹 → 应跳到 `TrashView`（DSH-095 统一入口：_已发送1次 + _垃圾作品）
+4. 本地模式点文件夹 → 应跳到 `LibraryFilesViewController`（本地文件浏览）
+
+**Android 同步发版**：见 #313~#316（modeButton 双模式可见 + 顶部按钮顺序对齐 iOS + 38dp 半圆浅绿统一）
+
+---
 
 ## DSH-095 v2 iOS HIG native 重做（iOS 0.8.36/108，2026-09-23 修复）
 

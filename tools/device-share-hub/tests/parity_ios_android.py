@@ -19,6 +19,10 @@
 2026-09-23 DSH-095 v2 追加（iOS HIG native 重做，回应用户「太不符合直觉」）：
   C18 iOS TrashView 用 navigationItem.titleView + rightBarButtonItems（不再用 tableHeaderView 装 UIStackView）
   A5  Android 仍走 showTrash 同一屏（与 v2 行为对齐 —— v1+ v2 两端行为一致）
+2026-09-24 DSH-097 追加（iOS / Android 双端主界面 toolbar 38pt 半圆浅绿统一 + folderItem 双模式分发）：
+  C22 iOS toolbarButton / toolbarItem 38pt 半圆浅绿（与 Android ImageButton 42dp 视觉对齐）
+  C23 iOS PlatformFlowView 居中布局（lineXOffset 算法，每行累计 + 末行结算 = Android rowXCenter）
+  C24 iOS folderItem 双模式可见 + openFiles 模式分发（本地→LibraryFilesViewController / 在线→openTrash）
 
 纪律：改实现**之前**必须先看到对应项 FAIL，改完必须 PASS。
 退出码 0 = 全通过；1 = 有未达标项。
@@ -332,6 +336,49 @@ def main():
         a5_no_branch and a5_trash_only,
         "v2 没动 Android 路径；no_branch=%s trash_only=%s"
         % (a5_no_branch, a5_trash_only)))
+
+    # ---- DSH-097：iOS / Android 主界面 toolbar 38pt 半圆浅绿 + folderItem 双模式 ----
+    # 顶端按钮颜色 / 形变对等：iOS 38pt + cornerRadius 19 + 浅绿 RGB(226,244,236) + 深绿图标 RGB(15,135,88)；
+    # 这套跟 Android ImageButton 42dp 视觉对齐（size 像素差 < 1pt，宽屏自适应后基本无差异）。
+
+    # C22 iOS toolbarButton / toolbarItem 38pt 半圆浅绿（与 Android ImageButton 42dp 视觉对齐）。
+    # 改前实测：34pt + cornerRadius 11 + `tintColor.withAlphaComponent(0.11)`（颜色不全、不固定 RGB）。
+    c22_size = "widthAnchor.constraint(equalToConstant: 38)" in cv \
+        and "heightAnchor.constraint(equalToConstant: 38)" in cv
+    c22_corner = "layer.cornerRadius = 19" in cv
+    c22_bg = "red: 226/255, green: 244/255, blue: 236/255" in cv
+    c22_icon = "red: 15/255, green: 135/255, blue: 88/255" in cv
+    c22_btn_count = cv.count("red: 226/255, green: 244/255, blue: 236/255")
+    results.append(check(
+        "C22 iOS toolbarButton/toolbarItem 38pt 半圆浅绿",
+        c22_size and c22_corner and c22_bg and c22_icon and c22_btn_count >= 2,
+        "38pt=%s 圆角19pt=%s 浅绿RGB=%s 深绿图标=%s 出现次数=%d"
+        % (c22_size, c22_corner, c22_bg, c22_icon, c22_btn_count)))
+
+    # C23 iOS PlatformFlowView 居中布局（lineXOffset 算法）。
+    # 改前实测：measure 直接 `view.frame = CGRect(x: x, ...)`，整行从左边起；多行时左对齐看着散。
+    # 改后：每行累计 xInLine + 末行结算 `lineXOffset = (width - lineWidth) / 2`。
+    c23_var = "lineXOffset" in cv and "lineRow" in cv and "xInLine" in cv
+    c23_apply = "lineXOffset + item.xInLine" in cv
+    c23_no_naive = "view.frame = CGRect(x: x" not in cv  # 旧式左对齐不应再存在
+    results.append(check(
+        "C23 iOS PlatformFlowView 居中布局（lineXOffset）",
+        c23_var and c23_apply and c23_no_naive,
+        "变量齐全=%s 行内应用=%s 旧左对齐已删=%s"
+        % (c23_var, c23_apply, c23_no_naive)))
+
+    # C24 iOS folderItem 双模式可见 + openFiles 模式分发。
+    # 改前实测：`folderItem?.customView?.isHidden = isOnlineMode` + openFiles 无模式分发。
+    # 改后：`isHidden = false` + openFiles 首行 `if isOnlineMode { openTrash(); return }`。
+    c24_no_hide = "folderItem?.customView?.isHidden = false" in cv \
+        and "isHidden = isOnlineMode" not in cv
+    c24_mode_branch = "if isOnlineMode {\n            openTrash()\n            return" in cv
+    c24_library = "LibraryFilesViewController(rootURL: root, currentURL: root)" in cv
+    results.append(check(
+        "C24 iOS folderItem 双模式可见 + openFiles 模式分发",
+        c24_no_hide and c24_mode_branch and c24_library,
+        "不隐藏=%s openFiles模式分发=%s LibraryFiles入口保留=%s"
+        % (c24_no_hide, c24_mode_branch, c24_library)))
 
     print()
     bad = results.count(False)
