@@ -400,6 +400,15 @@ def main():
         "id 参数=%s get_work=%s path+bn join=%s basename=%s"
         % (c25_id_param, c25_get_work, c25_path_join, c25_basename)))
 
+    # C26 DSH-104：在线相册分类下，已用过的作品（useCount > 0）必须置顶。
+    c26_sort = re.search(
+        r'filtered\.sort\(\s*key\s*=\s*lambda\s+w:\s*-int\(w\.get\("useCount"\s*,\s*0\)\s*or\s*0\)\)',
+        server_src) is not None
+    results.append(check(
+        "C26 服务端 DSH-104 分类下 useCount>0 作品置顶（按 useCount desc 排序）",
+        c26_sort,
+        "sort by useCount desc=%s" % c26_sort))
+
     print()
     bad = results.count(False)
     if bad:

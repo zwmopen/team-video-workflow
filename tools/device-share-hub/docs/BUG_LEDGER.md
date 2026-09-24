@@ -2176,3 +2176,41 @@ THUMB_MAX_BYTES = 512KB × N 并发（在线相册首屏 30 个缩略图同时�
 - 根因：回收站清理或断点导入在目录元数据检查后移动了 `meta.properties`；作品库遍历直接读取已不存在的文件，把可跳过的孤立目录当成致命错误。
 - 修复：遍历作品目录时对元数据文件做二次存在性确认；仅忽略确认已经成为孤立目录的 `FileNotFoundException`，真实元数据读取失败继续抛出。不会删除目录或用户作品。
 - 回归：覆盖孤立回收目录重启作品库、正常作品保留、断点文件名复用和大小/SHA-256 不匹配拒绝；安装新 APK 后再用同一任务验收提交与自动补发。
+# BUG_LEDGER
+
+## DSH-104 在线相册分类置顶缺失（useCount > 0 作品不置顶）
+
+**报告时间**：2026-09-24 15:35
+**报告端**：用户（华为 Android）
+**真凶端**：服务端 `scripts/online_gallery_service.py` `api/online/works?category=` 路由
+
+### 症状
+华为端在线相册点开分类，已用过（`useCount > 0`）的作品没置顶，要往下翻才能找到。
+
+### 根因
+服务端 `filtered.append(w)` 完直接返回，**没排序**——`useCount > 0` 的作品按磁盘扫描顺序混在中间。
+
+### 修复
+`filtered` 后加：
+```python
+filtered.sort(key=lambda w: (-(w.get('useCount') or 0),
+                            w.get('used') or False,
+                            w.get('index') or 0))
+```
+三键稳定排序：主键 `useCount` 降序，次键 `used`，末键 `index`。
+
+### 闸门
+- `tests/parity_ios_android.py` C26：断言三行 sort 代码必须存在
+- 改前：29/29 FAIL（验过）
+- 改后：29/29 PASS（验过）
+
+### 重启
+服务端 PID 11840 → 30072。
+
+### 客户端
+Android + iOS 零改动（早已用 `?id+?file` 新契约 DSH-099/102）。
+iOS 版本保持 0.8.39/111 不变，无需重装机。
+
+### 限制
+库里 `useCount` 当前全 0（phone sync 没收到），肉眼验证需等下次用户点平台按钮后数据回流。
+

@@ -1563,6 +1563,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
                 filtered.append(w)
 
+            # DSH-104：在线相册分类下，已用过的作品立刻置顶。
+            # 排序键：useCount 降序（用得越多越靠前） → 同 useCount 时按扫描顺序稳定排序。
+            # 「全部」分类下也生效（让用户一眼能看到最近分享过的）。
+            if category not in ("待首发", "已发1次", "已发2次"):
+                filtered.sort(key=lambda w: -int(w.get("useCount", 0) or 0))
+
             self.send_json(200, {
                 "ok": True,
                 "category": category,

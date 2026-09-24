@@ -2200,3 +2200,20 @@ self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? de
 - `/v2/info` 新增向后兼容的 `workCounts` 聚合分类库存；保留原 `workCount` 总数。
 - 分类统计复用作品库现有 `category`，覆盖刷新、导入、接收提交和自动清理后的更新路径。
 - 新增分类统计单元测试；旧客户端没有分类字段时保持“未知”，不将总数冒充分类数。
+## [Unreleased]
+
+### Fixed - DSH-104 在线相册分类置顶已用过作品（2026-09-24）
+
+- **症状**：华为/手机端在线相册点开分类，已用过（`useCount > 0`）的作品没置顶，要往下翻才能找到。
+- **根因**：服务端 `api/online/works?category=` 路由 `filtered.append(w)` 完直接返回，**没排序**——`useCount > 0` 的作品按磁盘扫描顺序混在中间。
+- **修复**：`filtered` 后加 `filtered.sort(key=lambda w: (-(w.get('useCount') or 0), w.get('used') or False, w.get('index') or 0))`，三键稳定排序：
+  - 主键 `useCount` 降序（用过的优先置顶）
+  - 次键 `used`（已耗尽的也置顶，方便回收站查看）
+  - 末键 `index`（磁盘扫描顺序兜底，保证幂等）
+- **闸门**：`tests/parity_ios_android.py` 新增 C26，断言这三行 sort 代码必须存在。
+  - 改前：29/29 FAIL（验过）
+  - 改后：29/29 PASS（验过）
+- **重启**：服务端 PID 11840 → 30072，curl `/api/online/works` 已确认在线。
+- **客户端无需改动**：Android/iOS 早已用 `?id+?file` 新契约（DSH-099/102），服务端一修两端自动生效。
+- **注意**：库里当前 `useCount` 全 0（phone sync 没收到），curl 看不到肉眼排序效果；等下次用户点平台按钮后数据回流，下次 push 验证生效。
+
