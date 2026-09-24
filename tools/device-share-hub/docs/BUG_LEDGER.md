@@ -2363,3 +2363,67 @@ Android 零改动。
 ### 版本
 - **Android 升 0.8.57/168 → 0.8.58/169**。
 - iOS 零改动。
+
+## DSH-110 — 在线相册一键启动 + 永远在线 + 文件监听自动刷新（2026-09-25）
+
+**用户诉求**:
+1. 「怎么样才能用上在线相册？有一键启动方式吗？是点击桌面上的『文件分发』应用吗？还是怎么的？」
+2. 「你认为如何才算合理？应该要怎么做才能保存那个在线相册，让它一直在线？」
+3. 「新增的作品，无论是手动移动文件夹进去，还是添加什么东西，手机端都能自动刷新，那边就能看到最新的。」
+
+**调研结论**:
+- Android 桌面 app 名为「相册」（不是「文件分发」），iOS 为「Album」。
+- 桌面「文件分发工作台（稳定版/测试版）」= 工作台 Electron app，**不是**相册入口。
+- 服务端只有 `start_online_gallery_service.ps1` 手动启动，**无开机自启**。
+- 服务端无文件监听，**手机端不点刷新看不到新文件**。
+- 桌面**无**「在线相册」快捷方式入口。
+
+**3 件套一并交付**：
+
+### A. 桌面一键启动入口（DSH-110 已部署到 `C:\Users\z\Desktop\`）
+- `在线相册.lnk`：双击 → 启动服务（pythonw.exe 无黑框）。
+- `在线相册-状态.lnk`：双击 → 健康检查（IP / 端口 / 总作品数 / 文件监听状态 🟢🟡❌）。
+- `在线相册-开机自启.lnk`：双击 → 注册 Windows 启动文件夹开机自启。
+- 创建脚本：`scripts/create-desktop-shortcuts.py`（系统 Python 3.11 + pywin32）。
+- 3 个 .cmd：`online_gallery.cmd` / `online_gallery-status.cmd` / `online_gallery-autostart.cmd`（去 emoji 让 COM 兼容）。
+- **踩坑**：emoji 在桌面 .lnk 名 + emoji 在 .cmd 文件名都会让 `WScript.Shell.Save()` 报 `0x80070057` 参数错误，必须用纯 ASCII/中文。
+
+### B. 开机自启（`scripts/install-autostart.ps1`）
+- 在 Windows「启动」文件夹（`shell:startup`）创建 `DSH-OnlineGallery-AutoStart.lnk`。
+- PowerShell `-WindowStyle Hidden` 跑 `restart_online_gallery.ps1`（无黑框）。
+- 优点：零第三方依赖（NSSM 不用），NT 内核权限不用，用户态 pythonw.exe 足够。
+- 卸载：`install-autostart.ps1 -Uninstall`。
+
+### C. 服务端文件监听 watchdog（`scripts/online_gallery_service.py`）
+- **设计**：stdlib 轮询（无 watchdog 第三方依赖），60 秒/次对比 (path, mtime) 集合。
+- `WorkScanner` 新增：
+  - `_walk_root_paths()`：遍历 `DEFAULT_LIBRARY_ROOT` 下 (path, mtime)，跳过 `._` 开头。
+  - `_poll_diff()`：diff prev vs curr，新增 / 删除 / mtime 变化 → `scan(force=True)`。
+  - `_start_watchdog_loop()`：daemon 线程，60s/次，stop event 优雅退出。
+  - `watchdog_status()`：暴露 active / intervalSec / lastPollAt / lastChangeAt / trackedPaths。
+- `/api/online/status` 响应新增 `watchdog` 字段（手机端 statusText badge 用）。
+- **修复老 bug**：`scan()` 之前没 `return results`，调用方 `len(scanner.scan(force=True))` 实际拿到 None（只是之前没人 print 出错就过去了）。DSH-110 修复时顺手补上。
+
+### 闸门 A10（7 项硬判据，DSH-110）
+- 改前 1/34 FAIL（验过：watchdogMethods 强制 False）
+- 改后 34/34 PASS（验过）
+
+### 单元测试 + 真实启动验证
+```
+## 单元测试（临时目录）
+初次 paths=3
+[DSH-110 watchdog] 检测到变更 → force scan: +0 / -0 / ~1   # 新增文件
+新增后 _poll_diff → result=True
+[DSH-110 watchdog] 检测到变更 → force scan: +0 / -0 / ~1   # 删除文件
+删除后 _poll_diff → result=True
+无变化 _poll_diff → result=False   # 不变不触发（稳）
+
+## 真实启动（端口 45836）
+watchdog.active = True
+watchdog.intervalSec = 60.0
+watchdog.rootDir = D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）
+totalWorks = 472
+```
+
+### 版本
+- 服务端无版本号概念，**Android / iOS 客户端零改动，不升版本号**。

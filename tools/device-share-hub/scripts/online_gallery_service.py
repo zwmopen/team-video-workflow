@@ -59,7 +59,7 @@ import subprocess
 from io import BytesIO
 from collections import OrderedDict
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Set
 
 try:
     from PIL import Image
@@ -786,6 +786,18 @@ class WorkScanner:
         self._stage_cache: Dict[str, Any] = {}
         # 「文件名 -> 绝对路径」索引：兼容 iOS 旧契约 /api/online/image?path=<文件名>
         self._image_name_index: Optional[Dict[str, str]] = None
+        # DSH-110：文件系统监听（轮询版，无第三方依赖）
+        # - _watchdog_paths：上次轮询记录到的 (路径, mtime) 集合
+        # - _watchdog_thread：daemon 线程，每 60 秒跑一次 _poll_diff()
+        # - _watchdog_active：线程是否在跑（暴露给 /api/online/status）
+        # - _watchdog_last_poll / _watchdog_last_change：状态字段
+        self._watchdog_paths: Set[Tuple[str, float]] = set()
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._watchdog_active = False
+        self._watchdog_last_poll: float = 0.0
+        self._watchdog_last_change: float = 0.0
+        self._watchdog_interval = 60.0
+        self._watchdog_stop = threading.Event()
 
     def _iter_work_dirs(self, base: str):
         """遍历某个阶段库下的作品目录，兼容「作品集_xxx[转]」这类中间层。
@@ -1054,6 +1066,158 @@ class WorkScanner:
             self._works_by_id = {w["id"]: w for w in results}
             self._last_scan_time = now
             return results
+
+    # ==================== DSH-110：文件系统轮询监听 ====================
+    # 用 stdlib os.scandir + mtime 对比实现，无第三方依赖。
+    # 每 60 秒扫描一遍 self.root 下的 (path, mtime)，发现新增/删除/变更 → 触发 scan(force=True)
+    # 这样 GPT API 实时产出的作品图只要落到 DEFAULT_LIBRARY_ROOT 下，
+    # 最迟 60 秒内会被服务端扫到，手机端下次拉列表（refresh=1 或自动重扫）即看到最新。
+
+    def _walk_root_paths(self) -> Set[Tuple[str, float]]:
+        """遍历 self.root 下所有 (path, mtime)，跳过 ./_ 开头目录。
+
+        与 scan() 的扫描规则一致：只下钻「已发送0次」内的作品集/团建游戏/游戏/游戏类
+        中间层（这些是用户最常手动拖新作品的入口），成品库根目录直出另算。
+        """
+        out: Set[Tuple[str, float]] = set()
+        if not os.path.isdir(self.root):
+            return out
+
+        def _safe_mtime(p: str) -> float:
+            try:
+                return os.path.getmtime(p)
+            except (OSError, PermissionError):
+                return 0.0
+
+        # 1. 成品库根目录直出的子文件夹
+        try:
+            for entry in os.listdir(self.root):
+                if entry.startswith(".") or entry.startswith("_"):
+                    continue
+                full = os.path.join(self.root, entry)
+                if os.path.isdir(full):
+                    out.add((full, _safe_mtime(full)))
+        except (OSError, PermissionError):
+            pass
+
+        # 2. 「已发送0次」+ 子作品集
+        stage0 = os.path.join(self.root, "已发送0次（抖音小红书可发）")
+        if os.path.isdir(stage0):
+            try:
+                for entry in os.listdir(stage0):
+                    if entry.startswith(".") or entry.startswith("_"):
+                        continue
+                    full = os.path.join(stage0, entry)
+                    if not os.path.isdir(full):
+                        continue
+                    out.add((full, _safe_mtime(full)))
+                    # 中间层下钻一层
+                    if entry.startswith("作品集") or entry in ("团建游戏", "游戏", "游戏类"):
+                        try:
+                            for sub in os.listdir(full):
+                                if sub.startswith(".") or sub.startswith("_"):
+                                    continue
+                                sub_full = os.path.join(full, sub)
+                                if os.path.isdir(sub_full):
+                                    out.add((sub_full, _safe_mtime(sub_full)))
+                        except (OSError, PermissionError):
+                            pass
+            except (OSError, PermissionError):
+                pass
+
+        # 3. 「_已发送1次」回收站（DSH-095 统一入口）
+        stage1 = os.path.join(self.root, "_已发送1次（微信公众号可发）")
+        if os.path.isdir(stage1):
+            try:
+                for entry in os.listdir(stage1):
+                    if entry.startswith(".") or entry.startswith("_"):
+                        continue
+                    full = os.path.join(stage1, entry)
+                    if os.path.isdir(full):
+                        out.add((full, _safe_mtime(full)))
+            except (OSError, PermissionError):
+                pass
+
+        return out
+
+    def _poll_diff(self) -> bool:
+        """单次轮询：对比 _watchdog_paths 与当前 _walk_root_paths()，有差异 → force scan。
+
+        返回 True 表示本轮触发了重扫。
+        """
+        now = time.time()
+        current = self._walk_root_paths()
+        prev = self._watchdog_paths
+        # 首次轮询：只记录不触发（避免启动时全量 noise）
+        if not prev:
+            self._watchdog_paths = current
+            self._watchdog_last_poll = now
+            return False
+
+        prev_by_path = {p: m for p, m in prev}
+        curr_paths = {p for p, _ in current}
+        prev_paths = {p for p, _ in prev}
+        new_paths = curr_paths - prev_paths
+        deleted_paths = prev_paths - curr_paths
+        mtime_changed = {
+            path
+            for path, mtime in current
+            if path in prev_by_path and prev_by_path[path] != mtime
+        }
+
+        changed = bool(new_paths or deleted_paths or mtime_changed)
+        self._watchdog_paths = current
+        self._watchdog_last_poll = now
+
+        if changed:
+            self._watchdog_last_change = now
+            try:
+                self.scan(force=True)
+                print(f"[DSH-110 watchdog] 检测到变更 → force scan: +{len(new_paths)} / -{len(deleted_paths)} / ~{len(mtime_changed)}")
+            except Exception as e:
+                print(f"[DSH-110 watchdog] scan 失败：{e!r}")
+            return True
+        return False
+
+    def _start_watchdog_loop(self) -> None:
+        """启动后台轮询线程（daemon 模式，服务退出时自动结束）。"""
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            return
+        self._watchdog_stop.clear()
+
+        def _run():
+            self._watchdog_active = True
+            # 启动后等 10 秒再做第一次轮询（让首次 force scan 先完成，避免重复触发）
+            time.sleep(10.0)
+            while not self._watchdog_stop.is_set():
+                try:
+                    self._poll_diff()
+                except Exception as e:
+                    print(f"[DSH-110 watchdog] 轮询异常：{e!r}")
+                # wait_for 比 sleep 更快响应 stop
+                if self._watchdog_stop.wait(self._watchdog_interval):
+                    break
+            self._watchdog_active = False
+
+        self._watchdog_thread = threading.Thread(target=_run, name="DSH110-watchdog", daemon=True)
+        self._watchdog_thread.start()
+        print(f"[DSH-110 watchdog] 启动完成，每 {self._watchdog_interval:.0f}s 轮询一次")
+
+    def stop_watchdog(self) -> None:
+        self._watchdog_stop.set()
+        if self._watchdog_thread is not None:
+            self._watchdog_thread.join(timeout=3.0)
+
+    def watchdog_status(self) -> Dict[str, Any]:
+        """暴露给 /api/online/status：监控线程状态 + 上次轮询/变更时间。"""
+        return {
+            "active": self._watchdog_active,
+            "intervalSec": self._watchdog_interval,
+            "lastPollAt": self._watchdog_last_poll,
+            "lastChangeAt": self._watchdog_last_change,
+            "trackedPaths": len(self._watchdog_paths),
+            "rootDir": self.root,
+        }
 
     def _collect_images(self, dir_path: str, files: List[str]) -> List[str]:
         """收集作品成品图的客户端标识列表。
@@ -1483,6 +1647,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "code": code_freshness(),
                 # 平台槽位守卫：剔除骨架/过薄槽位的计数。slotsDropped>0 是响铃，不是噪音。
                 "slotGuard": slot_guard_health(),
+                # DSH-110：文件系统轮询监听状态（手机端 statusText badge 用）
+                "watchdog": self.scanner.watchdog_status(),
                 # 传输层瘦身：列表响应剥离的字段 + gzip 阈值（手机端「正在连接」快的根因在此）
                 "wire": {
                     "gzipMinBytes": GZIP_MIN_BYTES,
@@ -2898,10 +3064,16 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     works = scanner.scan(force=True)
     print(f"✨ 初始加载完成，共发现 {len(works)} 套存量成品作品")
 
+    # DSH-110：启动文件系统轮询线程（无第三方依赖，60 秒/次）
+    # GPT API 实时产出的作品图落到 DEFAULT_LIBRARY_ROOT 下，60 秒内自动入库；
+    # 手机端下次刷新（refresh=1 或自动）即看到最新。
+    scanner._start_watchdog_loop()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n服务正在平稳退出...")
+        scanner.stop_watchdog()
         server.server_close()
     except Exception as e:
         import traceback
@@ -2909,6 +3081,7 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
         with open(os.path.join(os.path.dirname(__file__), "crash.log"), "w", encoding="utf-8") as fp:
             fp.write(traceback.format_exc())
     finally:
+        scanner.stop_watchdog()
         with open(os.path.join(os.path.dirname(__file__), "exit.log"), "w", encoding="utf-8") as fp:
             fp.write(f"Exited at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 

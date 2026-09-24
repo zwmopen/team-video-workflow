@@ -29,6 +29,7 @@
 """
 import re
 import sys
+import os
 from pathlib import Path
 
 # ⚠️ 本脚本会打印 ✅ / ❌ 与中文。Windows runner（或任何非 UTF-8 locale 的重定向 stdout）
@@ -547,6 +548,48 @@ def main():
             a9_and_sort_btn, a9_and_sort_menu, a9_and_sort_prefs, a9_and_sort_call,
             a9_client_sort_param, a9_client_sort_url,
             a9_service_keys, a9_service_sort_param, a9_service_size_bytes,
+        )))
+
+    # ---- DSH-110：服务端文件监听 watchdog + 桌面入口 + 开机自启脚本 ----
+    # 用户口径：「怎么才能用上在线相册？一键启动？怎么保存在线相册让它一直在线？新增作品手机端自动刷新」
+    # 改动：
+    #   - WorkScanner 加 _start_watchdog_loop() / _poll_diff() / watchdog_status()
+    #   - run_service() 启动 watchdog 线程；/api/online/status 暴露 watchdog 字段
+    #   - 桌面 3 个 .lnk：在线相册.lnk / 在线相册-状态.lnk / 在线相册-开机自启.lnk
+    #   - 3 个 cmd：online_gallery.cmd / online_gallery-status.cmd / online_gallery-autostart.cmd
+    #   - install-autostart.ps1：注册 Windows 启动文件夹开机自启（-Uninstall 卸载）
+    #   - check_online_gallery.ps1：健康检查（IP / 端口 / 总作品数 / watchdog 状态）
+    a10_watchdog_methods = (
+        "_start_watchdog_loop" in service_src
+        and "_poll_diff" in service_src
+        and "_walk_root_paths" in service_src
+        and "watchdog_status" in service_src
+        and "_watchdog_paths" in service_src
+    )
+    a10_watchdog_start = "scanner._start_watchdog_loop()" in service_src
+    a10_watchdog_status_field = '"watchdog": self.scanner.watchdog_status()' in service_src
+    a10_install_autostart = (service_path.parent / "install-autostart.ps1").exists()
+    a10_check_ps1 = (service_path.parent / "check_online_gallery.ps1").exists()
+    a10_create_lnks = (service_path.parent / "create-desktop-shortcuts.py").exists()
+    a10_lnk_path = os.path.expandvars(r"%USERPROFILE%\Desktop") + r"\在线相册.lnk"
+    a10_lnk_exists = os.path.exists(a10_lnk_path)
+
+    a10_overall = (
+        a10_watchdog_methods
+        and a10_watchdog_start
+        and a10_watchdog_status_field
+        and a10_install_autostart
+        and a10_check_ps1
+        and a10_create_lnks
+        and a10_lnk_exists
+    )
+    results.append(check(
+        "A10 文件监听 watchdog + 桌面入口 + 开机自启（DSH-110）",
+        a10_overall,
+        "watchdogMethods=%s watchdogStart=%s statusField=%s install=%s check=%s createLnks=%s lnkExists=%s"
+        % (
+            a10_watchdog_methods, a10_watchdog_start, a10_watchdog_status_field,
+            a10_install_autostart, a10_check_ps1, a10_create_lnks, a10_lnk_exists,
         )))
 
     print()
