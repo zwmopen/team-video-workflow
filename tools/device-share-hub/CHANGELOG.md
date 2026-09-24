@@ -1,5 +1,38 @@
 # 变更记录
 
+## Android 0.8.53 / 164 - 2026-09-24 - DSH-098：缩略图流式写盘 + DiagnosticLog 持久化（修 K60 "获取在线相册失败"）
+
+> **用户反馈**：2026-09-24 用户在 K60 上触发"获取在线相册失败"BUG，怀疑是内存写入问题。同时给两条硬约束——
+> ① 「以后所有开发 你要注意我有很多类型设备……开发，兼容，各种 BUG」（多设备/多账号兼容）
+> ② 「还有所有的开发都要有 deBUG 回传的对吧」（每个错误路径必须 Log.w + DiagnosticLog 双写）
+>
+> **我的反思**：`OnlineGalleryClient.downloadThumb` 用 `ByteArrayOutputStream` 把整张图累积到 byte[] 再 `BitmapFactory.decodeByteArray`——THUMB_MAX_BYTES = 512KB × N 并发（N 张缩略图同时请求），内存峰值 ≈ N×512KB，外加 BitmapFactory 解码还要再开一份内存，触发 OOM / GC 抖动，"获取在线相册失败"是其中一个症状。同时该文件全文件 `Log.w("OnlineGalleryClient", ...)` 裸字符串 + 完全没用 `DiagnosticLog.write`，违背"持久化 debug 回传"硬约束。
+
+- **① `OnlineGalleryClient.downloadThumb` 流式写盘**（`OnlineGalleryClient.java:829-905`）：
+  - **删**：`ByteArrayOutputStream` 累积 byte[] → `BitmapFactory.decodeByteArray`（图片留在内存）
+  - **改**：`InputStream` → 8KB 缓冲 → `FileOutputStream(tempFile)` 边读边写（图片直接落盘）
+  - **加**：累计 `totalBytes > THUMB_MAX_BYTES` 立即拒绝（服务端 `X-Thumb=fallback` 降级发原图时不会被内存打爆）
+  - **加**：`tempFile.renameTo(diskFile)` 原子落盘（rename 失败抛异常回滚）
+  - `loadThumbnail` caller 改用 `decodeThumbFile(diskFile)` 读盘解码（避免持有大 byte[]）
+- **② 全文件错误路径 Log.w(TAG) + DiagnosticLog.write 双写**（用户铁律"所有开发都要 debug 回传"）：
+  - 加类级常量 `private static final String TAG = "OnlineGalleryClient";`（logcat 过滤）
+  - `downloadThumb` 5 个错误分支（http_error / fallback / oversize / rename_failed / empty）+ 1 个 catch 总出口 = **6 处 Log.w(TAG) + 6 处 DiagnosticLog.write**（含堆栈）
+  - `loadFullImage` catch 块 **1 处 Log.w(TAG) + 1 处 DiagnosticLog.write**（含堆栈）
+  - `loadThumbnail` catch 块 retry / final_failed **2 处 Log.w(TAG) + 2 处 DiagnosticLog.write**
+  - 全文件共 **9 处 Log.w(TAG)**、**10 处 DiagnosticLog.write**，**0 处裸字符串**
+- **③ 配套独立 Android 闸门**：`tests/test_android_online_gallery_client.py`（新增）：
+  - **A1** `downloadThumb` 流式写盘（去 BAOS + FileOutputStream(tempFile) + byte[8192] + renameTo）
+  - **A2** THUMB_MAX_BYTES 大小阈值（> 512KB 拒绝）
+  - **A3** `downloadThumb` 错误路径 Log.w(TAG) ≥ 6 + DiagnosticLog ≥ 6 + 裸字符串 = 0
+  - **A4** `loadFullImage` Log.w(TAG) ≥ 1 + DiagnosticLog ≥ 1 + 裸字符串 = 0
+  - **A5** 类级 TAG 常量声明
+  - **A6** 全文件 Log.w(TAG) ≥ 8 + DiagnosticLog ≥ 8 双写覆盖率
+  - **改前 FAIL 验证**：HEAD 旧版（DSH-098 未改）跑出 **6/6 FAIL**（downloadThumb 函数不存在，0 字符 → extract_func_body 提取失败；A4 裸字符串残留 True；A6 全 0）
+  - **改后 PASS 验证**：工作区跑出 **6/6 PASS**（exit=0）
+- **④ 版本号**：Android `0.8.52/163` → **`0.8.53/164`**（改客户端代码必须升版本号；iOS 端不动，DSH-098 纯 Android 修复）
+- **⑤ iOS 端**：不动（DSH-098 修的是 Android `OnlineGalleryClient.java`，iOS `OnlineGallery.swift` 无此 BUG）
+- **⑥ 装机验证**：待 push 后 CI 通过 → `adb install -r album-Android-v0.8.53.apk` → 用户触发在线相册看是否还失败；如还失败 DiagnosticLog 已落盘可拉 `/Android/data/com.zwm.gallery/files/diagnostic.log` 分析
+
 ## Android 0.8.52 / 163 - 2026-09-24 - DSH-097 同步：Android `modeButton` 双模式可见 + 行为分流
 
 > **用户口径**（与 iOS 一致）：「至于那个文件夹按钮，我说的在线模式也可以留……要是本地文件分发也需要那就一起」+「确定统一2的，那就安卓苹果一起升级一起改」。

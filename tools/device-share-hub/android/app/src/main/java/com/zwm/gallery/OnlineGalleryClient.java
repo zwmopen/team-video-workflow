@@ -44,6 +44,8 @@ public final class OnlineGalleryClient {
     /** 信标地址保鲜期：超过该时长视为陈旧，需重新确认 */
     private static final long BEACON_FRESH_MS = 5 * 60 * 1000L;
     private static final int TIMEOUT_MS = 15000;
+    /** DSH-098 统一日志 TAG，方便 logcat 过滤 */
+    private static final String TAG = "OnlineGalleryClient";
     /**
      * 列表/分类请求专用超时（2026-09-20）。
      *
@@ -771,17 +773,22 @@ public final class OnlineGalleryClient {
                 if (diskFile.exists() && diskFile.length() > 512) {
                     bmp = decodeThumbFile(diskFile);
                 }
-                // 2) 网络
+                // 2) 网络（DSH-098：流式写盘，不再用 byte[] 中转）
                 if (bmp == null) {
-                    byte[] imgBytes = downloadThumb(workId, fileName, diskFile);
-                    bmp = decodeThumbBytes(imgBytes);
-                    if (bmp == null) throw new Exception("Failed to decode bitmap bytes: " + imgBytes.length);
+                    boolean ok = downloadThumb(workId, fileName, diskFile);
+                    if (ok && diskFile.exists() && diskFile.length() > 512) {
+                        bmp = decodeThumbFile(diskFile);
+                    }
+                    if (bmp == null) throw new Exception("Failed to decode thumbnail from " + diskFile);
                 }
             } catch (Exception e) {
                 err = e;
+                String errMsg = "loadThumbnail attempt=" + attempt + " | " + workId + "/" + fileName
+                        + " | " + e.getClass().getSimpleName() + ": " + e.getMessage();
                 if (attempt < THUMB_MAX_ATTEMPTS) {
-                    Log.w("OnlineGalleryClient", "loadThumbnail 第 " + attempt + " 次失败，稍后重试 "
-                            + workId + " / " + fileName + ": " + e.getMessage());
+                    Log.w(TAG, errMsg + "（稍后重试）", e);
+                    DiagnosticLog.write(context, "thumb_retry", workId + "/" + fileName
+                            + " | attempt=" + attempt + " | " + e.getMessage());
                     try {
                         Thread.sleep(THUMB_RETRY_DELAY_MS);
                     } catch (InterruptedException ie) {
@@ -789,7 +796,9 @@ public final class OnlineGalleryClient {
                         break;
                     }
                 } else {
-                    Log.w("OnlineGalleryClient", "loadThumbnail failed for " + workId + " / " + fileName + ": " + e.getMessage());
+                    Log.w(TAG, "loadThumbnail failed: " + errMsg, e);
+                    DiagnosticLog.write(context, "thumb_final_failed", workId + "/" + fileName
+                            + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 }
             }
         }
@@ -809,9 +818,17 @@ public final class OnlineGalleryClient {
         }
     }
 
-    /** 下载缩略图字节；确实是缩略图（体积合理）才写入磁盘缓存，避免把降级原图写进缓存。 */
-    private byte[] downloadThumb(String workId, String fileName, File diskFile) throws Exception {
+    /**
+     * DSH-098：流式下载缩略图到磁盘缓存。
+     * - HTTP → 8KB 缓冲 → tempFile 边读边写（不再用 ByteArrayOutputStream 累积到内存）
+     * - 大小限制：> THUMB_MAX_BYTES 直接拒绝（避免服务端降级发原图把内存打爆）
+     * - 原子落盘：tempFile 校验通过后 renameTo
+     * - 返回 boolean：true = 磁盘缓存已就绪，false = 失败（已 Log.w + DiagnosticLog 双写）
+     * - 错误路径必须 Log.w（堆栈）+ DiagnosticLog.write（持久化）双写
+     */
+    private boolean downloadThumb(String workId, String fileName, File diskFile) throws Exception {
         HttpURLConnection conn = null;
+        File tempFile = new File(diskFile.getParentFile(), diskFile.getName() + ".tmp");
         try {
             String baseUrl = resolveBaseUrl();
             String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
@@ -821,35 +838,65 @@ public final class OnlineGalleryClient {
             conn.setConnectTimeout(THUMB_CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(THUMB_READ_TIMEOUT_MS);
             int code = conn.getResponseCode();
-            if (code != 200) throw new Exception("HTTP " + code);
+            if (code != 200) {
+                String detail = "HTTP " + code;
+                Log.w(TAG, "downloadThumb " + detail + " for " + workId + "/" + fileName);
+                DiagnosticLog.write(context, "thumb_http_error", workId + "/" + fileName + " | " + detail);
+                throw new Exception(detail);
+            }
             String thumbState = conn.getHeaderField("X-Thumb");
             if ("fallback".equals(thumbState)) {
                 // 服务端缩略图链路不可用（例如缺 Pillow），正在发原图。只提示不阻断，方便定位。
-                Log.w("OnlineGalleryClient", "服务端缩略图未启用，已降级返回原图（X-Thumb=fallback）");
+                String detail = "服务端缩略图未启用，已降级返回原图（X-Thumb=fallback）";
+                Log.w(TAG, detail + " | " + workId + "/" + fileName);
+                DiagnosticLog.write(context, "thumb_fallback", workId + "/" + fileName + " | " + detail);
             }
             InputStream in = new BufferedInputStream(conn.getInputStream());
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            File dir = tempFile.getParentFile();
+            if (dir != null && !dir.exists()) dir.mkdirs();
+            FileOutputStream out = new FileOutputStream(tempFile);
             byte[] buf = new byte[8192];
             int len;
-            while ((len = in.read(buf)) != -1) {
-                baos.write(buf, 0, len);
-            }
-            in.close();
-            byte[] imgBytes = baos.toByteArray();
-            if (imgBytes.length > 0 && imgBytes.length <= THUMB_MAX_BYTES && diskFile != null) {
-                try {
-                    File dir = diskFile.getParentFile();
-                    if (dir != null && !dir.exists()) dir.mkdirs();
-                    FileOutputStream out = new FileOutputStream(diskFile);
-                    try {
-                        out.write(imgBytes);
-                    } finally {
-                        out.close();
+            long totalBytes = 0;
+            try {
+                while ((len = in.read(buf)) != -1) {
+                    out.write(buf, 0, len);
+                    totalBytes += len;
+                    if (totalBytes > THUMB_MAX_BYTES) {
+                        String detail = "thumb too large: " + totalBytes + " > " + THUMB_MAX_BYTES;
+                        Log.w(TAG, detail + " | " + workId + "/" + fileName);
+                        DiagnosticLog.write(context, "thumb_oversize", workId + "/" + fileName + " | " + detail);
+                        throw new Exception(detail);
                     }
-                } catch (Exception ignored) {
                 }
+                out.flush();
+            } finally {
+                try { out.close(); } catch (Throwable ignored) {}
+                try { in.close(); } catch (Throwable ignored) {}
             }
-            return imgBytes;
+            if (totalBytes > 0 && totalBytes <= THUMB_MAX_BYTES) {
+                if (diskFile.exists()) diskFile.delete();
+                if (!tempFile.renameTo(diskFile)) {
+                    String detail = "renameTo failed: " + tempFile + " -> " + diskFile;
+                    Log.w(TAG, detail);
+                    DiagnosticLog.write(context, "thumb_rename_failed", workId + "/" + fileName + " | " + detail);
+                    throw new Exception(detail);
+                }
+                return true;
+            } else {
+                if (tempFile.exists()) tempFile.delete();
+                String detail = "empty stream: totalBytes=" + totalBytes;
+                Log.w(TAG, "downloadThumb " + detail + " | " + workId + "/" + fileName);
+                DiagnosticLog.write(context, "thumb_empty", workId + "/" + fileName + " | " + detail);
+                return false;
+            }
+        } catch (Exception e) {
+            if (tempFile.exists()) tempFile.delete();
+            Log.w(TAG, "downloadThumb failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()
+                    + " | " + workId + "/" + fileName, e);
+            DiagnosticLog.write(context, "thumb_failed", workId + "/" + fileName + " | "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+            throw e;
         } finally {
             if (conn != null) {
                 try { conn.disconnect(); } catch (Throwable ignored) {}
@@ -979,7 +1026,9 @@ public final class OnlineGalleryClient {
                 mainHandler.post(() -> callback.onSuccess(bmp));
             } catch (Exception e) {
                 if (tempFile.exists()) tempFile.delete();
-                Log.w("OnlineGalleryClient", "loadFullImage failed for " + workId + " / " + fileName + ": " + e.getMessage());
+                Log.w(TAG, "loadFullImage failed for " + workId + " / " + fileName + ": " + e.getMessage(), e);
+                DiagnosticLog.write(context, "full_image_failed", workId + "/" + fileName
+                        + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 mainHandler.post(() -> callback.onError(e));
             } finally {
                 if (conn != null) {

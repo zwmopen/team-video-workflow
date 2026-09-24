@@ -4,7 +4,67 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-097**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-098**。
+
+## DSH-098 Android 在线相册"获取在线相册失败"BUG（Android 0.8.53/164，2026-09-24）
+
+> **用户口径**（2026-09-24 现场）：
+> ① 「你那个看到 K60 日志吗，他获取在线相册失败好像是内存写入的 BUG」
+> ② 「以后所有开发 你要注意我有很多类型设备，这些你也知道我目前多少账号多少设备，注意就行，开发，兼容，各种 BUG」（多设备/多账号兼容硬约束）
+> ③ 「还有所有的开发都要有 deBUG 回传的对吧」（每个错误路径必须 Log.w + DiagnosticLog 双写）
+
+**现象**：K60 上点在线相册模式，等几秒后报"获取在线相册失败"，部分缩略图区域空白。Logcat 没 FATAL，但 `OnlineGalleryClient` 静默失败。
+
+**根因**：`OnlineGalleryClient.downloadThumb` 旧实现（`HEAD` 仍是 DSH-097 状态）用 `ByteArrayOutputStream` 累积 byte[]：
+```java
+ByteArrayOutputStream bos = new ByteArrayOutputStream();
+byte[] buf = new byte[2048];
+int n;
+while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+byte[] imgBytes = bos.toByteArray();
+bmp = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length);
+```
+THUMB_MAX_BYTES = 512KB × N 并发（在线相册首屏 30 个缩略图同时请求）→ 内存峰值 ≈ 15MB+ ；`BitmapFactory.decodeByteArray` 还要再开一份解码内存；不同设备（K60 / 红米 / OPPO / 各种分辨率）内存压力阈值不同，K60（中端 SoC，6GB RAM，后台多 app）首当其冲。同时全文件 `Log.w("OnlineGalleryClient", ...)` 裸字符串 4 处 + DiagnosticLog.write **0 处**，失败只能看 logcat（系统日志会被滚动覆盖，无法离线取证）。
+
+**修复**（Android 0.8.53/164）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `OnlineGalleryClient.java:829-905` `downloadThumb` | `ByteArrayOutputStream` → 流式写盘（InputStream → 8KB 缓冲 → `FileOutputStream(tempFile)` 边读边写）+ `totalBytes > THUMB_MAX_BYTES` 拒绝 + `tempFile.renameTo(diskFile)` 原子落盘 |
+| 2 | `OnlineGalleryClient.java:775-803` `loadThumbnail` caller | 改用 `decodeThumbFile(diskFile)` 读盘解码（不再持有大 byte[]）|
+| 3 | `OnlineGalleryClient.java:813-892` `downloadThumb` 错误分支 | **6 处** Log.w(TAG) + **6 处** DiagnosticLog.write（http_error / fallback / oversize / rename_failed / empty + 总 catch 出口，含堆栈）|
+| 4 | `OnlineGalleryClient.java:1029` `loadFullImage` catch | Log.w("OnlineGalleryClient",...) → `Log.w(TAG, ..., e)` + `DiagnosticLog.write(context, "full_image_failed", ...)` |
+| 5 | `OnlineGalleryClient.java` 类顶部 | 加 `private static final String TAG = "OnlineGalleryClient";` |
+| 6 | `android/app/build.gradle.kts:13-14` | `versionCode 163 → 164`, `versionName 0.8.52 → 0.8.53` |
+| 7 | `tests/test_android_online_gallery_client.py` | 新增 6 项 Android 硬判据闸门（A1~A6）|
+| 8 | `CHANGELOG.md` 顶部 | 加 DSH-098 条目 |
+
+**证据**：
+- **闸门验证纪律**：HEAD 旧版跑 `test_android_online_gallery_client.py` = **6/6 FAIL**（downloadThumb 函数 0 字符，A4 裸字符串残留 True，A6 全 0）；工作区新版 = **6/6 PASS**（exit=0）
+- **Git HEAD 旧版摸底**（`git show HEAD:./.../OnlineGalleryClient.java`）：
+  - `ByteArrayOutputStream` count = **9**（旧累积）
+  - `DiagnosticLog.write` count = **0**（完全没用）
+  - `Log.w("OnlineGalleryClient"` count = **4**（裸字符串）
+  - `Log.w(TAG` count = **0**（TAG 常量没声明）
+- **工作区新版摸底**：
+  - `downloadThumb` 函数体 4170 字符 / `loadFullImage` 3417 字符
+  - `downloadThumb` 内 `ByteArrayOutputStream` = **0** / `DiagnosticLog.write` = **6** / `Log.w(TAG` = **6** / `Log.w("OnlineGalleryClient"` = **0**
+  - 全文件 `Log.w(TAG` = **9** / `DiagnosticLog.write` = **10**
+
+**回归要求**：
+- K60 / 红米 0.8.47 / OPPO / 各种分辨率设备都能加载在线相册缩略图（不再 OOM / GC 抖动）
+- 服务端 `X-Thumb=fallback`（缩略图链路故障，降级发原图）时被 THUMB_MAX_BYTES 拒绝不爆内存
+- `DiagnosticLog.write` 在 `/Android/data/com.zwm.gallery/files/diagnostic.log` 持续落盘（512KB rotate）
+- 任何错误路径都同时有 Logcat（堆栈）+ DiagnosticLog（持久化）两条线
+- `tests/test_android_online_gallery_client.py` **6/6 PASS**（CI 闸门）
+
+**配套独立闸门**（`tests/test_android_online_gallery_client.py`，6 项）：
+- A1 downloadThumb 流式写盘（去 BAOS + FileOutputStream(tempFile) + byte[8192] + renameTo）
+- A2 downloadThumb THUMB_MAX_BYTES 大小阈值
+- A3 downloadThumb 错误路径 Log.w(TAG) ≥ 6 + DiagnosticLog ≥ 6 + 裸字符串 = 0
+- A4 loadFullImage Log.w(TAG) ≥ 1 + DiagnosticLog ≥ 1 + 裸字符串 = 0
+- A5 类级 TAG 常量声明（必须字符串 = "OnlineGalleryClient"）
+- A6 全文件 Log.w(TAG) ≥ 8 + DiagnosticLog ≥ 8 双写覆盖率
 
 ## DSH-097 Android 同步发版（Android 0.8.52/163，2026-09-24 同步 iOS 修复）
 
