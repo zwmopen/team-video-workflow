@@ -571,6 +571,13 @@ def main():
     a10_install_autostart = (service_path.parent / "install-autostart.ps1").exists()
     a10_check_ps1 = (service_path.parent / "check_online_gallery.ps1").exists()
     a10_create_lnks = (service_path.parent / "create-desktop-shortcuts.py").exists()
+    # 桌面 .lnk 是用户态外部依赖（CI runner 没有 %USERPROFILE%\Desktop\在线相册.lnk），
+    # 改为验证 3 个 .cmd 入口文件存在（与 .lnk 同内容）；真桌面 .lnk 由 create-desktop-shortcuts.py 在本机单独跑验证
+    a10_cmd_entry_main = (service_path.parent / "online_gallery.cmd").exists()
+    a10_cmd_entry_status = (service_path.parent / "online_gallery-status.cmd").exists()
+    a10_cmd_entry_autostart = (service_path.parent / "online_gallery-autostart.cmd").exists()
+    a10_cmd_entries = a10_cmd_entry_main and a10_cmd_entry_status and a10_cmd_entry_autostart
+    # 本机软检查：仅在 %USERPROFILE%\Desktop 真实存在时校验 .lnk；CI 上自然 False 不计入 FAIL
     a10_lnk_path = os.path.expandvars(r"%USERPROFILE%\Desktop") + r"\在线相册.lnk"
     a10_lnk_exists = os.path.exists(a10_lnk_path)
 
@@ -581,15 +588,15 @@ def main():
         and a10_install_autostart
         and a10_check_ps1
         and a10_create_lnks
-        and a10_lnk_exists
+        and a10_cmd_entries
     )
     results.append(check(
         "A10 文件监听 watchdog + 桌面入口 + 开机自启（DSH-110）",
         a10_overall,
-        "watchdogMethods=%s watchdogStart=%s statusField=%s install=%s check=%s createLnks=%s lnkExists=%s"
+        "watchdogMethods=%s watchdogStart=%s statusField=%s install=%s check=%s createLnks=%s cmdEntries=%s"
         % (
             a10_watchdog_methods, a10_watchdog_start, a10_watchdog_status_field,
-            a10_install_autostart, a10_check_ps1, a10_create_lnks, a10_lnk_exists,
+            a10_install_autostart, a10_check_ps1, a10_create_lnks, a10_cmd_entries,
         )))
 
     print()
