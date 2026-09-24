@@ -2217,3 +2217,15 @@ self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? de
 - **客户端无需改动**：Android/iOS 早已用 `?id+?file` 新契约（DSH-099/102），服务端一修两端自动生效。
 - **注意**：库里当前 `useCount` 全 0（phone sync 没收到），curl 看不到肉眼排序效果；等下次用户点平台按钮后数据回流，下次 push 验证生效。
 
+## [Unreleased]
+
+### Fixed - DSH-107 Android 顶部不再显示「已连接电脑在线相册 (url)」（2026-09-24）
+
+- **症状**：用户反馈"安卓顶部那个已连接电脑XXXXX就别显示了"——电脑 IP + 端口这种技术字段不该堆在主屏顶部。
+- **修复**：Android `MainActivity.java:2906` `statusText.setText("💻 已连接电脑在线相册 (" + url + ") · 共 N 套")` → `"已同步电脑在线作品 · 共 N 套"`，去除电脑 IP/端口字段，**保留作品数**（用户还要看数据量）。
+- **闸门**：`tests/parity_ios_android.py` A6：检测 `statusText.setText(...)` 调用里没有 "已连接电脑在线相册" 字符串，且保留 `onlineWorks.size()`。
+  - 改前：30/30 FAIL（验过）
+  - 改后：30/30 PASS（验过）
+- **iOS 端**：无此字段（之前就没显示），DSH-107 不需要新增 iOS 代码。
+- **客户端**：Android 升 0.8.55/166 → **0.8.56/167**。
+

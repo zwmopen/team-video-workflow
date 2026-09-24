@@ -409,6 +409,23 @@ def main():
         c26_sort,
         "sort by useCount desc=%s" % c26_sort))
 
+    # ---- DSH-107：Android 顶部 statusText 不显示「已连接电脑在线相册 (url)」----
+    # 用户口径：「安卓顶部那个已连接电脑XXXXX就别显示了」+「机箱苹果那个」（= iOS 也确认无此条）。
+    # 改前实测：MainActivity.java:2906 statusText.setText("💻 已连接电脑在线相册 (" + ... + ") · 共 N 套")
+    #          用户觉得电脑上 IP 数字 + 端口 45835 这种技术字段不该堆在主屏顶部。
+    # 改后必须：statusText.setText(...) 调用里没有 "已连接电脑在线相册" 字符串，
+    #          作品数 (onlineWorks.size()) 仍保留。
+    status_text_calls = re.findall(
+        r'statusText\.setText\(\s*([^)]*?)\s*\)', and_main, re.DOTALL)
+    a6_status_text = " ".join(status_text_calls)
+    a6_and_no_status = "已连接电脑在线相册" not in a6_status_text
+    a6_and_keep_count = "onlineWorks.size()" in and_main
+    results.append(check(
+        "A6 Android 顶部 statusText 不显示「已连接电脑在线相册 (url)」（DSH-107）",
+        a6_and_no_status and a6_and_keep_count,
+        "statusText调用中含字符串=%s 保留作品数=%s 共%d处statusText"
+        % (not a6_and_no_status, a6_and_keep_count, len(status_text_calls))))
+
     print()
     bad = results.count(False)
     if bad:

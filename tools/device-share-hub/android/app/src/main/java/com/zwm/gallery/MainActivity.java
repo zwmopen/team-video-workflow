@@ -2903,7 +2903,9 @@ public final class MainActivity extends Activity {
                     updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
                 }
                 applyOnlineCategoryFilter(selectedOnlineCategory);
-                statusText.setText("💻 已连接电脑在线相册 (" + onlineClient.resolveBaseUrl() + ") · 共 " + onlineWorks.size() + " 套");
+                // DSH-107：用户口径「安卓顶部那个已连接电脑在线相册 (url)就别显示了」
+// line 2906 状态栏只保留作品数，去除电脑名/URL/端口等技术字段。
+                statusText.setText("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
                 finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
             }
 

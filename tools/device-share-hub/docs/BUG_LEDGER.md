@@ -2214,3 +2214,32 @@ iOS 版本保持 0.8.39/111 不变，无需重装机。
 ### 限制
 库里 `useCount` 当前全 0（phone sync 没收到），肉眼验证需等下次用户点平台按钮后数据回流。
 
+# BUG_LEDGER
+
+## DSH-107 Android 顶部 statusText 显示电脑 IP + 端口技术字段
+
+**报告时间**：2026-09-24 18:02
+**报告端**：用户（华为 Android + iPhone 装机对照）
+**真凶端**：Android `MainActivity.java:2906`
+
+### 症状
+用户反馈："安卓顶部那个已连接电脑XXXXX就别显示了"——电脑 IP + 端口 45835 这种技术字段不该堆在主屏顶部。
+
+### 根因
+原 statusText.setText 拼出了 `💻 已连接电脑在线相册 (http://192.168.x.x:45835) · 共 N 套`，把局域网 IP + 端口号暴露给用户。
+
+### 修复
+- Android `MainActivity.java:2906`：`statusText.setText("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套")`，去除电脑 IP/端口字段。
+- 保留作品数（用户感知数据量）。
+
+### 闸门
+- `tests/parity_ios_android.py` A6：检测 statusText.setText(...) 调用里没有 "已连接电脑在线相册" 字符串
+- 改前：30/30 FAIL（验过）
+- 改后：30/30 PASS（验过）
+
+### iOS 端
+无此字段（之前就没显示），DSH-107 不需要新增 iOS 代码。
+
+### 版本
+Android 升 0.8.55/166 → **0.8.56/167**。
+
