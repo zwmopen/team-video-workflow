@@ -711,6 +711,11 @@ public final class OnlineGalleryClient {
     }
 
     public void fetchWorks(String category, String query, Callback<List<OnlineWorkEntry>> callback) {
+        fetchWorks(category, query, null, callback);
+    }
+
+    // DSH-109：sortKey 可选，与服务端 SORT_KEYS 对齐；传 null 则不发 sort 参数（服务端默认 default）
+    public void fetchWorks(String category, String query, String sortKey, Callback<List<OnlineWorkEntry>> callback) {
         final boolean fullList = (category == null || category.isEmpty())
                 && (query == null || query.isEmpty());
         executor.execute(() -> {
@@ -722,6 +727,9 @@ public final class OnlineGalleryClient {
                 }
                 if (query != null && !query.isEmpty()) {
                     sb.append("query=").append(URLEncoder.encode(query, "UTF-8")).append("&");
+                }
+                if (sortKey != null && !sortKey.isEmpty()) {
+                    sb.append("sort=").append(URLEncoder.encode(sortKey, "UTF-8")).append("&");
                 }
                 URL url = new URL(sb.toString());
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);

@@ -1244,8 +1244,55 @@ class WorkScanner:
                 "placeholderOnly": is_placeholder_copy(copy_raw),
             },
             "searchBlob": copy_search_blob,
-            "updatedAt": os.path.getmtime(dir_path)
+            "updatedAt": os.path.getmtime(dir_path),
+            # DSH-109：作品目录总字节数（含子目录，用于 size_desc/size_asc 排序）
+            "sizeBytes": _dir_size_bytes(dir_path),
         }
+
+
+# DSH-109：在线相册列表排序键（服务端 /api/online/works?sort=）
+# - default（向后兼容）：保持 DSH-104 行为，useCount desc 已用置顶，其余保持扫描顺序
+# - time_asc：updatedAt 升序，最新作品排在最底（用户口径）
+# - time_desc：updatedAt 降序，最新作品排在最顶
+# - name_asc / name_desc：按 title 字典序升降
+# - size_desc / size_asc：按作品目录总字节数升降
+SORT_KEYS = ("default", "time_asc", "time_desc", "name_asc", "name_desc", "size_desc", "size_asc")
+
+
+class ReverseStr:
+    """让字符串按字典序反序参与比较的轻量包装类（DSH-109 用于 name_desc）。"""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: str):
+        self.value = value
+
+    def __lt__(self, other: "ReverseStr") -> bool:
+        return self.value > other.value
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, ReverseStr) and self.value == other.value
+
+
+def _dir_size_bytes(root_path: str) -> int:
+    """累加 root_path 下的总字节数（含子目录、单文件）。
+
+    DSH-109：size_desc/size_asc 排序用。一个坏文件不能挂掉整次扫描，
+    用 os.scandir + 容错，单文件 stat 失败直接跳过。
+    """
+    total = 0
+    try:
+        for entry in os.scandir(root_path):
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+                elif entry.is_dir(follow_symlinks=False):
+                    total += _dir_size_bytes(entry.path)
+            except (OSError, PermissionError):
+                continue
+    except (OSError, PermissionError):
+        pass
+    return total
 
 
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
@@ -1524,6 +1571,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             category = query.get("category", ["全部"])[0]
             search_query = query.get("query", [""])[0].strip().lower()
             force_refresh = query.get("refresh", ["0"])[0] == "1"
+            # DSH-109：排序键 = default|time_asc|time_desc|name_asc|name_desc|size_desc|size_asc
+            # 默认 default 保持 DSH-104 行为（useCount desc 已用置顶），向后兼容
+            sort_key = query.get("sort", ["default"])[0]
+            if sort_key not in SORT_KEYS:
+                sort_key = "default"
 
             works = self.scanner.scan(force=force_refresh)
             tokens = search_query.split() if search_query else []
@@ -1564,10 +1616,47 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 filtered.append(w)
 
             # DSH-104：在线相册分类下，已用过的作品立刻置顶。
-            # 排序键：useCount 降序（用得越多越靠前） → 同 useCount 时按扫描顺序稳定排序。
+            # 一级排序：useCount 降序（用得越多越靠前）。
+            # 二级排序（DSH-109）：sort_key 决定同 useCount 内的相对顺序。
+            #   - default（向后兼容）：保持扫描顺序（Python sort 稳定）
+            #   - time_asc：updatedAt 升序（最新作品排在最底，用户口径）
+            #   - time_desc：updatedAt 降序
+            #   - name_asc/name_desc：按 title 字典序升降
+            #   - size_desc/size_asc：按 sizeBytes 字节数升降
             # 「全部」分类下也生效（让用户一眼能看到最近分享过的）。
             if category not in ("待首发", "已发1次", "已发2次"):
-                filtered.sort(key=lambda w: -int(w.get("useCount", 0) or 0))
+                if sort_key == "default":
+                    filtered.sort(key=lambda w: -int(w.get("useCount", 0) or 0))
+                elif sort_key == "time_asc":
+                    filtered.sort(key=lambda w: (
+                        -int(w.get("useCount", 0) or 0),
+                        float(w.get("updatedAt") or 0.0),
+                    ))
+                elif sort_key == "time_desc":
+                    filtered.sort(key=lambda w: (
+                        -int(w.get("useCount", 0) or 0),
+                        -float(w.get("updatedAt") or 0.0),
+                    ))
+                elif sort_key == "size_asc":
+                    filtered.sort(key=lambda w: (
+                        -int(w.get("useCount", 0) or 0),
+                        int(w.get("sizeBytes") or 0),
+                    ))
+                elif sort_key == "size_desc":
+                    filtered.sort(key=lambda w: (
+                        -int(w.get("useCount", 0) or 0),
+                        -int(w.get("sizeBytes") or 0),
+                    ))
+                elif sort_key == "name_asc":
+                    filtered.sort(key=lambda w: (
+                        -int(w.get("useCount", 0) or 0),
+                        (w.get("title") or "").lower(),
+                    ))
+                elif sort_key == "name_desc":
+                    filtered.sort(key=lambda w: (
+                        -int(w.get("useCount", 0) or 0),
+                        ReverseStr((w.get("title") or "").lower()),
+                    ))
 
             self.send_json(200, {
                 "ok": True,

@@ -56,6 +56,9 @@ def _extract_right_mode_button_lambda(and_main_text):
 ROOT = Path(__file__).resolve().parents[1]
 IOS = ROOT / "ios" / "Album"
 ANDROID = ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "zwm" / "gallery"
+# DSH-109：客户端 fetchWorks 签名在 OnlineGalleryClient.java，服务端在 online_gallery_service.py
+android_client_path = ANDROID / "OnlineGalleryClient.java"
+service_path = ROOT / "scripts" / "online_gallery_service.py"
 
 
 def read_all(d, exts):
@@ -495,6 +498,55 @@ def main():
             "line@" + str(build_tail[:a8_and_category_pos.start()].count("\n") + 1) if a8_and_category_pos else "None",
             "line@" + str(build_tail[:a8_and_search_pos.start()].count("\n") + 1) if a8_and_search_pos else "None",
             a8_and_search_after_category,
+        )))
+
+    # ---- DSH-109：在线相册排序机制 = 搜索框右侧排序按钮 + 服务端 ?sort= 参数 + sizeBytes 字段 ----
+    # 用户口径：「最好能实现：默认排序 = 时间最新在底；筛选 = 名称/大小」
+    # Android 端：
+    #   - searchBar 内有 sortKeyButton + 5 种排序 PopupMenu（time_asc / name_asc / name_desc / size_desc / size_asc）
+    #   - sortKey 持久化到 SharedPreferences（PREF_ONLINE_SORT_KEY）
+    #   - onlineClient.fetchWorks 调用带 sortKey 参数
+    a9_and_sort_btn = re.search(
+        r"sortKeyButton = new Button\(this\)|sortKeyButton = new Button\b",
+        and_main) is not None
+    a9_and_sort_menu = "SORT_MENU" in and_main and "showSortKeyMenu" in and_main
+    a9_and_sort_prefs = "PREF_ONLINE_SORT_KEY" in and_main
+    a9_and_sort_call = "fetchWorks(null, null, currentSortKey" in and_main
+    # 客户端 fetchWorks 签名：sortKey 参数 + URL 拼装 &sort=
+    a9_client_sort_param = re.search(
+        r"public void fetchWorks\(String category, String query, String sortKey",
+        open(android_client_path, "r", encoding="utf-8", errors="replace").read()) is not None \
+        if android_client_path.exists() else False
+    a9_client_sort_url = re.search(
+        r'\.append\("sort="\)', open(android_client_path, "r", encoding="utf-8", errors="replace").read()) is not None \
+        if android_client_path.exists() else False
+
+    # 服务端：SORT_KEYS 常量 + ?sort= 参数 + sizeBytes 字段
+    service_src = open(service_path, "r", encoding="utf-8", errors="replace").read()
+    a9_service_keys = "SORT_KEYS" in service_src and "time_asc" in service_src and "size_desc" in service_src
+    a9_service_sort_param = re.search(
+        r'query\.get\("sort"', service_src) is not None
+    a9_service_size_bytes = '"sizeBytes"' in service_src and "_dir_size_bytes" in service_src
+
+    a9_overall = (
+        a9_and_sort_btn
+        and a9_and_sort_menu
+        and a9_and_sort_prefs
+        and a9_and_sort_call
+        and a9_client_sort_param
+        and a9_client_sort_url
+        and a9_service_keys
+        and a9_service_sort_param
+        and a9_service_size_bytes
+    )
+    results.append(check(
+        "A9 Android 排序按钮 + 客户端 sortKey 上报 + 服务端 sort 参数 + sizeBytes 字段（DSH-109）",
+        a9_overall,
+        "btn=%s menu=%s prefs=%s call=%s clientSort=%s clientUrl=%s serviceKeys=%s serviceParam=%s sizeBytes=%s"
+        % (
+            a9_and_sort_btn, a9_and_sort_menu, a9_and_sort_prefs, a9_and_sort_call,
+            a9_client_sort_param, a9_client_sort_url,
+            a9_service_keys, a9_service_sort_param, a9_service_size_bytes,
         )))
 
     print()

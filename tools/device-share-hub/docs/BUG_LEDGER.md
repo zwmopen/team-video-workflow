@@ -2318,3 +2318,48 @@ Android 零改动。
 - [ ] 红米无线真机视觉验证 —— 待装机。
 - [ ] Android 搜索框位置截图比对（按钮之下 + 分类按钮可见）—— 待装机。
 - [ ] CI 编译闸门（iOS .ipa / Android .apk）—— 待 push。
+
+## DSH-109 — 在线相册排序机制 + 实时看图机制（用户新需求）（2026-09-24）
+
+**用户诉求**:
+1. 实时看图：只要在电脑端添加了图片，手机端刷新就能看到最新的。
+2. 排序机制：放在搜索框的右侧；默认按时间排序，最新的排在最底；筛选支持名称 / 大小。
+
+**实时看图机制**（已存在，DSH-109 复用）:
+- 服务端 `online_gallery_service.py` `scan(force=True)` 触发强制重扫磁盘。手机端点刷新带 `?refresh=1`，5 秒内可见磁盘新增。
+- 三门槛：① 文件夹在 `DEFAULT_LIBRARY_ROOT`（成品库，非 `.`/`_` 开头）；② 至少 1 张图（顶层优先 → 回落 `产出素材/`）；③ 有 `文案.txt`。
+- 服务端顺手做 `_maybe_background_phone_sync()` 回读本地分享次数，多端 useCount 自动同步。
+
+**排序机制（DSH-109 新增）**:
+
+### 服务端（`scripts/online_gallery_service.py`）
+- 新增 `SORT_KEYS = ("default", "time_asc", "time_desc", "name_asc", "name_desc", "size_desc", "size_asc")`
+- 新增 `ReverseStr` 包装类（让字符串按字典序反向参与比较）
+- 新增 `_dir_size_bytes()` 递归工具函数（os.scandir + 容错，单文件 stat 失败跳过）
+- work dict 增加 `"sizeBytes": _dir_size_bytes(dir_path)`
+- `/api/online/works` 接 `?sort=<key>` 参数（白名单校验，不在白名单 fallback `default`）
+- 排序逻辑：DSH-104 一级 useCount desc（已用置顶）+ DSH-109 二级 sort_key（同 useCount 内的相对顺序）
+
+### Android（`MainActivity.java` + `OnlineGalleryClient.java`）
+- `PREF_ONLINE_SORT_KEY = "online_sort_key"` + `DEFAULT_ONLINE_SORT = "time_asc"`（SharedPreferences 持久化）
+- 搜索框（`searchBar` LinearLayout）右侧新增 `sortKeyButton`（`STYLE_MUTED_GRAY` 38pt 半圆浅绿，按 `STYLE_MUTED_GRAY` 与 iOS 对齐）
+- `SORT_MENU` 常量：5 个排序键 + 中文标签（默认（最新在底）/ 名称升降 / 大小升降）
+- `showSortKeyMenu()` 用 `androidx.appcompat.widget.PopupMenu` 弹菜单
+- `applySortKeyChange()`：写 prefs → 更新按钮文案 → 调 `applyOnlineCategoryFilter` 重渲染
+- `OnlineGalleryClient.fetchWorks(category, query, sortKey, callback)` 新增 sortKey 参数（保留旧 3 参数签名向下兼容）
+- MainActivity 两处 `onlineClient.fetchWorks` 调用点都改成 4 参数版（带 `currentSortKey`）
+
+### 闸门（`tests/parity_ios_android.py`）
+- **A9**：9 项硬判据（btn 存在 / SORT_MENU / PREF_ONLINE_SORT_KEY / fetchWorks 调用点 / 客户端 4 参数签名 / URL `.append("sort=")` / 服务端 SORT_KEYS / `?sort=` / `sizeBytes` 字段）
+- 改前：1/33 FAIL（验过）
+- 改后：33/33 PASS（验过）
+
+### 验证状态
+- [ ] Android 真机视觉验证（排序按钮存在 + PopupMenu 可弹 + 切换排序生效）—— 待 push + 装机。
+- [ ] 服务端 `?sort=time_asc` / `?sort=name_desc` 实测响应顺序正确 —— 待 push。
+- [ ] CI 编译闸门（iOS / Android）—— 待 push。
+- [ ] iOS 端 DSH-110 同步 —— 用户口径本次先做 Android，iOS 暂未做。
+
+### 版本
+- **Android 升 0.8.57/168 → 0.8.58/169**。
+- iOS 零改动。

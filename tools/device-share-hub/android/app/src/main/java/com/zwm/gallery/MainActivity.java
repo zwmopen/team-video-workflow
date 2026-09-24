@@ -106,6 +106,9 @@ public final class MainActivity extends Activity {
     private static final String PREF_TREE_URI = "libraryTreeUri";
     private static final String PREF_TREE_NAME = "libraryTreeName";
     private static final String PREF_IS_ONLINE_MODE = "is_online_mode";
+    // DSH-109：在线相册列表排序键（与 services/online_gallery_service.py SORT_KEYS 对齐）
+    private static final String PREF_ONLINE_SORT_KEY = "online_sort_key";
+    private static final String DEFAULT_ONLINE_SORT = "time_asc";
     private static final int REQUEST_TREE = 61;
     private static final int REQUEST_LEGACY_STORAGE = 62;
     public static volatile boolean isVisible;
@@ -176,6 +179,9 @@ public final class MainActivity extends Activity {
     private LinearLayout searchBar;
     private EditText searchInput;
     private ImageView clearSearchButton;
+    // DSH-109：搜索框右侧排序按钮（PopupMenu 弹出 5 种排序）
+    private Button sortKeyButton;
+    private String currentSortKey = DEFAULT_ONLINE_SORT;
     private String searchQuery = "";
     private OnlineGalleryClient onlineClient;
     private boolean isOnlineMode = false;
@@ -570,6 +576,21 @@ public final class MainActivity extends Activity {
         });
         LinearLayout.LayoutParams sClearParams = new LinearLayout.LayoutParams(dp(32), dp(32));
         searchBar.addView(clearSearchButton, sClearParams);
+
+        // ---- DSH-109：搜索框右侧排序按钮（与 iOS 对等），5 种排序：默认最新在底 / 名称升降 / 大小升降 ----
+        currentSortKey = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_ONLINE_SORT_KEY, DEFAULT_ONLINE_SORT);
+        sortKeyButton = new Button(this);
+        sortKeyButton.setText(sortKeyLabel(currentSortKey));
+        styleNeumorphicButton(sortKeyButton, STYLE_MUTED_GRAY);
+        sortKeyButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        sortKeyButton.setContentDescription("排序方式（DSH-109）");
+        LinearLayout.LayoutParams sSortParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
+        sSortParams.setMargins(dp(4), 0, dp(2), 0);
+        sortKeyButton.setPadding(dp(8), 0, dp(8), 0);
+        sortKeyButton.setOnClickListener(v -> showSortKeyMenu());
+        searchBar.addView(sortKeyButton, sSortParams);
 
         // ---- 在线回收站双 Tab（已使用 / 已标记垃圾）：默认隐藏，点顶栏「回收站」才出现 ----
         onlineRecycleTabBar = new LinearLayout(this);
@@ -992,6 +1013,53 @@ public final class MainActivity extends Activity {
             worksContainer.addView(workCard(entry), margins(0, 0, 0, dp(10)));
         }
         if (!animate) worksContainer.setLayoutTransition(transition);
+    }
+
+    // ---- DSH-109：在线相册排序 PopupMenu（5 种排序键） ----
+    private static final String[][] SORT_MENU = new String[][]{
+            {"time_asc",  "默认（最新在底）"},
+            {"name_asc",  "按名称（A→Z）"},
+            {"name_desc", "按名称（Z→A）"},
+            {"size_desc", "按大小（大→小）"},
+            {"size_asc",  "按大小（小→大）"},
+    };
+
+    private String sortKeyLabel(String sortKey) {
+        for (String[] pair : SORT_MENU) {
+            if (pair[0].equals(sortKey)) return pair[1];
+        }
+        return SORT_MENU[0][1]; // fallback = default
+    }
+
+    private void showSortKeyMenu() {
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(this, sortKeyButton);
+        for (String[] pair : SORT_MENU) {
+            popup.getMenu().add(pair[1]);
+        }
+        popup.setOnMenuItemClickListener(item -> {
+            CharSequence title = item.getTitle();
+            for (String[] pair : SORT_MENU) {
+                if (pair[1].contentEquals(title)) {
+                    applySortKeyChange(pair[0]);
+                    return true;
+                }
+            }
+            return false;
+        });
+        popup.show();
+    }
+
+    private void applySortKeyChange(String newSortKey) {
+        currentSortKey = newSortKey;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_ONLINE_SORT_KEY, newSortKey)
+                .apply();
+        if (sortKeyButton != null) sortKeyButton.setText(sortKeyLabel(newSortKey));
+        if (isOnlineMode) {
+            applyOnlineCategoryFilter(selectedOnlineCategory);
+        } else {
+            applyCategoryFilter(selectedCategory);
+        }
     }
 
     private void applyCategoryFilter(String folderKey) {
@@ -2731,7 +2799,7 @@ public final class MainActivity extends Activity {
                 Log.i("MainActivity", "在线分类预热失败（静默）: " + error.getMessage());
             }
         });
-        onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
+        onlineClient.fetchWorks(null, null, currentSortKey, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
             @Override
             public void onSuccess(List<OnlineWorkEntry> works) {
                 if (works == null) return;
@@ -2887,7 +2955,7 @@ public final class MainActivity extends Activity {
             }
         });
 
-        onlineClient.fetchWorks(null, null, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
+        onlineClient.fetchWorks(null, null, currentSortKey, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
             @Override
             public void onSuccess(List<OnlineWorkEntry> works) {
                 // 连通成功：记住这条可用地址，下次直接复用

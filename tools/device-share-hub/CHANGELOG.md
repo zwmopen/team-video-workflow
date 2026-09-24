@@ -2255,3 +2255,39 @@ self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? de
   - A8 改前：1/32 FAIL（验过）
   - A8 改后：32/32 PASS（验过）
 - **Android** 升 0.8.56/167 → **0.8.57/168**；iOS 升 0.8.40/112 → **0.8.41/113**（只改 ContentView 按版本号随代码上前移）。
+
+## [Unreleased]
+
+### Added - DSH-109 在线相册排序机制（搜索框右侧 5 种排序 + 服务端 sort 参数 + sizeBytes 字段）（2026-09-24）
+
+**用户诉求**：「最好能实现以下效果：1. 只要在电脑端添加了图片，手机端刷新就能看到最新的。2. 手机端能有排序功能，让最新的图片直接置顶显示；增加一个排序机制，看增加在搜索框的右侧比较好；默认按时间排序，最新在底；筛选 = 名称 / 大小」。
+
+**实时看图机制**（已存在，DSH-109 复用）：
+- `/api/online/works?refresh=1` 触发服务端 `scan(force=True)` 强制重扫磁盘。手机端每次点刷新都带 `refresh=1`，磁盘新增图片 5 秒内可见。
+- 三门槛：① 文件夹在 `D://AICode//项目推进//projects//江湖有旅人//主项目//成品库（GPT+本地脚本制作）`（非 `.`/`_` 开头）；② 至少 1 张图（`.jpg/.jpeg/.png/.webp/.bmp`，顶层优先 → 回落 `产出素材/`）；③ 有 `文案.txt`（缺则按钮置灰 `copyMissing=true`）。
+
+**排序键**（5 种 + 1 default）：
+- `time_asc`（默认，用户口径）：updatedAt 升序，最新作品排在最底
+- `name_asc` / `name_desc`：按 title 字典序升降（用 `ReverseStr` 包装类做反向 sort）
+- `size_desc` / `size_asc`：按作品目录总字节数升降（用 `_dir_size_bytes()` 递归算）
+- `default`：保留 DSH-104 行为（useCount desc 已用置顶），向后兼容
+
+**服务端**（`scripts/online_gallery_service.py`）：
+- 新增 `SORT_KEYS` 常量 + `ReverseStr` 包装类 + `_dir_size_bytes()` 递归工具
+- `/api/online/works` 接 `?sort=<key>` 参数（白名单校验，不在白名单则 fallback `default`）
+- work dict 增加 `sizeBytes` 字段（递归算作品目录总字节数，单文件 stat 失败容错跳过）
+- 排序逻辑：一级 useCount desc（DSH-104）+ 二级 sort_key（同 useCount 内的相对顺序）
+
+**Android**（`MainActivity.java` + `OnlineGalleryClient.java`）：
+- `PREF_ONLINE_SORT_KEY` + `DEFAULT_ONLINE_SORT = time_asc` 持久化（SharedPreferences）
+- 搜索框右侧新增 `sortKeyButton`（`STYLE_MUTED_GRAY` 38pt 半圆浅绿），点开 PopupMenu 5 个排序选项
+- `applySortKeyChange()` 改完 sortKey：写 prefs → 更新按钮文案 → 重新 `applyOnlineCategoryFilter`
+- `OnlineGalleryClient.fetchWorks(category, query, sortKey, callback)` 新增 sortKey 参数（向后兼容旧签名），URL 拼 `&sort=<key>`
+- MainActivity 两处 `onlineClient.fetchWorks` 调用都改成 4 参数版（带 `currentSortKey`）
+
+**闸门**：`tests/parity_ios_android.py` 新增 **A9**：9 项硬判据（按钮存在 / PopupMenu / Prefs / 调用点 / 客户端签名 / URL 拼装 / 服务端 SORT_KEYS / ?sort= / sizeBytes）。
+  - 改前：1/33 FAIL（验过）
+  - 改后：33/33 PASS（验过）
+
+**Android 升 0.8.57/168 → 0.8.58/169**。
+**iOS**：DSH-109 暂未同步 iOS 端（用户口径「安卓直接参照苹果的来」，本次只动 Android）。iOS 端排序按钮将在 DSH-110 跟做。
