@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""iOS 在线相册客户端硬判据闸门（DSH-099 iOS 等价引入）。
+"""iOS 在线相册客户端硬判据闸门（DSH-099 iOS 等价引入 + DSH-102 iOS URL 拼接加固）。
 
 背景：DSH-099 Android 修复 `downloadWorkImages` catch 块漏双写（用户铁律"debug 回传"）。
 iOS 端对应路径是 `OnlineGalleryClient.loadImage`（in-memory UIImage 给 UIActivityViewController
@@ -7,11 +7,19 @@ iOS 端对应路径是 `OnlineGalleryClient.loadImage`（in-memory UIImage 给 U
 
 iOS 用 NSLog（与现有 line 237 `[DeviceRegister] OK (%@)` 风格一致）。
 
+DSH-102：服务端 `image_name_index()` 同名文件只保留首个命中（库内 174 条作品共用 P1_封面.png），
+iOS 旧契约 `?path=裸文件名` 会让 iPhone 上图永远拿到第一个扫到的作品的图（与当前浏览无关，
+用户 iPhone 上图错位显示阳澄湖/浙江省攻略就是这条 BUG）。修法：iOS loadImage 改 `?id+?file`
+双键，与 Android 走齐；3 个 caller (downloadAllImages / loadOnline / loadCurrent) 必须传 workId。
+
 判据：
 B1 loadImage 失败分支有 NSLog（含 path / isThumbnail）
 B2 loadImage 磁盘缓存写失败有 NSLog（替换原 try? 吞错）
 B3 fetchCategories catch 有 NSLog
 B4 fetchWorks catch 有 NSLog（含 category / query / error）
+B5 loadImage 走新契约 ?id+?file（有 workId 时）（DSH-102）
+B6 loadImage 函数签名带 workId 参数（DSH-102）
+B7 ContentView 三个 caller (downloadAllImages / loadOnline / loadCurrent) 都传 workId（DSH-102）
 
 纪律：改前必须先看到对应项 FAIL（用 `git show HEAD:./<path>` 取改前代码摸底）；
      改完必须 PASS。退出码 0 = 全通过；1 = 有未达标项。
@@ -34,6 +42,7 @@ def extract_func_body(text, signature):
 
 ROOT = Path(__file__).resolve().parents[1]
 IOS_CLIENT = ROOT / "ios" / "Album" / "OnlineGalleryClient.swift"
+CONTENT_VIEW = ROOT / "ios" / "Album" / "ContentView.swift"
 
 
 def check(name, ok, detail):
@@ -48,6 +57,7 @@ def main():
         return 1
 
     src = IOS_CLIENT.read_text(encoding="utf-8", errors="replace")
+    cv_src = CONTENT_VIEW.read_text(encoding="utf-8", errors="replace")
     load_image = extract_func_body(src, "public func loadImage(")
     fetch_categories = extract_func_body(src, "public func fetchCategories(")
     fetch_works = extract_func_body(src, "public func fetchWorks(")
@@ -103,6 +113,47 @@ def main():
         b4_catch and b4_nslog and b4_nslog_count >= 1,
         "catch存在=%s 三参数标记=%s NSLog数=%d"
         % (b4_catch, b4_nslog, b4_nslog_count)))
+
+    print()
+    print("=== DSH-102: iOS loadImage 改 ?id+?file 双键（绕开 image_name_index 同名冲突） ===")
+    print()
+    results_102 = []
+
+    # ---- B6: loadImage 函数签名带 workId 参数（DSH-102）----
+    # 必须先判，否则 B5 的 URLQueryItem 也可能拼在旧 ?path= 上下文里
+    b6_sig = re.search(r"public func loadImage\(\s*path\s*:\s*String\s*,\s*workId\s*:\s*String\?\s*=\s*nil", load_image) is not None
+    results_102.append(check(
+        "B6 loadImage 签名带 workId: String? = nil",
+        b6_sig,
+        "签名缺失 workId 参数（必须放到 path 之后、isThumbnail 之前）"))
+
+    # ---- B5: loadImage 走新契约 ?id+?file（有 workId 时）----
+    # 用 (?:name|key)\s*:\s*"id" / "file" 容错，DSH-102 期间若做小幅重命名也不会误报
+    b5_id = re.search(r'URLQueryItem\(\s*(?:name|key)\s*:\s*"id"\s*,\s*(?:value|value)\s*:\s*workId\s*\)', load_image) is not None
+    b5_file = re.search(r'URLQueryItem\(\s*(?:name|key)\s*:\s*"file"\s*,\s*(?:value|value)\s*:\s*bn\s*\)', load_image) is not None
+    b5_basename = "lastPathComponent" in load_image  # 必须从 path 抽 basename
+    results_102.append(check(
+        "B5 loadImage 走新契约 ?id+?file（带 basename 取裸文件名）",
+        b5_id and b5_file and b5_basename,
+        "id 拼=%s file 拼=%s basename=%s" % (b5_id, b5_file, b5_basename)))
+
+    # ---- B7: ContentView 三个 caller 都传 workId（DSH-102）----
+    # 三个调用点：line ~863 downloadAllImages(paths: entry.images, workId: entry.id, ...)
+    #          line ~1466 loadOnline 内 loadImage(path: path, workId: workId, ...)
+    #          line ~2318 loadCurrent 内 loadImage(path: path, workId: entry.id, ...)
+    #          line ~1971 loadOnline 自身被 renderOnlinePreviews 调时传 workId
+    b7_dl = "downloadAllImages(paths: entry.images, workId: entry.id" in cv_src
+    b7_online_li = "OnlineGalleryClient.shared.loadImage(path: path, workId: workId" in cv_src
+    b7_preview_lc = "OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id" in cv_src
+    b7_loadonline = re.search(r"func loadOnline\(\s*path\s*:\s*String\s*,\s*workId\s*:\s*String\?\s*=\s*nil", cv_src) is not None
+    b7_render = "renderOnlinePreviews(entry.images, workId: entry.id" in cv_src
+    results_102.append(check(
+        "B7 ContentView 三个 caller 都传 workId（DSH-102）",
+        b7_dl and b7_online_li and b7_preview_lc and b7_loadonline and b7_render,
+        "downloadAllImages=%s loadOnline内loadImage=%s loadCurrent内loadImage=%s loadOnline签名=%s renderOnlinePreviews=%s"
+        % (b7_dl, b7_online_li, b7_preview_lc, b7_loadonline, b7_render)))
+
+    results.extend(results_102)
 
     print()
     bad = results.count(False)

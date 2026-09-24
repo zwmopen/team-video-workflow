@@ -658,12 +658,36 @@ class TestSubdirImages(unittest.TestCase):
             self.assertIsNotNone(got, "iOS 契约 ?path=%s 解析失败，手机端会 404" % fn)
             self.assertTrue(os.path.isfile(got))
 
-    def test_toplevel_layout_unchanged(self):
-        """布局 A 不得被回归影响：顶层有图时优先用顶层，images 仍是裸文件名。"""
+    def test_toplevel_layout_unique_relpath(self):
+        """【2026-09-24 修「iPhone 全库串图」】布局 A 也必须返回成品库根相对路径。
+
+        旧契约要求布局 A 返回裸文件名——那正是串图根因：全库 393 套作品共用
+        P1.png / P1_封面.png 这类同名标识，iOS `?path=<裸文件名>` 会命中
+        image_name_index 的「同名首命中」，叠加客户端缓存键=路径字符串，
+        表现为全库作品在 iPhone 上显示同一套图（2026-09-24 实测复现）。
+        """
         self._make_work("20260918_100000_安吉2天1夜秋季团建", "toplevel")
         works = self.scanner.scan(force=True)
         self.assertEqual(len(works), 1)
-        self.assertEqual(sorted(works[0]["images"]), ["P1.png", "P2.png"])
+        ims = works[0]["images"]
+        self.assertEqual(len(ims), 2)
+        for fn in ims:
+            self.assertIn("/", fn, "布局 A 必须返回含路径的全局唯一标识，禁止裸文件名")
+            got = self.scanner.resolve_image_path(fn)
+            self.assertIsNotNone(got, "iOS 契约 ?path=%s 解析失败，手机端会 404" % fn)
+            self.assertTrue(os.path.isfile(got))
+
+    def test_two_works_same_image_names_get_unique_ids(self):
+        """【2026-09-24 串图闸门】两套作品图片同名时，下发标识必须互不相同。"""
+        self._make_work("20260918_100000_安吉2天1夜秋季团建", "toplevel")
+        self._make_work("20260918_110000_莫干山2天1夜秋季团建", "toplevel")
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 2)
+        a = set(works[0]["images"])
+        b = set(works[1]["images"])
+        self.assertEqual(len(a), 2)
+        self.assertEqual(len(b), 2)
+        self.assertFalse(a & b, "两套作品的图片标识出现交集 ⇒ iOS 端必然串图")
 
     def test_no_image_work_still_excluded(self):
         """反向闸门：真·没有图的作品（子目录也没有）仍必须排除，别把空壳放进手机。"""

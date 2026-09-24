@@ -1,3 +1,42 @@
+# DSH-102 — iPhone 在线相册串图（image_name_index 同名冲突）
+
+**修复日期**: 2026-09-24
+**影响端**: 服务端 `online_gallery_service.py` + iOS `OnlineGalleryClient.swift` / `ContentView.swift`
+**症状**: iPhone 端点击「在线相册 → 杭州分类 → 江浙沪小众秘境 Top9🍁」详情页，路径/标题/文案都对，但首图缩略图显示阳澄湖（其余图位也错位）。Android 端正常。
+
+## 根因
+
+服务端 `image_name_index()`（scripts/online_gallery_service.py 旧实现）按文件名裸名建索引，同名文件只保留首个命中。线上库内 393 套作品大量共用 `P1_封面.png` / `P1.png` 这类标识图，iOS 走 `?path=<裸文件名>` 旧契约拿到的是索引里**第一个被扫到的**作品对应的图，与用户点击的作品毫无关系。
+
+DSH-101 阶段尝试改用 `resolve_image_path()` 兜底解决 404，但同名首命中问题被一起带过去，演变为 DSH-102 的「全库串图」。
+
+## 修复
+
+### 服务端（scripts/online_gallery_service.py）
+- `/image` 路由：当 `?id` + `?file` 同时存在时，**优先**用 `work_id` 查 work 真实路径，再用 `basename(file)` 在该作品目录拼装候选路径。
+- `resolve_image_path()` 仍作为兜底（兼容 DSH-101 时代旧调用）。
+- `image_name_index(rebuild=True)` 仅在 `id+file` 拼不出图时触发，不会污染首命中。
+
+### iOS 端
+- `OnlineGalleryClient.loadImage(path:workId:isThumbnail:maxPixel:completion:)` 新增 `workId: String? = nil` 参数。
+- 客户端 URL 拼接逻辑改为：有 `workId` ⇒ `?id=<workId>&file=<basename>&thumb=...`；无 `workId` ⇒ 保留 `?path=` 旧契约兜底。
+- `ContentView.swift` 6 处调用点（`loadOnline` / `renderOnlinePreviews` / `downloadAllImages` / 三处 `loadImage` 预览/原图）全部传入 `entry.id`。
+
+## 验证（闸门先改后判）
+
+| 闸门 | 文件 | 改前 | 改后 |
+|---|---|---|---|
+| B5（iOS URL 新契约 id+file） | tests/test_ios_online_gallery_client.py | FAIL | PASS |
+| B6（iOS loadImage 签名带 workId） | tests/test_ios_online_gallery_client.py | FAIL | PASS |
+| B7（iOS 三个 caller 都传 workId） | tests/test_ios_online_gallery_client.py | FAIL | PASS |
+| C25（服务端 id+basename 拼路径） | tests/parity_ios_android.py | FAIL | PASS |
+
+服务端正向 curl `?id=<秘境 Top9 work_id>&file=P1_封面.png`：
+- 改前：`sha256=a8077f8a52a5d46b size=2566262`（错图 = 浙江省全攻略首命中）
+- 改后：`sha256=cefc78b909831e86 size=3278852`（✅ 秘境 Top9 封面真图）
+
+iOS 升级 0.8.38/110 → **0.8.39/111**。
+
 # 变更记录
 
 ## 服务端 fix - 2026-09-24 - DSH-101：use-work 移走作品后 `/api/online/image` 仍能取原图（修服务端 `os.path.join` 重复拼接 → 404）

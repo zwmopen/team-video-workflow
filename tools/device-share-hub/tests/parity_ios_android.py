@@ -381,6 +381,26 @@ def main():
         % (c24_no_hide, c24_mode_branch, c24_library)))
 
     print()
+    print("=== DSH-102: 服务端 image endpoint ?id+?file 双键（绕开 image_name_index 同名冲突） ===")
+    print()
+    server_src = (ROOT / "scripts" / "online_gallery_service.py").read_text(encoding="utf-8", errors="replace")
+    # C25 服务端 handle_image ?id+?file 优先于 resolve_image_path。
+    # DSH-102 改前实测：HEAD 版本下 `?id+?file` 走 resolve_image_path → 忽略 id
+    #              → image_name_index 同名冲突 → iOS 取图永远拿第一个扫到的作品
+    #              （库内 174 条 P1_封面.png 同名命中），用户 iPhone 上图错位就是这个 BUG。
+    # 改后必须：`target_work = scanner.get_work(work_id)` + `os.path.join(target_work["path"], bn)`
+    #              用 basename 拼作品目录，彻底绕开 image_name_index 索引。
+    c25_id_param = re.search(r'id\s*=\s*query\.get\(\s*"id"\s*,\s*\[""\]\s*\)\[0\]', server_src) is not None
+    c25_get_work = re.search(r'self\.scanner\.get_work\(work_id\)', server_src) is not None
+    c25_path_join = re.search(r'os\.path\.join\(target_work\["path"\],\s*bn\)', server_src) is not None
+    c25_basename = re.search(r"bn = file_name\.rsplit", server_src) is not None
+    results.append(check(
+        "C25 服务端 handle_image ?id+?file 双键 + basename 拼作品目录",
+        c25_id_param and c25_get_work and c25_path_join and c25_basename,
+        "id 参数=%s get_work=%s path+bn join=%s basename=%s"
+        % (c25_id_param, c25_get_work, c25_path_join, c25_basename)))
+
+    print()
     bad = results.count(False)
     if bad:
         print("❌ %d/%d 项未达标" % (bad, len(results)))

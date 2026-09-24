@@ -1,3 +1,18 @@
+# iOS 0.8.39 (build 111) — DSH-102 修复
+
+## 修复
+- **DSH-102 在线相册串图**：iPhone 端在线相册点击作品时，路径/标题/文案对，但图片显示成另一部作品的图（image_name_index 同名冲突）。iOS 客户端 `loadImage` 现在传入 `workId`，URL 走 `?id+?file` 新契约；服务端用 `work_id` 定位作品目录拼装候选路径，全库 393 套作品的同名标识图不再被首命中串掉。
+  - 改动文件：`OnlineGalleryClient.swift`（loadImage 加 workId 参数 + URL 拼接）、`ContentView.swift`（6 处 caller 全部传 entry.id）。
+
+## 验证
+- tests/test_ios_online_gallery_client.py：B5/B6/B7 三项闸门改前 FAIL → 改后 PASS。
+- tests/parity_ios_android.py：C25 服务端闸门改前 FAIL → 改后 PASS（共 28 项全绿）。
+- 服务端正向 curl `?id=<秘境 Top9 work_id>&file=P1_封面.png` 拿到 `sha256=cefc78b909831e86` 秘境 Top9 真图（改前为 a8077f8a52a5d46b 串图）。
+
+## 版本
+- MARKETING_VERSION: 0.8.38 → **0.8.39**
+- CURRENT_PROJECT_VERSION: 110 → **111**
+
 # iOS 变更记录
 
 ## 0.8.5 - 已用作品临时置顶复盘与【重置】误触回滚

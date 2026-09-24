@@ -407,7 +407,16 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
-    public func loadImage(path: String, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
+    /// DSH-102：加 `workId` 参数（默认 nil 保留旧契约）。
+    /// 服务端 `image_name_index()` 同名文件只保留首个命中（库内 174 条作品共用 P1_封面.png），
+    /// 旧契约 `?path=裸文件名` 会让 iOS 永远拿到第一个扫到的作品的图（与当前浏览无关，
+    /// 用户 iPhone 上图错位显示阳澄湖/浙江省攻略就是这条 BUG）。修法：
+    /// - 有 workId → `?id=<workId>&file=<basename(path)>` 双键，服务端
+    ///   `OnlineGalleryHandler.handle_image()` 会用 workId 定位作品目录 + basename 拼图，
+    ///   彻底绕开 image_name_index 同名冲突索引。
+    /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
+    /// DSH-099 失败 NSLog 保留。
+    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
         let cacheKey = "\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
             completion(memoryCached)
@@ -425,10 +434,18 @@ public final class OnlineGalleryClient {
 
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/image")
-        components?.queryItems = [
-            URLQueryItem(name: "path", value: path),
-            URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")
-        ]
+        // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目（旧 BUG）
+        var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
+        if let workId = workId, !workId.isEmpty {
+            // DSH-102 新契约：id+file 双键，basename 永远在作品目录里
+            let bn = (path as NSString).lastPathComponent
+            queryItems.append(URLQueryItem(name: "id", value: workId))
+            queryItems.append(URLQueryItem(name: "file", value: bn))
+        } else {
+            // 旧契约：?path=裸文件名（无 workId 的 caller 不传，保持向后兼容）
+            queryItems.append(URLQueryItem(name: "path", value: path))
+        }
+        components?.queryItems = queryItems
         guard let url = components?.url else {
             completion(nil)
             return

@@ -1059,7 +1059,7 @@ class WorkScanner:
         """收集作品成品图的客户端标识列表。
 
         两级策略（2026-09-21 修「图在 产出素材/ 子目录 ⇒ 手机看不到」）：
-        ① 作品根目录有图 → 原样返回裸文件名（布局 A，行为完全不变）；
+        ① 作品根目录有图 → 返回**成品库根相对路径**（2026-09-24 起与 ② 同口径，全局唯一）；
         ② 根目录无图 → 回退到产线标准素材子目录（IMAGE_SUBDIR_FALLBACKS），
            返回**成品库根相对路径**，保证全局唯一：
              - iOS 走 `?path=`，resolve_image_path() 原生支持「相对根路径」形态；
@@ -1067,10 +1067,19 @@ class WorkScanner:
            若只返回作品内相对路径（`产出素材/P1.png`），103 套作品会共用同一个
            图片标识 ⇒ iOS 端磁盘/内存缓存键与文件名索引双重串图，故必须用根相对路径。
         """
+        root_real = os.path.realpath(self.root)
         top = [f for f in files if os.path.splitext(f.lower())[1] in IMAGE_EXTENSIONS]
         if top:
-            return top
-        root_real = os.path.realpath(self.root)
+            # 【2026-09-24 修「iPhone 全库串图」】布局 A 同样禁止返回裸文件名：
+            # 393 套作品共用 P1_封面.png / P1.png 这类同名标识，iOS 走
+            # /api/online/image?path=<裸文件名> 会命中 image_name_index 的「同名首命中」，
+            # 叠加客户端缓存键=路径字符串 ⇒ 全库作品在 iPhone 上显示同一套图
+            # （实测复现：path=P1_封面.png 返回的是「评371-浙江省旅游全攻略」的封面，
+            #  而非请求作品自己的封面）。与 ② 同口径：统一返回成品库根相对路径，全局唯一。
+            return [
+                os.path.relpath(os.path.join(dir_path, f), root_real).replace(os.sep, "/")
+                for f in top
+            ]
         for sub in IMAGE_SUBDIR_FALLBACKS:
             sub_dir = os.path.join(dir_path, sub)
             if not os.path.isdir(sub_dir):
@@ -1612,13 +1621,23 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             img_path = ""
             if work_id and file_name:
-                # DSH-101：file_name 是「成品库根相对路径」（如
-                # 「_已发送1次（微信公众号可发）/xxx/产出素材/P1.png」），
-                # 老代码 `os.path.join(target_work["path"], file_name)` 在 use-work
-                # 移走作品后会重复拼 `_已发送1次/.../.../_已发送1次/.../产出素材/...` 找不到。
-                # 统一交给 resolve_image_path：它内部 `os.path.join(self.root, raw)`
-                # 能正确处理三种形态（绝对/成品库根相对/裸文件名）。
-                img_path = self.scanner.resolve_image_path(file_name) or ""
+                # DSH-102：work_id 必须用于定位作品目录，避免 image_name_index
+                # 同名文件「同名」只保留首个命中带来的串图 BUG（用户报告：江浙沪秘境 Top9
+                # 作品在 iOS 上图显示阳澄湖，根因就是服务端 P1_封面.png 同名冲突）。
+                # 优先：作品目录 + basename(file_name) → basename 永远在作品目录里。
+                # 兜底：resolve_image_path(file_name)（处理 DSH-101 use-work 移走 + 子目录路径）
+                bn = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                target_work = self.scanner.get_work(work_id)
+                if target_work:
+                    cand = os.path.join(target_work["path"], bn)
+                    if os.path.isfile(cand):
+                        img_path = cand
+                    else:
+                        # 文件名不在作品目录（极少见，子目录或路径变更） → 走 resolve_image_path
+                        img_path = self.scanner.resolve_image_path(file_name) or ""
+                else:
+                    # DSH-101 场景：target_work 找不到（理论上不会，get_work 兜底所有分类） → 走 resolve_image_path
+                    img_path = self.scanner.resolve_image_path(file_name) or ""
                 if not img_path:
                     # 索引可能还没建全（未先拉列表），重建一次再试
                     self.scanner.image_name_index(rebuild=True)

@@ -1,3 +1,21 @@
+# DSH-102 — iPhone 在线相册全库串图（image_name_index 同名冲突）
+
+**症状**: 2026-09-24 用户反馈：iPhone 上点「在线相册 → 杭州分类 → 江浙沪小众秘境 Top9🍁」详情页，路径/标题/文案都对，但首图缩略图显示阳澄湖（其余图位也错位）。Android 端正常。
+**根因链**:
+1. 库内 393 套作品大量共用 `P1_封面.png` / `P1.png` 这类同名标识图。
+2. 服务端 `image_name_index()` 按文件名裸名建索引，**同名只保留首个命中**（online_gallery_service.py 旧实现，DSH-101 修复 404 时未触及）。
+3. iOS 客户端走 `?path=<裸文件名>` 旧契约，永远拿第一个被扫到的作品对应的图。
+4. DSH-101 用 `resolve_image_path()` 兜底修 404，反而把同名首命中问题一起带到新契约，演变为 DSH-102。
+**修复**:
+- 服务端 `/image`：`?id + ?file` 同时存在时，优先用 `work_id` 查 work 真实路径 + `basename(file)` 拼候选；旧 `resolve_image_path` 仅作兜底。
+- iOS：`loadImage(path:workId:isThumbnail:maxPixel:completion:)` 加 `workId` 参数；有 `workId` ⇒ `?id+?file`；无 ⇒ 旧 `?path=` 兜底。
+- iOS `ContentView.swift` 6 处 caller 全部传 `entry.id`。
+**验证（闸门先改后判）**:
+- `tests/test_ios_online_gallery_client.py` B5/B6/B7 改前 FAIL → 改后 PASS（7/7）。
+- `tests/parity_ios_android.py` C25 改前 FAIL → 改后 PASS（28/28）。
+- curl `?id=<秘境 Top9 work_id>&file=P1_封面.png`：改前 sha256=a8077f8a52a5d46b（错图）/ 改后 sha256=cefc78b909831e86（✅ 真图）。
+- iOS 升 0.8.38/110 → **0.8.39/111**。
+
 # Bug、根因与回归账本
 
 只记录脱敏、可复现、可复用的结论。新增问题必须补齐现象、根因、修复、证据和回归要求，不能只贴原始日志。

@@ -859,7 +859,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         progress.addAction(UIAlertAction(title: "取消", style: .cancel))
         present(progress, animated: true)
 
-        downloadAllImages(paths: entry.images, onProgress: { [weak progress] done, count, name in
+        // DSH-102：传 workId 给服务端，避免 image_name_index 同名冲突导致图错位
+        downloadAllImages(paths: entry.images, workId: entry.id, onProgress: { [weak progress] done, count, name in
             progress?.message = "正在下载：\(name)（\(done)/\(count) 张）"
         }, completion: { [weak self] urls in
             guard let self = self else { return }
@@ -900,6 +901,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 把 `[UIImage]` 直接交给 `UIActivityViewController` 时，小红书/抖音的 share extension
     /// 会把 N 张图读成同一张（实测 9 张全变 1 张），改传文件 URL 后不再串图。
     private func downloadAllImages(paths: [String],
+                                   workId: String,
                                    onProgress: @escaping (Int, Int, String) -> Void,
                                    completion: @escaping ([URL]) -> Void) {
         var collected = [URL?](repeating: nil, count: paths.count)
@@ -916,7 +918,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             let path = paths[index]
             let src = (path as NSString).lastPathComponent
             onProgress(index + 1, total, src)
-            OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: false) { image in
+            OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: false) { image in
                 defer { step(index + 1) }
                 guard let image = image else { return }
                 // 序号前缀保证分享顺序与电脑端一致，且不会因重名互相覆盖
@@ -1457,11 +1459,11 @@ private final class ThumbnailButton: UIButton {
         }
     }
 
-    func loadOnline(path: String) {
+    func loadOnline(path: String, workId: String? = nil) {
         currentOnlinePath = path
         currentURL = nil
         imageViewWidget.image = nil
-        OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: true, maxPixel: 200) { [weak self] image in
+        OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: true, maxPixel: 200) { [weak self] image in
             guard let self = self, self.currentOnlinePath == path else { return }
             self.imageViewWidget.image = image
         }
@@ -1942,11 +1944,12 @@ private final class WorkCell: UICollectionViewCell {
             ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
             : AppColors.secondaryText
 
-        renderOnlinePreviews(entry.images)
+        // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键
+        renderOnlinePreviews(entry.images, workId: entry.id)
         configureOnlineButtons(entry)
     }
 
-    private func renderOnlinePreviews(_ paths: [String]) {
+    private func renderOnlinePreviews(_ paths: [String], workId: String) {
         let currentViews = previewStack.arrangedSubviews.compactMap { $0 as? ThumbnailButton }
         if currentViews.count > paths.count {
             for v in currentViews[paths.count...] {
@@ -1964,7 +1967,8 @@ private final class WorkCell: UICollectionViewCell {
                 previewStack.addArrangedSubview(button)
             }
             button.tag = index
-            button.loadOnline(path: path)
+            // DSH-102：loadOnline 传入 workId，让 loadImage 走 ?id+?file 双键
+            button.loadOnline(path: path, workId: workId)
         }
     }
 
@@ -2310,7 +2314,8 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         guard currentIndex >= 0, currentIndex < entry.images.count else { return }
         counterLabel.text = "\(currentIndex + 1) / \(entry.images.count)"
         let path = entry.images[currentIndex]
-        OnlineGalleryClient.shared.loadImage(path: path, isThumbnail: false) { [weak self] img in
+        // DSH-102：传 workId 给 loadImage，走 ?id+?file 双键
+        OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] img in
             self?.imageView.image = img
         }
     }
