@@ -1,5 +1,36 @@
 # 变更记录
 
+## Android 0.8.55 / 166 - 2026-09-24 - DSH-100：downloadWorkImages 缺 mkdirs 导致"下载图片失败"（FileNotFoundException ENOENT，根因定位）
+
+> **用户现场反馈**：「哦点击了''」（在 K60 上点平台按钮下载原图，触发 0.8.54 装的 DSH-099 修复路径）→ 我从 K60 logcat 抓到完整堆栈：
+> ```
+> W OnlineGalleryClient: downloadWorkImages failed: FileNotFoundException: 
+> /data/user/0/com.zwm.gallery/files/work-library/online/<workId>/已发送0次（抖音小红书可发）/20260917_CodexAPI-AUTUMN-C-评3-赞2-中秋手工团建/产出素材/P1.png: 
+> open failed: ENOENT (No such file or directory)
+>   at com.zwm.gallery.OnlineGalleryClient.lambda$downloadWorkImages$47(OnlineGalleryClient.java:1322)
+> ```
+>
+> **根因**：服务端 `_collect_images` 两级策略（`scripts/online_gallery_service.py:1058-1090`）—— 当图在 `产出素材/` 子目录时返回**成品库根相对路径**（如 `已发送0次（抖音小红书可发）/20260917_.../产出素材/P1.png`）。iOS 走 `?path=` 走 `resolve_image_path()` 原生解析；Android 走 `?id=..&file=` 然后 `new File(targetDir, fileName)`，**中间的子目录从未 mkdirs**，FileOutputStream 打开嵌套路径直接 ENOENT。**典型 iOS/Android 不对称 BUG**——iOS 早考虑到了（line 932 注释 + 兜底逻辑），Android 端**从来没有这个细节**。
+>
+> **DSH-099 价值体现**：诊断 8m 之内定位到精确行号（line 1322）+ fileName + 完整堆栈 + Caused by。换以前 0.8.52 静默失败版，用户只会看到"下载图片失败: 网络超时" toast，不知道是哪张图、哪个 workId、哪个 HTTP code、哪行抛错。
+
+- **① `OnlineGalleryClient.downloadWorkImages` 嵌套子目录 mkdirs**（`OnlineGalleryClient.java:1303-1307`）：
+  - 改动位置：`java.io.File localFile = new java.io.File(targetDir, fileName);` 之后立即加：
+    ```java
+    java.io.File parent = localFile.getParentFile();
+    if (parent != null && !parent.exists()) parent.mkdirs();
+    ```
+  - **必须先 mkdirs 才能 FileOutputStream**：fileName 可能是单层文件名（"P1.png"）也可能嵌套（"产出素材/P1.png" 或更深的成品库根相对路径），parent.mkdirs 递归创建所有中间目录；已有的 `targetDir.mkdirs`（line 1284）保留，保证 targetDir 存在
+  - DSH-098 / DSH-099 修的都是「下载层」（流式写盘 + 双写），**DSH-100 修的是「路径解析层」**——这一层 iOS / Android 历来不对称，是 DSH-098 / DSH-099 的盲区
+- **② 配套闸门 A8**（`tests/test_android_online_gallery_client.py`）：
+  - **A8** `downloadWorkImages` 嵌套子目录 mkdirs：`localFile.getParentFile()` + `parent.mkdirs` + `targetDir.mkdirs` 三处必须存在
+  - **改前 FAIL 验证**：HEAD 旧版（DSH-100 没改）跑出 **A8 FAIL**（`parent.mkdirs=False`），整体 **7/8 FAIL**
+  - **改后 PASS 验证**：工作区跑出 **A8 PASS**，整体 **8/8 PASS**
+- **③ 版本号**：Android `0.8.54/165` → **`0.8.55/166`**（改客户端代码必须升版本号）
+- **④ iOS 端**：不动（iOS 走 `?path=` 走 `resolve_image_path` 原生解析，不存在这个问题）
+- **⑤ Windows 端**：不动（架构隔离）
+- **⑥ 装机验证**：push 后 CI 通过 → 下 0.8.55 APK → `adb install -r` 装 K60 → 用户点同一作品平台按钮 → 应该下载成功；DiagnosticLog 应该没 `download_work_failed` 事件（除非服务端返回错误）
+
 ## Android 0.8.54 / 165 - 2026-09-24 - DSH-099：downloadWorkImages（原图下载）错误路径 Log.w + DiagnosticLog 双写（补 DSH-098 漏的双写）
 
 > **用户口径**：2026-09-24 现场反馈 K60 触发"下载图片失败..data/user..." → 定位 `MainActivity.java:4444` toast → `OnlineGalleryClient.downloadWorkImages` catch 块只 `callback.onError`，**完全没有 Log.w + DiagnosticLog 双写**，违背"debug 回传"硬约束。

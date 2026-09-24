@@ -4,7 +4,55 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-099**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-100**。
+
+## DSH-100 Android downloadWorkImages 嵌套子目录 mkdirs 缺失 → FileNotFoundException ENOENT（Android 0.8.55/166，2026-09-24）
+
+> **用户现场反馈**：「哦点击了''」→ 在 K60 上点平台按钮下载原图 → 触发 DSH-099 修复的 `downloadWorkImages` catch 路径 → 从 K60 logcat（12:10:00）抓到完整堆栈：
+> ```
+> W OnlineGalleryClient: downloadWorkImages failed: FileNotFoundException:
+> /data/user/0/com.zwm.gallery/files/work-library/online/<workId>/已发送0次（抖音小红书可发）/20260917_CodexAPI-AUTUMN-C-评3-赞2-中秋手工团建/产出素材/P1.png:
+> open failed: ENOENT (No such file or directory)
+>   at com.zwm.gallery.OnlineGalleryClient.lambda$downloadWorkImages$47(OnlineGalleryClient.java:1322)
+> ```
+
+**现象**：K60 装 0.8.54/165（DSH-099 build）后用户点平台按钮下载原图 → **依然"下载图片失败"**（失败原因不再是 catch 静默，而是真 ENOENT）。
+
+**根因**：服务端 `_collect_images` 两级策略（`scripts/online_gallery_service.py:1058-1090`）—— 当作品根目录无图 → 回退 `产出素材/` 子目录 → 返回**成品库根相对路径**：
+```
+已发送0次（抖音小红书可发）/20260917_CodexAPI-AUTUMN-C-评3-赞2-中秋手工团建/产出素材/P1.png
+```
+iOS 走 `?path=` 走 `resolve_image_path()` 原生解析（含解析兜底 `line 1621`），Android 走 `?id=..&file=` 后 `new File(targetDir, fileName)`，**中间的 `已发送0次（抖音小红书可发）/20260917_.../` 子目录从未 mkdirs** → FileOutputStream 打开嵌套路径直接 ENOENT。
+
+**典型 iOS/Android 不对称 BUG**：
+- iOS：发现得早（line 932 注释明说 + `resolve_image_path` 兜底）
+- Android：从来没有这个细节——`new File(parent, child)` 把含 `/` 的 child 当单一文件名，**Linux fs 只认路径不认抽象逻辑**
+
+**DSH-099 价值体现**：DSH-099 之前用户只会看到"下载图片失败: 网络超时" toast；DSH-099 之后**8 分钟定位到精确行号（line 1322）+ fileName + 完整堆栈 + Caused by**。DSH-099 修了"看不见 BUG"；DSH-100 修了"看得到的 BUG"。
+
+**修复**（Android 0.8.55/166）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `OnlineGalleryClient.java:1303-1307` `downloadWorkImages` | `new File(targetDir, fileName)` 后立即加 `java.io.File parent = localFile.getParentFile(); if (parent != null && !parent.exists()) parent.mkdirs();` 递归创建所有中间子目录 |
+| 2 | `tests/test_android_online_gallery_client.py` | 加 A8 闸门：`localFile.getParentFile()` + `parent.mkdirs` + `targetDir.mkdirs` 三处必须存在 |
+| 3 | `android/app/build.gradle.kts:13-14` | `versionCode 165 → 166`, `versionName 0.8.54 → 0.8.55` |
+| 4 | `CHANGELOG.md` 顶部 | 加 DSH-100 条目 |
+
+**证据**：
+- **K60 logcat 12:10:00 完整堆栈**：`downloadWorkImages failed: FileNotFoundException ... open failed: ENOENT` + `at OnlineGalleryClient.lambda$downloadWorkImages$47(OnlineGalleryClient.java:1322)` + `Caused by: android.system.ErrnoException: open failed: ENOENT`
+- **服务端 `_collect_images` line 1058-1090 两级策略摸底**：根目录有图 → 裸文件名；根目录无图 → 回落 `产出素材/` → 返回成品库根相对路径
+- **服务端 line 932 注释**："images 值也可能是「成品库根相对路径」（图在 产出素材/ 的作品）"——iOS 早考虑到了，Android 没跟进
+- **闸门验证纪律**：HEAD 旧版跑 `test_android_online_gallery_client.py` = **A8 FAIL**（`parent.mkdirs=False`），整体 **7/8 FAIL**；工作区 = **A8 PASS**，整体 **8/8 PASS**
+
+**回归要求**：
+- K60 装 0.8.55 后触发同一作品的平台按钮，下载应该成功；图片落到 `/data/user/0/com.zwm.gallery/files/work-library/online/<workId>/已发送0次（抖音小红书可发）/20260917_.../产出素材/P1.png`（中间目录由 mkdirs 自动创建）
+- DiagnosticLog 应该没 `download_work_failed` / `download_work_http_error` 事件
+- `tests/test_android_online_gallery_client.py` **8/8 PASS**（A1~A8）
+
+**配套独立闸门**（`tests/test_android_online_gallery_client.py` 8 项，DSH-100 增 A8）：
+- A1~A7 同 DSH-098 / DSH-099
+- **A8** `downloadWorkImages` 嵌套子目录 mkdirs（修 FileNotFoundException ENOENT）
 
 ## DSH-099 Android downloadWorkImages（原图下载）错误路径补双写（Android 0.8.54/165，2026-09-24）
 

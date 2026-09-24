@@ -137,6 +137,20 @@ def main():
         "裸字符串残留=%s Log.w(TAG 处数=%d(>=2) DiagnosticLog 处数=%d(>=2) currentFileName=%s"
         % (not a7_no_bare, a7_logw_tag, a7_diag, a7_currentFile)))
 
+    # ---- A8：downloadWorkImages 必须 mkdirs 嵌套子目录（DSH-100 引入）----
+    # 服务端 _collect_images 两级策略：当图在 产出素材/ 子目录时返回"成品库根相对路径"
+    # （如 "已发送0次（抖音小红书可发）/20260917_.../产出素材/P1.png"），iOS 走 ?path= 走
+    # resolve_image_path 原生解析，Android 走 ?id+?file 必须显式 mkdirs(parent) 否则
+    # FileOutputStream 直接 ENOENT（"下载图片失败" BUG 根因）。
+    a8_parent_mkdirs = "localFile.getParentFile()" in download_work_images \
+        and "parent.mkdirs" in download_work_images
+    a8_target_mkdirs = "targetDir.mkdirs" in download_work_images  # 已有的 targetDir
+    results.append(check(
+        "A8 downloadWorkImages 嵌套子目录 mkdirs（修 FileNotFoundException ENOENT）",
+        a8_parent_mkdirs and a8_target_mkdirs,
+        "parent.mkdirs=%s targetDir.mkdirs=%s"
+        % (a8_parent_mkdirs, a8_target_mkdirs)))
+
     print()
     bad = results.count(False)
     if bad:

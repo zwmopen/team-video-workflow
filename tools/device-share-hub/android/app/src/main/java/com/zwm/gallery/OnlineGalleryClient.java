@@ -1296,6 +1296,12 @@ public final class OnlineGalleryClient {
                         mainHandler.post(() -> callback.onProgress(progStart, total, curName));
 
                         java.io.File localFile = new java.io.File(targetDir, fileName);
+                        // DSH-100：服务端 _collect_images 两级策略 → 图在 产出素材/ 子目录时返回「成品库根相对路径」
+                        // （如 "已发送0次（抖音小红书可发）/20260917_.../产出素材/P1.png"），必须先把中间子目录建出来，
+                        // 否则 FileOutputStream 直接 ENOENT。iOS 走 ?path= 走 resolve_image_path 不需要这一步，
+                        // Android 走 ?id+?file 必须显式 mkdirs。
+                        java.io.File parent = localFile.getParentFile();
+                        if (parent != null && !parent.exists()) parent.mkdirs();
                         if (localFile.exists() && localFile.length() > 0) {
                             result.add(localFile);
                             count++;
