@@ -671,6 +671,46 @@ class TestSubdirImages(unittest.TestCase):
         works = self.scanner.scan(force=True)
         self.assertEqual(len(works), 0, "无图空壳作品被误放进了在线相册")
 
+    def test_dsh101_get_work_miss_falls_back_to_image_name_index(self):
+        """【DSH-101 闸门】use-work 移走作品后，/api/online/image 必须能取原图。
+
+        现象：手机点平台按钮 → handleOnlineWorkUse 先 recordUse 把作品从「已发送0次」
+        移到「_已发送1次」→ 紧接着 downloadWorkImages(id, file, ...) 服务端
+        `os.path.join(target_work["path"], file_name)` 拼成
+        `_已发送1次/.../_已发送1次/.../产出素材/P1.png`（path 已是新分类，file 又带旧前缀）
+        → 老代码 fallback 才能命中。
+        DSH-101 修复：服务端直接走 resolve_image_path(file_name)，由它内部
+        `os.path.join(self.root, raw)` 正确解析成品库根相对路径。
+        """
+        # 1. 布两条作品：一条会被移走，另一条不变
+        moved_dir = self._make_work("20260922_Codex-DSH101_moved", "subdir")
+        stable_dir = self._make_work("20260922_Codex-DSH101_stable", "subdir")
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 2)
+
+        # 2. 模拟 use-work 移走：把 moved_dir 整体搬到 stage1
+        stage1 = os.path.join(self.temp_dir, "_已发送1次（微信公众号可发）")
+        os.makedirs(stage1, exist_ok=True)
+        moved_id = "20260922_Codex-DSH101_moved"
+        moved_dst = os.path.join(stage1, moved_id)
+        shutil.move(moved_dir, moved_dst)
+
+        # 3. 重建索引（手机端会先拉列表触发扫描）
+        self.scanner.scan(force=True)
+
+        # 4. file_name 是「成品库根相对路径」（DSH-100 下发形态）
+        moved_file = "_已发送1次（微信公众号可发）/{}/产出素材/P1.png".format(moved_id)
+
+        # 5. DSH-101 核心：resolve_image_path 必须用 file_name 直接解析（不再走 os.path.join(path, file_name)）
+        resolved = self.scanner.resolve_image_path(moved_file)
+        self.assertIsNotNone(
+            resolved,
+            "DSH-101 修复目标：服务端 image endpoint 改走 resolve_image_path(file_name)，"
+            "避开 use-work 移走后的 path/file_name 重复拼接问题。实解析={}".format(resolved),
+        )
+        self.assertTrue(os.path.isfile(resolved))
+        self.assertIn(moved_id, resolved)
+
 
 if __name__ == "__main__":
     unittest.main()

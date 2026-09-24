@@ -4,7 +4,71 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件最新条目此前停在 DSH-075（Android 0.8.12），
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-100**。
+> 中间缺口未回填（不冒充完整），建议后续按 `git log` 回溯补齐。当前最新条目为 **DSH-101**。
+
+## DSH-101 服务端 `/api/online/image` use-work 移走作品后取图 404（服务端 fix，2026-09-24）
+
+> **用户现场反馈**：K60 装 0.8.55/166（DSH-100 build）→ 用户点同一作品平台按钮 → 服务端返回 `HTTP 404 下载 已发送0次（抖音小红书可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png 失败`。
+> K60 logcat（12:29:08）完整堆栈：
+> ```
+> W OnlineGalleryClient: downloadWorkImages HTTP 404 | 20260920_CodexAPI-马岭古道徒步攻略/已发送0次（抖音小红书可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png
+> W OnlineGalleryClient: downloadWorkImages failed: Exception: HTTP 404 下载 ...
+>   at com.zwm.gallery.OnlineGalleryClient.lambda$downloadWorkImages$47(OnlineGalleryClient.java:1325)
+> ```
+
+**现象**：K60 装 DSH-100 build（0.8.55/166）→ 点平台按钮 → DSH-099 双写 100% 工作（logcat 抓到 9 条 OnlineGalleryClient TAG + DiagnosticLog 命中）→ 但下载依然失败（ENOENT 没了，新出现 HTTP 404）。
+
+**根因**：`handleOnlineWorkUse` 单击流程：
+1. 客户端先调 `/api/online/use-work`（记录使用 + 把作品从「已发送0次」移到「_已发送1次」）
+2. 紧接着调 `/api/online/image?id=X&file=Y`（下载原图）
+
+老服务端 image endpoint 逻辑（`scripts/online_gallery_service.py:1614-1625` 改前）：
+```python
+if work_id and file_name:
+    target_work = self.scanner.get_work(work_id)
+    if not target_work:
+        self.send_error(404, "Work not found")        # ← 这条死路径
+        return
+    img_path = os.path.join(target_work["path"], file_name)  # ← 拼错
+    if not os.path.isfile(img_path):
+        resolved = self.scanner.resolve_image_path(file_name)  # ← 兜底但路径已错
+        if resolved:
+            img_path = resolved
+```
+
+- `target_work["path"]` 在 use-work 后被 update 成 `_已发送1次（微信公众号可发）/20260920_CodexAPI-马岭古道徒步攻略`（新分类）
+- `file_name` 是客户端拿到的原下发值：`已发送0次（抖音小红书可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png`（含旧分类前缀）
+- `os.path.join(new_path, old_file)` → `_已发送1次/.../已发送0次/.../产出素材/P2.png`——**两个分类前缀撞车，根本不存在**
+
+更糟的是：客户端的 file_name 永远是**客户端列表接口拿到的原值**（即 list 时这条作品还在「已发送0次」时的下发值），list 拉完→ 点按钮 → use-work 移走 → download 用旧 file_name + 新 path，**结构上必坏**。
+
+**修复**（服务端 fix，**不动客户端代码**）：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `scripts/online_gallery_service.py:1607-1640` `/api/online/image` endpoint | 删除 `get_work` + `os.path.join(path, file_name)` + `get_work 失败 404` 三段，改成 `img_path = self.scanner.resolve_image_path(file_name) or ""` —— 内部 `os.path.join(self.root, raw)` 正确处理成品库根相对路径 |
+| 2 | `scripts/test_online_gallery_service.py` `TestSubdirImages` | 加 `test_dsh101_get_work_miss_falls_back_to_image_name_index` 闸门：模拟 use-work 移走 → resolve_image_path 必须用 file_name 直接命中 |
+| 3 | `CHANGELOG.md` 顶部 | 加 DSH-101 服务端 fix 条目（**不 bump 客户端版本号**，客户端代码未改） |
+
+**证据**：
+- **K60 logcat 12:29:08**：`downloadWorkImages HTTP 404 | 20260920_CodexAPI-马岭古道徒步攻略/已发送0次（抖音小红书可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png`——path 含两个分类前缀（重叠）
+- **服务端直测**：`python -m unittest test_online_gallery_service.TestSubdirImages` = **5/5 PASS**（DSH-101 + 原 4 个 subdir 测试全绿）
+- **服务端 image API 直测**：`GET /api/online/image?id=X&file=_已发送1次（微信公众号可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png` 返回 200 + 2.28MB
+- **客户端实测 DSH-099 双写 100% 工作**：logcat 抓到 9 条 OnlineGalleryClient TAG（含 HTTP 404 错误详情 + 完整堆栈），DSH-099 双写架构有效
+
+**回归要求**：
+- K60 重插后点同一已移走作品的剩余平台按钮 → 期望下载成功
+- iPhone 0.8.38/110 装好后同样测试 → 期望 NSLog 抓到 `loadImage` 路径上的成功日志（不再 failed）
+- `test_online_gallery_service.py` **5/5 PASS**（含 DSH-101）
+
+**与 DSH-100 协同**：
+- DSH-100 修客户端写盘 ENOENT（`new File(targetDir, fileName)` 缺 mkdirs）
+- DSH-101 修服务端取图 404（`os.path.join(path, file_name)` 重复拼接）
+- **两个一起 = use-work → download 一条龙跑通**
+
+**配套独立闸门**（`scripts/test_online_gallery_service.py` `TestSubdirImages` 5 项）：
+- 原 4 项同 DSH-100（`test_subdir_images_work_is_visible` / `test_subdir_image_path_is_resolvable` / `test_toplevel_layout_unchanged` / `test_no_image_work_still_excluded`）
+- **DSH-101 新增**：`test_dsh101_get_work_miss_falls_back_to_image_name_index`——`resolve_image_path` 拿 file_name 必须直接命中 use-work 移走后的真身
 
 ## DSH-100 Android downloadWorkImages 嵌套子目录 mkdirs 缺失 → FileNotFoundException ENOENT（Android 0.8.55/166，2026-09-24）
 

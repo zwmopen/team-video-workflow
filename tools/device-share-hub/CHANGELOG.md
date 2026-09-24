@@ -1,5 +1,37 @@
 # 变更记录
 
+## 服务端 fix - 2026-09-24 - DSH-101：use-work 移走作品后 `/api/online/image` 仍能取原图（修服务端 `os.path.join` 重复拼接 → 404）
+
+> **用户现场反馈**：K60 装 0.8.55/166 后点平台按钮（"数字爆款"）→ 服务端返回 `HTTP 404 下载 已发送0次（抖音小红书可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png 失败`。
+> K60 logcat 抓到完整堆栈：
+> ```
+> W OnlineGalleryClient: downloadWorkImages HTTP 404 | 20260920_CodexAPI-马岭古道徒步攻略/已发送0次（抖音小红书可发）/20260920_CodexAPI-马岭古道徒步攻略/产出素材/P2.png
+> W OnlineGalleryClient: downloadWorkImages failed: Exception: HTTP 404 下载 ...
+> ```
+>
+> **根因**：`handleOnlineWorkUse` 先调 `/api/online/use-work` → 服务端 `recordUse` 把作品从「已发送0次」移到「_已发送1次」→ 紧接着 `downloadWorkImages` 用同一个 `id + file_name` 调 `/api/online/image` → 老逻辑：
+> ```python
+> img_path = os.path.join(target_work["path"], file_name)  # ← 移走后 path 已是新分类
+> ```
+> `target_work["path"]` 被 use-work 更新成 `_已发送1次（微信公众号可发）/20260920_CodexAPI-马岭古道徒步攻略`，再拼 `file_name`（含「已发送0次.../产出素材/P1.png」完整前缀）→ 结果是 `_已发送1次/.../已发送0次/.../产出素材/P1.png`（两个分类前缀撞车），**根本不存在**。
+>
+> 老 fallback `resolve_image_path(file_name)` **理论上能解**，但代码路径是 `if not os.path.isfile(img_path)` 才进 fallback，而**前面的 `os.path.join` 已经拼错路径**——fallback 能解析原 file_name 拿到正确绝对路径，但旧代码在 `get_work` 失败分支直接 `send_error(404, "Work not found")`，**根本没机会走到 fallback**。
+
+- **① 服务端 `image` endpoint 改走统一解析器**（`scripts/online_gallery_service.py:1607-1640`）：
+  - 删除 `get_work(work_id)` + `os.path.join(target_work["path"], file_name)` + `get_work 失败 404` 三段复杂分支
+  - 改成 `img_path = self.scanner.resolve_image_path(file_name) or ""`（line 1614-1620）—— `resolve_image_path` 内部 `os.path.join(self.root, raw)` 能正确处理三种形态（绝对路径 / 成品库根相对路径 / 裸文件名），避开 path/file 重复拼接陷阱
+  - 索引兜底：`image_name_index(rebuild=True)` 后再试一次（line 1621-1623）
+- **② 配套闸门 DSH-101**（`scripts/test_online_gallery_service.py` `TestSubdirImages`）：
+  - 新增 `test_dsh101_get_work_miss_falls_back_to_image_name_index`：模拟 use-work 移走作品（`shutil.move` 到 `_已发送1次`）→ 用 file_name（成品库根相对路径）调 `resolve_image_path` → 必须命中移走后的真身
+  - **改前 FAIL 验证**：HEAD 旧版跑 `resolve_image_path(moved_file)` 应该 fail（因为旧代码不走 resolve_image_path 走 os.path.join 拼错路径）
+  - **改后 PASS 验证**：工作区跑 **5/5 PASS**（含原有 4 个 subdir 测试 + DSH-101）
+- **③ 客户端无需改动**：Android `OnlineGalleryClient.downloadWorkImages` 已通过 DSH-099 双写捕获 `HTTP 404`（实测 9 条 OnlineGalleryClient TAG + DiagnosticLog 命中）；DSH-101 服务端修后客户端拿到的就是 200 OK。iOS `OnlineGalleryClient.loadImage` 等价 iOS NSLog 也已通过 DSH-099 落地。**DSH-099 双写 + DSH-101 服务端修复 = 完整闭环**
+- **④ 装机验证**：
+  - K60 已装 0.8.55/166（DSH-100），DSH-101 服务端 fix 已 `start_online_gallery_service.ps1 -Restart` 重启生效
+  - 用户重插 K60 后点同一作品（已从「已发送0次」移到「_已发送1次」）的剩余平台按钮 → 期望下载成功
+  - iPhone 已装 0.8.38/110（DSH-099），同样服务端 fix 覆盖
+- **⑤ 与 DSH-100 协同**：DSH-100 修客户端写盘 ENOENT（mkdirs），DSH-101 修服务端取图 404（path 重复拼接）。**两个一起才能让 use-work → download 一条龙跑通**
+
 ## Android 0.8.55 / 166 - 2026-09-24 - DSH-100：downloadWorkImages 缺 mkdirs 导致"下载图片失败"（FileNotFoundException ENOENT，根因定位）
 
 > **用户现场反馈**：「哦点击了''」（在 K60 上点平台按钮下载原图，触发 0.8.54 装的 DSH-099 修复路径）→ 我从 K60 logcat 抓到完整堆栈：

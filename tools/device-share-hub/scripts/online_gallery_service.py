@@ -1612,17 +1612,17 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             img_path = ""
             if work_id and file_name:
-                target_work = self.scanner.get_work(work_id)
-                if not target_work:
-                    self.send_error(404, "Work not found")
-                    return
-                img_path = os.path.join(target_work["path"], file_name)
-                if not os.path.isfile(img_path):
-                    # 兜底：file 可能是「成品库根相对路径」（成品图在 产出素材/ 子目录的作品），
-                    # 直接拼作品目录必然落空，交给统一解析器。
-                    resolved = self.scanner.resolve_image_path(file_name)
-                    if resolved:
-                        img_path = resolved
+                # DSH-101：file_name 是「成品库根相对路径」（如
+                # 「_已发送1次（微信公众号可发）/xxx/产出素材/P1.png」），
+                # 老代码 `os.path.join(target_work["path"], file_name)` 在 use-work
+                # 移走作品后会重复拼 `_已发送1次/.../.../_已发送1次/.../产出素材/...` 找不到。
+                # 统一交给 resolve_image_path：它内部 `os.path.join(self.root, raw)`
+                # 能正确处理三种形态（绝对/成品库根相对/裸文件名）。
+                img_path = self.scanner.resolve_image_path(file_name) or ""
+                if not img_path:
+                    # 索引可能还没建全（未先拉列表），重建一次再试
+                    self.scanner.image_name_index(rebuild=True)
+                    img_path = self.scanner.resolve_image_path(file_name) or ""
             elif raw_path:
                 # iOS 旧契约：只带 ?path=（裸文件名 / 相对 / 绝对路径）
                 img_path = self.scanner.resolve_image_path(raw_path) or ""
