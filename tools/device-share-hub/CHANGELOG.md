@@ -2362,3 +2362,22 @@ totalWorks = 472
 
 **版本号**：Android `0.8.58/169` → `0.8.59/170`。iOS 零改动不升。
 
+
+## DSH-109 fix2 — 排序菜单补齐 time_desc（新→旧）
+
+- 用户口径：「还差一个按时间 新→旧 / 旧→新」
+- 名称/大小都成对（A→Z / Z→A、大→小 / 小→大），唯独时间只有单向（time_asc）
+- 服务端 `SORT_KEYS` 早就支持 `time_desc`，只是 Android 客户端菜单漏列
+- 菜单从 5 项 → 6 项：按时间（新→旧）/ 按时间（旧→新）/ 按名称 A→Z / Z→A / 按大小 大→小 / 小→大
+- `sortKeyLabel()` fallback 改为查 `DEFAULT_ONLINE_SORT`（原来返回 SORT_MENU[0]，第一项现在是 time_desc 会错）
+
+**闸门 A12**（4 项硬判据）：
+- time_desc 在 SORT_MENU 里
+- 6 个排序键全部出现
+- fallback 不再返回 SORT_MENU[0][1]
+- fallback 走 DEFAULT_ONLINE_SORT
+- 闸门自检：删掉 time_desc 那行 → A12 FAIL（timeDesc=False allSix=False）
+- 改后 36/36 PASS
+
+**版本号**：Android `0.8.59/170` → `0.8.60/171`。iOS 零改动不升。
+

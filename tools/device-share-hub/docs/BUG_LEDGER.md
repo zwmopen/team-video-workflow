@@ -2440,3 +2440,15 @@ totalWorks = 472
 - setCheckable 在 setChecked 之前调用（Android 必须先 setCheckable 才能 setChecked 生效）
 
 **版本**：Android 0.8.58/169 → 0.8.59/170
+
+## DSH-109 fix2 — 排序菜单缺「按时间（新→旧）」
+
+**症状**：排序菜单里名称、大小都是成对的（A→Z / Z→A、大→小 / 小→大），唯独时间只有「默认（最新在底）」一个方向，用户没法让最新作品排最前面。
+
+**根因**：服务端 `SORT_KEYS` 早就支持 `time_desc`，是 Android 客户端 `SORT_MENU` 只列了 5 项、漏了 `time_desc`。
+
+**修法**：菜单补 `time_desc`「按时间（新→旧）」，`time_asc` 标签改为「按时间（旧→新）」保持对称；`sortKeyLabel()` fallback 从 `SORT_MENU[0][1]` 改为查 `DEFAULT_ONLINE_SORT`（第一项换成 time_desc 后原写法会返回错标签）。
+
+**闸门 A12**：time_desc 在菜单 + 6 键齐全 + fallback 不指第一项 + fallback 走默认。
+
+**版本**：Android 0.8.59/170 → 0.8.60/171

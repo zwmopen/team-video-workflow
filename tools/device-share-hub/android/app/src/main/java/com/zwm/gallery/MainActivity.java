@@ -1015,9 +1015,11 @@ public final class MainActivity extends Activity {
         if (!animate) worksContainer.setLayoutTransition(transition);
     }
 
-    // ---- DSH-109：在线相册排序 PopupMenu（5 种排序键） ----
+    // ---- DSH-109：在线相册排序 PopupMenu（6 种排序键 = 时间/名称/大小 各两个方向） ----
+    // DSH-109 fix2：补 time_desc（新→旧）。服务端 SORT_KEYS 早就支持，只是客户端菜单漏列。
     private static final String[][] SORT_MENU = new String[][]{
-            {"time_asc",  "默认（最新在底）"},
+            {"time_desc", "按时间（新→旧）"},
+            {"time_asc",  "按时间（旧→新）"},
             {"name_asc",  "按名称（A→Z）"},
             {"name_desc", "按名称（Z→A）"},
             {"size_desc", "按大小（大→小）"},
@@ -1028,7 +1030,11 @@ public final class MainActivity extends Activity {
         for (String[] pair : SORT_MENU) {
             if (pair[0].equals(sortKey)) return pair[1];
         }
-        return SORT_MENU[0][1]; // fallback = default
+        // fallback = 默认排序（time_asc「按时间（旧→新）」），不是菜单第一项
+        for (String[] pair : SORT_MENU) {
+            if (pair[0].equals(DEFAULT_ONLINE_SORT)) return pair[1];
+        }
+        return "按时间（旧→新）";
     }
 
     private void showSortKeyMenu() {

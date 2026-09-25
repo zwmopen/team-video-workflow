@@ -616,6 +616,32 @@ def main():
         "checkable=%s checked=%s inShowSortKeyMenu=%s"
         % (a11_and_sort_checkable, a11_and_sort_checked, a11_and_sort_in_menu)))
 
+    # ---- DSH-109 fix2：排序菜单补齐 time_desc（新→旧） ----
+    # 用户口径：「还差一个按时间 新→旧 / 旧→新」—— 名称/大小都成对（A→Z/Z→A、大→小/小→大），
+    # 唯独时间只有单向（time_asc），缺 time_desc。服务端 SORT_KEYS 早就支持，客户端菜单漏列。
+    a12_menu_has_time_desc = re.search(
+        r'\{\s*"time_desc"\s*,\s*"[^"]+"\s*\}', and_main) is not None
+    # 6 个排序键全部出现在 SORT_MENU 里
+    a12_menu_all_six = all(
+        re.search(r'\{\s*"%s"\s*,' % k, and_main) is not None
+        for k in ("time_desc", "time_asc", "name_asc", "name_desc", "size_desc", "size_asc")
+    )
+    # fallback 不能指向菜单第一项（第一项现在是 time_desc，默认却是 time_asc）
+    a12_fallback_not_first = re.search(
+        r'return\s+SORT_MENU\[0\]\[1\]', and_main) is None
+    a12_fallback_uses_default = re.search(
+        r'DEFAULT_ONLINE_SORT\s*\)+\s*return\s+pair\[1\]', and_main) is not None
+    a12_overall = (
+        a12_menu_has_time_desc and a12_menu_all_six
+        and a12_fallback_not_first and a12_fallback_uses_default
+    )
+    results.append(check(
+        "A12 排序菜单补齐 time_desc（新→旧）（DSH-109 fix2）",
+        a12_overall,
+        "timeDesc=%s allSix=%s fallbackNotFirst=%s fallbackDefault=%s"
+        % (a12_menu_has_time_desc, a12_menu_all_six,
+           a12_fallback_not_first, a12_fallback_uses_default)))
+
     print()
     bad = results.count(False)
     if bad:
