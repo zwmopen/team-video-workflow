@@ -399,7 +399,9 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
-    public func fetchWorks(category: String? = nil, query: String? = nil, completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
+    public func fetchWorks(category: String? = nil, query: String? = nil,
+                           sortKey: String? = nil,
+                           completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/works")
         var queryItems: [URLQueryItem] = []
@@ -408,6 +410,10 @@ public final class OnlineGalleryClient {
         }
         if let q = query, !q.isEmpty {
             queryItems.append(URLQueryItem(name: "query", value: q))
+        }
+        // DSH-112：排序键上报（与安卓同口径，服务端 SORT_KEYS 早就支持 ?sort=）
+        if let sk = sortKey, !sk.isEmpty {
+            queryItems.append(URLQueryItem(name: "sort", value: sk))
         }
         if !queryItems.isEmpty {
             components?.queryItems = queryItems

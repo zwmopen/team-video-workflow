@@ -2477,3 +2477,28 @@ totalWorks = 472
 > 每次加了自动刷新/守卫类实现，必须做**源码级删除**自检（不是只把判据变量改成 False）。
 
 **版本**：Android 0.8.60/171 → 0.8.61/172；iOS 0.8.41/113 → 0.8.42/114
+
+## DSH-112 — 苹果端从来没有排序按钮（DSH-109 只做了安卓）
+
+**症状**：安卓有排序按钮 + 6 种排序，苹果端 `Album/` 下 0 处 sortKey/sortBy，
+整个功能从没做过。用户：「你那个苹果的按钮还是没有」。
+
+**根因（重要）**：A9 闸门**只查 Android 端**。
+对等契约里最危险的失效方式 —— 单端通过冒充两端通过，绿灯掩盖了整整半边缺失。
+
+**修法**：
+- iOS 补排序按钮（UIAlertController actionSheet，因部署目标 iOS 12 不能用 UIMenu）
+- iPad 必设 popoverPresentationController（不设会崩）
+- A9 闸门改为两端都查，新增 6 项 iOS 判据
+
+### 自检教训（第二次踩同类坑）
+第一版探针把 `onlineSortButton` 改成 `onlineSortButtonZZZ` 来模拟「iOS 没做」，
+结果 A9 **照样 PASS** —— 因为 `onlineSortButtonZZZ` **包含** `onlineSortButton` 子串，
+探针根本没删干净。改成不含原串的名字（`dummySortBtn`）后才正确报 FAIL。
+
+> 探针本身也要自检：确认残留计数为 0，再信它的 FAIL/PASS。
+
+**附带**：DSH-110 开机自启 .lnk 曾指向没人生成的 `_autostart_wrapper.ps1`，
+已删 wrapper 并重新指向 `restart_online_gallery.ps1`。
+
+**版本**：iOS 0.8.42/114 → 0.8.43/115

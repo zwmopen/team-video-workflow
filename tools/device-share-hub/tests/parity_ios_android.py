@@ -529,6 +529,27 @@ def main():
         r'query\.get\("sort"', service_src) is not None
     a9_service_size_bytes = '"sizeBytes"' in service_src and "_dir_size_bytes" in service_src
 
+    # ⚠️ DSH-112 补漏：A9 原版**只查 Android**，于是 iOS 端整个排序功能从没做过，
+    # 而闸门一路绿灯 —— 这正是「对等契约」最危险的失效方式（单端通过冒充两端通过）。
+    # 现在两端都查。判据用**特征串**而非全文件短子串（见 A13 假闸门教训）。
+    ios_client_src = "\n".join(
+        t for p, t in IOS_SRC if p.name == "OnlineGalleryClient.swift")
+    # 排序按钮本体
+    a9_ios_sort_btn = "onlineSortButton" in cv
+    # 6 个排序键必须都出现在菜单里（这些串只会出现在 sortMenu 定义中）
+    a9_ios_sort_menu = all(
+        k in cv for k in ("time_desc", "time_asc", "name_asc",
+                          "name_desc", "size_desc", "size_asc"))
+    # 持久化到 UserDefaults
+    a9_ios_sort_prefs = "online_sort_key" in cv
+    # 加载列表时真的把排序键传下去（不是只存着不用）
+    a9_ios_sort_call = "fetchWorks(sortKey: currentSortKey)" in cv
+    # iOS 客户端：fetchWorks 有 sortKey 形参 + URL 拼 &sort=
+    a9_ios_client_sort_param = re.search(
+        r"sortKey: String\? = nil", ios_client_src) is not None
+    a9_ios_client_sort_url = re.search(
+        r'URLQueryItem\(name: "sort"', ios_client_src) is not None
+
     a9_overall = (
         a9_and_sort_btn
         and a9_and_sort_menu
@@ -539,14 +560,22 @@ def main():
         and a9_service_keys
         and a9_service_sort_param
         and a9_service_size_bytes
+        and a9_ios_sort_btn
+        and a9_ios_sort_menu
+        and a9_ios_sort_prefs
+        and a9_ios_sort_call
+        and a9_ios_client_sort_param
+        and a9_ios_client_sort_url
     )
     results.append(check(
-        "A9 Android 排序按钮 + 客户端 sortKey 上报 + 服务端 sort 参数 + sizeBytes 字段（DSH-109）",
+        "A9 排序按钮两端对等 + sortKey 上报 + 服务端 sort 参数（DSH-109 + DSH-112 补 iOS）",
         a9_overall,
-        "btn=%s menu=%s prefs=%s call=%s clientSort=%s clientUrl=%s serviceKeys=%s serviceParam=%s sizeBytes=%s"
+        "and[btn=%s menu=%s prefs=%s call=%s url=%s] ios[btn=%s menu=%s prefs=%s call=%s param=%s url=%s] svc[keys=%s param=%s size=%s]"
         % (
             a9_and_sort_btn, a9_and_sort_menu, a9_and_sort_prefs, a9_and_sort_call,
-            a9_client_sort_param, a9_client_sort_url,
+            a9_client_sort_url,
+            a9_ios_sort_btn, a9_ios_sort_menu, a9_ios_sort_prefs, a9_ios_sort_call,
+            a9_ios_client_sort_param, a9_ios_client_sort_url,
             a9_service_keys, a9_service_sort_param, a9_service_size_bytes,
         )))
 

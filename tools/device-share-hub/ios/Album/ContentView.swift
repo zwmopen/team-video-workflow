@@ -28,6 +28,26 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// DSH-091 C2：顶部作品搜索框 —— 对齐 Android / 工作台的搜索入口。
     private let workSearchBar = UISearchBar()
     private var searchQuery = ""
+
+    // MARK: - DSH-112 在线相册排序（对齐 Android SORT_MENU，服务端本来就有 ?sort= 参数）
+    // 部署目标是 iOS 12，用不了 iOS 14 的 UIMenu / showsMenuAsPrimaryAction，
+    // 所以用 UIAlertController 的 actionSheet（iOS 8+，全版本安全）。
+    private let onlineSortButton = UIButton(type: .system)
+    private static let sortDefaultsKey = "online_sort_key"
+    private static let defaultSortKey = "time_asc"
+    /// 6 种排序 = 时间 / 名称 / 大小，各两个方向（与 Android SORT_MENU 逐项对齐）
+    private let sortMenu: [(key: String, label: String)] = [
+        ("time_desc", "按时间（新→旧）"),
+        ("time_asc",  "按时间（旧→新）"),
+        ("name_asc",  "按名称（A→Z）"),
+        ("name_desc", "按名称（Z→A）"),
+        ("size_desc", "按大小（大→小）"),
+        ("size_asc",  "按大小（小→大）"),
+    ]
+    private lazy var currentSortKey: String = {
+        let saved = UserDefaults.standard.string(forKey: ContentView.sortDefaultsKey)
+        return (saved?.isEmpty == false) ? saved! : ContentView.defaultSortKey
+    }()
     /// DSH-092 C6：在线作品列表分页上限（对齐 Android `onlinePageLimit`，首屏 30 条）。
     /// 成品库 400+ 套时，一次性渲染会让 `sizeForItemAt` 把 400 份文案全解析一遍 ——
     /// 既卡首屏，也和 Android「加载更多」的观感不一致。
@@ -416,17 +436,67 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         workSearchBar.autocapitalizationType = .none
         view.addSubview(workSearchBar)
         view.addSubview(collectionView)
+        // DSH-112：排序按钮放在搜索框右侧（与 Android「搜索框右侧排序按钮」同一位置）
+        onlineSortButton.translatesAutoresizingMaskIntoConstraints = false
+        onlineSortButton.setTitle(sortKeyLabel(currentSortKey), for: .normal)
+        onlineSortButton.titleLabel?.font = UIFont.systemFont(ofSize: 11)
+        onlineSortButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        onlineSortButton.accessibilityLabel = "排序方式"
+        onlineSortButton.addTarget(self, action: #selector(sortButtonTapped(_:)), for: .touchUpInside)
+        view.addSubview(onlineSortButton)
         NSLayoutConstraint.activate([
             workSearchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            workSearchBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            // 搜索栏给右侧排序按钮让位，不再顶到屏幕右边
+            workSearchBar.trailingAnchor.constraint(equalTo: onlineSortButton.leadingAnchor, constant: -6),
             workSearchBar.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 2),
             workSearchBar.heightAnchor.constraint(equalToConstant: 44),
+
+            onlineSortButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            onlineSortButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
+            onlineSortButton.widthAnchor.constraint(equalToConstant: 96),
+            onlineSortButton.heightAnchor.constraint(equalToConstant: 32),
 
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             collectionView.topAnchor.constraint(equalTo: workSearchBar.bottomAnchor, constant: 4),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    // MARK: - DSH-112 在线相册排序（对齐 Android SORT_MENU）
+
+    private func sortKeyLabel(_ key: String) -> String {
+        for pair in sortMenu where pair.key == key { return pair.label }
+        return "按时间（旧→新）"   // fallback = 默认排序，不是菜单第一项
+    }
+
+    @objc private func sortButtonTapped(_ sender: UIButton) {
+        let sheet = UIAlertController(title: "排序方式", message: nil, preferredStyle: .actionSheet)
+        for pair in sortMenu {
+            // 当前选中的那项打勾 —— 用户口径「选中后有个状态显示就行」
+            let title = (pair.key == currentSortKey) ? "✓ " + pair.label : pair.label
+            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.applySortKey(pair.key)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        // ⚠️ iPad 上 actionSheet 不设 popover 会直接崩溃（UIDevice 通用防护）
+        if let pop = sheet.popoverPresentationController {
+            pop.sourceView = onlineSortButton
+            pop.sourceRect = onlineSortButton.bounds
+        }
+        present(sheet, animated: true)
+    }
+
+    private func applySortKey(_ key: String) {
+        currentSortKey = key
+        UserDefaults.standard.set(key, forKey: ContentView.sortDefaultsKey)
+        onlineSortButton.setTitle(sortKeyLabel(key), for: .normal)
+        if isOnlineMode {
+            loadOnlineData(silent: true)
+        } else {
+            render()
+        }
     }
 
     // MARK: - DSH-092 C6 在线列表分页（对齐 Android「加载更多作品」）
@@ -560,7 +630,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             group.leave()
         }
         group.enter()
-        OnlineGalleryClient.shared.fetchWorks { result in
+        OnlineGalleryClient.shared.fetchWorks(sortKey: currentSortKey) { result in
             workResult = result
             group.leave()
         }

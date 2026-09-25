@@ -2409,3 +2409,29 @@ totalWorks = 472
 
 **版本号**：Android `0.8.60/171` → `0.8.61/172`；iOS `0.8.41/113` → `0.8.42/114`（两端都改了代码）。
 
+
+## DSH-112 — 苹果端补上排序按钮（DSH-109 漏做的那半边）
+
+**根因**：DSH-109 只做了 Android。iOS `Album/` 下 0 处 sortKey / sortBy，
+而 A9 闸门**只查 Android 端**，所以一路绿灯 —— 单端通过冒充了两端通过。
+
+**实现**（与 Android 对等）：
+- `ContentView.swift`：搜索框右侧加排序按钮（96×32），6 种排序：
+  按时间新→旧 / 旧→新、按名称 A→Z / Z→A、按大小 大→小 / 小→大
+- 菜单用 `UIAlertController(actionSheet)`：**部署目标是 iOS 12**，
+  用不了 iOS 14 的 UIMenu / showsMenuAsPrimaryAction
+- iPad 上 actionSheet 必设 `popoverPresentationController`，否则直接崩
+- 当前选中项标题前加 ✓（用户口径「选中后有个状态显示就行」）
+- `UserDefaults` 键 `online_sort_key` 持久化，默认 `time_asc`
+- `OnlineGalleryClient.swift`：fetchWorks 加 sortKey 形参 + URL 拼 `sort=`
+
+**闸门 A9 修好**：从「只查 Android」改为**两端都查**，新增 6 项 iOS 判据
+（按钮 / 6 键菜单 / UserDefaults / 真的传 sortKey / 客户端形参 / URL 参数）。
+自检：把 iOS `onlineSortButton` 改名（用不含原串的名字）→ A9 正确 FAIL。
+
+**顺带修的 DSH-110 遗留**：开机自启 .lnk 曾指向一个没人会生成的
+`_autostart_wrapper.ps1`（我早前测试时的临时产物），重跑就失效。
+已删除 wrapper 并把 .lnk 重新指向真正的 `restart_online_gallery.ps1`。
+
+**版本号**：iOS `0.8.42/114` → `0.8.43/115`。Android 本次没改代码，不升。
+
