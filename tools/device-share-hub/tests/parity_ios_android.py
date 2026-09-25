@@ -846,6 +846,26 @@ def main():
            a16_manifest_route, a16_download_route, a16_origin_kept,
            a16_sha_gate, a16_status_field, a16_feature)))
 
+    # ---- DSH-114：扫描缓存必须真能命中（TTL 必须 > 单次扫描耗时） ----
+    # 事故：TTL 写死 5.0 秒，而一次全量扫描实测 5.2~10 秒（473 作品，逐个读 文案.txt
+    # + 枚举图片 + 跑槽位守卫正则）。**扫描耗时 > 缓存时长 ⇒ 缓存永远命中不了**，
+    # 每次 /api/online/status 都在全库重扫 —— 实测三次间隔 7 秒的请求分别耗时
+    # 11.4 / 10.6 / 8.0 秒，手机端「正在连接电脑在线相册…」就是在这儿干等。
+    # 实测证据（最直白）：改之前 `scan()` 紧接着 `scan()` 也要 5.24 秒；改之后 0.0000 秒。
+    # 修法：TTL 5.0 → SCAN_CACHE_TTL = 30.0；新鲜度交给 DSH-110 的 watchdog
+    # （每 60 秒轮询，发现增删改就 scan(force=True) 主动作废），所以放宽 TTL 不会变旧。
+    a17_ttl_const = "SCAN_CACHE_TTL = 30.0" in service_src
+    a17_ttl_used = ("now - self._last_scan_time < SCAN_CACHE_TTL" in service_src)
+    # 老写法（写死 5.0）不许再出现在 scan 的缓存判据里
+    a17_no_hardcoded = ("now - self._last_scan_time < 5.0" not in service_src)
+
+    a17_overall = a17_ttl_const and a17_ttl_used and a17_no_hardcoded
+    results.append(check(
+        "A17 扫描缓存 TTL 必须大于单次扫描耗时（否则缓存永不命中）（DSH-114）",
+        a17_overall,
+        "ttlConst=%s ttlUsed=%s noHardcoded=%s"
+        % (a17_ttl_const, a17_ttl_used, a17_no_hardcoded)))
+
     print()
     bad = results.count(False)
     if bad:

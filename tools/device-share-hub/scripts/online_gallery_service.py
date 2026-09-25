@@ -312,6 +312,15 @@ MIN_PLATFORM_SUBSTANCE = 30
 # 服务端内部检索仍用完整 dict（work_text_blob 依赖 searchBlob），不受影响。
 # ============================================================================
 GZIP_MIN_BYTES = 1024
+# 【DSH-114】作品扫描结果缓存时长（秒）。
+# ⚠️ 之前写死 5.0，而一次全量扫描实测 **5.2~10 秒**（473 个作品，逐个读 文案.txt +
+# 枚举图片 + 跑槽位守卫正则）。**扫描耗时 > 缓存时长 ⇒ 缓存永远命中不了**，
+# 每一次 /api/online/status 都在全库重扫 —— 手机端「正在连接电脑在线相册…」
+# 干等 8~11 秒的根因就在这里（实测三次间隔 7 秒的请求，分别耗时 11.4 / 10.6 / 8.0 秒）。
+# 改成 30 秒后：命中即毫秒级返回。
+# 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 60 秒轮询一次，发现增删改就
+# scan(force=True) 主动作废缓存，所以放宽 TTL **不会**让手机看到更旧的数据。
+SCAN_CACHE_TTL = 30.0
 _WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard")
 
 # gzip 结果缓存。实测瘦身后的全量列表 1568.5 KB，gzip.compress(body, 6) 要烧约 66 ms CPU，
@@ -1176,7 +1185,7 @@ class WorkScanner:
                 # （回收站两个 Tab 的 5 秒缓存）⇒ 手机端点「重置」后立刻重拉列表，
                 # 仍拿到 useCount=1 的旧值，表现为「重置失败」（5 秒后又自己好）。
                 self._stage_cache.clear()
-            if not force and self._cached_works and (now - self._last_scan_time < 5.0):
+            if not force and self._cached_works and (now - self._last_scan_time < SCAN_CACHE_TTL):
                 return self._cached_works
 
             results = []
@@ -1806,7 +1815,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": len(works),
