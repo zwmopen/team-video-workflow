@@ -2381,3 +2381,31 @@ totalWorks = 472
 
 **版本号**：Android `0.8.59/170` → `0.8.60/171`。iOS 零改动不升。
 
+
+## DSH-111 — 在线相册自动刷新（手机不用下拉也能看到电脑的新作品）
+
+**背景**：DSH-110 的服务端 watchdog 已经让作品数据实时正确（60 秒内识别新增/删除），
+但客户端只会（a）下拉刷新、（b）进页面时拉一次 —— 用户坐那儿不动就永远看不到新东西。
+
+**做法（两端同口径）**：
+- 页面在前台时，每 30 秒发一个**极轻的** `/api/online/status` 请求，
+  只取 `totalWorks` + `watchdog.lastChangeAt` 拼成指纹
+- **指纹没变 → 完全不动 UI**（不清列表、不闪状态栏）—— 对用户零打扰
+- 指纹变了（用 lastChangeAt 而非只数总数：加了 1 套又删 1 套也能抓到）→ 才真正刷新列表
+
+**不打扰用户的四道守卫**：
+- 你正在**滚动**列表 → 跳过这轮（等下一轮），免得列表被拽回顶部
+- 你正在**搜索框打字** → 跳过
+- 你**最近 8 秒动过** → 跳过（刚点/刚滑都算）
+- App**退到后台** → 立刻停表，不在后台空转耗电
+
+**改动文件**：
+- `MainActivity.java`：定时器 + canAutoRefreshNow 守卫 + onStart/onStop 挂载 + 滚动/搜索里记操作时刻
+- `OnlineGalleryClient.java`：新增 `fetchServerFingerprint()`
+- `ContentView.swift`：`Timer.scheduledTimer` + canAutoRefreshNow 守卫 + viewWillAppear/Disappear 挂载
+- `OnlineGalleryClient.swift`：新增 `fetchServerFingerprint(completion:)`
+
+**体感**：电脑放新作品 → 最快 30 秒、最慢 90 秒手机上自动出现（服务端 60 秒扫一轮 + 客户端 30 秒问一次）。
+
+**版本号**：Android `0.8.60/171` → `0.8.61/172`；iOS `0.8.41/113` → `0.8.42/114`（两端都改了代码）。
+

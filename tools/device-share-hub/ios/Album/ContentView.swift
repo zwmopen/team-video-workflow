@@ -103,13 +103,74 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationController?.pushViewController(TransferViewController(), animated: true)
     }
 
+    // MARK: - DSH-111 在线相册自动刷新（与安卓同口径）
+    // 用户口径：「新增的作品，无论是手动移动文件夹进去，还是添加什么东西，手机端都能自动刷新」
+    // 做法：页面在前台时每 30 秒问电脑一句「你那儿变了吗」（一个极轻的 /status 请求，
+    //       只取 totalWorks + watchdog.lastChangeAt），**变了才调 loadOnlineData**。
+    //       没变就完全不动 UI —— 不会把用户正在看的列表拽回去。
+    private var autoRefreshTimer: Timer?
+    private var lastUserTouchAt: Date = .distantPast
+    private var lastServerFingerprint: String?
+
+    private func startOnlineAutoRefresh() {
+        stopOnlineAutoRefresh()
+        lastServerFingerprint = nil   // 第一轮只记指纹（viewWillAppear 刚刷过列表）
+        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.canAutoRefreshNow() else { return }
+            self.pollForOnlineChanges()
+        }
+    }
+
+    private func stopOnlineAutoRefresh() {
+        autoRefreshTimer?.invalidate()
+        autoRefreshTimer = nil
+    }
+
+    /// 现在适不适合自动刷新：在线首屏 + 在前台 + 没在搜索 + 没在滑动 + 没刚动过
+    private func canAutoRefreshNow() -> Bool {
+        guard isOnlineMode else { return false }
+        guard UIApplication.shared.applicationState == .active else { return false }
+        if workSearchBar.isFirstResponder { return false }
+        if collectionView.isDragging || collectionView.isDecelerating {
+            noteUserTouch()
+            return false
+        }
+        if Date().timeIntervalSince(lastUserTouchAt) < 8 { return false }
+        return true
+    }
+
+    private func noteUserTouch() {
+        lastUserTouchAt = Date()
+    }
+
+    /// 问一句「变了吗」，不变就什么都不做
+    private func pollForOnlineChanges() {
+        OnlineGalleryClient.shared.fetchServerFingerprint { [weak self] result in
+            guard let self = self else { return }
+            guard case .success(let fingerprint) = result else { return }  // 失败静默等下一轮
+            guard self.canAutoRefreshNow() else { return }                 // 请求期间用户开始操作了
+            let first = self.lastServerFingerprint == nil
+            let same = fingerprint == self.lastServerFingerprint
+            self.lastServerFingerprint = fingerprint
+            if first || same { return }
+            self.loadOnlineData(silent: true)
+        }
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         if isOnlineMode {
             loadOnlineData(silent: true)
+            startOnlineAutoRefresh()   // DSH-111：前台期间周期探测，有新作品自动出现
         } else {
             render()
         }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopOnlineAutoRefresh()        // DSH-111：离开页面立刻停表，不在后台空转耗电
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -1085,6 +1146,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     /// DSH-091 C2：搜索框输入回调 —— 本地 / 在线两条列表共用同一个 `searchQuery`。
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        noteUserTouch()   // DSH-111：正在打字搜索，先别自动刷新
         searchQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         resetOnlinePaging()
         if isOnlineMode { renderOnlineUI() } else { render() }

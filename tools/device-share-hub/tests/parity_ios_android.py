@@ -642,6 +642,92 @@ def main():
         % (a12_menu_has_time_desc, a12_menu_all_six,
            a12_fallback_not_first, a12_fallback_uses_default)))
 
+    # ---- DSH-111：在线相册自动刷新（手机不用下拉也能看到电脑新增的作品）----
+    # 用户口径：「新增的作品……手机端都能自动刷新，那边就能看到最新的」
+    # 服务端 watchdog（DSH-110）已经让数据实时正确，但客户端只会 Pull-to-refresh 和
+    # 进页面时才拉 —— 补一排定时探测定时器，两端都要有（吸取 A9 只查一端的教训）。
+    # 做法统一：每 30s 问 /api/online/status 拿 totalWorks + watchdog.lastChangeAt 做指纹，
+    #           指纹变了才真正刷列表；滚动/搜索时不打扰。
+    ios_client_src = "\n".join(
+        t for p, t in IOS_SRC if p.name == "OnlineGalleryClient.swift")
+    and_client_src = open(android_client_path, "r", encoding="utf-8", errors="replace").read() \
+        if android_client_path.exists() else ""
+
+    # —— 指纹探测：两端 client 都要有 ——
+    a13_ios_fingerprint = re.search(
+        r"func\s+fetchServerFingerprint\s*\(", ios_client_src) is not None
+    a13_and_fingerprint = re.search(
+        r"public void fetchServerFingerprint\s*\(", and_client_src) is not None
+
+    # ⚠️ 判据必须**隔离到方法体内**查。踩过的坑：直接 `in and_main` 查短子串会形同虚设——
+    # `searchInput.isFocused()` 在滚动监听里也有一处、`uiHandler.postDelayed` 在缩略图
+    # 排水逻辑里有 5 处，删光真守卫闸门照样 PASS。所以用花括号配平取方法体。
+    def _method_body(src, signature):
+        i = src.find(signature)
+        if i < 0:
+            return ""
+        j = src.find("{", i)
+        if j < 0:
+            return ""
+        depth = 0
+        for k in range(j, len(src)):
+            if src[k] == "{":
+                depth += 1
+            elif src[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    return src[j:k + 1]
+        return src[j:]
+
+    a13_and_guard_body = _method_body(and_main, "private boolean canAutoRefreshNow()")
+    a13_and_start_body = _method_body(and_main, "private void startOnlineAutoRefresh()")
+    a13_and_stop_body = _method_body(and_main, "private void stopOnlineAutoRefresh()")
+    a13_ios_guard_body = _method_body(cv, "private func canAutoRefreshNow()")
+    a13_ios_start_body = _method_body(cv, "private func startOnlineAutoRefresh()")
+    a13_ios_stop_body = _method_body(cv, "private func stopOnlineAutoRefresh()")
+
+    # —— Android：定时器 + 守卫（都在对应方法体内）+ 生命周期挂载 ——
+    a13_and_interval = "ONLINE_AUTO_REFRESH_INTERVAL_MS" in and_main
+    a13_and_timer = ("startOnlineAutoRefresh" in and_main
+                     and "stopOnlineAutoRefresh" in and_main
+                     and "uiHandler.postDelayed" in a13_and_start_body
+                     and "uiHandler.removeCallbacks" in a13_and_stop_body)
+    # 守卫必须真的检查「正在搜索」和「刚动过」，否则会在用户输入时把列表拽回去
+    a13_and_guard_search = "searchInput.isFocused()" in a13_and_guard_body
+    a13_and_guard_quiet = "AUTO_REFRESH_QUIET_MS" in a13_and_guard_body
+    a13_and_lifecycle = re.search(
+        r"protected void onStart[\s\S]{0,900}startOnlineAutoRefresh", and_main) is not None \
+        and re.search(r"protected void onStop[\s\S]{0,400}stopOnlineAutoRefresh", and_main) is not None
+    a13_and_poke = "noteUserTouch()" in and_main
+
+    # —— iOS：定时器 + 守卫（都在对应方法体内）+ 生命周期挂载 ——
+    a13_ios_timer = ("startOnlineAutoRefresh" in cv
+                     and "stopOnlineAutoRefresh" in cv
+                     and "Timer.scheduledTimer" in a13_ios_start_body
+                     and "invalidate()" in a13_ios_stop_body)
+    a13_ios_guard_drag = "collectionView.isDragging" in a13_ios_guard_body
+    a13_ios_guard_search = "workSearchBar.isFirstResponder" in a13_ios_guard_body
+    a13_ios_lifecycle = re.search(
+        r"func viewWillAppear[\s\S]{0,400}startOnlineAutoRefresh", cv) is not None \
+        and re.search(r"func viewWillDisappear[\s\S]{0,300}stopOnlineAutoRefresh", cv) is not None
+
+    a13_overall = (
+        a13_ios_fingerprint and a13_and_fingerprint
+        and a13_and_interval and a13_and_timer
+        and a13_and_guard_search and a13_and_guard_quiet
+        and a13_and_lifecycle and a13_and_poke
+        and a13_ios_timer and a13_ios_guard_drag and a13_ios_guard_search
+        and a13_ios_lifecycle
+    )
+    results.append(check(
+        "A13 在线相册自动刷新定时器 + 打扰守卫（两端）（DSH-111）",
+        a13_overall,
+        "fp(ios/and)=%s/%s and定时器=%s and搜索守卫=%s and静默期=%s and生命周期=%s ios定时器=%s ios滑动守卫=%s ios搜索守卫=%s ios生命周期=%s"
+        % (a13_ios_fingerprint, a13_and_fingerprint, a13_and_timer,
+           a13_and_guard_search, a13_and_guard_quiet, a13_and_lifecycle,
+           a13_ios_timer, a13_ios_guard_drag, a13_ios_guard_search,
+           a13_ios_lifecycle)))
+
     print()
     bad = results.count(False)
     if bad:

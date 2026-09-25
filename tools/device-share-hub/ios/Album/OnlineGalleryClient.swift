@@ -310,6 +310,50 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    /// DSH-111：轻量探测「电脑端的作品有没有变」——只请求 `/api/online/status`，
+    /// 用 `totalWorks` + `watchdog.lastChangeAt` 拼成一个指纹串。
+    ///
+    /// 为什么需要它：在线相册如果每隔几十秒直接调 loadOnlineData()，列表会整份重建，
+    /// 用户正在滑动或搜索时会被拽回顶部。有了指纹就能先问一句「变了吗」，
+    /// 没变就完全不动 UI —— 自动刷新对用户零打扰（与安卓端同口径）。
+    ///
+    /// 用 lastChangeAt 而不是只看 totalWorks：加了 1 套又删了 1 套时总数不变，
+    /// 但 lastChangeAt 会变，能抓到这种「内容变了」的情况。
+    ///
+    /// - Returns: 形如 "472|1790293067.11" 的指纹；watchdog 缺失时形如 "472|"（调用方会保守刷新）
+    public func fetchServerFingerprint(completion: @escaping (Result<String, Error>) -> Void) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/status") else {
+            completion(.failure(NSError(domain: "OnlineGallery", code: -1,
+                                        userInfo: [NSLocalizedDescriptionKey: "无效的服务器地址"])))
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2.5
+        session.dataTask(with: request) { data, _, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(domain: "OnlineGallery", code: -2,
+                                                userInfo: [NSLocalizedDescriptionKey: "返回数据为空"])))
+                }
+                return
+            }
+            let total = json["totalWorks"] as? Int ?? -1
+            // watchdog 缺字段时留空，调用方见空串会保守地照常刷新（宁可多刷，不可漏刷）
+            var changeAt = ""
+            if let wd = json["watchdog"] as? [String: Any],
+               let ts = wd["lastChangeAt"] as? Double {
+                changeAt = String(ts)
+            }
+            DispatchQueue.main.async { completion(.success("\(total)|\(changeAt)")) }
+        }.resume()
+    }
+
     public func fetchCategories(completion: @escaping (Result<OnlineCategoriesResult, Error>) -> Void) {
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/categories") else {

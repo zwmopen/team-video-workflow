@@ -98,6 +98,11 @@ public final class MainActivity extends Activity {
     private static final int ONLINE_THUMB_BURST_BUDGET = 18;
     private static final int ONLINE_THUMB_DRAIN_STEP = 6;
     private static final long ONLINE_THUMB_DRAIN_INTERVAL_MS = 260L;
+    // DSH-111：在线相册自动刷新。服务端 watchdog 60 秒轮询一遍作品目录，
+    // 客户端 30 秒问一次「变了吗」，所以最快 30 秒、最慢 90 秒手机上就能看到新作品。
+    private static final long ONLINE_AUTO_REFRESH_INTERVAL_MS = 30_000L;
+    // 用户刚操作过（滚动/搜索/点按）就先让路，等下一轮再刷，免得列表被拽回去
+    private static final long AUTO_REFRESH_QUIET_MS = 8_000L;
     private final ArrayDeque<Runnable> onlineThumbPending = new ArrayDeque<>();
     private int onlineThumbBurst = ONLINE_THUMB_BURST_BUDGET;
     private boolean onlineThumbDraining = false;
@@ -179,9 +184,13 @@ public final class MainActivity extends Activity {
     private LinearLayout searchBar;
     private EditText searchInput;
     private ImageView clearSearchButton;
-    // DSH-109：搜索框右侧排序按钮（PopupMenu 弹出 5 种排序）
+    // DSH-109：搜索框右侧排序按钮（PopupMenu 弹出 6 种排序）
     private Button sortKeyButton;
     private String currentSortKey = DEFAULT_ONLINE_SORT;
+    // DSH-111：在线相册自动刷新（页面可见时周期探测，服务端有变化才真刷列表）
+    private Runnable onlineAutoRefreshRunnable;
+    private volatile long lastUserTouchMs = 0L;
+    private String lastServerFingerprint = null;
     private String searchQuery = "";
     private OnlineGalleryClient onlineClient;
     private boolean isOnlineMode = false;
@@ -305,6 +314,7 @@ public final class MainActivity extends Activity {
         if (isOnlineMode) {
             startOnlineBeaconListener();   // 回到前台重新开始接收电脑信标
             refreshOnlineWorks(false);
+            startOnlineAutoRefresh();      // DSH-111：前台期间周期探测，有新作品自动出现
         } else if (fileMode) {
             openSelectedTreeForBrowsing(false);
         } else if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "").isEmpty()) {
@@ -320,6 +330,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         isVisible = false;
+        stopOnlineAutoRefresh();           // DSH-111：退后台立刻停表，不在后台空转耗电
         onlineClient.stopBeaconListener();   // 退到后台停掉信标监听，回到前台会重新开启
         try { unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) { }
         super.onStop();
@@ -533,6 +544,7 @@ public final class MainActivity extends Activity {
         searchInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                noteUserTouch();   // DSH-111：正在打字搜索，先别自动刷新
                 String newQuery = s != null ? s.toString().trim() : "";
                 clearSearchButton.setVisibility(newQuery.isEmpty() ? View.GONE : View.VISIBLE);
                 if (!newQuery.equals(searchQuery)) {
@@ -676,6 +688,7 @@ public final class MainActivity extends Activity {
             }
         });
         contentScroll.getViewTreeObserver().addOnScrollChangedListener(() -> {
+            noteUserTouch();   // DSH-111：用户正在翻列表，自动刷新先等 8 秒
             if (searchInput != null && searchInput.isFocused()) {
                 hideKeyboard(searchInput);
                 searchInput.clearFocus();
@@ -1071,6 +1084,69 @@ public final class MainActivity extends Activity {
         } else {
             applyCategoryFilter(selectedCategory);
         }
+    }
+
+    // ---- DSH-111：在线相册自动刷新 ----
+    // 用户口径：「新增的作品，无论是手动移动文件夹进去，还是添加什么东西，手机端都能自动刷新」
+    // 做法：页面在前台时每 30 秒问电脑一句「你那儿变了吗」（一个极轻的 /status 请求，
+    //       只取 totalWorks + watchdog.lastChangeAt），**变了才调 refreshOnlineWorks**。
+    //       没变就完全不动 UI —— 不会把用户正在看的列表拽回去，也不会闪状态栏。
+    /** 记一笔「用户刚操作过」，自动刷新先让路 */
+    private void noteUserTouch() {
+        lastUserTouchMs = System.currentTimeMillis();
+    }
+
+    /** 现在适不适合自动刷新：前台 + 在线首屏 + 没在搜索 + 没刚动过 */
+    private boolean canAutoRefreshNow() {
+        if (!isVisible || !isOnlineMode) return false;
+        if (showingTrash || showingOnlineRecycle || fileMode) return false;
+        if (searchInput != null && searchInput.isFocused()) return false;
+        if (System.currentTimeMillis() - lastUserTouchMs < AUTO_REFRESH_QUIET_MS) return false;
+        return true;
+    }
+
+    private void startOnlineAutoRefresh() {
+        stopOnlineAutoRefresh();
+        lastServerFingerprint = null;   // 第一轮只记指纹（onStart 刚刷过列表）
+        onlineAutoRefreshRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!isVisible || !isOnlineMode) {
+                    stopOnlineAutoRefresh();
+                    return;
+                }
+                if (canAutoRefreshNow()) pollForOnlineChanges();
+                uiHandler.postDelayed(this, ONLINE_AUTO_REFRESH_INTERVAL_MS);
+            }
+        };
+        uiHandler.postDelayed(onlineAutoRefreshRunnable, ONLINE_AUTO_REFRESH_INTERVAL_MS);
+    }
+
+    private void stopOnlineAutoRefresh() {
+        if (onlineAutoRefreshRunnable != null) {
+            uiHandler.removeCallbacks(onlineAutoRefreshRunnable);
+            onlineAutoRefreshRunnable = null;
+        }
+    }
+
+    /** 问一句「变了吗」，不变就什么都不做 */
+    private void pollForOnlineChanges() {
+        onlineClient.fetchServerFingerprint(new OnlineGalleryClient.Callback<String>() {
+            @Override
+            public void onSuccess(String fingerprint) {
+                if (!canAutoRefreshNow()) return;   // 请求期间用户开始操作了，这次算了
+                boolean first = lastServerFingerprint == null;
+                boolean same = fingerprint.equals(lastServerFingerprint);
+                lastServerFingerprint = fingerprint;
+                if (first || same) return;
+                refreshOnlineWorks(false);
+            }
+
+            @Override
+            public void onError(Exception error) {
+                // 探测失败静默等下一轮：电脑关机/断网很常见，不弹提示也不清屏
+            }
+        });
     }
 
     private void applyCategoryFilter(String folderKey) {

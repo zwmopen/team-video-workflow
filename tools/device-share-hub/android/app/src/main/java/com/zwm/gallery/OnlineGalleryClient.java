@@ -694,6 +694,53 @@ public final class OnlineGalleryClient {
         return list;
     }
 
+    /**
+     * DSH-111：轻量探测「电脑端的作品有没有变」——只请求 `/api/online/status`，
+     * 用 `totalWorks` + `watchdog.lastChangeAt` 拼成一个指纹串。
+     *
+     * 为什么需要它：在线相册如果每隔几十秒直接调 refreshOnlineWorks()，
+     * 列表会被整个清空重建，用户正在滚动或搜索时会被拽回顶部。
+     * 有了指纹就能先问一句「变了吗」，没变就完全不动 UI —— 自动刷新对用户零打扰。
+     *
+     * 用 lastChangeAt 而不是只看 totalWorks：加了 1 套又删了 1 套时总数不变，
+     * 但 lastChangeAt 会变，能抓到这种「内容变了」的情况。
+     *
+     * @return 形如 "472|1790293067.11" 的指纹；请求失败走 onError（调用方应保持原状）
+     */
+    public void fetchServerFingerprint(Callback<String> callback) {
+        executor.execute(() -> {
+            try {
+                URL url = new URL(resolveBaseUrl() + "/api/online/status");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(2500);
+                conn.setReadTimeout(2500);
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    conn.disconnect();
+                    mainHandler.post(() -> callback.onError(new IllegalStateException("HTTP " + code)));
+                    return;
+                }
+                java.io.InputStream in = conn.getInputStream();
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[2048];
+                int n;
+                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                in.close();
+                conn.disconnect();
+                String body = new String(bos.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                JSONObject json = new JSONObject(body);
+                int total = json.optInt("totalWorks", -1);
+                // watchdog 缺字段时留空，调用方见空串会保守地照常刷新（宁可多刷，不可漏刷）
+                JSONObject wd = json.optJSONObject("watchdog");
+                String changeAt = (wd != null) ? String.valueOf(wd.optDouble("lastChangeAt", 0d)) : "";
+                final String fingerprint = total + "|" + changeAt;
+                mainHandler.post(() -> callback.onSuccess(fingerprint));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
     public void fetchCategories(Callback<CategoriesResult> callback) {
         executor.execute(() -> {
             try {

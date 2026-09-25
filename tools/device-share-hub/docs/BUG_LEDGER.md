@@ -2452,3 +2452,28 @@ totalWorks = 472
 **闸门 A12**：time_desc 在菜单 + 6 键齐全 + fallback 不指第一项 + fallback 走默认。
 
 **版本**：Android 0.8.59/170 → 0.8.60/171
+
+## DSH-111 — 手机不会自动看到电脑新增的作品
+
+**症状**：服务端 watchdog（DSH-110）已经让作品数据实时正确，但客户端只有「下拉刷新」和
+「进页面拉一次」两条路。用户坐那儿不动，电脑上放新作品，手机永远停在旧列表。
+
+**修法**：两端各加一排 30 秒定时器，先问 `/api/online/status` 拿
+`totalWorks + watchdog.lastChangeAt` 做指纹，**指纹没变就完全不动 UI**（零打扰），
+变了才调真正的刷新。配四道守卫：滚动中 / 搜索中 / 最近 8 秒动过 / 退后台，都不刷。
+
+**闸门 A13**（两端一起查，吸取 A9 只查 Android 漏了 iOS 的教训）。
+
+### ⚠️ 这个改动里抓到的「假闸门」（重要方法论）
+第一版 A13 判据写成 `searchInput.isFocused() in and_main`、
+`uiHandler.postDelayed in and_main`。做闸门自检时把真守卫代码删掉，
+**A13 照样 PASS 37/37** —— 因为 `searchInput.isFocused()` 在滚动监听里也有一处，
+`uiHandler.postDelayed` 在缩略图排水逻辑里有 5 处。判据查的是整个文件的短子串，形同虚设。
+
+修法：**用花括号配平取出方法体，只在方法体内查**（`_method_body(src, signature)`）。
+改完后同样的删除操作 → A13 正确报 FAIL（`and搜索守卫=False`、`ios滑动守卫=False`）。
+
+> 教训：判据粒度 = 用户消费的粒度。查短子串 = 没闸门。
+> 每次加了自动刷新/守卫类实现，必须做**源码级删除**自检（不是只把判据变量改成 False）。
+
+**版本**：Android 0.8.60/171 → 0.8.61/172；iOS 0.8.41/113 → 0.8.42/114
