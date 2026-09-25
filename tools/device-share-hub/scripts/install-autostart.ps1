@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 DSH-110：注册/卸载「在线相册服务」Windows 开机自启（启动文件夹方式）。
 

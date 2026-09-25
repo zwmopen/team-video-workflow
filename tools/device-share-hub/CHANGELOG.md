@@ -2435,3 +2435,22 @@ totalWorks = 472
 
 **版本号**：iOS `0.8.42/114` → `0.8.43/115`。Android 本次没改代码，不升。
 
+
+## DSH-112 fix2 — 开机自启 .ps1 补 UTF-8 BOM（脚本原本根本跑不起来）
+
+- 症状：`install-autostart.ps1` 一跑就报「表达式或语句中包含意外的标记」，脚本完全不可用
+- 根因：这三个 .ps1 存成 **UTF-8 无 BOM**。PowerShell 5.1 会按 GBK 去读，
+  中文/emoji 全变乱码（`✅ 已注册开机自启` → `鉁?宸叉敞鍐屽紑鏈鸿嚜鍚�`），
+  这些乱码落在 `Write-Host "..."` 字符串里就变成语法错误
+- 注释里的乱码还能侥幸跑（所以 `start_online_gallery_service.ps1` 一直能用），
+  字符串里的直接挂 —— 这就是为什么现象这么迷惑
+- 修法：给 `check_online_gallery.ps1` / `install-autostart.ps1` /
+  `restart_online_gallery.ps1` 补 UTF-8 BOM（与仓库老脚本
+  `build-local.ps1` / `copy-usb-apk.ps1` 保持一致）
+
+**闸门 A14**：检查这三个 .ps1 的前 3 字节是否 `EF BB BF`。
+- 自检：剥掉 `install-autostart.ps1` 的 BOM → A14 正确 FAIL（`install-autostart=False`）
+- 改后 38/38 PASS
+
+**版本号**：只动脚本和测试，**客户端版本号不动**。
+

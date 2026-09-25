@@ -757,6 +757,29 @@ def main():
            a13_ios_timer, a13_ios_guard_drag, a13_ios_guard_search,
            a13_ios_lifecycle)))
 
+    # ---- DSH-112 fix：DSH-110 交付的 .ps1 必须带 UTF-8 BOM ----
+    # 踩过的坑：用「UTF-8 无 BOM」写含中文的 .ps1，PowerShell 5.1 会按 GBK 去读，
+    # 中文/emoji 全变乱码 —— 注释里的乱码还能侥幸跑，但 Write-Host "✅ 已注册..."
+    # 这种字符串里的会直接**语法错误**，脚本整个跑不起来（实测 install-autostart.ps1
+    # 报「表达式或语句中包含意外的标记」，而当时看不出原因，因为子进程 stderr 被吞）。
+    # 仓库里老脚本（build-local.ps1 / copy-usb-apk.ps1）本来就都带 BOM，是我新写的三个漏了。
+    ps1_dir = service_path.parent
+    ps1_names = ["check_online_gallery.ps1", "install-autostart.ps1",
+                 "restart_online_gallery.ps1"]
+    a14_bom = {}
+    for n in ps1_names:
+        fp = ps1_dir / n
+        if not fp.exists():
+            a14_bom[n] = False
+            continue
+        with open(fp, "rb") as fh:
+            a14_bom[n] = fh.read(3) == b"\xef\xbb\xbf"
+    a14_overall = all(a14_bom.values())
+    results.append(check(
+        "A14 开机自启 .ps1 带 UTF-8 BOM（否则 PowerShell 5.1 中文乱码挂掉）（DSH-112 fix）",
+        a14_overall,
+        " ".join("%s=%s" % (n.split(".")[0], v) for n, v in a14_bom.items())))
+
     print()
     bad = results.count(False)
     if bad:

@@ -2502,3 +2502,21 @@ totalWorks = 472
 已删 wrapper 并重新指向 `restart_online_gallery.ps1`。
 
 **版本**：iOS 0.8.42/114 → 0.8.43/115
+
+## DSH-112 fix2 — 开机自启 .ps1 因缺 BOM 完全无法执行
+
+**症状**：`install-autostart.ps1` 执行即报「表达式或语句中包含意外的标记」，
+而且因为子进程的 stderr 被吞，一开始看不出是编码问题。
+
+**根因**：三个 DSH-110 新增的 .ps1 存成 **UTF-8 无 BOM**。PowerShell 5.1 默认按 ANSI/GBK
+读取无 BOM 的脚本，中文与 emoji 变成乱码。乱码若只出现在 `#` 注释里还能侥幸运行
+（`start_online_gallery_service.ps1` 正是如此，所以它能启动服务），
+一旦落在 `Write-Host "✅ ..."` 这类**字符串**里就是语法错误 —— 脚本整个废掉。
+
+**修法**：补 UTF-8 BOM（`EF BB BF`），与仓库既有脚本 `build-local.ps1`、
+`copy-usb-apk.ps1` 的写法对齐。
+
+**闸门 A14**：校验这三个 .ps1 前 3 字节。剥 BOM 自检 → 正确 FAIL。
+
+> 教训：Windows 下给 PowerShell 5.1 写**含中文**的 .ps1，必须带 BOM。
+> 只含注释也可能在某天被人往字符串里加中文后突然挂掉。
