@@ -53,6 +53,8 @@ import socket
 import threading
 import hashlib
 import urllib.parse
+import urllib.request
+import tempfile
 import re
 import shutil
 import subprocess
@@ -678,6 +680,188 @@ def slot_guard_health() -> Dict[str, Any]:
         "scanSlotsDropped": stats.get("slotsDropped", 0),
         "hint": ("本轮扫描剔除了占位/过薄槽位：文案骨架未填充，请回流产线重生成"
                  if stats.get("slotsDropped", 0) else ""),
+    }
+
+
+# -- DSH-113：局域网更新中转（手机拿不到 GitHub，让电脑代取）--------------------
+# 踩到的坑（2026-09-25 实测）：手机端 UpdateChecker 会先问电脑要 /latest.json，
+# 拿不到才回落 raw.githubusercontent.com。而本机实测：
+#   直连 raw.githubusercontent.com -> **10 秒超时**（http_code=000）
+#   PC 必须走 7897 代理才能通（0.46s / 200）
+# 手机没有代理，所以永远拿不到清单 => 一直停在旧版本。
+# 表现就是「我这边发版了，手机上还是旧的 / 苹果端按钮还是没有」——
+# 不是没发布，是**发布根本没送到手机上**。
+# 修法：电脑有代理，让电脑把 GitHub 的发布清单和安装包代取回来，从局域网发给手机。
+UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json"
+# 出网代理：本机 7897 常驻。留空即直连（大概率失败，但绝不拖垮相册主流程）
+UPDATE_UPSTREAM_PROXY = os.environ.get("DSH_UPDATE_PROXY", "http://127.0.0.1:7897")
+UPDATE_MANIFEST_TTL = 300.0
+UPDATE_CACHE_DIR = os.path.join(tempfile.gettempdir(), "dsh-update-relay")
+
+_UPDATE_LOCK = threading.Lock()
+_UPDATE_MANIFEST_CACHE: Dict[str, Any] = {"at": 0.0, "data": None}
+# 改写前的**原始**下载地址（改写后 apk_url 变成 /download/apk，不能再拿去出网）
+_UPDATE_ORIGIN_URLS: Dict[str, str] = {}
+_UPDATE_RELAY_STATS: Dict[str, Any] = {
+    "manifestFetches": 0, "manifestFailures": 0,
+    "downloads": 0, "downloadFailures": 0,
+    "lastError": "", "lastManifestAt": 0.0,
+}
+
+
+def _update_opener():
+    """出网 opener：有代理挂代理，没有就直连（直连通常失败，但不会抛）。"""
+    if UPDATE_UPSTREAM_PROXY:
+        return urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": UPDATE_UPSTREAM_PROXY,
+                                         "https": UPDATE_UPSTREAM_PROXY}))
+    return urllib.request.build_opener()
+
+
+def _rewrite_manifest_for_lan(data: Dict[str, Any]) -> Dict[str, Any]:
+    """把 GitHub 清单里的下载地址改写成局域网地址。
+
+    Android 端只读 version_name / apk_url / sha256 / source 四个字段，
+    所以这里**只动 URL，不动版本号和校验值**：sha256 仍是 GitHub 原包的，
+    而中转是逐字节转发，校验自然一致。
+    """
+    out = dict(data)
+    if out.get("apk_url"):
+        out["apk_url"] = "/download/apk"
+    if out.get("url"):
+        out["url"] = "/download/apk"
+    ios = out.get("ios")
+    if isinstance(ios, dict) and ios.get("ipa_url"):
+        ios = dict(ios)
+        ios["ipa_url"] = "/download/ipa"
+        out["ios"] = ios
+    out["source"] = "lan-relay"
+    out["relayedBy"] = get_local_ip()
+    return out
+
+
+def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
+    """取发布清单（TTL 缓存）。失败返回空 dict —— 中转挂了不能拖垮相册服务。"""
+    with _UPDATE_LOCK:
+        now = time.time()
+        cached = _UPDATE_MANIFEST_CACHE.get("data")
+        if (not force) and cached and (
+                now - float(_UPDATE_MANIFEST_CACHE.get("at", 0.0)) < UPDATE_MANIFEST_TTL):
+            return cached
+    try:
+        req = urllib.request.Request(
+            UPDATE_MANIFEST_URL,
+            headers={"User-Agent": "dsh-online-gallery", "Accept": "application/json"})
+        with _update_opener().open(req, timeout=12) as resp:
+            raw = resp.read()
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict) or not data.get("apk_url"):
+            raise ValueError("发布清单里没有 apk_url")
+        with _UPDATE_LOCK:
+            # 先把原始地址存下来（改写后就找不回来了）
+            _UPDATE_ORIGIN_URLS["apk"] = data.get("apk_url", "")
+            _UPDATE_ORIGIN_URLS["ipa"] = (data.get("ios") or {}).get("ipa_url", "")
+        data = _rewrite_manifest_for_lan(data)
+        with _UPDATE_LOCK:
+            _UPDATE_MANIFEST_CACHE["at"] = time.time()
+            _UPDATE_MANIFEST_CACHE["data"] = data
+            _UPDATE_RELAY_STATS["manifestFetches"] = int(
+                _UPDATE_RELAY_STATS.get("manifestFetches", 0)) + 1
+            _UPDATE_RELAY_STATS["lastManifestAt"] = time.time()
+            _UPDATE_RELAY_STATS["lastError"] = ""
+        return data
+    except Exception as e:
+        with _UPDATE_LOCK:
+            _UPDATE_RELAY_STATS["manifestFailures"] = int(
+                _UPDATE_RELAY_STATS.get("manifestFailures", 0)) + 1
+            _UPDATE_RELAY_STATS["lastError"] = str(e)
+        print("[UpdateRelay] 取发布清单失败：%s" % e)
+        return {}
+
+
+def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
+    """代取安装包（按版本落磁盘缓存，两台手机只出网一次）。"""
+    manifest = fetch_update_manifest()
+    if not manifest:
+        return None, "拿不到发布清单（检查 7897 代理）"
+    with _UPDATE_LOCK:
+        url = _UPDATE_ORIGIN_URLS.get(kind, "")
+    if not url:
+        return None, "发布清单里没有 %s 下载地址" % ("APK" if kind == "apk" else "IPA")
+    version = (manifest.get("version_name") or manifest.get("tag_name") or "0").lstrip("vV")
+    if kind == "ipa":
+        version = (manifest.get("ios") or {}).get("version_name", version)
+    try:
+        os.makedirs(UPDATE_CACHE_DIR, exist_ok=True)
+    except Exception:
+        pass
+    cache_file = os.path.join(UPDATE_CACHE_DIR, "album-%s-%s.%s"
+                              % ("Android" if kind == "apk" else "iOS", version, kind))
+    try:
+        if os.path.isfile(cache_file) and os.path.getsize(cache_file) > 64 * 1024:
+            with open(cache_file, "rb") as fh:
+                payload = fh.read()
+            with _UPDATE_LOCK:
+                _UPDATE_RELAY_STATS["downloads"] = int(
+                    _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
+            return payload, ""
+    except Exception:
+        pass
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "dsh-online-gallery"})
+        with _update_opener().open(req, timeout=180) as resp:
+            payload = resp.read()
+        if not payload or len(payload) < 64 * 1024:
+            raise ValueError("下载到的安装包太小（%d 字节），疑似失败" % len(payload))
+        # 判据用 sha256，**不用体积**：实测这个 APK 只有 0.86 MB，
+        # 早先用「必须 >1MB」当闸门把它整包判废了（自创判据的代价）。
+        # 清单里本来就带 sha256，手机端也会校验同一个值 —— 与客户端口径完全一致。
+        expected = ""
+        if kind == "apk":
+            expected = manifest.get("sha256") or ""
+        else:
+            expected = (manifest.get("ios") or {}).get("sha256") or ""
+        if expected:
+            actual = hashlib.sha256(payload).hexdigest()
+            if actual.lower() != expected.lower():
+                raise ValueError("安装包校验不一致：期望 %s... 实际 %s..."
+                                 % (expected[:12], actual[:12]))
+        tmp = cache_file + ".part"
+        with open(tmp, "wb") as fh:
+            fh.write(payload)
+        os.replace(tmp, cache_file)
+        with _UPDATE_LOCK:
+            _UPDATE_RELAY_STATS["downloads"] = int(
+                _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
+        return payload, ""
+    except Exception as e:
+        with _UPDATE_LOCK:
+            _UPDATE_RELAY_STATS["downloadFailures"] = int(
+                _UPDATE_RELAY_STATS.get("downloadFailures", 0)) + 1
+            _UPDATE_RELAY_STATS["lastError"] = str(e)
+        print("[UpdateRelay] 代取 %s 失败：%s" % (kind, e))
+        return None, str(e)
+
+
+def update_relay_health() -> Dict[str, Any]:
+    """中转健康快照（/api/online/status 暴露，一条命令看出手机能不能更新）。"""
+    with _UPDATE_LOCK:
+        stats = dict(_UPDATE_RELAY_STATS)
+        manifest = _UPDATE_MANIFEST_CACHE.get("data") or {}
+    ios = manifest.get("ios") or {}
+    return {
+        "proxy": UPDATE_UPSTREAM_PROXY or "",
+        "manifestTtlSec": UPDATE_MANIFEST_TTL,
+        "cachedVersion": manifest.get("version_name", ""),
+        "cachedVersionCode": manifest.get("version_code", manifest.get("versionCode", 0)),
+        "iosCachedVersion": ios.get("version_name", ""),
+        "manifestFetches": stats.get("manifestFetches", 0),
+        "manifestFailures": stats.get("manifestFailures", 0),
+        "downloads": stats.get("downloads", 0),
+        "downloadFailures": stats.get("downloadFailures", 0),
+        "lastError": stats.get("lastError", ""),
+        "hint": ("" if stats.get("manifestFetches")
+                 else "还没成功取过清单：检查 7897 代理是否活着"),
     }
 
 
@@ -1636,6 +1820,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "workPath",           # 作品文件夹路径（复制路径按钮）
                     "phoneCountSync",     # 手机本地分享次数回读电脑
                     "phoneDiscovery",     # 电脑主动扫描在线手机
+                    "lanUpdateRelay",     # 局域网更新中转：手机连不上 GitHub，电脑代取清单+安装包
                 ],
                 "phoneSyncApi": "/api/online/sync-phone-counts",
                 "phonePanelApi": "/api/online/phones",
@@ -1649,6 +1834,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "slotGuard": slot_guard_health(),
                 # DSH-110：文件系统轮询监听状态（手机端 statusText badge 用）
                 "watchdog": self.scanner.watchdog_status(),
+                # DSH-113：手机 OTA 中转健康度（手机拿不到 GitHub，只能靠电脑代取）
+                "updateRelay": update_relay_health(),
                 # 传输层瘦身：列表响应剥离的字段 + gzip 阈值（手机端「正在连接」快的根因在此）
                 "wire": {
                     "gzipMinBytes": GZIP_MIN_BYTES,
@@ -1658,6 +1845,38 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 },
             }
             self.send_json(200, data)
+            return
+
+        # -- DSH-113：局域网更新中转路由（必须在 /api 兜底之前） --
+        if path in ("/latest.json", "/altstore.json"):
+            data = fetch_update_manifest()
+            if not data:
+                self.send_json(503, {"ok": False,
+                                     "error": "电脑端代取发布清单失败（检查 7897 代理）"})
+                return
+            self.send_json(200, data)
+            return
+
+        if path.startswith("/download/"):
+            kind = path.rsplit("/", 1)[-1].lower()
+            if kind not in ("apk", "ipa"):
+                self.send_error(404)
+                return
+            payload, err = _download_upstream(kind)
+            if payload is None:
+                self.send_json(502, {"ok": False, "error": err})
+                return
+            ctype = ("application/vnd.android.package-archive" if kind == "apk"
+                     else "application/octet-stream")
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(payload)
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                pass
             return
 
         if path == "/api/online/phones":

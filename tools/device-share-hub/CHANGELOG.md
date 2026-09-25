@@ -2494,3 +2494,61 @@ totalWorks = 472
 
 **版本号**：只动 Windows 脚本 + 测试，**客户端版本号不动**（Android 0.8.61/172、iOS 0.8.44/116）。
 
+
+
+## DSH-113 — 局域网更新中转：手机连不上 GitHub，让电脑代取（**发布根本没送到手机上**）
+
+### 症状（极具迷惑性）
+
+- CI 全绿、包也发了、`latest.json` 上写的就是 `0.8.61/172`
+- 但真机 `/api/online/phones` 上报的两台安卓机**全是 `0.8.58/169`**
+- 用户的体感就是：「苹果的按钮还是没有」「怎么手机上还是旧的」
+
+### 根因
+
+手机端 `UpdateChecker.fetchManifest()` 会**先问电脑要** `lanServer + "/latest.json"`，
+拿不到才回落 `raw.githubusercontent.com`。而实测：
+
+| 路径 | 结果 |
+|---|---|
+| 电脑端 `/latest.json`（45835） | **404** —— 服务端压根没这个路由 |
+| 本机直连 `raw.githubusercontent.com` | **10 秒超时**（`http_code=000`） |
+| 本机走代理 7897 | 200，0.46s |
+
+手机没有代理 ⇒ **永远拿不到清单** ⇒ 一直停在旧版本。
+不是没发布，是**发布根本没送到手机上**。
+
+### 修法
+
+电脑有代理，让电脑当代购：`online_gallery_service.py` 新增
+
+- `/latest.json`（同时兼容 `/altstore.json`）：走 7897 代理取 GitHub 清单，
+  把 `apk_url` / `ios.ipa_url` 改写成局域网地址，**版本号和 sha256 原样保留**
+- `/download/apk`、`/download/ipa`：代取安装包，按版本落磁盘缓存（两台手机只出网一次）
+- `/api/online/status` 新增 `updateRelay` 健康快照 + 能力位 `lanUpdateRelay`
+
+**客户端一行都不用改** —— Android 本来就优先问 LAN，拿到就用。
+每次 app 回前台都会检查（`checkOnResume`，6 小时节流），下次打开就会升到 0.8.61。
+
+### 中途踩的坑：自创判据把真包判废
+
+第一版用「下载到的包必须 > 1 MB」当成功判据，结果 0.86 MB 的真 APK 被整包判废。
+**判据应该是清单里本来就带的 sha256**，跟手机端校验的是同一个值。
+实测中转拿到的包 sha256 与 GitHub 原包**逐字节一致**（`19d54a84…`）。
+
+### 闸门 A16（40 项）
+
+10 条判据，源码级删除自检三项全部正确 FAIL：
+- 删 `/latest.json` 路由 → `route=False`
+- 把 sha256 校验换成假实现 → `sha=False`
+- 去掉代理 → `proxy=False`
+
+判据粒度纪律（**第三次踩**）：`/download/apk`、`sha256` 这些串在注释里也出现，
+只查裸子串的话删光实现照样 PASS ⇒ 一律查**完整语句**。
+
+### 还没解决的半边：iOS 没有局域网更新通道
+
+`AlbumUpdateChecker.swift` 里 **0 处** LAN 逻辑，只认 GitHub —— 而 iOS 本来就
+不能自行安装 IPA（靠电脑侧载）。所以 iPhone 的更新仍然走**电脑装机**
+（技能 `ios-sideload-bypass-sandbox`），本次不改造 iOS 客户端。
+

@@ -808,6 +808,44 @@ def main():
         "restartCall=%s legacyNamed=%s legacyCleanup=%s"
         % (a15_restart_call, a15_legacy_named, a15_legacy_cleanup)))
 
+    # ---- DSH-113：局域网更新中转（手机连不上 GitHub，电脑代取） ----
+    # 事故链：手机 UpdateChecker 先问电脑要 /latest.json，拿不到才回落
+    # raw.githubusercontent.com。而后者在本机**直连 10 秒超时**（http_code=000），
+    # 手机没有代理 ⇒ 永远拿不到清单 ⇒ 一直停在旧版本。
+    # 现象极具迷惑性：我这边 CI 全绿、包也发了，但手机上就是没有新功能
+    # （用户原话「苹果的按钮还是没有」）—— 不是没发布，是**发布没送到手机上**。
+    # 修法：电脑有 7897 代理，把清单和安装包代取回来，从局域网发给手机。
+    #
+    # 判据粒度纪律（第三次踩）：「/download/apk」在注释里也出现过，
+    # 「sha256」在文件里到处都是 ⇒ 一律查**完整语句**，不查裸子串。
+    a16_manifest_url = ('UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/'
+                        'zwmopen/gallery-updates/main/latest.json"' in service_src)
+    a16_proxy = "urllib.request.ProxyHandler(" in service_src
+    a16_fetch_fn = "def fetch_update_manifest(" in service_src
+    a16_rewrite = 'out["apk_url"] = "/download/apk"' in service_src
+    a16_manifest_route = 'if path in ("/latest.json", "/altstore.json"):' in service_src
+    a16_download_route = 'if path.startswith("/download/"):' in service_src
+    a16_origin_kept = '_UPDATE_ORIGIN_URLS["apk"] = data.get("apk_url", "")' in service_src
+    # 校验用 sha256，**不用体积**：这个 APK 实测只有 0.86MB，
+    # 早先用「必须 >1MB」当判据把它整包判废了（自创判据的代价，见 BUG_LEDGER）。
+    a16_sha_gate = ("actual = hashlib.sha256(payload).hexdigest()" in service_src
+                    and 'if actual.lower() != expected.lower():' in service_src)
+    a16_status_field = '"updateRelay": update_relay_health(),' in service_src
+    a16_feature = '"lanUpdateRelay",' in service_src
+
+    a16_overall = (
+        a16_manifest_url and a16_proxy and a16_fetch_fn and a16_rewrite
+        and a16_manifest_route and a16_download_route and a16_origin_kept
+        and a16_sha_gate and a16_status_field and a16_feature
+    )
+    results.append(check(
+        "A16 局域网更新中转：电脑代取发布清单 + 安装包（DSH-113）",
+        a16_overall,
+        "manifestUrl=%s proxy=%s fetch=%s rewrite=%s route=%s/%s origin=%s sha=%s status=%s feature=%s"
+        % (a16_manifest_url, a16_proxy, a16_fetch_fn, a16_rewrite,
+           a16_manifest_route, a16_download_route, a16_origin_kept,
+           a16_sha_gate, a16_status_field, a16_feature)))
+
     print()
     bad = results.count(False)
     if bad:
