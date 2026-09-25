@@ -45,8 +45,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         ("size_asc",  "按大小（小→大）"),
     ]
     private lazy var currentSortKey: String = {
-        let saved = UserDefaults.standard.string(forKey: ContentView.sortDefaultsKey)
-        return (saved?.isEmpty == false) ? saved! : ContentView.defaultSortKey
+        let saved = UserDefaults.standard.string(forKey: LibraryViewController.sortDefaultsKey)
+        return (saved?.isEmpty == false) ? saved! : LibraryViewController.defaultSortKey
     }()
     /// DSH-092 C6：在线作品列表分页上限（对齐 Android `onlinePageLimit`，首屏 30 条）。
     /// 成品库 400+ 套时，一次性渲染会让 `sizeForItemAt` 把 400 份文案全解析一遍 ——
@@ -490,7 +490,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func applySortKey(_ key: String) {
         currentSortKey = key
-        UserDefaults.standard.set(key, forKey: ContentView.sortDefaultsKey)
+        UserDefaults.standard.set(key, forKey: LibraryViewController.sortDefaultsKey)
         onlineSortButton.setTitle(sortKeyLabel(key), for: .normal)
         if isOnlineMode {
             loadOnlineData(silent: true)
