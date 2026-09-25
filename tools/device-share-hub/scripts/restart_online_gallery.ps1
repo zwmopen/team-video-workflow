@@ -15,5 +15,8 @@ if (-not (Test-Path -LiteralPath $StartScript)) {
 }
 
 # 简单包装：调 start_online_gallery_service.ps1，传 -Restart 保证幂等
-& $StartScript -Port $Port
+# -Restart：先 kill 掉任何仍在监听的旧进程，再拉新进程。
+# 为什么不能省：旧进程会继续用旧代码应答（历史上 thumb=1 静默回落成发原图，
+# 手机端在线回收站直接卡死）。开机自启必须保证加载的是磁盘上的最新代码。
+& $StartScript -Port $Port -Restart
 exit $LASTEXITCODE

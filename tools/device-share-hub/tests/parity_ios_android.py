@@ -780,6 +780,34 @@ def main():
         a14_overall,
         " ".join("%s=%s" % (n.split(".")[0], v) for n, v in a14_bom.items())))
 
+    # ---- DSH-112 fix3：开机自启必须「只有一个入口」且「真传 -Restart」 ----
+    # 踩过的坑（都是静默的，不报错，只是行为不对）：
+    #   ① restart_online_gallery.ps1 的注释写着「传 -Restart 保证幂等」，代码里压根没传。
+    #      不带 -Restart 时，若旧进程仍在监听且能应答，脚本直接 return —— 于是开机后
+    #      服务继续用旧代码跑（历史上就是这么让 thumb=1 静默回落成发原图的）。
+    #   ② 启动文件夹里躺着两份开机自启：2026-09-20 的 DeviceShareHub-OnlineGallery.vbs
+    #      和 DSH-110 装的 DSH-OnlineGallery-AutoStart.lnk。开机瞬间并发抢 45835，
+    #      且 -Uninstall 只删 .lnk —— 用户以为卸载了，.vbs 照样把服务拉起来。
+    # 判据粒度纪律：查「完整调用语句」，不查裸子串 —— 「-Restart」在注释里也出现了 3 次，
+    # 只查子串的话把实现删光闸门照样 PASS（假闸门）。
+    restart_src = (ps1_dir / "restart_online_gallery.ps1").read_text(encoding="utf-8-sig")
+    install_src = (ps1_dir / "install-autostart.ps1").read_text(encoding="utf-8-sig")
+
+    a15_restart_call = re.search(
+        r"&\s+\$StartScript\s+-Port\s+\$Port\s+-Restart", restart_src) is not None
+    a15_legacy_named = ("DeviceShareHub-OnlineGallery.vbs" in install_src
+                        and "$LegacyVbsPath" in install_src)
+    # 注册路径 + 卸载路径各清一次 ⇒ Remove-Item 出现 2 次
+    a15_legacy_cleanup = len(re.findall(
+        r"Remove-Item\s+-LiteralPath\s+\$LegacyVbsPath", install_src)) >= 2
+
+    a15_overall = a15_restart_call and a15_legacy_named and a15_legacy_cleanup
+    results.append(check(
+        "A15 开机自启单入口 + restart 真传 -Restart（DSH-112 fix3）",
+        a15_overall,
+        "restartCall=%s legacyNamed=%s legacyCleanup=%s"
+        % (a15_restart_call, a15_legacy_named, a15_legacy_cleanup)))
+
     print()
     bad = results.count(False)
     if bad:

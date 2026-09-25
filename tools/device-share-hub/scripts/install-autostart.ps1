@@ -36,9 +36,19 @@ if (-not $StartupDir) {
 $LinkName = "DSH-OnlineGallery-AutoStart.lnk"
 $LinkPath = Join-Path $StartupDir $LinkName
 
+# DSH-112 fix2：历史遗留入口 —— 2026-09-20 那版用的是 .vbs（直连 pythonw / 后改为 -Restart）。
+# 它和本脚本装的 .lnk 是同一个服务的两份开机自启，开机瞬间会并发抢 45835 端口；
+# 更要命的是 -Uninstall 只删 .lnk，卸载后 .vbs 照样把服务拉起来 —— 用户以为卸了其实没卸。
+# 所以注册/卸载两条路径都顺手清掉它（幂等，不存在就跳过）。
+$LegacyVbsPath = Join-Path $StartupDir "DeviceShareHub-OnlineGallery.vbs"
+
 if ($Uninstall) {
     if (Test-Path -LiteralPath $LinkPath) {
         Remove-Item -LiteralPath $LinkPath -Force
+        if (Test-Path -LiteralPath $LegacyVbsPath) {
+            Remove-Item -LiteralPath $LegacyVbsPath -Force
+            Write-Host "   (also removed legacy entry $LegacyVbsPath)" -ForegroundColor DarkGray
+        }
         Write-Host "✅ 已卸载开机自启（删除 $LinkPath）" -ForegroundColor Green
     } else {
         Write-Host "未找到开机自启项（$LinkPath 不存在），无需卸载" -ForegroundColor Yellow
@@ -58,6 +68,12 @@ $Shortcut.Save()
 # 释放 COM 对象（避免进程残留）
 [System.Runtime.Interopservices.Marshal]::ReleaseComObject($Shortcut) | Out-Null
 [System.Runtime.Interopservices.Marshal]::ReleaseComObject($WshShell) | Out-Null
+
+# 清掉历史遗留的 .vbs 入口，保证全局只有一份开机自启（见上面 DSH-112 fix2 说明）
+if (Test-Path -LiteralPath $LegacyVbsPath) {
+    Remove-Item -LiteralPath $LegacyVbsPath -Force
+    Write-Host "[cleanup] removed legacy autostart entry: $LegacyVbsPath" -ForegroundColor DarkGray
+}
 
 Write-Host "✅ 已注册开机自启：" -ForegroundColor Green
 Write-Host "   $LinkPath"

@@ -2454,3 +2454,43 @@ totalWorks = 472
 
 **版本号**：只动脚本和测试，**客户端版本号不动**。
 
+
+
+## DSH-112 fix3 — 开机自启「两份入口抢同一个服务」+ restart 没真传 -Restart
+
+两个都是**静默故障**：不报错，只是行为不对，所以一直没人发现。
+
+### ① restart_online_gallery.ps1 注释说谎
+
+- 注释写着「传 -Restart 保证幂等」，代码里是 `& $StartScript -Port $Port` —— **根本没传**
+- 不带 `-Restart` 时：若旧进程还在监听且能应答，脚本直接打印「already running」就 return
+- 后果：开机后服务继续用**旧代码**跑。`start_online_gallery_service.ps1` 是磁盘上的新代码，
+  但跑着的还是昨天那个进程 —— 历史上 `thumb=1` 就是这么静默回落成发原图，
+  手机端在线回收站直接卡死
+- 修法：补上 `-Restart`（先 kill 旧监听者，再拉新进程），并把「为什么不能省」写进注释
+
+### ② 启动文件夹里躺着两份开机自启
+
+- `DeviceShareHub-OnlineGallery.vbs`（2026-09-20 那版的遗留）
+- `DSH-OnlineGallery-AutoStart.lnk`（DSH-110 装的）
+- 同一个服务、两份入口 ⇒ 开机瞬间并发抢 45835 端口
+- 更要命的：`install-autostart.ps1 -Uninstall` **只删 .lnk**，
+  卸载后 .vbs 照样把服务拉起来 —— 用户以为卸了，其实没卸
+- 修法：`install-autostart.ps1` 的**注册 / 卸载两条路径**都顺手清掉历史遗留 .vbs（幂等）
+- 本机已把那个 .vbs 送进回收站（`$IUZK5WI.vbs`，可恢复），启动目录现只剩一份入口
+
+**闸门 A15**（新增，39 项）：
+- `a15_restart_call`：`& $StartScript -Port $Port -Restart` 完整调用语句
+- `a15_legacy_named`：install 脚本里出现 legacy .vbs 名 + `$LegacyVbsPath`
+- `a15_legacy_cleanup`：`Remove-Item -LiteralPath $LegacyVbsPath` 出现 ≥2 次（注册 + 卸载）
+
+判据粒度纪律（又一次踩到）：**`-Restart` 在注释里也出现了 3 次**，
+只查裸子串的话把实现删光闸门照样 PASS ⇒ 改成查完整调用语句 + 正则定位 Remove-Item。
+
+自检（源码级删除，不用 cp 备份 —— 安全中心会拦）：
+- 删掉 `-Restart` → A15 FAIL（`restartCall=False`）
+- 删掉注册路径的清 legacy → A15 FAIL（`legacyCleanup=False`）
+- 反向 replace 还原 → PASS，且校验字节与原始完全一致
+
+**版本号**：只动 Windows 脚本 + 测试，**客户端版本号不动**（Android 0.8.61/172、iOS 0.8.44/116）。
+

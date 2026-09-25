@@ -2520,3 +2520,16 @@ totalWorks = 472
 
 > 教训：Windows 下给 PowerShell 5.1 写**含中文**的 .ps1，必须带 BOM。
 > 只含注释也可能在某天被人往字符串里加中文后突然挂掉。
+
+
+## DSH-112 fix3 — 开机自启双入口 + restart 未传 -Restart（2026-09-25）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | ①`restart_online_gallery.ps1` 注释称传 `-Restart` 但代码没传；②启动目录有 .vbs + .lnk 两份自启 |
+| 危害 | 都是静默故障：服务继续跑旧代码（历史 thumb=1 回落发原图、手机在线回收站卡死）；`-Uninstall` 卸载不干净 |
+| 根因 | ①漏传参数；②2026-09-20 的 .vbs 遗留入口未被 DSH-110 的安装器接管 |
+| 修法 | ①补 `-Restart` 并写清理由；②install-autostart 注册/卸载两条路径都清 legacy .vbs；本机 .vbs 送回收站 |
+| 闸门 | A15（3 判据，源码级删除自检 FAIL×2，还原 PASS） |
+| 教训 | 裸子串判据会造**假闸门** —— `-Restart` 在注释里出现 3 次，删实现仍 PASS；必须查完整调用语句 |
+
