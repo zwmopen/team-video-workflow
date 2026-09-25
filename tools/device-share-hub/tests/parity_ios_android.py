@@ -599,6 +599,23 @@ def main():
             a10_install_autostart, a10_check_ps1, a10_create_lnks, a10_cmd_entries,
         )))
 
+    # ---- DSH-109 fix：PopupMenu 当前选中排序打勾（视觉状态显示） ----
+    # 用户口径：「选中后有个状态显示就行」—— 当前实现只更新按钮文字，PopupMenu 项没标记
+    # 修法：在 showSortKeyMenu 里给 currentSortKey 对应项 setCheckable(true) + setChecked(true)
+    a11_and_sort_checkable = re.search(
+        r"setCheckable\s*\(\s*true\s*\)", and_main) is not None
+    a11_and_sort_checked = re.search(
+        r"setChecked\s*\(\s*true\s*\)", and_main) is not None
+    a11_and_sort_in_menu = "showSortKeyMenu" in and_main and re.search(
+        r"setCheckable\s*\(\s*true\s*\)[\s\S]{0,200}showSortKeyMenu", and_main) is None \
+        and re.search(r"showSortKeyMenu[\s\S]{0,500}setCheckable", and_main) is not None
+    a11_overall = a11_and_sort_checkable and a11_and_sort_checked and a11_and_sort_in_menu
+    results.append(check(
+        "A11 排序 PopupMenu 当前选中项打勾（DSH-109 fix）",
+        a11_overall,
+        "checkable=%s checked=%s inShowSortKeyMenu=%s"
+        % (a11_and_sort_checkable, a11_and_sort_checked, a11_and_sort_in_menu)))
+
     print()
     bad = results.count(False)
     if bad:

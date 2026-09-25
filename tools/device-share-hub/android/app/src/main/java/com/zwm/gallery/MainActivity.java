@@ -1034,7 +1034,12 @@ public final class MainActivity extends Activity {
     private void showSortKeyMenu() {
         android.widget.PopupMenu popup = new android.widget.PopupMenu(this, sortKeyButton);
         for (String[] pair : SORT_MENU) {
-            popup.getMenu().add(pair[1]);
+            android.view.MenuItem mi = popup.getMenu().add(pair[1]);
+            // DSH-109 fix: 给当前选中的排序打勾（视觉状态显示）
+            if (pair[0].equals(currentSortKey)) {
+                mi.setCheckable(true);
+                mi.setChecked(true);
+            }
         }
         popup.setOnMenuItemClickListener(item -> {
             CharSequence title = item.getTitle();

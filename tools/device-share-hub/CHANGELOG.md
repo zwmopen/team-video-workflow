@@ -2347,3 +2347,18 @@ totalWorks = 472
 - 改后 34/34 PASS（验过）
 
 **版本号**：客户端零改动，**Android / iOS 不升版本号**。
+
+## DSH-109 fix — 排序 PopupMenu 当前选中项打勾（状态显示）
+
+- Android `MainActivity.showSortKeyMenu()`：给 `currentSortKey` 对应项 `setCheckable(true) + setChecked(true)`
+- 弹出 PopupMenu 时当前选中的排序右侧显示打勾标记（Android Material 默认行为）
+- 默认排序仍是 `time_asc`（按时间最新在底），未变
+- 按钮文字 `sortKeyButton.setText(sortKeyLabel(...))` 仍保留（双状态显示：按钮文字 + PopupMenu 选中）
+
+**闸门 A11**（3 项硬判据）：
+- 改前 setCheckable 不在源码 → A11 FAIL
+- 闸门自检：强制 `a11_and_sort_checkable = False` → A11 FAIL（确认非恒真）
+- 改后 35/35 PASS
+
+**版本号**：Android `0.8.58/169` → `0.8.59/170`。iOS 零改动不升。
+

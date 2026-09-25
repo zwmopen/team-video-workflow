@@ -2427,3 +2427,16 @@ totalWorks = 472
 
 ### 版本
 - 服务端无版本号概念，**Android / iOS 客户端零改动，不升版本号**。
+
+## DSH-109 fix — 排序 PopupMenu 当前选中项无视觉标记
+
+**症状**：DSH-109 加了排序按钮 + 5 种排序 PopupMenu，但 PopupMenu 弹出时当前选中的排序没有打勾标记，用户只能通过排序按钮本身的文字间接判断当前排序。
+
+**修法**：在 `showSortKeyMenu()` 里给 `currentSortKey` 对应项 `setCheckable(true) + setChecked(true)`。
+
+**闸门 A11**：
+- `setCheckable\s*\(\s*true\s*\)` 在 showSortKeyMenu 函数内
+- `setChecked\s*\(\s*true\s*\)` 同上
+- setCheckable 在 setChecked 之前调用（Android 必须先 setCheckable 才能 setChecked 生效）
+
+**版本**：Android 0.8.58/169 → 0.8.59/170
