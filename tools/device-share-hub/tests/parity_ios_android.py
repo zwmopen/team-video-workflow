@@ -866,6 +866,32 @@ def main():
         "ttlConst=%s ttlUsed=%s noHardcoded=%s"
         % (a17_ttl_const, a17_ttl_used, a17_no_hardcoded)))
 
+    # ---- DSH-115：出网代理必须多候选轮试，不能写死一个端口 ----
+    # 事故：中转写死 `http://127.0.0.1:7897`。而 Clash 混合端口会在 7890/7897
+    # 之间回跳（2026-09-25 CDP 产线就因此停产过一次），节点还偶发掉线 ——
+    # 实测 2026-09-26 拿到 `<urlopen error [WinError 10054]>`，
+    # 中转只剩一个 110 字节的报错体，手机端拿到它连校验都过不了。
+    # 修法：按序轮试（上次成功的 > 显式指定 > 7897 > 7890 > 7891 > 7892 > 直连兜底），
+    # 并把赢的那个记成下次的提示，典型情况下零额外开销。
+    a18_candidates = "_UPDATE_PROXY_CANDIDATES" in service_src
+    a18_two_ports = ("http://127.0.0.1:7897" in service_src
+                     and "http://127.0.0.1:7890" in service_src)
+    a18_hint = "_UPDATE_PROXY_HINT" in service_src
+    a18_fetch_helper = "def _update_fetch(" in service_src
+    # 两处出网（清单 + 安装包）都必须走轮试，不能只改一处
+    a18_both_paths = service_src.count("_update_fetch(req,") >= 2
+    # 老的单点 opener 不该再被出网路径直接调用
+    a18_no_single = "with _update_opener().open(" not in service_src
+
+    a18_overall = (a18_candidates and a18_two_ports and a18_hint
+                   and a18_fetch_helper and a18_both_paths and a18_no_single)
+    results.append(check(
+        "A18 出网代理多候选轮试（Clash 端口会跳 / 节点会抽风）（DSH-115）",
+        a18_overall,
+        "candidates=%s twoPorts=%s hint=%s fetch=%s bothPaths=%s noSingle=%s"
+        % (a18_candidates, a18_two_ports, a18_hint,
+           a18_fetch_helper, a18_both_paths, a18_no_single)))
+
     print()
     bad = results.count(False)
     if bad:

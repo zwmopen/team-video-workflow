@@ -702,8 +702,18 @@ def slot_guard_health() -> Dict[str, Any]:
 # 不是没发布，是**发布根本没送到手机上**。
 # 修法：电脑有代理，让电脑把 GitHub 的发布清单和安装包代取回来，从局域网发给手机。
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json"
-# 出网代理：本机 7897 常驻。留空即直连（大概率失败，但绝不拖垮相册主流程）
-UPDATE_UPSTREAM_PROXY = os.environ.get("DSH_UPDATE_PROXY", "http://127.0.0.1:7897")
+# 出网代理：环境变量显式指定时只用它。
+# 【DSH-115】不再写死 7897 —— Clash 混合端口会在 7890/7897 之间回跳
+# （2026-09-25 CDP 产线就因此停产过一次），节点还偶发掉线（实测 WinError 10054）。
+# 所以每次出网按序轮试：上次成功的 > 显式指定 > 7897 > 7890 > 7891 > 7892 > 直连兜底。
+UPDATE_UPSTREAM_PROXY = os.environ.get("DSH_UPDATE_PROXY", "")
+_UPDATE_PROXY_CANDIDATES = (
+    "http://127.0.0.1:7897",
+    "http://127.0.0.1:7890",
+    "http://127.0.0.1:7891",
+    "http://127.0.0.1:7892",
+)
+_UPDATE_PROXY_HINT: Dict[str, str] = {"url": ""}
 UPDATE_MANIFEST_TTL = 300.0
 UPDATE_CACHE_DIR = os.path.join(tempfile.gettempdir(), "dsh-update-relay")
 
@@ -718,13 +728,36 @@ _UPDATE_RELAY_STATS: Dict[str, Any] = {
 }
 
 
-def _update_opener():
-    """出网 opener：有代理挂代理，没有就直连（直连通常失败，但不会抛）。"""
+def _update_openers():
+    """按优先级给出 (标签, opener) 列表：上次成功的最前，直连兜底最后。"""
+    cands: List[str] = []
     if UPDATE_UPSTREAM_PROXY:
-        return urllib.request.build_opener(
-            urllib.request.ProxyHandler({"http": UPDATE_UPSTREAM_PROXY,
-                                         "https": UPDATE_UPSTREAM_PROXY}))
-    return urllib.request.build_opener()
+        cands.append(UPDATE_UPSTREAM_PROXY)
+    hint = _UPDATE_PROXY_HINT.get("url")
+    if hint and hint not in cands:
+        cands.insert(0, hint)
+    cands += [c for c in _UPDATE_PROXY_CANDIDATES if c not in cands]
+    out = []
+    for c in cands:
+        out.append((c, urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": c, "https": c}))))
+    out.append(("", urllib.request.build_opener()))     # 直连兜底
+    return out
+
+
+def _update_fetch(req, timeout):
+    """带代理轮试的出网 GET。第一个成功的赢，并把它的地址记成下次的提示；
+    全部失败才抛（抛最后一个异常，调用方自行降级，绝不拖垮主流程）。"""
+    last_err: Optional[Exception] = None
+    for proxy_url, opener in _update_openers():
+        try:
+            resp = opener.open(req, timeout=timeout)
+            _UPDATE_PROXY_HINT["url"] = proxy_url
+            return resp
+        except Exception as e:
+            last_err = e
+    assert last_err is not None
+    raise last_err
 
 
 def _rewrite_manifest_for_lan(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -761,7 +794,7 @@ def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
         req = urllib.request.Request(
             UPDATE_MANIFEST_URL,
             headers={"User-Agent": "dsh-online-gallery", "Accept": "application/json"})
-        with _update_opener().open(req, timeout=12) as resp:
+        with _update_fetch(req, 12) as resp:
             raw = resp.read()
         data = json.loads(raw.decode("utf-8"))
         if not isinstance(data, dict) or not data.get("apk_url"):
@@ -818,7 +851,7 @@ def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
         pass
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "dsh-online-gallery"})
-        with _update_opener().open(req, timeout=180) as resp:
+        with _update_fetch(req, 180) as resp:
             payload = resp.read()
         if not payload or len(payload) < 64 * 1024:
             raise ValueError("下载到的安装包太小（%d 字节），疑似失败" % len(payload))
@@ -859,7 +892,7 @@ def update_relay_health() -> Dict[str, Any]:
         manifest = _UPDATE_MANIFEST_CACHE.get("data") or {}
     ios = manifest.get("ios") or {}
     return {
-        "proxy": UPDATE_UPSTREAM_PROXY or "",
+        "proxy": _UPDATE_PROXY_HINT.get("url") or UPDATE_UPSTREAM_PROXY or "",
         "manifestTtlSec": UPDATE_MANIFEST_TTL,
         "cachedVersion": manifest.get("version_name", ""),
         "cachedVersionCode": manifest.get("version_code", manifest.get("versionCode", 0)),
