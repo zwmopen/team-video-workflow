@@ -2938,3 +2938,62 @@ DSH-119 补二给 CI 加了「Windows 便携版也进 Release」。第一跑就�
 | 防复发 | 新增闸门 `scripts/check-cpp-test-assertions.py`（已挂 CI），盯的是「闸门有没有真在跑」而不是「代码对不对」：①禁用 `assert` ②禁用 `<cassert>` ③必须有失败返回非 0 的出口 ④断言数 ≥ 3 ⑤每个 `tests/*.cpp` 都必须被 `add_executable` + `add_test` 注册（没注册 = 永远不跑） |
 | 变异自检 | 5 项退回坏版本 ⇒ **5/5 FAIL** 且逐字节还原 |
 | 意外收获 | 变异自检当场抓出**闸门自己的假绿**：扫 CMakeLists 时没跳过 `#` 注释行，把 `add_test(...)` 注释掉后正则照样匹配得到 ⇒ 闸门不响。已加 `strip_cmake_comments()` 修掉 |
+
+
+## DSH-121 — 电脑端永远收不到更新提示：拿手机端版本号跟电脑端版本号比（2026-09-27）
+
+### 现象
+
+用户：「我一直觉得这个电脑客户端需要升级」。而客户端的「检查更新」永远回「当前已是最新版本」。
+
+### 根因
+
+`CheckForUpdates()` 读的是**主仓库** team-video-workflow 的手工 Release tag，再拿它跟
+`APP_VERSION` 比。两个坑叠加：
+
+| # | 坑 | 后果 |
+|---|---|---|
+| ① | 主仓库的 Release 是**人手发**的，CI 不会更新它 | 忘了发就永远停在旧版本（实测停在 V4.3.29，而代码当时已经是 V4.3.30） |
+| ② | 一旦那个 tag 不是 Windows 版本（比如手机端的 v0.8.63） | `4.3.30 > 0.8.63` ⇒ 永远判「已是最新」，用户从此再也收不到电脑端更新提示，**全程零报错** |
+
+### 修法
+
+真源换成一个：**发布仓库 gallery-updates 的 `latest.json` 里的 `windows` 段** —— 那是 CI
+每次发版自动写的（DSH-120 加的）。判定逻辑抽到 `src/update_check.{h,cpp}`（纯逻辑、可单测），
+原来的 GitHub Release 检查保留为兜底，并在清单不可比时把原因一起报出来。
+
+### 新增判据（tests/update_check_tests.cpp）
+
+| 判据 | 说明 |
+|---|---|
+| **口径错配守卫** | 当前版本比清单新**且主版本号不同** ⇒ 判定口径错配、拒绝比较，而不是静默说「已是最新」 |
+| 主版本升级不被误伤 | 4.3.30 → 5.0.0 必须正常报更新 |
+| windows 段缺失 / 版本号为空 | 说「不知道」，不说「没有更新」 |
+| 嵌套对象里的同名键 | `{"ios": {"windows": {...}}, "windows": {...}}` 必须取**顶层**那个 |
+| 前缀键 `windows_note` | 不能被当成 windows 段 |
+| 字符串里的括号 | `"a}b"` 不能参与配对（陷阱要用不平衡括号，平衡的话陷阱失效） |
+
+### 验证
+
+本机没有 MSVC / g++，**CI 是唯一的真编译闸门**。所以分三层：
+
+| 层 | 手段 | 结果 |
+|---|---|---|
+| 判据设计有区分度 | `_verify_update_check_logic.py`：Python 逐行复刻 C++ 逻辑，用开关翻转模拟「判据被去掉」 | 5 项变异中，去掉任意一条判据，对应断言都会失效 |
+| C++ 里确实有这些判据 | `scripts/check-cpp-test-assertions.py` + 静态自检 | 全绿 |
+| 真编译真运行 | CI 的 `ctest`（新增 `update_check_tests`） | 见 CI |
+
+### 顺带修的
+
+- **新闸门当场抓到未注册的测试**：`update_check_tests.cpp` 建好但还没写进 CMakeLists 时，
+  P5 判据（每个 `tests/*.cpp` 都必须被 `add_executable` + `add_test` 注册）直接红了 ——
+  而且挂在昂贵的 vcpkg 构建**之前**。这正是设计 P5 的目的。
+- **闸门自己先红了一次（我自己的 bug）**：脚本打印中文在 Windows runner 上
+  `UnicodeEncodeError`（默认 stdout 是 cp1252）。已加 UTF-8 输出兜底。
+  并新增 **P7 判据**扫全仓，顺带抓出另外 3 个脚本（`create-desktop-shortcuts.py` /
+  `phone_sync.py` / `test_online_gallery_service.py`）缺同样的兜底，一并修掉。
+- `content_store_tests` 没加 `/utf-8`：它里面有 `L"D:\素材库"` 这类中文宽字符串，没有这个
+  选项 MSVC 按 GBK 解释源文件字节 ⇒ 宽字符串其实是错的，但测试只断言「存进去再取出来相等」，
+  两边都错照样过 —— 静默错误。已给所有测试 target 补上 `/utf-8`。
+
+**版本号**：Windows V4.3.30 → **V4.3.31**。

@@ -52,6 +52,16 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+# ⚠️ 本脚本会打印中文。Windows 上 Python 默认按 locale 编码输出（cp1252），
+#    一打印中文就 UnicodeEncodeError 崩掉，而且崩在「打印」而不是「判定」上，
+#    很容易被误读成闸门失败。固定 utf-8，保证在任何 runner / 任何 locale 下都能跑。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
 # 手机相册 OnlineService 的监听端口（0.0.0.0:45833）
 PHONE_ALBUM_PORT = 45833
 

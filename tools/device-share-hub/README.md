@@ -1,4 +1,4 @@
-# 文件收发中控（当前版本：Windows V4.3.30 / Android 0.8.63 / iPhone 0.8.45）
+# 文件收发中控（当前版本：Windows V4.3.31 / Android 0.8.63 / iPhone 0.8.45）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
 > 本轮源码候选：**Android 0.8.62 / versionCode 173**、**iPhone 0.8.45 / build 117**。
@@ -80,7 +80,13 @@
 - **Android / iPhone（推荐，走局域网中转）**：`http://<电脑局域网IP>:45835/latest.json`
 - **Android / iPhone（回落，手机上通常不可达）**：<https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json>
 - **iPhone AltStore**：<https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json>，或走中转的 `/altstore.json`
-- **安装包**：中转 `/download/apk`、`/download/ipa`；或 GitHub Releases 原地址
+- **安装包**：中转 `/download/apk`、`/download/ipa`；或 GitHub Releases 原地址
+- **电脑端（Windows 面板）**：点「检查更新」时读的是发布仓库 `latest.json` 里的 `windows` 段
+  —— 那一节是 CI 每次发版自动写的，不会漏。装包在
+  <https://github.com/zwmopen/gallery-updates/releases/latest>，文件名形如
+  `DeviceShareHub-Windows-V4.3.31.exe`。
+  以前这里读的是主仓库的手工 Release：漏发就永远停在旧版；而且一旦那个 tag 不是 Windows
+  版本（比如手机端的 v0.8.63），`4.3.31 > 0.8.63` 会让它**永远提示「已是最新」**（DSH-121）。
 - iOS 仍需 AltStore/AltServer 或 Sideloadly 用用户自己的 Apple ID 完成签名；Android 下载后由系统确认安装。
   **应用不能静默替换自身 —— iPhone 尤其永远不会自己升级，只能电脑侧载。**
 - 源码推送后由 GitHub Actions 在云端完成三端构建；构建通过后发布版本化 APK/IPA、`SHA256SUMS.txt` 和 `latest.json`。

@@ -23,12 +23,23 @@ import os
 import re
 import sys
 
+# ⚠️ 本脚本会打印中文。Windows runner（或任何非 UTF-8 locale 的重定向 stdout）下
+# 默认按 locale 编码输出（cp1252）⇒ 一打印中文就 `UnicodeEncodeError` 崩掉，
+# 而且崩在 output 阶段，看上去像「闸门判定失败」，实际是打印失败。
+# 固定 utf-8 + errors=replace，保证在任何 runner 上都不会因为「打印」而失败。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # 本脚本在 scripts/ 下，被测工程在同级目录 windows-native/
 ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "windows-native")
 TESTS = os.path.join(ROOT, "tests")
 CMAKELISTS = os.path.join(ROOT, "CMakeLists.txt")
 CHECK_HEADER = os.path.join(TESTS, "test_check.h")
+SCRIPTS = os.path.join(os.path.dirname(ROOT), "scripts")  # scripts/ 与 windows-native/ 同级
 
 fails = []
 
@@ -157,6 +168,31 @@ for name in sources:
 # 反向：注册了但源文件不存在（删了测试忘了摘注册）
 for t in sorted(test_names):
     check("add_test(%s) 对应源文件存在" % t, os.path.exists(os.path.join(TESTS, t + ".cpp")))
+
+print("=== P7 Python 脚本的 UTF-8 输出兜底 ===")
+
+
+def has_cjk(text):
+    return any('\u4e00' <= ch <= '\u9fff' for ch in text)
+
+
+# ⚠️ Windows runner 上 Python 的默认 stdout 编码是 cp1252，一打印中文就
+#    UnicodeEncodeError 崩掉 —— 而且崩在 output 阶段，看上去像「闸门判定失败」，
+#    实际根本没跑到判定（DSH-120-B 第五轮 CI 就是这么红的）。
+#    只要有中文且会 print，就必须在开头 reconfigure 成 utf-8。
+for directory in (SCRIPTS, TESTS):
+    if not os.path.isdir(directory):
+        continue
+    for name in sorted(f for f in os.listdir(directory) if f.endswith(".py")):
+        path = os.path.join(directory, name)
+        text = open(path, encoding="utf-8", errors="replace").read()
+        if not (has_cjk(text) and "print(" in text):
+            continue  # 不打印中文的脚本不受这个约束
+        guarded = ("reconfigure(encoding=\"utf-8\"" in text
+                   or "reconfigure(encoding='utf-8'" in text
+                   or "PYTHONIOENCODING" in text)
+        check("%s P7 有 UTF-8 输出兜底（会打印中文）" % name, guarded,
+              "需在开头加 sys.stdout.reconfigure(encoding=\"utf-8\", errors=\"replace\")")
 
 print()
 if fails:

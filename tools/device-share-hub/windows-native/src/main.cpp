@@ -17,6 +17,7 @@
 #include "send_to_integration.h"
 #include "remote_relay.h"
 #include "online_service.h"
+#include "update_check.h"
 
 #include <algorithm>
 #include <atomic>
@@ -109,7 +110,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.30";
+constexpr wchar_t APP_VERSION[] = L"4.3.31";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -625,29 +626,75 @@ L"Accept: application/vnd.github+json\r\nUser-Agent: DeviceShareHub/4.3.29\r\n",
     return release;
 }
 
+// 前向声明：FetchHttpsText 定义在文件后面，这里先用到
+std::optional<std::string> FetchHttpsText(const wchar_t* host, const wchar_t* path,
+                                          size_t maxBytes, std::wstring& error);
+
+// 电脑端自己的新版本检查（DSH-121）。
+//
+// ⚠️ 真源只有一个：发布仓库 gallery-updates 的 latest.json 里的 `windows` 段 ——
+//    那是 CI 每次发版自动写的，不会漏。以前这里读的是**主仓库** team-video-workflow
+//    的手工 Release tag，两个坑：
+//      ① 主仓库 Release 靠人手发，忘了发就永远停在旧版本；
+//      ② 一旦那个 tag 不是 Windows 版本（比如手机端的 v0.8.63），4.3.30 > 0.8.63
+//         就会永远判「当前已是最新版本」⇒ 用户从此再也收不到电脑端更新提示，且零报错。
+//    口径判定与错配守卫在 src/update_check.{h,cpp}，有单测。
 void CheckForUpdates(bool manual) {
     if (gUpdateCheckInProgress.exchange(true)) {
-        if (manual) PostStatus(L"正在检查 GitHub 最新版本，请稍候…");
+        if (manual) PostStatus(L"正在检查最新版本，请稍候…");
         return;
     }
-    if (manual) PostStatus(L"正在检查 GitHub 最新版本…");
+    if (manual) PostStatus(L"正在检查最新版本…");
     std::thread([manual] {
         UpdateCheckResult result;
         std::wstring error;
-        auto release = FetchLatestGitHubRelease(error);
-        if (!release) {
-            result.message = error;
+
+        // ① 优先问发布仓库的 latest.json：那份是 CI 每次发版自动写的，不会漏。
+        //    口径判定与「拿电脑端版本比手机端版本」的错配守卫都在 update_check 里。
+        std::optional<update_check::UpdateDecision> decided;
+        std::wstring manifestNote;
+        auto manifest = FetchHttpsText(MOBILE_UPDATE_MANIFEST_HOST, MOBILE_UPDATE_MANIFEST_PATH,
+                                       1024 * 1024, error);
+        if (manifest) {
+            auto section = update_check::ParseWindowsSection(*manifest);
+            auto decision = update_check::DecideWindowsUpdate(section, WideToUtf8(APP_VERSION));
+            if (decision.comparable) {
+                decided = decision;
+            } else {
+                // 清单不可比就记下原因，别拿别的口径糊弄过去
+                manifestNote = Utf8ToWide(decision.reason);
+            }
+        }
+
+        if (decided) {
+            result.success = true;
+            result.hasUpdate = decided->hasUpdate;
+            result.releaseUrl = Utf8ToWide(decided->releaseUrl);
+            if (result.hasUpdate) {
+                result.message = L"发现电脑端新版本 V" + Utf8ToWide(decided->latestVersion) +
+                                 L"（当前 V" + APP_VERSION + L"）。";
+            } else {
+                result.message = L"当前已是最新版本（V" + std::wstring(APP_VERSION) + L"）。";
+            }
         } else {
+            // ② 兜底：沿用原来的 GitHub Release（主仓库的手工 Release）。
+            //    这条路口径不稳（见上面注释），只作为清单不可用时的退路。
+            auto release = FetchLatestGitHubRelease(error);
+            if (!release) {
+                result.message = manifestNote.empty() ? error
+                                                      : (error + L"（" + manifestNote + L"）");
+            } else {
             const auto latestVersion = VersionNumbers(release->tag);
             const auto currentVersion = VersionNumbers(WideToUtf8(APP_VERSION));
             result.success = true;
             result.hasUpdate = CompareVersions(currentVersion, latestVersion) < 0;
             result.releaseUrl = Utf8ToWide(release->url);
             std::wstring latestTag = Utf8ToWide(release->tag);
-            if (result.hasUpdate) {
-                result.message = L"发现 GitHub 新版本 " + latestTag + L"（当前 V" + APP_VERSION + L"）。";
-            } else {
-                result.message = L"当前已是最新版本（V" + std::wstring(APP_VERSION) + L"；GitHub " + latestTag + L"）。";
+                if (result.hasUpdate) {
+                    result.message = L"发现 GitHub 新版本 " + latestTag + L"（当前 V" + APP_VERSION + L"）。";
+                } else {
+                    result.message = L"当前已是最新版本（V" + std::wstring(APP_VERSION) + L"；GitHub " + latestTag + L"）。";
+                }
             }
         }
         gUpdateCheckInProgress = false;

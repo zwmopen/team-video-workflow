@@ -19,6 +19,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import online_gallery_service as _svc_mod
 from online_gallery_service import WorkScanner, ThreadingHTTPServer, OnlineGalleryHandler, detect_destination
 
+# ⚠️ 本脚本会打印中文。Windows 上 Python 默认按 locale 编码输出（cp1252），
+#    一打印中文就 UnicodeEncodeError 崩掉，而且崩在「打印」而不是「判定」上，
+#    很容易被误读成闸门失败。固定 utf-8，保证在任何 runner / 任何 locale 下都能跑。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
 # Minimal 1x1 PNG（用作样例作品的封面，避免依赖外部图片文件）
 PNG_1PX = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
            b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00"
