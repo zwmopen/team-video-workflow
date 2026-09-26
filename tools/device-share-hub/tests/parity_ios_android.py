@@ -828,8 +828,11 @@ def main():
     a16_origin_kept = '_UPDATE_ORIGIN_URLS["apk"] = data.get("apk_url", "")' in service_src
     # 校验用 sha256，**不用体积**：这个 APK 实测只有 0.86MB，
     # 早先用「必须 >1MB」当判据把它整包判废了（自创判据的代价，见 BUG_LEDGER）。
+    # 只查「比较」这个动作本身，不锁前缀 —— DSH-116 把它改成
+    # `if expected and actual.lower() != expected.lower():`（清单没带 sha 时跳过校验）；
+    # 锁前缀会把好代码判死（这正是 C8 那类假 FAIL 的翻版）。
     a16_sha_gate = ("actual = hashlib.sha256(payload).hexdigest()" in service_src
-                    and 'if actual.lower() != expected.lower():' in service_src)
+                    and "actual.lower() != expected.lower():" in service_src)
     a16_status_field = '"updateRelay": update_relay_health(),' in service_src
     a16_feature = '"lanUpdateRelay",' in service_src
 
@@ -891,6 +894,41 @@ def main():
         "candidates=%s twoPorts=%s hint=%s fetch=%s bothPaths=%s noSingle=%s"
         % (a18_candidates, a18_two_ports, a18_hint,
            a18_fetch_helper, a18_both_paths, a18_no_single)))
+
+    # ---- DSH-116：中转的安装包缓存必须按 sha256 落名，命中也要校验 ----
+    # 事故：缓存只按 version_name 落名（`album-Android-0.8.61.apk`）。
+    # GitHub 会以同一个 version_name 重发**重新构建过**的包 —— 实测 v0.8.61
+    # 被重发过：字节不同、体积却一模一样（都是 883308），于是中转把旧字节
+    # 配着新清单里的 sha256 端出去。手机端 UpdatePackageValidator 必判
+    # 「更新包校验失败」并删包，而中转这边 downloads++、downloadFailures=0，
+    # 全绿，实则永远装不上 —— 典型的静默故障。
+    # 修法：缓存名编入 sha256；命中分支也重新算一遍 sha，不一致就删掉重下；
+    # 不一致次数进健康快照，一眼能看见。
+    a19_helper = "def _update_cache_file(" in service_src
+    a19_used = "cache_file = _update_cache_file(" in service_src
+    # 缓存名里必须真的编进 sha（4 个占位符 + 取 sha 前 12 位）
+    a19_sha_in_name = ('"album-%s-%s-%s.%s"' in service_src
+                       and "tag = sha[:12] if sha else \"nosha\"" in service_src)
+    # 命中分支也要校验（完整比较语句，不只是算个哈希）
+    a19_hit_verify = ("hashlib.sha256(payload).hexdigest().lower() == expected"
+                      in service_src)
+    # 不一致必须丢弃旧文件，不能将就着端出去
+    a19_discard = "os.remove(cache_file)" in service_src
+    a19_counted = '_UPDATE_RELAY_STATS["shaMismatch"]' in service_src
+    # 旧的三段式（只有版本、没有 sha）缓存名必须消失
+    a19_no_old = '"album-%s-%s.%s"' not in service_src
+    # 健康快照要能看出「现在端出去的是哪个包 / 已经错过几次」
+    a19_health = ('"cachedSha": stats.get("cachedSha", "")' in service_src
+                  and '"shaMismatch": stats.get("shaMismatch", 0)' in service_src)
+
+    a19_overall = (a19_helper and a19_used and a19_sha_in_name and a19_hit_verify
+                   and a19_discard and a19_counted and a19_no_old and a19_health)
+    results.append(check(
+        "A19 安装包缓存按 sha256 落名且命中即校验（同版本重发不能顶旧字节）（DSH-116）",
+        a19_overall,
+        "helper=%s used=%s shaInName=%s hitVerify=%s discard=%s counted=%s noOld=%s health=%s"
+        % (a19_helper, a19_used, a19_sha_in_name, a19_hit_verify,
+           a19_discard, a19_counted, a19_no_old, a19_health)))
 
     print()
     bad = results.count(False)

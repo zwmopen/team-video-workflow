@@ -724,6 +724,7 @@ _UPDATE_ORIGIN_URLS: Dict[str, str] = {}
 _UPDATE_RELAY_STATS: Dict[str, Any] = {
     "manifestFetches": 0, "manifestFailures": 0,
     "downloads": 0, "downloadFailures": 0,
+    "shaMismatch": 0, "cachedSha": "",
     "lastError": "", "lastManifestAt": 0.0,
 }
 
@@ -821,6 +822,28 @@ def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
         return {}
 
 
+def _update_expected_sha(manifest: Dict[str, Any], kind: str) -> str:
+    """清单里声明的该包 sha256（小写）；取不到就返回空，调用方跳过校验。"""
+    if kind == "apk":
+        return (manifest.get("sha256") or "").strip().lower()
+    ios = manifest.get("ios") or {}
+    return (ios.get("sha256") or "").strip().lower()
+
+
+def _update_cache_file(kind: str, version: str, sha: str) -> str:
+    """缓存文件名把 sha256 编进去。
+
+    【DSH-116】GitHub 会以同一个 version_name 重发**重新构建过**的包：
+    实测 v0.8.61 被重发过一次，字节不同、体积却一模一样（都是 883308）。
+    只按版本落名 ⇒ 命中旧字节、却配新清单里的 sha256 ⇒ 手机端
+    UpdatePackageValidator 必判「更新包校验失败」并删包，
+    而中转这边 downloads++、downloadFailures=0 —— 全绿，实则永远装不上。
+    """
+    tag = sha[:12] if sha else "nosha"
+    return os.path.join(UPDATE_CACHE_DIR, "album-%s-%s-%s.%s"
+                        % ("Android" if kind == "apk" else "iOS", version, tag, kind))
+
+
 def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
     """代取安装包（按版本落磁盘缓存，两台手机只出网一次）。"""
     manifest = fetch_update_manifest()
@@ -837,18 +860,28 @@ def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
         os.makedirs(UPDATE_CACHE_DIR, exist_ok=True)
     except Exception:
         pass
-    cache_file = os.path.join(UPDATE_CACHE_DIR, "album-%s-%s.%s"
-                              % ("Android" if kind == "apk" else "iOS", version, kind))
-    try:
-        if os.path.isfile(cache_file) and os.path.getsize(cache_file) > 64 * 1024:
+    expected = _update_expected_sha(manifest, kind)
+    cache_file = _update_cache_file(kind, version, expected)
+    if os.path.isfile(cache_file) and os.path.getsize(cache_file) > 64 * 1024:
+        try:
             with open(cache_file, "rb") as fh:
                 payload = fh.read()
+            if (not expected) or hashlib.sha256(payload).hexdigest().lower() == expected:
+                with _UPDATE_LOCK:
+                    _UPDATE_RELAY_STATS["downloads"] = int(
+                        _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
+                    _UPDATE_RELAY_STATS["cachedSha"] = expected
+                return payload, ""
+            print("[UpdateRelay] %s 缓存字节与清单 sha256 不一致，丢弃重下" % kind.upper())
             with _UPDATE_LOCK:
-                _UPDATE_RELAY_STATS["downloads"] = int(
-                    _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
-            return payload, ""
-    except Exception:
-        pass
+                _UPDATE_RELAY_STATS["shaMismatch"] = int(
+                    _UPDATE_RELAY_STATS.get("shaMismatch", 0)) + 1
+            try:
+                os.remove(cache_file)
+            except Exception:
+                pass
+        except Exception:
+            pass
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "dsh-online-gallery"})
         with _update_fetch(req, 180) as resp:
@@ -858,16 +891,10 @@ def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
         # 判据用 sha256，**不用体积**：实测这个 APK 只有 0.86 MB，
         # 早先用「必须 >1MB」当闸门把它整包判废了（自创判据的代价）。
         # 清单里本来就带 sha256，手机端也会校验同一个值 —— 与客户端口径完全一致。
-        expected = ""
-        if kind == "apk":
-            expected = manifest.get("sha256") or ""
-        else:
-            expected = (manifest.get("ios") or {}).get("sha256") or ""
-        if expected:
-            actual = hashlib.sha256(payload).hexdigest()
-            if actual.lower() != expected.lower():
-                raise ValueError("安装包校验不一致：期望 %s... 实际 %s..."
-                                 % (expected[:12], actual[:12]))
+        actual = hashlib.sha256(payload).hexdigest()
+        if expected and actual.lower() != expected.lower():
+            raise ValueError("安装包校验不一致：期望 %s... 实际 %s..."
+                             % (expected[:12], actual[:12]))
         tmp = cache_file + ".part"
         with open(tmp, "wb") as fh:
             fh.write(payload)
@@ -875,6 +902,7 @@ def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
         with _UPDATE_LOCK:
             _UPDATE_RELAY_STATS["downloads"] = int(
                 _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
+            _UPDATE_RELAY_STATS["cachedSha"] = expected
         return payload, ""
     except Exception as e:
         with _UPDATE_LOCK:
@@ -901,6 +929,8 @@ def update_relay_health() -> Dict[str, Any]:
         "manifestFailures": stats.get("manifestFailures", 0),
         "downloads": stats.get("downloads", 0),
         "downloadFailures": stats.get("downloadFailures", 0),
+        "cachedSha": stats.get("cachedSha", ""),
+        "shaMismatch": stats.get("shaMismatch", 0),
         "lastError": stats.get("lastError", ""),
         "hint": ("" if stats.get("manifestFetches")
                  else "还没成功取过清单：检查 7897 代理是否活着"),
