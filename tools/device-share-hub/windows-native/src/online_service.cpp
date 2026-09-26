@@ -11,7 +11,6 @@
 #include <winhttp.h>
 
 #include <cctype>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -263,9 +262,14 @@ std::wstring ModuleDirectory() {
 
 std::vector<std::wstring> PythonCandidates() {
     std::vector<std::wstring> out;
-    // 本机固定的安装位置优先；pythonw.exe 才不会弹出控制台黑框
-    if (const wchar_t* local = _wgetenv(L"LOCALAPPDATA")) {
-        std::filesystem::path base(local);
+    // 本机固定的安装位置优先；pythonw.exe 才不会弹出控制台黑框。
+    // 用 GetEnvironmentVariableW 而不是 _wgetenv：后者在 MSVC /W4 下会报
+    // C4996「可能不安全」，CI 日志里看着像隐患，实际只是 CRT 的旧接口。
+    wchar_t localAppData[4096]{};
+    const DWORD localAppDataCapacity =
+        static_cast<DWORD>(sizeof(localAppData) / sizeof(localAppData[0]));
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, localAppDataCapacity) > 0) {
+        std::filesystem::path base(localAppData);
         for (int minor = 313; minor >= 308; --minor) {
             std::wstring folder = L"Python" + std::to_wstring(minor);
             out.push_back((base / L"Programs" / L"Python" / folder / L"pythonw.exe").wstring());

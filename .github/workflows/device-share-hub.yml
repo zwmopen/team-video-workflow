@@ -533,7 +533,17 @@ jobs:
               --title "相册 Android ${version_name} / iPhone ${ios_version_name}" \
               --notes "Published from zwmopen/team-video-workflow commit ${GITHUB_SHA}. Android versionCode=${version_code}; iPhone build=${ios_build}."
           fi
-          gh release upload "$tag" --repo "$repo" "$apk" "$sums" "$ios_ipa" "$ios_sums" --clobber
+          # 源码快照：跟着安装包一起发。发布仓库的 README 早就写了「发布页同时提供显式源码 ZIP」，
+          # 但这一步一直没做 —— 名不副实。补上之后 Release 页面直接就有「构建出这批包的那一版源码」，
+          # 不用再去主仓库翻 commit。只收 tools/device-share-hub，排除构建产物。
+          source_zip="release/device-share-hub-source-${version_name}.zip"
+          (cd tools && zip -qr "../${source_zip}" device-share-hub \
+            -x '*/build/*' '*/out/*' '*/__pycache__/*' '*.pyc' '*/.gradle/*')
+          test -s "$source_zip"
+          echo "源码快照 $(stat -c%s "$source_zip") 字节"
+
+          gh release upload "$tag" --repo "$repo" "$apk" "$sums" "$ios_ipa" "$ios_sums" \
+            "$source_zip" --clobber
 
           current_json=$(curl --fail --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
