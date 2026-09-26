@@ -638,7 +638,15 @@ _disk_write_count = 0
 DISK_EVICT_LOCK = threading.Lock()
 
 # 同一张图并发生成去重：手机端一屏会同时要几十张图，无去重时会同时对同一文件跑 PIL（CPU 密集）
-THUMB_INFLIGHT: Dict[str, threading.Lock] = {}
+#
+# 【DSH-129】这里原来是 `Dict[str, threading.Lock]`，只有 `_inflight_lock()` 往里塞、
+# **全文件没有任何一行往外拿** ⇒ 服务是 7x24 常驻进程，跑几个月字典里就堆着每一个
+# 曾经请求过的 (路径, mtime) 组合的锁对象，单调增长、零报错、零日志（典型慢变量隐患）。
+# 现改成「带引用计数的票」：acquire 时 users+1，release 时 users-1，归零才真正删除。
+# ⛔ 不能按 LRU / 上限直接删：删掉一把还有线程正在等的锁，单飞保护会**静默失效**
+#    （不报错、不崩溃，只是同一张图被重复生成 —— 正是这类 BUG 最难查的地方）。
+MAX_INFLIGHT_ENTRIES = 2000      # 安全网：正常路径靠引用计数归零回收，走不到这里
+THUMB_INFLIGHT: "Dict[str, dict]" = {}
 THUMB_INFLIGHT_LOCK = threading.Lock()
 
 # 缩略图链路健康计数（供 /api/online/status 一眼诊断，避免同类静默失败再次发生）
@@ -726,14 +734,65 @@ def evict_disk_cache_if_needed() -> int:
         return removed
 
 
-def _inflight_lock(key: str) -> threading.Lock:
-    """取某个缓存键的专属互斥锁（保证同一张图只被生成一次）。"""
+def _inflight_acquire(key: str) -> threading.Lock:
+    """取某个缓存键的专属互斥锁（保证同一张图只被生成一次），并把引用计数 +1。
+
+    必须与 `_inflight_release(key)` 成对调用（用 try/finally 包住），
+    否则条目永远归不了零 —— DSH-129 之前那种「只增不减」的慢泄漏就又回来了。
+    """
     with THUMB_INFLIGHT_LOCK:
-        lock = THUMB_INFLIGHT.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            THUMB_INFLIGHT[key] = lock
-        return lock
+        entry = THUMB_INFLIGHT.get(key)
+        if entry is None:
+            entry = {"lock": threading.Lock(), "users": 0}
+            THUMB_INFLIGHT[key] = entry
+        entry["users"] += 1
+        return entry["lock"]
+
+
+def _inflight_release(key: str) -> None:
+    """引用计数 -1；归零时把条目真正删掉。
+
+    这就是 DSH-129 要补的那个「谁负责往外拿」—— 之前整份文件里没有这一行。
+    """
+    with THUMB_INFLIGHT_LOCK:
+        entry = THUMB_INFLIGHT.get(key)
+        if entry is None:
+            return
+        entry["users"] -= 1
+        if entry["users"] <= 0:
+            THUMB_INFLIGHT.pop(key, None)
+
+
+def prune_inflight_entries(limit: Optional[int] = None) -> int:
+    """安全网：只清「当前没人引用」的条目，清到不超过 limit 为止。
+
+    正常路径下引用计数会把条目清干净，所以这个函数平时几乎总是返回 0；
+    它存在的意义是兜住「未来某处调用方忘了 release」这类回归。
+    ⛔ 绝不能删 users > 0 的条目：正在等这把锁的线程会静默失去单飞保护。
+    """
+    cap = MAX_INFLIGHT_ENTRIES if limit is None else limit
+    with THUMB_INFLIGHT_LOCK:
+        if len(THUMB_INFLIGHT) <= cap:
+            return 0
+        removed = 0
+        for key in list(THUMB_INFLIGHT.keys()):
+            if len(THUMB_INFLIGHT) <= cap:
+                break
+            entry = THUMB_INFLIGHT.get(key)
+            if entry is not None and int(entry.get("users", 0)) <= 0:
+                THUMB_INFLIGHT.pop(key, None)
+                removed += 1
+        return removed
+
+
+def inflight_entries_health() -> Dict[str, int]:
+    """单飞登记表健康快照（供 thumbnail_health / /api/online/status 一眼看穿）。"""
+    with THUMB_INFLIGHT_LOCK:
+        return {
+            "entries": len(THUMB_INFLIGHT),
+            "inUse": sum(int(e.get("users", 0)) for e in THUMB_INFLIGHT.values()),
+            "limit": MAX_INFLIGHT_ENTRIES,
+        }
 
 
 def build_thumbnail_bytes(img_path: str, mtime: float) -> Optional[bytes]:
@@ -765,40 +824,46 @@ def build_thumbnail_bytes(img_path: str, mtime: float) -> Optional[bytes]:
         return None
 
     # 单飞：并发的同一张图只让一个线程真正跑 PIL，其余等结果
-    with _inflight_lock(cache_key):
-        data = thumb_cache_get(cache_key)          # 等锁期间别人可能已经生成好了
-        if data is not None:
-            _thumb_stat("memoryHit")
-            return data
-        if os.path.isfile(disk_path):
-            try:
-                with open(disk_path, "rb") as fp:
-                    data = fp.read()
-                thumb_cache_put(cache_key, data)
-                _thumb_stat("diskHit")
+    # DSH-129：锁改成「带引用计数的票」，用完必须 release（try/finally 保证）。
+    #          否则登记表只增不减 —— 常驻几个月就堆出几万个锁对象、零报错。
+    inflight = _inflight_acquire(cache_key)
+    try:
+        with inflight:
+            data = thumb_cache_get(cache_key)          # 等锁期间别人可能已经生成好了
+            if data is not None:
+                _thumb_stat("memoryHit")
                 return data
+            if os.path.isfile(disk_path):
+                try:
+                    with open(disk_path, "rb") as fp:
+                        data = fp.read()
+                    thumb_cache_put(cache_key, data)
+                    _thumb_stat("diskHit")
+                    return data
+                except Exception:
+                    pass
+            try:
+                with Image.open(img_path) as im:
+                    im.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                    buf = BytesIO()
+                    im.convert("RGB").save(buf, format="JPEG", quality=82)
+                    data = buf.getvalue()
+            except Exception as e:
+                print(f"[Thumb] 生成失败 {img_path}: {e}")
+                _thumb_stat("fallbackOriginal")
+                return None
+
+            thumb_cache_put(cache_key, data)
+            try:
+                with open(disk_path, "wb") as fp:
+                    fp.write(data)
+                evict_disk_cache_if_needed()
             except Exception:
                 pass
-        try:
-            with Image.open(img_path) as im:
-                im.thumbnail((320, 320), Image.Resampling.LANCZOS)
-                buf = BytesIO()
-                im.convert("RGB").save(buf, format="JPEG", quality=82)
-                data = buf.getvalue()
-        except Exception as e:
-            print(f"[Thumb] 生成失败 {img_path}: {e}")
-            _thumb_stat("fallbackOriginal")
-            return None
-
-        thumb_cache_put(cache_key, data)
-        try:
-            with open(disk_path, "wb") as fp:
-                fp.write(data)
-            evict_disk_cache_if_needed()
-        except Exception:
-            pass
-        _thumb_stat("generated")
-        return data
+            _thumb_stat("generated")
+            return data
+    finally:
+        _inflight_release(cache_key)
 
 
 def thumbnail_health() -> Dict[str, Any]:
@@ -811,6 +876,9 @@ def thumbnail_health() -> Dict[str, Any]:
         stats = dict(THUMB_STATS)
     with THUMB_CACHE_LOCK:
         mem_entries = len(THUMB_CACHE)
+    # DSH-129：单飞登记表大小要能一眼看见 —— 之前它只增不减且**没有任何出口暴露**，
+    # 这正是这类慢变量能潜伏数月的原因。
+    inflight = inflight_entries_health()
     return {
         "ok": bool(HAS_PIL),
         "pil": bool(HAS_PIL),
@@ -821,6 +889,9 @@ def thumbnail_health() -> Dict[str, Any]:
         "diskCacheDir": DISK_THUMB_DIR,
         "diskCacheFiles": disk_files,
         "diskCacheLimit": MAX_DISK_ENTRIES,
+        "inflightEntries": inflight["entries"],
+        "inflightInUse": inflight["inUse"],
+        "inflightLimit": inflight["limit"],
         "stats": stats,
         "hint": "" if HAS_PIL else "Pillow 未安装：thumb=1 会降级返回原图，请在该服务的解释器里 pip install Pillow",
     }
@@ -2144,6 +2215,23 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             "results": results,
         }
 
+    @classmethod
+    def _prune_phone_sync_cooldown(cls, now: float, cooldown: float) -> int:
+        """DSH-129：清掉「超过 2 倍冷却期都没再出现」的 IP 条目，返回清掉几条。
+
+        `_phone_sync_last` 原来只增不减 —— 手机 DHCP 每换一个 IP 就永久留一条。
+        单条只有几十字节，但同属「没人负责往外拿」的慢变量，而且它挂在每次心跳上。
+
+        ⚠️ 调用方必须已经持有 `_phone_sync_lock`。
+        ⛔ 阈值必须是 **2 倍** 冷却期：刚好 1 倍的话，一台手机正常间隔 5 分钟来一次
+           心跳，就有可能被自己上一轮的冷却判定给清掉 ⇒ 冷却失效、回读变频繁。
+        """
+        stale_ips = [k for k, t in cls._phone_sync_last.items()
+                     if now - t > cooldown * 2]
+        for k in stale_ips:
+            cls._phone_sync_last.pop(k, None)
+        return len(stale_ips)
+
     def _maybe_background_phone_sync(self, client_ip: str):
         """手机一联上 45835，就顺手回读它的本地分享次数（后台线程 + 冷却）。
 
@@ -2155,6 +2243,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
         now = time.time()
         with OnlineGalleryHandler._phone_sync_lock:
+            # DSH-129：顺手清掉过了冷却期的陈旧 IP 条目。这张表原来只增不减 ——
+            # 手机 DHCP 每换一个 IP 就永久留一条。单条虽小，但同属「没人负责往外拿」，
+            # 而且就在心跳路径上，一起清掉成本几乎为零。
+            OnlineGalleryHandler._prune_phone_sync_cooldown(now, self.PHONE_SYNC_COOLDOWN)
             if now - OnlineGalleryHandler._phone_sync_last.get(ip, 0.0) < self.PHONE_SYNC_COOLDOWN:
                 return
             OnlineGalleryHandler._phone_sync_last[ip] = now

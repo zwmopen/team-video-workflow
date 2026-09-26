@@ -1052,5 +1052,184 @@ class TestLogRotation(unittest.TestCase):
         self.assertGreater(_svc_mod.LOG_CHECK_EVERY_CHARS, 0)
 
 
+class TestThumbInflight(unittest.TestCase):
+    """DSH-129：`THUMB_INFLIGHT` 单飞登记表只增不减 ⇒ 常驻进程内存/句柄慢泄漏。
+
+    背景：缩略图是 CPU 密集活，`build_thumbnail_bytes()` 用「每个缓存键一把锁」做单飞
+    （同一张图并发生成时只让一个线程真正跑 PIL）。但登记表从模块加载之后就**只有
+    `_inflight_lock()` 往里塞，全文件没有任何一行往外拿** ⇒ 服务 7x24 常驻，
+    每请求过一张新图（或图的 mtime 变了）就永久多一条，单调增长、**零报错零日志**。
+
+    ⛔ 修这个 BUG 最容易踩的坑：**直接按 LRU / 上限删**。删掉一把还有线程正在等的锁，
+       单飞保护会**静默失效** —— 不报错、不崩溃，只是同一张图被重复生成，
+       CPU 白白翻倍。这类 BUG 几个月都查不出来。
+       所以改成引用计数：acquire +1 / release -1，归零才真正删；
+       `prune_inflight_entries()` 只是兜底安全网，且**绝不动 users > 0 的条目**。
+    """
+
+    def setUp(self):
+        # 单飞登记表 / 磁盘缓存目录 / 手机冷却表都是**模块级或类级全局**，
+        # 测试之间必须彻底隔离，否则一个用例留下的条目会让下一个用例误判。
+        with _svc_mod.THUMB_INFLIGHT_LOCK:
+            self._saved_inflight = dict(_svc_mod.THUMB_INFLIGHT)
+            _svc_mod.THUMB_INFLIGHT.clear()
+        self.temp_dir = tempfile.mkdtemp(prefix="dsh129_")
+        self._saved_disk_dir = _svc_mod.DISK_THUMB_DIR
+        _svc_mod.DISK_THUMB_DIR = os.path.join(self.temp_dir, "diskcache")
+        os.makedirs(_svc_mod.DISK_THUMB_DIR, exist_ok=True)
+        self._saved_sync = dict(OnlineGalleryHandler._phone_sync_last)
+        OnlineGalleryHandler._phone_sync_last.clear()
+
+    def tearDown(self):
+        with _svc_mod.THUMB_INFLIGHT_LOCK:
+            _svc_mod.THUMB_INFLIGHT.clear()
+            _svc_mod.THUMB_INFLIGHT.update(self._saved_inflight)
+        _svc_mod.DISK_THUMB_DIR = self._saved_disk_dir
+        OnlineGalleryHandler._phone_sync_last.clear()
+        OnlineGalleryHandler._phone_sync_last.update(self._saved_sync)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_01_release_removes_entry(self):
+        """acquire → release 之后条目必须真的消失 —— 这就是 DSH-129 缺的那一环。"""
+        _svc_mod._inflight_acquire("k1")
+        self.assertEqual(len(_svc_mod.THUMB_INFLIGHT), 1)
+        _svc_mod._inflight_release("k1")
+        self.assertEqual(len(_svc_mod.THUMB_INFLIGHT), 0,
+                         "release 之后必须真的删掉，否则和改之前一样只增不减")
+
+    def test_02_entry_survives_while_held(self):
+        """还没 release 的条目必须留着（它正被某个线程引用）。"""
+        _svc_mod._inflight_acquire("held")
+        self.assertIn("held", _svc_mod.THUMB_INFLIGHT)
+        self.assertGreaterEqual(_svc_mod.THUMB_INFLIGHT["held"]["users"], 1)
+        _svc_mod._inflight_release("held")
+
+    def test_03_concurrent_callers_share_one_entry(self):
+        """两个线程要同一张图 ⇒ 拿到**同一把锁**且只占一条登记；最后一个走了才删。"""
+        a = _svc_mod._inflight_acquire("same")
+        b = _svc_mod._inflight_acquire("same")
+        self.assertIs(a, b, "同一张图必须拿到同一把锁，否则单飞保护失效")
+        self.assertEqual(len(_svc_mod.THUMB_INFLIGHT), 1)
+        self.assertEqual(_svc_mod.THUMB_INFLIGHT["same"]["users"], 2)
+
+        _svc_mod._inflight_release("same")
+        self.assertIn("same", _svc_mod.THUMB_INFLIGHT,
+                      "还有一个人在用，绝不能删 —— 删了就静默失去单飞保护")
+        _svc_mod._inflight_release("same")
+        self.assertNotIn("same", _svc_mod.THUMB_INFLIGHT)
+
+    def test_04_prune_only_drops_unreferenced(self):
+        """安全网按上限清理时，只挑「没人引用」的条目下手。"""
+        _svc_mod.THUMB_INFLIGHT["free-1"] = {"lock": threading.Lock(), "users": 0}
+        _svc_mod.THUMB_INFLIGHT["free-2"] = {"lock": threading.Lock(), "users": 0}
+        _svc_mod.THUMB_INFLIGHT["busy-1"] = {"lock": threading.Lock(), "users": 1}
+
+        removed = _svc_mod.prune_inflight_entries(limit=1)
+
+        self.assertEqual(removed, 2)
+        self.assertEqual(list(_svc_mod.THUMB_INFLIGHT.keys()), ["busy-1"],
+                         "在用的条目一条都不能被清掉")
+
+    def test_05_prune_never_drops_in_use(self):
+        """全都在用时，安全网必须一条都不删 —— 宁可超限也不能破坏单飞。"""
+        for index in range(5):
+            _svc_mod.THUMB_INFLIGHT["busy-%d" % index] = {
+                "lock": threading.Lock(), "users": 1}
+
+        removed = _svc_mod.prune_inflight_entries(limit=1)
+
+        self.assertEqual(removed, 0)
+        self.assertEqual(len(_svc_mod.THUMB_INFLIGHT), 5)
+
+    def test_06_build_thumbnail_releases_on_failure(self):
+        """生成失败（图打不开）也必须 release —— try/finally 的意义就在这里。"""
+        if not _svc_mod.HAS_PIL:
+            self.skipTest("本机没有 Pillow，走不到单飞分支")
+        missing = os.path.join(self.temp_dir, "does-not-exist.png")
+
+        result = _svc_mod.build_thumbnail_bytes(missing, 123.0)
+
+        self.assertIsNone(result, "打不开的图应该返回 None 走显式降级")
+        self.assertEqual(len(_svc_mod.THUMB_INFLIGHT), 0,
+                         "失败路径也必须把登记表清干净")
+
+    def test_07_build_thumbnail_releases_on_success(self):
+        """成功路径同样不能留下条目。"""
+        if not _svc_mod.HAS_PIL:
+            self.skipTest("本机没有 Pillow，走不到单飞分支")
+        # ⚠️ 别复用文件头的 PNG_1PX：那份字节是给扫描器当占位图用的（扫描器不解码），
+        #    实测它的 IHDR CRC 与 IDAT 长度都不对，Pillow 会报
+        #    "cannot identify image file"。这里要用 Pillow 自己生成一张**真**图。
+        from PIL import Image as _PILImage
+        src = os.path.join(self.temp_dir, "src.png")
+        _PILImage.new("RGB", (64, 48), (200, 120, 60)).save(src, format="PNG")
+
+        data = _svc_mod.build_thumbnail_bytes(src, 456.0)
+
+        self.assertIsInstance(data, (bytes, bytearray))
+        self.assertGreater(len(data), 0)
+        self.assertEqual(len(_svc_mod.THUMB_INFLIGHT), 0,
+                         "成功路径也要把条目清干净")
+
+    def test_08_health_exposes_inflight_size(self):
+        """登记表大小必须能从 /api/online/status 一眼看见。
+
+        它之前能潜伏数月，一半的原因就是**没有任何出口暴露它**。
+        """
+        health = _svc_mod.thumbnail_health()
+        for field in ("inflightEntries", "inflightInUse", "inflightLimit"):
+            self.assertIn(field, health, "thumbnail_health 缺字段：%s" % field)
+            self.assertIsInstance(health[field], int)
+
+        _svc_mod._inflight_acquire("visible")
+        try:
+            health = _svc_mod.thumbnail_health()
+            self.assertEqual(health["inflightEntries"], 1)
+            self.assertEqual(health["inflightInUse"], 1)
+        finally:
+            _svc_mod._inflight_release("visible")
+
+    def test_09_default_limit_is_sane(self):
+        """默认上限要能兜住正常并发，又不能大到形同虚设。"""
+        limit = getattr(_svc_mod, "MAX_INFLIGHT_ENTRIES", None)
+        self.assertIsNotNone(limit, "缺 MAX_INFLIGHT_ENTRIES 常量")
+        self.assertGreaterEqual(limit, 100, "太小会误伤正常并发")
+        self.assertLessEqual(limit, 100000, "太大就失去保护意义")
+
+    def test_10_source_level_no_bare_lock_regression(self):
+        """源码级回归闸门：裸锁登记表的写法不能回来。"""
+        src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "online_gallery_service.py")
+        with open(src_path, encoding="utf-8") as fp:
+            src = fp.read()
+        self.assertNotIn("THUMB_INFLIGHT[key] = lock", src,
+                         "裸锁登记表又回来了（DSH-129 回归）")
+        self.assertIn("def _inflight_release", src, "缺 _inflight_release")
+        # release 必须挂在 finally 里，不能只在成功路径上 —— 判据锁「完整调用语句」
+        self.assertIn("    finally:\n        _inflight_release(cache_key)", src,
+                      "release 必须在 finally 里，失败路径才不会漏")
+
+    def test_11_phone_sync_last_prunes_stale(self):
+        """手机冷却表同属「只增不减」，陈旧 IP 条目要被清掉、新鲜的必须留下。
+
+        ⛔ 阈值特意设成 **2 倍** 冷却期：刚好 1 倍的话，一台手机正常间隔 5 分钟来一次
+           心跳，就可能被自己上一轮的冷却判定清掉 ⇒ 冷却失效、回读变得频繁。
+        """
+        now = time.time()
+        cooldown = 300.0
+        OnlineGalleryHandler._phone_sync_last["192.168.1.50"] = now - cooldown * 10
+        OnlineGalleryHandler._phone_sync_last["192.168.1.51"] = now - cooldown * 0.5
+        OnlineGalleryHandler._phone_sync_last["192.168.1.52"] = now - cooldown * 1.5
+
+        removed = OnlineGalleryHandler._prune_phone_sync_cooldown(now, cooldown)
+
+        self.assertEqual(removed, 1)
+        self.assertNotIn("192.168.1.50", OnlineGalleryHandler._phone_sync_last,
+                         "过了 10 倍冷却期的陈旧 IP 必须清掉")
+        self.assertIn("192.168.1.51", OnlineGalleryHandler._phone_sync_last)
+        self.assertIn("192.168.1.52", OnlineGalleryHandler._phone_sync_last,
+                      "只过了 1.5 倍冷却期的手机不能被清掉，否则冷却会失效")
+
+
 if __name__ == "__main__":
     unittest.main()
