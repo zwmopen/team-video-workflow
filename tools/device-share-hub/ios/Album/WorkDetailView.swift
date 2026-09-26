@@ -104,7 +104,7 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             let hint = UILabel()
             hint.text = "点图片预览，长按可多选"
             hint.font = .systemFont(ofSize: 12)
-            hint.textColor = .secondaryLabel
+            hint.textColor = .gray
             hint.textAlignment = .center
             actions.addArrangedSubview(hint)
             return

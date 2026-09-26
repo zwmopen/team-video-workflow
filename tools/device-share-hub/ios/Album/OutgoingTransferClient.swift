@@ -14,7 +14,7 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
     // 又不能太大 —— 否则用户要盯着转圈等很久才知道失败。取 45 秒。
     private static let timeoutSeconds: TimeInterval = 45
     private static var requestWaitTimeout: DispatchTimeInterval {
-        .nanoseconds(Int(timeoutSeconds * 1_000_000_000))
+        .milliseconds(Int(timeoutSeconds * 1000))
     }
     private let queue = DispatchQueue(label: "com.zwm.album.outgoing-transfer")
     private var progress: Progress?
@@ -101,10 +101,10 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
         // 切后台导致回调永远不来时，这个线程就永久挂住 —— 传送界面一直转圈，
         // 既不报错也不超时，只能杀 App。给一个比请求超时略宽的兜底窗口，
         // 超时即取消任务并显式抛错（用户能看见「对方无响应」，而不是无限等待）。
-        let waitDeadline: DispatchTime = .now() + requestWaitTimeout
+        let waitDeadline: DispatchTime = .now() + Self.requestWaitTimeout
         if semaphore.wait(timeout: waitDeadline) == .timedOut {
             task.cancel()
-            throw OutgoingError.remote("对方 \(timeoutSeconds) 秒无响应，已取消本次请求")
+            throw OutgoingError.remote("对方 \(Self.timeoutSeconds) 秒无响应，已取消本次请求")
         }
         if let error = resultError { throw error }
         guard (200..<300).contains(status) else {
