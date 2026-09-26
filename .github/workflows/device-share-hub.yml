@@ -542,8 +542,39 @@ jobs:
           test -s "$source_zip"
           echo "源码快照 $(stat -c%s "$source_zip") 字节"
 
-          gh release upload "$tag" --repo "$repo" "$apk" "$sums" "$ios_ipa" "$ios_sums" \
-            "$source_zip" --clobber
+          # Windows 便携版：以前只留在 Actions artifact 里 —— 要登录 GitHub 才能下、
+          # 90 天还会过期，Release 页面上根本找不到。而电脑端和手机端一样是要发的东西，
+          # 现在跟 APK / IPA 一起发。
+          windows_exe=$(find release/windows -maxdepth 1 -type f -name '*.exe' -print -quit)
+          windows_sha=""
+          windows_version=""
+          windows_sums=""
+          windows_file_name=""
+          if [ -n "$windows_exe" ]; then
+            windows_file_name=$(basename "$windows_exe")
+            windows_sha=$(sha256sum "$windows_exe" | awk '{print $1}')
+            windows_version=$(sed -n 's/.*APP_VERSION\[\][^"]*L"\([^"]*\)".*/\1/p' \
+              tools/device-share-hub/windows-native/src/main.cpp | head -1 | tr -d '\r\n')
+            windows_sums="release/windows/Windows-SHA256.txt"
+            printf '%s  %s\n' "$windows_sha" "$windows_file_name" > "$windows_sums"
+            echo "Windows 包 ${windows_file_name}  V${windows_version}  sha256=${windows_sha:0:12}…"
+          else
+            echo "::warning::release/windows 里没找到 exe，本次不发布 Windows 包"
+          fi
+
+          uploads=("$apk" "$sums" "$ios_ipa" "$ios_sums" "$source_zip")
+          if [ -n "$windows_exe" ]; then
+            uploads+=("$windows_exe" "$windows_sums")
+          fi
+          gh release upload "$tag" --repo "$repo" "${uploads[@]}" --clobber
+
+          # 中文文件名在 download URL 里会被 percent-encode，手写拼 URL 容易拼错，
+          # 直接从上传结果里取真实地址。
+          windows_url=""
+          if [ -n "$windows_exe" ]; then
+            windows_url=$(gh release view "$tag" --repo "$repo" --json assets \
+              | python3 -c "import json,sys;d=json.load(sys.stdin);print(next((a['browser_download_url'] for a in d['assets'] if a['name'].endswith('.exe')),''))")
+          fi
 
           current_json=$(curl --fail --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
@@ -562,6 +593,10 @@ jobs:
             --arg ios_ipa_url "$ios_ipa_url" \
             --arg ios_ipa_name "$ios_ipa_name" \
             --arg ios_release_url "$release_url" \
+            --arg windows_version "$windows_version" \
+            --arg windows_sha "$windows_sha" \
+            --arg windows_url "$windows_url" \
+            --arg windows_file_name "$windows_file_name" \
             '.version_name=$version_name
              | .notes=$notes
              | .version_code=$version_code
@@ -573,7 +608,9 @@ jobs:
              | .tag_name=$tag_name
              | .html_url=$html_url
              | .ios={version_name:$ios_version_name, build:$ios_build, sha256:$ios_sha256,
-                    ipa_url:$ios_ipa_url, ipa_file_name:$ios_ipa_name, release_url:$ios_release_url}')
+                    ipa_url:$ios_ipa_url, ipa_file_name:$ios_ipa_name, release_url:$ios_release_url}
+             | .windows={version:$windows_version, sha256:$windows_sha, url:$windows_url,
+                        file_name:$windows_file_name, release_url:$html_url}')
           content=$(printf '%s' "$updated_json" | base64 -w0)
           latest_sha=$(gh api "repos/${repo}/contents/latest.json" --jq '.sha' 2>/dev/null || true)
           if [ -n "$latest_sha" ]; then
