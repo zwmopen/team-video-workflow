@@ -4654,7 +4654,11 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
         case WM_VSCROLL: {
             RECT client{};
             GetClientRect(window, &client);
-            const int page = std::max(1, (client.bottom - client.top) - kSettingsScrollStep);
+            // ⚠️ RECT 的成员是 LONG，`LONG - int` 的结果是 long；
+            //    `std::max(1, <long>)` 两侧类型不同，模板推导不出公共类型
+            //    （CI 实测 error C2672）。必须显式统一。
+            const int page = std::max(1, static_cast<int>(client.bottom - client.top)
+                                             - kSettingsScrollStep);
             switch (LOWORD(wParam)) {
                 case SB_LINEUP: gSettingsScrollY -= kSettingsScrollStep; break;
                 case SB_LINEDOWN: gSettingsScrollY += kSettingsScrollStep; break;
@@ -4754,8 +4758,13 @@ void ShowSettingsWindow() {
     // 优先居中在主窗口上；主窗口自己贴着屏幕边缘时退回在工作区里居中
     int x = owner.left + ((owner.right - owner.left) - width) / 2;
     int y = owner.top + ((owner.bottom - owner.top) - height) / 2;
-    if (x < work.left) x = work.left + std::max(0, (workWidth - width) / 2);
-    if (y < work.top) y = work.top + std::max(0, (workHeight - height) / 2);
+    // 同理：workWidth / workHeight 是 long，字面量 0 是 int ⇒ 用 0L 对齐
+    if (x < work.left) {
+        x = work.left + static_cast<int>(std::max(0L, (workWidth - width) / 2));
+    }
+    if (y < work.top) {
+        y = work.top + static_cast<int>(std::max(0L, (workHeight - height) / 2));
+    }
     gSettingsWindow = CreateWindowExW(WS_EX_DLGMODALFRAME, SETTINGS_CLASS,
         (L"设置 · 文件收发中控 V" + std::wstring(APP_VERSION)).c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX |

@@ -111,7 +111,12 @@ void TestEscapedQuoteTrap() {
     auto panel = phone_panel::ParsePhonesJson(body);
     CHECK_MSG(panel.error.empty(), "值里有转义引号不该导致解析失败");
     CHECK_MSG(panel.devices.size() == 1, "设备要解析出来");
-    CHECK_MSG(panel.devices[0].name == L"a\"b", "转义引号要还原成普通引号");
+    // ⚠️ 期望值必须先算进变量，不能把 `L"a\"b"` 直接写进 CHECK_MSG 的表达式：
+    //    CHECK_MSG 用 `#expression` 做字符串化，而 **MSVC 传统预处理器不保证给已有
+    //    转义序列的反斜杠再补一层转义** ⇒ `\"` 会被展开成提前闭合的坏字面量。
+    //    CI 上实测报 C2017 / C3688 / C2146（本机无编译器，发现不了）。
+    const std::wstring expectedName = std::wstring(L"a") + wchar_t('"') + L"b";
+    CHECK_MSG(panel.devices[0].name == expectedName, "转义引号要还原成普通引号");
     CHECK_MSG(panel.devices[0].verified, "转义引号后面的 verified 仍要读到");
     CHECK_MSG(panel.devices[0].workCount == 5, "转义引号后面的 workCount 仍要读到");
 }
@@ -330,22 +335,32 @@ void TestSyncSummary() {
 }
 
 void TestBuildSyncRequestBody() {
+    // ⚠️ 期望值一律先算进变量再断言，不把带引号/反斜杠的字面量写进 CHECK_MSG ——
+    //    宏里的 `#expression` 字符串化在 MSVC 传统预处理器下会把它展开坏（见陷阱 3）。
+    const std::string expectBare = R"J({"dryRun":true})J";
+    const std::string expectReal = R"J({"dryRun":false})J";
+    const std::string expectHostsKey = R"J("hosts":[)J";
+    const std::string expectHost1 = R"J("192.168.0.101")J";
+    const std::string expectHost2 = R"J("192.168.0.105:45833")J";
+    // 期望的请求体片段：`"a\"b\\c"`（外层是 JSON 引号，内部各转义一层）
+    const std::string expectEscaped = std::string("\"a\\\"b\\\\c\"");
+
     // 不传 host ⇒ 让服务端自己扫在线手机
     auto bare = phone_panel::BuildSyncRequestBody(true, {});
-    CHECK_MSG(bare == R"J({"dryRun":true})J", "空 hosts 时只发 dryRun");
+    CHECK_MSG(bare == expectBare, "空 hosts 时只发 dryRun");
 
     auto real = phone_panel::BuildSyncRequestBody(false, {});
-    CHECK_MSG(real == R"J({"dryRun":false})J", "落盘时 dryRun 为 false");
+    CHECK_MSG(real == expectReal, "落盘时 dryRun 为 false");
 
     auto withHosts = phone_panel::BuildSyncRequestBody(true, {L"192.168.0.101", L"192.168.0.105:45833"});
-    CHECK_MSG(withHosts.find(R"J("hosts":[)J") != std::wstring::npos, "带 hosts 数组");
-    CHECK_MSG(withHosts.find(R"J("192.168.0.101")J") != std::wstring::npos, "第一个 host");
-    CHECK_MSG(withHosts.find(R"J("192.168.0.105:45833")J") != std::wstring::npos, "第二个 host 带端口");
+    CHECK_MSG(withHosts.find(expectHostsKey) != std::string::npos, "带 hosts 数组");
+    CHECK_MSG(withHosts.find(expectHost1) != std::string::npos, "第一个 host");
+    CHECK_MSG(withHosts.find(expectHost2) != std::string::npos, "第二个 host 带端口");
     CHECK_MSG(withHosts.back() == '}', "收尾是右花括号");
 
     // 转义：界面输入里带引号/反斜杠会把 JSON 直接弄坏，服务端会返回 400
     auto escaped = phone_panel::BuildSyncRequestBody(false, {L"a\"b\\c"});
-    CHECK_MSG(escaped.find(R"J("a\"b\\c")J") != std::wstring::npos,
+    CHECK_MSG(escaped.find(expectEscaped) != std::string::npos,
               "引号和反斜杠必须转义，否则请求体不是合法 JSON");
 }
 
