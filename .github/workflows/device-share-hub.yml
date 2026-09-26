@@ -120,6 +120,14 @@ jobs:
       # ⚠️ 本 job 是 publish-gallery-updates 的前置：这里红 ⇒ 整条发版链断。
       - name: Verify iOS / Android parity contract
         run: python tools/device-share-hub/tests/parity_ios_android.py
+      # 【2026-09-27 新增】C++ 测试闸门体检：盯的不是「代码对不对」，而是
+      # 「这些测试到底有没有在跑」。仓库里 content_store_tests / send_to_integration_tests
+      # 长期用 assert，而本 job 编的是 Release（预定义 NDEBUG）⇒ assert 被整段编译掉
+      # ⇒ 20 条判据一条没跑、ctest 每次都报「通过」。假闸门比没闸门更危险。
+      # 判据：不得用 assert、必须有失败返回非 0 的出口、断言数 >= 3、
+      #       且每个 tests/*.cpp 都必须在 CMakeLists 里被 add_executable + add_test 注册。
+      - name: Verify C++ tests are real gates (not compiled out)
+        run: python tools/device-share-hub/scripts/check-cpp-test-assertions.py
       - name: Build native Windows panel
         id: windows_compile
         shell: pwsh
@@ -587,11 +595,22 @@ jobs:
           fi
           gh release upload "$tag" --repo "$repo" "${uploads[@]}" --clobber
 
-          # 自愈：删掉本 tag 下名字被 artifact 截断的历史 Windows 附件（DSH-120 清理）。
+          # 取 assets 清单（放在 upload 之后，这样本次新传的附件也在里头）。
+          #
+          # ⚠️ gh 有两套 API 面，字段名不一样，**混着用必踩坑** —— DSH-120 连红两次：
+          #   - `gh release view --json assets` 走 GraphQL 模板：id 是 "RA_..." 节点 ID，
+          #     下载地址字段叫 url。第一次我在这套上取 browser_download_url ⇒ KeyError；
+          #     第二次改用 url 取到了，但拿 RA_ 节点 id 去调 REST 删除接口 ⇒ 404。
+          #   - REST `releases/tags/<tag>`：id 是数字（删除接口要的就是这个），
+          #     下载地址字段叫 browser_download_url。
+          # 结论：**只走一套，不混用**。这里统一用 REST。
+          assets_json=$(gh api "repos/${repo}/releases/tags/${tag}")
+
+          # 自愈：删掉本 tag 下名字被 artifact 截断的历史 Windows 附件。
           # 只删 .exe 且文件名不等于本次发布名的，正常附件不会误伤。
           if [ -n "$windows_publish_path" ]; then
-            gh release view "$tag" --repo "$repo" --json assets > release_assets.json
-            python3 -c "import json;d=json.load(open('release_assets.json'));keep='$windows_file_name';print('\n'.join(str(a['id']) for a in d.get('assets',[]) if a.get('name','').endswith('.exe') and a.get('name','')!=keep))" > stale_assets.txt
+            printf '%s' "$assets_json" \
+              | python3 -c "import json,sys;d=json.load(sys.stdin);keep=sys.argv[1];print('\n'.join(str(a['id']) for a in d.get('assets',[]) if a.get('name','').endswith('.exe') and a.get('name','')!=keep))" "$windows_file_name" > stale_assets.txt
             while IFS= read -r stale_id; do
               [ -n "$stale_id" ] || continue
               echo "清理残留 Windows 附件 asset id=${stale_id}"
@@ -599,15 +618,11 @@ jobs:
             done < stale_assets.txt
           fi
 
-          # 取真实下载地址。
-          # ⚠️ gh 有两套 API 面，字段名不一样：
-          #   - `gh release view --json assets` 给的是 gh 模板字段，叫 url；
-          #   - REST API /releases/.../assets 给的才叫 browser_download_url。
-          # 这里走的是前者，写成 browser_download_url 会 KeyError（DSH-120）。
+          # 取真实下载地址（同一份 REST 清单，不另起一套 API 面）。
           windows_url=""
           if [ -n "$windows_publish_path" ]; then
-            windows_url=$(gh release view "$tag" --repo "$repo" --json assets \
-              | python3 -c "import json,sys;d=json.load(sys.stdin);keep=sys.argv[1];print(next((a.get('url','') for a in d.get('assets',[]) if a.get('name','')==keep),''))" "$windows_file_name")
+            windows_url=$(printf '%s' "$assets_json" \
+              | python3 -c "import json,sys;d=json.load(sys.stdin);keep=sys.argv[1];print(next((a.get('browser_download_url','') for a in d.get('assets',[]) if a.get('name','')==keep),''))" "$windows_file_name")
             # 兜底：gh 没给就按 GitHub 标准下载地址拼（文件名已 ASCII，不用 percent-encode）
             if [ -z "$windows_url" ]; then
               windows_url="https://github.com/${repo}/releases/download/${tag}/${windows_file_name}"

@@ -2909,3 +2909,32 @@ DSH-119 补二给 CI 加了「Windows 便携版也进 Release」。第一跑就�
 | 清理片段只列被截断的旧 exe，不误删正常 apk / 本次发布的 exe | PASS |
 | 否定判据只看代码行（注释里提 `browser_download_url` 不算违规） | PASS |
 | 改名后断言 sha256 不变 / 拿不到下载地址直接红 | PASS |
+
+
+### DSH-120 补充（第二轮，2026-09-27）
+
+第一轮的修法只改对了一半：改用 `url` 字段后确实取到地址了，但**清理残留附件时又红了** —— `gh: Not Found (HTTP 404)`。
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 改名 + 上传都成功了（Release 上已出现 `DeviceShareHub-Windows-V4.3.30.exe`），但清理历史残缺附件时 404，整个 job 挂掉 |
+| 根因 | **混用了 gh 的两套 API 面**：`gh release view --json assets` 走 GraphQL，给的 `id` 是 `RA_...` **节点 ID**；而 REST 删除接口 `releases/assets/<id>` 要的是**数字 ID** |
+| 实测证据 | `gh api -X DELETE .../assets/RA_kwDOTcht984jPLCm` ⇒ `404 Not Found`；`gh api -X DELETE .../assets/591179942` ⇒ `204` 成功（顺手把历史残留清掉了） |
+| 修法 | **只走一套，不混用**：assets 清单统一取自 `gh api repos/{repo}/releases/tags/{tag}`（REST），id 是数字、下载地址字段叫 `browser_download_url`；删除与取 URL 共用同一份清单，只调一次 API |
+| 顺序陷阱 | 清单必须在 `gh release upload` **之后**取，否则本次新传的附件不在列表里（闸门里加了行号先后断言） |
+
+两轮合起来看：同一个工具的两套 API 面，**字段名和 ID 形态都不一样**。要么全走 A 面，要么全走 B 面 ——
+混用的后果不是「可能出错」，而是必错。仓库里 `UpdateChecker.java` 用 `browser_download_url` 是对的，
+因为它走的是 REST 面。
+
+## DSH-120-B — C++ 测试里 20 条判据一直在空跑（Release 下 assert 被编译掉）（2026-09-27）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `content_store_tests`（8 条）+ `send_to_integration_tests`（12 条）用 `assert(...)` 做判据，CI 每次报 `4/4 passed` |
+| 根因 | CI 编的是 **Release**（预定义 `NDEBUG`），`assert` 被预处理器**整段编译掉** ⇒ 这 20 条判据一条都没执行，测试只是「跑一遍业务逻辑然后 return 0」 |
+| 危害 | **假绿**。比没闸门更危险 —— 没闸门你知道要补，假闸门给的是假的安心（DSH-119 已记账，本条是修复） |
+| 修法 | 抽 `tests/test_check.h` 提供 `CHECK` / `CHECK_MSG` / `Finish()`（普通函数，不受 `NDEBUG` 影响）；三个测试文件改用 CHECK；收尾走 `return dsh_test::Finish(...)` 把失败翻译成退出码 |
+| 防复发 | 新增闸门 `scripts/check-cpp-test-assertions.py`（已挂 CI），盯的是「闸门有没有真在跑」而不是「代码对不对」：①禁用 `assert` ②禁用 `<cassert>` ③必须有失败返回非 0 的出口 ④断言数 ≥ 3 ⑤每个 `tests/*.cpp` 都必须被 `add_executable` + `add_test` 注册（没注册 = 永远不跑） |
+| 变异自检 | 5 项退回坏版本 ⇒ **5/5 FAIL** 且逐字节还原 |
+| 意外收获 | 变异自检当场抓出**闸门自己的假绿**：扫 CMakeLists 时没跳过 `#` 注释行，把 `add_test(...)` 注释掉后正则照样匹配得到 ⇒ 闸门不响。已加 `strip_cmake_comments()` 修掉 |

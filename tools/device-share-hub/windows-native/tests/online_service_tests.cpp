@@ -9,6 +9,7 @@
 // ⚠️ 用自定义 CHECK 而不是 assert：CI 编的是 Release（NDEBUG），assert 会被整段编译掉，
 //    那样这个测试就变成「永远绿色」的假闸门。
 #include "online_service.h"
+#include "test_check.h"
 
 #include <windows.h>
 
@@ -17,17 +18,8 @@
 #include <iostream>
 #include <string>
 
+// 断言统一走 tests/test_check.h 的 CHECK —— 它在 Release 下不会被编译掉。
 namespace {
-
-int gFailures = 0;
-
-void Check(bool condition, const wchar_t* expression, int line) {
-    if (condition) return;
-    ++gFailures;
-    std::wcerr << L"  [FAIL] 第 " << line << L" 行: " << expression << L"\n";
-}
-
-#define CHECK(expression) Check((expression), L#expression, __LINE__)
 
 std::wstring Quote(const std::wstring& value) { return L"\"" + value + L"\""; }
 
@@ -288,10 +280,5 @@ int wmain() {
               std::wstring::npos);
     }
 
-    if (gFailures) {
-        std::wcerr << L"online_service_tests FAILED (" << gFailures << L" 项)\n";
-        return 1;
-    }
-    std::wcout << L"online_service_tests passed\n";
-    return 0;
+    return dsh_test::Finish("online_service_tests");
 }

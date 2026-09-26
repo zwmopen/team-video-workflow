@@ -2673,3 +2673,29 @@ totalWorks = 472
 | 闸门 | `_verify_workflow_dsh120.py`（YAML 块标量完整性 + `bash -n` + 4 段内嵌 python 单独跑 + 4 条逻辑回归），**含一条「旧写法确实 KeyError」证明修复是真修而非假绿** |
 | 教训 | ①**gh 有两套 API 面，字段名不一样**：`--json` 模板字段 vs REST API。看到 `browser_download_url` 要先确认走的是哪一套（`UpdateChecker.java` 那份是对的，因为它走 REST）。②**跨 OS 的 artifact 中转不可信非 ASCII 文件名** —— 构建产物中文名在本地和 CI 日志里都正常，只有落 Release 时才发现断了；凡是「经中转的非 ASCII 名」，发布前一律自己定 ASCII 名并对内容做 sha 断言。③拿不到下载地址要**直接红**，不许静默写空 URL 进 `latest.json` —— 空 URL 会让手机端「有更新但下不动」，比 CI 红难查得多。④Windows 上 PATH 里的 `bash` 会先命中 `C:\Windows\System32\bash.exe`（WSL 启动器，被沙箱拦），跑 `bash -n` 必须用 Git 的绝对路径 |
 | 类型 | 混合：①明红（CI 断链）；②**静默故障**（附件名残缺，全程零报错） |
+
+
+## DSH-120 — 补充：两套 API 面混用导致第二轮红（2026-09-27）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 第一轮改用 `url` 字段后取地址成功了，改名与上传也都成功（Release 上已出现 `DeviceShareHub-Windows-V4.3.30.exe`），但**清理残留附件时 404**，job 挂掉 |
+| 根因 | **混用了 gh 的两套 API 面**：`gh release view --json assets` 走 GraphQL ⇒ `id` 是 `RA_...` 节点 ID；REST 删除 `releases/assets/<id>` 要数字 ID |
+| 实测 | `gh api -X DELETE .../assets/RA_kwDOTcht984jPLCm` ⇒ `404 Not Found`（与 CI 日志逐字一致）；换成 `.../assets/591179942` ⇒ `204` 成功 |
+| 修法 | 只走 REST 一套：`assets_json=$(gh api repos/{repo}/releases/tags/{tag})`，id 是数字、地址字段叫 `browser_download_url`；删除与取 URL 共用同一份清单 |
+| 顺序 | 清单必须在 upload 之后取（闸门加了行号先后断言） |
+| 教训 | 「同一个工具的两套 API 面字段名不同」只是表象，**ID 形态也不同**（`RA_...` 节点 ID vs 数字 ID）。混用必错。判「有没有在用 GraphQL 面」比判「有没有用错字段名」更能防住这一类 |
+
+## DSH-120-B — C++ 测试里 20 条判据一直在空跑：Release 下 assert 被编译掉（2026-09-27）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `content_store_tests`（8 条）+ `send_to_integration_tests`（12 条）用 `assert(...)` 做判据，CI 每次报 `4/4 passed`，看起来一切正常 |
+| 根因 | CI 编 **Release**（预定义 `NDEBUG`）⇒ `assert` 被预处理器整段编译掉 ⇒ 20 条判据一条没执行，测试只是「跑一遍业务逻辑然后 `return 0`」 |
+| 危害 | **假绿**。比没闸门更危险 —— 没闸门你知道要补，假闸门给的是假的安心。DSH-119 已记账，本条是修复 |
+| 修法 | 抽 `tests/test_check.h` 提供 `CHECK` / `CHECK_MSG` / `Finish()`（普通函数，不受 `NDEBUG` 影响）；三个测试文件改用 CHECK；收尾 `return dsh_test::Finish(...)` 把失败翻译成退出码 |
+| 防复发 | 新增闸门 `scripts/check-cpp-test-assertions.py`（已挂 CI）：①禁用 `assert` ②禁用 `<cassert>` ③必须有失败返回非 0 的出口 ④断言数 ≥ 3 ⑤每个 `tests/*.cpp` 都必须被 `add_executable` + `add_test` 注册 |
+| 变异自检 | 5 项退回坏版本 ⇒ **5/5 全部 FAIL** 且逐字节还原 |
+| 意外收获 | 变异自检当场抓出**闸门自己的假绿**：扫 CMakeLists 时没跳过 `#` 注释行，把 `add_test(...)` 注释掉后正则照样匹配得到 ⇒ 闸门不响。已加 `strip_cmake_comments()` |
+| 教训 | ①**用正则扫配置文件判「有没有某行」之前必须先把注释摘干净** —— 注释掉的配置等于没有，不摘就是假绿。②「测试文件存在」≠「闸门在跑」，要同时确认三件事：断言没被编译掉 / 失败会返回非 0 / 测试被 CMake 注册。③**变异自检的价值不只在于验证被测代码，更能抓出闸门本身的缺陷** —— 这次假绿就是它抓出来的，靠肉眼 review 大概率溜过去 |
+| 类型 | **假绿闸门**（静默故障，全程零报错） |
