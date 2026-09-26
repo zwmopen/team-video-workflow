@@ -746,6 +746,124 @@ class TestSubdirImages(unittest.TestCase):
         self.assertIn(moved_id, resolved)
 
 
+class TestMovedWorksPruning(unittest.TestCase):
+    """DSH-128：`WorkScanner._moved_works` 只增不减 ⇒ 常驻内存单调增长。
+
+    背景：_moved_works 是「作品被移走之后还能按 id 找回原图」的登记表。
+    但它在 `__init__` 里初始化之后，只有三处会往里塞（扫阶段目录 / 按 id 定位 /
+    作品被移走），**只有 restore 回「已发送0次」时会 pop 一条**。服务是 7x24 常驻
+    进程 ⇒ 这个字典单调增长，跑几个月就是上万条。
+
+    严重性不是「占几 KB」：每条存的是**完整作品对象**，含 `copyText`（V4.5 全系
+    11 个版本的文案）和 `images` 列表，单条就是几 KB 到十几 KB。
+
+    ⛔ 判据设计上最容易犯的错：用「这次 scan 的结果里有没有」来判断该不该删。
+       scan **只扫「已发送0次」**，而 _moved_works 里登记的绝大多数是
+       「已发送1次」的作品 —— 那样会当场误删一大片，把「移走后取原图」的兜底
+       直接干掉。判据只能用「路径还在不在」。
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="dsh128_")
+        self.scanner = _svc_mod.WorkScanner(self.temp_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _seed(self, name, exists=True):
+        """造一条 _moved_works 条目；exists=False 时只登记路径、不建目录。"""
+        path = os.path.join(self.temp_dir, name)
+        if exists:
+            os.makedirs(path, exist_ok=True)
+        self.scanner._moved_works[name] = {
+            "id": name, "path": path, "images": [], "copyText": "",
+        }
+        return name
+
+    def test_01_stale_entries_are_dropped(self):
+        """路径已经不存在的条目必须清掉 —— 它救不了任何请求，只是白占内存。"""
+        self._seed("gone-work", exists=False)
+        self._seed("gone-again", exists=False)
+
+        removed = self.scanner.prune_moved_works()
+
+        self.assertGreaterEqual(removed, 2, "两条陈旧条目都应该被清掉")
+        self.assertNotIn("gone-work", self.scanner._moved_works)
+        self.assertNotIn("gone-again", self.scanner._moved_works)
+
+    def test_02_live_entries_are_kept(self):
+        """路径还在的条目**一条都不能删**。
+
+        这条专门防「按 scan 结果判断」那种错法：scan 只扫「已发送0次」，
+        而这里登记的绝大多数是「已发送1次」的作品，按 scan 结果删会当场误删一大片。
+        """
+        for name in ("stage1-work", "garbage-work", "nested-work"):
+            self._seed(name, exists=True)
+
+        self.scanner.prune_moved_works()
+
+        for name in ("stage1-work", "garbage-work", "nested-work"):
+            self.assertIn(name, self.scanner._moved_works,
+                          "路径还在的条目绝不能被清掉：%s" % name)
+
+    def test_03_mixed_keeps_live_drops_stale(self):
+        """混合场景：只清陈旧的，留下的必须恰好是路径还在的那些。"""
+        self._seed("live-a", exists=True)
+        self._seed("stale-b", exists=False)
+        self._seed("live-c", exists=True)
+
+        self.scanner.prune_moved_works()
+
+        self.assertEqual(sorted(self.scanner._moved_works.keys()),
+                         ["live-a", "live-c"])
+
+    def test_04_over_limit_is_trimmed(self):
+        """超过上限要压回来 —— 否则「只增不减」的老毛病还在，只是涨得慢点。
+
+        limit 做成可注入参数：默认上限（MOVED_WORKS_LIMIT）很大，测试里造
+        上千个目录太慢，也没必要。
+        """
+        for index in range(30):
+            self._seed("w%03d" % index, exists=True)
+
+        self.scanner.prune_moved_works(limit=10)
+
+        self.assertEqual(len(self.scanner._moved_works), 10,
+                         "超过上限必须压回 10 条，实际=%d" % len(self.scanner._moved_works))
+
+    def test_05_scan_triggers_pruning(self):
+        """真的扫一轮之后，陈旧条目应该被清掉（证明清理确实挂在扫描路径上）。"""
+        self._seed("stale-before-scan", exists=False)
+        self._seed("live-before-scan", exists=True)
+
+        self.scanner.scan(force=True)
+
+        self.assertNotIn("stale-before-scan", self.scanner._moved_works,
+                         "扫完一轮之后陈旧条目应该已经清掉了")
+        self.assertIn("live-before-scan", self.scanner._moved_works)
+
+    def test_06_prune_is_idempotent(self):
+        """连着清两次结果不变 —— 清理不能自己把还活着的条目越清越少。"""
+        self._seed("live-1", exists=True)
+        self._seed("live-2", exists=True)
+        self._seed("stale-1", exists=False)
+
+        self.scanner.prune_moved_works()
+        after_first = sorted(self.scanner._moved_works.keys())
+        self.scanner.prune_moved_works()
+        after_second = sorted(self.scanner._moved_works.keys())
+
+        self.assertEqual(after_first, after_second)
+        self.assertEqual(after_first, ["live-1", "live-2"])
+
+    def test_07_default_limit_is_sane(self):
+        """默认上限要既能兜住「最近移走的作品」，又不能大到形同虚设。"""
+        limit = getattr(_svc_mod, "MOVED_WORKS_LIMIT", None)
+        self.assertIsNotNone(limit, "缺 MOVED_WORKS_LIMIT 常量")
+        self.assertGreaterEqual(limit, 100, "上限太小会让「移走后取原图」的兜底频繁失效")
+        self.assertLessEqual(limit, 5000, "上限太大就失去保护意义（每条含完整文案）")
+
+
 class TestLogRotation(unittest.TestCase):
     """DSH-126：常驻服务的 stdout/stderr 日志必须会自动轮转。
 

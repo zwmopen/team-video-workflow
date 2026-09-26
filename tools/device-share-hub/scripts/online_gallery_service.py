@@ -467,6 +467,12 @@ SCAN_CACHE_TTL = 30.0
 # 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
 # 限速后：窗口内的第二次及以后一律读缓存（数据新鲜度仍由 60 秒 watchdog 兜底）。
 FORCE_SCAN_MIN_INTERVAL = 3.0
+# DSH-128：「作品被移走后还能按 id 找回」登记表（WorkScanner._moved_works）的上限。
+# 这里存的不是路径字符串，而是**完整作品对象**（含 copyText —— V4.5 全系 11 个版本
+# 的文案，外加 images 列表），单条就是几 KB 到十几 KB。此前只增不减，
+# 服务常驻几个月就是上万条 ⇒ 常驻内存单调涨到上百 MB 且零报错。
+# 800 条足够覆盖「最近移走的作品」，按作品库现规模相当于几个月的使用量。
+MOVED_WORKS_LIMIT = 800
 _WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard")
 
 # gzip 结果缓存。实测瘦身后的全量列表 1568.5 KB，gzip.compress(body, 6) 要烧约 66 ms CPU，
@@ -1367,6 +1373,40 @@ class WorkScanner:
                 return hit
         return None
 
+    def prune_moved_works(self, limit: Optional[int] = None) -> int:
+        """清掉 _moved_works 里的陈旧条目，并把总量压回上限以内。返回清掉几条。
+
+        【DSH-128】_moved_works 是「作品被移走之后还能按 id 找回原图」的登记表，
+        但它在 __init__ 之后**只增不减**：扫阶段目录、按 id 定位、作品被移走都在往里
+        塞，只有 restore 回「已发送0次」时 pop 一条。服务是 7x24 常驻进程 ⇒
+        这个字典单调增长；而每条存的是**完整作品对象**（含 copyText 与 images），
+        单条几 KB 到十几 KB，跑几个月就是上百 MB 常驻内存，**且没有任何报错**。
+
+        ⛔ 判据只能用「路径还在不在」，**绝不能**按「这次 scan 的结果里有没有」来删：
+           scan 只扫「已发送0次」，而这里登记的绝大多数是「已发送1次」/「垃圾作品」
+           里的作品 —— 按 scan 结果删会当场误删一大片，把「移走后取原图」的兜底干掉。
+           路径都没了的条目本来就救不了任何请求（get_work / image_name_index 里
+           也都有 exists 校验），留着只是白占内存。
+
+        limit 做成可注入参数，是为了让测试不必造上千个目录；生产一律用默认值。
+        """
+        cap = MOVED_WORKS_LIMIT if limit is None else limit
+        with self._lock:
+            stale = [key for key, work in self._moved_works.items()
+                     if not os.path.exists(work.get("path", ""))]
+            for key in stale:
+                self._moved_works.pop(key, None)
+
+            removed = len(stale)
+            extra = len(self._moved_works) - cap
+            if extra > 0:
+                # 超限时按「先登记的先走」：dict 保序（Python 3.7+），
+                # 最早登记的通常也是最久没被用到的
+                for key in list(self._moved_works.keys())[:extra]:
+                    self._moved_works.pop(key, None)
+                removed += extra
+            return removed
+
     def image_name_index(self, rebuild: bool = False) -> Dict[str, str]:
         """构建「文件名 -> 绝对路径」索引（只读快照，供路径兜底解析用）。
 
@@ -1544,6 +1584,10 @@ class WorkScanner:
             self._cached_works = results
             self._works_by_id = {w["id"]: w for w in results}
             self._last_scan_time = now
+            # DSH-128：_moved_works 只增不减，趁每轮**真的**全盘扫描顺手清一次。
+            # 挂在这里而不是缓存命中的提前返回路径上：清理要 stat 每一条，
+            # 没必要在「读缓存」这种高频短路径上反复跑。
+            self.prune_moved_works()
             return results
 
     # ==================== DSH-110：文件系统轮询监听 ====================
