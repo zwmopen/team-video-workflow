@@ -746,5 +746,193 @@ class TestSubdirImages(unittest.TestCase):
         self.assertIn(moved_id, resolved)
 
 
+class TestLogRotation(unittest.TestCase):
+    """DSH-126：常驻服务的 stdout/stderr 日志必须会自动轮转。
+
+    背景：服务是 7x24 常驻进程，日志一直往脚本目录下同一个 .log 里追加，
+    没有任何上限。跑上几周就是 GB 级，而它就在脚本目录里，磁盘被自己吃光也没人发现。
+
+    ⚠️ 闸门设计要点（这几条都是踩过的坑）：
+      - 判据查**文件系统事实**（文件在不在、内容对不对），不查「有没有调用某个函数」；
+      - 「通过流写入会真的轮转」这条必须走 RotatingLogStream 而不能只测
+        rotate_log_if_needed —— Windows 上文件开着时 os.replace 会 PermissionError，
+        而本类所有异常都是吞掉的，只测纯函数完全看不出这个静默失效；
+      - 备份链顺序（.1 最新 / .3 最老）必须断言，正序改名会静默把内容搅乱。
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="dsh126_")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _path(self, name="app.log"):
+        return os.path.join(self.temp_dir, name)
+
+    def _read(self, path):
+        with open(path, "r", encoding="utf-8") as fp:
+            return fp.read()
+
+    def test_01_rotate_log_if_needed_renames_chain(self):
+        """超过阈值时：x.log -> x.log.1，且原内容完整留在 .1 里。"""
+        path = self._path()
+        with open(path, "w", encoding="utf-8") as fp:
+            fp.write("old-content\n")
+
+        rotated = _svc_mod.rotate_log_if_needed(path, max_bytes=1, backups=3)
+
+        self.assertTrue(rotated, "文件已超过阈值，rotate_log_if_needed 必须返回 True")
+        self.assertFalse(os.path.exists(path), "轮转后原文件不应该还在原地")
+        self.assertEqual(self._read(path + ".1"), "old-content\n",
+                         "旧内容必须完整保留在 .1 里，不能丢")
+
+    def test_02_rotate_log_if_needed_noop_below_threshold(self):
+        """没超阈值就一刀都别切：切了就会把正在排查的日志冲掉。"""
+        path = self._path()
+        with open(path, "w", encoding="utf-8") as fp:
+            fp.write("tiny\n")
+
+        rotated = _svc_mod.rotate_log_if_needed(path, max_bytes=1024 * 1024, backups=3)
+
+        self.assertFalse(rotated, "没超阈值不能轮转")
+        self.assertEqual(self._read(path), "tiny\n")
+        self.assertFalse(os.path.exists(path + ".1"), "没轮转就不该出现 .1")
+
+    def test_03_rotate_log_if_needed_missing_file_is_noop(self):
+        """文件不存在时返回 False 且不抛异常（服务刚部署、日志还没建出来的场景）。"""
+        self.assertFalse(_svc_mod.rotate_log_if_needed(self._path("nope.log"),
+                                                       max_bytes=1, backups=3))
+
+    def test_04_backup_chain_is_newest_first(self):
+        """连续切三次：.1 是最新的一份，.3 是最老的一份。"""
+        path = self._path()
+        for index in range(3):
+            with open(path, "w", encoding="utf-8") as fp:
+                fp.write("round-%d\n" % index)
+            self.assertTrue(_svc_mod.rotate_log_if_needed(path, max_bytes=1, backups=3))
+
+        self.assertEqual(self._read(path + ".1"), "round-2\n",
+                         ".1 必须是最近一次被切走的内容（改名链条不能正着来）")
+        self.assertEqual(self._read(path + ".2"), "round-1\n")
+        self.assertEqual(self._read(path + ".3"), "round-0\n")
+
+    def test_05_backup_count_is_capped(self):
+        """切很多次也只留 3 份历史，最老的被踢掉 —— 否则轮转自己就会撑爆磁盘。"""
+        path = self._path()
+        for index in range(8):
+            with open(path, "w", encoding="utf-8") as fp:
+                fp.write("round-%d\n" % index)
+            _svc_mod.rotate_log_if_needed(path, max_bytes=1, backups=3)
+
+        names = sorted(n for n in os.listdir(self.temp_dir) if n.startswith("app.log."))
+        self.assertEqual(names, ["app.log.1", "app.log.2", "app.log.3"],
+                         "历史备份必须恰好 3 份，实际=%s" % names)
+        self.assertEqual(self._read(path + ".1"), "round-7\n")
+        self.assertEqual(self._read(path + ".3"), "round-5\n",
+                         "最老的备份要被踢掉，只保留最近 3 次")
+
+    def test_06_stream_rotates_while_file_is_open(self):
+        """★核心闸门★ 通过流写入必须真的会轮转。
+
+        这条专门用来抓「文件还开着就改名」的静默失效：Windows 上 os.replace 一个
+        被打开的文件会 PermissionError，而 write() 里的异常是吞掉的，表现就是
+        「代码看着在轮转，磁盘上文件却一直在涨，且零报错」。
+        """
+        path = self._path()
+        stream = _svc_mod.RotatingLogStream(path, max_bytes=200, backups=2,
+                                            check_every=20)
+        try:
+            for index in range(200):
+                stream.write("line-%03d\n" % index)
+                stream.flush()
+        finally:
+            stream.close()
+
+        backups = sorted(n for n in os.listdir(self.temp_dir)
+                         if n.startswith("app.log."))
+        self.assertTrue(backups,
+                        "写了 200 行（约 1.8KB）到阈值 200B 的流里，却一个备份都没切出来 —— "
+                        "八成又是「文件开着改不了名」，异常被吞了")
+
+    def test_07_stream_does_not_rotate_below_threshold(self):
+        """没超阈值不能切：切了等于把用户正在看的日志凭空搬走。"""
+        path = self._path()
+        stream = _svc_mod.RotatingLogStream(path, max_bytes=100 * 1024, backups=2,
+                                            check_every=10)
+        try:
+            for index in range(20):
+                stream.write("line-%03d\n" % index)
+                stream.flush()
+        finally:
+            stream.close()
+
+        self.assertEqual(sorted(os.listdir(self.temp_dir)), ["app.log"],
+                         "没到阈值切出备份 = 误伤正在排查的日志")
+
+    def test_08_stream_keeps_writing_after_rotation(self):
+        """切完之后必须继续往新文件里写，不能写进已经关掉的句柄。
+
+        ⚠️ 别断言「最后一个标记一定在当前文件里」：判定是在 write 之后做的，刚好在
+           最后一次写入时触发轮转的话，当前文件就是空的（内容被切到 .1 了）。
+           要断言的是「写入没丢、且落在最新的那个文件里」。
+        """
+        path = self._path()
+        stream = _svc_mod.RotatingLogStream(path, max_bytes=100, backups=2,
+                                            check_every=10)
+        try:
+            for index in range(60):
+                stream.write("line-%03d\n" % index)
+                stream.flush()
+            # 轮转之后再写一行，确认它一定落进「当前」这个文件
+            stream.write("tail-marker\n")
+            stream.flush()
+        finally:
+            stream.close()
+
+        self.assertTrue(os.path.exists(path), "轮转后必须重新打开一个新文件继续写")
+        self.assertIn("tail-marker", self._read(path),
+                      "轮转之后的新写入必须落进新文件，实际=%r" % self._read(path))
+        # 时序不能倒挂：新写入绝不能出现在已被切走的备份里
+        for suffix in (".1", ".2"):
+            backup_path = path + suffix
+            if os.path.exists(backup_path):
+                self.assertNotIn("tail-marker", self._read(backup_path),
+                                 "新写入不该出现在已切走的备份 %s 里" % suffix)
+
+    def test_09_stream_survives_failed_reopen(self):
+        """轮转后「重新打开」失败必须降级，不能把 print() 的调用方炸掉。
+
+        真场景：磁盘满 / 日志目录被手工删掉 / 权限变了。此时 open() 会抛，
+        而这个异常一旦往外冒，ThreadingHTTPServer 的请求线程就跟着挂了。
+        """
+        path = self._path()
+        stream = _svc_mod.RotatingLogStream(path, max_bytes=100, backups=2,
+                                            check_every=10)
+        try:
+            stream.write("warm-up\n")
+            stream.flush()
+            # 把目标指到一个不存在的目录，逼出「重开失败」这条路径
+            stream.path = os.path.join(self.temp_dir, "gone-dir", "app.log")
+            stream._rotate()
+            # 降级之后还能继续写：绝不能抛给调用方
+            stream.write("still-alive\n")
+            stream.flush()
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    def test_10_defaults_are_sane(self):
+        """默认阈值必须是「能兜住几周日志、又不会撑爆磁盘」的量级。"""
+        self.assertGreaterEqual(_svc_mod.LOG_MAX_BYTES, 1024 * 1024,
+                                "单文件上限至少 1MB，太小会导致一天切几十次")
+        self.assertLessEqual(_svc_mod.LOG_MAX_BYTES, 64 * 1024 * 1024,
+                             "单文件上限不超过 64MB，否则轮转形同虚设")
+        self.assertGreaterEqual(_svc_mod.LOG_BACKUP_COUNT, 1,
+                                "至少要留一份历史，否则排查时旧日志当场就没了")
+        self.assertGreater(_svc_mod.LOG_CHECK_EVERY_CHARS, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

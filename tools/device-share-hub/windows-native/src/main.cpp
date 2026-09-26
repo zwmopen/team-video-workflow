@@ -104,6 +104,7 @@ constexpr int IDC_SETTINGS_PHONES_REFRESH = 422;
 constexpr int IDC_SETTINGS_PHONES_DRY = 423;
 constexpr int IDC_SETTINGS_PHONES_SYNC = 424;
 constexpr int IDC_SETTINGS_SHORTCUTS = 425;
+constexpr int IDC_SETTINGS_ONLINE_LOG = 426;
 // 探测结果回传消息：探测走后台线程，探完 PostMessage 回 UI 线程
 constexpr UINT WM_ONLINE_PROBE_DONE = WM_APP + 11;
 // 在线手机面板的结果回传（扫描 / 同步都在后台线程，回来再 PostMessage）
@@ -119,7 +120,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.32";
+constexpr wchar_t APP_VERSION[] = L"4.3.33";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -276,6 +277,7 @@ HWND gSettingsOnlineAddress = nullptr;
 HWND gSettingsOnlinePythonPath = nullptr;
 HWND gSettingsOnlineScriptPath = nullptr;
 HWND gSettingsOnlineAutoStartCheck = nullptr;
+HWND gSettingsLogSizeLabel = nullptr;
 online_service::Config gOnlineConfig;
 online_service::ProbeResult gOnlineStatus;
 std::atomic<unsigned long long> gOnlineProbeSeq{0};
@@ -4199,6 +4201,66 @@ void StartOnlineProbe() {
     }).detach();
 }
 
+// ------------------------------ 服务日志（DSH-126 / DSH-127） ------------------------------
+//
+// 在线相册服务是常驻进程，日志一直往 scripts\online_gallery_service.log 里追加。
+// 服务端 DSH-126 起会自动轮转（超过 8MB 切一刀、留 3 份历史），所以不会再无限涨；
+// 但用户还是需要一个「日志现在多大了、点一下就能看」的入口 —— 在这之前只能自己
+// 摸到 scripts 目录里去翻文件。
+
+std::wstring ServiceLogPath() {
+    std::error_code ec;
+    // 优先用已配置的脚本路径：它的父目录就是 scripts。
+    // 用户把脚本挪到别处时，看到的日志才是他真正在用的那份。
+    if (!gOnlineConfig.scriptPath.empty() &&
+        std::filesystem::exists(gOnlineConfig.scriptPath, ec)) {
+        return (std::filesystem::path(gOnlineConfig.scriptPath).parent_path() /
+                L"online_gallery_service.log").wstring();
+    }
+    for (const auto& candidate : online_service::ScriptCandidates(
+             online_service::ModuleDirectory())) {
+        if (std::filesystem::exists(candidate, ec)) {
+            return (std::filesystem::path(candidate).parent_path() /
+                    L"online_gallery_service.log").wstring();
+        }
+    }
+    return std::wstring();
+}
+
+void RefreshServiceLogSize() {
+    if (!IsWindow(gSettingsLogSizeLabel)) return;
+    // 服务从没跑过时文件根本不存在：那是正常的，不是错误
+    std::wstring text = L"日志 —";
+    std::wstring path = ServiceLogPath();
+    if (!path.empty()) {
+        std::error_code ec;
+        auto size = std::filesystem::file_size(path, ec);
+        text = ec ? L"日志 暂无" : (L"日志 " + FormatBytes(size));
+    }
+    SetWindowTextW(gSettingsLogSizeLabel, text.c_str());
+}
+
+void OpenServiceLog(HWND owner) {
+    std::wstring path = ServiceLogPath();
+    if (path.empty() || !std::filesystem::exists(path)) {
+        MessageBoxW(owner,
+                    L"没找到在线相册服务的日志文件（scripts\\online_gallery_service.log）。\n\n"
+                    L"服务至少启动过一次才会有日志。也可以先在上面把「脚本」路径选好，"
+                    L"客户端会去那个脚本所在的目录里找。",
+                    L"服务日志", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    WriteDiagnosticLog(L"service_log_opened", path);
+    // 用 open 而不是写死 notepad：用户可能装了别的编辑器 / 日志查看器，
+    // 交给系统默认程序更符合直觉。返回值 <= 32 表示失败（见 ShellExecute 文档）。
+    auto result = ShellExecuteW(owner, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<intptr_t>(result) <= 32) {
+        MessageBoxW(owner,
+                    (L"打不开日志文件：\n" + path).c_str(),
+                    L"服务日志", MB_OK | MB_ICONWARNING);
+    }
+}
+
 void RefreshOnlineServiceSection() {
     if (!IsWindow(gSettingsOnlineHeadline)) return;
     SetWindowTextW(gSettingsOnlinePythonPath, gOnlineConfig.pythonPath.empty()
@@ -4207,6 +4269,7 @@ void RefreshOnlineServiceSection() {
                    ? L"尚未设置" : gOnlineConfig.scriptPath.c_str());
     SendMessageW(gSettingsOnlineAutoStartCheck, BM_SETCHECK,
                  online_service::AutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+    RefreshServiceLogSize();
     ApplyOnlineStatusToUi();
 }
 
@@ -4445,6 +4508,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             AddSettingsButton(window, L"重启", IDC_SETTINGS_ONLINE_RESTART, 240, 634, 92, 34);
             AddSettingsButton(window, L"刷新", IDC_SETTINGS_ONLINE_REFRESH, 340, 634, 92, 34);
             AddSettingsButton(window, L"浏览器打开", IDC_SETTINGS_ONLINE_BROWSER, 440, 634, 124, 34);
+            AddSettingsButton(window, L"日志", IDC_SETTINGS_ONLINE_LOG, 574, 634, 100, 34);
             gSettingsOnlineAutoStartCheck = CreateWindowW(
                 L"BUTTON", L"开机自动启动服务", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
                 570, 638, 140, 24, window,
@@ -4453,7 +4517,10 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             SendMessageW(gSettingsOnlineAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsText(window,
                 L"手机端「电脑在线相册」读的就是这个服务；改了端口或脚本要点「重启」才生效。",
-                40, 668, 664, 20);
+                40, 668, 520, 20);
+            // 日志大小单独占右侧一列：常驻服务的日志会一直涨，
+            // 用户第一眼要能看出「现在多大了」，而不是自己摸到 scripts 目录里去翻。
+            gSettingsLogSizeLabel = AddSettingsText(window, L"日志 —", 574, 668, 150, 20);
 
             AddSettingsGroup(window, L"在线手机（看谁在看你的电脑相册）", 20, 698, 704, 198);
             gSettingsPhonesHeadline = AddSettingsText(window, L"在线手机：尚未扫描", 40, 724, 664, 24);
@@ -4597,6 +4664,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 online_service::OpenInBrowser(gOnlineConfig.port);
                 return 0;
             }
+            if (id == IDC_SETTINGS_ONLINE_LOG) { OpenServiceLog(window); return 0; }
             if (id == IDC_SETTINGS_ONLINE_AUTOSTART) {
                 bool enabled = SendMessageW(gSettingsOnlineAutoStartCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 // 注意：这里写的是「pythonw + 服务脚本」，不是客户端本体
@@ -4722,6 +4790,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             gSettingsOnlinePythonPath = nullptr;
             gSettingsOnlineScriptPath = nullptr;
             gSettingsOnlineAutoStartCheck = nullptr;
+            gSettingsLogSizeLabel = nullptr;
             gSettingsPhonesHeadline = nullptr;
             gSettingsPhonesList = nullptr;
             gPhoneSyncNote.clear();

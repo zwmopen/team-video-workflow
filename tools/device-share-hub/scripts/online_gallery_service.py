@@ -15,6 +15,146 @@ Online Gallery LAN Service for Device Share Hub & Mobile Gallery
 
 import os
 import sys
+import threading
+
+# ------------------------------ 日志轮转（DSH-126） ------------------------------
+#
+# 为什么需要：服务是常驻进程，stdout / stderr 一直往脚本目录下的同一个 .log 里追加，
+# 从来没有任何上限。跑上几周就是几百 MB 甚至 GB 级，而且它就躺在脚本目录里，
+# 磁盘被自己吃光了也不会有人发现（实测 online_gallery_service.log 已经 1MB）。
+#
+# 为什么不直接用 logging.handlers.RotatingFileHandler：这里接管的是**整个进程**的
+# sys.stdout / sys.stderr（服务日志基本都是 print() 打出来的），只能自己写一个最小文本流。
+
+LOG_MAX_BYTES = 8 * 1024 * 1024    # 单个日志超过 8MB 就切一刀
+LOG_BACKUP_COUNT = 3               # 最多留 3 份历史：.1 / .2 / .3
+LOG_CHECK_EVERY_CHARS = 200000     # 每累计写入约 20 万个字符才 stat 一次磁盘
+
+
+def rotate_log_if_needed(path, max_bytes=LOG_MAX_BYTES, backups=LOG_BACKUP_COUNT):
+    """日志文件超过阈值就轮转：x.log -> x.log.1 -> x.log.2 -> x.log.3（最老的丢掉）。
+
+    返回 True 表示真的切过一刀。出错一律吞掉 —— 日志轮转失败绝不能把服务拖崩。
+    """
+    try:
+        if not os.path.exists(path):
+            return False
+        if os.path.getsize(path) < max_bytes:
+            return False
+    except Exception:
+        return False
+
+    # 先把最老的踢掉，再从老到新逐级改名：必须倒着来，正着来会互相覆盖
+    oldest = "%s.%d" % (path, backups)
+    try:
+        if os.path.exists(oldest):
+            os.remove(oldest)
+    except Exception:
+        pass
+    for index in range(backups - 1, 0, -1):
+        src = "%s.%d" % (path, index)
+        dst = "%s.%d" % (path, index + 1)
+        if os.path.exists(src):
+            try:
+                os.replace(src, dst)
+            except Exception:
+                pass
+    try:
+        os.replace(path, "%s.%d" % (path, 1))
+        return True
+    except Exception:
+        return False
+
+
+class RotatingLogStream(object):
+    """边写文件边按大小自动轮转的最小文本流，只实现 print() 真正会用到的那几个接口。
+
+    线程安全：服务是 ThreadingHTTPServer，print() 可能同时从好几个线程进来；而轮转要
+    关掉旧文件再开新的，跟并发写入撞上就会往已关闭的文件里写。所以写和切共用一把锁。
+    """
+
+    def __init__(self, path, max_bytes=LOG_MAX_BYTES, backups=LOG_BACKUP_COUNT,
+                 check_every=LOG_CHECK_EVERY_CHARS):
+        self.path = path
+        self.max_bytes = max_bytes
+        self.backups = backups
+        self.check_every = check_every
+        self.encoding = "utf-8"
+        self.errors = "replace"
+        self.name = path
+        self._lock = threading.Lock()
+        self._since_check = 0
+        # 启动时先切一次：上次跑大的文件别一直顶着，等写满 20 万字符才切太晚
+        rotate_log_if_needed(path, max_bytes, backups)
+        self._fp = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+
+    def _is_too_big(self):
+        try:
+            return os.path.getsize(self.path) >= self.max_bytes
+        except Exception:
+            return False
+
+    def _rotate(self):
+        """关掉旧文件 -> 走一遍改名链条 -> 重新打开。
+
+        ⚠️ Windows 上**不能**在文件还开着的时候改名：os.replace 会抛 PermissionError，
+           而本类所有异常都是吞掉的，结果就是日志**永远轮转不了且零报错** —— 这正是
+           DSH-126 第一版在真机上表现出的症状。顺序必须是「先关 -> 再切 -> 再开」，
+           跟 Linux 上「先改名再关」的直觉恰好相反。
+        """
+        try:
+            self._fp.close()
+        except Exception:
+            pass
+        rotate_log_if_needed(self.path, self.max_bytes, self.backups)
+        try:
+            self._fp = open(self.path, "a", encoding="utf-8",
+                            errors="replace", buffering=1)
+        except Exception:
+            # 重开失败也要保证 print() 不会把调用方（HTTP 请求线程）炸掉：
+            # 磁盘满 / 日志目录被删 / 权限变了都会走到这里。日志没了能忍，服务挂了不行。
+            try:
+                self._fp = open(os.devnull, "w", encoding="utf-8")
+            except Exception:
+                pass
+
+    def write(self, text):
+        if not text:
+            return
+        with self._lock:
+            try:
+                self._fp.write(text)
+            except Exception:
+                return
+            # 按「字符数」而不是字节数估算：中文一个字 3 字节，逐条 stat 太亏
+            self._since_check += len(text)
+            if self._since_check >= self.check_every:
+                self._since_check = 0
+                if self._is_too_big():
+                    self._rotate()
+
+    def flush(self):
+        with self._lock:
+            try:
+                self._fp.flush()
+            except Exception:
+                pass
+
+    def fileno(self):
+        return self._fp.fileno()
+
+    def isatty(self):
+        return False
+
+    def writable(self):
+        return True
+
+    def close(self):
+        try:
+            self._fp.close()
+        except Exception:
+            pass
+
 
 def _setup_streams():
     log_dir = os.path.dirname(__file__)
@@ -32,7 +172,8 @@ def _setup_streams():
                 needs_redirect = True
         if needs_redirect:
             try:
-                f = open(os.path.join(log_dir, log_name), "a", encoding="utf-8", buffering=1)
+                # DSH-126：换成会自动轮转的流，常驻服务不再把日志写成无上限的巨文件
+                f = RotatingLogStream(os.path.join(log_dir, log_name))
                 setattr(sys, stream_name, f)
             except Exception:
                 setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))

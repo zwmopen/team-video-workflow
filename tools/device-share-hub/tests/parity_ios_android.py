@@ -947,8 +947,17 @@ def main():
     #   因为有内层 try 安然无恙 —— 两端行为不一致，且**零报错**。
     # 判据只锁「用了可重入锁」与「单作品有独立容错 + 留痕」这两个能力，
     # 不锁注释文案。
-    a20_rlock = "self._lock = threading.RLock()" in service_src
-    a20_no_plain = "self._lock = threading.Lock()" not in service_src
+    # ⚠️ 只取 WorkScanner 自己的源码块，不能全文搜：
+    #    DSH-126 给日志流 RotatingLogStream 也加了一把 `self._lock = threading.Lock()`
+    #    （写和轮转要串行化，本来就该是普通锁），全文搜同名赋值会把「别的类里的
+    #    普通锁」算到 WorkScanner 头上 ⇒ 误判 FAIL。
+    #    判据要锁的是「WorkScanner 用的是可重入锁」这个能力，不是「文件里有这几个字」。
+    a20_scanner_start = service_src.find("class WorkScanner")
+    a20_scanner_end = service_src.find("\nclass ", a20_scanner_start + 1)
+    a20_scanner_src = (service_src[a20_scanner_start:a20_scanner_end]
+                       if a20_scanner_start >= 0 and a20_scanner_end > 0 else "")
+    a20_rlock = "self._lock = threading.RLock()" in a20_scanner_src
+    a20_no_plain = "self._lock = threading.Lock()" not in a20_scanner_src
     a20_per_work = '_scan_error("root-entry"' in service_src
     a20_logged = ("def _scan_error(" in service_src
                   and "def scan_errors(" in service_src)
