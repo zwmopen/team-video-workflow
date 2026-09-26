@@ -4825,20 +4825,23 @@ public final class MainActivity extends Activity {
 
     private void showEditPcIpDialog() {
         EditText input = new EditText(this);
-        input.setHint("例如: 192.168.1.27");
+        input.setHint("例如: 192.168.1.27 或 192.168.1.27:45999");
         String current = onlineClient.resolveBaseUrl().replace("http://", "").replace(":" + OnlineGalleryClient.DEFAULT_PC_PORT, "");
         input.setText(current);
         AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
-                .setTitle("设置电脑在线相册 IP")
-                .setMessage("请输入运行 online_gallery_service.py 的电脑局域网 IP 地址：")
+                .setTitle("设置电脑在线相册地址")
+                .setMessage("请输入运行 online_gallery_service.py 的电脑局域网 IP；\n"
+                        + "电脑那边用了别的端口就写成「IP:端口」，例如 192.168.1.27:45999。\n"
+                        + "不写端口按 " + OnlineGalleryClient.DEFAULT_PC_PORT + " 连接。")
                 .setView(input)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存并连接", (dialog, which) -> {
-                    String ip = input.getText().toString().trim();
-                    if (!ip.isEmpty()) {
-                        String url = "http://" + ip + ":" + OnlineGalleryClient.DEFAULT_PC_PORT;
+                    String raw = input.getText().toString().trim();
+                    if (!raw.isEmpty()) {
+                        String url = normalizePcAddress(raw);
                         // 走「手工指定」通道：明确表达意图，不会被自动信标悄悄改掉
                         onlineClient.setManualBaseUrl(url);
+                        DiagnosticLog.write(this, "online_manual_address", url);
                         toast("已设置电脑地址: " + url);
                         refreshOnlineWorks(true);
                     }
@@ -4847,6 +4850,27 @@ public final class MainActivity extends Activity {
             // 带输入框的弹窗：禁止点击背景关闭 —— 误触一次就把打好的字全丢了（BUG_LEDGER DSH-084）。
             protectedInputDialog.setCanceledOnTouchOutside(false);
             protectedInputDialog.show();
+    }
+
+    /**
+     * 把用户填的「IP」或「IP:端口」规范化成 http://host:port。
+     *
+     * 以前这里写死 DEFAULT_PC_PORT：电脑端一旦用了别的端口（默认端口被占就要换），
+     * 安卓就再也连不上，而 iPhone 那边的入口是填完整 URL 的、能连 —— 两端不对等。
+     * 现在跟 iPhone 一样接受完整形态，顺手也容忍用户直接粘一段带 http:// 的地址。
+     */
+    private static String normalizePcAddress(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (value.startsWith("http://") || value.startsWith("https://")) {
+            while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+            return value;
+        }
+        value = value.replace("http://", "").replace("https://", "");
+        while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+        if (value.indexOf(':') < 0) {
+            return "http://" + value + ":" + OnlineGalleryClient.DEFAULT_PC_PORT;
+        }
+        return "http://" + value;
     }
 
     private static final class FileEntry {

@@ -3,7 +3,7 @@ project(DeviceShareHub LANGUAGES CXX)
 
 find_package(LibDataChannel CONFIG REQUIRED)
 
-add_executable(DeviceShareHub WIN32 src/main.cpp src/receiver.cpp src/usb_transport.cpp src/content_store.cpp src/send_to_integration.cpp src/remote_relay.cpp src/p2p_transport.cpp resources.rc)
+add_executable(DeviceShareHub WIN32 src/main.cpp src/receiver.cpp src/usb_transport.cpp src/content_store.cpp src/send_to_integration.cpp src/remote_relay.cpp src/p2p_transport.cpp src/online_service.cpp resources.rc)
 target_compile_features(DeviceShareHub PRIVATE cxx_std_17)
 target_compile_definitions(DeviceShareHub PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 target_compile_definitions(DeviceShareHub PRIVATE RTC_STATIC)
@@ -31,7 +31,16 @@ if(BUILD_TESTING)
   target_compile_definitions(p2p_transport_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00 RTC_STATIC)
   target_link_libraries(p2p_transport_tests PRIVATE LibDataChannel::LibDataChannel ws2_32)
   add_test(NAME p2p_transport_tests COMMAND p2p_transport_tests)
+
   set_tests_properties(p2p_transport_tests PROPERTIES TIMEOUT 60)
+
+  add_executable(online_service_tests tests/online_service_tests.cpp src/online_service.cpp)
+  target_include_directories(online_service_tests PRIVATE src)
+  target_compile_features(online_service_tests PRIVATE cxx_std_17)
+  target_compile_definitions(online_service_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+  target_link_libraries(online_service_tests PRIVATE winhttp iphlpapi shell32 advapi32 ws2_32)
+  add_test(NAME online_service_tests COMMAND online_service_tests)
+  set_tests_properties(online_service_tests PROPERTIES TIMEOUT 60)
 endif()
 
 if(MSVC)
@@ -39,9 +48,12 @@ if(MSVC)
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   set_property(TARGET p2p_transport_tests PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-  target_compile_options(DeviceShareHub PRIVATE /W4 /permissive- /utf-8 /EHsc)
+  set_property(TARGET online_service_tests PROPERTY
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   target_compile_options(send_to_integration_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
   target_compile_options(p2p_transport_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+  target_compile_options(online_service_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+  target_compile_options(DeviceShareHub PRIVATE /W4 /permissive- /utf-8 /EHsc)
   target_link_options(DeviceShareHub PRIVATE /SUBSYSTEM:WINDOWS "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/app.manifest")
 endif()
 

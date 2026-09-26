@@ -1089,6 +1089,40 @@ def main():
         % (a24_fg, a24_sdk, a24_atomic, a24_nodiagctx,
            a24_key, a24_sem, a24_write, a24_timer)))
 
+    # ── A25 两端「手工指定电脑地址」必须对得上（DSH-119） ──
+    # 起因：Windows 客户端 V4.3.30 把在线相册服务收进设置后，地址是**带端口**的。
+    # iPhone 的入口本来就填完整 URL（端口能改），安卓却只让填 IP、端口写死 45835 ——
+    # 电脑那边一旦换了端口，安卓就再也连不上，而且不会报错，只会一直转圈。
+    a25_body = _method_body(and_code_all, "void showEditPcIpDialog(")
+    a25_norm_body = _method_body(and_code_all, "String normalizePcAddress(")
+    # ① 保存的必须是「归一化之后」的地址，不是拿 IP 直接拼端口。
+    #    锁的是动作（都发生在 showEditPcIpDialog 体内），不锁内联写法 ——
+    #    上一版写成 setManualBaseUrl(normalizePcAddress(...) 才算过，
+    #    结果「先算到 url 变量再传」这种更常见的写法被误判成没做。
+    a25_norm = ("normalizePcAddress(" in a25_body and "setManualBaseUrl(" in a25_body)
+    # ② 归一化函数本身要真的能处理端口，三条缺一不可：
+    #    - 没写端口时兜底默认端口
+    #    - 写了端口就按用户写的走（indexOf(':') 分支）
+    #    - 用户直接粘一段 http://... 也认
+    a25_helper = ("OnlineGalleryClient.DEFAULT_PC_PORT" in a25_norm_body
+                  and "indexOf(':')" in a25_norm_body
+                  and 'startsWith("http://")' in a25_norm_body)
+    # ③ 手工改地址是高价值排障动作，必须留痕（Debug 回传铁律）
+    a25_logged = "online_manual_address" in a25_body
+    # ④ iPhone 那边的入口不能被顺手改没了
+    a25_ios = ("func configureServerUrl(" in ios_code_all
+               and "192.168.1.27:45835" in ios_code_all)
+    # ⑤ 两端的入口都还在（不是只有一端有）
+    a25_both = ("showEditPcIpDialog(" in and_code_all
+                and "configureServerUrl" in ios_code_all)
+
+    a25_overall = (a25_norm and a25_helper and a25_logged and a25_ios and a25_both)
+    results.append(check(
+        "A25 两端手工指定电脑地址对等（安卓支持 IP:端口，不再写死 45835）",
+        a25_overall,
+        "norm=%s helper=%s logged=%s ios=%s both=%s"
+        % (a25_norm, a25_helper, a25_logged, a25_ios, a25_both)))
+
     print()
     bad = results.count(False)
     if bad:

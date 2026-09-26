@@ -16,6 +16,7 @@
 #include "content_store.h"
 #include "send_to_integration.h"
 #include "remote_relay.h"
+#include "online_service.h"
 
 #include <algorithm>
 #include <atomic>
@@ -86,12 +87,29 @@ constexpr int IDC_SETTINGS_DARK_MODE = 410;
 constexpr int IDC_SETTINGS_DIAGNOSTICS = 411;
 constexpr int IDC_SETTINGS_CLOSE = 412;
 constexpr int IDC_SETTINGS_AUTO_MOBILE_UPDATE = 413;
+// 「设置 → 在线相册服务」：手机端「电脑在线相册」读的就是这个 Python 服务（默认 45835）。
+constexpr int IDC_SETTINGS_ONLINE_START = 414;
+constexpr int IDC_SETTINGS_ONLINE_STOP = 415;
+constexpr int IDC_SETTINGS_ONLINE_RESTART = 416;
+constexpr int IDC_SETTINGS_ONLINE_REFRESH = 417;
+constexpr int IDC_SETTINGS_ONLINE_BROWSER = 418;
+constexpr int IDC_SETTINGS_ONLINE_AUTOSTART = 419;
+constexpr int IDC_SETTINGS_ONLINE_PYTHON = 420;
+constexpr int IDC_SETTINGS_ONLINE_SCRIPT = 421;
+// 探测结果回传消息：探测走后台线程，探完 PostMessage 回 UI 线程
+constexpr UINT WM_ONLINE_PROBE_DONE = WM_APP + 11;
+constexpr UINT_PTR IDC_ONLINE_PROBE_TIMER = 1;
+constexpr int kOnlineProbeIntervalMs = 5000;
+// 探测序号只走低 32 位：WPARAM 在 32 位构建上是 unsigned int，
+// 拿 64 位原值去比被截断的 WPARAM 会永远不等，状态就再也不刷新了。
+constexpr unsigned long long kProbeSeqMask = 0xFFFFFFFFull;
+constexpr unsigned long long kProbeMinIntervalMs = 1000;
 constexpr int IDC_PICK_FILES = 203;
 constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.29";
+constexpr wchar_t APP_VERSION[] = L"4.3.30";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -241,6 +259,17 @@ HWND gSettingsAutoRestockCheck = nullptr;
 HWND gSettingsThresholdEdit = nullptr;
 HWND gSettingsAutoStartCheck = nullptr;
 HWND gSettingsDarkModeCheck = nullptr;
+// 在线相册服务：状态每 5 秒在后台线程探一次，探测回来再 PostMessage 回 UI 线程
+HWND gSettingsOnlineHeadline = nullptr;
+HWND gSettingsOnlineDetail = nullptr;
+HWND gSettingsOnlineAddress = nullptr;
+HWND gSettingsOnlinePythonPath = nullptr;
+HWND gSettingsOnlineScriptPath = nullptr;
+HWND gSettingsOnlineAutoStartCheck = nullptr;
+online_service::Config gOnlineConfig;
+online_service::ProbeResult gOnlineStatus;
+std::atomic<unsigned long long> gOnlineProbeSeq{0};
+std::atomic<unsigned long long> gLastOnlineProbeAtMs{0};
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
@@ -3534,6 +3563,37 @@ std::optional<std::filesystem::path> PickSingleFolder(HWND owner, const std::wst
     return result;
 }
 
+std::optional<std::filesystem::path> PickSingleFile(HWND owner, const wchar_t* title,
+                                                    const wchar_t* filterLabel,
+                                                    const std::wstring& pattern) {
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return std::nullopt;
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(title);
+    COMDLG_FILTERSPEC filter{};
+    std::wstring patternText = pattern.empty() ? std::wstring(L"*.*") : pattern;
+    filter.pszName = filterLabel;
+    filter.pszSpec = patternText.c_str();
+    dialog->SetFileTypes(1, &filter);
+    dialog->SetFileName(patternText.c_str());
+    std::optional<std::filesystem::path> result;
+    if (SUCCEEDED(dialog->Show(owner))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item))) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                result = std::filesystem::path(path);
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+    dialog->Release();
+    return result;
+}
+
 uint16_t ReadLe16(const unsigned char* value) {
     return static_cast<uint16_t>(value[0] | (static_cast<uint16_t>(value[1]) << 8));
 }
@@ -3922,6 +3982,10 @@ void ChooseArchiveRoot(HWND owner) {
     PostStatus(L"归档目录已设置：" + folder->wstring());
 }
 
+// 在线相册服务这一段的实现在设置窗口辅助函数之后（要用 AddSettingsText 那一套）
+void RefreshOnlineServiceSection();
+void StartOnlineProbe();
+
 void RefreshSettingsWindow() {
     if (!gSettingsWindow || !IsWindow(gSettingsWindow)) return;
     std::filesystem::path original = LibraryRoot();
@@ -3942,6 +4006,8 @@ void RefreshSettingsWindow() {
                  IsAutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(gSettingsDarkModeCheck, BM_SETCHECK,
                  gDarkMode ? BST_CHECKED : BST_UNCHECKED, 0);
+    RefreshOnlineServiceSection();
+    StartOnlineProbe();
 }
 
 HWND AddSettingsText(HWND parent, const wchar_t* text, int x, int y, int width, int height,
@@ -3967,13 +4033,119 @@ HWND AddSettingsGroup(HWND parent, const wchar_t* text, int x, int y, int width,
     return control;
 }
 
+// ------------------------------ 设置 → 在线相册服务 ------------------------------
+//
+// 手机端「电脑在线相册」读的是一个 Python 服务（默认 45835 端口）。在这之前它完全靠
+// scripts\ 下面的一堆 .cmd / .ps1 管着，客户端源码里连 45835 这个数字都没出现过 ——
+// 服务没起来时手机端只会一直转圈，用户既不知道要去点哪个黑框，也不知道该看哪个状态。
+// 现在状态、启停、重启、刷新、浏览器打开、开机自启、解释器与脚本路径全在这里。
+
+void ApplyOnlineStatusToUi() {
+    if (!IsWindow(gSettingsOnlineHeadline)) return;
+    SetWindowTextW(gSettingsOnlineHeadline,
+                   online_service::StatusHeadline(gOnlineStatus).c_str());
+    SetWindowTextW(gSettingsOnlineDetail,
+                   online_service::StatusDetail(gOnlineStatus, gOnlineConfig.port).c_str());
+    SetWindowTextW(gSettingsOnlineAddress,
+                   online_service::StatusAddress(gOnlineStatus, gOnlineConfig.port).c_str());
+}
+
+void StartOnlineProbe() {
+    if (!gSettingsWindow || !IsWindow(gSettingsWindow)) return;
+    // RefreshSettingsWindow 有十几个调用入口（选目录、改阈值、开窗口…），
+    // 不节流的话每次都会真的发一次本机 HTTP 请求。
+    const unsigned long long now = GetTickCount64();
+    const unsigned long long last = gLastOnlineProbeAtMs.load();
+    if (last && now - last < kProbeMinIntervalMs) return;
+    gLastOnlineProbeAtMs.store(now);
+    unsigned long long seq = ++gOnlineProbeSeq;
+    HWND target = gSettingsWindow;
+    int port = gOnlineConfig.port;
+    // 探测要发一次本机 HTTP 请求，放在 UI 线程上跑会让设置窗口卡住（服务假死时尤其明显）
+    std::thread([target, seq, port]() {
+        online_service::ProbeResult result = online_service::Probe(port);
+        if (!IsWindow(target)) return;
+        auto* payload = new online_service::ProbeResult(std::move(result));
+        if (!PostMessageW(target, WM_ONLINE_PROBE_DONE,
+                          static_cast<WPARAM>(seq & kProbeSeqMask),
+                          reinterpret_cast<LPARAM>(payload))) {
+            delete payload;  // 窗口没了就别把 payload 漏在堆上
+        }
+    }).detach();
+}
+
+void RefreshOnlineServiceSection() {
+    if (!IsWindow(gSettingsOnlineHeadline)) return;
+    SetWindowTextW(gSettingsOnlinePythonPath, gOnlineConfig.pythonPath.empty()
+                   ? L"尚未设置" : gOnlineConfig.pythonPath.c_str());
+    SetWindowTextW(gSettingsOnlineScriptPath, gOnlineConfig.scriptPath.empty()
+                   ? L"尚未设置" : gOnlineConfig.scriptPath.c_str());
+    SendMessageW(gSettingsOnlineAutoStartCheck, BM_SETCHECK,
+                 online_service::AutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+    ApplyOnlineStatusToUi();
+}
+
+void ChooseOnlinePython(HWND owner) {
+    auto file = PickSingleFile(owner, L"选择 Python 解释器（推荐 pythonw.exe，不会弹出黑框）",
+                               L"Python 解释器", L"pythonw.exe");
+    if (!file) return;
+    gOnlineConfig.pythonPath = file->wstring();
+    online_service::SaveConfig(gOnlineConfig);
+    RefreshOnlineServiceSection();
+    WriteDiagnosticLog(L"online_gallery_python_picked", file->wstring());
+}
+
+void ChooseOnlineScript(HWND owner) {
+    auto file = PickSingleFile(owner, L"选择在线相册服务脚本", L"Python 脚本",
+                               online_service::kServiceScriptName);
+    if (!file) return;
+    if (file->filename().wstring() != online_service::kServiceScriptName) {
+        MessageBoxW(owner,
+                    (std::wstring(L"要选的是 ") + online_service::kServiceScriptName +
+                     L"，当前选中的是 " + file->filename().wstring() + L"。").c_str(),
+                    L"在线相册服务", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    gOnlineConfig.scriptPath = file->wstring();
+    online_service::SaveConfig(gOnlineConfig);
+    RefreshOnlineServiceSection();
+    WriteDiagnosticLog(L"online_gallery_script_picked", file->wstring());
+}
+
+void RunOnlineServiceAction(HWND owner, const std::wstring& action) {
+    std::wstring error;
+    DWORD pid = 0;
+    bool ok = false;
+    if (action == L"start") {
+        ok = online_service::Start(gOnlineConfig, pid, error);
+    } else if (action == L"stop") {
+        ok = online_service::Stop(gOnlineConfig.port, error);
+    } else {
+        ok = online_service::Restart(gOnlineConfig, pid, error);
+    }
+    if (!ok) {
+        // 失败一定要留痕：这类问题只在用户机器上出现，日志是唯一的现场
+        WriteDiagnosticLog(L"online_gallery_" + action + L"_failed", error);
+        MessageBoxW(owner, error.c_str(), L"在线相册服务", MB_OK | MB_ICONERROR);
+        ApplyOnlineStatusToUi();
+        return;
+    }
+    WriteDiagnosticLog(L"online_gallery_" + action,
+                       pid ? (L"pid=" + std::to_wstring(pid)) : L"ok");
+    // 服务从启动到能响应要一两秒，先写「正在处理」，真状态交给 5 秒定时器刷新
+    gOnlineStatus = online_service::ProbeResult{};
+    SetWindowTextW(gSettingsOnlineHeadline, L"状态：正在处理，几秒后自动刷新…");
+    SetWindowTextW(gSettingsOnlineDetail, L"没动静就点「刷新」，或者看一眼上面的解释器与脚本路径。");
+    StartOnlineProbe();
+}
+
 LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
         case WM_CREATE: {
             gSettingsWindow = window;
             HWND title = AddSettingsText(window, L"设置", 24, 18, 420, 36);
             SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-            AddSettingsText(window, L"集中管理目录、更新、自动补货和软件偏好。日常收发操作仍在主界面完成。",
+            AddSettingsText(window, L"集中管理目录、更新、自动补货、在线相册服务和软件偏好。日常收发操作仍在主界面完成。",
                             24, 54, 690, 24);
 
             AddSettingsGroup(window, L"目录", 20, 86, 704, 144);
@@ -4016,22 +4188,69 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             AddSettingsText(window, L"自动补货只按精准流量类库存判断；默认低于 5 个，阈值范围 1–500。",
                             40, 420, 640, 22);
 
-            AddSettingsGroup(window, L"常规与软件", 20, 466, 704, 112);
+            AddSettingsGroup(window, L"在线相册服务（手机看电脑相册靠它）", 20, 466, 704, 222);
+            gSettingsOnlineHeadline = AddSettingsText(window, L"状态：正在探测…", 40, 492, 664, 24);
+            gSettingsOnlineDetail = AddSettingsText(window, L"", 40, 516, 664, 22);
+            // 地址那行用只读输入框而不是纯文本：手机自动扫不到电脑时，用户要能选中复制走
+            gSettingsOnlineAddress = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL, 40, 540, 664, 26, window,
+                nullptr, nullptr, nullptr);
+            SendMessageW(gSettingsOnlineAddress, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsText(window, L"解释器", 40, 574, 80, 24);
+            gSettingsOnlinePythonPath = AddSettingsText(window, L"尚未设置", 124, 574, 460, 24,
+                                                        SS_LEFT | SS_ENDELLIPSIS);
+            AddSettingsButton(window, L"更改…", IDC_SETTINGS_ONLINE_PYTHON, 600, 566, 104, 34);
+            AddSettingsText(window, L"脚本", 40, 604, 80, 24);
+            gSettingsOnlineScriptPath = AddSettingsText(window, L"尚未设置", 124, 604, 460, 24,
+                                                        SS_LEFT | SS_ENDELLIPSIS);
+            AddSettingsButton(window, L"更改…", IDC_SETTINGS_ONLINE_SCRIPT, 600, 596, 104, 34);
+            AddSettingsButton(window, L"启动", IDC_SETTINGS_ONLINE_START, 40, 634, 92, 34);
+            AddSettingsButton(window, L"停止", IDC_SETTINGS_ONLINE_STOP, 140, 634, 92, 34);
+            AddSettingsButton(window, L"重启", IDC_SETTINGS_ONLINE_RESTART, 240, 634, 92, 34);
+            AddSettingsButton(window, L"刷新", IDC_SETTINGS_ONLINE_REFRESH, 340, 634, 92, 34);
+            AddSettingsButton(window, L"浏览器打开", IDC_SETTINGS_ONLINE_BROWSER, 440, 634, 124, 34);
+            gSettingsOnlineAutoStartCheck = CreateWindowW(
+                L"BUTTON", L"开机自动启动服务", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                570, 638, 140, 24, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_ONLINE_AUTOSTART)),
+                nullptr, nullptr);
+            SendMessageW(gSettingsOnlineAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsText(window,
+                L"手机端「电脑在线相册」读的就是这个服务；改了端口或脚本要点「重启」才生效。",
+                40, 668, 664, 20);
+
+            AddSettingsGroup(window, L"常规与软件", 20, 698, 704, 112);
             gSettingsAutoStartCheck = CreateWindowW(L"BUTTON", L"开机自动启动",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 496, 160, 24, window,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 728, 160, 24, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTOSTART)), nullptr, nullptr);
             gSettingsDarkModeCheck = CreateWindowW(L"BUTTON", L"暗色模式",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 214, 496, 130, 24, window,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 214, 728, 130, 24, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_DARK_MODE)), nullptr, nullptr);
             SendMessageW(gSettingsAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             SendMessageW(gSettingsDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 490, 164, 36);
+            AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 722, 164, 36);
             AddSettingsText(window,
                 L"通用文件库与多设备收发工具；文件只在本机和已选设备间传输。",
-                40, 536, 650, 24);
+                40, 768, 650, 24);
 
-            AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 594, 120, 38);
+            AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 826, 120, 38);
+            // 配置（端口 / 解释器 / 脚本）存在 HKCU 里，第一次打开会自动探测并落盘
+            gOnlineConfig = online_service::LoadConfig();
+            SetTimer(window, IDC_ONLINE_PROBE_TIMER, kOnlineProbeIntervalMs, nullptr);
             RefreshSettingsWindow();
+            return 0;
+        }
+        case WM_TIMER:
+            if (wParam == IDC_ONLINE_PROBE_TIMER) StartOnlineProbe();
+            return 0;
+        case WM_ONLINE_PROBE_DONE: {
+            std::unique_ptr<online_service::ProbeResult> payload(
+                reinterpret_cast<online_service::ProbeResult*>(lParam));
+            // 过期的探测结果直接丢：慢的那一次回来得晚，会把新状态覆盖成旧的
+            const unsigned long long arrived = static_cast<unsigned long long>(wParam);
+            if (arrived != (gOnlineProbeSeq.load() & kProbeSeqMask)) return 0;
+            gOnlineStatus = *payload;
+            ApplyOnlineStatusToUi();
             return 0;
         }
         case WM_COMMAND: {
@@ -4104,6 +4323,27 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 ShellExecuteW(window, L"open", gLogPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 return 0;
             }
+            if (id == IDC_SETTINGS_ONLINE_PYTHON) { ChooseOnlinePython(window); return 0; }
+            if (id == IDC_SETTINGS_ONLINE_SCRIPT) { ChooseOnlineScript(window); return 0; }
+            if (id == IDC_SETTINGS_ONLINE_START) { RunOnlineServiceAction(window, L"start"); return 0; }
+            if (id == IDC_SETTINGS_ONLINE_STOP) { RunOnlineServiceAction(window, L"stop"); return 0; }
+            if (id == IDC_SETTINGS_ONLINE_RESTART) { RunOnlineServiceAction(window, L"restart"); return 0; }
+            if (id == IDC_SETTINGS_ONLINE_REFRESH) {
+                RefreshOnlineServiceSection();
+                StartOnlineProbe();
+                return 0;
+            }
+            if (id == IDC_SETTINGS_ONLINE_BROWSER) {
+                online_service::OpenInBrowser(gOnlineConfig.port);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_ONLINE_AUTOSTART) {
+                bool enabled = SendMessageW(gSettingsOnlineAutoStartCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                // 注意：这里写的是「pythonw + 服务脚本」，不是客户端本体
+                online_service::SetAutoStart(enabled, gOnlineConfig);
+                PostStatus(enabled ? L"已设置在线相册服务开机自启。" : L"已取消在线相册服务开机自启。");
+                return 0;
+            }
             if (id == IDC_SETTINGS_CLOSE) { DestroyWindow(window); return 0; }
             break;
         }
@@ -4151,6 +4391,13 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             gSettingsThresholdEdit = nullptr;
             gSettingsAutoStartCheck = nullptr;
             gSettingsDarkModeCheck = nullptr;
+            KillTimer(window, IDC_ONLINE_PROBE_TIMER);
+            gSettingsOnlineHeadline = nullptr;
+            gSettingsOnlineDetail = nullptr;
+            gSettingsOnlineAddress = nullptr;
+            gSettingsOnlinePythonPath = nullptr;
+            gSettingsOnlineScriptPath = nullptr;
+            gSettingsOnlineAutoStartCheck = nullptr;
             return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -4166,7 +4413,7 @@ void ShowSettingsWindow() {
     RECT owner{};
     GetWindowRect(gWindow, &owner);
     constexpr int width = 760;
-    constexpr int height = 690;
+    constexpr int height = 900;
     int x = owner.left + std::max(0L, ((owner.right - owner.left) - width) / 2);
     int y = owner.top + std::max(0L, ((owner.bottom - owner.top) - height) / 2);
     gSettingsWindow = CreateWindowExW(WS_EX_DLGMODALFRAME, SETTINGS_CLASS,
