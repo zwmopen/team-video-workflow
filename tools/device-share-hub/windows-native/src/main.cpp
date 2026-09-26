@@ -17,6 +17,8 @@
 #include "send_to_integration.h"
 #include "remote_relay.h"
 #include "online_service.h"
+#include "phone_panel.h"
+#include "desktop_shortcut.h"
 #include "update_check.h"
 
 #include <algorithm>
@@ -97,8 +99,15 @@ constexpr int IDC_SETTINGS_ONLINE_BROWSER = 418;
 constexpr int IDC_SETTINGS_ONLINE_AUTOSTART = 419;
 constexpr int IDC_SETTINGS_ONLINE_PYTHON = 420;
 constexpr int IDC_SETTINGS_ONLINE_SCRIPT = 421;
+// 在线手机面板
+constexpr int IDC_SETTINGS_PHONES_REFRESH = 422;
+constexpr int IDC_SETTINGS_PHONES_DRY = 423;
+constexpr int IDC_SETTINGS_PHONES_SYNC = 424;
+constexpr int IDC_SETTINGS_SHORTCUTS = 425;
 // 探测结果回传消息：探测走后台线程，探完 PostMessage 回 UI 线程
 constexpr UINT WM_ONLINE_PROBE_DONE = WM_APP + 11;
+// 在线手机面板的结果回传（扫描 / 同步都在后台线程，回来再 PostMessage）
+constexpr UINT WM_PHONE_PANEL_DONE = WM_APP + 12;
 constexpr UINT_PTR IDC_ONLINE_PROBE_TIMER = 1;
 constexpr int kOnlineProbeIntervalMs = 5000;
 // 探测序号只走低 32 位：WPARAM 在 32 位构建上是 unsigned int，
@@ -110,7 +119,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.31";
+constexpr wchar_t APP_VERSION[] = L"4.3.32";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -271,6 +280,20 @@ online_service::Config gOnlineConfig;
 online_service::ProbeResult gOnlineStatus;
 std::atomic<unsigned long long> gOnlineProbeSeq{0};
 std::atomic<unsigned long long> gLastOnlineProbeAtMs{0};
+// 在线手机面板的状态。gPhoneBusy 是「同一时刻只跑一个」的闸门：
+// 扫描 /24 要几秒、同步要几十秒，用户连点会把请求叠起来，而且后回来的
+// 慢结果会把先回来的新结果盖掉。
+HWND gSettingsPhonesHeadline = nullptr;
+HWND gSettingsPhonesList = nullptr;
+phone_panel::Panel gPhonePanel;
+std::wstring gPhoneSyncNote;
+std::atomic<bool> gPhoneBusy{false};
+
+struct PhonePanelPayload {
+    int kind = 0;                  // 0 = 面板扫描结果，1 = 次数同步结果
+    phone_panel::Panel panel;
+    phone_panel::SyncResult sync;
+};
 HWND gLibrarySendButton = nullptr;
 HWND gArchiveButton = nullptr;
 std::vector<std::filesystem::path> gLibraryItems;
@@ -4080,6 +4103,61 @@ HWND AddSettingsGroup(HWND parent, const wchar_t* text, int x, int y, int width,
     return control;
 }
 
+// ------------------------------ 设置窗口滚动（DSH-125） ------------------------------
+//
+// 为什么需要：设置窗口此前是**固定 900px 高、不能缩放**的，而内容底部在 y=864。
+// 在 1366x768 / 1440x900 这类笔记本上，窗口本身就比屏幕还高，底部的「常规与软件」
+// 分组和「关闭」按钮直接掉到屏幕外，而且因为没有 WS_THICKFRAME，用户拉都拉不回来。
+//
+// 做法：内容高度常量化 + 记住每个控件的初始 y + 滚动时整体平移。这样窗口可以缩到
+// 任意高度，内容照样能滚到，而且后面继续往设置里加分组也不用再算窗口高度。
+constexpr int kSettingsContentBottom = 1072;  // 最后一个控件（关闭按钮）的下沿
+constexpr int kSettingsScrollStep = 36;       // 滚轮一格 / 点箭头一次走的距离
+std::map<HWND, int> gSettingsBaseY;           // 控件 -> 初始 y（滚动偏移量基于它算）
+int gSettingsScrollY = 0;
+
+BOOL CALLBACK RecordSettingsRow(HWND child, LPARAM) {
+    RECT rect{};
+    if (!GetWindowRect(child, &rect)) return TRUE;
+    POINT top{rect.left, rect.top};
+    ScreenToClient(GetParent(child), &top);
+    gSettingsBaseY[child] = top.y;
+    return TRUE;
+}
+
+BOOL CALLBACK MoveSettingsRow(HWND child, LPARAM lParam) {
+    auto it = gSettingsBaseY.find(child);
+    if (it == gSettingsBaseY.end()) return TRUE;
+    RECT rect{};
+    if (!GetWindowRect(child, &rect)) return TRUE;
+    POINT top{rect.left, rect.top};
+    ScreenToClient(GetParent(child), &top);
+    SetWindowPos(child, nullptr, top.x, it->second - static_cast<int>(lParam), 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return TRUE;
+}
+
+// 滚动条范围、位置、控件平移三件事必须一起做，否则会出现「能滚但滚不到底」。
+void ApplySettingsScroll(HWND window) {
+    RECT client{};
+    GetClientRect(window, &client);
+    const int visible = client.bottom - client.top;
+    const int maxScroll = std::max(0, kSettingsContentBottom + 16 - visible);
+    gSettingsScrollY = std::clamp(gSettingsScrollY, 0, maxScroll);
+
+    SCROLLINFO info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    info.nMin = 0;
+    info.nMax = maxScroll;
+    info.nPage = static_cast<UINT>(std::max(1, visible));
+    info.nPos = gSettingsScrollY;
+    SetScrollInfo(window, SB_VERT, &info, TRUE);
+
+    EnumChildWindows(window, MoveSettingsRow, static_cast<LPARAM>(gSettingsScrollY));
+    InvalidateRect(window, nullptr, TRUE);
+}
+
 // ------------------------------ 设置 → 在线相册服务 ------------------------------
 //
 // 手机端「电脑在线相册」读的是一个 Python 服务（默认 45835 端口）。在这之前它完全靠
@@ -4186,6 +4264,117 @@ void RunOnlineServiceAction(HWND owner, const std::wstring& action) {
     StartOnlineProbe();
 }
 
+void CreateDesktopShortcuts(HWND owner);
+
+// 在桌面生成三个在线相册入口（启动 / 状态 / 开机自启）。
+// 以前这件事要靠 scripts\create-desktop-shortcuts.py 手动跑，而那个脚本又依赖
+// pywin32；现在直接用 IShellLink 生成，装了客户端就有。
+void CreateDesktopShortcuts(HWND owner) {
+    std::error_code ec;
+    std::wstring scriptsDir;
+    // 优先用已经配置好的脚本路径：它的父目录就是 scripts。
+    // 这样即便用户把脚本挪到别处，图标指的还是他真正在用的那份。
+    if (!gOnlineConfig.scriptPath.empty() &&
+        std::filesystem::exists(std::filesystem::path(gOnlineConfig.scriptPath), ec)) {
+        scriptsDir = std::filesystem::path(gOnlineConfig.scriptPath).parent_path().wstring();
+    }
+    if (scriptsDir.empty()) {
+        // 没配置过就按 exe 所在位置逐级向上找（开发期与发布期的目录层数不一样）
+        for (const auto& candidate : online_service::ScriptCandidates(
+                 online_service::ModuleDirectory())) {
+            if (std::filesystem::exists(candidate, ec)) {
+                scriptsDir = std::filesystem::path(candidate).parent_path().wstring();
+                break;
+            }
+        }
+    }
+    if (scriptsDir.empty()) {
+        MessageBoxW(owner,
+                    L"没找到 scripts 目录（在线相册服务的脚本都在这里面）。\n\n"
+                    L"请先在上面「在线相册服务」里把脚本路径选好，再点这个按钮。",
+                    L"桌面快捷方式", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    auto specs = desktop_shortcut::DefaultSpecs(scriptsDir);
+    // desktop 传空 ⇒ 由实现自己取「当前用户桌面」。不写 Public 桌面：
+    // 那要管理员权限，会弹 UAC，而这里只是放三个图标。
+    auto outcome = desktop_shortcut::Create(specs, scriptsDir, std::wstring());
+    std::wstring message;
+    if (outcome.failed == 0) {
+        message = L"已在桌面创建 " + std::to_wstring(outcome.created) + L" 个快捷方式。";
+    } else {
+        message = outcome.firstError;
+    }
+    if (!outcome.detail.empty()) message += L"\n\n" + outcome.detail;
+    MessageBoxW(owner, message.c_str(), L"桌面快捷方式",
+                outcome.failed == 0 ? MB_OK | MB_ICONINFORMATION : MB_OK | MB_ICONWARNING);
+    WriteDiagnosticLog(L"desktop_shortcuts",
+                       L"created=" + std::to_wstring(outcome.created) +
+                       L" failed=" + std::to_wstring(outcome.failed));
+}
+
+void StartPhonePanelRefresh(bool forceScan);
+void StartPhoneCountSync(bool dryRun);
+
+// 把手机列表与同步结果渲染到那块只读输入框里。
+void ApplyPhonePanelToUi() {
+    if (!IsWindow(gSettingsPhonesHeadline)) return;
+    SetWindowTextW(gSettingsPhonesHeadline, phone_panel::PanelHeadline(gPhonePanel).c_str());
+    std::wstring text;
+    for (const auto& device : gPhonePanel.devices) {
+        if (!text.empty()) text += L"\r\n";
+        text += phone_panel::DeviceLine(device);
+    }
+    std::wstring warning = phone_panel::PanelWarning(gPhonePanel);
+    if (!warning.empty()) {
+        if (!text.empty()) text += L"\r\n";
+        text += L"[注意] " + warning;
+    }
+    if (!gPhoneSyncNote.empty()) {
+        if (!text.empty()) text += L"\r\n";
+        text += gPhoneSyncNote;
+    }
+    if (text.empty()) text = L"（现在没有手机在线）";
+    SetWindowTextW(gSettingsPhonesList, text.c_str());
+}
+
+void StartPhonePanelRefresh(bool forceScan) {
+    if (!gSettingsWindow || !IsWindow(gSettingsWindow)) return;
+    if (gPhoneBusy.exchange(true)) return;  // 已经在跑，别把请求叠起来
+    HWND target = gSettingsWindow;
+    int port = gOnlineConfig.port;
+    std::thread([target, port, forceScan]() {
+        auto panel = phone_panel::FetchPhones(port, forceScan);
+        auto* payload = new PhonePanelPayload();
+        payload->kind = 0;
+        payload->panel = std::move(panel);
+        if (!IsWindow(target) ||
+            !PostMessageW(target, WM_PHONE_PANEL_DONE, 0, reinterpret_cast<LPARAM>(payload))) {
+            delete payload;
+            gPhoneBusy.store(false);   // 没人收就得自己解锁，否则按钮永远点不动
+        }
+    }).detach();
+}
+
+void StartPhoneCountSync(bool dryRun) {
+    if (!gSettingsWindow || !IsWindow(gSettingsWindow)) return;
+    if (gPhoneBusy.exchange(true)) return;
+    HWND target = gSettingsWindow;
+    int port = gOnlineConfig.port;
+    // hosts 传空 ⇒ 服务端自己扫在线手机，跟面板看到的保持一致
+    std::thread([target, port, dryRun]() {
+        auto result = phone_panel::SyncCounts(port, dryRun, {});
+        auto* payload = new PhonePanelPayload();
+        payload->kind = 1;
+        payload->sync = std::move(result);
+        if (!IsWindow(target) ||
+            !PostMessageW(target, WM_PHONE_PANEL_DONE, 0, reinterpret_cast<LPARAM>(payload))) {
+            delete payload;
+            gPhoneBusy.store(false);
+        }
+    }).detach();
+}
+
 LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
         case WM_CREATE: {
@@ -4266,25 +4455,49 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 L"手机端「电脑在线相册」读的就是这个服务；改了端口或脚本要点「重启」才生效。",
                 40, 668, 664, 20);
 
-            AddSettingsGroup(window, L"常规与软件", 20, 698, 704, 112);
+            AddSettingsGroup(window, L"在线手机（看谁在看你的电脑相册）", 20, 698, 704, 198);
+            gSettingsPhonesHeadline = AddSettingsText(window, L"在线手机：尚未扫描", 40, 724, 664, 24);
+            // 设备列表用只读多行输入框而不是列表框：一台一行、长的会截断，
+            // 而用户经常要整段复制走（比如发给别人排查）。
+            gSettingsPhonesList = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY |
+                    ES_AUTOVSCROLL,
+                40, 752, 664, 88, window, nullptr, nullptr, nullptr);
+            SendMessageW(gSettingsPhonesList, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
+            AddSettingsButton(window, L"刷新", IDC_SETTINGS_PHONES_REFRESH, 40, 850, 92, 34);
+            AddSettingsButton(window, L"预演同步", IDC_SETTINGS_PHONES_DRY, 140, 850, 110, 34);
+            AddSettingsButton(window, L"同步次数", IDC_SETTINGS_PHONES_SYNC, 258, 850, 110, 34);
+            AddSettingsText(window,
+                L"手机在本地相册分享过的次数，点「同步次数」回写到电脑（只补次数，不动文件）。",
+                378, 856, 330, 40);
+
+            AddSettingsGroup(window, L"常规与软件", 20, 906, 704, 112);
             gSettingsAutoStartCheck = CreateWindowW(L"BUTTON", L"开机自动启动",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 728, 160, 24, window,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 40, 936, 160, 24, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_AUTOSTART)), nullptr, nullptr);
             gSettingsDarkModeCheck = CreateWindowW(L"BUTTON", L"暗色模式",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 214, 728, 130, 24, window,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 214, 936, 130, 24, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SETTINGS_DARK_MODE)), nullptr, nullptr);
             SendMessageW(gSettingsAutoStartCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             SendMessageW(gSettingsDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
-            AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 722, 164, 36);
+            AddSettingsButton(window, L"桌面快捷方式", IDC_SETTINGS_SHORTCUTS, 350, 928, 180, 36);
+            AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 930, 164, 36);
             AddSettingsText(window,
                 L"通用文件库与多设备收发工具；文件只在本机和已选设备间传输。",
-                40, 768, 650, 24);
+                40, 976, 650, 24);
 
-            AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 826, 120, 38);
+            AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 1034, 120, 38);
             // 配置（端口 / 解释器 / 脚本）存在 HKCU 里，第一次打开会自动探测并落盘
             gOnlineConfig = online_service::LoadConfig();
             SetTimer(window, IDC_ONLINE_PROBE_TIMER, kOnlineProbeIntervalMs, nullptr);
+            // 控件都建完了才记录初始 y：早一步会漏掉后面建的，滚动时那些控件就不动
+            gSettingsBaseY.clear();
+            gSettingsScrollY = 0;
+            EnumChildWindows(window, RecordSettingsRow, 0);
             RefreshSettingsWindow();
+            ApplySettingsScroll(window);
+            // 打开设置就顺手扫一次：用户点进来多半就是想看「手机在不在线」
+            StartPhonePanelRefresh(false);
             return 0;
         }
         case WM_TIMER:
@@ -4391,6 +4604,16 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 PostStatus(enabled ? L"已设置在线相册服务开机自启。" : L"已取消在线相册服务开机自启。");
                 return 0;
             }
+            if (id == IDC_SETTINGS_PHONES_REFRESH) {
+                // 点刷新就是想看「此刻」：丢掉服务端 30 秒缓存重扫整个网段。
+                // 「同一时刻只跑一个」由 StartPhonePanelRefresh 里的闸门管，
+                // 这里不要重复判一次 —— 判了又立刻解锁等于给自己埋竞态。
+                StartPhonePanelRefresh(true);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_PHONES_DRY) { StartPhoneCountSync(true); return 0; }
+            if (id == IDC_SETTINGS_SHORTCUTS) { CreateDesktopShortcuts(window); return 0; }
+            if (id == IDC_SETTINGS_PHONES_SYNC) { StartPhoneCountSync(false); return 0; }
             if (id == IDC_SETTINGS_CLOSE) { DestroyWindow(window); return 0; }
             break;
         }
@@ -4417,6 +4640,56 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             SetBkColor(dc, theme.listBg);
             if (!gEditBrush) UpdateBgBrush();
             return reinterpret_cast<LRESULT>(gEditBrush);
+        }
+        case WM_SIZE:
+            // 窗口被拉小 / 最大化 / 系统 DPI 变化都会走这里，重算一次滚动范围
+            ApplySettingsScroll(window);
+            return 0;
+        case WM_MOUSEWHEEL: {
+            int wheel = GET_WHEEL_DELTA_WPARAM(wParam);
+            gSettingsScrollY -= (wheel / WHEEL_DELTA) * kSettingsScrollStep;
+            ApplySettingsScroll(window);
+            return 0;
+        }
+        case WM_VSCROLL: {
+            RECT client{};
+            GetClientRect(window, &client);
+            const int page = std::max(1, (client.bottom - client.top) - kSettingsScrollStep);
+            switch (LOWORD(wParam)) {
+                case SB_LINEUP: gSettingsScrollY -= kSettingsScrollStep; break;
+                case SB_LINEDOWN: gSettingsScrollY += kSettingsScrollStep; break;
+                case SB_PAGEUP: gSettingsScrollY -= page; break;
+                case SB_PAGEDOWN: gSettingsScrollY += page; break;
+                case SB_THUMBTRACK:
+                case SB_THUMBPOSITION: gSettingsScrollY = HIWORD(wParam); break;
+                case SB_TOP: gSettingsScrollY = 0; break;
+                case SB_BOTTOM: gSettingsScrollY = kSettingsContentBottom; break;
+                default: break;
+            }
+            ApplySettingsScroll(window);
+            return 0;
+        }
+        case WM_GETMINMAXINFO: {
+            // 可以给缩放了，但不能让人拉成一个什么都看不见的小条
+            auto* limits = reinterpret_cast<MINMAXINFO*>(lParam);
+            limits->ptMinTrackSize.x = 620;
+            limits->ptMinTrackSize.y = 420;
+            return 0;
+        }
+        case WM_PHONE_PANEL_DONE: {
+            std::unique_ptr<PhonePanelPayload> payload(
+                reinterpret_cast<PhonePanelPayload*>(lParam));
+            gPhoneBusy.store(false);
+            if (payload->kind == 0) {
+                gPhonePanel = std::move(payload->panel);
+                ApplyPhonePanelToUi();
+                return 0;
+            }
+            // 同步完把结果留在面板下方的列表里，并顺手刷新一次手机列表
+            gPhoneSyncNote = L"[同步] " + phone_panel::SyncSummary(payload->sync);
+            ApplyPhonePanelToUi();
+            StartPhonePanelRefresh(false);
+            return 0;
         }
         case WM_ERASEBKGND: {
             RECT client{};
@@ -4445,6 +4718,11 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             gSettingsOnlinePythonPath = nullptr;
             gSettingsOnlineScriptPath = nullptr;
             gSettingsOnlineAutoStartCheck = nullptr;
+            gSettingsPhonesHeadline = nullptr;
+            gSettingsPhonesList = nullptr;
+            gPhoneSyncNote.clear();
+            gSettingsBaseY.clear();
+            gSettingsScrollY = 0;
             return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -4459,13 +4737,29 @@ void ShowSettingsWindow() {
     }
     RECT owner{};
     GetWindowRect(gWindow, &owner);
-    constexpr int width = 760;
-    constexpr int height = 900;
-    int x = owner.left + std::max(0L, ((owner.right - owner.left) - width) / 2);
-    int y = owner.top + std::max(0L, ((owner.bottom - owner.top) - height) / 2);
+    // ⚠️ 以前这里写死 760x900 且不带 WS_THICKFRAME：笔记本（1366x768、1440x900）上
+    //    窗口比屏幕还高，底部一截直接掉到屏幕外，用户还没法把窗口拉大 —— 属于
+    //    「功能其实都有，但根本点不到」。现在按屏幕可用工作区定初始尺寸，并允许缩放。
+    RECT work{};
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) ||
+        work.right - work.left < 320 || work.bottom - work.top < 320) {
+        // 拿不到工作区就退回一个肯定放得下的尺寸，绝不能算出 280px 宽的窄条
+        work.left = 0; work.top = 0; work.right = 1280; work.bottom = 800;
+    }
+    const long workWidth = work.right - work.left;
+    const long workHeight = work.bottom - work.top;
+    // 内容右沿在 744（含 20 的边距），760 减去滚动条宽度后刚好放得下
+    const int width = static_cast<int>(std::clamp<long>(workWidth - 40, 560, 760));
+    const int height = static_cast<int>(std::clamp<long>(workHeight - 60, 480, 900));
+    // 优先居中在主窗口上；主窗口自己贴着屏幕边缘时退回在工作区里居中
+    int x = owner.left + ((owner.right - owner.left) - width) / 2;
+    int y = owner.top + ((owner.bottom - owner.top) - height) / 2;
+    if (x < work.left) x = work.left + std::max(0, (workWidth - width) / 2);
+    if (y < work.top) y = work.top + std::max(0, (workHeight - height) / 2);
     gSettingsWindow = CreateWindowExW(WS_EX_DLGMODALFRAME, SETTINGS_CLASS,
         (L"设置 · 文件收发中控 V" + std::wstring(APP_VERSION)).c_str(),
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX |
+            WS_THICKFRAME | WS_VSCROLL,
         x, y, width, height, gWindow, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!gSettingsWindow) return;
     ShowWindow(gSettingsWindow, SW_SHOW);
