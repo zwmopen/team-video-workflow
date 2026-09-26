@@ -1,20 +1,29 @@
-# 文件收发中控（当前源码候选：Android 0.8.44 / iPhone 0.8.25）
+# 文件收发中控（当前版本：Android 0.8.61 / iPhone 0.8.44）
 
-当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。本轮源码候选为 Android 0.8.44 / versionCode 155、iPhone 0.8.25 / build 96；iOS 侧改动尚未完成云端构建与实体手机验收。
+> 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
+> 本轮源码候选：**Android 0.8.61 / versionCode 172**、**iPhone 0.8.44 / build 116**。
+> 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
-本轮仅修复 iOS 在线相册的两处真机缺陷：多版本文案（`<<<COPY_FORMAT:MULTI>>>`）被当成「非协议文本」，导致 11 个版本塌成一个「乱码」按钮；以及点发布只带入第一张图。解析器已与 Android 1:1 对齐，不改变传送协议、作品库数据格式与更新协议。
+## 手机是怎么拿到新版本的（一句话版）
 
-Android、iPhone 和 Windows 统一读取正式更新入口。为兼容仍运行旧测试通道的设备，`latest-beta.json` 与 `altstore-beta.json` 也已同步到同一正式版本，不再产生第二套包或版本。
+**电脑有代理能出网，手机没有。** 所以由电脑上的在线相册服务（`:45835`）替手机去 GitHub 取
+「发布清单 + 安装包」，再从局域网原样端给手机。
+
+没有这层中转，手机会一直停在旧版本**并且不报任何错** —— 表现就是点「检查更新」
+永远回答「已是最新」（实测：仓库已 0.8.61，手机卡在 0.8.58 长达数日无人察觉）。
+
+原理、接口、健康自查和排障手册全部写在 **`docs/LAN_UPDATE_RELAY.md`**。
 
 ## 更新入口
 
-- Android、iPhone 和 Windows：使用 <https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json>。
-- iPhone AltStore：使用 <https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json>。
-- iOS 仍需要 AltStore/AltServer 或 Sideloadly 使用用户自己的 Apple ID 完成签名；Android 下载后由系统确认安装。应用不能静默替换自身。
-
-桌面当前包位于 `C:\Users\z\Desktop`：`album-Android-v0.6.62.apk`、`album-iOS-v0.6.45-altstore.ipa`。两者哈希已与发布索引一致。
-
-当前机器已运行 AltServer 与 Sideloadly 后台服务，但本次检查没有发现实体 iPhone 或 Android 设备，因此续签、覆盖安装和真机传输不能在没有设备的情况下宣称完成。设备解锁、信任电脑并启用 Wi‑Fi 同步后，再进行现场验收。
+- **Android / iPhone（推荐，走局域网中转）**：`http://<电脑局域网IP>:45835/latest.json`
+- **Android / iPhone（回落，手机上通常不可达）**：<https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json>
+- **iPhone AltStore**：<https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json>，或走中转的 `/altstore.json`
+- **安装包**：中转 `/download/apk`、`/download/ipa`；或 GitHub Releases 原地址
+- iOS 仍需 AltStore/AltServer 或 Sideloadly 用用户自己的 Apple ID 完成签名；Android 下载后由系统确认安装。
+  **应用不能静默替换自身 —— iPhone 尤其永远不会自己升级，只能电脑侧载。**
+- 源码推送后由 GitHub Actions 在云端完成三端构建；构建通过后发布版本化 APK/IPA、`SHA256SUMS.txt` 和 `latest.json`。
+  电脑侧 5 分钟取一次清单（`UPDATE_MANIFEST_TTL = 300`），不轮询安装。
 
 ## 当前能力边界
 
