@@ -69,6 +69,17 @@ enum RemoteIdentity {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess else { return nil }
-        return result as! SecKey
+        // 【DSH-118】此处原本是 `result as! SecKey` 强制解包：
+        // SecItemCopyMatching 返回成功只代表**查到了匹配项**，不代表它一定是 SecKey
+        // （设备上若存在同 applicationTag 的证书 / 通用密码项就会命中别的类型），
+        // 此时 as! 直接崩溃，而且只在特定机型 + 特定历史数据下才复现，极难排查。
+        // 改成先确认 CF 类型再转换：类型不对就当没取到，走重新生成密钥的分支。
+        guard let key = result else { return nil }
+        guard CFGetTypeID(key) == SecKeyGetTypeID() else {
+            print("[RemoteIdentity] 钥匙串同 tag 的项不是 SecKey（typeID=\(CFGetTypeID(key))），忽略")
+            return nil
+        }
+        // 上面已确认过 CF 类型，这里的强转不会再有崩溃风险
+        return (key as! SecKey)
     }
 }

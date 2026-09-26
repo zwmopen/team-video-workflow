@@ -164,7 +164,15 @@ final class RemoteRelayClient {
             semaphore.signal()
         }
         task.resume()
-        semaphore.wait()
+        let waitDeadline: DispatchTime = .now() + objectTimeout + 15
+        // 【DSH-118】原本是 `semaphore.wait()` 无超时：只要回调因为任何原因不来
+        // （网络栈卡死 / 进程被挂起 / 后台任务被系统回收），这个线程就永久挂住，
+        // 界面停在「正在下载…」转圈，既不报错也不超时，只能杀 App。
+        // 给一个比 HTTP 资源超时略宽的兜底窗口，超时即取消任务并显式抛错。
+        if semaphore.wait(timeout: waitDeadline) == .timedOut {
+            task.cancel()
+            throw RemoteRelayError.remote("远程对象下载超时（\(Int(objectTimeout) + 15) 秒无响应）")
+        }
         if let error = responseError { throw error }
         guard (200..<300).contains(responseStatus), let source = downloadedURL else {
             throw RemoteRelayError.remote("远程文件下载失败 \(responseStatus)")
@@ -240,7 +248,13 @@ final class RemoteRelayClient {
             semaphore.signal()
         }
         task.resume()
-        semaphore.wait()
+        let waitDeadline: DispatchTime = .now() + connectTimeout + readTimeout + 15
+        // 【DSH-118】同上：这一条是**所有中继 JSON 请求**的公共出口，
+        // 无超时会把整个 relay 链路（列目录 / 取状态 / 提交）拖成假死。
+        if semaphore.wait(timeout: waitDeadline) == .timedOut {
+            task.cancel()
+            throw RemoteRelayError.remote("中继请求超时（\(Int(connectTimeout + readTimeout) + 15) 秒无响应）")
+        }
         if let error = responseError { throw error }
         guard responseData.count <= maxResponseBytes else {
             throw RemoteRelayError.responseTooLarge

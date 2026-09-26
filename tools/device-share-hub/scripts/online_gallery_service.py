@@ -321,6 +321,11 @@ GZIP_MIN_BYTES = 1024
 # 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 60 秒轮询一次，发现增删改就
 # scan(force=True) 主动作废缓存，所以放宽 TTL **不会**让手机看到更旧的数据。
 SCAN_CACHE_TTL = 30.0
+# DSH-117：refresh=1（强制全盘扫描）的最小间隔。
+# 手机端下拉刷新连点、或多部手机同一秒一起下拉，会在几秒内叠 N 次 5~10 秒的全盘
+# 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
+# 限速后：窗口内的第二次及以后一律读缓存（数据新鲜度仍由 60 秒 watchdog 兜底）。
+FORCE_SCAN_MIN_INTERVAL = 3.0
 _WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard")
 
 # gzip 结果缓存。实测瘦身后的全量列表 1568.5 KB，gzip.compress(body, 6) 要烧约 66 ms CPU，
@@ -1015,6 +1020,39 @@ def read_garbage_meta(dir_path: str) -> Dict[str, Any]:
     return info
 
 
+# DSH-117：扫描期被跳过的异常目录留痕（Debug 回传铁律：错误路径必须有诊断日志）。
+# 此前「一个目录炸掉 ⇒ 整轮扫描被外层 try 吞掉」是**零报错**的，用户只会看到
+# 「作品少了」却查不到任何线索。这里保留最近 50 条，并由 /api/online/status 外抛。
+_SCAN_ERRORS: "deque" = None  # 延迟到下方 import 完成后初始化
+
+
+def _scan_error(tag: str, path: str, exc: "Exception") -> None:
+    """记录一次被跳过的扫描异常（有界，不增长、不落盘、不阻塞）。"""
+    global _SCAN_ERRORS
+    try:
+        if _SCAN_ERRORS is None:
+            from collections import deque as _dq
+            _SCAN_ERRORS = _dq(maxlen=50)
+        _SCAN_ERRORS.append({
+            "t": int(time.time()),
+            "tag": tag,
+            "path": str(path)[:300],
+            "err": "%s: %s" % (type(exc).__name__, exc),
+        })
+    except Exception:
+        pass
+    try:
+        print("[Scan] 跳过异常目录 [%s] %s -> %s: %s" % (tag, path, type(exc).__name__, exc))
+    except Exception:
+        pass
+
+
+def scan_errors() -> Dict[str, Any]:
+    """供 /api/online/status 外抛：一眼看出扫描链路有没有在静默吞异常。"""
+    items = list(_SCAN_ERRORS) if _SCAN_ERRORS else []
+    return {"count": len(items), "recent": items[-10:]}
+
+
 class WorkScanner:
     """负责扫描成品库「可发布」作品与元数据。
 
@@ -1032,11 +1070,18 @@ class WorkScanner:
 
     def __init__(self, root: str):
         self.root = os.path.abspath(root)
-        self._lock = threading.Lock()
+        # 【DSH-117】必须是**可重入锁**：get_work() 已经持有 _lock 时内部会再调
+        # scan()，而 scan() 开头又要拿同一把锁 —— 普通 Lock 非重入 ⇒ 自死锁。
+        # 现场：服务刚起、缓存还没建时，手机端点开任意一个作品详情，
+        # 整个 45835 端口就此永久卡死（不报错、不超时、线程数只增不减）。
+        self._lock = threading.RLock()
         self._cached_works: List[Dict[str, Any]] = []
         self._works_by_id: Dict[str, Dict[str, Any]] = {}
         self._moved_works: Dict[str, Dict[str, Any]] = {}
         self._last_scan_time = 0.0
+        # DSH-117：HTTP 入口 refresh=1 的强制扫描限速（FORCE_SCAN_MIN_INTERVAL 秒一次）
+        self._last_force_scan = 0.0
+        self._force_scan_throttled = 0
         # 在线回收站各 Tab 的列表缓存：{folder: (时间戳, 作品列表)}
         # 阶段库作品数可达 500+，每条都要读文案文件，不缓存的话手机每次切 Tab 都要等 1.5s+
         self._stage_cache: Dict[str, Any] = {}
@@ -1239,6 +1284,35 @@ class WorkScanner:
                         return w
             return None
 
+    def snapshot_count(self) -> int:
+        """只读计数：缓存已建立就直接返回，**绝不触发全盘扫描**。
+
+        /api/online/status 是手机端几秒一次的健康心跳，此前每次都走 scan()：
+        冷缓存时单次要 5~10 秒，两三部手机同探就把 45835 打满，表现为
+        「正在连接电脑在线相册…」一直转圈。缓存没建立时（进程刚起、还没预热）
+        才退化成一次同步扫描，保证 totalWorks 一开始就是对的。
+        """
+        with self._lock:
+            if self._cached_works:
+                return len(self._cached_works)
+        return len(self.scan())
+
+    def scan_throttled(self, force: bool = False) -> List[Dict[str, Any]]:
+        """HTTP 入口专用：把 refresh=1 的强制全盘扫描限速到 FORCE_SCAN_MIN_INTERVAL 秒一次。
+
+        只包 HTTP 入口、不包 scan() 本身，是为了让单测里连续 scan(force=True)
+        仍然是「真的重扫」—— 限速是**入口流量整形**，不是扫描语义。
+        """
+        if force:
+            now = time.time()
+            with self._lock:
+                if self._last_force_scan and (now - self._last_force_scan < FORCE_SCAN_MIN_INTERVAL):
+                    self._force_scan_throttled += 1
+                    force = False
+                else:
+                    self._last_force_scan = now
+        return self.scan(force=force)
+
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
         with self._lock:
@@ -1309,7 +1383,15 @@ class WorkScanner:
                     full_path = os.path.join(self.root, entry)
                     if not os.path.isdir(full_path):
                         continue
-                    work = self._inspect_work_dir(full_path, entry, "待首发", 0)
+                    try:
+                        work = self._inspect_work_dir(full_path, entry, "待首发", 0)
+                    except Exception as _e:
+                        # 【DSH-117】单个目录异常（权限 / 非法编码名 / 删到一半）
+                        # 不能再连坐整轮扫描：此前外层 try 会直接吞掉整个循环，
+                        # 让根目录直出的成品「整套消失」且**零报错**；
+                        # 而 stage0 分支因为有内层 try 安然无恙 —— 两端行为不一致。
+                        _scan_error("root-entry", full_path, _e)
+                        work = None
                     if work and work["id"] not in seen_ids:
                         seen_ids.add(work["id"])
                         results.append(work)
@@ -1715,6 +1797,42 @@ def _dir_size_bytes(root_path: str) -> int:
     return total
 
 
+def _normalize_sync_host(raw: str) -> Optional[str]:
+    """把 "192.168.1.50" / "192.168.1.50:45833" 归一化成 "ip:port"；
+    非私网地址一律返回 None（DSH-117 SSRF 收敛）。
+
+    背景：/api/online/sync-phone-counts 会让**电脑端**主动向请求里的 host 发 HTTP。
+    不加校验时，任何能访问 45835 的人都能拿这台电脑当跳板去打任意地址
+    （内网端口扫描 + 探测路由器/NAS/摄像头），而电脑自己毫无察觉。
+    """
+    s = (raw or "").strip()
+    if not s or "://" in s or "/" in s:
+        return None
+    host, port = s, None
+    if ":" in s:
+        host, _, p = s.rpartition(":")
+        if not p.isdigit():
+            return None
+        port = int(p)
+        if not (1 <= port <= 65535):
+            return None
+    octets = host.split(".")
+    if len(octets) != 4 or not all(o.isdigit() for o in octets):
+        return None
+    nums = [int(o) for o in octets]
+    if not all(0 <= n <= 255 for n in nums):
+        return None
+    private = (
+        nums[0] == 10
+        or (nums[0] == 172 and 16 <= nums[1] <= 31)
+        or (nums[0] == 192 and nums[1] == 168)
+        or (nums[0] == 169 and nums[1] == 254)
+    )
+    if not private:
+        return None
+    return "%s:%d" % (host, port or phone_sync.PHONE_ALBUM_PORT)
+
+
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
     scanner: WorkScanner = None
     # 手机在线发现缓存（30s TTL）：面板与「顺手回读」共用，避免每次请求都全量扫网段
@@ -1739,7 +1857,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_json(self, status: int, data: Any):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        try:
+            body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        except Exception as _je:
+            # 【DSH-117】目录名含代理项/非法 UTF-8 时 json.dumps 会抛异常，
+            # 此前整条响应直接 500（连接被重置）⇒ 手机端「列表空白、无任何报错」。
+            # 三级降级：留痕 → 未知类型 str() 化 → 最小可解析错误体。
+            _scan_error("send_json", "", _je)
+            try:
+                body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8", "replace")
+            except Exception:
+                body = json.dumps(
+                    {"ok": False, "error": "响应序列化失败（详见 status.scanErrors）"},
+                    ensure_ascii=False).encode("utf-8")
         # 【传输层瘦身】2026-09-20：/api/online/works 全量裸发实测 **2751.8 KB**，
         # 手机端「正在连接电脑在线相册…」的绝大部分时间其实是在等这 2.75 MB 过 Wi-Fi。
         # 两步治理（实测）：剥离 searchBlob/slotGuard → 1568.5 KB；再按协商开 gzip
@@ -1871,17 +2001,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         if path == "/" or path == "/api/online/status":
-            works = self.scanner.scan()
+            # 【DSH-117】status 是手机端几秒一次的心跳，此前每次都走全量 scan()。
+            # 改为只读缓存计数（启动预热 + 60 秒 watchdog 保证缓存恒非空）。
+            total_works = self.scanner.snapshot_count()
             ip = get_local_ip()
             # 手机每次联上来都顺手回读一次它的本地分享次数（后台线程，不拖慢响应）
             self._maybe_background_phone_sync(self.client_address[0] if self.client_address else "")
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.1.0",
+                "version": "1.2.0",
                 "ip": ip,
                 "port": self.server.server_port,
-                "totalWorks": len(works),
+                "totalWorks": total_works,
                 "libraryRoot": self.scanner.root,
                 "timestamp": int(time.time()),
                 # 能力清单：手机端可据此决定是否显示「同步次数 / 在线状态」等入口，
@@ -1908,6 +2040,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "watchdog": self.scanner.watchdog_status(),
                 # DSH-113：手机 OTA 中转健康度（手机拿不到 GitHub，只能靠电脑代取）
                 "updateRelay": update_relay_health(),
+                # DSH-117：扫描链路有没有在静默吞异常（count>0 就是响铃，不是噪音）
+                "scanErrors": scan_errors(),
+                # DSH-117：refresh=1 被限速的次数（持续飙升说明有客户端在高频重刷）
+                "scanThrottle": {"minIntervalSec": FORCE_SCAN_MIN_INTERVAL,
+                                 "throttled": self.scanner._force_scan_throttled},
                 # 传输层瘦身：列表响应剥离的字段 + gzip 阈值（手机端「正在连接」快的根因在此）
                 "wire": {
                     "gzipMinBytes": GZIP_MIN_BYTES,
@@ -2034,7 +2171,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if sort_key not in SORT_KEYS:
                 sort_key = "default"
 
-            works = self.scanner.scan(force=force_refresh)
+            works = self.scanner.scan_throttled(force=force_refresh)
             tokens = search_query.split() if search_query else []
 
             # 手机打开在线相册（拉列表）也顺手回读一次本地分享次数
@@ -2747,7 +2884,21 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            report = self._run_phone_sync(hosts, dry_run=dry_run)
+            # 【DSH-117】SSRF 收敛：只允许局域网私网地址。
+            safe_hosts = []
+            rejected = []
+            for _h in hosts:
+                _n = _normalize_sync_host(str(_h))
+                (safe_hosts if _n else rejected).append(_n if _n else str(_h))
+            if rejected:
+                self.send_json(200, {
+                    "ok": False,
+                    "error": "host 只允许局域网私网地址（10.x / 172.16-31.x / 192.168.x / 169.254.x）",
+                    "rejected": rejected,
+                    "appliedCount": 0,
+                })
+                return
+            report = self._run_phone_sync(safe_hosts, dry_run=dry_run)
             report["message"] = (
                 f"共回写 {report['appliedCount']} 个作品的使用次数"
                 + ("（预演，未落盘）" if dry_run else "")
@@ -3336,7 +3487,16 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     scanner = WorkScanner(library_root)
     OnlineGalleryHandler.scanner = scanner
 
-    server = ThreadingHTTPServer(("0.0.0.0", port), OnlineGalleryHandler)
+    # 【DSH-117】默认 ThreadingHTTPServer 的 request_queue_size 只有 5：
+    # 多部手机同时拉列表 + 缩略图时，第 6 个连接直接被内核拒掉，
+    # 手机端表现为「正在连接电脑在线相册…」一直转圈直到超时，服务端零报错。
+    # daemon_threads 保证退出时工作线程不把进程拖住。
+    class _LanHTTPServer(ThreadingHTTPServer):
+        daemon_threads = True
+        request_queue_size = 128
+        allow_reuse_address = True
+
+    server = _LanHTTPServer(("0.0.0.0", port), OnlineGalleryHandler)
     local_ip = get_local_ip()
     print(f"================================================================")
     print(f"🚀 Device Share Hub - 电脑在线相册服务已就绪")

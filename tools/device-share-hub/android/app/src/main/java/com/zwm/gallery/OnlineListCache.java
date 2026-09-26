@@ -46,11 +46,11 @@ final class OnlineListCache {
     }
 
     static void saveWorks(Context c, String json) {
-        write(new File(dir(c), FILE_WORKS), json);
+        write(c, new File(dir(c), FILE_WORKS), json);
     }
 
     static void saveCategories(Context c, String json) {
-        write(new File(dir(c), FILE_CATEGORIES), json);
+        write(c, new File(dir(c), FILE_CATEGORIES), json);
     }
 
     /**
@@ -59,7 +59,7 @@ final class OnlineListCache {
      *         本类刻意不做语义校验（见类注释约束 1）。
      */
     static String loadWorks(Context c) {
-        return read(new File(dir(c), FILE_WORKS));
+        return read(c, new File(dir(c), FILE_WORKS));
     }
 
     /**
@@ -67,7 +67,7 @@ final class OnlineListCache {
      *         <p>解析失败同样由调用方判定，本类只负责「原样取回」。
      */
     static String loadCategories(Context c) {
-        return read(new File(dir(c), FILE_CATEGORIES));
+        return read(c, new File(dir(c), FILE_CATEGORIES));
     }
 
     /** 快照落盘时间（0 表示没有快照） */
@@ -86,7 +86,7 @@ final class OnlineListCache {
         }
     }
 
-    private static void write(File f, String s) {
+    private static void write(Context c, File f, String s) {
         if (s == null || s.isEmpty()) return;
         File tmp = new File(f.getAbsolutePath() + ".tmp");
         FileOutputStream out = null;
@@ -96,7 +96,11 @@ final class OnlineListCache {
             out.flush();
             out.getFD().sync();
         } catch (Exception e) {
+            // 【DSH-118】Debug 回传铁律：失败必须落盘，不能只 Log.w
+            // （logcat 会被系统随时清空，「秒开为什么没生效」永远查不到现场）。
+            String detail = f.getName() + " | " + e.getClass().getSimpleName() + ": " + e.getMessage();
             Log.w(TAG, "快照写入失败: " + e.getMessage());
+            DiagnosticLog.write(c, "list_cache_write_failed", detail);
             return;
         } finally {
             if (out != null) {
@@ -109,12 +113,13 @@ final class OnlineListCache {
             if (f.exists() && !f.delete()) Log.w(TAG, "旧快照删除失败");
             if (!tmp.renameTo(f)) {
                 Log.w(TAG, "快照改名失败，本次不缓存");
+                DiagnosticLog.write(c, "list_cache_rename_failed", f.getName());
                 tmp.delete();
             }
         }
     }
 
-    private static String read(File f) {
+    private static String read(Context c, File f) {
         if (!f.exists()) return null;
         long age = System.currentTimeMillis() - f.lastModified();
         if (age > MAX_AGE_MS) {
@@ -131,7 +136,10 @@ final class OnlineListCache {
             String s = out.toString(StandardCharsets.UTF_8.name());
             return s.isEmpty() ? null : s;
         } catch (Exception e) {
+            // 【DSH-118】同上：读失败也要留痕。之前只有 Log.w，真机上等于没有。
+            String detail = f.getName() + " | " + e.getClass().getSimpleName() + ": " + e.getMessage();
             Log.w(TAG, "快照读取失败: " + e.getMessage());
+            DiagnosticLog.write(c, "list_cache_read_failed", detail);
             return null;
         } finally {
             if (in != null) {

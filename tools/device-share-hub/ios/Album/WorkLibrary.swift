@@ -342,12 +342,30 @@ final class WorkLibrary {
         notify()
     }
 
+    /// 图片回收站目录名 —— 【DSH-118 口径统一】与 Android 的 `.image-trash` 完全一致。
+    ///
+    /// 此前 iOS 用 `.图片回收站`、Android 用 `.image-trash`：同一个作品在两端产生的
+    /// 目录名不同，跨端对账 / 电脑端扫描 / 备份还原时都会各算一套。
+    static let imageTrashFolderName = ".image-trash"
+
+    /// 历史遗留名：早期 iOS 版本用过中文名。**读取必须兼容**，否则老用户已经删进
+    /// 回收站的图会「凭空消失」（不是报错，是查不到）。
+    private static let legacyImageTrashFolderName = ".图片回收站"
+
+    /// 兼容读取：返回磁盘上真实存在的回收站根目录（新旧两种名字都算）。
+    private func imageTrashRoots(_ work: WorkItem) -> [URL] {
+        let fm = FileManager.default
+        return [Self.imageTrashFolderName, Self.legacyImageTrashFolderName]
+            .map { work.folderURL.appendingPathComponent($0, isDirectory: true) }
+            .filter { fm.fileExists(atPath: $0.path) }
+    }
+
     func moveImagesToTrash(_ work: WorkItem, images: [URL]) throws -> Int {
         let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
         let selected = images.map { $0.standardizedFileURL }.filter { allowed.contains($0) }
         guard !selected.isEmpty else { return 0 }
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
-        let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
+        let bin = work.folderURL.appendingPathComponent(Self.imageTrashFolderName, isDirectory: true)
             .appendingPathComponent(formatter.string(from: Date()), isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         var moved = 0
@@ -422,24 +440,30 @@ final class WorkLibrary {
     }
 
     func imageTrashCount(_ work: WorkItem) -> Int {
-        let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
-        guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
-        var count = 0
-        for case let url as URL in enumerator where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { count += 1 }
-        return count
+        var total = 0
+        for bin in imageTrashRoots(work) {
+            guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
+            for case let url as URL in enumerator where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { total += 1 }
+        }
+        return total
     }
 
     func restoreAllImages(_ work: WorkItem) throws -> Int {
-        let bin = work.folderURL.appendingPathComponent(".图片回收站", isDirectory: true)
-        guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
-        let files = enumerator.compactMap { $0 as? URL }.filter {
-            (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        var files: [URL] = []
+        for bin in imageTrashRoots(work) {
+            guard let enumerator = FileManager.default.enumerator(at: bin, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
+            files.append(contentsOf: enumerator.compactMap { $0 as? URL }.filter {
+                (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            })
         }
         for source in files {
             let destination = StoredZipExtractor.uniqueDestination(for: source.lastPathComponent, under: work.folderURL)
             try FileManager.default.moveItem(at: source, to: destination)
         }
-        try? FileManager.default.removeItem(at: bin)
+        // DSH-118：搬空之后连根删掉（新旧两种名字都要处理，否则旧目录会一直留在磁盘上）
+        for bin in imageTrashRoots(work) {
+            try? FileManager.default.removeItem(at: bin)
+        }
         refresh(showConfirmation: false)
         return files.count
     }
@@ -721,7 +745,9 @@ final class WorkLibrary {
                                                                includingPropertiesForKeys: Array(keys),
                                                                options: []) else { return }
         let bins = enumerator.compactMap { $0 as? URL }.filter { url in
-            guard url.lastPathComponent == ".图片回收站" else { return false }
+            // DSH-118：新旧两种回收站目录名都要清理，否则旧名目录下的图永不回收
+            guard url.lastPathComponent == Self.imageTrashFolderName
+                    || url.lastPathComponent == Self.legacyImageTrashFolderName else { return false }
             return (try? url.resourceValues(forKeys: keys).isDirectory) == true
         }
         for bin in bins {

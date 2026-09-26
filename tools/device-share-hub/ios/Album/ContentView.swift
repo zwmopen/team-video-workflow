@@ -1059,7 +1059,16 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 let ext = (src as NSString).pathExtension.lowercased()
                 let data = (ext == "png") ? image.pngData() : image.jpegData(compressionQuality: 0.95)
                 guard let payload = data else { return }
-                try? payload.write(to: fileURL)
+                do {
+                    try payload.write(to: fileURL)
+                } catch {
+                    // 【DSH-118】原本是 `try?`：写盘失败（磁盘满 / 目录只读 /
+                    // 文件名非法）时被静默吞掉，而下面仍会把这个 URL 记进 collected
+                    // ⇒ 后续分享指向一个**根本不存在**的文件，用户只看到「分享失败」，
+                    // 完全查不到是哪一步没写成。这里必须留痕并跳过。
+                    print("[Share] 写盘失败 \(fileURL.lastPathComponent)：\(error)")
+                    return
+                }
                 collected[index] = fileURL
             }
         }

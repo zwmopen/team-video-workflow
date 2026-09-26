@@ -10,6 +10,12 @@ struct OutgoingItem {
 
 final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
     typealias Progress = (Int, String) -> Void
+    // 【DSH-118】等待对方响应的兜底上限。必须大于 URLSession 的请求超时（30s），
+    // 又不能太大 —— 否则用户要盯着转圈等很久才知道失败。取 45 秒。
+    private static let timeoutSeconds: TimeInterval = 45
+    private static var requestWaitTimeout: DispatchTimeInterval {
+        .nanoseconds(Int(timeoutSeconds * 1_000_000_000))
+    }
     private let queue = DispatchQueue(label: "com.zwm.album.outgoing-transfer")
     private var progress: Progress?
     private var completedBytes: Int64 = 0
@@ -91,7 +97,15 @@ final class OutgoingTransferClient: NSObject, URLSessionTaskDelegate {
         if let file = file { task = session.uploadTask(with: request, fromFile: file, completionHandler: completion) }
         else { request.httpBody = body; task = session.dataTask(with: request, completionHandler: completion) }
         task.resume()
-        semaphore.wait()
+        // 【DSH-118】原本是 `semaphore.wait()` 无超时：对方设备中途断连 / 息屏 /
+        // 切后台导致回调永远不来时，这个线程就永久挂住 —— 传送界面一直转圈，
+        // 既不报错也不超时，只能杀 App。给一个比请求超时略宽的兜底窗口，
+        // 超时即取消任务并显式抛错（用户能看见「对方无响应」，而不是无限等待）。
+        let waitDeadline: DispatchTime = .now() + requestWaitTimeout
+        if semaphore.wait(timeout: waitDeadline) == .timedOut {
+            task.cancel()
+            throw OutgoingError.remote("对方 \(timeoutSeconds) 秒无响应，已取消本次请求")
+        }
         if let error = resultError { throw error }
         guard (200..<300).contains(status) else {
             let detail = String(data: responseBody.prefix(4096), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)

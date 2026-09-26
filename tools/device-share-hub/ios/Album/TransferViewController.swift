@@ -30,7 +30,14 @@ final class TransferViewController: UIViewController, UITableViewDataSource, UIT
         configureUI()
         NotificationCenter.default.addObserver(self, selector: #selector(reloadPeers), name: .transferPeersChanged, object: nil)
         reloadPeers()
-        timer = Timer.scheduledTimer(timeInterval: 2, target: self, selector: #selector(reloadPeers), userInfo: nil, repeats: true)
+        // 【DSH-118】原本是 target-action 版 Timer：`scheduledTimer(timeInterval:target:selector:)`
+        // 会**强引用 target**，而 `timer?.invalidate()` 写在 deinit 里 ——
+        // 于是 deinit 永远不会被调用，定时器永远不会被失效：界面关掉之后它还在
+        // 每 2 秒扫一次局域网，控制器连同整棵视图树一起泄漏，电量白白烧掉。
+        // 改成 block 版 + weak self：谁都不持有谁，deinit 能正常跑到。
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.reloadPeers()
+        }
     }
 
     deinit { timer?.invalidate(); NotificationCenter.default.removeObserver(self) }

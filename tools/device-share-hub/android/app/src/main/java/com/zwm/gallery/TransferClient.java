@@ -151,6 +151,11 @@ final class TransferClient {
         } catch (Exception error) {
             try { request(peer, "POST", "/v2/tasks/" + taskId + "/cancel", "text/plain", new byte[0], null); }
             catch (Exception ignored) { }
+            // 【DSH-118】整批传送失败此前**只 throw 不留痕**：用户在界面上看到
+            // 「传送失败」，而到底卡在建连 / 写盘 / commit 哪一步完全无从查起。
+            DiagnosticLog.write("transfer_send_failed",
+                    (peer != null ? peer.name : "<null peer>") + " | task=" + taskId
+                            + " | " + error.getClass().getSimpleName() + ": " + error.getMessage());
             throw error;
         }
     }

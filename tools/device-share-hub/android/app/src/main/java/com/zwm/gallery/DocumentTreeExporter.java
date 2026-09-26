@@ -227,6 +227,11 @@ final class DocumentTreeExporter {
         }
         Uri fallback = findChildFile(resolver, tree, parent, name);
         if (fallback != null) return fallback;
+        // 【DSH-118】此前这里**只抛不记**：用户看到「导出失败」弹窗，而磁盘上到底
+        // 卡在哪一步（重名冲突 / 文档树权限过期 / 目标目录被删）完全没有留痕。
+        DiagnosticLog.write("export_create_failed",
+                "无法创建文件：" + name + " | mime=" + mime
+                        + " | tree=" + tree + " | parent=" + parent);
         throw new IOException("无法创建文件：" + name);
     }
 

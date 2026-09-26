@@ -291,18 +291,17 @@ public final class OnlineService extends Service {
         }
         if (ACTION_REFRESH_STATUS.equals(action)) {
             beaconRequested = true;
+            ensureForegroundAndLoops("ACTION_REFRESH_STATUS");
             return START_STICKY;
         }
         if (ACTION_DISCOVER_PEERS.equals(action)) {
             beaconRequested = true;
             discoverRequested = true;
+            ensureForegroundAndLoops("ACTION_DISCOVER_PEERS");
             return START_STICKY;
         }
         if (ACTION_AUTO_RECEIVE_CHANGED.equals(action)) {
-            startForeground(FOREGROUND_NOTIFICATION_ID,
-                    buildForegroundNotification("局域网接收已开启"));
-            acquireMulticastLock();
-            ensureNetworkLoops();
+            ensureForegroundAndLoops("ACTION_AUTO_RECEIVE_CHANGED");
             boolean enabled = intent != null
                     && intent.getBooleanExtra(EXTRA_AUTO_RECEIVE_ENABLED,
                     isAutoReceiveEnabled());
@@ -373,6 +372,33 @@ public final class OnlineService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    /**
+     * 【DSH-118】前台通知 + 组播锁 + 网络循环，三件套必须成套调用。
+     *
+     * Android 8（SDK 26 —— 正是本工程的 minSdk）起，用 startForegroundService() 拉起的
+     * 服务必须在 5 秒内调用 startForeground()，否则系统会抛
+     * ForegroundServiceDidNotStartInTimeException 直接把进程杀掉：
+     * logcat 里只有一行，用户侧看到的就是「点一下闪退 / 服务起不来」。
+     *
+     * 此前 ACTION_REFRESH_STATUS / ACTION_DISCOVER_PEERS 两个分支只置了标志位就
+     * return START_STICKY，既没有 startForeground() 也没有 ensureNetworkLoops()：
+     * 冷启动和设置页点刷新时必崩；即便侥幸不崩，信标与接收循环也没起来，
+     * 在线状态永远不会刷新 —— 典型「看起来在跑、实际没干活」。
+     */
+    private void ensureForegroundAndLoops(String reason) {
+        try {
+            startForeground(FOREGROUND_NOTIFICATION_ID,
+                    buildForegroundNotification("局域网接收已开启"));
+        } catch (Exception e) {
+            Log.w(TAG, "startForeground failed: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage() + " | " + reason);
+            DiagnosticLog.write(this, "foreground_start_failed",
+                    reason + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        acquireMulticastLock();
+        ensureNetworkLoops();
     }
 
     private void stopReceiver() {

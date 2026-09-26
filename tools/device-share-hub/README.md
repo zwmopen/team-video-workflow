@@ -1,7 +1,7 @@
-# 文件收发中控（当前版本：Android 0.8.61 / iPhone 0.8.44）
+# 文件收发中控（当前版本：Android 0.8.62 / iPhone 0.8.45）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.61 / versionCode 172**、**iPhone 0.8.44 / build 116**。
+> 本轮源码候选：**Android 0.8.62 / versionCode 173**、**iPhone 0.8.45 / build 117**。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
 ## 手机是怎么拿到新版本的（一句话版）

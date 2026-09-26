@@ -8,11 +8,13 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.media.MediaScannerConnection;
 import android.provider.MediaStore;
 import android.webkit.MimeTypeMap;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.LocalDate;
@@ -114,6 +116,14 @@ final class GalleryShareBridge {
 
     static Uri publish(Context context, File source, String requestedName) throws Exception {
         if (!source.isFile()) throw new IllegalStateException("图片不存在：" + requestedName);
+        // 【DSH-118】RELATIVE_PATH / IS_PENDING / VOLUME_EXTERNAL_PRIMARY 三个字段都是
+        // Android 10（API 29）才引入的，而本工程 minSdk = 26。
+        // 在 Android 8/9（API 26~28）上访问这些常量会在**运行时**抛 NoSuchFieldError ——
+        // 编译期完全不报错（CI 永远发现不了），用户侧就是「一点分享立刻闪退」。
+        // 老设备走独立通路：先写完整文件再触发媒体扫描。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return publishLegacy(context, source, requestedName);
+        }
         ContentResolver resolver = context.getContentResolver();
         String mime = mimeType(requestedName);
         ContentValues values = new ContentValues();
@@ -149,6 +159,38 @@ final class GalleryShareBridge {
         } finally {
             if (!completed) resolver.delete(destination, null, null);
         }
+    }
+
+    /**
+     * Android 8/9（API 26~28）发布通路：直接写公共 Pictures 目录 + 手动触发媒体扫描。
+     *
+     * <p>这两代系统没有 IS_PENDING，无法「先占位、写完再公开」。因此必须严格
+     * 先写完整文件、再 scanFile —— 顺序反了就会让图库索引到半张图。
+     *
+     * <p>注意：Environment.getExternalStoragePublicDirectory 在 API 29 起被废弃，
+     * 但在这里只在 &lt; 29 的分支里使用，不存在兼容问题。
+     */
+    private static Uri publishLegacy(Context context, File source, String requestedName) throws Exception {
+        File publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+        File target = new File(new File(publicDir, "相册分享缓存"), requestedName);
+        File dir = target.getParentFile();
+        if (dir != null && !dir.exists() && !dir.mkdirs()) {
+            DiagnosticLog.write(context, "share_publish_legacy_failed", "无法创建目录：" + dir);
+            throw new IllegalStateException("无法创建公共图片目录：" + dir);
+        }
+        try (FileInputStream input = new FileInputStream(source);
+             FileOutputStream output = new FileOutputStream(target)) {
+            byte[] buffer = new byte[128 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
+            output.flush();
+        }
+        // 写完再扫描：让图库只看到完整文件
+        MediaScannerConnection.scanFile(context, new String[]{target.getAbsolutePath()},
+                new String[]{mimeType(requestedName)}, null);
+        DiagnosticLog.write(context, "share_publish_legacy",
+                "SDK " + Build.VERSION.SDK_INT + " | " + requestedName + " | " + target.length() + "B");
+        return Uri.fromFile(target);
     }
 
     private static void awaitReadable(ContentResolver resolver, Uri uri, long expectedBytes) throws Exception {

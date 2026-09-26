@@ -23,7 +23,34 @@ final class DiagnosticLog {
     private DiagnosticLog() {
     }
 
+    /**
+     * 【DSH-118】进程级缓存的 ApplicationContext。
+     * 只存 getApplicationContext()（进程单例、不持有 Activity），不会泄漏。
+     * 存在的意义：让**没有 Context 的静态工具方法**（DocumentTreeExporter /
+     * TransferClient 那类只拿到 ContentResolver 的工具类）也能把失败原因落盘。
+     * 否则这些路径只能靠 logcat，而 logcat 会被系统随时清空 —— 现场永远抓不到。
+     */
+    private static volatile Context appContext;
+
+    /**
+     * 无 Context 版本：依赖此前任意一次带 Context 的调用缓存下来的 ApplicationContext。
+     * 还没缓存过时静默放弃 —— 诊断日志绝不能反过来成为新的崩溃源。
+     */
+    static synchronized void write(String event, String detail) {
+        Context cached = appContext;
+        if (cached == null) return;
+        write(cached, event, detail);
+    }
+
     static synchronized void write(Context context, String event, String detail) {
+        if (context != null && appContext == null) {
+            try {
+                Context app = context.getApplicationContext();
+                appContext = app != null ? app : context;
+            } catch (Exception ignored) {
+                appContext = context;
+            }
+        }
         String line = timestamp() + " | " + event + " | " + oneLine(detail) + "\n";
         try {
             File file = file(context);

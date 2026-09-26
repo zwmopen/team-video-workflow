@@ -96,25 +96,27 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private func renderActions() {
         actions.arrangedSubviews.forEach { actions.removeArrangedSubview($0); $0.removeFromSuperview() }
         if selected.isEmpty {
-            // 未选图状态：呈现大号【🚀 一键直接发布】主按钮
-            let publishButton = UIButton(type: .system)
-            publishButton.setTitle("🚀 一键直接发布 (复制文案 + 分享全部)", for: .normal)
-            publishButton.titleLabel?.font = .boldSystemFont(ofSize: 16)
-            publishButton.backgroundColor = UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1)
-            publishButton.setTitleColor(.white, for: .normal)
-            publishButton.layer.cornerRadius = 16
-            publishButton.addTarget(self, action: #selector(publishAllImages), for: .touchUpInside)
-            actions.addArrangedSubview(publishButton)
+            // 【DSH-118】未选图状态对齐 Android：只给一行操作提示，不放任何按钮。
+            // 此前这里是「🚀 一键直接发布（复制文案 + 分享全部）」大按钮，问题有二：
+            //   ① Android 详情页在这一态下没有对应按钮（只有一行提示），两端口径不一致；
+            //   ② 「直接发布」名不副实 —— iOS 只能拉起系统分享面板，并不能直接发到
+            //      小红书/抖音，用户以为点一下就发完了，实际还要在面板里手动选目标 App。
+            let hint = UILabel()
+            hint.text = "点图片预览，长按可多选"
+            hint.font = .systemFont(ofSize: 12)
+            hint.textColor = .secondaryLabel
+            hint.textAlignment = .center
+            actions.addArrangedSubview(hint)
             return
         }
 
-        // 多选状态：呈现【移到回收站】、【🚀 直接发布 (所选 N 张)】、【传送其他设备】
+        // 多选状态：呈现【移到回收站】、【分享所选 N 张】、【传送其他设备】（对齐 Android 三个入口）
         let deleteBtn = iconActionButton(.trash, label: "移到回收站",
                                          background: UIColor(red: 1, green: 0.92, blue: 0.91, alpha: 1),
                                          foreground: UIColor(red: 0.74, green: 0.22, blue: 0.2, alpha: 1),
                                          action: #selector(deleteImages))
 
-        let publishBtn = actionButton("🚀 直接发布 (\(selected.count)张)",
+        let publishBtn = actionButton("分享所选 \(selected.count) 张",
                                       background: UIColor(red: 0.15, green: 0.57, blue: 0.37, alpha: 1),
                                       foreground: .white,
                                       action: #selector(publishSelectedImages))
@@ -263,34 +265,19 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             let feedback = UIImpactFeedbackGenerator(style: .medium)
             feedback.impactOccurred()
         }
-        showToast("✅ 文案已复制 (共 \(content.count) 字)")
+        showToast("✅ 文案已复制 (共 \(content.utf16.count) 字)")
     }
 
-    @objc private func publishAllImages() {
-        copyText()
-        if work.shareCount > 0 {
-            let alert = UIAlertController(title: "该作品已发布/分享 \(work.shareCount) 次",
-                                          message: "继续操作会再次记录分享。确认是要发到另一个平台或重新发布吗？",
-                                          preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-            alert.addAction(UIAlertAction(title: "继续发布全部", style: .default) { [weak self] _ in
-                self?.executeShare(images: self?.work.imageURLs ?? [])
-            })
-            present(alert, animated: true)
-            return
-        }
-        executeShare(images: work.imageURLs)
-    }
 
     @objc private func publishSelectedImages() {
         copyText()
         let imagesToShare = Array(selected)
         if work.shareCount > 0 {
             let alert = UIAlertController(title: "该作品已发布/分享 \(work.shareCount) 次",
-                                          message: "继续操作会再次记录分享。确认继续发布所选 \(imagesToShare.count) 张图片吗？",
+                                          message: "继续操作会再次记录分享。确认继续分享所选 \(imagesToShare.count) 张图片吗？",
                                           preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-            alert.addAction(UIAlertAction(title: "继续发布", style: .default) { [weak self] _ in
+            alert.addAction(UIAlertAction(title: "继续分享", style: .default) { [weak self] _ in
                 self?.executeShare(images: imagesToShare)
             })
             present(alert, animated: true)

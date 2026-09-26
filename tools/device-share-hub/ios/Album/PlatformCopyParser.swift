@@ -121,7 +121,7 @@ enum PlatformCopyParser {
 
     /// 空壳作品：实质字数不足 30 字即视为文案缺失（阈值与 Android 一致）。
     static func isCopySubstanceMissing(_ text: String?) -> Bool {
-        copySubstance(text).count < 30
+        copySubstance(text).utf16.count < 30
     }
 
     static func parseAvailablePlatforms(_ source: String?) -> [AvailableCopyPlatform] {

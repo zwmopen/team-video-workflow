@@ -2710,3 +2710,66 @@ DSH-113 建的「局域网更新中转」忽然代取不到安装包：
   并新增「手机是怎么拿到新版本的」一节 + 指向新文档的链接。
   原文**完全没提局域网更新中转**，还写着「电脑不做定时轮询」，读起来会误导。
 - `docs/MAINTAINER_HANDOFF.md` 顶部补 DSH-113~116 交接条目（一句话版 + 闸门 + 现状）。
+
+
+---
+
+## 服务端 v1.2.0 + Android 0.8.62 / 173 + iOS 0.8.45 / 117 - 2026-09-27 - DSH-117 / DSH-118：全库「上帝视角」审计后的健壮性批次
+
+> **来源**：2026-09-26 用户要求「站在上帝视角把所有代码查一遍，两端有什么毛病、有没有功能缺失」。
+> 审计结论里属于**同一个根因族**（炸了但查不到 / 慢了但查不到 / 两端口径不一致）的一并落到这里。
+
+### DSH-117 服务端（online_gallery_service.py，v1.1.0 → v1.2.0）
+
+| # | 问题 | 用户看到的现象 | 修法 |
+|---|---|---|---|
+| P0 | `WorkScanner._lock` 是普通 `Lock`，而 `get_work()` 已持锁时内部还要调 `scan()` 再拿一次同一把锁 ⇒ **自死锁** | 服务刚起、缓存还没建时，手机点开任意一个作品详情 ⇒ 整个 45835 端口永久卡死，不报错、不超时 | 换成 `threading.RLock()` |
+| P0 | 根目录直出的扫描循环只有**外层**一个 `try`，任一作品目录读炸（权限 / 非法编码名 / 删到一半）就把整轮扫描全部吞掉 | 根目录直出的成品「整套凭空消失」，而且零报错；stage0 分支因为有内层 try 却安然无恙 —— 两端行为不一致 | 每个作品单独 `try`，失败只跳过它自己并留痕 |
+| P1 | `send_json` 里 `json.dumps` 抛异常（目录名含代理项 / 非法 UTF-8） | 整条响应 500、连接被重置，手机端「列表空白、无任何报错」 | 三级降级：留痕 → `default=str` → 最小可解析错误体 |
+| P1 | `/api/online/status` 每次都走全量 `scan()` | 手机每几秒探一次心跳，冷缓存单次要 5~10 秒；两三部手机同探就把服务打满，表现为「正在连接电脑在线相册…」一直转圈 | 新增 `snapshot_count()`：缓存已建立就只读计数，绝不触发扫描 |
+| P1 | `refresh=1` 没有任何限速 | 下拉刷新连点、多部手机一起下拉 ⇒ 几秒内叠 N 次全盘扫描，请求堆积成假死 | 新增 `scan_throttled()`，HTTP 入口强制扫描最多 3 秒一次 |
+| P2 | 默认 `ThreadingHTTPServer` 的 `request_queue_size` 只有 5 | 多部手机同时拉列表 + 缩略图，第 6 个连接被内核直接拒掉，服务端零报错 | 子类化：`daemon_threads=True` + `request_queue_size=128` |
+| P2 | `/api/online/sync-phone-counts` 的 `hosts` 完全不校验 | 任何能访问 45835 的人都能让这台电脑当跳板去打任意地址（内网端口扫描 / 探测路由器·NAS·摄像头） | 新增 `_normalize_sync_host()`：只允许 10.x / 172.16-31.x / 192.168.x / 169.254.x，其余显式拒绝并返回 `rejected` |
+
+配套 Debug 回传：`status` 新增 `scanErrors`（最近 50 条被跳过的扫描异常，含 tag / path / 异常类型）与
+`scanThrottle`（限速阈值 + 已拦截次数）。这两个数 > 0 就是响铃，不是噪音。
+
+### DSH-118 客户端（Android + iOS）
+
+**Android**
+
+| # | 问题 | 现象 | 修法 |
+|---|---|---|---|
+| P0 | `ACTION_REFRESH_STATUS` / `ACTION_DISCOVER_PEERS` 用 `startForegroundService()` 拉起，却只置标志位就 `return START_STICKY` —— 5 秒内没有 `startForeground()` | Android 8+ 抛 `ForegroundServiceDidNotStartInTimeException` 直接杀进程：用户看到「点一下闪退」；即便侥幸不崩，`ensureNetworkLoops()` 没调 ⇒ 信标/接收循环压根没起，在线状态永远不刷新 | 抽出 `ensureForegroundAndLoops()` 三件套，两个分支都必须调用 |
+| P0 | `GalleryShareBridge.publish()` 直接用 `RELATIVE_PATH` / `IS_PENDING` / `VOLUME_EXTERNAL_PRIMARY`（**均为 API 29+**），而 `minSdk = 26` | Android 8/9 设备上运行时抛 `NoSuchFieldError`（编译期不报错，CI 永远发现不了）⇒ 「一点分享立刻闪退」 | 加 `SDK_INT < Q` 分支，走 `publishLegacy()`：写公共 Pictures 目录 + 手动 `scanFile`（严格先写完整文件再索引） |
+| P1 | `downloadWorkImages` 原图**直写最终文件** | 中途失败（Wi-Fi 断 / 磁盘满 / App 被杀）会留下一个「名字符合预期但内容残缺」的文件；下一轮 `exists() && length() > 0` 判定会当成成品复用 ⇒ 用户看到半张图 / 打不开的图，全程零报错 | 与缩略图链路同口径：`.part` 临时文件 + `sync` + 原子 `renameTo`，失败即删；跨分区 rename 失败时退化为显式拷贝 |
+| P1 | `OnlineListCache` 全部只 `Log.w` | logcat 会被系统随时清空 ⇒ 「秒开为什么没生效」永远查不到现场 | 快照写失败 / 改名失败 / 读失败三处补 `DiagnosticLog.write` |
+| P1 | `DiagnosticLog` 只有带 `Context` 的重载，而 `DocumentTreeExporter` / `TransferClient` 这类静态工具类拿不到 Context | 这两条链路**完全零留痕**：导出失败只有弹窗、传送失败只有 throw，磁盘上什么都没留下 | 新增「无 Context」重载 + 进程级缓存 `ApplicationContext`（只存 app context，不持有 Activity，不泄漏） |
+
+**iOS**
+
+| # | 问题 | 现象 | 修法 |
+|---|---|---|---|
+| P0 | `RemoteIdentity.loadKey` 用 `result as! SecKey` 强制解包 | `SecItemCopyMatching` 成功 ≠ 返回的一定是 `SecKey`（存在同 `applicationTag` 的证书/通用密码项时会命中别的类型）⇒ 直接崩溃，且只在特定机型 + 特定历史数据下复现 | 先判 `CFGetTypeID(key) == SecKeyGetTypeID()`，类型不对就当没取到，走重新生成分支 |
+| P1 | `RemoteRelayClient` 两处 + `OutgoingTransferClient` 一处 `semaphore.wait()` **无超时** | 对端设备断连 / 息屏 / 切后台导致回调不来 ⇒ 线程永久挂住，界面停在「正在下载…」转圈，既不报错也不超时，只能杀 App | 全部改成 `wait(timeout:)`，超时即 `task.cancel()` 并显式抛错（用户看见「对方 N 秒无响应」而不是无限等待） |
+| P1 | `ContentView` 分享前本地写盘用 `try? payload.write(...)` | 写盘失败（磁盘满 / 目录只读 / 名字非法）被静默吞掉，而 URL 仍被记进结果 ⇒ 后续分享指向**根本不存在**的文件，用户只看到「分享失败」 | 改 `do/catch`，失败留痕并跳过该文件 |
+| P1 | `TransferViewController` 用 target-action 版 `Timer`（强引用 target），而 `invalidate()` 写在 `deinit` 里 | `deinit` 永远不执行 ⇒ 定时器永不失效：页面关掉后仍在每 2 秒扫一次局域网，控制器与整棵视图树一起泄漏 | 改 block 版 + `[weak self]` |
+| 口径 | 图片回收站目录名 iOS `.图片回收站` vs Android `.image-trash` | 同一作品两端各算一套，跨端对账 / 备份还原会对不上 | 统一成 `.image-trash`（写入用新名）；读取**兼容旧名**，老用户已删的图不会凭空消失 |
+| 口径 | 字数统计 iOS 用 `.count`（字形簇），Android 用 `String.length()`（UTF-16 码元） | 同一个空壳判据（< 30 字）两端结果不同：一端判废一端放行 | iOS 改 `.utf16.count` |
+| 口径 | iOS 详情页多一个「🚀 一键直接发布」按钮 | Android 在这一态下只有一行提示、没有按钮；且「直接发布」名不副实 —— iOS 只能拉系统分享面板，并不能直接发到小红书/抖音 | 移除该按钮 + `publishAllImages()`，改为对齐 Android 的提示文案；工具栏按钮改名「分享所选 N 张」；确认按钮措辞统一为 Android 的「继续分享」 |
+
+### 闸门与自检（全部「改前 FAIL → 改后 PASS」）
+
+| 闸门 | 判据数 | 源码级变异自检 |
+|---|---|---|
+| A20 服务端可重入锁 + 单目录异常不连坐整轮 | 5 | 2 项回退全部 FAIL |
+| A21 心跳只读计数 + refresh=1 限速 | 6 | 2 项回退全部 FAIL |
+| A22 回写接口私网白名单 + 监听队列 | 7 | 2 项回退全部 FAIL |
+| A23 两端口径统一（回收站名 / utf16 / 去掉名不副实的入口） | 6 | 4 项回退全部 FAIL |
+| A24 崩溃 / 挂死 / 静默失败必须留痕 | 8 | 8 项回退全部 FAIL |
+| C8（**修正判据**：按形状判定，不再只看字面） | 2 | 1 项回退 FAIL |
+
+合计 **19 项源码级变异自检全部 FAIL 且逐字节还原**；`parity_ios_android.py` 48/48；
+服务端单测 29/29；Android 全量 `javac` 除「程序包 R 不存在」（Gradle 才生成）外**零语法错误**。
+
+**版本号**：服务端 v1.1.0 → **v1.2.0**；Android 0.8.61/172 → **0.8.62/173**；iOS 0.8.44/116 → **0.8.45/117**。

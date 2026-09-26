@@ -157,14 +157,21 @@ def main():
         "pageLimit=%s 加载更多=%s" % (c7_limit, c7_btn)))
 
     # C8 重复分享确认（Android：作品已分享过 N 次 → 弹二次确认）
-    # 判能力不判逐字文案 —— iOS 用的是「继续发布全部 / 继续发布」，语义同一回事。
+    # 【DSH-118 口径统一】iOS 原本写「继续发布全部 / 继续发布」，与 Android 的
+    # 「继续分享」不是一个口径；现已统一为 Android 的措辞，并把多余的那一个
+    # 「🚀 一键直接发布」入口去掉（Android 详情页在这一态下只有一行提示、没有按钮）。
+    # 判据只锁「有二次确认 + 确认按钮用统一措辞」，不锁整句弹窗文案。
     wdv = "\n".join(t for p, t in IOS_SRC if p.name == "WorkDetailView.swift")
-    c8_guard = wdv.count("work.shareCount > 0") >= 2
-    c8_alert = "继续发布" in wdv
+    c8_guard = wdv.count("work.shareCount > 0") >= 1
+    # 判**形状**不判措辞：必须存在一个「不是取消」的 .default 确认动作。
+    # 曾经写成 `"继续分享" in wdv`，结果弹窗正文里恰好也有这四个字，
+    # 把确认按钮改没了闸门照样绿 —— 典型的「绿灯但没在守门」。
+    c8_alert = bool(re.search(
+        r'UIAlertAction\(title:\s*"(?!取消)[^"]+",\s*style:\s*\.default', wdv))
     results.append(check(
-        "C8 iOS 重复分享二次确认",
+        "C8 iOS 重复分享二次确认（至少有一个非取消的确认动作）",
         c8_guard and c8_alert,
-        "两处入口都拦=%s 确认按钮=%s" % (c8_guard, c8_alert)))
+        "二次确认在=%s 有非取消的确认动作=%s" % (c8_guard, c8_alert)))
 
     # ---- DSH-093：称呼 / 口径统一（以 Android 为基准）----
     and_main = "\n".join(t for p, t in AND_SRC if p.name == "MainActivity.java")
@@ -929,6 +936,158 @@ def main():
         "helper=%s used=%s shaInName=%s hitVerify=%s discard=%s counted=%s noOld=%s health=%s"
         % (a19_helper, a19_used, a19_sha_in_name, a19_hit_verify,
            a19_discard, a19_counted, a19_no_old, a19_health)))
+
+    # ── A20 服务端：持锁再扫描不得自死锁 + 单目录异常不得连坐整轮（DSH-117） ──
+    # 现场一：WorkScanner._lock 是普通 Lock（非重入），而 get_work() 已经持锁时
+    #   会再调 scan()，scan() 开头又要拿同一把锁 ⇒ 自死锁。
+    #   表现：服务刚起、缓存还没建时，手机点开任意一个作品详情，整个 45835
+    #   端口永久卡死 —— 不报错、不超时、只能重启进程。
+    # 现场二：根目录直出的扫描循环只有**外层**一个 try，任何一个作品目录读炸
+    #   （权限 / 非法编码名 / 删到一半）都会让整轮扫描归零；而 stage0 分支
+    #   因为有内层 try 安然无恙 —— 两端行为不一致，且**零报错**。
+    # 判据只锁「用了可重入锁」与「单作品有独立容错 + 留痕」这两个能力，
+    # 不锁注释文案。
+    a20_rlock = "self._lock = threading.RLock()" in service_src
+    a20_no_plain = "self._lock = threading.Lock()" not in service_src
+    a20_per_work = '_scan_error("root-entry"' in service_src
+    a20_logged = ("def _scan_error(" in service_src
+                  and "def scan_errors(" in service_src)
+    a20_exposed = '"scanErrors": scan_errors()' in service_src
+
+    a20_overall = (a20_rlock and a20_no_plain and a20_per_work
+                   and a20_logged and a20_exposed)
+    results.append(check(
+        "A20 服务端持锁再扫描用 RLock + 单目录异常不连坐整轮（DSH-117）",
+        a20_overall,
+        "rlock=%s noPlain=%s perWork=%s logged=%s exposed=%s"
+        % (a20_rlock, a20_no_plain, a20_per_work, a20_logged, a20_exposed)))
+
+    # ── A21 服务端：心跳不得全量扫描 + refresh=1 必须限速（DSH-117） ──
+    # /api/online/status 是手机端几秒一次的心跳，此前每次都走 scan()：冷缓存
+    # 单次要 5~10 秒，两三部手机同探就把 45835 打满，表现为「正在连接电脑
+    # 在线相册…」一直转圈。refresh=1 同理：连点下拉会叠 N 次全盘扫描。
+    a21_count_helper = "def snapshot_count(self)" in service_src
+    a21_status_uses = "total_works = self.scanner.snapshot_count()" in service_src
+    a21_total = '"totalWorks": total_works,' in service_src
+    a21_throttle_helper = "def scan_throttled(self" in service_src
+    a21_throttle_used = "self.scanner.scan_throttled(force=force_refresh)" in service_src
+    a21_interval = "FORCE_SCAN_MIN_INTERVAL = 3.0" in service_src
+
+    a21_overall = (a21_count_helper and a21_status_uses and a21_total
+                   and a21_throttle_helper and a21_throttle_used and a21_interval)
+    results.append(check(
+        "A21 心跳只读计数 + refresh=1 限速（多手机同探不得打满服务）（DSH-117）",
+        a21_overall,
+        "count=%s statusUses=%s total=%s thrHelper=%s thrUsed=%s interval=%s"
+        % (a21_count_helper, a21_status_uses, a21_total,
+           a21_throttle_helper, a21_throttle_used, a21_interval)))
+
+    # ── A22 服务端：sync-phone-counts 私网白名单 + 监听队列（DSH-117） ──
+    # 这个接口会让**电脑端**主动向请求里的 host 发 HTTP：不加校验时，任何能
+    # 访问 45835 的人都能拿这台电脑当跳板打任意地址（内网端口扫描 + 探测
+    # 路由器/NAS/摄像头）。另外默认 ThreadingHTTPServer 的 request_queue_size
+    # 只有 5，第 6 个连接被内核直接拒掉，手机端只会转圈，服务端零报错。
+    a22_helper = "def _normalize_sync_host(" in service_src
+    a22_called = "_normalize_sync_host(str(_h))" in service_src
+    a22_safe_used = "self._run_phone_sync(safe_hosts" in service_src
+    a22_reject = '"rejected": rejected,' in service_src
+    a22_daemon = "daemon_threads = True" in service_src
+    a22_queue = "request_queue_size = 128" in service_src
+    a22_subclass = "_LanHTTPServer((" in service_src
+
+    a22_overall = (a22_helper and a22_called and a22_safe_used and a22_reject
+                   and a22_daemon and a22_queue and a22_subclass)
+    results.append(check(
+        "A22 回写接口只放行私网 host + 监听队列不为默认 5（DSH-117）",
+        a22_overall,
+        "helper=%s called=%s safeUsed=%s reject=%s daemon=%s queue=%s subclass=%s"
+        % (a22_helper, a22_called, a22_safe_used, a22_reject,
+           a22_daemon, a22_queue, a22_subclass)))
+
+    # ── A23 两端口径统一：回收站目录名 / 字数统计 / 详情页入口（DSH-118） ──
+    # 三条都是「同一件事两端叫法或算法不一样」，用户侧表现为：
+    #   ① 回收站目录名不同 ⇒ 同一个作品跨端对账各算一套，备份还原会对不上；
+    #   ② 字数用 .count（字形簇）而非 utf16.count（码元）⇒ 同一个空壳判据
+    #      （<30 字）两端结果不同，一端判废一端放行；
+    #   ③ iOS 多一个「🚀 一键直接发布」入口 ⇒ 名不副实（只能拉系统分享面板），
+    #      且 Android 没有对应按钮。
+    ios_all = "\n".join(t for _, t in IOS_SRC)
+    and_all = "\n".join(t for _, t in AND_SRC)
+
+    # 「按钮已移除」这类**否定判据**必须只看代码行、跳过注释：
+    # 修复说明里必然要把旧按钮名字写出来（否则后人看不懂改了什么），
+    # 若整文件扫字符串就会被自己的注释判死 —— 与 C8 那类假 FAIL 同源。
+    def code_only(text):
+        return "\n".join(l for l in text.splitlines()
+                         if not l.strip().startswith("//"))
+
+    ios_code = code_only(ios_all)
+
+    a23_ios_trash = 'static let imageTrashFolderName = ".image-trash"' in ios_code
+    a23_and_trash = '".image-trash"' in and_all
+    # 老 iOS 版本写过中文目录名，读取必须兼容，否则老用户已删的图会「凭空消失」
+    a23_legacy = "legacyImageTrashFolderName" in ios_code
+    a23_utf16 = "copySubstance(text).utf16.count" in ios_code
+    a23_no_fake_publish = ("一键直接发布" not in ios_code
+                           and "publishAllImages" not in ios_code)
+    a23_wording = "继续分享" in ios_code
+
+    a23_overall = (a23_ios_trash and a23_and_trash and a23_legacy and a23_utf16
+                   and a23_no_fake_publish and a23_wording)
+    results.append(check(
+        "A23 两端口径统一：回收站目录名 / 字数 utf16 / 去掉名不副实的入口（DSH-118）",
+        a23_overall,
+        "iosTrash=%s andTrash=%s legacy=%s utf16=%s noFakePublish=%s wording=%s"
+        % (a23_ios_trash, a23_and_trash, a23_legacy, a23_utf16,
+           a23_no_fake_publish, a23_wording)))
+
+    # ── A24 崩溃 / 挂死 / 静默失败不留痕 —— 两端各自的「炸了却查不到」清单（DSH-118） ──
+    # 这七条的共同点：**都不报错**。用户只会看到「闪退 / 一直转圈 / 分享失败」，
+    # 而磁盘和日志里没有任何线索。判据统一取「代码行」，跳过注释。
+    def code_only_all(src_list):
+        out = []
+        for _, text in src_list:
+            out.append("\n".join(l for l in text.splitlines()
+                                 if not l.strip().startswith("//")))
+        return "\n".join(out)
+
+    ios_code_all = code_only_all(IOS_SRC)
+    and_code_all = code_only_all(AND_SRC)
+
+    # Android：startForegroundService 拉起的两个 action 必须补前台 + 网络循环（Android 8+ 必崩）。
+    # 只数**调用点**（带引号实参），不能把助手方法自己的定义行也算进去 ——
+    # 否则删掉任意一个调用点、总数依然是 3，闸门照样绿，等于没守。
+    a24_fg = and_code_all.count('ensureForegroundAndLoops("') >= 3
+    # Android：minSdk 26，但 RELATIVE_PATH / IS_PENDING 是 API 29+ ⇒ 必须有版本分支
+    a24_sdk = "Build.VERSION.SDK_INT < Build.VERSION_CODES.Q" in and_code_all
+    # Android：原图下载必须「.part 临时文件 + rename」，不能直写最终文件
+    a24_atomic = (".part\"" in and_code_all
+                  and "partFile.renameTo(localFile)" in and_code_all)
+    # Android：无 Context 的静态工具类也要能落诊断日志
+    a24_nodiagctx = "static synchronized void write(String event" in and_code_all
+    # iOS：钥匙串取值不得 as! 强转（命中非 SecKey 类型即崩）
+    a24_key = ("CFGetTypeID(key) == SecKeyGetTypeID()" in ios_code_all
+               and "result as! SecKey" not in ios_code_all)
+    # iOS：信号量必须有超时（无超时 = 界面永久转圈）
+    a24_sem = "semaphore.wait()" not in ios_code_all
+    # iOS：分享前的本地写盘不得静默 try?
+    a24_write = ("try payload.write(to: fileURL)" in ios_code_all
+                 and "try? payload.write(to: fileURL)" not in ios_code_all)
+    # iOS：重复 Timer 不得 retain self（target-action 版会强引用 target，
+    # 而 invalidate 写在 deinit 里 ⇒ deinit 永不执行 ⇒ 关掉页面仍在每 2 秒扫局域网）。
+    # 正反两面都要判：只用 `scheduledTimer(withTimeInterval:` 判「有」，会因为别处
+    # 本来就有一个 block 版 Timer 而永远为真 —— 必须同时判「target-action 版已消失」。
+    a24_timer = ("scheduledTimer(withTimeInterval:" in ios_code_all
+                 and "scheduledTimer(timeInterval:" not in ios_code_all)
+
+    a24_overall = (a24_fg and a24_sdk and a24_atomic and a24_nodiagctx
+                   and a24_key and a24_sem and a24_write and a24_timer)
+    results.append(check(
+        "A24 崩溃/挂死/静默失败必须有留痕（前台服务·幂等写盘·钥匙串·信号量·Timer）",
+        a24_overall,
+        "fg=%s sdk=%s atomic=%s diagCtx=%s key=%s sem=%s write=%s timer=%s"
+        % (a24_fg, a24_sdk, a24_atomic, a24_nodiagctx,
+           a24_key, a24_sem, a24_write, a24_timer)))
 
     print()
     bad = results.count(False)

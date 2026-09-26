@@ -1380,16 +1380,67 @@ public final class OnlineGalleryClient {
                             throw new Exception(detail);
                         }
                         InputStream in = new BufferedInputStream(conn.getInputStream());
-                        java.io.FileOutputStream out = new java.io.FileOutputStream(localFile);
+                        // 【DSH-118】必须「临时文件 + 原子 rename」，不能直写最终文件。
+                        // 直写时一旦中途失败（Wi-Fi 断 / 磁盘满 / App 被杀），磁盘上留下的是
+                        // 一个**名字符合预期但内容残缺**的文件；下一轮判据
+                        // `localFile.exists() && length() > 0` 会把它当成已下好的成品直接复用
+                        // ⇒ 用户看到半张图 / 打不开的图，而全程零报错、无法自查。
+                        // 与缩略图链路（downloadThumb）保持同一套原子落盘口径。
+                        java.io.File partFile = new java.io.File(
+                                localFile.getAbsolutePath() + ".part");
+                        if (partFile.exists() && !partFile.delete()) {
+                            Log.w(TAG, "残留临时文件清理失败: " + partFile.getName());
+                        }
+                        java.io.FileOutputStream out = new java.io.FileOutputStream(partFile);
                         byte[] buf = new byte[8192];
                         int len;
-                        while ((len = in.read(buf)) != -1) {
-                            out.write(buf, 0, len);
+                        long writtenBytes = 0L;
+                        try {
+                            while ((len = in.read(buf)) != -1) {
+                                out.write(buf, 0, len);
+                                writtenBytes += len;
+                            }
+                            out.flush();
+                            try {
+                                out.getFD().sync();
+                            } catch (Exception syncIgnored) {
+                                // 部分厂商 / SD 卡不支持 sync；rename 本身仍是原子的
+                            }
+                        } finally {
+                            try { out.close(); } catch (Throwable ignored) { }
+                            try { in.close(); } catch (Throwable ignored) { }
                         }
-                        out.flush();
-                        out.close();
-                        in.close();
                         conn.disconnect();
+                        if (writtenBytes <= 0) {
+                            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+                            Log.w(TAG, "downloadWorkImages 空文件 | " + workId + "/" + fileName);
+                            DiagnosticLog.write(context, "download_work_empty",
+                                    workId + "/" + fileName + " | written=0");
+                            throw new Exception("下载内容为空：" + fileName);
+                        }
+                        if (localFile.exists() && !localFile.delete()) {
+                            Log.w(TAG, "旧文件删除失败: " + localFile.getName());
+                        }
+                        if (!partFile.renameTo(localFile)) {
+                            // 跨分区 / 部分 ROM 上 renameTo 会返回 false：
+                            // 退化成显式拷贝，仍然保证「最终文件只在写完整之后才出现」。
+                            String detail = "renameTo failed: " + partFile + " -> " + localFile;
+                            Log.w(TAG, detail);
+                            DiagnosticLog.write(context, "download_work_rename_failed",
+                                    workId + "/" + fileName + " | " + detail);
+                            java.io.FileInputStream fin = new java.io.FileInputStream(partFile);
+                            java.io.FileOutputStream fout = new java.io.FileOutputStream(localFile);
+                            try {
+                                byte[] cb = new byte[8192];
+                                int cl;
+                                while ((cl = fin.read(cb)) != -1) fout.write(cb, 0, cl);
+                                fout.flush();
+                            } finally {
+                                try { fout.close(); } catch (Throwable ignored) { }
+                                try { fin.close(); } catch (Throwable ignored) { }
+                            }
+                            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+                        }
                         result.add(localFile);
                         count++;
                         final int progDone = count;
