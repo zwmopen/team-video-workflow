@@ -2865,3 +2865,47 @@ DSH-113 建的「局域网更新中转」忽然代取不到安装包：
 服务端单测 29/29；Android 全量 `javac` 除「程序包 R 不存在」（Gradle 才生成）外**零语法错误**。
 
 **版本号**：服务端 v1.1.0 → **v1.2.0**；Android 0.8.61/172 → **0.8.62/173**；iOS 0.8.44/116 → **0.8.45/117**。
+
+
+## DSH-120 — Windows 便携版发布：取地址 KeyError + 中文文件名被 artifact 静默截断（2026-09-27）
+
+### 背景
+
+DSH-119 补二给 CI 加了「Windows 便携版也进 Release」。第一跑就暴露两个问题：
+一个是明红（好查），另一个**全程零报错** —— Release 上出现了一个名字残缺的附件。
+
+### 问题 1：取下载地址 KeyError（CI 直接红，发版链断）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `publish-gallery-updates` job 报 `KeyError: 'browser_download_url'`，整个发版链断 |
+| 根因 | `gh release view --json assets` 走的是 **gh 模板字段**，asset 对象里叫 `url`；`browser_download_url` 是 **REST API** `/releases/.../assets` 的字段名。两套 API 面字段名不同，写错即 KeyError |
+| 旁证 | `UpdateChecker.java` 里那份 `optString("browser_download_url", "")` 是对的 —— 它走的是 REST API。所以「同一个名字，一处对一处错」 |
+| 修法 | 改成取 `url` 字段；拿不到时兜底按 `https://github.com/{repo}/releases/download/{tag}/{file_name}` 拼；最后**必须 curl 到 200 才往下走** |
+
+### 问题 2：中文文件名被 artifact 中转截断（**不报错，静默损坏**）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | Release 上的 Windows 附件叫 `-Windows-V4.3.30.exe`，中文前缀「文件收发中控」整段丢失；而 CI 日志里打印的还是完整中文名 |
+| 根因 | `windows-portable` job 在 **Windows runner** 上传 artifact，`publish` job 在 **Linux runner** 下载；非 ASCII 文件名在这一跳被截断（GitHub artifact 服务对非 ASCII 文件名不可靠） |
+| 危害 | 不红、不报错：文件照样上传、sha256 照样对、日志照样打印完整中文名，**只有 Release 页面上那个附件名是残缺的** —— 典型静默故障 |
+| 修法 | 发布前统一改成 ASCII 名 `DeviceShareHub-Windows-V{版本}.exe`，内容字节不变，改名后**断言 sha256 一致**；`使用说明.md` 同样按 ASCII 名 `USAGE-Windows.md` 重新落一份 |
+| 自愈 | 每次发布顺带删掉本 tag 下「`.exe` 结尾且名字 ≠ 本次发布名」的旧附件，历史遗留的残缺附件自动清掉；正常附件不会误伤 |
+
+### 顺带
+
+- Release 现在同时提供 `USAGE-Windows.md`（电脑端使用说明），跟 `device-share-hub-source-<版本>.zip` 一样，不用再去主仓库翻 README。
+
+### 验证（`_verify_workflow_dsh120.py`，全绿）
+
+| 判据 | 结果 |
+|---|---|
+| YAML 块标量完整性（`yaml.safe_load` 后 run 块 258 行首尾完整） | PASS |
+| `bash -n` 语法检查 | PASS |
+| 取 URL 片段喂真实 `gh release view` 返回能取到 `url` | PASS |
+| 取不到时返回空串 ⇒ 走兜底拼 URL 分支 | PASS |
+| **旧写法喂同一份数据确实抛 `KeyError`**（证明修复是真修，不是假绿） | PASS |
+| 清理片段只列被截断的旧 exe，不误删正常 apk / 本次发布的 exe | PASS |
+| 否定判据只看代码行（注释里提 `browser_download_url` 不算违规） | PASS |
+| 改名后断言 sha256 不变 / 拿不到下载地址直接红 | PASS |

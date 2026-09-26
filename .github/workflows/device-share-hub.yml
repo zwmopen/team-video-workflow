@@ -550,30 +550,71 @@ jobs:
           windows_version=""
           windows_sums=""
           windows_file_name=""
+          windows_publish_path=""
+          windows_usage_path=""
           if [ -n "$windows_exe" ]; then
-            windows_file_name=$(basename "$windows_exe")
             windows_sha=$(sha256sum "$windows_exe" | awk '{print $1}')
             windows_version=$(sed -n 's/.*APP_VERSION\[\][^"]*L"\([^"]*\)".*/\1/p' \
               tools/device-share-hub/windows-native/src/main.cpp | head -1 | tr -d '\r\n')
+            test -n "$windows_version"
+            # ⚠️ DSH-120：构建产物的 exe 名带中文前缀（文件收发中控-Windows-Vx.y.z.exe），
+            # 但 Windows runner 上传 → Linux runner 下载的 artifact 中转会把非 ASCII 文件名截断，
+            # 实测 Release 上只剩 "-Windows-V4.3.30.exe"，中文前缀整段丢失。
+            # 内容字节不受影响，所以发布前统一改成 ASCII 名，并对 sha256 做一致性断言。
+            windows_file_name="DeviceShareHub-Windows-V${windows_version}.exe"
+            windows_publish_path="release/windows/${windows_file_name}"
+            cp -f "$windows_exe" "$windows_publish_path"
+            test "$(sha256sum "$windows_publish_path" | awk '{print $1}')" = "$windows_sha"
             windows_sums="release/windows/Windows-SHA256.txt"
             printf '%s  %s\n' "$windows_sha" "$windows_file_name" > "$windows_sums"
+            # 使用说明同样过了一遍 artifact，中文名可能已残缺；按 ASCII 名重新落一份。
+            windows_usage_src=$(find release/windows -maxdepth 1 -type f -name '*.md' -print -quit)
+            if [ -n "$windows_usage_src" ]; then
+              windows_usage_path="release/windows/USAGE-Windows.md"
+              cp -f "$windows_usage_src" "$windows_usage_path"
+            fi
             echo "Windows 包 ${windows_file_name}  V${windows_version}  sha256=${windows_sha:0:12}…"
           else
             echo "::warning::release/windows 里没找到 exe，本次不发布 Windows 包"
           fi
 
           uploads=("$apk" "$sums" "$ios_ipa" "$ios_sums" "$source_zip")
-          if [ -n "$windows_exe" ]; then
-            uploads+=("$windows_exe" "$windows_sums")
+          if [ -n "$windows_publish_path" ]; then
+            uploads+=("$windows_publish_path" "$windows_sums")
+            if [ -n "$windows_usage_path" ]; then
+              uploads+=("$windows_usage_path")
+            fi
           fi
           gh release upload "$tag" --repo "$repo" "${uploads[@]}" --clobber
 
-          # 中文文件名在 download URL 里会被 percent-encode，手写拼 URL 容易拼错，
-          # 直接从上传结果里取真实地址。
+          # 自愈：删掉本 tag 下名字被 artifact 截断的历史 Windows 附件（DSH-120 清理）。
+          # 只删 .exe 且文件名不等于本次发布名的，正常附件不会误伤。
+          if [ -n "$windows_publish_path" ]; then
+            gh release view "$tag" --repo "$repo" --json assets > release_assets.json
+            python3 -c "import json;d=json.load(open('release_assets.json'));keep='$windows_file_name';print('\n'.join(str(a['id']) for a in d.get('assets',[]) if a.get('name','').endswith('.exe') and a.get('name','')!=keep))" > stale_assets.txt
+            while IFS= read -r stale_id; do
+              [ -n "$stale_id" ] || continue
+              echo "清理残留 Windows 附件 asset id=${stale_id}"
+              gh api --method DELETE "repos/${repo}/releases/assets/${stale_id}" >/dev/null
+            done < stale_assets.txt
+          fi
+
+          # 取真实下载地址。
+          # ⚠️ gh 有两套 API 面，字段名不一样：
+          #   - `gh release view --json assets` 给的是 gh 模板字段，叫 url；
+          #   - REST API /releases/.../assets 给的才叫 browser_download_url。
+          # 这里走的是前者，写成 browser_download_url 会 KeyError（DSH-120）。
           windows_url=""
-          if [ -n "$windows_exe" ]; then
+          if [ -n "$windows_publish_path" ]; then
             windows_url=$(gh release view "$tag" --repo "$repo" --json assets \
-              | python3 -c "import json,sys;d=json.load(sys.stdin);print(next((a['browser_download_url'] for a in d['assets'] if a['name'].endswith('.exe')),''))")
+              | python3 -c "import json,sys;d=json.load(sys.stdin);keep=sys.argv[1];print(next((a.get('url','') for a in d.get('assets',[]) if a.get('name','')==keep),''))" "$windows_file_name")
+            # 兜底：gh 没给就按 GitHub 标准下载地址拼（文件名已 ASCII，不用 percent-encode）
+            if [ -z "$windows_url" ]; then
+              windows_url="https://github.com/${repo}/releases/download/${tag}/${windows_file_name}"
+            fi
+            # 拿不到可下载地址就直接红 —— 静默把空 URL 写进 latest.json 比红更坑。
+            test "$(curl -sIL --retry 3 --retry-delay 2 --retry-all-errors -o /dev/null -w '%{http_code}' "$windows_url")" = "200"
+            echo "Windows 下载地址 ${windows_url}"
           fi
 
           current_json=$(curl --fail --silent --show-error --retry 3 \

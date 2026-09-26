@@ -2659,3 +2659,17 @@ totalWorks = 472
 | 教训 | ①**否定判据必须只看代码行** —— 修复说明里必然要写出旧按钮名字，整文件扫字符串会被自己的注释判死；②判「存在某个 API」容易判假绿（别处本来就有），必须正反两面都判；③`DiagnosticLog` 必须提供无 Context 重载，否则所有静态工具类的失败路径天然零留痕 |
 | 事故 | 变异自检脚本把「断言」写在「还原」**之前**，断言抛错时源文件被留在变异态（`semaphore.wait()` 无超时版本已悄悄落盘）—— 已修正为 **还原必须放在 `finally` 里** |
 | 类型 | 混合：崩溃 + 静默故障 + 口径不一致 |
+
+
+## DSH-120 — Windows 便携版发布：取地址 KeyError + 中文文件名被 artifact 静默截断（2026-09-27）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | ①`publish-gallery-updates` job 直接红：`KeyError: 'browser_download_url'`，整个发版链断；②Release 上出现名字残缺的附件 `-Windows-V4.3.30.exe`，中文前缀「文件收发中控」整段丢失 |
+| 根因 | ①`gh release view --json assets` 走 **gh 模板字段**，asset 里叫 `url`；`browser_download_url` 是 **REST API** 的字段名 —— 两套 API 面字段名不同。②`windows-portable` 在 **Windows runner** 上传 artifact、`publish` 在 **Linux runner** 下载，非 ASCII 文件名在这一跳被截断（GitHub artifact 服务对非 ASCII 文件名不可靠） |
+| 危害 | ①是明红，好查；②是**静默故障** —— 文件照样上传、sha256 照样对、日志照样打印完整中文名，只有 Release 页面上那个附件名是残缺的 |
+| 修法 | ①取 `url` 字段；拿不到兜底拼标准下载地址；最后必须 curl 到 200 才往下走。②发布前统一改 ASCII 名 `DeviceShareHub-Windows-V{版本}.exe`，改名后断言 sha256 不变；`使用说明.md` 按 `USAGE-Windows.md` 落一份 |
+| 自愈 | 每次发布删掉本 tag 下「`.exe` 结尾且名字 ≠ 本次发布名」的旧附件，历史残缺附件自动清掉 |
+| 闸门 | `_verify_workflow_dsh120.py`（YAML 块标量完整性 + `bash -n` + 4 段内嵌 python 单独跑 + 4 条逻辑回归），**含一条「旧写法确实 KeyError」证明修复是真修而非假绿** |
+| 教训 | ①**gh 有两套 API 面，字段名不一样**：`--json` 模板字段 vs REST API。看到 `browser_download_url` 要先确认走的是哪一套（`UpdateChecker.java` 那份是对的，因为它走 REST）。②**跨 OS 的 artifact 中转不可信非 ASCII 文件名** —— 构建产物中文名在本地和 CI 日志里都正常，只有落 Release 时才发现断了；凡是「经中转的非 ASCII 名」，发布前一律自己定 ASCII 名并对内容做 sha 断言。③拿不到下载地址要**直接红**，不许静默写空 URL 进 `latest.json` —— 空 URL 会让手机端「有更新但下不动」，比 CI 红难查得多。④Windows 上 PATH 里的 `bash` 会先命中 `C:\Windows\System32\bash.exe`（WSL 启动器，被沙箱拦），跑 `bash -n` 必须用 Git 的绝对路径 |
+| 类型 | 混合：①明红（CI 断链）；②**静默故障**（附件名残缺，全程零报错） |
