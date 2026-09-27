@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zwm-wechat-draft-publisher"
+version = "0.1.0"
+description = "Local library browser and official-API publisher for WeChat newspic drafts"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+zwm-wechat-drafts = "wechat_draft_publisher.app:main"
+
+[tool.setuptools.packages.find]
+include = ["wechat_draft_publisher*"]
