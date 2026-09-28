@@ -110,15 +110,19 @@ def probe_status(timeout: float = 3.0) -> bool:
 
 def is_service_healthy() -> bool:
     # 第一次探活（非阻塞毫秒级）
-    if probe_status(timeout=2.0):
-        return True
-    # 偶发波动重试二次确认（防抖 0.5s）
-    time.sleep(0.5)
     if probe_status(timeout=2.5):
         return True
-    # 第三次终极死锁超时确认（防抖 0.5s）
-    time.sleep(0.5)
-    return probe_status(timeout=3.0)
+    # 偶发波动重试二次确认（防抖 1.0s）
+    time.sleep(1.0)
+    if probe_status(timeout=3.5):
+        return True
+    # 第三次防抖确认（容忍后台磁盘全量扫描期 2.0s）
+    time.sleep(2.0)
+    if probe_status(timeout=6.0):
+        return True
+    # 第四次终极死锁超时确认（防抖 3.0s）
+    time.sleep(3.0)
+    return probe_status(timeout=10.0)
 
 # ----------------- 清理僵死/孤儿进程 -----------------
 _last_child_proc = None
@@ -182,11 +186,11 @@ def start_service() -> bool:
         log(f"拉起相册服务进程失败: {e}", "ERROR")
         return False
 
-    # 轮询等待就绪（每 0.2 秒一次，最多等 10 秒）
+    # 轮询等待就绪（每 0.5 秒一次，最多等 60 秒，充分容纳全库 529 套作品扫描）
     ready = False
-    for _ in range(50):
-        time.sleep(0.2)
-        if probe_status(timeout=1.0):
+    for _ in range(120):
+        time.sleep(0.5)
+        if probe_status(timeout=2.0):
             ready = True
             break
 
