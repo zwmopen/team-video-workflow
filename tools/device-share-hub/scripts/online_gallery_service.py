@@ -2789,7 +2789,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     target_work = self.scanner.resolve_stage_work(work_id)
 
                 if target_work:
-                    img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
+                    bn = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    direct_p = os.path.join(target_work["path"], bn)
+                    if os.path.isfile(direct_p):
+                        img_path = direct_p
+                    else:
+                        img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
 
                 if not img_path and "__link_" in work_id:
                     base_id = work_id.split("__link_")[0]

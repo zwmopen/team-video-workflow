@@ -133,12 +133,12 @@ enum PlatformCopyParser {
             || text.contains(headerMulti) || text.contains(versionStartPrefix)
             || text.contains("_START>>>")
         guard isProtocol else {
-            // 旧版纯文案（无任何标记）→ 单个「发布」按钮。
+            // 旧版纯文案（无任何标记）→ 单个「复制文案」按钮。
             // 【2026-09-21 DSH-087】兜底也必须剥净 `<<<…>>>`：畸形标记
             // （如只有两个 `>` 的 `<<<X_END>>`）会让 `isProtocol` 判false，
             // 原文连同畸形标记一起进剪贴板。与 Android 同函数同位置对齐。
-            return [AvailableCopyPlatform(platform: .xhs,
-                                          buttonLabel: "发布",
+            return [AvailableCopyPlatform(platform: .general,
+                                          buttonLabel: "复制文案",
                                           copyText: strippingProtocolMarkers(text)
                                               .trimmingCharacters(in: .whitespacesAndNewlines))]
         }
@@ -151,8 +151,22 @@ enum PlatformCopyParser {
             let content = strippingProtocolMarkers(stripOuterLineBreaks(body))
             guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let label = friendlyLabelForMarker(name)
-            // 与 Android 一致：命中「抖音避坑」的版本归到抖音平台，其余按通用版本处理。
-            let platform: CopyPlatform = (label == "抖音避坑" || label.contains("抖音")) ? .douyin : .general
+            let platform: CopyPlatform
+            if label.contains("抖音") || label == "抖音避坑" {
+                platform = .douyin
+            } else if label.contains("大纲") || label.contains("方案") {
+                platform = .xhs2
+            } else if label.contains("种草") || label.contains("小红书") {
+                platform = .xhs
+            } else if label.uppercased().contains("HR") || label.contains("决策") {
+                platform = .hr
+            } else if label.contains("公众号") || label.contains("微信") {
+                platform = .wechat
+            } else if label.contains("短文") || label.contains("精选") {
+                platform = .xhs3
+            } else {
+                platform = .general
+            }
             multiItems.append(AvailableCopyPlatform(platform: platform, buttonLabel: label, copyText: content))
         }
         if !multiItems.isEmpty { return multiItems }
@@ -194,8 +208,8 @@ enum PlatformCopyParser {
             // 【2026-09-21 DSH-087】Codex「伪协议」文案（有 `<<<COPY_FORMAT:3>>>` 头、
             // 正文用 `【小红书自然种草版】` 分节、无任何 `<<<XHS_START>>>`）会落到这里，
             // 原先直接 `text.trimmed` ⇒ 头标记进剪贴板（实测 46 份命中）。
-            return [AvailableCopyPlatform(platform: .xhs,
-                                          buttonLabel: "发布",
+            return [AvailableCopyPlatform(platform: .general,
+                                          buttonLabel: "复制文案",
                                           copyText: strippingProtocolMarkers(text)
                                               .trimmingCharacters(in: .whitespacesAndNewlines))]
         }
@@ -219,11 +233,27 @@ enum PlatformCopyParser {
         }
 
         guard let start = value.range(of: platform.startMarker) else {
+            // 兼容多版本语法：当按平台查找时，在 <<<VERSION_START:…>>> 块中智能匹配对应的风格版本
+            let vblocks = versionBlocks(in: value)
+            if !vblocks.isEmpty {
+                for (vname, body) in vblocks {
+                    let content = strippingProtocolMarkers(stripOuterLineBreaks(body))
+                    guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    if matchesPlatformName(platform: platform, vname: vname) {
+                        return PlatformCopyResult(status: .ok, text: content)
+                    }
+                }
+                if platform == .general, let first = vblocks.first {
+                    let content = strippingProtocolMarkers(stripOuterLineBreaks(first.1))
+                    return PlatformCopyResult(status: .ok, text: content)
+                }
+            }
+
             let hasOther = CopyPlatform.allCases.contains { other in
                 other != platform
                     && (value.contains(other.startMarker) || value.contains(other.endMarker))
             }
-            if !hasOther {
+            if !hasOther && vblocks.isEmpty {
                 return PlatformCopyResult(status: .unreadable, text: "")
             }
             return PlatformCopyResult(status: .missing, text: "")
@@ -323,5 +353,25 @@ enum PlatformCopyParser {
         while let first = sub.first, first == "\r" || first == "\n" { sub = sub.dropFirst() }
         while let last = sub.last, last == "\r" || last == "\n" { sub = sub.dropLast() }
         return String(sub)
+    }
+
+    private static func matchesPlatformName(platform: CopyPlatform, vname: String) -> Bool {
+        let lower = vname.lowercased()
+        switch platform {
+        case .douyin:
+            return vname.contains("抖音") || vname.contains("避坑") || vname.contains("规避营销")
+        case .xhs2:
+            return vname.contains("大纲") || vname.contains("方案")
+        case .xhs:
+            return vname.contains("种草") || vname.contains("小红书") || vname.contains("原生")
+        case .hr:
+            return lower.contains("hr") || vname.contains("决策")
+        case .wechat:
+            return vname.contains("公众号") || vname.contains("微信")
+        case .xhs3:
+            return vname.contains("短文") || vname.contains("精选")
+        case .general:
+            return false
+        }
     }
 }

@@ -560,7 +560,7 @@ public final class OnlineGalleryClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var payload: [String: Any] = ["workId": workId]
+        var payload: [String: Any] = ["workId": workId, "device": UIDevice.current.name]
         if let p = platform { payload["platform"] = p }
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 

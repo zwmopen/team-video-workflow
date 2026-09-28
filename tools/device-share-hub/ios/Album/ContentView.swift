@@ -1039,8 +1039,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         try? FileManager.default.removeItem(at: dir)
                     }
                     guard completed, let self = self else { return }
-                    // 1. 通知电脑端物理归档移动至 _已发送1次
-                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.platform.code)
+                    // 1. 通知电脑端物理归档移动至 _已发送1次（记录所选文案版本名，解绑特定平台）
+                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.buttonLabel)
                     // 2. 本地记录生命周期打标
                     OnlineWorkLifecycle.markUsed(work: entry)
                     self.showToast("🚀 分享完成，电脑端已自动归档")

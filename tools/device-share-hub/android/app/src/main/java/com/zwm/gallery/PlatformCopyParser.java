@@ -90,7 +90,7 @@ final class PlatformCopyParser {
                 || text.contains("_START>>>");
         if (!isProtocol) {
             // 【2026-09-21 修复】兜底文案也必须剥净 `<<<…>>>`，否则非标准标记会被原样带进剪贴板。
-            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布",
+            return Collections.singletonList(new AvailableItem(Platform.GENERAL, "复制文案",
                     stripProtocolMarkers(text).trim()));
         }
 
@@ -102,7 +102,22 @@ final class PlatformCopyParser {
             String content = stripProtocolMarkers(stripOuterLineBreaks(vMatcher.group(2)));
             if (!content.trim().isEmpty()) {
                 String label = friendlyLabelForMarker(vname);
-                Platform plat = ("抖音避坑".equals(label) || label.contains("抖音")) ? Platform.DOUYIN : Platform.GENERAL;
+                Platform plat;
+                if (label.contains("抖音") || "抖音避坑".equals(label)) {
+                    plat = Platform.DOUYIN;
+                } else if (label.contains("大纲") || label.contains("方案")) {
+                    plat = Platform.XHS_2;
+                } else if (label.contains("种草") || label.contains("小红书")) {
+                    plat = Platform.XHS;
+                } else if (label.toUpperCase(java.util.Locale.ROOT).contains("HR") || label.contains("决策")) {
+                    plat = Platform.HR;
+                } else if (label.contains("公众号") || label.contains("微信")) {
+                    plat = Platform.WECHAT;
+                } else if (label.contains("短文") || label.contains("精选")) {
+                    plat = Platform.XHS_3;
+                } else {
+                    plat = Platform.GENERAL;
+                }
                 multiItems.add(new AvailableItem(plat, label, content));
             }
         }
@@ -161,7 +176,7 @@ final class PlatformCopyParser {
             // 正文却用 `【小红书自然种草版】` 之类中文标题分节、没有任何 `<<<XHS_START>>>` 标记。
             // 此时落到这里，原先直接 `text.trim()` ⇒ 把 `<<<COPY_FORMAT:3>>>` 原样带进剪贴板
             // （实测 46 份作品命中）。剥净标记后再兜底。
-            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布",
+            return Collections.singletonList(new AvailableItem(Platform.GENERAL, "复制文案",
                     stripProtocolMarkers(text).trim()));
         }
         return items;
@@ -212,31 +227,72 @@ final class PlatformCopyParser {
             return new Result(text.trim().isEmpty() ? Status.UNREADABLE : Status.OK, text);
         }
         Matcher matcher = platform.pattern.matcher(text);
-        if (!matcher.find()) {
-            String marker = platform.marker;
-            if (text.contains("<<<" + marker + "_START>>>")
-                    || text.contains("<<<" + marker + "_END>>>")) {
-                return new Result(Status.UNREADABLE, "");
-            }
-            boolean hasOther = false;
-            for (Platform other : Platform.values()) {
-                if (other != platform && (text.contains("<<<" + other.marker + "_START>>>")
-                        || text.contains("<<<" + other.marker + "_END>>>"))) {
-                    hasOther = true;
+        if (matcher.find()) {
+            String value = stripOuterLineBreaks(matcher.group(1));
+            if (value.trim().isEmpty()) return new Result(Status.UNREADABLE, "");
+            return new Result(Status.OK, stripProtocolMarkers(value));
+        }
+
+        // 兼容多版本语法：当按平台查找时，在 <<<VERSION_START:…>>> 块中智能匹配对应的风格版本
+        if (hasMultiVersionBlocks(text)) {
+            Matcher vMatcher = VERSION_BLOCK_PATTERN.matcher(text);
+            String bestMatch = null;
+            String firstBlock = null;
+            while (vMatcher.find()) {
+                String vname = vMatcher.group(1).trim();
+                String content = stripProtocolMarkers(stripOuterLineBreaks(vMatcher.group(2)));
+                if (content.trim().isEmpty()) continue;
+                if (firstBlock == null) firstBlock = content;
+                if (matchesPlatformName(platform, vname)) {
+                    bestMatch = content;
                     break;
                 }
             }
-            if (!hasOther) {
-                return new Result(Status.UNREADABLE, "");
+            if (bestMatch != null) {
+                return new Result(Status.OK, bestMatch);
             }
-            return new Result(Status.MISSING, "");
+            if (platform == Platform.GENERAL && firstBlock != null) {
+                return new Result(Status.OK, firstBlock);
+            }
         }
-        String value = stripOuterLineBreaks(matcher.group(1));
-        if (value.trim().isEmpty()) return new Result(Status.UNREADABLE, "");
-        // 【2026-09-21 修复】不能假设磁盘上的标记一定规范：已发现 Codex 产线把结束标记
-        // 写成 `<<<DOUYIN_END>>`（只有两个 `>`），会被正则当成正文吞进来。
-        // 取出的正文再净化一次，保证剪贴板里永远不出现 `<<<…>>`。
-        return new Result(Status.OK, stripProtocolMarkers(value));
+
+        String marker = platform.marker;
+        if (text.contains("<<<" + marker + "_START>>>")
+                || text.contains("<<<" + marker + "_END>>>")) {
+            return new Result(Status.UNREADABLE, "");
+        }
+        boolean hasOther = false;
+        for (Platform other : Platform.values()) {
+            if (other != platform && (text.contains("<<<" + other.marker + "_START>>>")
+                    || text.contains("<<<" + other.marker + "_END>>>"))) {
+                hasOther = true;
+                break;
+            }
+        }
+        if (!hasOther && !hasMultiVersionBlocks(text)) {
+            return new Result(Status.UNREADABLE, "");
+        }
+        return new Result(Status.MISSING, "");
+    }
+
+    private static boolean matchesPlatformName(Platform platform, String vname) {
+        String lower = vname.toLowerCase(java.util.Locale.ROOT);
+        switch (platform) {
+            case DOUYIN:
+                return vname.contains("抖音") || vname.contains("避坑") || vname.contains("规避营销");
+            case XHS_2:
+                return vname.contains("大纲") || vname.contains("方案");
+            case XHS:
+                return vname.contains("种草") || vname.contains("小红书") || vname.contains("原生");
+            case HR:
+                return lower.contains("hr") || vname.contains("决策");
+            case WECHAT:
+                return vname.contains("公众号") || vname.contains("微信");
+            case XHS_3:
+                return vname.contains("短文") || vname.contains("精选");
+            default:
+                return false;
+        }
     }
 
     private static String stripBom(String value) {
@@ -259,10 +315,7 @@ final class PlatformCopyParser {
         clean = clean.replace(HEADER_V2, "").replace(HEADER_V3, "");
         // 兜底：连同 MULTI 头、VERSION_START/END、任意自定义标记一并剥净。
         clean = ANY_MARKER_PATTERN.matcher(clean).replaceAll("");
-        // Remove hashtag topic tags commonly used in XHS
-        clean = clean.replaceAll("#[^\\s#]+", "");
-        // Remove XHS emoji tags like [打卡R] etc
-        clean = clean.replaceAll("\\[[^\\]]+R\\]", "");
+        // 严禁剥除 #话题，用户明确要求文案保真与话题完整
         clean = clean.trim();
         return clean.isEmpty() ? source.trim() : clean;
     }

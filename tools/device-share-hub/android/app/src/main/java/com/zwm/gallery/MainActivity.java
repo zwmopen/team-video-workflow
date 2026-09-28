@@ -1343,12 +1343,12 @@ public final class MainActivity extends Activity {
                         ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.text, item.platform);
                 btn.setOnClickListener(v -> {
                     markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
-                    openShare(work, item.platform.code, copyForPlatform);
+                    openShare(work, item.buttonLabel, copyForPlatform);
                 });
                 btn.setOnLongClickListener(v -> {
                     showCopyPreviewDialog(work.name, item.buttonLabel, copyForPlatform, () -> {
                         markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
-                        openShare(work, item.platform.code, copyForPlatform);
+                        openShare(work, item.buttonLabel, copyForPlatform);
                     });
                     return true;
                 });
@@ -3933,80 +3933,14 @@ public final class MainActivity extends Activity {
 
     private List<PlatformCopyParser.AvailableItem> enrichPlatformSuite(
             List<PlatformCopyParser.AvailableItem> rawPlatforms, String rawText, String title) {
-        List<PlatformCopyParser.AvailableItem> result = new ArrayList<>();
-        PlatformCopyParser.AvailableItem douyinItem = null;
-        PlatformCopyParser.AvailableItem xhsItem = null;
-        PlatformCopyParser.AvailableItem xhs2Item = null;
-
-        if (rawPlatforms != null) {
-            for (PlatformCopyParser.AvailableItem item : rawPlatforms) {
-                if (item.platform == PlatformCopyParser.Platform.DOUYIN || "规避营销版".equals(item.buttonLabel)) {
-                    douyinItem = item;
-                } else if (item.platform == PlatformCopyParser.Platform.XHS || "种草版".equals(item.buttonLabel) || "发布".equals(item.buttonLabel)) {
-                    xhsItem = item;
-                } else if (item.platform == PlatformCopyParser.Platform.XHS_2 || "大纲方案版".equals(item.buttonLabel)) {
-                    xhs2Item = item;
-                } else {
-                    result.add(item);
-                }
-            }
-        }
-
-        String fallback = (rawText != null && !rawText.trim().isEmpty()) ? rawText.trim() : (title != null ? title : "");
-
-        // 【2026-09-21 修复】V4.5 多版本文案（MULTI）已逐版本出按钮，不再合成这 3 个旧版兜底按钮。
-        // 它们的兜底内容取的是整篇原文，点一下就把全部 `<<<…>>>` 标记复制进剪贴板
-        // （实测 111 份「已发送0次」作品命中）。多版本时只保留各版本自身按钮 + 「抖音避坑」。
-        // 【2026-09-23 用户口径】11 个版本**平级**，按钮顺序 = `文案.txt` 里版本块出现的先后顺序
-        // （手机端跟随文件顺序，不需要任何 rank 规则）。
-        // 旧行为有两处破坏顺序：① 把「抖音」那一版从列表里摘出来、`result.add` 追加到末尾；
-        // ② 末尾 `result.sort(getButtonRank)` —— 已排在文案最前的抖音版会被甩到整行最后。
-        // 现在多版本时**原样返回**解析结果，与 iOS `if !multiItems.isEmpty { return multiItems }` 1:1 对齐。
-        boolean multiVersion = PlatformCopyParser.hasMultiVersionBlocks(rawText) && !result.isEmpty();
-        if (multiVersion) {
+        // 【2026-09-28 用户铁律对齐】
+        // 手机端文案按钮必须 100% 忠实于物理文件夹里文案.txt 实际识别到的版本块！
+        // 严禁凭空合成兜底按钮（如将种草文案冒充大纲方案版、剥除规避营销版话题标签等）。
+        // 直接采纳 parseAvailablePlatforms 的真实解析结果，保证每个按钮对应的文案与话题 100% 保真。
+        if (rawPlatforms != null && !rawPlatforms.isEmpty()) {
             return new ArrayList<>(rawPlatforms);
         }
-
-        // —— 以下为「旧协议（COPY_FORMAT:2/3）/ 纯文案」的兜底合成：
-        //    固定产出 规避营销版 → 种草版 → 大纲方案版 三个按钮 ——
-        // 1. 规避营销版
-        if (douyinItem != null && douyinItem.copyText != null && !douyinItem.copyText.trim().isEmpty()) {
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.DOUYIN, "规避营销版", douyinItem.copyText));
-        } else {
-            String douyinCopy = PlatformCopyParser.synthesizeDouyinCopy(fallback);
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.DOUYIN, "规避营销版", douyinCopy));
-        }
-
-        // 2. 种草版
-        if (xhsItem != null && xhsItem.copyText != null && !xhsItem.copyText.trim().isEmpty()) {
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版", xhsItem.copyText));
-        } else {
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS, "种草版",
-                    PlatformCopyParser.stripProtocolMarkers(fallback)));
-        }
-
-        // 3. 大纲方案版
-        if (xhs2Item != null && xhs2Item.copyText != null && !xhs2Item.copyText.trim().isEmpty()) {
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS_2, "大纲方案版", xhs2Item.copyText));
-        } else {
-            String outlineCopy = PlatformCopyParser.synthesizeOutlineCopy(fallback);
-            result.add(new PlatformCopyParser.AvailableItem(PlatformCopyParser.Platform.XHS_2, "大纲方案版", outlineCopy));
-        }
-
-        // 仅兜底三按钮路径需要 rank（多版本走上面的 early return，绝不重排）
-        result.sort((a, b) -> {
-            int rankA = getButtonRank(a.buttonLabel);
-            int rankB = getButtonRank(b.buttonLabel);
-            return Integer.compare(rankA, rankB);
-        });
-        return result;
-    }
-
-    private static int getButtonRank(String label) {
-        if ("规避营销版".equals(label)) return 1;
-        if ("种草版".equals(label)) return 2;
-        if ("大纲方案版".equals(label)) return 3;
-        return 10;
+        return Collections.emptyList();
     }
 
     /** 剔除 <<<...>>> 协议标记、空白与盲文空格（U+2800）后的文案实质内容。 */
@@ -4675,12 +4609,13 @@ public final class MainActivity extends Activity {
         // 手机端本地生命周期记录（启动遵循手机端设置的时间规则倒计时）
         OnlineWorkLifecycle.markUsed(this, work, System.currentTimeMillis());
 
-        onlineClient.recordUse(work.id, getDeviceName(), platformCode, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
+        final String versionTag = (label != null && !label.trim().isEmpty()) ? label.trim() : platformCode;
+        onlineClient.recordUse(work.id, getDeviceName(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
                 if (result != null && result.ok) {
                     updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses,
-                            getDeviceName() + "(" + platformCode + ")");
+                            getDeviceName() + "(" + versionTag + ")");
                 }
             }
 
@@ -4728,23 +4663,23 @@ public final class MainActivity extends Activity {
             }
             send.setClipData(clipData);
 
-            String targetPkg = null;
-            if ("douyin".equalsIgnoreCase(platformCode)) {
-                targetPkg = "com.ss.android.ugc.aweme";
-            } else if ("xhs".equalsIgnoreCase(platformCode) || "xhs2".equalsIgnoreCase(platformCode) || "xhs3".equalsIgnoreCase(platformCode)) {
-                targetPkg = "com.xingin.xhs";
-            }
-            if (targetPkg != null && isAppInstalled(targetPkg)) {
-                send.setPackage(targetPkg);
-                for (Uri u : uris) {
-                    grantUriPermission(targetPkg, u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // 针对各种 Android 系统（华为鸿蒙/小米澎湃/vivo等），提前为所有可分享应用授予 URI 权限
+            for (ResolveInfo target : getPackageManager().queryIntentActivities(send, 0)) {
+                if (target.activityInfo == null || target.activityInfo.packageName == null) continue;
+                for (Uri uri : uris) {
+                    try {
+                        grantUriPermission(target.activityInfo.packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (SecurityException ignored) {
+                    }
                 }
-                startActivity(send);
-            } else {
-                Intent chooser = Intent.createChooser(send, "分享作品图片");
-                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                startActivity(chooser);
             }
+
+            // 绝对铁律：100% 呼出系统原生分享面板（Intent.createChooser），严禁直接唤起特定App（如抖音）
+            // 赋予用户在系统原生分享面板自由选择小红书、抖音、微信或系统相册的完全自主权
+            Intent chooser = Intent.createChooser(send, "分享作品图片");
+            chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            chooser.setClipData(clipData);
+            startActivity(chooser);
         } catch (Exception e) {
             toast("打开分享失败: " + e.getMessage());
         }
@@ -4867,6 +4802,11 @@ public final class MainActivity extends Activity {
     }
 
     private String getDeviceName() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String customName = prefs.getString("deviceName", "").trim();
+        if (!customName.isEmpty()) {
+            return customName;
+        }
         String manufacturer = Build.MANUFACTURER;
         String model = Build.MODEL;
         if (model != null && manufacturer != null && model.toLowerCase(Locale.ROOT).startsWith(manufacturer.toLowerCase(Locale.ROOT))) {
