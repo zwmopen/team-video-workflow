@@ -1196,6 +1196,19 @@ def detect_destination(title: str, dir_path: str = "") -> str:
     return "其他"
 
 
+def extract_category_from_folder_name(folder_name: str) -> str:
+    """去除目录名后缀（成品/作品/合集）作为默认分类（如 安吉成品 -> 安吉）"""
+    cat = folder_name.strip()
+    if cat.startswith("已发送0次"):
+        return ""
+    for suffix in ("成品", "作品", "合集"):
+        if cat.endswith(suffix) and len(cat) > len(suffix):
+            cat = cat[:-len(suffix)].strip()
+            break
+    return cat
+
+
+
 DISK_THUMB_DIR = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "gallery_thumb_cache")
 try:
     os.makedirs(DISK_THUMB_DIR, exist_ok=True)
@@ -1581,45 +1594,8 @@ class WorkScanner:
             seen_ids = set()
             _slot_guard_reset()   # 槽位守卫计数按「本轮扫描」统计，避免累积值误导
 
-            # 1. 严格只扫描「已发送0次（抖音小红书可发）」目录
-            stage0_dir = os.path.join(self.root, "已发送0次（抖音小红书可发）")
-            if os.path.isdir(stage0_dir):
-                try:
-                    entries = os.listdir(stage0_dir)
-                except Exception:
-                    entries = []
-
-                for entry in entries:
-                    if entry.startswith(".") or entry.startswith("_"):
-                        continue
-                    full_path = os.path.join(stage0_dir, entry)
-                    if not os.path.isdir(full_path):
-                        continue
-
-                    # 处理作品集子目录（如 作品集_099）以及 团建游戏 子目录
-                    if entry.startswith("作品集") or entry in ("团建游戏", "游戏", "游戏类"):
-                        try:
-                            sub_entries = os.listdir(full_path)
-                            for sub in sub_entries:
-                                if sub.startswith(".") or sub.startswith("_"):
-                                    continue
-                                sub_path = os.path.join(full_path, sub)
-                                if os.path.isdir(sub_path):
-                                    work = self._inspect_work_dir(sub_path, sub, "已发送0次", 0)
-                                    if work and work["id"] not in seen_ids:
-                                        seen_ids.add(work["id"])
-                                        results.append(work)
-                        except Exception:
-                            pass
-                    else:
-                        work = self._inspect_work_dir(full_path, entry, "已发送0次", 0)
-                        if work and work["id"] not in seen_ids:
-                            seen_ids.add(work["id"])
-                            results.append(work)
-
-            # 扫描根目录下最新直出的合法作品，排除忽略目录与特殊目录
             IGNORED_NAMES = {
-                "已发送0次（抖音小红书可发）", "已发送1次（微信公众号可发）", "_已发送1次（微信公众号可发）",
+                "已发送1次（微信公众号可发）", "_已发送1次（微信公众号可发）",
                 "_已发送一次", "已发送2次（其他平台可发）", "_已发送2次（其他平台可发）",
                 "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
                 "_portfolio_backup", "_portfolio_move_logs", "_不合格成品合集", "_作品历史数据",
@@ -1629,26 +1605,76 @@ class WorkScanner:
             }
             try:
                 root_entries = os.listdir(self.root)
-                for entry in root_entries:
-                    if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
+            except Exception as _e:
+                _scan_error("root-listdir", self.root, _e)
+                root_entries = []
+
+            for entry in root_entries:
+                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
+                    continue
+                full_path = os.path.join(self.root, entry)
+                if not os.path.isdir(full_path):
+                    continue
+
+                # 兼容根目录下直接出图的单个作品
+                try:
+                    direct_work = self._inspect_work_dir(full_path, entry, "待首发", 0)
+                except Exception as _e:
+                    _scan_error("root-entry", full_path, _e)
+                    direct_work = None
+
+                if direct_work:
+                    if direct_work["id"] not in seen_ids:
+                        seen_ids.add(direct_work["id"])
+                        results.append(direct_work)
+                    continue
+
+                # 扫描各分类目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
+                default_cat = extract_category_from_folder_name(entry)
+                try:
+                    sub_entries = os.listdir(full_path)
+                except Exception as _e:
+                    _scan_error("cat-dir-list", full_path, _e)
+                    continue
+
+                for sub in sub_entries:
+                    if sub.startswith(".") or sub.startswith("_"):
                         continue
-                    full_path = os.path.join(self.root, entry)
-                    if not os.path.isdir(full_path):
+                    sub_path = os.path.join(full_path, sub)
+                    if not os.path.isdir(sub_path):
                         continue
+
                     try:
-                        work = self._inspect_work_dir(full_path, entry, "待首发", 0)
+                        work = self._inspect_work_dir(sub_path, sub, "待首发", 0, default_category=default_cat)
                     except Exception as _e:
-                        # 【DSH-117】单个目录异常（权限 / 非法编码名 / 删到一半）
-                        # 不能再连坐整轮扫描：此前外层 try 会直接吞掉整个循环，
-                        # 让根目录直出的成品「整套消失」且**零报错**；
-                        # 而 stage0 分支因为有内层 try 安然无恙 —— 两端行为不一致。
-                        _scan_error("root-entry", full_path, _e)
+                        _scan_error("sub-entry", sub_path, _e)
                         work = None
-                    if work and work["id"] not in seen_ids:
-                        seen_ids.add(work["id"])
-                        results.append(work)
-            except Exception:
-                pass
+
+                    if work:
+                        if work["id"] not in seen_ids:
+                            seen_ids.add(work["id"])
+                            results.append(work)
+                    else:
+                        # 兼容作品集子目录或嵌套目录（如 作品集_099 等）
+                        if sub.startswith("作品集") or sub in ("团建游戏", "游戏", "游戏类"):
+                            try:
+                                child_entries = os.listdir(sub_path)
+                                for child in child_entries:
+                                    if child.startswith(".") or child.startswith("_"):
+                                        continue
+                                    child_path = os.path.join(sub_path, child)
+                                    if not os.path.isdir(child_path):
+                                        continue
+                                    try:
+                                        c_work = self._inspect_work_dir(child_path, child, "待首发", 0, default_category=default_cat)
+                                    except Exception as _ce:
+                                        _scan_error("child-entry", child_path, _ce)
+                                        c_work = None
+                                    if c_work and c_work["id"] not in seen_ids:
+                                        seen_ids.add(c_work["id"])
+                                        results.append(c_work)
+                            except Exception:
+                                pass
 
             # 按时间倒序（标题通常带时间戳）
             results.sort(key=lambda w: w.get("title", ""), reverse=True)
@@ -1668,11 +1694,7 @@ class WorkScanner:
     # 最迟 60 秒内会被服务端扫到，手机端下次拉列表（refresh=1 或自动重扫）即看到最新。
 
     def _walk_root_paths(self) -> Set[Tuple[str, float]]:
-        """遍历 self.root 下所有 (path, mtime)，跳过 ./_ 开头目录。
-
-        与 scan() 的扫描规则一致：只下钻「已发送0次」内的作品集/团建游戏/游戏/游戏类
-        中间层（这些是用户最常手动拖新作品的入口），成品库根目录直出另算。
-        """
+        """遍历 self.root 下所有分类目录与作品目录的 (path, mtime)，跳过 ./_ 开头目录。"""
         out: Set[Tuple[str, float]] = set()
         if not os.path.isdir(self.root):
             return out
@@ -1683,44 +1705,51 @@ class WorkScanner:
             except (OSError, PermissionError):
                 return 0.0
 
-        # 1. 成品库根目录直出的子文件夹
+        IGNORED_NAMES = {
+            "已发送1次（微信公众号可发）", "_已发送1次（微信公众号可发）",
+            "_已发送一次", "已发送2次（其他平台可发）", "_已发送2次（其他平台可发）",
+            "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
+            "_portfolio_backup", "_portfolio_move_logs", "_不合格成品合集", "_作品历史数据",
+            "_制作中", "_待补全_单封面作品集", "_测试验收", "_生产计划与排产参考", "_重复待处理",
+            "_垃圾作品（后续参考分析）",
+            "发布空间", "待制作待补全", "抖音小红书"
+        }
+
+        # 1. 扫描所有非 . 非 _ 开头的目录及根目录直出作品
         try:
             for entry in os.listdir(self.root):
-                if entry.startswith(".") or entry.startswith("_"):
+                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
                     continue
                 full = os.path.join(self.root, entry)
-                if os.path.isdir(full):
-                    out.add((full, _safe_mtime(full)))
+                if not os.path.isdir(full):
+                    continue
+                out.add((full, _safe_mtime(full)))
+                # 遍历分类目录下的作品或中间层
+                try:
+                    for sub in os.listdir(full):
+                        if sub.startswith(".") or sub.startswith("_"):
+                            continue
+                        sub_full = os.path.join(full, sub)
+                        if os.path.isdir(sub_full):
+                            out.add((sub_full, _safe_mtime(sub_full)))
+                            # 如果是中间层（作品集/游戏等）再下钻一层
+                            if sub.startswith("作品集") or sub in ("团建游戏", "游戏", "游戏类"):
+                                try:
+                                    for child in os.listdir(sub_full):
+                                        if child.startswith(".") or child.startswith("_"):
+                                            continue
+                                        child_full = os.path.join(sub_full, child)
+                                        if os.path.isdir(child_full):
+                                            out.add((child_full, _safe_mtime(child_full)))
+                                except (OSError, PermissionError):
+                                    pass
+                except (OSError, PermissionError):
+                    pass
         except (OSError, PermissionError):
             pass
 
-        # 2. 「已发送0次」+ 子作品集
-        stage0 = os.path.join(self.root, "已发送0次（抖音小红书可发）")
-        if os.path.isdir(stage0):
-            try:
-                for entry in os.listdir(stage0):
-                    if entry.startswith(".") or entry.startswith("_"):
-                        continue
-                    full = os.path.join(stage0, entry)
-                    if not os.path.isdir(full):
-                        continue
-                    out.add((full, _safe_mtime(full)))
-                    # 中间层下钻一层
-                    if entry.startswith("作品集") or entry in ("团建游戏", "游戏", "游戏类"):
-                        try:
-                            for sub in os.listdir(full):
-                                if sub.startswith(".") or sub.startswith("_"):
-                                    continue
-                                sub_full = os.path.join(full, sub)
-                                if os.path.isdir(sub_full):
-                                    out.add((sub_full, _safe_mtime(sub_full)))
-                        except (OSError, PermissionError):
-                            pass
-            except (OSError, PermissionError):
-                pass
-
-        # 3. 「_已发送1次」回收站（DSH-095 统一入口）
-        stage1 = os.path.join(self.root, "_已发送1次（微信公众号可发）")
+        # 2. 「_已发送1次」回收站（监控其变更以便回收站界面即时同步）
+        stage1 = os.path.join(self.root, self.STAGE1_FOLDER)
         if os.path.isdir(stage1):
             try:
                 for entry in os.listdir(stage1):
@@ -1856,7 +1885,7 @@ class WorkScanner:
                 return hits
         return []
 
-    def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int) -> Optional[Dict[str, Any]]:
+    def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int, default_category: str = "") -> Optional[Dict[str, Any]]:
         try:
             files = os.listdir(dir_path)
         except Exception:
@@ -1958,6 +1987,12 @@ class WorkScanner:
             use_count = len(dispatched) if dispatched else default_count
 
         destination = detect_destination(folder_name, dir_path)
+        if default_category:
+            if destination == "其他":
+                destination = default_category
+            elif default_category not in ("综合与其它城市", "其他", ""):
+                if destination != "游戏":
+                    destination = default_category
 
         # 优雅标题清洗：剥离时间戳与机器流水线前缀，让手机端直显方案名
         clean_title = folder_name
@@ -2425,11 +2460,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 categories.append({"name": "🎮 游戏", "count": game_count})
 
             dest_categories = []
+            seen_dest = set()
             for d in DESTINATIONS:
-                if d in ("中秋", "国庆", "游戏"):
+                if d in ("中秋", "国庆", "游戏", "其他"):
                     continue
                 if d in counts and counts[d] > 0:
                     dest_categories.append({"name": d, "count": counts[d]})
+                    seen_dest.add(d)
+            for d, cnt in counts.items():
+                if d in ("中秋", "国庆", "游戏", "其他") or d in seen_dest:
+                    continue
+                if cnt > 0:
+                    dest_categories.append({"name": d, "count": cnt})
+                    seen_dest.add(d)
             if "其他" in counts and counts["其他"] > 0:
                 dest_categories.append({"name": "其他", "count": counts["其他"]})
             dest_categories.sort(key=lambda c: -c["count"])
@@ -2739,12 +2782,30 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         folder_name = os.path.basename(src_path)
         work_id = target_work.get("id", "")
         root_dir = self.scanner.root
-        dest_base = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
+
+        # 优先反查原始归属目录（如 安吉成品、莫干山成品、作品集_xxx 等）
+        dest_base = None
+        home = self._original_parent_dir(work_id)
+        if home and os.path.isdir(home) and self._is_valid_restore_parent(home):
+            dest_base = home
+        if not dest_base:
+            dest_name = target_work.get("destination", "")
+            if dest_name and dest_name not in ("其他", ""):
+                candidate = os.path.join(root_dir, f"{dest_name}成品")
+                if os.path.isdir(candidate):
+                    dest_base = candidate
+        if not dest_base:
+            stage0_candidate = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
+            if os.path.isdir(stage0_candidate):
+                dest_base = stage0_candidate
+            else:
+                dest_base = root_dir
+
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
         if os.path.abspath(target_dest) == os.path.abspath(src_path):
-            return True, src_path, "作品已位于「已发送0次（抖音小红书可发）」"
+            return True, src_path, f"作品已位于「{os.path.basename(dest_base)}」"
         if os.path.exists(target_dest):
             ts_suffix = time.strftime("%Y%m%d_%H%M%S")
             target_dest = os.path.join(dest_base, f"{folder_name}_{ts_suffix}")
@@ -2923,16 +2984,26 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     return parent
         return None
 
-    def _is_album_dir_under_stage0(self, path: str) -> bool:
-        """path 是否为「已发送0次」下面的合集子目录（只允许恢复到这一类原位）。"""
+    def _is_valid_restore_parent(self, path: str) -> bool:
+        """检查恢复目标父目录是否合法（必须在成品库内，且不是 _ 或 . 开头的系统阶段目录）"""
         try:
-            stage0 = os.path.abspath(os.path.join(self.scanner.root, self.scanner.STAGE0_FOLDER))
             target = os.path.abspath(path)
-            if target == stage0:
+            root = os.path.abspath(self.scanner.root)
+            if target == root:
+                return True
+            if os.path.commonpath([target, root]) != root:
                 return False
-            return os.path.commonpath([target, stage0]) == stage0
+            rel = os.path.relpath(target, root)
+            first_part = rel.split(os.sep)[0]
+            if first_part.startswith(".") or first_part.startswith("_"):
+                return False
+            return True
         except Exception:
             return False
+
+    def _is_album_dir_under_stage0(self, path: str) -> bool:
+        """向后兼容：检查是否为合法的成品库归属目录。"""
+        return self._is_valid_restore_parent(path)
 
     def _log_stage_move(self, root_dir: str, device_name: str, work_id: str,
                         src_path: str, dest_path: str, use_count: int,
@@ -2951,7 +3022,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             pass
 
     def _restore_work_to_stage0(self, target_work: Dict[str, Any], device_name: str) -> Tuple[bool, str, str]:
-        """在线回收站「恢复」：移回「已发送0次（抖音小红书可发）」、使用次数归零、撤销垃圾标记。
+        """在线回收站「恢复」：移回原归属分类目录、使用次数归零、撤销垃圾标记。
 
         已与用户确认口径：两个 Tab（已使用 / 已标记垃圾）的「恢复」都是这个语义 ——
         让作品重新变回可发手机的全新作品。
@@ -2961,14 +3032,26 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         work_id = target_work.get("id", "")
         was_garbage = target_work.get("folder") == self.scanner.GARBAGE_FOLDER
         root_dir = self.scanner.root
-        dest_base = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
-        # 若作品原本住在「已发送0次/作品集_xxx」合集里，优先放回原位，
-        # 否则会把作品从它的合集里抖到根目录，破坏成品库结构。
+
+        # 优先反查作品搬家前的父目录，放回原归属目录（安吉成品、莫干山成品、合集等）
+        dest_base = None
         restored_to_album = False
         home = self._original_parent_dir(work_id)
-        if home and os.path.isdir(home) and self._is_album_dir_under_stage0(home):
+        if home and os.path.isdir(home) and self._is_valid_restore_parent(home):
             dest_base = home
             restored_to_album = True
+        if not dest_base:
+            dest_name = target_work.get("destination", "")
+            if dest_name and dest_name not in ("其他", ""):
+                candidate = os.path.join(root_dir, f"{dest_name}成品")
+                if os.path.isdir(candidate):
+                    dest_base = candidate
+        if not dest_base:
+            stage0_candidate = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
+            if os.path.isdir(stage0_candidate):
+                dest_base = stage0_candidate
+            else:
+                dest_base = root_dir
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -3073,7 +3156,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["folder"] = self.scanner.STAGE0_FOLDER
 
         label = "垃圾样本库" if was_garbage else "已发送1次"
-        where = "原作品集合集" if restored_to_album else "「已发送0次（抖音小红书可发）」"
+        where = f"原作品集合集「{os.path.basename(dest_base)}」" if restored_to_album else f"「{os.path.basename(dest_base)}」"
         return True, target_dest, f"已从「{label}」恢复：移回{where}，使用次数归零，可重新发布"
 
     def _annotate_garbage(self, target_work: Dict[str, Any], remark: str, device_name: str) -> Tuple[bool, str]:

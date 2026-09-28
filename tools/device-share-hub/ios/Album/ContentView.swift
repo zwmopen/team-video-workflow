@@ -67,10 +67,50 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
     }
 
+    private func matchesOnlineCategory(work: OnlineWorkEntry, catKey: String) -> Bool {
+        if catKey == "全部" || catKey.isEmpty {
+            return true
+        }
+        if catKey == "待首发" {
+            return work.useCount == 0
+        } else if catKey == "已发1次" || catKey == "已发1" {
+            return work.useCount == 1
+        } else if catKey == "已发2次" || catKey == "已发2" || catKey == "已用满" {
+            return work.useCount >= 2
+        }
+
+        let cleanCat = catKey
+            .replacingOccurrences(of: "🌕", with: "")
+            .replacingOccurrences(of: "🇨🇳", with: "")
+            .replacingOccurrences(of: "🎮", with: "")
+            .replacingOccurrences(of: "🏷️", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleanCat == "游戏" || catKey.contains("游戏") {
+            return work.destination.contains("游戏")
+                || work.id.contains("游戏")
+                || work.title.contains("游戏") || work.title.contains("破冰") || work.title.contains("桌游")
+                || work.copyText.contains("游戏") || work.copyText.contains("破冰") || work.copyText.contains("桌游")
+        } else if cleanCat == "中秋" || catKey.contains("中秋") {
+            return work.destination.contains("中秋")
+                || work.title.contains("中秋")
+                || work.copyText.contains("中秋")
+        } else if cleanCat == "国庆" || catKey.contains("国庆") || catKey.contains("十一") {
+            return work.destination.contains("国庆") || work.destination.contains("十一")
+                || work.title.contains("国庆") || work.title.contains("十一")
+                || work.copyText.contains("国庆") || work.copyText.contains("十一")
+        } else {
+            return catKey == work.destination
+                || (!cleanCat.isEmpty && cleanCat == work.destination)
+                || work.title.contains(catKey)
+                || (!cleanCat.isEmpty && work.title.contains(cleanCat))
+        }
+    }
+
     private var filteredOnlineWorks: [OnlineWorkEntry] {
         var base = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
         if selectedOnlineCategory != "全部" {
-            base = base.filter { $0.destination == selectedOnlineCategory }
+            base = base.filter { matchesOnlineCategory(work: $0, catKey: selectedOnlineCategory) }
         }
         guard !searchQuery.isEmpty else { return base }
         // ⚠️ OnlineWorkEntry 没有 `name` 成员（只有 title / destination）——
