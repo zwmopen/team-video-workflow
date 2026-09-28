@@ -2415,7 +2415,13 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     // 右上角原画加载状态药丸（对齐 Android）
     private let statusBadge = UIControl()
     private let badgeStack = UIStackView()
-    private let badgeSpinner = UIActivityIndicatorView(style: .medium)
+    private let badgeSpinner: UIActivityIndicatorView = {
+        if #available(iOS 13.0, *) {
+            return UIActivityIndicatorView(style: .medium)
+        } else {
+            return UIActivityIndicatorView(style: .white)
+        }
+    }()
     private let badgeLabel = UILabel()
 
     // 请求竞态防乱序标识
