@@ -746,6 +746,70 @@ class TestSubdirImages(unittest.TestCase):
         self.assertIn(moved_id, resolved)
 
 
+class TestWorkImageIsolationAndMovedResolution(unittest.TestCase):
+    """测试作品图片物理隔离与移库后子目录图片解析，杜绝跨作品拼盘串图。"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="dsh_iso_")
+        self.scanner = _svc_mod.WorkScanner(self.temp_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _make_shelf_work(self, shelf: str, work_name: str, has_subdir: bool = True):
+        shelf_dir = os.path.join(self.temp_dir, shelf)
+        work_dir = os.path.join(shelf_dir, work_name)
+        img_dir = os.path.join(work_dir, "产出素材") if has_subdir else work_dir
+        os.makedirs(img_dir, exist_ok=True)
+        with open(os.path.join(work_dir, "文案.txt"), "w", encoding="utf-8") as f:
+            f.write("真实文案内容测试 " * 20)
+        with open(os.path.join(img_dir, "P1.png"), "wb") as f:
+            f.write(f"IMAGE DATA FOR {work_name} P1".encode("utf-8"))
+        with open(os.path.join(img_dir, "P2.png"), "wb") as f:
+            f.write(f"IMAGE DATA FOR {work_name} P2".encode("utf-8"))
+        return work_dir
+
+    def test_moved_work_subdir_image_resolution_no_cross_leak(self):
+        # 1. 建立两个作品，都有 P1.png / P2.png
+        work_a = self._make_shelf_work("莫干山成品", "20260928_Codex-WorkA_Moganshan", True)
+        work_b = self._make_shelf_work("安吉成品", "20260928_Codex-WorkB_Anji", True)
+
+        works = self.scanner.scan(force=True)
+        self.assertEqual(len(works), 2)
+
+        # 2. 模拟客户端持有移库前的路径请求图片
+        old_req_p1 = "莫干山成品/20260928_Codex-WorkA_Moganshan/产出素材/P1.png"
+
+        # 3. 模拟移库到 _已发送1次
+        stage1 = os.path.join(self.temp_dir, "_已发送1次（微信公众号可发）")
+        os.makedirs(stage1, exist_ok=True)
+        dest_a = os.path.join(stage1, "20260928_Codex-WorkA_Moganshan")
+        shutil.move(work_a, dest_a)
+
+        # 作品移库后更新 scanner 的 _moved_works（如 use-work 所做）
+        work_obj_a = [w for w in works if w["id"] == "20260928_Codex-WorkA_Moganshan"][0]
+        work_obj_a["path"] = dest_a
+        self.scanner._moved_works["20260928_Codex-WorkA_Moganshan"] = work_obj_a
+
+        # 4. 验证 resolve_image_for_work 在移库后依然能 100% 命中产出素材/P1.png
+        res_work = self.scanner.resolve_image_for_work(work_obj_a, old_req_p1)
+        self.assertIsNotNone(res_work)
+        self.assertTrue(os.path.isfile(res_work))
+        self.assertIn("20260928_Codex-WorkA_Moganshan", res_work)
+        self.assertIn("产出素材", res_work)
+        with open(res_work, "rb") as f:
+            content = f.read()
+        self.assertIn(b"IMAGE DATA FOR 20260928_Codex-WorkA_Moganshan P1", content)
+
+        # 5. 验证 resolve_image_path 在移库后也能通过路径中识别出的作品目录名成功解析
+        res_path = self.scanner.resolve_image_path(old_req_p1)
+        self.assertIsNotNone(res_path)
+        self.assertEqual(res_path, res_work)
+
+        # 6. 验证防串图核心铁律：WorkA 的 P1 绝不会返回 WorkB 的 P1 内容！
+        self.assertNotIn(b"WorkB", content)
+
+
 class TestMovedWorksPruning(unittest.TestCase):
     """DSH-128：`WorkScanner._moved_works` 只增不减 ⇒ 常驻内存单调增长。
 

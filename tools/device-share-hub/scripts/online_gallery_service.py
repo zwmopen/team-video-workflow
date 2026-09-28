@@ -1456,13 +1456,80 @@ class WorkScanner:
                     return w
         return None
 
+    def resolve_image_for_work(self, work: Dict[str, Any], file_name: str) -> Optional[str]:
+        """严格在指定作品目录及其子目录内解析图片路径，绝对物理隔离，彻底杜绝跨作品串图。"""
+        if not work:
+            return None
+        work_path = work.get("path") or ""
+        if not work_path or not os.path.exists(work_path):
+            return None
+
+        clean_file = (file_name or "").strip().replace("\\", "/")
+        bn = clean_file.rsplit("/", 1)[-1]
+        if not bn:
+            return None
+
+        # 1. 尝试直接作品根目录下寻找 bn (例如 "P1.png")
+        cand = os.path.join(work_path, bn)
+        if os.path.isfile(cand):
+            return os.path.realpath(cand)
+
+        # 2. 尝试标准产线素材子目录（IMAGE_SUBDIR_FALLBACKS，如 "产出素材/P1.png"）
+        for subdir in IMAGE_SUBDIR_FALLBACKS:
+            cand = os.path.join(work_path, subdir, bn)
+            if os.path.isfile(cand):
+                return os.path.realpath(cand)
+
+        # 3. 常见其他素材子目录
+        for subdir in ("素材", "images", "output", "imgs"):
+            cand = os.path.join(work_path, subdir, bn)
+            if os.path.isfile(cand):
+                return os.path.realpath(cand)
+
+        # 4. 如果 clean_file 中包含作品目录名之后的子相对路径（如 ".../20260928.../产出素材/P1.png"）
+        work_name = os.path.basename(work_path)
+        if work_name in clean_file:
+            rel = clean_file.split(work_name, 1)[-1].lstrip("/\\")
+            cand = os.path.join(work_path, rel)
+            if os.path.isfile(cand):
+                return os.path.realpath(cand)
+
+        # 5. 如果 clean_file 直接是作品内相对路径（如 "产出素材/P1.png"）
+        cand = os.path.join(work_path, clean_file)
+        if os.path.isfile(cand):
+            return os.path.realpath(cand)
+
+        # 6. 对照 work["images"] 列表中的相对/绝对路径
+        for img_entry in (work.get("images") or []):
+            entry_clean = str(img_entry).replace("\\", "/")
+            if entry_clean.endswith("/" + bn) or entry_clean == bn:
+                cand = os.path.join(work_path, entry_clean)
+                if os.path.isfile(cand):
+                    return os.path.realpath(cand)
+                cand_root = os.path.join(self.root, entry_clean)
+                if os.path.isfile(cand_root):
+                    return os.path.realpath(cand_root)
+
+        # 7. 作品私有目录极速递归搜索（单作品通常 < 30 文件，os.walk 毫秒级命中且绝对杜绝跨作品逃逸）
+        try:
+            for root_dir, _, files in os.walk(work_path):
+                if bn in files:
+                    cand = os.path.join(root_dir, bn)
+                    if os.path.isfile(cand):
+                        return os.path.realpath(cand)
+        except Exception:
+            pass
+
+        return None
+
     def resolve_image_path(self, raw: str) -> Optional[str]:
         """把客户端传来的图片定位信息解析成本机绝对路径。
 
-        支持三种形态（按 iOS 旧契约兼容，2026-09-20 补）：
+        支持三种形态：
         1. 绝对路径（必须在成品库根目录内，防目录穿越）；
-        2. 相对成品库根目录的路径，如「_已发送1次（微信公众号可发）/xxx/P1.png」；
-        3. 裸文件名，如「P1_封面.png」——回退到作品库文件名索引里查。
+        2. 相对成品库根目录的路径（如「_已发送1次.../xxx/产出素材/P1.png」）；
+        3. 移库前相对路径自动智能重映射（如客户端请求「莫干山成品/xxx/P1.png」，但作品已被移入「_已发送1次」）；
+        4. 全库唯一文件名索引兜底（碰撞同名如 P1.png / P2.png 严禁盲目首命中，杜绝串图）。
 
         返回 None 表示无法定位或不安全。
         """
@@ -1479,14 +1546,26 @@ class WorkScanner:
         if _inside(cand) and os.path.isfile(cand):
             return os.path.realpath(cand)
 
-        # 作品库图片标识索引兜底：
-        # ① 完整标识（裸文件名 / 作品内相对路径 / 成品库根相对路径）直接命中；
-        # ② 再退化到 basename，兼容「作品被移库后旧路径失效」与只发裸文件名的旧客户端。
+        # 关键加固：如果 raw 不存在（典型于作品被移库，如从 莫干山成品 移到 _已发送1次）
+        # 尝试从路径中识别出作品 ID / 目录名，并在该作品的最新物理路径下解析
+        parts = raw.strip("/").split("/")
+        if len(parts) >= 2:
+            for part in reversed(parts[:-1]):
+                matched_work = self.get_work(part) or self.resolve_stage_work(part)
+                if matched_work:
+                    hit = self.resolve_image_for_work(matched_work, raw)
+                    if hit and os.path.isfile(hit):
+                        return hit
+
+        # 作品库完整相对路径索引直接命中：
         hit = self.image_name_index().get(raw)
         if hit and os.path.isfile(hit):
             return hit
+
+        # 兜底到 basename（仅当 index 中该 basename 唯一无冲突时）
         if "/" in raw:
-            hit = self.image_name_index().get(raw.rsplit("/", 1)[-1])
+            bn = raw.rsplit("/", 1)[-1]
+            hit = self.image_name_index().get(bn)
             if hit and os.path.isfile(hit):
                 return hit
         return None
@@ -1528,12 +1607,17 @@ class WorkScanner:
     def image_name_index(self, rebuild: bool = False) -> Dict[str, str]:
         """构建「文件名 -> 绝对路径」索引（只读快照，供路径兜底解析用）。
 
-        数据源是已扫描到的作品表（_works_by_id + _moved_works），因此调用前必须先拉过
-        作品列表——这正好是手机端取图的真实时序。同名文件只保留首个命中。
+        数据源是已扫描到的作品表（_works_by_id + _moved_works）。
+        重要防串图策略：
+        对于全局重名/通用文件名（如 P1.png、P2.png、01.png 等），严禁盲目首命中覆盖！
+        发生重名的 basename 一律剔除索引，避免不同作品间串图。
         """
         with self._lock:
             if self._image_name_index is None or rebuild:
                 idx: Dict[str, str] = {}
+                bn_seen: Dict[str, str] = {}
+                bn_duplicates: Set[str] = set()
+
                 for w in list(self._works_by_id.values()) + list(self._moved_works.values()):
                     base = w.get("path") or ""
                     if not base:
@@ -1541,7 +1625,6 @@ class WorkScanner:
                     for fn in (w.get("images") or []):
                         fp = os.path.join(base, fn)
                         if not os.path.isfile(fp):
-                            # images 值也可能是「成品库根相对路径」（图在 产出素材/ 的作品）
                             alt = os.path.join(self.root, fn)
                             if os.path.isfile(alt):
                                 fp = alt
@@ -1550,8 +1633,17 @@ class WorkScanner:
                         if fn not in idx:
                             idx[fn] = fp
                         bn = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                        if bn and bn not in idx:
-                            idx[bn] = fp
+                        if bn:
+                            if bn in bn_seen and bn_seen[bn] != fp:
+                                bn_duplicates.add(bn)
+                            else:
+                                bn_seen[bn] = fp
+
+                # 仅将全局唯一的 basename 加入索引；重名的 basename 严禁注入，彻底斩断串图通道
+                for bn, fp in bn_seen.items():
+                    if bn not in bn_duplicates and bn not in idx:
+                        idx[bn] = fp
+
                 self._image_name_index = idx
             return dict(self._image_name_index)
 
@@ -2704,32 +2796,42 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             img_path = ""
             if work_id and file_name:
-                # DSH-102：work_id 必须用于定位作品目录，避免 image_name_index
-                # 同名文件「同名」只保留首个命中带来的串图 BUG（用户报告：江浙沪秘境 Top9
-                # 作品在 iOS 上图显示阳澄湖，根因就是服务端 P1_封面.png 同名冲突）。
-                # 优先：作品目录 + basename(file_name) → basename 永远在作品目录里。
-                # 兜底：resolve_image_path(file_name)（处理 DSH-101 use-work 移走 + 子目录路径）
-                bn = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                # 严格物理隔离：有 work_id 时，必须且只能在目标作品范围内解析
                 target_work = self.scanner.get_work(work_id)
+                if not target_work:
+                    target_work = self.scanner.resolve_stage_work(work_id)
+
                 if target_work:
-                    cand = os.path.join(target_work["path"], bn)
-                    if os.path.isfile(cand):
-                        img_path = cand
-                    else:
-                        # 文件名不在作品目录（极少见，子目录或路径变更） → 走 resolve_image_path
-                        img_path = self.scanner.resolve_image_path(file_name) or ""
-                else:
-                    # DSH-101 场景：target_work 找不到（理论上不会，get_work 兜底所有分类） → 走 resolve_image_path
-                    img_path = self.scanner.resolve_image_path(file_name) or ""
+                    img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
+
+                if not img_path and "__link_" in work_id:
+                    base_id = work_id.split("__link_")[0]
+                    base_work = self.scanner.get_work(base_id) or self.scanner.resolve_stage_work(base_id)
+                    if base_work:
+                        img_path = self.scanner.resolve_image_for_work(base_work, file_name) or ""
+
+                # 兜底：若目标作品解析未中，尝试在 file_name 中反查
                 if not img_path:
-                    # 索引可能还没建全（未先拉列表），重建一次再试
+                    resolved = self.scanner.resolve_image_path(file_name)
+                    # 绝对铁律：解析出的路径必须属于目标作品，严禁返回其他作品图片
+                    if resolved and target_work and target_work.get("path"):
+                        tw_p = os.path.realpath(target_work["path"])
+                        res_p = os.path.realpath(resolved)
+                        if res_p.startswith(tw_p):
+                            img_path = resolved
+                    elif resolved and work_id in resolved:
+                        img_path = resolved
+
+                if not img_path:
+                    # 触发一次索引重建尝试再次带 work_id 寻找
                     self.scanner.image_name_index(rebuild=True)
-                    img_path = self.scanner.resolve_image_path(file_name) or ""
+                    if target_work:
+                        img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
+                    if not img_path:
+                        print(f"[Image] !! 严防串图拦截：作品 [{work_id}] 找不到对应图片 [{file_name}]，坚决不降级为全库随机图片！")
             elif raw_path:
-                # iOS 旧契约：只带 ?path=（裸文件名 / 相对 / 绝对路径）
                 img_path = self.scanner.resolve_image_path(raw_path) or ""
                 if not img_path:
-                    # 索引可能还没建全（未先拉列表），重建一次再试
                     self.scanner.image_name_index(rebuild=True)
                     img_path = self.scanner.resolve_image_path(raw_path) or ""
             else:
