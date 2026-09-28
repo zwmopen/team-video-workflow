@@ -205,6 +205,28 @@ from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional, Tuple, Set
 
 try:
+    from cross_shelf_linker import (
+        is_junction_or_symlink,
+        resolve_junction_source,
+        unlink_junction,
+        cleanup_junctions_for_source,
+        prune_dangling_junctions,
+        create_junction,
+    )
+except ImportError:
+    _cur_dir = os.path.dirname(os.path.abspath(__file__))
+    if _cur_dir not in sys.path:
+        sys.path.insert(0, _cur_dir)
+    from cross_shelf_linker import (
+        is_junction_or_symlink,
+        resolve_junction_source,
+        unlink_junction,
+        cleanup_junctions_for_source,
+        prune_dangling_junctions,
+        create_junction,
+    )
+
+try:
     from PIL import Image
     HAS_PIL = True
 except ImportError:
@@ -609,8 +631,8 @@ DESTINATIONS = [
     # 专题与游戏类优先
     "游戏", "中秋", "国庆",
     # 具体目的地与景区优先检测
-    "舟山", "嵊泗", "安吉", "莫干山", "千岛湖", "桐庐", "象山", "临安",
-    "余杭", "溧阳", "宜兴", "乌镇", "黄山", "崇明", "阳澄湖", "西山岛",
+    "舟山海岛", "舟山", "嵊泗", "安吉", "莫干山", "千岛湖", "桐庐", "象山", "临安",
+    "余杭", "宜兴溧阳", "溧阳", "宜兴", "乌镇", "黄山", "崇明", "阳澄湖", "西山岛",
     "宁波", "绍兴", "温州", "台州", "金华", "义乌", "南京", "无锡", "湖州",
     # 核心大城市及宏观主题
     "苏州", "杭州", "上海", "江浙沪"
@@ -1534,12 +1556,33 @@ class WorkScanner:
             return dict(self._image_name_index)
 
     def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
+        # 极速快路（无锁读取内存字典，0ms 避免并发阻塞 /api/online/image）
+        if self._works_by_id:
+            work = self._works_by_id.get(work_id)
+            if work and os.path.exists(work.get("path", "")):
+                return work
+            if "__link_" in work_id:
+                base_id = work_id.split("__link_")[0]
+                base_work = self._works_by_id.get(base_id)
+                if base_work and os.path.exists(base_work.get("path", "")):
+                    return base_work
+            if work_id in self._moved_works:
+                mw = self._moved_works[work_id]
+                if os.path.exists(mw.get("path", "")):
+                    return mw
+
         with self._lock:
             if not self._works_by_id:
                 self.scan()
             work = self._works_by_id.get(work_id)
             if work and os.path.exists(work.get("path", "")):
                 return work
+            # 兼容软链接镜像 ID 反查或本体 ID 查找
+            if "__link_" in work_id:
+                base_id = work_id.split("__link_")[0]
+                base_work = self._works_by_id.get(base_id)
+                if base_work and os.path.exists(base_work.get("path", "")):
+                    return base_work
             if work_id in self._moved_works:
                 mw = self._moved_works[work_id]
                 if os.path.exists(mw.get("path", "")):
@@ -1562,17 +1605,11 @@ class WorkScanner:
             return None
 
     def snapshot_count(self) -> int:
-        """只读计数：缓存已建立就直接返回，**绝不触发全盘扫描**。
-
-        /api/online/status 是手机端几秒一次的健康心跳，此前每次都走 scan()：
-        冷缓存时单次要 5~10 秒，两三部手机同探就把 45835 打满，表现为
-        「正在连接电脑在线相册…」一直转圈。缓存没建立时（进程刚起、还没预热）
-        才退化成一次同步扫描，保证 totalWorks 一开始就是对的。
-        """
-        with self._lock:
-            if self._cached_works:
-                return len(self._cached_works)
-        return len(self.scan())
+        """只读计数：非阻塞毫秒级返回，绝不阻塞在全盘扫描锁上。"""
+        cached = self._cached_works
+        if cached:
+            return len(cached)
+        return 0
 
     def scan_throttled(self, force: bool = False) -> List[Dict[str, Any]]:
         """HTTP 入口专用：把 refresh=1 的强制全盘扫描限速到 FORCE_SCAN_MIN_INTERVAL 秒一次。
@@ -1601,6 +1638,14 @@ class WorkScanner:
                 self._stage_cache.clear()
             if not force and self._cached_works and (now - self._last_scan_time < SCAN_CACHE_TTL):
                 return self._cached_works
+
+            # 自愈扫描：自动清理失效死链软链接 (DSH Junction Healer)，仅 force 或间隔 >300s 触发
+            if force or (now - getattr(self, "_last_healer_time", 0) > 300):
+                self._last_healer_time = now
+                try:
+                    prune_dangling_junctions(self.root)
+                except Exception:
+                    pass
 
             results = []
             seen_ids = set()
@@ -1898,6 +1943,17 @@ class WorkScanner:
         return []
 
     def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int, default_category: str = "") -> Optional[Dict[str, Any]]:
+        # Junction / 软链接检测与解析
+        is_symlink = False
+        source_path = dir_path
+        if is_junction_or_symlink(dir_path):
+            real_src = resolve_junction_source(dir_path)
+            if not real_src or not os.path.exists(real_src):
+                # 死链软链接，跳过展示（后续自愈例程会自动清理）
+                return None
+            is_symlink = True
+            source_path = real_src
+
         try:
             files = os.listdir(dir_path)
         except Exception:
@@ -2019,13 +2075,19 @@ class WorkScanner:
         if not clean_title:
             clean_title = folder_name
 
+        # 针对软链接镜像，生成独立 workId 避免与主货架本体在前端排重时冲突
+        work_id = f"{folder_name}__link_{default_category}" if is_symlink and default_category else folder_name
+
         return {
-            "id": folder_name,
+            "id": work_id,
             "title": clean_title,
             "rawTitle": folder_name,
             "destination": destination,
             "stage": stage_name,
             "path": dir_path,
+            "is_symlink": is_symlink,
+            "source_path": source_path,
+            "shelf": default_category or os.path.basename(os.path.dirname(dir_path)),
             "useCount": int(use_count),
             "maxUses": 2,
             "used": bool(use_count > 0),
@@ -2441,7 +2503,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/categories":
-            works = self.scanner.scan()
+            works = self.scanner.scan_throttled()
             counts: Dict[str, int] = {}
             count_stage0 = 0
             count_stage1 = 0
@@ -3017,6 +3079,46 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         """向后兼容：检查是否为合法的成品库归属目录。"""
         return self._is_valid_restore_parent(path)
 
+    def _record_work_usage(self, dir_path: str, device_name: str, platform: str, work_id: str) -> None:
+        """为物理作品目录更新使用标签和设备使用日志（软链接镜像被使用时触发）"""
+        tag_file = os.path.join(dir_path, "作品标签.json")
+        tag_data = {}
+        if os.path.exists(tag_file):
+            try:
+                with open(tag_file, "r", encoding="utf-8") as fp:
+                    tag_data = json.load(fp)
+            except Exception:
+                pass
+        if "distribution" not in tag_data:
+            tag_data["distribution"] = {}
+        dist = tag_data["distribution"]
+        current_count = int(dist.get("useCount", 0))
+        new_count = current_count + 1
+        dist["useCount"] = new_count
+        dispatched_list = dist.get("dispatchedTo", [])
+        record_str = f"{device_name} ({platform} @ {time.strftime('%Y-%m-%d %H:%M:%S')})"
+        if record_str not in dispatched_list:
+            dispatched_list.append(record_str)
+        dist["dispatchedTo"] = dispatched_list
+        dist["lastDispatchedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+        dist["status"] = f"已使用{new_count}次"
+        try:
+            with open(tag_file, "w", encoding="utf-8") as fp:
+                json.dump(tag_data, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        log_file = _get_device_usage_log_file(self.scanner.root)
+        try:
+            exists = os.path.exists(log_file)
+            with open(log_file, "a", encoding="utf-8") as fp:
+                if not exists:
+                    fp.write("时间,设备名,源作品,使用次数,平台,操作\n")
+                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{new_count},{platform},软链接镜像直用打标\n")
+        except Exception:
+            pass
+
+
     def _log_stage_move(self, root_dir: str, device_name: str, work_id: str,
                         src_path: str, dest_path: str, use_count: int,
                         action_type: str, remark: str = "") -> None:
@@ -3303,6 +3405,32 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             dir_path = target_work["path"]
+            is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
+
+            if is_link:
+                # 【软链接镜像使用】：
+                # 仅解绑当前副货架上的软链接（不破坏主货架物理本体）
+                unlink_ok, unlink_msg = unlink_junction(dir_path, self.scanner.root)
+                source_p = target_work.get("source_path") or resolve_junction_source(dir_path)
+                if source_p and os.path.isdir(source_p):
+                    try:
+                        self._record_work_usage(source_p, device_name, platform, work_id)
+                    except Exception:
+                        pass
+                self.scanner.scan(force=True)
+                self.send_json(200, {
+                    "ok": True,
+                    "workId": work_id,
+                    "isSymlink": True,
+                    "useCount": 1,
+                    "remainingUses": 0,
+                    "moved": False,
+                    "unlinked": unlink_ok,
+                    "message": "软链接镜像已从当前副货架安全解除，源物理本体完好保留在原货架",
+                    "targetPath": dir_path
+                })
+                return
+
             tag_file = os.path.join(dir_path, "作品标签.json")
             tag_data = {}
             if os.path.exists(tag_file):
@@ -3350,6 +3478,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if new_count >= 1:
                 ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
                 moved = ok
+                if moved:
+                    # 联动清理：自动物理清除所有指向该本体的软链接镜像
+                    try:
+                        cleanup_junctions_for_source(dir_path, self.scanner.root)
+                    except Exception as _ce:
+                        print(f"[Warn] 清理关联软链接失败: {_ce}")
 
             msg = f"已成功记录第 {new_count} 次使用" + ("，电脑端已自动移入「_已发送1次」" if moved else "")
 
@@ -3471,6 +3605,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Work not found")
                 return
 
+            dir_path = target_work["path"]
+            is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
+
+            if is_link:
+                # 【软链接镜像删除】：
+                # 仅解绑当前副货架上的软链接，绝对不污染/移走主货架物理本体！
+                unlink_ok, unlink_msg = unlink_junction(dir_path, self.scanner.root)
+                self.scanner.scan(force=True)
+                self.send_json(200, {
+                    "ok": True,
+                    "workId": work_id,
+                    "isSymlink": True,
+                    "action": "junction_unlinked",
+                    "message": "软链接镜像已从当前货架安全解绑移除，物理本体保留在原货架不受影响",
+                    "remainingWorks": len(self.scanner.scan())
+                })
+                return
+
             # 判定权在手机端：只要手机点了删除（含「用过 → 重置 → 再删除」），
             # 一律视为人工判定垃圾：物理移入「_垃圾作品样本」永久保留，
             # 并在元数据写死垃圾标记（全渠道硬拦截）。电脑端绝不自动清理该样本库。
@@ -3478,6 +3630,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if not ok:
                 self.send_json(200, {"ok": False, "error": action_desc})
                 return
+
+            # 联动清理：自动物理清除所有指向该本体的软链接镜像
+            try:
+                cleanup_junctions_for_source(dir_path, self.scanner.root)
+            except Exception as _ce:
+                print(f"[Warn] 清理关联软链接失败: {_ce}")
 
             self.scanner.scan(force=True)
 
@@ -3855,7 +4013,31 @@ def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
     t.start()
 
 
+_service_mutex = None
+
+def _acquire_service_instance_mutex():
+    global _service_mutex
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            MUTEX_NAME = "Local\\DeviceShareHub_OnlineGallery_Service_Instance_Mutex"
+            kernel32 = ctypes.windll.kernel32
+            CreateMutexW = kernel32.CreateMutexW
+            CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+            CreateMutexW.restype = wintypes.HANDLE
+            h = CreateMutexW(None, True, MUTEX_NAME)
+            ERROR_ALREADY_EXISTS = 183
+            if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+                print("[SingleInstance] Another online_gallery_service is already running. Exiting.")
+                sys.exit(0)
+            _service_mutex = h
+        except Exception:
+            pass
+
 def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_ROOT, enable_adb: bool = False):
+    _acquire_service_instance_mutex()
+
     scanner = WorkScanner(library_root)
     OnlineGalleryHandler.scanner = scanner
 
@@ -3868,7 +4050,30 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
         request_queue_size = 128
         allow_reuse_address = True
 
-    server = _LanHTTPServer(("0.0.0.0", port), OnlineGalleryHandler)
+        def server_bind(self):
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                try:
+                    self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 0)
+                except Exception:
+                    pass
+            if self.allow_reuse_address:
+                try:
+                    self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                except Exception:
+                    pass
+            super().server_bind()
+
+    server = None
+    for attempt in range(15):
+        try:
+            server = _LanHTTPServer(("0.0.0.0", port), OnlineGalleryHandler)
+            break
+        except OSError as e:
+            if attempt < 14:
+                time.sleep(1.0)
+            else:
+                raise e
+
     local_ip = get_local_ip()
     print(f"================================================================")
     print(f"🚀 Device Share Hub - 电脑在线相册服务已就绪")
@@ -3876,6 +4081,10 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     print(f"📂 作品真源目录: {library_root}")
     print(f"🛡️ 纯净首发保障: 仅限「已发送0次」与根目录直出成品，排除忽略项")
     print(f"================================================================")
+
+    # 立即启动 HTTP 监听循环（避免首次预热扫描耗时阻塞探活心跳）
+    serve_thread = threading.Thread(target=server.serve_forever, daemon=True, name="HttpServe")
+    serve_thread.start()
 
     # 启动纯静默 ADB 隧道守护（0 弹窗 0 黑框）
     start_adb_reverse_daemon(port)
@@ -3888,16 +4097,12 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     print(f"✨ 初始加载完成，共发现 {len(works)} 套存量成品作品")
 
     # DSH-110：启动文件系统轮询线程（无第三方依赖，60 秒/次）
-    # GPT API 实时产出的作品图落到 DEFAULT_LIBRARY_ROOT 下，60 秒内自动入库；
-    # 手机端下次刷新（refresh=1 或自动）即看到最新。
     scanner._start_watchdog_loop()
 
     try:
-        server.serve_forever()
+        serve_thread.join()
     except KeyboardInterrupt:
         print("\n服务正在平稳退出...")
-        scanner.stop_watchdog()
-        server.server_close()
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -3905,6 +4110,11 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
             fp.write(traceback.format_exc())
     finally:
         scanner.stop_watchdog()
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception:
+            pass
         with open(os.path.join(os.path.dirname(__file__), "exit.log"), "w", encoding="utf-8") as fp:
             fp.write(f"Exited at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 

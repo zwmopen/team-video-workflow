@@ -99,3 +99,33 @@
 5. 发布前核对 EXE/APK/IPA、源码提交、Release、Android 更新索引和 SHA-256 一致；
 6. 文档和日志禁止出现密码、Token、Cookie、Apple ID、设备唯一标识、配对记录、用户作品正文和原始隐私日志；
 7. **提交前必须过一遍"从用户角度审视"清单**，发现 UX-BUG 立即修复或在 commit message 中说明延期理由。
+
+## 设计文档同步（强制）
+
+`CHANGELOG.md` 和 `docs/BUG_LEDGER.md` 已有强制同步制度，**设计文档此前没有** ⇒ 写完就烂（实例：`docs/ALBUM_WORKFLOW_DESIGN.md` 长期停在旧基线，写着早已失效的包名与产品名；另有 8 份过期文档已移入 `docs/_archive/`）。本节把这块缺口补上。
+
+### 1. 每次改动先回答一个问题
+
+改动代码、扫描规则、协议或版本号时，必须先回答：**「本次改动影响哪几份设计文档？」**
+答案写进 `CHANGELOG.md` 对应条目的 **`影响文档`** 字段；确实不触及任何设计文档时，显式写 `影响文档：无`，不许留空跳过。
+
+### 2. 同一次提交，不许后补
+
+受影响的设计文档必须与代码 **同一次提交** 落地。⛔ 禁止"代码先上、文档后补" —— 后补在实践上等于不补。
+
+### 3. 失效的历史文档移入 `docs/_archive/`，不就地改
+
+已确认失效的历史文档 **不要就地删改**，移入 `docs/_archive/` 保留可追溯。`_` 开头 = 不参与扫描与日常维护，与成品库同一套约定。
+
+### 4. 活文档清单（当前有效、必须随代码维护）
+
+- `docs/`：ALBUM_WORKFLOW_DESIGN.md、PROTOCOL.md、REMOTE_PROTOCOL_V1.md、LAN_UPDATE_RELAY.md、MAINTAINER_HANDOFF.md、TEST_PLAYBOOK.md、COMPATIBILITY_AND_TEST_MATRIX.md、MULTI_PLATFORM_SPEC_AND_GOALS.md、P2P_DATA_PROTOCOL.md、SOURCE_BUILD_AND_RECOVERY.md、IOS_WINDOWS_SIDELOAD_HANDOFF.md
+- 根目录：`README.md`、`CHANGELOG.md`；另有 `docs/BUG_LEDGER.md`
+
+新增或作废活文档时，同步修订本节清单。
+
+### 5. ⚠️ 待办（不要顺手归档）
+
+- **`docs/REMOTE_CHANNEL.md` 部分过期，需改写而非归档**：第 129 行版本号 V3.9.1 / 0.5.8 / 0.5.2 已过时；第 131、141 行"服务尚未部署""三端客户端未完成"已失效（远程中继与 P2P 已三端上线）；第 133 行进度快照已冻结。
+  阻塞原因：`docs/MAINTAINER_HANDOFF.md:862` 仍引用它作为"互联网中继约束"指引 ⇒ **暂时保留，待改写后再评估归档**。
+- `docs/ALBUM_WORKFLOW_DESIGN.md` 重写进行中（另一路负责），本规则同样适用。

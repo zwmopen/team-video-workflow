@@ -1,0 +1,27 @@
+{
+  "version_name": "0.8.63",
+  "version_code": 174,
+  "versionName": "0.8.63",
+  "versionCode": 174,
+  "tag_name": "v0.8.63",
+  "file_name": "album-Android-v0.8.63.apk",
+  "apk_url": "/album-Android-v0.8.63.apk",
+  "url": "/album-Android-v0.8.63.apk",
+  "sha256": "e0805d8c6265b0c5f5cb7b48a38db3dc72e54d974f4d4f8eb02cba74fb99a191",
+  "source": "lan",
+  "notes": "相册 Android 0.8.63 (versionCode 174) / iOS 0.8.45 (build 117)：\n1. 支持全货架分类智能过滤\n2. 支持中秋国庆游戏快捷筛选\n3. 两阶段原画加载优化",
+  "ios": {
+    "version_name": "0.8.45",
+    "build": 117,
+    "sha256": "a08d9b9d41663f1414f8dd8d613ca3a831a89856a804c081195245d3fd2f12cc",
+    "ipa_url": "/album-iOS-v0.8.45-altstore.ipa",
+    "ipa_file_name": "album-iOS-v0.8.45-altstore.ipa",
+    "release_url": "https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.63"
+  },
+  "windows": {
+    "version": "4.3.33",
+    "sha256": "4389684a321c7ffd4bb6d524814fad0dcc7c6bc061a79fc0fe01aec02b3fca56",
+    "url": "https://github.com/zwmopen/gallery-updates/releases/download/v0.8.63/DeviceShareHub-Windows-V4.3.33.exe",
+    "file_name": "DeviceShareHub-Windows-V4.3.33.exe"
+  }
+}

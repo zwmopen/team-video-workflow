@@ -936,8 +936,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             cell.onOnlineShare = { [weak self, weak cell] item in
                 self?.shareOnline(entry, item: item, source: cell)
             }
-            cell.onOnlinePreview = { [weak self] index in
-                self?.openOnlinePreview(entry: entry, initialIndex: index)
+            cell.onOnlinePreview = { [weak self] index, img in
+                self?.openOnlinePreview(entry: entry, initialIndex: index, initialImage: img)
             }
             cell.onOnlineDelete = { [weak self] in
                 self?.confirmDeleteOnline(entry)
@@ -989,7 +989,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if isOnlineMode {
             let entry = displayedOnlineWorks[indexPath.item]
-            openOnlinePreview(entry: entry, initialIndex: 0)
+            let cell = collectionView.cellForItem(at: indexPath) as? WorkCell
+            openOnlinePreview(entry: entry, initialIndex: 0, initialImage: cell?.firstThumbnailImage)
         } else {
             let work = filteredWorks[indexPath.item]
             navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
@@ -1116,9 +1117,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         step(0)
     }
 
-    private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int) {
+    private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int, initialImage: UIImage? = nil) {
         guard !entry.images.isEmpty else { return }
-        let vc = OnlineImagePreviewController(entry: entry, initialIndex: initialIndex)
+        let vc = OnlineImagePreviewController(entry: entry, initialIndex: initialIndex, initialImage: initialImage)
         vc.modalPresentationStyle = .fullScreen
         vc.modalTransitionStyle = .crossDissolve
         present(vc, animated: true)
@@ -1978,11 +1979,15 @@ private final class WorkCell: UICollectionViewCell {
 
     /// 在线作品：同上，携带「被点的那一条」。
     var onOnlineShare: ((AvailableCopyPlatform) -> Void)?
-    var onOnlinePreview: ((Int) -> Void)?
+    var onOnlinePreview: ((Int, UIImage?) -> Void)?
     var onOnlineDelete: (() -> Void)?
     var onOnlineReset: (() -> Void)?
     /// 在线作品：复制电脑成品库里的作品文件夹路径
     var onOnlineCopyPath: (() -> Void)?
+
+    var firstThumbnailImage: UIImage? {
+        (previewStack.arrangedSubviews.first as? ThumbnailButton)?.imageViewWidget.image
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1990,11 +1995,16 @@ private final class WorkCell: UICollectionViewCell {
         contentView.layer.borderWidth = 1
         name.font = .boldSystemFont(ofSize: 14.5)
         name.numberOfLines = 1
+        name.isUserInteractionEnabled = true
+        let nameTap = UITapGestureRecognizer(target: self, action: #selector(cardHeaderTapped))
+        name.addGestureRecognizer(nameTap)
+
         detail.font = .systemFont(ofSize: 11.5)
         detail.textColor = AppColors.secondaryText
-        // DSH-091 C4 生效修复：UILabel 默认 numberOfLines = 1，不设成 0 的话
-        // 「✓ 小红书 X · 抖音 Y」这行附加信息会被截断 —— 加了等于没加。
         detail.numberOfLines = 0
+        detail.isUserInteractionEnabled = true
+        let detailTap = UITapGestureRecognizer(target: self, action: #selector(cardHeaderTapped))
+        detail.addGestureRecognizer(detailTap)
         previewScroll.showsHorizontalScrollIndicator = false
         previewScroll.alwaysBounceHorizontal = false
         previewScroll.accessibilityLabel = "作品缩略图，可横向查看全部图片"
@@ -2153,8 +2163,16 @@ private final class WorkCell: UICollectionViewCell {
         }
     }
 
+    @objc private func cardHeaderTapped() {
+        if isOnlineCard {
+            onOnlinePreview?(0, firstThumbnailImage)
+        } else {
+            onPreview?(0)
+        }
+    }
+
     @objc private func onlineThumbnailTapped(_ sender: ThumbnailButton) {
-        onOnlinePreview?(sender.tag)
+        onOnlinePreview?(sender.tag, sender.imageViewWidget.image)
     }
 
     private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
@@ -2408,6 +2426,7 @@ private final class WorkCell: UICollectionViewCell {
 final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate {
     private let entry: OnlineWorkEntry
     private var currentIndex: Int
+    private var initialImage: UIImage?
     private let scrollView = UIScrollView()
     private let counterLabel = UILabel()
     private let imageView = UIImageView()
@@ -2429,9 +2448,10 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     // 静默预加载防乱序与生命周期标识
     private var currentPrefetchId = UUID().uuidString
 
-    init(entry: OnlineWorkEntry, initialIndex: Int) {
+    init(entry: OnlineWorkEntry, initialIndex: Int, initialImage: UIImage? = nil) {
         self.entry = entry
         self.currentIndex = initialIndex
+        self.initialImage = initialImage
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -2443,7 +2463,12 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         setupScrollView()
         setupUI()
         setupGestures()
-        loadCurrent()
+
+        // 【0ms 极速秒开】：优先展示传入的卡片封面或快速缓存图片，杜绝黑屏等待
+        if let initImg = initialImage {
+            self.imageView.image = initImg
+        }
+        loadCurrent(isInitial: true)
     }
 
     private func setupScrollView() {
@@ -2486,7 +2511,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         closeBtn.addTarget(self, action: #selector(close), for: .touchUpInside)
         view.addSubview(closeBtn)
 
-        // 右上角原画加载状态药丸（学学安卓2）
+        // 右上角原画加载状态药丸（对齐 Android）
         statusBadge.backgroundColor = UIColor.black.withAlphaComponent(0.55)
         statusBadge.layer.cornerRadius = 16
         statusBadge.clipsToBounds = true
@@ -2625,7 +2650,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         case failed
     }
 
-    private func loadCurrent(forceReloadOriginal: Bool = false) {
+    private func loadCurrent(forceReloadOriginal: Bool = false, isInitial: Bool = false) {
         guard currentIndex >= 0, currentIndex < entry.images.count else { return }
         scrollView.setZoomScale(1.0, animated: false)
         counterLabel.text = "\(currentIndex + 1) / \(entry.images.count)"
@@ -2634,21 +2659,32 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         let requestId = UUID().uuidString
         self.currentRequestId = requestId
 
-        // 切图时先重置当前图片，防止上一张图视觉残留
-        self.imageView.image = nil
+        // 尝试从内存/磁盘同步获取缩略图或原图（有图则直接呈现，杜绝黑屏）
+        if let fastThumb = OnlineGalleryClient.shared.getFastCachedImage(path: path, workId: entry.id, isThumbnail: true) {
+            self.imageView.image = fastThumb
+        } else if !isInitial && self.imageView.image == nil {
+            self.imageView.image = nil
+        }
 
-        // 1. 先展示真实缩略图占位（0秒秒开，彻底告别黑屏）
-        OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: true) { [weak self] thumbImg in
-            guard let self = self, self.currentRequestId == requestId else { return }
-            if let thumb = thumbImg, self.imageView.image == nil {
-                self.imageView.image = thumb
+        // 1. 异步缩略图补充（若同步未命中且当前无图）
+        if self.imageView.image == nil {
+            OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: true) { [weak self] thumbImg in
+                guard let self = self, self.currentRequestId == requestId else { return }
+                if let thumb = thumbImg, self.imageView.image == nil {
+                    self.imageView.image = thumb
+                }
             }
         }
 
         // 2. 检查高清原图是否已在内存/本地磁盘命中
-        let isFullCached = !forceReloadOriginal && OnlineGalleryClient.shared.hasFullImageCached(path: path)
+        let isFullCached = !forceReloadOriginal && OnlineGalleryClient.shared.hasFullImageCached(path: path, workId: entry.id)
         if isFullCached {
-            updateBadge(status: .cachedFull)
+            if let fullSync = OnlineGalleryClient.shared.getFastCachedImage(path: path, workId: entry.id, isThumbnail: false) {
+                self.imageView.image = fullSync
+                updateBadge(status: .cachedFull)
+            } else {
+                updateBadge(status: .loading)
+            }
         } else {
             updateBadge(status: .loading)
         }
@@ -2657,7 +2693,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] fullImg in
             guard let self = self, self.currentRequestId == requestId else { return }
             if let full = fullImg {
-                UIView.transition(with: self.imageView, duration: 0.25, options: .transitionCrossDissolve, animations: {
+                UIView.transition(with: self.imageView, duration: 0.2, options: .transitionCrossDissolve, animations: {
                     self.imageView.image = full
                 }, completion: nil)
                 self.updateBadge(status: .loadedFull)
@@ -2668,7 +2704,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
             }
         }
 
-        // 4. 同作品大图后台并发静默预加载
+        // 4. 【同作品大图后台并发静默预加载】
         prefetchRemainingImages(for: entry, startingAt: currentIndex)
     }
 
@@ -2715,7 +2751,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         let path = entry.images[idx]
 
         // 检查原图是否已在磁盘/内存中缓存，若已就绪直接递归检查下一张
-        if OnlineGalleryClient.shared.hasFullImageCached(path: path) {
+        if OnlineGalleryClient.shared.hasFullImageCached(path: path, workId: entry.id) {
             self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + 1, prefetchId: prefetchId)
             return
         }

@@ -467,7 +467,8 @@ public final class OnlineGalleryClient {
     /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
     /// DSH-099 失败 NSLog 保留。
     public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
-        let cacheKey = "\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
+        let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
+        let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
             completion(memoryCached)
             return
@@ -484,7 +485,7 @@ public final class OnlineGalleryClient {
 
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/image")
-        // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目（旧 BUG）
+        // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
         if let workId = workId, !workId.isEmpty {
             // DSH-102 新契约：id+file 双键，basename 永远在作品目录里
@@ -522,9 +523,26 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    /// 同步快速获取缓存图片（若内存或磁盘命中直接返回，0毫秒无缝秒开）
+    public func getFastCachedImage(path: String, workId: String? = nil, isThumbnail: Bool = true) -> UIImage? {
+        let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
+        let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
+        if let mem = imageCache.object(forKey: cacheKey) {
+            return mem
+        }
+        let safeFileName = cacheKey.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
+        let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
+        if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
+            imageCache.setObject(diskImage, forKey: cacheKey)
+            return diskImage
+        }
+        return nil
+    }
+
     /// 检查指定路径的高清原画是否已在内存或本地磁盘就绪
-    public func hasFullImageCached(path: String) -> Bool {
-        let cacheKey = "\(path)_full" as NSString
+    public func hasFullImageCached(path: String, workId: String? = nil) -> Bool {
+        let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
+        let cacheKey = "\(prefix)\(path)_full" as NSString
         if imageCache.object(forKey: cacheKey) != nil {
             return true
         }
