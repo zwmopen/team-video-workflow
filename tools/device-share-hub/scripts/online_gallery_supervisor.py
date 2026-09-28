@@ -95,6 +95,29 @@ def acquire_single_instance_mutex():
     _mutex_handle = h
 
 # ----------------- 探活与死锁检测 -----------------
+def get_listening_pid(port: int = PORT):
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind='inet'):
+            if conn.laddr and conn.laddr.port == port and conn.status == 'LISTEN':
+                return conn.pid
+    except Exception:
+        pass
+    return None
+
+def is_child_proc_running(proc) -> bool:
+    if proc is None:
+        return False
+    if hasattr(proc, 'poll'):
+        return proc.poll() is None
+    if hasattr(proc, 'is_running'):
+        try:
+            import psutil
+            return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+        except Exception:
+            return False
+    return False
+
 def probe_status(timeout: float = 3.0) -> bool:
     try:
         url = f"http://127.0.0.1:{PORT}/api/online/status"
@@ -136,7 +159,7 @@ def kill_stale_processes():
     # 1. 如果上次记录的子进程仍在，优先终止
     if _last_child_proc is not None:
         try:
-            if _last_child_proc.poll() is None:
+            if is_child_proc_running(_last_child_proc):
                 _last_child_proc.kill()
                 cleaned_pids.add(_last_child_proc.pid)
         except Exception:
@@ -204,6 +227,7 @@ def start_service() -> bool:
 
 # ----------------- 主守护神循环 -----------------
 def main():
+    global _last_child_proc
     acquire_single_instance_mutex()
 
     # 写入 lock 文件供状态检查
@@ -216,7 +240,7 @@ def main():
     log(f"==================================================", "INFO")
     log(f"🚀 在线相册守护神 (OnlineGallery-Supervisor) 启动成功", "INFO")
     log(f"   PID: {os.getpid()} | Python: {PYTHONW}", "INFO")
-    log(f"   端口: {PORT} | 巡检周期: 2.5s | 探活超时: 2.5s", "INFO")
+    log(f"   端口: {PORT} | 巡检周期: 5.0s | 梯次探活超时: 4s~12s", "INFO")
     log(f"==================================================", "INFO")
 
     consecutive_ok_count = 0
@@ -224,7 +248,7 @@ def main():
     while True:
         try:
             # 优先检查子进程是否真实存活：如果子进程还在跑，绝不盲目强杀
-            if _last_child_proc is not None and _last_child_proc.poll() is None:
+            if is_child_proc_running(_last_child_proc):
                 # 子进程仍在运行，执行宽容防抖探活
                 if not is_service_healthy():
                     log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
@@ -235,10 +259,22 @@ def main():
                     if consecutive_ok_count % 720 == 0:
                         log(f"相册服务常驻健康心跳: 持续稳定运行中 (累计正常探活 {consecutive_ok_count} 次)", "INFO")
             else:
-                # 进程未启动或已崩溃退出，立即拉起！
-                log("检测到相册服务进程已离线，立即启动自愈！", "INFO")
-                start_service()
-                consecutive_ok_count = 0
+                # 检查端口上是否已有健康的相册服务实例在运行（如外部/前任拉起）
+                if is_service_healthy():
+                    pid = get_listening_pid(PORT)
+                    if pid:
+                        try:
+                            import psutil
+                            _last_child_proc = psutil.Process(pid)
+                            log(f"发现已有健康相册服务在端口 {PORT} 运行 (PID={pid})，直接接管守护，无需重启！", "INFO")
+                        except Exception:
+                            pass
+                    consecutive_ok_count += 1
+                else:
+                    # 端口无服务且探活失败，立即自愈拉起！
+                    log("检测到相册服务进程已离线且端口无响应，立即启动自愈！", "INFO")
+                    start_service()
+                    consecutive_ok_count = 0
         except Exception as e:
             log(f"守护主循环捕捉到未预期异常: {e}", "ERROR")
 
