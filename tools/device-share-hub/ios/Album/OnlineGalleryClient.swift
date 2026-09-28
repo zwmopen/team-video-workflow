@@ -522,6 +522,17 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    /// 检查指定路径的高清原画是否已在内存或本地磁盘就绪
+    public func hasFullImageCached(path: String) -> Bool {
+        let cacheKey = "\(path)_full" as NSString
+        if imageCache.object(forKey: cacheKey) != nil {
+            return true
+        }
+        let safeFileName = cacheKey.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
+        let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
+        return fileManager.fileExists(atPath: diskURL.path)
+    }
+
     public func recordUse(workId: String, platform: String? = nil, completion: ((OnlineUseResult) -> Void)? = nil) {
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/use-work") else {

@@ -1257,6 +1257,18 @@ def read_garbage_meta(dir_path: str) -> Dict[str, Any]:
 _SCAN_ERRORS: "deque" = None  # 延迟到下方 import 完成后初始化
 
 
+def _get_portfolio_move_logs_dir(root_dir: str) -> str:
+    internal = os.path.join(root_dir, "_内部台账与历史数据")
+    base = internal if os.path.isdir(internal) else root_dir
+    p = os.path.join(base, "_portfolio_move_logs")
+    os.makedirs(p, exist_ok=True)
+    return p
+
+def _get_device_usage_log_file(root_dir: str) -> str:
+    internal = os.path.join(root_dir, "_内部台账与历史数据")
+    base = internal if os.path.isdir(internal) else root_dir
+    return os.path.join(base, "device-usage-log.csv")
+
 def _scan_error(tag: str, path: str, exc: "Exception") -> None:
     """记录一次被跳过的扫描异常（有界，不增长、不落盘、不阻塞）。"""
     global _SCAN_ERRORS
@@ -2218,7 +2230,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def _run_phone_sync(self, hosts: List[str], dry_run: bool = False) -> Dict[str, Any]:
         """对给定手机列表执行「次数回读同步」（只补次数，绝不搬文件）。"""
         index = self._computer_works_index()
-        log_dir = os.path.join(self.scanner.root, "_portfolio_move_logs")
+        log_dir = _get_portfolio_move_logs_dir(self.scanner.root)
         results: List[Dict[str, Any]] = []
         total_applied = 0
 
@@ -2297,7 +2309,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 rep = phone_sync.sync_phone_counts(
                     index, works,
                     phone_label=f"{ip}:{phone_sync.PHONE_ALBUM_PORT}",
-                    log_dir=os.path.join(scanner.root, "_portfolio_move_logs"),
+                    log_dir=_get_portfolio_move_logs_dir(scanner.root),
                 )
                 if rep.get("appliedCount"):
                     scanner.scan(force=True)
@@ -2757,7 +2769,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["path"] = target_dest
         self.scanner._moved_works[work_id] = target_work
 
-        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        log_dir = _get_portfolio_move_logs_dir(root_dir)
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
         try:
@@ -2834,7 +2846,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["path"] = target_dest
         self.scanner._moved_works[work_id] = target_work
 
-        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        log_dir = _get_portfolio_move_logs_dir(root_dir)
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
         try:
@@ -2930,7 +2942,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["path"] = target_dest
         self.scanner._moved_works[work_id] = target_work
 
-        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        log_dir = _get_portfolio_move_logs_dir(root_dir)
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
         try:
@@ -2957,7 +2969,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         """
         if not work_id:
             return None
-        log_dir = os.path.join(self.scanner.root, "_portfolio_move_logs")
+        log_dir = _get_portfolio_move_logs_dir(self.scanner.root)
         if not os.path.isdir(log_dir):
             return None
         try:
@@ -3008,7 +3020,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def _log_stage_move(self, root_dir: str, device_name: str, work_id: str,
                         src_path: str, dest_path: str, use_count: int,
                         action_type: str, remark: str = "") -> None:
-        log_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        log_dir = _get_portfolio_move_logs_dir(root_dir)
         try:
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
@@ -3322,7 +3334,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Warn] Failed to write tag file: {e}")
 
-            log_file = os.path.join(self.scanner.root, "device-usage-log.csv")
+            log_file = _get_device_usage_log_file(self.scanner.root)
             try:
                 exists = os.path.exists(log_file)
                 with open(log_file, "a", encoding="utf-8") as fp:

@@ -2412,6 +2412,15 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     private let counterLabel = UILabel()
     private let imageView = UIImageView()
 
+    // 右上角原画加载状态药丸（对齐 Android）
+    private let statusBadge = UIControl()
+    private let badgeStack = UIStackView()
+    private let badgeSpinner = UIActivityIndicatorView(style: .medium)
+    private let badgeLabel = UILabel()
+
+    // 请求竞态防乱序标识
+    private var currentRequestId = UUID().uuidString
+
     init(entry: OnlineWorkEntry, initialIndex: Int) {
         self.entry = entry
         self.currentIndex = initialIndex
@@ -2423,34 +2432,76 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        setupScrollView()
+        setupUI()
+        setupGestures()
+        loadCurrent()
+    }
+
+    private func setupScrollView() {
         scrollView.frame = view.bounds
+        scrollView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         scrollView.delegate = self
-        scrollView.maximumZoomScale = 3.0
+        scrollView.maximumZoomScale = 3.5
         scrollView.minimumZoomScale = 1.0
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
         view.addSubview(scrollView)
 
         imageView.frame = scrollView.bounds
+        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
         scrollView.addSubview(imageView)
+    }
 
+    private func setupUI() {
+        // 底部张数计数
         counterLabel.textAlignment = .center
         counterLabel.textColor = .white
-        counterLabel.font = .boldSystemFont(ofSize: 14)
-        counterLabel.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        counterLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        counterLabel.backgroundColor = UIColor.black.withAlphaComponent(0.55)
         counterLabel.layer.cornerRadius = 14
         counterLabel.clipsToBounds = true
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(counterLabel)
 
+        // 右上角关闭按钮
         let closeBtn = UIButton(type: .system)
         closeBtn.setTitle("✕", for: .normal)
         closeBtn.setTitleColor(.white, for: .normal)
-        closeBtn.titleLabel?.font = .systemFont(ofSize: 22, weight: .medium)
-        closeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        closeBtn.titleLabel?.font = .systemFont(ofSize: 20, weight: .medium)
+        closeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.55)
         closeBtn.layer.cornerRadius = 18
+        closeBtn.clipsToBounds = true
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.addTarget(self, action: #selector(close), for: .touchUpInside)
         view.addSubview(closeBtn)
+
+        // 右上角原画加载状态药丸（学学安卓2）
+        statusBadge.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        statusBadge.layer.cornerRadius = 16
+        statusBadge.clipsToBounds = true
+        statusBadge.translatesAutoresizingMaskIntoConstraints = false
+        statusBadge.addTarget(self, action: #selector(retryLoadOriginal), for: .touchUpInside)
+        view.addSubview(statusBadge)
+
+        badgeStack.axis = .horizontal
+        badgeStack.alignment = .center
+        badgeStack.spacing = 6
+        badgeStack.isUserInteractionEnabled = false
+        badgeStack.translatesAutoresizingMaskIntoConstraints = false
+        statusBadge.addSubview(badgeStack)
+
+        badgeSpinner.color = .white
+        badgeSpinner.hidesWhenStopped = true
+        badgeSpinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
+
+        badgeLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        badgeLabel.textColor = .white
+
+        badgeStack.addArrangedSubview(badgeSpinner)
+        badgeStack.addArrangedSubview(badgeLabel)
 
         NSLayoutConstraint.activate([
             closeBtn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
@@ -2458,12 +2509,22 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
             closeBtn.widthAnchor.constraint(equalToConstant: 36),
             closeBtn.heightAnchor.constraint(equalToConstant: 36),
 
+            statusBadge.centerYAnchor.constraint(equalTo: closeBtn.centerYAnchor),
+            statusBadge.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -10),
+            statusBadge.heightAnchor.constraint(equalToConstant: 32),
+
+            badgeStack.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: 10),
+            badgeStack.trailingAnchor.constraint(equalTo: statusBadge.trailingAnchor, constant: -10),
+            badgeStack.centerYAnchor.constraint(equalTo: statusBadge.centerYAnchor),
+
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             counterLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-            counterLabel.widthAnchor.constraint(equalToConstant: 100),
+            counterLabel.widthAnchor.constraint(equalToConstant: 90),
             counterLabel.heightAnchor.constraint(equalToConstant: 28)
         ])
+    }
 
+    private func setupGestures() {
         let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(nextImage))
         swipeLeft.direction = .left
         view.addGestureRecognizer(swipeLeft)
@@ -2472,7 +2533,29 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         swipeRight.direction = .right
         view.addGestureRecognizer(swipeRight)
 
-        loadCurrent()
+        // 双击放大/还原
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        view.addGestureRecognizer(doubleTap)
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        if scrollView.zoomScale > 1.0 {
+            scrollView.setZoomScale(1.0, animated: true)
+        } else {
+            let point = gesture.location(in: imageView)
+            let zoomRect = zoomRectForScale(scale: 2.5, center: point)
+            scrollView.zoom(to: zoomRect, animated: true)
+        }
+    }
+
+    private func zoomRectForScale(scale: CGFloat, center: CGPoint) -> CGRect {
+        var zoomRect = CGRect.zero
+        zoomRect.size.height = imageView.frame.size.height / scale
+        zoomRect.size.width  = imageView.frame.size.width  / scale
+        zoomRect.origin.x    = center.x - (zoomRect.size.width  / 2.0)
+        zoomRect.origin.y    = center.y - (zoomRect.size.height / 2.0)
+        return zoomRect
     }
 
     @objc private func close() {
@@ -2493,13 +2576,78 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         }
     }
 
-    private func loadCurrent() {
+    @objc private func retryLoadOriginal() {
+        loadCurrent(forceReloadOriginal: true)
+    }
+
+    private func updateBadge(status: ImageLoadStatus) {
+        switch status {
+        case .loading:
+            badgeSpinner.startAnimating()
+            badgeLabel.text = "⏳ 正在加载原图..."
+            badgeLabel.textColor = UIColor(red: 1.0, green: 0.88, blue: 0.45, alpha: 1.0)
+            statusBadge.backgroundColor = UIColor(red: 0.28, green: 0.18, blue: 0.05, alpha: 0.75)
+        case .cachedFull, .loadedFull:
+            badgeSpinner.stopAnimating()
+            badgeLabel.text = "✅ 100% 原图"
+            badgeLabel.textColor = UIColor(red: 0.35, green: 0.95, blue: 0.55, alpha: 1.0)
+            statusBadge.backgroundColor = UIColor(red: 0.06, green: 0.28, blue: 0.14, alpha: 0.75)
+        case .failed:
+            badgeSpinner.stopAnimating()
+            badgeLabel.text = "⚠️ 缩略图 (点此重试)"
+            badgeLabel.textColor = UIColor(white: 0.85, alpha: 1.0)
+            statusBadge.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        }
+    }
+
+    private enum ImageLoadStatus {
+        case loading
+        case cachedFull
+        case loadedFull
+        case failed
+    }
+
+    private func loadCurrent(forceReloadOriginal: Bool = false) {
         guard currentIndex >= 0, currentIndex < entry.images.count else { return }
+        scrollView.setZoomScale(1.0, animated: false)
         counterLabel.text = "\(currentIndex + 1) / \(entry.images.count)"
+
         let path = entry.images[currentIndex]
-        // DSH-102：传 workId 给 loadImage，走 ?id+?file 双键
-        OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] img in
-            self?.imageView.image = img
+        let requestId = UUID().uuidString
+        self.currentRequestId = requestId
+
+        // 切图时先重置当前图片，防止上一张图视觉残留
+        self.imageView.image = nil
+
+        // 1. 先展示真实缩略图占位（0秒秒开，彻底告别黑屏）
+        OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: true) { [weak self] thumbImg in
+            guard let self = self, self.currentRequestId == requestId else { return }
+            if let thumb = thumbImg, self.imageView.image == nil {
+                self.imageView.image = thumb
+            }
+        }
+
+        // 2. 检查高清原图是否已在内存/本地磁盘命中
+        let isFullCached = !forceReloadOriginal && OnlineGalleryClient.shared.hasFullImageCached(path: path)
+        if isFullCached {
+            updateBadge(status: .cachedFull)
+        } else {
+            updateBadge(status: .loading)
+        }
+
+        // 3. 异步拉取 100% 原始画质（与 Android 端两阶段原画逻辑 1:1 对齐）
+        OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] fullImg in
+            guard let self = self, self.currentRequestId == requestId else { return }
+            if let full = fullImg {
+                UIView.transition(with: self.imageView, duration: 0.25, options: .transitionCrossDissolve, animations: {
+                    self.imageView.image = full
+                }, completion: nil)
+                self.updateBadge(status: .loadedFull)
+            } else {
+                if !isFullCached {
+                    self.updateBadge(status: .failed)
+                }
+            }
         }
     }
 
