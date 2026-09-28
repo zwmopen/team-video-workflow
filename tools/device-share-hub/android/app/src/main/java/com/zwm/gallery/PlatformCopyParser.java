@@ -90,7 +90,7 @@ final class PlatformCopyParser {
                 || text.contains("_START>>>");
         if (!isProtocol) {
             // 【2026-09-21 修复】兜底文案也必须剥净 `<<<…>>>`，否则非标准标记会被原样带进剪贴板。
-            return Collections.singletonList(new AvailableItem(Platform.GENERAL, "复制文案",
+            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布",
                     stripProtocolMarkers(text).trim()));
         }
 
@@ -176,7 +176,7 @@ final class PlatformCopyParser {
             // 正文却用 `【小红书自然种草版】` 之类中文标题分节、没有任何 `<<<XHS_START>>>` 标记。
             // 此时落到这里，原先直接 `text.trim()` ⇒ 把 `<<<COPY_FORMAT:3>>>` 原样带进剪贴板
             // （实测 46 份作品命中）。剥净标记后再兜底。
-            return Collections.singletonList(new AvailableItem(Platform.GENERAL, "复制文案",
+            return Collections.singletonList(new AvailableItem(Platform.XHS, "发布",
                     stripProtocolMarkers(text).trim()));
         }
         return items;

@@ -137,8 +137,8 @@ enum PlatformCopyParser {
             // 【2026-09-21 DSH-087】兜底也必须剥净 `<<<…>>>`：畸形标记
             // （如只有两个 `>` 的 `<<<X_END>>`）会让 `isProtocol` 判false，
             // 原文连同畸形标记一起进剪贴板。与 Android 同函数同位置对齐。
-            return [AvailableCopyPlatform(platform: .general,
-                                          buttonLabel: "复制文案",
+            return [AvailableCopyPlatform(platform: .xhs,
+                                          buttonLabel: "发布",
                                           copyText: strippingProtocolMarkers(text)
                                               .trimmingCharacters(in: .whitespacesAndNewlines))]
         }
@@ -208,8 +208,8 @@ enum PlatformCopyParser {
             // 【2026-09-21 DSH-087】Codex「伪协议」文案（有 `<<<COPY_FORMAT:3>>>` 头、
             // 正文用 `【小红书自然种草版】` 分节、无任何 `<<<XHS_START>>>`）会落到这里，
             // 原先直接 `text.trimmed` ⇒ 头标记进剪贴板（实测 46 份命中）。
-            return [AvailableCopyPlatform(platform: .general,
-                                          buttonLabel: "复制文案",
+            return [AvailableCopyPlatform(platform: .xhs,
+                                          buttonLabel: "发布",
                                           copyText: strippingProtocolMarkers(text)
                                               .trimmingCharacters(in: .whitespacesAndNewlines))]
         }
