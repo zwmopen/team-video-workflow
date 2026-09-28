@@ -110,19 +110,19 @@ def probe_status(timeout: float = 3.0) -> bool:
 
 def is_service_healthy() -> bool:
     # 第一次探活（非阻塞毫秒级）
-    if probe_status(timeout=2.5):
+    if probe_status(timeout=4.0):
         return True
-    # 偶发波动重试二次确认（防抖 1.0s）
-    time.sleep(1.0)
-    if probe_status(timeout=3.5):
-        return True
-    # 第三次防抖确认（容忍后台磁盘全量扫描期 2.0s）
+    # 偶发波动重试二次确认（防抖 2.0s）
     time.sleep(2.0)
-    if probe_status(timeout=6.0):
+    if probe_status(timeout=5.0):
+        return True
+    # 第三次防抖确认（容忍后台磁盘全量扫描期 3.0s）
+    time.sleep(3.0)
+    if probe_status(timeout=8.0):
         return True
     # 第四次终极死锁超时确认（防抖 3.0s）
     time.sleep(3.0)
-    return probe_status(timeout=10.0)
+    return probe_status(timeout=12.0)
 
 # ----------------- 清理僵死/孤儿进程 -----------------
 _last_child_proc = None
@@ -223,19 +223,26 @@ def main():
 
     while True:
         try:
-            if not is_service_healthy():
-                log("检测到相册服务异常/死锁/已离线，立即触发秒级自愈机制！", "WARN")
+            # 优先检查子进程是否真实存活：如果子进程还在跑，绝不盲目强杀
+            if _last_child_proc is not None and _last_child_proc.poll() is None:
+                # 子进程仍在运行，执行宽容防抖探活
+                if not is_service_healthy():
+                    log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
+                    start_service()
+                    consecutive_ok_count = 0
+                else:
+                    consecutive_ok_count += 1
+                    if consecutive_ok_count % 720 == 0:
+                        log(f"相册服务常驻健康心跳: 持续稳定运行中 (累计正常探活 {consecutive_ok_count} 次)", "INFO")
+            else:
+                # 进程未启动或已崩溃退出，立即拉起！
+                log("检测到相册服务进程已离线，立即启动自愈！", "INFO")
                 start_service()
                 consecutive_ok_count = 0
-            else:
-                consecutive_ok_count += 1
-                # 每 1440 次正常探活（约 1 小时）打一条心跳，避免日志无限膨胀同时证明活跃
-                if consecutive_ok_count % 1440 == 0:
-                    log(f"相册服务常驻健康心跳: 持续稳定运行中 (累计正常探活 {consecutive_ok_count} 次)", "INFO")
         except Exception as e:
             log(f"守护主循环捕捉到未预期异常: {e}", "ERROR")
 
-        time.sleep(2.0)
+        time.sleep(5.0)
 
 if __name__ == "__main__":
     main()

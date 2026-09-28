@@ -1937,18 +1937,21 @@ class WorkScanner:
             if path in prev_by_path and prev_by_path[path] != mtime
         }
 
-        changed = bool(new_paths or deleted_paths or mtime_changed)
+        # 上帝视角加固：只有真实发生作品文件夹新增或删除时才触发，绝不因单纯的 mtime 变动频繁全盘重扫
+        has_structural_change = bool(new_paths or deleted_paths)
         self._watchdog_paths = current
         self._watchdog_last_poll = now
 
-        if changed:
-            self._watchdog_last_change = now
-            try:
-                self.scan(force=True)
-                print(f"[DSH-110 watchdog] 检测到变更 → force scan: +{len(new_paths)} / -{len(deleted_paths)} / ~{len(mtime_changed)}")
-            except Exception as e:
-                print(f"[DSH-110 watchdog] scan 失败：{e!r}")
-            return True
+        if has_structural_change:
+            # 防抖与冷却：避免高频连续全盘重扫拖死手机端
+            if now - self._last_scan_time > 120.0:
+                self._watchdog_last_change = now
+                try:
+                    self.scan(force=True)
+                    print(f"[DSH-110 watchdog] 检测到货架结构变更 → force scan: +{len(new_paths)} / -{len(deleted_paths)}")
+                except Exception as e:
+                    print(f"[DSH-110 watchdog] scan 失败：{e!r}")
+                return True
         return False
 
     def _start_watchdog_loop(self) -> None:
@@ -2957,17 +2960,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if home and os.path.isdir(home) and self._is_valid_restore_parent(home):
             dest_base = home
         if not dest_base:
-            dest_name = target_work.get("destination", "")
-            if dest_name and dest_name not in ("其他", ""):
-                candidate = os.path.join(root_dir, f"{dest_name}成品")
-                if os.path.isdir(candidate):
-                    dest_base = candidate
-        if not dest_base:
-            stage0_candidate = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
-            if os.path.isdir(stage0_candidate):
-                dest_base = stage0_candidate
-            else:
-                dest_base = root_dir
+            dest_base = self._find_target_shelf_dir(target_work.get("destination", ""), folder_name)
 
         os.makedirs(dest_base, exist_ok=True)
 
@@ -3016,7 +3009,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        return True, target_dest, "已移回「已发送0次（抖音小红书可发）」"
+        shelf_name = os.path.basename(dest_base)
+        return True, target_dest, f"已移回待发货架「{shelf_name}」"
 
     def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "") -> Tuple[bool, str, str]:
         """
@@ -3114,6 +3108,54 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if remark:
             msg += f"（备注：{remark}）"
         return True, target_dest, msg
+
+    def _find_target_shelf_dir(self, destination: str = "", folder_name: str = "") -> str:
+        """智能查找作品在待发货架中的目标归属目录（支持 24 大细分货架与主题货架）"""
+        root_dir = self.scanner.root
+        dest_clean = (destination or "").strip()
+
+        # 1. 明确专题与目的地映射表
+        DEST_MAP = {
+            "游戏": "团建游戏成品",
+            "团建游戏": "团建游戏成品",
+            "中秋": "中秋国庆成品",
+            "国庆": "中秋国庆成品",
+            "中秋国庆": "中秋国庆成品",
+            "江浙沪": "江浙沪成品",
+        }
+        candidates = []
+        if dest_clean in DEST_MAP:
+            candidates.append(DEST_MAP[dest_clean])
+        if dest_clean and dest_clean not in ("其他", ""):
+            candidates.append(f"{dest_clean}成品")
+            candidates.append(dest_clean)
+
+        # 2. 从文件夹名 / 标题中提取关键词
+        for kw, shelf_name in [
+            ("安吉", "安吉成品"), ("莫干山", "莫干山成品"), ("杭州", "杭州成品"),
+            ("上海", "上海成品"), ("苏州", "苏州成品"), ("千岛湖", "千岛湖成品"),
+            ("桐庐", "桐庐成品"), ("宁波", "宁波成品"), ("南京", "南京成品"),
+            ("宜兴", "宜兴溧阳成品"), ("溧阳", "宜兴溧阳成品"), ("舟山", "舟山海岛成品"),
+            ("海岛", "舟山海岛成品"), ("绍兴", "绍兴成品"), ("无锡", "无锡成品"),
+            ("湖州", "湖州成品"), ("台州", "台州成品"), ("金华", "金华成品"),
+            ("义乌", "义乌成品"), ("乌镇", "乌镇成品"), ("游戏", "团建游戏成品"),
+            ("中秋", "中秋国庆成品"), ("国庆", "中秋国庆成品"),
+        ]:
+            if kw in folder_name:
+                candidates.append(shelf_name)
+
+        for c in candidates:
+            cand_p = os.path.join(root_dir, c)
+            if os.path.isdir(cand_p):
+                return cand_p
+
+        # 3. 兜底货架：综合与其它城市 / 已发送0次（抖音小红书可发）
+        for fallback_name in ("综合与其它城市", "已发送0次（抖音小红书可发）"):
+            fb = os.path.join(root_dir, fallback_name)
+            if os.path.isdir(fb):
+                return fb
+
+        return root_dir
 
     def _original_parent_dir(self, work_id: str) -> Optional[str]:
         """从移动日志里反查作品搬家前的父目录（供「恢复」放回原位）。
@@ -3249,17 +3291,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             dest_base = home
             restored_to_album = True
         if not dest_base:
-            dest_name = target_work.get("destination", "")
-            if dest_name and dest_name not in ("其他", ""):
-                candidate = os.path.join(root_dir, f"{dest_name}成品")
-                if os.path.isdir(candidate):
-                    dest_base = candidate
-        if not dest_base:
-            stage0_candidate = os.path.join(root_dir, self.scanner.STAGE0_FOLDER)
-            if os.path.isdir(stage0_candidate):
-                dest_base = stage0_candidate
-            else:
-                dest_base = root_dir
+            dest_base = self._find_target_shelf_dir(target_work.get("destination", ""), folder_name)
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -3605,12 +3637,32 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             work_id = req.get("workId", "").strip()
+            if not work_id:
+                self.send_error(400, "Missing workId")
+                return
+
+            # 多重容错寻址：原ID -> 剥离软链接镜像ID -> 阶段库寻址
             target_work = self.scanner.get_work(work_id)
+            if not target_work and "__link_" in work_id:
+                target_work = self.scanner.get_work(work_id.split("__link_")[0])
+            if not target_work:
+                target_work = self.scanner.resolve_stage_work(work_id)
+
             if not target_work:
                 self.send_error(404, "Work not found")
                 return
 
             dir_path = target_work["path"]
+            is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
+
+            if is_link:
+                # 软链接镜像重置：解绑当前副货架软链接，并定位到主货架本体
+                unlink_junction(dir_path, self.scanner.root)
+                source_p = target_work.get("source_path") or resolve_junction_source(dir_path)
+                if source_p and os.path.isdir(source_p):
+                    dir_path = source_p
+                    target_work["path"] = source_p
+
             tag_file = os.path.join(dir_path, "作品标签.json")
             if os.path.exists(tag_file):
                 try:
@@ -3625,10 +3677,6 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"Error resetting tags: {e}")
 
-            # 同步归零 manifest.json，确保扫描器与手机端看到的「使用次数」一致为 0，
-            # 这样「用过 → 重置 → 再删除」才能被正确判定为人工垃圾样本。
-            # 注意：此项与上面的「作品标签.json」归零必须同时写入 useCount / used /
-            # distribution / dispatchedTo / status，缺一项都会让扫描器读到非 0 次数。
             manifest_file = os.path.join(dir_path, "manifest.json")
             if os.path.exists(manifest_file):
                 try:
@@ -3647,8 +3695,6 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"Error resetting manifest: {e}")
 
-            # 【2026-09-21 修复②】「重置」的另一半：把作品从「_已发送1次」移回「已发送0次」。
-            # 只对确实位于「_已发送1次」的作品回迁；垃圾库/已在待发区的作品不动，避免误挪。
             moved = False
             move_message = ""
             new_path = dir_path
@@ -3661,11 +3707,32 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as move_ex:
                 move_message = f"回迁异常（计数已归零，不影响重置结果）: {move_ex}"
 
-            # 【2026-09-21 修复①】force 扫描 + 显式作废阶段库缓存：
-            # 手机端重置后会立刻重拉 /api/online/recycle，若不清 _stage_cache 会拿到
-            # 5 秒内的旧值（useCount=1）⇒ 表现为「重置失败」。
-            self.scanner.scan(force=True)
-            self.scanner.invalidate_stage_cache()
+            # 极速局部内存原子更新（毫秒级响应，彻底消灭 13 秒全盘扫描阻塞与超时）：
+            target_work["useCount"] = 0
+            target_work["used"] = False
+            target_work["remainingUses"] = 2
+            target_work["statusLabel"] = ""
+            target_work["path"] = new_path
+            target_work["stage"] = "已发送0次"
+            shelf_candidate = os.path.basename(os.path.dirname(new_path))
+            target_work["shelf"] = shelf_candidate
+            target_work["folder"] = shelf_candidate
+
+            with self.scanner._lock:
+                self.scanner._works_by_id[work_id] = target_work
+                if "__link_" in work_id:
+                    self.scanner._works_by_id[work_id.split("__link_")[0]] = target_work
+                self.scanner._moved_works.pop(work_id, None)
+                self.scanner._stage_cache.clear()
+
+            # 将耗时的全盘深度重新扫描放入后台守护线程异步执行（彻底消除超时与死锁）
+            threading.Thread(
+                target=self.scanner.scan,
+                kwargs={"force": True},
+                name="bg-scan-after-reset",
+                daemon=True
+            ).start()
+
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
@@ -3763,7 +3830,30 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             ok, target_dest, msg = self._restore_work_to_stage0(target_work, device_name)
-            self.scanner.scan(force=True)
+            
+            # 局部内存更新 + 作废回收站缓存
+            with self.scanner._lock:
+                target_work["useCount"] = 0
+                target_work["used"] = False
+                target_work["remainingUses"] = 2
+                target_work["statusLabel"] = ""
+                target_work["path"] = target_dest
+                target_work["stage"] = "已发送0次"
+                shelf_cand = os.path.basename(os.path.dirname(target_dest))
+                target_work["shelf"] = shelf_cand
+                target_work["folder"] = shelf_cand
+                self.scanner._works_by_id[work_id] = target_work
+                self.scanner._moved_works.pop(work_id, None)
+                self.scanner._stage_cache.clear()
+
+            # 将耗时全盘扫描丢入后台守护线程异步刷新
+            threading.Thread(
+                target=self.scanner.scan,
+                kwargs={"force": True},
+                name="bg-scan-after-restore",
+                daemon=True
+            ).start()
+
             self.send_json(200 if ok else 500, {
                 "ok": ok,
                 "workId": work_id,

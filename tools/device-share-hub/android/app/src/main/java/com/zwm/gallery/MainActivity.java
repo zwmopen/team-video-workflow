@@ -3965,16 +3965,16 @@ public final class MainActivity extends Activity {
                 .setMessage("是否重置该电脑在线作品为待首发状态？")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("重置", (dialog, which) -> {
-                    onlineClient.resetWork(workId, new OnlineGalleryClient.Callback<Boolean>() {
+                    onlineClient.resetWork(workId, new OnlineGalleryClient.Callback<OnlineGalleryClient.ActionResult>() {
                         @Override
-                        public void onSuccess(Boolean ok) {
-                            if (ok) {
-                                toast("已重置为待首发状态");
+                        public void onSuccess(OnlineGalleryClient.ActionResult res) {
+                            if (res != null && res.ok) {
+                                toast(res.message.isEmpty() ? "已重置为待首发状态" : res.message);
                                 for (int i = 0; i < onlineWorks.size(); i++) {
                                     OnlineWorkEntry old = onlineWorks.get(i);
-                                    if (old.id.equals(workId)) {
+                                    if (old.id.equals(workId) || (workId.contains("__link_") && old.id.equals(workId.split("__link_")[0]))) {
                                         OnlineWorkEntry updated = new OnlineWorkEntry(
-                                                old.id, old.title, old.destination, old.stage,
+                                                old.id, old.title, old.destination, "已发送0次",
                                                 0, old.maxUses, false, 2, "",
                                                 old.images, old.imageCount, old.copyText, old.hasCopyText,
                                                 new ArrayList<>(), System.currentTimeMillis()
@@ -3985,7 +3985,8 @@ public final class MainActivity extends Activity {
                                 }
                                 applyOnlineCategoryFilter(selectedOnlineCategory);
                             } else {
-                                toast("重置失败");
+                                String err = (res != null && !res.message.isEmpty()) ? res.message : "重置失败";
+                                toast(err);
                             }
                         }
 

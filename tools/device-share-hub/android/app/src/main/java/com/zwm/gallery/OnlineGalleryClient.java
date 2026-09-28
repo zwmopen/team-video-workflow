@@ -1119,7 +1119,7 @@ public final class OnlineGalleryClient {
         });
     }
 
-    public void resetWork(String workId, Callback<Boolean> callback) {
+    public void resetWork(String workId, Callback<ActionResult> callback) {
         executor.execute(() -> {
             try {
                 String baseUrl = resolveBaseUrl();
@@ -1129,7 +1129,9 @@ public final class OnlineGalleryClient {
                 String resp = httpPost(url, body.toString());
                 JSONObject json = new JSONObject(resp);
                 boolean ok = json.optBoolean("ok", false);
-                mainHandler.post(() -> callback.onSuccess(ok));
+                String msg = json.optString("message", ok ? "已重置为待首发状态" : "重置失败");
+                ActionResult res = new ActionResult(ok, workId, msg, json.optString("newPath", ""));
+                mainHandler.post(() -> callback.onSuccess(res));
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(e));
             }
