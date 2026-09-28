@@ -102,22 +102,7 @@ final class PlatformCopyParser {
             String content = stripProtocolMarkers(stripOuterLineBreaks(vMatcher.group(2)));
             if (!content.trim().isEmpty()) {
                 String label = friendlyLabelForMarker(vname);
-                Platform plat;
-                if (label.contains("抖音") || "抖音避坑".equals(label)) {
-                    plat = Platform.DOUYIN;
-                } else if (label.contains("大纲") || label.contains("方案")) {
-                    plat = Platform.XHS_2;
-                } else if (label.contains("种草") || label.contains("小红书")) {
-                    plat = Platform.XHS;
-                } else if (label.toUpperCase(java.util.Locale.ROOT).contains("HR") || label.contains("决策")) {
-                    plat = Platform.HR;
-                } else if (label.contains("公众号") || label.contains("微信")) {
-                    plat = Platform.WECHAT;
-                } else if (label.contains("短文") || label.contains("精选")) {
-                    plat = Platform.XHS_3;
-                } else {
-                    plat = Platform.GENERAL;
-                }
+                Platform plat = (label.contains("抖音") || "抖音避坑".equals(label)) ? Platform.DOUYIN : Platform.GENERAL;
                 multiItems.add(new AvailableItem(plat, label, content));
             }
         }

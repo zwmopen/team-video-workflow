@@ -151,22 +151,7 @@ enum PlatformCopyParser {
             let content = strippingProtocolMarkers(stripOuterLineBreaks(body))
             guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let label = friendlyLabelForMarker(name)
-            let platform: CopyPlatform
-            if label.contains("抖音") || label == "抖音避坑" {
-                platform = .douyin
-            } else if label.contains("大纲") || label.contains("方案") {
-                platform = .xhs2
-            } else if label.contains("种草") || label.contains("小红书") {
-                platform = .xhs
-            } else if label.uppercased().contains("HR") || label.contains("决策") {
-                platform = .hr
-            } else if label.contains("公众号") || label.contains("微信") {
-                platform = .wechat
-            } else if label.contains("短文") || label.contains("精选") {
-                platform = .xhs3
-            } else {
-                platform = .general
-            }
+            let platform: CopyPlatform = (label.contains("抖音") || label == "抖音避坑") ? .douyin : .general
             multiItems.append(AvailableCopyPlatform(platform: platform, buttonLabel: label, copyText: content))
         }
         if !multiItems.isEmpty { return multiItems }
