@@ -1307,7 +1307,7 @@ class WorkScanner:
     # 三个阶段库的物理目录名（与成品库实际结构一致）
     STAGE0_FOLDER = "已发送0次（抖音小红书可发）"
     STAGE1_FOLDER = "_已发送1次（微信公众号可发）"
-    GARBAGE_FOLDER = "_垃圾作品（后续参考分析）"
+    GARBAGE_FOLDER = "_垃圾作品样本"
     # 需要下钻一层的中间目录前缀（作品集/游戏类会在阶段库里再套一层）
     NESTED_PREFIXES = ("作品集", "团建游戏", "游戏", "游戏类")
 
@@ -1612,7 +1612,7 @@ class WorkScanner:
                 "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
                 "_portfolio_backup", "_portfolio_move_logs", "_不合格成品合集", "_作品历史数据",
                 "_制作中", "_待补全_单封面作品集", "_测试验收", "_生产计划与排产参考", "_重复待处理",
-                "_垃圾作品（后续参考分析）",
+                "_垃圾作品样本",
                 "发布空间", "待制作待补全", "抖音小红书"
             }
             try:
@@ -1723,7 +1723,7 @@ class WorkScanner:
             "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
             "_portfolio_backup", "_portfolio_move_logs", "_不合格成品合集", "_作品历史数据",
             "_制作中", "_待补全_单封面作品集", "_测试验收", "_生产计划与排产参考", "_重复待处理",
-            "_垃圾作品（后续参考分析）",
+            "_垃圾作品样本",
             "发布空间", "待制作待补全", "抖音小红书"
         }
 
@@ -2864,7 +2864,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
     def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "") -> Tuple[bool, str, str]:
         """
-        未发送作品的人工判定删除：物理移入垃圾样本库「_垃圾作品（后续参考分析）」，
+        未发送作品的人工判定删除：物理移入垃圾样本库「_垃圾作品样本」，
         并在元数据（manifest.json + quality_tag.json）永久标记为垃圾，全渠道分发引擎硬拦截。
         """
         src_path = target_work["path"]
@@ -2874,7 +2874,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
 
         root_dir = self.scanner.root
-        dest_base = os.path.join(root_dir, "_垃圾作品（后续参考分析）")
+        dest_base = os.path.join(root_dir, "_垃圾作品样本")
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -2883,7 +2883,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             target_dest = os.path.join(dest_base, f"{folder_name}_{ts_suffix}")
 
         if os.path.abspath(target_dest) == os.path.abspath(src_path):
-            return True, target_dest, "作品已位于垃圾样本库「_垃圾作品（后续参考分析）」"
+            return True, target_dest, "作品已位于垃圾样本库「_垃圾作品样本」"
 
         move_err = None
         for attempt in range(3):
@@ -2954,7 +2954,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        msg = "已移入垃圾样本库「_垃圾作品（后续参考分析）」并在元数据标记为垃圾"
+        msg = "已移入垃圾样本库「_垃圾作品样本」并在元数据标记为垃圾"
         if remark:
             msg += f"（备注：{remark}）"
         return True, target_dest, msg
@@ -3472,7 +3472,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             # 判定权在手机端：只要手机点了删除（含「用过 → 重置 → 再删除」），
-            # 一律视为人工判定垃圾：物理移入「_垃圾作品（后续参考分析）」永久保留，
+            # 一律视为人工判定垃圾：物理移入「_垃圾作品样本」永久保留，
             # 并在元数据写死垃圾标记（全渠道硬拦截）。电脑端绝不自动清理该样本库。
             ok, target_dest, action_desc = self._move_work_to_garbage(target_work, device_name, remark)
             if not ok:
