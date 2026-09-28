@@ -90,6 +90,7 @@ public final class MainActivity extends Activity {
         thread.setPriority(Thread.MIN_PRIORITY);
         return thread;
     });
+    private volatile int onlinePrefetchVersion = 0;
 
     // ── 在线缩略图「整页调度器」────────────────────────────────────────────
     // 2026-09-20：在线列表一屏几百张卡片，旧实现每张卡片前 4 张图立刻发请求
@@ -4399,6 +4400,9 @@ public final class MainActivity extends Activity {
         builder.setView(layout);
         builder.setPositiveButton("关闭", null);
         AlertDialog dialog = builder.create();
+        dialog.setOnDismissListener(d -> {
+            onlinePrefetchVersion++;
+        });
         dialog.show();
 
         final int[] currentIndex = new int[]{imageIndex};
@@ -4432,6 +4436,7 @@ public final class MainActivity extends Activity {
                 badge.setText("✅ 100% 原画");
                 badge.setTextColor(Color.rgb(15, 135, 88));
                 badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+                prefetchOnlineImages(workId, images, currentIndex[0]);
                 return;
             }
 
@@ -4461,36 +4466,8 @@ public final class MainActivity extends Activity {
                 }
             });
 
-            // 点击 badge 支持随时手动重新拉取刷新
-            badge.setOnClickListener(v -> {
-                badge.setText("⏳ 重新拉取中…");
-                badge.setTextColor(Color.rgb(180, 120, 20));
-                badge.setBackground(round(Color.rgb(255, 246, 230), 8));
-                spinner.setVisibility(View.VISIBLE);
-                THUMBNAIL_CACHE.remove(cacheKeyFull);
-                java.io.File cf = new java.io.File(new java.io.File(getCacheDir(), "online_full_images"), OnlineGalleryClient.getDiskCacheKey(workId, imageName));
-                if (cf.exists()) cf.delete();
-                onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
-                    @Override
-                    public void onSuccess(Bitmap result) {
-                        if (currentIndex[0] >= images.size() || !images.get(currentIndex[0]).equals(imageName)) return;
-                        spinner.setVisibility(View.GONE);
-                        if (result != null && !result.isRecycled()) {
-                            THUMBNAIL_CACHE.put(cacheKeyFull, result);
-                            fullView.setImageBitmap(result);
-                            badge.setText("✅ 100% 原画");
-                            badge.setTextColor(Color.rgb(15, 135, 88));
-                            badge.setBackground(round(Color.rgb(235, 247, 240), 8));
-                        }
-                    }
-
-                    @Override
-                    public void onError(Exception error) {
-                        spinner.setVisibility(View.GONE);
-                        badge.setText("拉取失败 (点此重试)");
-                    }
-                });
-            });
+            // 4. 同作品大图后台并发静默预加载
+            prefetchOnlineImages(workId, images, currentIndex[0]);
         };
 
         Runnable stepPrev = () -> {
@@ -4534,6 +4511,100 @@ public final class MainActivity extends Activity {
         });
 
         renderHolder[0].run();
+    }
+
+    /**
+     * 同作品大图后台并发静默预加载：
+     * 打开某张大图或切图时，使用 THUMBNAIL_EXECUTOR 自动对该作品的其余图片发起
+     * loadThumbnail 和 loadFullImage 预加载，优先拉取相邻前后的图片进 THUMBNAIL_CACHE。
+     */
+    private void prefetchOnlineImages(String workId, List<String> images, int centerIndex) {
+        if (images == null || images.size() <= 1) return;
+        final int prefetchVersion = ++onlinePrefetchVersion;
+
+        THUMBNAIL_EXECUTOR.execute(() -> {
+            try {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            } catch (Throwable ignored) {}
+
+            if (prefetchVersion != onlinePrefetchVersion) return;
+
+            // 计算相邻前后顺序（centerIndex+1, centerIndex-1, centerIndex+2, centerIndex-2...）
+            List<Integer> orderedIndices = new ArrayList<>();
+            int step = 1;
+            while (orderedIndices.size() < images.size() - 1) {
+                int next = centerIndex + step;
+                if (next < images.size() && next >= 0 && !orderedIndices.contains(next) && next != centerIndex) {
+                    orderedIndices.add(next);
+                }
+                int prev = centerIndex - step;
+                if (prev >= 0 && prev < images.size() && !orderedIndices.contains(prev) && prev != centerIndex) {
+                    orderedIndices.add(prev);
+                }
+                step++;
+                if (step > images.size()) break;
+            }
+
+            // 1. 优先并发拉取剩余图片的缩略图，0秒充盈缩略图缓存
+            for (int idx : orderedIndices) {
+                if (prefetchVersion != onlinePrefetchVersion) return;
+                String imgName = images.get(idx);
+                String thumbKey = "online:" + workId + ":" + imgName;
+                if (THUMBNAIL_CACHE.get(thumbKey) == null) {
+                    onlineClient.loadThumbnail(workId, imgName, new OnlineGalleryClient.Callback<Bitmap>() {
+                        @Override
+                        public void onSuccess(Bitmap result) {
+                            if (result != null && !result.isRecycled()) {
+                                THUMBNAIL_CACHE.put(thumbKey, result);
+                            }
+                        }
+
+                        @Override
+                        public void onError(Exception error) {}
+                    });
+                }
+            }
+
+            // 2. 按相邻前后优先顺序逐张预加载 100% 高清原图进 THUMBNAIL_CACHE
+            prefetchFullImagesSequentially(workId, images, orderedIndices, 0, prefetchVersion);
+        });
+    }
+
+    private void prefetchFullImagesSequentially(String workId, List<String> images, List<Integer> indices, int pointer, int prefetchVersion) {
+        if (pointer >= indices.size()) return;
+        if (prefetchVersion != onlinePrefetchVersion) return;
+
+        int idx = indices.get(pointer);
+        String imgName = images.get(idx);
+        String fullKey = "online:full:" + workId + ":" + imgName;
+
+        if (THUMBNAIL_CACHE.get(fullKey) != null) {
+            prefetchFullImagesSequentially(workId, images, indices, pointer + 1, prefetchVersion);
+            return;
+        }
+
+        onlineClient.loadFullImage(workId, imgName, new OnlineGalleryClient.Callback<Bitmap>() {
+            @Override
+            public void onSuccess(Bitmap result) {
+                if (result != null && !result.isRecycled()) {
+                    THUMBNAIL_CACHE.put(fullKey, result);
+                }
+                if (prefetchVersion == onlinePrefetchVersion) {
+                    THUMBNAIL_EXECUTOR.execute(() ->
+                            prefetchFullImagesSequentially(workId, images, indices, pointer + 1, prefetchVersion)
+                    );
+                }
+            }
+
+            @Override
+            public void onError(Exception error) {
+                if (prefetchVersion == onlinePrefetchVersion) {
+                    THUMBNAIL_EXECUTOR.execute(() ->
+                            prefetchFullImagesSequentially(workId, images, indices, pointer + 1, prefetchVersion)
+                    );
+                }
+            }
+        });
     }
 
     private void handleOnlineWorkUse(OnlineWorkEntry work, String platformCode, String label, String copyText) {

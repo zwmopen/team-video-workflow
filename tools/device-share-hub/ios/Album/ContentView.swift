@@ -2426,6 +2426,8 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
 
     // 请求竞态防乱序标识
     private var currentRequestId = UUID().uuidString
+    // 静默预加载防乱序与生命周期标识
+    private var currentPrefetchId = UUID().uuidString
 
     init(entry: OnlineWorkEntry, initialIndex: Int) {
         self.entry = entry
@@ -2565,7 +2567,17 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     }
 
     @objc private func close() {
+        currentPrefetchId = ""
         dismiss(animated: true)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        currentPrefetchId = ""
+    }
+
+    deinit {
+        currentPrefetchId = ""
     }
 
     @objc private func nextImage() {
@@ -2654,6 +2666,63 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
                     self.updateBadge(status: .failed)
                 }
             }
+        }
+
+        // 4. 同作品大图后台并发静默预加载
+        prefetchRemainingImages(for: entry, startingAt: currentIndex)
+    }
+
+    /// 同作品大图后台并发静默预加载：
+    /// 打开大图或切换图片时，自动遍历除当前图外的所有图片。
+    /// 先预加载所有剩余图片的缩略图（isThumbnail: true），0秒充盈磁盘与内存缓存；
+    /// 紧接着在后台按滑动可能顺序（currentIndex+1, currentIndex-1, currentIndex+2...）逐张预加载 100% 高清原图（isThumbnail: false）；
+    /// 保证用户向左/向右滑动翻页时直接 0 延迟秒开！
+    private func prefetchRemainingImages(for entry: OnlineWorkEntry, startingAt currentIndex: Int) {
+        guard entry.images.count > 1 else { return }
+        let prefetchId = UUID().uuidString
+        self.currentPrefetchId = prefetchId
+
+        var orderedIndices: [Int] = []
+        var step = 1
+        while orderedIndices.count < entry.images.count - 1 {
+            let next = currentIndex + step
+            if next >= 0 && next < entry.images.count && next != currentIndex && !orderedIndices.contains(next) {
+                orderedIndices.append(next)
+            }
+            let prev = currentIndex - step
+            if prev >= 0 && prev < entry.images.count && prev != currentIndex && !orderedIndices.contains(prev) {
+                orderedIndices.append(prev)
+            }
+            step += 1
+            if step > entry.images.count { break }
+        }
+
+        // 1. 优先并发预加载所有剩余图片的缩略图（isThumbnail: true），0秒充盈磁盘与内存缓存
+        for idx in orderedIndices {
+            let path = entry.images[idx]
+            OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: true) { _ in }
+        }
+
+        // 2. 紧接着在后台按滑动可能顺序逐张预加载 100% 高清原图（isThumbnail: false）
+        prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: 0, prefetchId: prefetchId)
+    }
+
+    private func prefetchNextFullImage(for entry: OnlineWorkEntry, orderedIndices: [Int], pointer: Int, prefetchId: String) {
+        guard pointer < orderedIndices.count else { return }
+        guard self.currentPrefetchId == prefetchId else { return }
+
+        let idx = orderedIndices[pointer]
+        let path = entry.images[idx]
+
+        // 检查原图是否已在磁盘/内存中缓存，若已就绪直接递归检查下一张
+        if OnlineGalleryClient.shared.hasFullImageCached(path: path) {
+            self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + 1, prefetchId: prefetchId)
+            return
+        }
+
+        OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] _ in
+            guard let self = self, self.currentPrefetchId == prefetchId else { return }
+            self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + 1, prefetchId: prefetchId)
         }
     }
 
