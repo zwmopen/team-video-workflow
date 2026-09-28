@@ -2146,13 +2146,10 @@ class WorkScanner:
             dispatched = distribution.get("dispatchedTo", [])
             use_count = len(dispatched) if dispatched else default_count
 
-        destination = detect_destination(folder_name, dir_path)
         if default_category:
-            if destination == "其他":
-                destination = default_category
-            elif default_category not in ("综合与其它城市", "其他", ""):
-                if destination != "游戏":
-                    destination = default_category
+            destination = default_category
+        else:
+            destination = detect_destination(folder_name, dir_path)
 
         # 优雅标题清洗：剥离时间戳与机器流水线前缀，让手机端直显方案名
         clean_title = folder_name
@@ -2611,38 +2608,30 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 dest = w.get("destination", "其他")
                 counts[dest] = counts.get(dest, 0) + 1
 
-            # 节日时令专题聚合（中秋、国庆优先置顶）与游戏专题
-            mid_autumn_count = sum(1 for w in works if "中秋" in work_text_blob(w))
-            national_day_count = sum(1 for w in works if ("国庆" in work_text_blob(w) or "十一" in work_text_blob(w)))
-            game_count = sum(1 for w in works if is_game_work(w.get("rawTitle", ""), w.get("path", "")))
-
-            # 纯净分类聚合：节日专题置顶，游戏专题同级别优先展示，其余按数量倒序的目的地
+            # 纯净分类聚合（严格 1:1 对齐本地 24 大货架目录，零 Emoji，纯净高雅）：
+            # 1. 时令节日与特色专题优先置顶（中秋、国庆、中秋国庆、团建游戏）
+            priority_topics = ["中秋", "国庆", "中秋国庆", "团建游戏"]
             categories = []
-            if mid_autumn_count > 0:
-                categories.append({"name": "🌕 中秋", "count": mid_autumn_count})
-            if national_day_count > 0:
-                categories.append({"name": "🇨🇳 国庆", "count": national_day_count})
-            if game_count > 0:
-                categories.append({"name": "🎮 游戏", "count": game_count})
+            seen_cats = set()
+            for topic in priority_topics:
+                if topic in counts and counts[topic] > 0:
+                    categories.append({"name": topic, "count": counts[topic]})
+                    seen_cats.add(topic)
 
+            # 2. 其余目的地按作品数量倒序排列
             dest_categories = []
-            seen_dest = set()
-            for d in DESTINATIONS:
-                if d in ("中秋", "国庆", "游戏", "其他"):
-                    continue
-                if d in counts and counts[d] > 0:
-                    dest_categories.append({"name": d, "count": counts[d]})
-                    seen_dest.add(d)
             for d, cnt in counts.items():
-                if d in ("中秋", "国庆", "游戏", "其他") or d in seen_dest:
+                if d in seen_cats or d in ("其他", ""):
                     continue
                 if cnt > 0:
                     dest_categories.append({"name": d, "count": cnt})
-                    seen_dest.add(d)
-            if "其他" in counts and counts["其他"] > 0:
-                dest_categories.append({"name": "其他", "count": counts["其他"]})
+                    seen_cats.add(d)
             dest_categories.sort(key=lambda c: -c["count"])
             categories.extend(dest_categories)
+
+            # 3. 兜底其它
+            if "其他" in counts and counts["其他"] > 0:
+                categories.append({"name": "其他", "count": counts["其他"]})
 
             self.send_json(200, {"ok": True, "categories": categories, "stages": [], "total": len(works)})
             return
@@ -2665,26 +2654,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             filtered = []
             for w in works:
-                # 分类过滤（支持专题分类、游戏与地域分类）
+                # 分类过滤（支持专题分类、游戏与地域分类，严格 1:1 匹配本地货架）
                 if category and category != "全部":
-                    if category in ("🌕 中秋", "中秋"):
-                        if "中秋" not in work_text_blob(w):
+                    clean_cat = category.replace("🌕", "").replace("🇨🇳", "").replace("🎮", "").replace("🏷️", "").strip()
+                    if clean_cat in ("游戏", "团建游戏"):
+                        if w.get("destination") not in ("游戏", "团建游戏") and w.get("shelf") not in ("游戏", "团建游戏"):
                             continue
-                    elif category in ("🇨🇳 国庆", "国庆"):
-                        blob = work_text_blob(w)
-                        if "国庆" not in blob and "十一" not in blob:
+                    elif clean_cat == "待首发":
+                        if w.get("useCount", 0) != 0:
                             continue
-                    elif category in ("🎮 游戏", "游戏"):
-                        if not is_game_work(w.get("rawTitle", ""), w.get("path", "")):
+                    elif clean_cat in ("已发1次", "已发1"):
+                        if w.get("useCount", 0) != 1:
                             continue
-                    elif category == "待首发" and w.get("useCount", 0) != 0:
-                        continue
-                    elif category == "已发1次" and w.get("useCount", 0) != 1:
-                        continue
-                    elif category == "已发2次" and w.get("useCount", 0) < 2:
-                        continue
-                    elif category not in ("待首发", "已发1次", "已发2次"):
-                        if w.get("destination") != category:
+                    elif clean_cat in ("已发2次", "已发2", "已用满"):
+                        if w.get("useCount", 0) < 2:
+                            continue
+                    else:
+                        if (w.get("destination") != clean_cat and w.get("shelf") != clean_cat
+                                and w.get("destination") != category and w.get("shelf") != category):
                             continue
 
                 # 搜索关键词过滤

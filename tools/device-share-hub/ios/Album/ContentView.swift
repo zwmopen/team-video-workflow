@@ -86,24 +86,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             .replacingOccurrences(of: "🏷️", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if cleanCat == "游戏" || catKey.contains("游戏") {
+        if cleanCat == "游戏" || cleanCat == "团建游戏" || catKey.contains("游戏") {
             return work.destination.contains("游戏")
-                || work.id.contains("游戏")
-                || work.title.contains("游戏") || work.title.contains("破冰") || work.title.contains("桌游")
-                || work.copyText.contains("游戏") || work.copyText.contains("破冰") || work.copyText.contains("桌游")
-        } else if cleanCat == "中秋" || catKey.contains("中秋") {
-            return work.destination.contains("中秋")
-                || work.title.contains("中秋")
-                || work.copyText.contains("中秋")
-        } else if cleanCat == "国庆" || catKey.contains("国庆") || catKey.contains("十一") {
-            return work.destination.contains("国庆") || work.destination.contains("十一")
-                || work.title.contains("国庆") || work.title.contains("十一")
-                || work.copyText.contains("国庆") || work.copyText.contains("十一")
         } else {
-            return catKey == work.destination
-                || (!cleanCat.isEmpty && cleanCat == work.destination)
-                || work.title.contains(catKey)
-                || (!cleanCat.isEmpty && work.title.contains(cleanCat))
+            return catKey == work.destination || (!cleanCat.isEmpty && cleanCat == work.destination)
         }
     }
 

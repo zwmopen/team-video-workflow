@@ -3690,21 +3690,10 @@ public final class MainActivity extends Activity {
                     matchesCategory = (work.useCount >= 2);
                 } else {
                     String cleanCat = catKey.replace("🌕", "").replace("🇨🇳", "").replace("🎮", "").replace("🏷️", "").trim();
-                    if ("游戏".equals(cleanCat)) {
-                        matchesCategory = "游戏".equals(work.destination)
-                                || (work.id != null && work.id.contains("游戏"))
-                                || (work.title != null && (work.title.contains("游戏") || work.title.contains("破冰") || work.title.contains("桌游")));
-                    } else if ("中秋".equals(cleanCat)) {
-                        matchesCategory = "中秋".equals(work.destination)
-                                || (work.title != null && work.title.contains("中秋"))
-                                || (work.copyText != null && work.copyText.contains("中秋"));
-                    } else if ("国庆".equals(cleanCat)) {
-                        matchesCategory = "国庆".equals(work.destination)
-                                || (work.title != null && (work.title.contains("国庆") || work.title.contains("十一")))
-                                || (work.copyText != null && (work.copyText.contains("国庆") || work.copyText.contains("十一")));
+                    if ("游戏".equals(cleanCat) || "团建游戏".equals(cleanCat) || cleanCat.contains("游戏")) {
+                        matchesCategory = "游戏".equals(work.destination) || "团建游戏".equals(work.destination);
                     } else {
-                        matchesCategory = catKey.equals(work.destination) || cleanCat.equals(work.destination)
-                                || (work.title != null && (work.title.contains(catKey) || (!cleanCat.isEmpty() && work.title.contains(cleanCat))));
+                        matchesCategory = catKey.equals(work.destination) || cleanCat.equals(work.destination);
                     }
                 }
                 if (!matchesCategory) continue;
