@@ -623,8 +623,9 @@ def sanitize_platform_copy(copy_text: str) -> "tuple[str, Dict[str, Any]]":
 def splice_platform_copy(original_full_text: str, version_key: str, new_slot_text: str) -> str:
     """DSH-138: 若原文是多槽位文案，且 new_slot_text 为单一版本内容，
     则精确定向替换对应槽位，保护其他平台槽位不丢失。
+    支持 <<<VERSION_START>>>、<<<MK_START>>> 与 --- 方案X：... --- 三大协议。
     """
-    if not original_full_text or "<<<" not in original_full_text:
+    if not original_full_text:
         return new_slot_text
     if "<<<COPY_FORMAT" in new_slot_text or "_START>>>" in new_slot_text:
         return new_slot_text
@@ -635,39 +636,70 @@ def splice_platform_copy(original_full_text: str, version_key: str, new_slot_tex
 
     v_upper = v_trimmed.upper()
     alias_map = {
-        "种草版": "XHS", "小红书": "XHS", "XHS": "XHS",
-        "大纲方案版": "XHS_2", "方案版": "XHS_2", "XHS2": "XHS_2", "XHS_2": "XHS_2",
+        "种草版": "XHS", "小红书": "XHS", "XHS": "XHS", "红书种草": "XHS", "自然种草": "XHS",
+        "大纲方案版": "XHS_2", "方案版": "XHS_2", "XHS2": "XHS_2", "XHS_2": "XHS_2", "红书大纲": "XHS_2",
         "短文精选版": "XHS_3", "精选版": "XHS_3", "XHS3": "XHS_3", "XHS_3": "XHS_3",
-        "规避营销版": "DOUYIN", "抖音": "DOUYIN", "抖音探店": "DOUYIN", "DOUYIN": "DOUYIN",
+        "规避营销版": "DOUYIN", "抖音": "DOUYIN", "抖音探店": "DOUYIN", "DOUYIN": "DOUYIN", "抖音无营销": "DOUYIN", "抖音避坑": "DOUYIN",
         "公众号版": "WECHAT", "微信": "WECHAT", "WECHAT": "WECHAT",
-        "HR决策版": "HR", "HR": "HR",
+        "HR决策版": "HR", "HR": "HR", "决策版": "HR",
     }
     target_marker = alias_map.get(v_trimmed, v_upper)
 
-    # 1. 尝试匹配 <<<MK_START>>> ... <<<MK_END>>>
-    def _repl_marker(m):
-        m_tag = m.group(1)
-        if m_tag.upper() == target_marker or m_tag.upper() == v_upper or m_tag == v_trimmed:
-            return f"<<<{m_tag}_START>>>\n{new_slot_text.strip()}\n<<<{m_tag}_END>>>"
-        return m.group(0)
-
-    replaced, count = _PLATFORM_BLOCK_RE.subn(_repl_marker, original_full_text)
-    if count > 0:
-        return replaced
-
-    # 2. 尝试匹配 <<<VERSION_START: tag>>> ... <<<VERSION_END>>>
+    # 1. 尝试匹配 <<<VERSION_START: tag>>> ... <<<VERSION_END>>>
     version_pat = re.compile(r"(?s)<<<VERSION_START:\s*([^>\r\n]+?)\s*>>>[\r\n]*(.*?)[\r\n]*<<<VERSION_END>>>")
     def _repl_ver(m):
         tag = m.group(1).strip()
-        if tag == v_trimmed or tag.upper() == v_upper or tag.upper() == target_marker:
-            return f"<<<VERSION_START: {tag}>>>\n{new_slot_text.strip()}\n<<<VERSION_END>>>"
+        matched = (tag == v_trimmed or tag.upper() == v_upper or tag.upper() == target_marker
+                   or alias_map.get(tag) == target_marker
+                   or v_trimmed in tag or tag in v_trimmed)
+        if matched:
+            return f"<<<VERSION_START:{tag}>>>\n{new_slot_text.strip()}\n<<<VERSION_END>>>"
         return m.group(0)
 
-    replaced, count = version_pat.subn(_repl_ver, original_full_text)
-    if count > 0:
-        return replaced
+    replaced_ver, count_ver = version_pat.subn(_repl_ver, original_full_text)
+    if count_ver > 0:
+        return replaced_ver
+
+    # 2. 尝试匹配 <<<MK_START>>> ... <<<MK_END>>>
+    def _repl_marker(m):
+        m_tag = m.group(1)
+        matched = (m_tag.upper() == target_marker or m_tag.upper() == v_upper or m_tag == v_trimmed
+                   or alias_map.get(m_tag) == target_marker)
+        if matched:
+            return f"<<<{m_tag}_START>>>\n{new_slot_text.strip()}\n<<<{m_tag}_END>>>"
+        return m.group(0)
+
+    replaced_mk, count_mk = _PLATFORM_BLOCK_RE.subn(_repl_marker, original_full_text)
+    if count_mk > 0:
+        return replaced_mk
+
+    # 3. 尝试匹配 Format 3 方案分隔格式：--- 方案X：... ---
+    plan_pat = re.compile(r"(?m)^(---+\s*方案(?:\d+|[一二三四五六七八九十]+)[：:]\s*([^\r\n]+?)\s*---+\s*$)")
+    matches = list(plan_pat.finditer(original_full_text))
+    if matches:
+        target_idx = -1
+        for idx, match in enumerate(matches):
+            hdr_name = match.group(2).strip()
+            if (v_trimmed in hdr_name or hdr_name in v_trimmed
+                    or alias_map.get(hdr_name) == target_marker
+                    or ("种草" in v_trimmed and "种草" in hdr_name)
+                    or ("大纲" in v_trimmed and ("大纲" in hdr_name or "决策" in hdr_name))
+                    or ("HR" in v_trimmed and "HR" in hdr_name)
+                    or ("抖音" in v_trimmed and "抖音" in hdr_name)):
+                target_idx = idx
+                break
+
+        if target_idx >= 0:
+            target_match = matches[target_idx]
+            content_start = target_match.end()
+            content_end = matches[target_idx + 1].start() if target_idx + 1 < len(matches) else len(original_full_text)
+            header_str = target_match.group(1)
+            before = original_full_text[:content_start]
+            after = original_full_text[content_end:]
+            return f"{before}\n\n{new_slot_text.strip()}\n\n{after}"
 
     return new_slot_text
+
 
 
 

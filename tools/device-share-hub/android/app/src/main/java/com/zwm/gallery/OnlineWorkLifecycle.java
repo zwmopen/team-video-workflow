@@ -137,12 +137,13 @@ public final class OnlineWorkLifecycle {
             }
         }
         if (existing == null) {
-            existing = new Item(work.id, work.title, work.destination, nowMs, 0,
+            long firstShared = work.firstSharedAtMs > 0 ? work.firstSharedAtMs : nowMs;
+            existing = new Item(work.id, work.title, work.destination, firstShared, 0,
                     Math.max(1, work.useCount + 1), work.images, work.copyText);
             list.add(existing);
         } else {
             if (existing.firstSharedAtMs <= 0) {
-                existing.firstSharedAtMs = nowMs;
+                existing.firstSharedAtMs = work.firstSharedAtMs > 0 ? work.firstSharedAtMs : nowMs;
             }
             existing.useCount++;
         }

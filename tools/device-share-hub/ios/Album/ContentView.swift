@@ -1090,7 +1090,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 self?.copyOnlineWorkPath(entry)
             }
             cell.onCopyPreview = { [weak self, weak cell] item in
-                self?.presentCopyPreview(item) {
+                self?.presentCopyPreview(item, workId: entry.id) {
                     self?.shareOnline(entry, item: item, source: cell)
                 }
             }
@@ -1459,8 +1459,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// **零副作用**：不写剪贴板、不调用 recordUse、不移动作品 —— 与点按分享严格区分。
     /// DSH-092 C5：`onUse` = 「前往使用」，等价于 Android 弹窗的 PositiveButton
     /// （复制 + 唤起分享）。长按本身仍是零副作用，只有点这个按钮才算一次使用。
-    private func presentCopyPreview(_ item: AvailableCopyPlatform, onUse: @escaping () -> Void) {
-        let vc = CopyPreviewViewController(title: item.buttonLabel, text: item.copyText, onUse: onUse)
+    private func presentCopyPreview(_ item: AvailableCopyPlatform, workId: String? = nil, onUse: @escaping () -> Void) {
+        let vc = CopyPreviewViewController(title: item.buttonLabel, text: item.copyText, workId: workId, onUse: onUse)
         let nav = UINavigationController(rootViewController: vc)
         nav.modalPresentationStyle = .pageSheet
         present(nav, animated: true)
@@ -1884,17 +1884,20 @@ private enum CopyParserCache {
 /// DSH-091 C1：长按平台按钮弹出的文案预览。
 /// DSH-092 C5：补齐 Android AlertDialog 的**三个出口** —— 关闭 / 复制全文 / 前往使用。
 /// 只复制（复制全文）仍然零副作用；「前往使用」才会复制 + 唤起分享 + 计使用次数。
-private final class CopyPreviewViewController: UIViewController {
-    private let bodyText: String
+private final class CopyPreviewViewController: UIViewController, UITextViewDelegate {
+    private var bodyText: String
     private let versionLabel: String
+    private let workId: String?
     private let subtitle = UILabel()
     private let textView = UITextView()
+    private let saveButton = UIButton(type: .system)
     /// DSH-092 C5：「前往使用」—— 由外部注入，保持本类不知道分享细节。
     var onUse: (() -> Void)?
 
-    init(title: String, text: String, onUse: (() -> Void)? = nil) {
+    init(title: String, text: String, workId: String? = nil, onUse: (() -> Void)? = nil) {
         self.bodyText = text
         self.versionLabel = title
+        self.workId = workId
         self.onUse = onUse
         super.init(nibName: nil, bundle: nil)
         self.title = title
@@ -1903,26 +1906,39 @@ private final class CopyPreviewViewController: UIViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// 与 Android 同一口径：`copyText.length()`（UTF-16 码元数），不是 Swift 的 `count`（字形数）。
-    private var charCount: Int { bodyText.utf16.count }
+    private var charCount: Int { (textView.text ?? bodyText).utf16.count }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         // ⚠️ `.systemBackground` 要 iOS 13+，项目 deploymentTarget 更低 ⇒ 用 AppColors 的兜底版本
         view.backgroundColor = AppColors.background
 
-        subtitle.text = "【\(versionLabel)】 共 \(charCount) 字"
+        let isOnline = (workId != nil && !workId!.isEmpty)
+        let tipSuffix = isOnline ? " · ✏️ 可直接编辑" : ""
+        subtitle.text = "【\(versionLabel)】 共 \(charCount) 字\(tipSuffix)"
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = UIColor(red: 0.06, green: 0.59, blue: 0.39, alpha: 1)
         subtitle.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(subtitle)
 
         textView.font = .systemFont(ofSize: 15)
-        textView.isEditable = false
+        textView.isEditable = isOnline
         // Android 是 `setTextIsSelectable(true)` —— iOS 对应允许选中拷贝。
         textView.isSelectable = true
         textView.text = bodyText
+        textView.delegate = self
+        textView.layer.cornerRadius = 8
+        textView.backgroundColor = isOnline ? UIColor(white: 0.96, alpha: 1.0) : .clear
         textView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(textView)
+
+        saveButton.setTitle("💾 保存修改到电脑真源", for: .normal)
+        saveButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        saveButton.setTitleColor(.white, for: .normal)
+        saveButton.backgroundColor = UIColor(red: 0.06, green: 0.59, blue: 0.39, alpha: 1)
+        saveButton.layer.cornerRadius = 8
+        saveButton.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
+        saveButton.translatesAutoresizingMaskIntoConstraints = false
 
         let copyButton = UIButton(type: .system)
         copyButton.setTitle("复制全文", for: .normal)
@@ -1938,7 +1954,7 @@ private final class CopyPreviewViewController: UIViewController {
         bar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(bar)
 
-        NSLayoutConstraint.activate([
+        var constraints = [
             subtitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             subtitle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             subtitle.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
@@ -1946,25 +1962,69 @@ private final class CopyPreviewViewController: UIViewController {
             textView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             textView.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 8),
-            textView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -8),
 
             bar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
             bar.heightAnchor.constraint(equalToConstant: 44)
-        ])
+        ]
+
+        if isOnline {
+            view.addSubview(saveButton)
+            constraints.append(contentsOf: [
+                textView.bottomAnchor.constraint(equalTo: saveButton.topAnchor, constant: -10),
+                saveButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                saveButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                saveButton.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -8),
+                saveButton.heightAnchor.constraint(equalToConstant: 40)
+            ])
+        } else {
+            constraints.append(textView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -8))
+        }
+
+        NSLayoutConstraint.activate(constraints)
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done,
                                                            target: self,
                                                            action: #selector(closeTapped))
     }
 
+    func textViewDidChange(_ textView: UITextView) {
+        bodyText = textView.text
+        let isOnline = (workId != nil && !workId!.isEmpty)
+        let tipSuffix = isOnline ? " · ✏️ 可直接编辑" : ""
+        subtitle.text = "【\(versionLabel)】 共 \(charCount) 字\(tipSuffix)"
+    }
+
     @objc private func closeTapped() { dismiss(animated: true) }
+
+    /// DSH-138: 保存修改到电脑真源文案.txt
+    @objc private func saveTapped() {
+        guard let wid = workId, !wid.isEmpty else { return }
+        let currentText = textView.text ?? ""
+        if currentText.trimmingCharacters(in: .whitespacesAndNewlines).count < 30 {
+            showToast("⚠️ 文案内容过少（需>=30字），为防误删已拦截保存")
+            return
+        }
+        saveButton.isEnabled = false
+        saveButton.setTitle("⏳ 正在保存至电脑...", for: .normal)
+        OnlineGalleryClient.shared.updateCopy(workId: wid, updatedCopy: currentText, versionTag: versionLabel) { [weak self] ok, msg in
+            guard let self = self else { return }
+            self.saveButton.isEnabled = true
+            self.saveButton.setTitle("💾 保存修改到电脑真源", for: .normal)
+            self.showToast(ok ? "✅ " + msg : "❌ " + msg)
+        }
+    }
 
     /// 复制全文：**不分享、不计使用次数**（Android `setNeutralButton` 同语义）。
     @objc private func copyAllTapped() {
-        UIPasteboard.general.string = bodyText
+        let textToCopy = textView.text ?? bodyText
+        UIPasteboard.general.string = textToCopy
+        showToast("已复制 \(versionLabel) 全文 (\(textToCopy.utf16.count)字)")
+    }
+
+    private func showToast(_ message: String) {
         let toast = UILabel()
-        toast.text = "已复制 \(versionLabel) 全文 (\(charCount)字)"
+        toast.text = message
         toast.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
         toast.textColor = .white
         toast.font = .systemFont(ofSize: 13)
@@ -1977,17 +2037,19 @@ private final class CopyPreviewViewController: UIViewController {
         NSLayoutConstraint.activate([
             toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             toast.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -70),
-            toast.heightAnchor.constraint(equalToConstant: 36)
+            toast.heightAnchor.constraint(equalToConstant: 36),
+            toast.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            toast.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16)
         ])
         UIView.animate(withDuration: 0.2, animations: { toast.alpha = 1 }, completion: { _ in
-            UIView.animate(withDuration: 0.3, delay: 1.1, animations: { toast.alpha = 0 },
+            UIView.animate(withDuration: 0.3, delay: 1.2, animations: { toast.alpha = 0 },
                            completion: { _ in toast.removeFromSuperview() })
         })
     }
 
     /// 前往使用：复制 + 关闭 + 交回外层唤起分享（有副作用，与长按预览的只读语义严格分开）。
     @objc private func useTapped() {
-        UIPasteboard.general.string = bodyText
+        UIPasteboard.general.string = textView.text ?? bodyText
         let handler = onUse
         dismiss(animated: true) { handler?() }
     }

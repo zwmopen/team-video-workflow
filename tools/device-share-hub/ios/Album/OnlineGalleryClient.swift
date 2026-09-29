@@ -125,6 +125,22 @@ public struct OnlineUseResult {
     public let remainingUses: Int
     public let moved: Bool
     public let message: String
+    public let firstSharedAtMs: Double
+    public let expireAtMs: Double
+    public let originDevice: String
+
+    public init(ok: Bool, workId: String, useCount: Int, remainingUses: Int, moved: Bool, message: String,
+                firstSharedAtMs: Double = 0, expireAtMs: Double = 0, originDevice: String = "") {
+        self.ok = ok
+        self.workId = workId
+        self.useCount = useCount
+        self.remainingUses = remainingUses
+        self.moved = moved
+        self.message = message
+        self.firstSharedAtMs = firstSharedAtMs
+        self.expireAtMs = expireAtMs
+        self.originDevice = originDevice
+    }
 }
 
 public final class OnlineGalleryClient {
@@ -615,8 +631,44 @@ public final class OnlineGalleryClient {
             let remaining = (json["remainingUses"] as? Int) ?? 0
             let moved = (json["moved"] as? Bool) ?? false
             let msg = (json["message"] as? String) ?? ""
-            let res = OnlineUseResult(ok: ok, workId: workId, useCount: useCount, remainingUses: remaining, moved: moved, message: msg)
+            let firstShared = (json["firstSharedAtMs"] as? Double) ?? 0
+            let expire = (json["expireAtMs"] as? Double) ?? 0
+            let dev = (json["originDevice"] as? String) ?? ""
+            let res = OnlineUseResult(ok: ok, workId: workId, useCount: useCount, remainingUses: remaining, moved: moved, message: msg,
+                                      firstSharedAtMs: firstShared, expireAtMs: expire, originDevice: dev)
             DispatchQueue.main.async { completion?(res) }
+        }.resume()
+    }
+
+    /// DSH-138: 手机端在线修改文案同步写回电脑真源文案.txt
+    public func updateCopy(workId: String, updatedCopy: String, device: String? = nil, versionTag: String? = nil, completion: ((Bool, String) -> Void)? = nil) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/update-copy") else {
+            completion?(false, "URL 无效")
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var payload: [String: Any] = [
+            "workId": workId,
+            "updatedCopy": updatedCopy,
+            "device": device ?? UIDevice.current.name
+        ]
+        if let vt = versionTag, !vt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["versionTag"] = vt.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        session.dataTask(with: request) { data, _, err in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async { completion?(false, err?.localizedDescription ?? "网络请求失败") }
+                return
+            }
+            let ok = (json["ok"] as? Bool) ?? false
+            let msg = (json["message"] as? String) ?? (ok ? "文案已成功同步至电脑" : "保存失败")
+            DispatchQueue.main.async { completion?(ok, msg) }
         }.resume()
     }
 

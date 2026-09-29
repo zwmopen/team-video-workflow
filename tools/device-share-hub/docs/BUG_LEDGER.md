@@ -3054,64 +3054,40 @@ totalWorks = 472
   2. **状态合并守卫（State Merge）**：在 `refreshOnlineWorks` 接收服务端列表时，遍历合并本地持久化的 `dispatchedTo` 与版本打勾记录，任何网络数据拉取绝对不冲掉已使用的绿色对勾 `✓`；
   3. **验证证据**：红米真机多次下拉刷新与页面重载后，翡翠绿对勾「✓ 红书种草」始终稳固常驻（`redmi_after_share.png`）。
 
-## DSH-138 手机端长按文案预览弹窗支持在线就地编辑删减并双向同步真源（设计中 · 2026-09-29）
+## DSH-138 手机端长按文案预览弹窗支持在线就地编辑删减并双向同步真源（已解决 · 2026-09-29）
 
 - **用户原始诉求**：
   > “记录功能更新想法：我想要手机上长按能够预览文案是吧，那个按钮，我希望也能够在那个页面编辑，允许我删减，然后保存，保存那就真保存了，其他手机同步也能读取。。。”
-- **业务痛点与使用场景**：
-  1. 目前在移动端长按文案版本按钮（如“红书种草”、“抖音合规”），弹出的是只读式的文案预览对话框（`CopyPreviewDialog` / `CopyPreviewViewController`），仅支持点击底部“复制”或“前往发布”；
-  2. 在实际发布矩阵过程中，用户经常需要根据具体账号的调性或最新活动对文案进行微调（例如删减某两句不适用的活动描述、增加一两个特定 Emoji、修改某个集合地点或价格）；
-  3. 目前若在手机系统分享或进入小红书后再改，改动**仅停留在单台手机的单次发布中**；
-  4. 如果该作品稍后需要用另一台手机发布抖音或小红书号，或者电脑端重新审阅，修改成果无法共享，必须在另一台设备上重新手动编辑，效率严重受阻；
-  5. 用户诉求核心：“保存那就真保存了，其他手机同步也能读取”，要求建立**从手机端反向写回电脑端物理真源（Single Source of Truth）的双向闭环**。
-- **架构方案设计（五大硬核技术支撑）**：
-  1. **服务端真源写回接口（`/api/online/update-copy`）**：
-     - 请求方式：`POST /api/online/update-copy`；
-     - 请求参数：`workId`（作品ID）、`versionKey`（版本标识，如 `xiaohongshu` / `douyin` / `plan` 或具体版本名）、`updatedCopy`（修改后的文案正文）、`deviceName`（发起修改的手机名称）；
-     - 定位机制：根据 `workId` 快速定位作品在成品库 10 大标准货架下的物理文件夹，提取其中的 `文案.txt`；
-  2. **多版本容器精准定向替换（<<<COPY_FORMAT:MULTI>>>）**：
-     - `online_gallery_service.py` 内部引入 `CopyVersionPatcher`：
-     - 若 `文案.txt` 为 Format 3 协议（`--- 方案1：小红书爆款种草版 ---` / `--- 方案2：企业HR与行政决策方案版 ---` / `--- 方案3：抖音合规版 ---`）：
-       正则定位对应方案的开始标记与结束标记（或下一个方案开始），仅精确替换该方案下的正文内容，**其余所有方案内容 100% 保持原样不动**；
-     - 若为纯文本单版本：整体安全替换；
-  3. **银行级安全写盘与防空壳防御**：
-     - **防手抖空壳防御**：若手机端传回的 `updatedCopy` 字数小于 30 字，服务端或客户端坚决拦截保存并红字提示“文案内容过少，为防止破坏作品已拦截保存”，杜绝误操作将完整作品洗成空壳；
-     - **原子替换与备份**：写入前自动将原 `文案.txt` 备份为 `.bak`，先写入 `文案.txt.tmp`，校验写入大小与非空后通过 `os.replace` 原子替换，确保断电或异常绝不损坏真源；
-     - **内存缓存与时间戳刷新**：更新成功后同步刷新服务端的内存缓存 `work["copyText"]` 与版本映射，并更新 `watchdog.lastChangeAt`；
-  4. **移动端交互设计（Android & iOS 双端对等）**：
-     - **UI 升级**：长按文案按钮弹出的预览弹窗（`CopyPreviewDialog` / `CopyPreviewViewController`）正文区域由普通 `TextView` 升级为具备聚焦与滚动的可编辑文本框（`EditText` / `UITextView`）；
-     - **字数实时指示**：弹窗右上角呈现动态字数标签（如“字数：382 字”）；
-     - **底部按钮组**：
-       - 【💾 保存修改】：点击后显示 loading，异步发起 `/api/online/update-copy`，成功后弹出翡翠绿 Toast“已同步保存至电脑真源，多端已生效”，并就地更新当前卡片绑定的文案；
-       - 【前往使用】：直接使用当前（已保存或临时）文案唤起分享；
-       - 【取消】：放弃修改关闭弹窗；
-  5. **全网其他手机秒级同频感知**：
-     - 电脑端落盘成功后，由于服务端内存与时间戳已更新，局域网内任意其他手机只要发起 30s 自动轮询或下拉刷新，拉取到的就是已经被用户删减编辑后的最新文案；
-     - 彻底实现“一机修改、全网生效、电脑留痕”的真源闭环。
+- **解决（双端对等落盘 + 服务端原子写回真源）**：
+  1. **服务端 `/api/online/update-copy` 落地**：
+     - 支持 `<<<VERSION_START>>>`、`<<<MK_START>>>` 与 Format 3 方案精准定向替换；
+     - 自动 `.bak` 备份、临时文件写入并原子替换；
+     - 防空壳拦截（<30字拒绝保存）；
+  2. **Android 客户端升级**：
+     - `showCopyPreviewDialog` 内置 `EditText`，实时显示字数统计与 `✏️ 可直接编辑` 提示；
+     - 新增 `💾 保存修改到电脑真源` 绿色按键，点击直接写回电脑，秒级吐司提示，列表自动刷新；
+  3. **iOS 客户端对等实装**：
+     - `OnlineGalleryClient.swift` 新增 `updateCopy` 接口；
+     - `ContentView.swift` 内 `CopyPreviewViewController` 支持可编辑 `UITextView`、动态字数、`💾 保存修改到电脑真源` 按钮与防空壳防御；
+  4. **版本号升版**：Android `0.8.68` (179) / iOS `0.8.49` (121)。
 
-## DSH-139 多设备先后使用同一作品导致首发倒计时丢失/异常清空（待集中解决 · 2026-09-29）
+## DSH-139 多设备先后使用同一作品导致首发倒计时丢失/异常清空（已解决 · 2026-09-29）
 
 - **现象**：
   1. 用户在设备 A（如 VIVO）点击使用了某个作品，设备 A 上正常显示该作品进入使用倒计时（例如“剩 59 分钟入回收站”）；
   2. 随后用户在设备 B（如红米）上再次点击使用同一个作品；
   3. 用户发现：“那就相当于第一台不使用了，然后第一台的倒计时就被删除了。这有点问题，它不是应该到时间就得删除掉吗？就是同一个作品。”
 - **根因（逐行铁证）**：
-  1. **移库判断逻辑缺陷**（`online_gallery_service.py:3636`）：
-     ```python
-     should_move = force_move or (retention_duration_ms <= 0) or (dist.get("expireAtMs") and now_ms >= dist["expireAtMs"])
-     ```
-     如果设备 B 发起的 `/api/online/use-work` 请求中没有带 `retentionDurationMs` 或上报值为 0（例如某些机型本地默认策略为 0，或某些调用分支未传），服务端误将 `(retention_duration_ms <= 0)` 视为移库条件成立，直接调用 `_move_work_to_stage1` 执行了物理剪切移库！
-     移库后作品离开货架，设备 A 刷新后直接找不到该作品，倒计时自然“消失”。
-  2. **多端本地生命周期（OnlineWorkLifecycle）各自为政**：
-     - 客户端各设备的 `OnlineWorkLifecycle` 仅存放在各手机本地私有的 `SharedPreferences` 中；
-     - 设备 B 点击使用时，设备 B 的本地生命周期并没有同步给设备 A；
-     - 设备 A 重新从服务端拉取作品列表时，若服务端的 `dist["originDevice"]` 仍为设备 A，但服务端与本地缓存若发生冲突或列表覆盖，导致设备 A 的卡片倒计时展示被冲掉。
-- **预定解法（坚守全局唯一生命周期钢印）**：
-  1. **首发生命周期绝对不可逆冻结**：
-     - 服务端逻辑加固：只要作品 `firstSharedAtMs` 已经存在，**后续任何设备（无论是设备 B、C 还是原设备）再次点击使用，绝对不允许修改 `firstSharedAtMs`、`expireAtMs` 和 `originDevice`**！
-     - 严格封死移库条件：若已有首发倒计时（`expireAtMs > 0`），**绝不允许因后续设备传了 `<=0` 的保留时间而触发提前移库**，只有当全局系统时间 `now_ms >= expireAtMs` 时才允许自动移库；
-  2. **服务端向客户端下发完整首发时间戳与过期时间**：
-     - 所有设备在渲染作品卡片时，统一以服务端的 `firstSharedAtMs` 和 `expireAtMs` 为全网最高真源显示倒计时（如“已使用2次 (VIVO/Redmi) · 剩 42 分钟入回收站”）；
-     - 设备 B 的再次使用仅累加 `useCount` 并追加 `dispatchedTo` 和 `dispatchedVersions`，绝对不破坏设备 A 开启的倒计时时间轴；
-  3. 到期多端同频下架：倒计时归零时，电脑服务端统一移库，所有设备同时平滑下架。
+  1. **移库与重置判断缺陷**：旧逻辑在第二台设备使用时因 `new_count >= 2` 或设备 B 传入空参数误触移库条件，且直接用新时间覆盖首发时间；
+  2. **多端本地生命周期各自为政**：客户端 `OnlineWorkLifecycle` 原逻辑在未匹配本地记录时，直接无脑取当前时间 `nowMs` 作为首次使用时间，且 `mergeLocalSentWorks` 构造方法中漏传了 `expireAtMs`；
+  3. **服务端守护进程运行旧代码（Stale Code）**：Supervisor 未重启服务导致内存中仍跑旧逻辑。
+- **解决（坚守全局唯一生命周期钢印）**：
+  1. **服务端核心业务加固**：
+     - `online_gallery_service.py` 判定 `has_active_lifecycle`：只要作品当前有未到期的首发倒计时，第二台设备使用时绝对禁止重置 `firstSharedAtMs`、`expireAtMs`、`originDevice`，且 `should_move` 坚决判定为 `False`，绝不提前物理移库；
+     - `use-work` 返回完整 `firstSharedAtMs`、`expireAtMs`、`originDevice`；
+  2. **双端客户端对齐最高真源**：
+     - Android `OnlineGalleryClient.UseResult` 解析并透传服务端首发时间戳与过期时间；
+     - `MainActivity.java` 在 `updateOnlineWorkUseCount`、`mergeLocalSentWorks`、`onlineWorkCard` 顶部药丸全链路采用 `work.expireAtMs` / `work.firstSharedAtMs` 优先作为最高真源，过期时明确显示“已使用 · 即将入回收站”；
+     - `OnlineWorkLifecycle.markUsed` 继承 `work.firstSharedAtMs`，彻底杜绝第二台手机本地重置时间轴；
+     - iOS `OnlineUseResult` 与 `configureOnline` 保持全链路同频。
 

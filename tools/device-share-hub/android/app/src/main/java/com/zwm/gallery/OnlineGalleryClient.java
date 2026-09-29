@@ -129,14 +129,25 @@ public final class OnlineGalleryClient {
         public final int remainingUses;
         public final boolean moved;
         public final String message;
+        public final long firstSharedAtMs;
+        public final long expireAtMs;
+        public final String originDevice;
 
         public UseResult(boolean ok, String workId, int useCount, int remainingUses, boolean moved, String message) {
+            this(ok, workId, useCount, remainingUses, moved, message, 0L, 0L, "");
+        }
+
+        public UseResult(boolean ok, String workId, int useCount, int remainingUses, boolean moved, String message,
+                         long firstSharedAtMs, long expireAtMs, String originDevice) {
             this.ok = ok;
             this.workId = workId;
             this.useCount = useCount;
             this.remainingUses = remainingUses;
             this.moved = moved;
             this.message = message;
+            this.firstSharedAtMs = firstSharedAtMs;
+            this.expireAtMs = expireAtMs;
+            this.originDevice = originDevice == null ? "" : originDevice;
         }
     }
 
@@ -1118,7 +1129,10 @@ public final class OnlineGalleryClient {
                         json.optInt("useCount", 1),
                         json.optInt("remainingUses", 1),
                         json.optBoolean("moved", false),
-                        json.optString("message", "")
+                        json.optString("message", ""),
+                        json.optLong("firstSharedAtMs", 0L),
+                        json.optLong("expireAtMs", 0L),
+                        json.optString("originDevice", "")
                 );
                 mainHandler.post(() -> callback.onSuccess(res));
             } catch (Exception e) {

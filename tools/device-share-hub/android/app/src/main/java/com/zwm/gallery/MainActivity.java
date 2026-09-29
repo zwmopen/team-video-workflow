@@ -2989,12 +2989,13 @@ public final class MainActivity extends Activity {
             if (present) continue;
             List<String> images = item.images == null ? new ArrayList<String>() : new ArrayList<>(item.images);
             String copyText = item.copyText == null ? "" : item.copyText;
-            String stage = "已发送" + item.useCount + "次";
+            long itemExp = item.firstSharedAtMs > 0 ? (item.firstSharedAtMs + cleanup.moveAfterMs()) : 0L;
             onlineWorks.add(new OnlineWorkEntry(
                     item.id, item.title, item.destination, stage,
                     item.useCount, 2, true, Math.max(0, 2 - item.useCount), stage,
                     images, images.size(), copyText, !copyText.trim().isEmpty(),
-                    new ArrayList<String>(), item.firstSharedAtMs));
+                    new ArrayList<String>(), item.firstSharedAtMs, false, "", "",
+                    item.firstSharedAtMs, itemExp, "", Collections.emptyList()));
         }
 
         // 置顶：已发送过的排在最前（按最近使用时间倒序），未使用的保持原顺序
@@ -3996,6 +3997,8 @@ public final class MainActivity extends Activity {
                 if (remainMs > 0) {
                     int remainMin = Math.max(1, (int) (remainMs / 60000L));
                     statusText = "已使用 · 剩 " + remainMin + " 分钟入回收站";
+                } else {
+                    statusText = "已使用 · 即将入回收站";
                 }
             }
             TextView useBadge = text(statusText, 11, true);
@@ -4857,7 +4860,8 @@ public final class MainActivity extends Activity {
                 @Override
                 public void onSuccess(OnlineGalleryClient.UseResult result) {
                     if (result != null && result.ok) {
-                        updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag);
+                        updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag,
+                                result.firstSharedAtMs, result.expireAtMs, result.originDevice);
                     }
                 }
 
@@ -4935,7 +4939,8 @@ public final class MainActivity extends Activity {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
                 if (result != null && result.ok) {
-                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag);
+                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag,
+                            result.firstSharedAtMs, result.expireAtMs, result.originDevice);
                 }
             }
 
@@ -5015,18 +5020,28 @@ public final class MainActivity extends Activity {
     }
 
     private void updateOnlineWorkUseCount(String workId, int newCount, int remainingUses, String dispatchTag) {
+        updateOnlineWorkUseCount(workId, newCount, remainingUses, dispatchTag, 0L, 0L, "");
+    }
+
+    private void updateOnlineWorkUseCount(String workId, int newCount, int remainingUses, String dispatchTag,
+                                          long firstSharedAtMs, long expireAtMs, String originDevice) {
         for (int i = 0; i < onlineWorks.size(); i++) {
             OnlineWorkEntry old = onlineWorks.get(i);
             if (old.id.equals(workId)) {
                 List<String> newDispatched = new ArrayList<>(old.dispatchedTo);
-                newDispatched.add(dispatchTag);
+                if (dispatchTag != null && !newDispatched.contains(dispatchTag)) {
+                    newDispatched.add(dispatchTag);
+                }
+                long finalFirstShared = (firstSharedAtMs > 0) ? firstSharedAtMs : (old.firstSharedAtMs > 0 ? old.firstSharedAtMs : System.currentTimeMillis());
+                long finalExpire = (expireAtMs > 0) ? expireAtMs : old.expireAtMs;
+                String finalOrigin = (originDevice != null && !originDevice.isEmpty()) ? originDevice : old.originDevice;
                 OnlineWorkEntry updated = new OnlineWorkEntry(
                         old.id, old.title, old.destination, old.stage,
                         newCount, old.maxUses, true, remainingUses,
                         newCount >= 2 ? "已发送" : "已发1次",
                         old.images, old.imageCount, old.copyText, old.hasCopyText,
                         newDispatched, System.currentTimeMillis(), old.garbage, old.garbageRemark,
-                        old.path, old.firstSharedAtMs, old.expireAtMs, old.originDevice, old.dispatchedVersions
+                        old.path, finalFirstShared, finalExpire, finalOrigin, old.dispatchedVersions
                 );
                 onlineWorks.remove(i);
                 onlineWorks.add(0, updated);
