@@ -417,22 +417,72 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private final class CategoryFilterButton: UIButton {
         var folderKey: String = ""
         var displayLabel: String = ""
+        var isPinned: Bool = false
+    }
+
+    // ==================== DSH-131: 分类 Tab 智能频次排序与长按 📌 钉住 (iOS) ====================
+    private static let keyPinnedCategories = "online_pinned_categories"
+    private static let keyCategoryUsagePrefix = "online_cat_usage_"
+
+    private func getPinnedOnlineCategories() -> [String] {
+        return UserDefaults.standard.stringArray(forKey: Self.keyPinnedCategories) ?? []
+    }
+
+    private func savePinnedOnlineCategories(_ list: [String]) {
+        UserDefaults.standard.set(list, forKey: Self.keyPinnedCategories)
+    }
+
+    private func getOnlineCategoryUsage(key: String) -> Int {
+        return UserDefaults.standard.integer(forKey: Self.keyCategoryUsagePrefix + key)
+    }
+
+    private func incrementOnlineCategoryUsage(key: String) {
+        guard !key.isEmpty, key != "全部" else { return }
+        let cur = getOnlineCategoryUsage(key: key)
+        UserDefaults.standard.set(cur + 1, forKey: Self.keyCategoryUsagePrefix + key)
+    }
+
+    private func togglePinnedOnlineCategory(key: String, display: String) {
+        guard !key.isEmpty, key != "全部" else { return }
+        var pinned = getPinnedOnlineCategories()
+        if pinned.contains(key) {
+            pinned.removeAll { $0 == key }
+            showToast("已取消【\(display)】固定")
+        } else {
+            pinned.append(key)
+            showToast("📌 已将【\(display)】固定在前排最前")
+        }
+        savePinnedOnlineCategories(pinned)
+        updateOnlineFilterTitles()
+        if let btn = filterButtons[key] {
+            let rect = btn.convert(btn.bounds, to: filterScrollView)
+            filterScrollView.scrollRectToVisible(rect.insetBy(dx: -20, dy: 0), animated: true)
+        }
+    }
+
+    @objc private func categoryFilterLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let button = gesture.view as? CategoryFilterButton else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        togglePinnedOnlineCategory(key: button.folderKey, display: button.displayLabel)
     }
 
     @objc private func filterButtonTapped(_ sender: CategoryFilterButton) {
         if isOnlineMode {
             guard selectedOnlineCategory != sender.folderKey else { return }
             selectedOnlineCategory = sender.folderKey
+            incrementOnlineCategoryUsage(key: sender.folderKey)
             resetOnlinePaging()
+            let pinnedList = getPinnedOnlineCategories()
             for (key, btn) in filterButtons {
-                applyFilterButtonStyle(btn, isSelected: key == selectedOnlineCategory)
+                let isPin = pinnedList.contains(key)
+                applyFilterButtonStyle(btn, isSelected: key == selectedOnlineCategory, isPinned: isPin)
             }
             renderOnlineUI()
         } else {
             guard selectedCategory != sender.folderKey else { return }
             selectedCategory = sender.folderKey
             for (key, btn) in filterButtons {
-                applyFilterButtonStyle(btn, isSelected: key == selectedCategory)
+                applyFilterButtonStyle(btn, isSelected: key == selectedCategory, isPinned: false)
             }
             render()
         }
@@ -788,21 +838,55 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             counts[w.destination, default: 0] += 1
         }
 
-        // 1. 全部
+        // 1. 全部 (永久第一位)
         let allTitle = "全部 \(activeWorks.count)"
-        let allBtn = createFilterButton(key: "全部", display: "全部", fullTitle: allTitle, isSelected: selectedOnlineCategory == "全部")
+        let allBtn = createFilterButton(key: "全部", display: "全部", fullTitle: allTitle,
+                                        isSelected: selectedOnlineCategory == "全部", isPinned: false)
         filterStackView.addArrangedSubview(allBtn)
         filterButtons["全部"] = allBtn
 
-        // 2. 目的地下拉分类
+        // 2. 智能四阶排序 (DSH-131)
+        let pinnedList = getPinnedOnlineCategories()
+        var rawDict: [String: (display: String, count: Int, isPinned: Bool, score: Int)] = [:]
         for cat in onlineCategories {
+            if cat.count <= 0 || cat.name == "全部" { continue }
             let cnt = counts[cat.name] ?? cat.count
             let disp = Self.formatFolderLabel(cat.name)
-            let fullTitle = "\(disp) \(cnt)"
-            let isSelected = selectedOnlineCategory == cat.name
-            let btn = createFilterButton(key: cat.name, display: disp, fullTitle: fullTitle, isSelected: isSelected)
+            let isPinned = pinnedList.contains(cat.name)
+            let score = getOnlineCategoryUsage(key: cat.name)
+            rawDict[cat.name] = (disp, cnt, isPinned, score)
+        }
+
+        var sortedKeys: [String] = []
+        // 阶段 1: 📌 钉住项
+        for pinKey in pinnedList {
+            if rawDict[pinKey] != nil {
+                sortedKeys.append(pinKey)
+            }
+        }
+        // 阶段 2: 🔥 高频项 (score > 0)
+        let frequentKeys = rawDict.keys
+            .filter { !pinnedList.contains($0) && (rawDict[$0]?.score ?? 0) > 0 }
+            .sorted { (rawDict[$0]?.score ?? 0) > (rawDict[$1]?.score ?? 0) }
+        sortedKeys.append(contentsOf: frequentKeys)
+        // 阶段 3: 常规未常用项
+        for cat in onlineCategories {
+            if !sortedKeys.contains(cat.name) && rawDict[cat.name] != nil {
+                sortedKeys.append(cat.name)
+            }
+        }
+
+        // 依次渲染排好序的按钮
+        for key in sortedKeys {
+            guard let item = rawDict[key] else { continue }
+            let isPinned = item.isPinned
+            let titlePrefix = isPinned ? "📌 " : ""
+            let fullTitle = "\(titlePrefix)\(item.display) \(item.count)"
+            let isSelected = selectedOnlineCategory == key
+            let btn = createFilterButton(key: key, display: item.display, fullTitle: fullTitle,
+                                         isSelected: isSelected, isPinned: isPinned)
             filterStackView.addArrangedSubview(btn)
-            filterButtons[cat.name] = btn
+            filterButtons[key] = btn
         }
     }
 
@@ -880,19 +964,26 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         filterScrollView.accessibilityLabel = "作品合集分类"
     }
 
-    private func createFilterButton(key: String, display: String, fullTitle: String, isSelected: Bool) -> UIButton {
+    private func createFilterButton(key: String, display: String, fullTitle: String, isSelected: Bool, isPinned: Bool = false) -> UIButton {
         let button = CategoryFilterButton(type: .system)
         button.folderKey = key
         button.displayLabel = display
+        button.isPinned = isPinned
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(fullTitle, for: .normal)
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        applyFilterButtonStyle(button, isSelected: isSelected)
+        applyFilterButtonStyle(button, isSelected: isSelected, isPinned: isPinned)
         button.addTarget(self, action: #selector(filterButtonTapped(_:)), for: .touchUpInside)
+
+        if key != "全部" && key != WorkCategory.all {
+            let lp = UILongPressGestureRecognizer(target: self, action: #selector(categoryFilterLongPressed(_:)))
+            lp.minimumPressDuration = 0.4
+            button.addGestureRecognizer(lp)
+        }
         return button
     }
 
-    private func applyFilterButtonStyle(_ button: UIButton, isSelected: Bool) {
+    private func applyFilterButtonStyle(_ button: UIButton, isSelected: Bool, isPinned: Bool = false) {
         if isSelected {
             button.backgroundColor = AppColors.background
             button.setTitleColor(AppColors.text, for: .normal)
@@ -902,11 +993,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             button.layer.shadowOpacity = 0.08
             button.layer.shadowOffset = CGSize(width: 0, height: 1)
             button.layer.shadowRadius = 2
+            button.layer.borderWidth = 0
+        } else if isPinned {
+            button.backgroundColor = UIColor(red: 0.94, green: 0.97, blue: 0.95, alpha: 1.0)
+            button.setTitleColor(UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1.0), for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+            button.layer.cornerRadius = 8
+            button.layer.borderWidth = 1
+            button.layer.borderColor = UIColor(red: 0.70, green: 0.88, blue: 0.78, alpha: 1.0).cgColor
+            button.layer.shadowOpacity = 0
         } else {
             button.backgroundColor = .clear
             button.setTitleColor(AppColors.secondaryText, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 12, weight: .regular)
             button.layer.shadowOpacity = 0
+            button.layer.borderWidth = 0
         }
     }
 
@@ -994,6 +1095,40 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 3. 分享载体改为**文件 URL**（2026-09-22 修复，DSH-090）——旧实现把 `[UIImage]` 直接交给
     ///    `UIActivityViewController`，小红书/抖音的 share extension 会把 N 张图读成同一张
     ///    （实测 9 张全变 1 张，而预览正常）。现与本地相册 `prepareShare` 同传 `NSURL`。
+    private func optimisticMarkOnlineWorkUsedAndTop(workId: String, versionLabel: String, destination: String) {
+        // 1. 累计该分类的使用热度（让分类 Tab 智能靠前）
+        incrementOnlineCategoryUsage(key: destination)
+
+        guard let index = onlineWorks.firstIndex(where: { $0.id == workId }) else { return }
+        let old = onlineWorks[index]
+        OnlineWorkLifecycle.markUsed(work: old)
+
+        var newDispatched = old.dispatchedTo
+        let tag = "iPhone(\(versionLabel))"
+        if !newDispatched.contains(tag) { newDispatched.append(tag) }
+        let newCount = old.useCount + 1
+        let remaining = max(0, old.remainingUses - 1)
+        let updated = OnlineWorkEntry(
+            id: old.id, title: old.title, destination: old.destination, stage: old.stage,
+            useCount: newCount, maxUses: old.maxUses, used: true, remainingUses: remaining,
+            statusLabel: newCount >= 2 ? "已发送" : "已发1次",
+            images: old.images, imageCount: old.imageCount, copyText: old.copyText,
+            hasCopyText: old.hasCopyText, dispatchedTo: newDispatched,
+            updatedAt: Date().timeIntervalSince1970 * 1000
+        )
+
+        // DSH-130-A: 0ms 内存置顶
+        onlineWorks.remove(at: index)
+        onlineWorks.insert(updated, at: 0)
+
+        // 立即刷新列表并平滑回顶
+        collectionView.reloadData()
+        if !displayedOnlineWorks.isEmpty {
+            collectionView.scrollToItem(at: IndexPath(item: 0, section: 0), at: .top, animated: true)
+        }
+        updateOnlineFilterTitles()
+    }
+
     private func shareOnline(_ entry: OnlineWorkEntry, item: AvailableCopyPlatform, source: UIView?) {
         let textToCopy = item.copyText.trimmingCharacters(in: .whitespacesAndNewlines)
         // 【深度防御】与 Android `handleOnlineWorkUse` 1:1 对齐：判据是「实质字数 < 30」，
@@ -1004,6 +1139,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
         UIPasteboard.general.string = textToCopy
         showToast("已复制：\(item.buttonLabel)")
+
+        // ==================== DSH-130: 0ms 乐观 UI 更新与就地置顶 ====================
+        optimisticMarkOnlineWorkUsedAndTop(workId: entry.id, versionLabel: item.buttonLabel, destination: entry.destination)
 
         guard !entry.images.isEmpty else {
             showToast("已复制 \(item.buttonLabel)（无图片作品）")
@@ -2167,8 +2305,12 @@ private final class WorkCell: UICollectionViewCell {
         // 字数不足 30 视为空壳作品 —— 不渲染任何可点击文案按钮（防止骨架/兜底冒充
         // 真实文案），改为置灰标红占位；分享入口再做一次深度防御（见 shareOnline）。
         let copyMissing = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
-        // 在线作品不做「乐观置灰」：使用次数只决定是否出现「重置」按钮。
-        rebuildPlatformButtons(copyMissing ? [] : platforms, isOptimistic: { _ in false },
+        let isDispatched: (Int) -> Bool = { idx in
+            guard idx >= 0 && idx < platforms.count else { return false }
+            let label = platforms[idx].buttonLabel
+            return entry.dispatchedTo.contains(where: { $0.contains(label) })
+        }
+        rebuildPlatformButtons(copyMissing ? [] : platforms, isOptimistic: isDispatched,
                                action: #selector(platformButtonTapped(_:)))
         if copyMissing { platformRow.addArrangedSubview(makeCopyMissingButton()) }
         rebuildActionRow()
@@ -2215,15 +2357,17 @@ private final class WorkCell: UICollectionViewCell {
         platformItems = platforms
         for (index, item) in platforms.enumerated() {
             let button = UIButton(type: .system)
-            button.setTitle(item.buttonLabel, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+            let isDispatched = isOptimistic(index)
+            let title = isDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel
+            button.setTitle(title, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 13, weight: isDispatched ? .bold : .semibold)
             button.layer.cornerRadius = 8
             button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 15, bottom: 5, right: 15)
             button.translatesAutoresizingMaskIntoConstraints = false
             button.heightAnchor.constraint(equalToConstant: 36).isActive = true
             button.tag = index
             button.accessibilityLabel = item.buttonLabel
-            applyPlatformStyle(button, isOptimistic: isOptimistic(index))
+            applyPlatformStyle(button, isOptimistic: isDispatched)
             button.addTarget(self, action: action, for: .touchUpInside)
             // DSH-091 C1：长按 = 预览文案（零副作用），与 Android 对齐。
             let lp = UILongPressGestureRecognizer(target: self,
@@ -2396,11 +2540,15 @@ private final class WorkCell: UICollectionViewCell {
 
     private func applyPlatformStyle(_ button: UIButton, isOptimistic: Bool) {
         if isOptimistic {
-            button.setTitleColor(AppColors.secondaryText, for: .normal)
-            button.backgroundColor = AppColors.separator.withAlphaComponent(0.3)
+            // 已分发状态：翡翠绿深绿 + 浅绿高亮底，带清爽边框
+            button.setTitleColor(UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1), for: .normal)
+            button.backgroundColor = UIColor(red: 0.85, green: 0.96, blue: 0.90, alpha: 1)
+            button.layer.borderWidth = 1
+            button.layer.borderColor = UIColor(red: 0.55, green: 0.85, blue: 0.68, alpha: 1).cgColor
         } else {
             button.setTitleColor(UIColor(red: 0.12, green: 0.52, blue: 0.32, alpha: 1), for: .normal)
-            button.backgroundColor = UIColor(red: 0.9, green: 0.97, blue: 0.93, alpha: 1)
+            button.backgroundColor = UIColor(red: 0.92, green: 0.97, blue: 0.94, alpha: 1)
+            button.layer.borderWidth = 0
         }
     }
 

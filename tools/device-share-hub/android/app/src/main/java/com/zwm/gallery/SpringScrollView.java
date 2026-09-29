@@ -190,7 +190,23 @@ public final class SpringScrollView extends ScrollView {
             }
             return true;
         }
-        if (refreshing) return true;
+        if (refreshing) {
+            if (action == MotionEvent.ACTION_MOVE) {
+                float currentY = event.getY();
+                float delta = currentY - lastY;
+                lastY = currentY;
+                // 在顶部且用户继续向下拉扯时，拦截过度拉伸
+                if (getScrollY() <= 0 && delta > 0) {
+                    return true;
+                }
+            } else if (action == MotionEvent.ACTION_DOWN) {
+                lastY = event.getY();
+                downX = event.getX();
+                downY = event.getY();
+            }
+            // 向上滑动浏览内容、抬手或常规滚动均放行给父类 ScrollView，绝不锁死手势
+            return super.onTouchEvent(event);
+        }
         if (action == MotionEvent.ACTION_MOVE) {
             float currentY = event.getY();
             float delta = currentY - lastY;

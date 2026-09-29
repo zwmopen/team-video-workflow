@@ -2919,3 +2919,58 @@ totalWorks = 472
 `test_online_gallery_service.py` 文件头的 `PNG_1PX` 常量 IHDR CRC 与 IDAT
 长度都不对，Pillow 会报 `cannot identify image file`。扫描器只当占位图、不解码，
 所以一直没暴露。新测试要用 Pillow 自己生成真图，别复用它。
+
+## DSH-130 手机端点击使用后作品未就地置顶 + 卡片状态/按钮变化缺失乐观更新（待集中解决 · 2026-09-29）
+
+### 130-A 点击使用后未能就地置顶，需手动下拉刷新才重新排序
+
+- **现象**：用户在手机相册点击文案版本按钮（如“红书种草”）并唤起分享后，卡片依然停留在列表原来的第 5 位或第 10 位，用户肉眼看不到置顶效果，直到手动下拉刷新重新向电脑拉列表，才看到它排到了第一个。
+- **根因**：
+  1. `MainActivity.java` 中按 `usedAt` 倒序的置顶排序逻辑（`Collections.sort(onlineWorks, ...)`）仅写在全量刷新/初次加载的 `rebuildOnlineWorksFromSnapshot()` 中；
+  2. 实时点击使用触发的 `updateOnlineWorkUseCount(workId, newCount, remainingUses, dispatchTag)` 内部仅在原索引 `i` 执行 `onlineWorks.set(i, updated)`，完全没有将作品移动到头部（index 0）或触发排序；
+  3. `applyOnlineCategoryFilter` 遍历未排序的集合，卡片停留在原地。
+- **预定解法**：在 `updateOnlineWorkUseCount` 中，更新条目后立即执行 `onlineWorks.remove(i); onlineWorks.add(0, updated);`（或就地按 `firstSharedAtMs` 倒序重排），并触发列表平滑滚动至顶部 `contentScroll.smoothScrollTo(0, 0)`。
+
+### 130-B 卡片状态、文案按钮高亮与顶部计数无即时响应，必须刷新才变
+
+- **现象**：用户点击文案按钮后，按钮本身没有立即呈现“已使用/已选中”的视觉反馈；卡片状态行（`💻 电脑在线 · 6 图 · 未使用` ➔ `已使用1次`）依赖异步网络请求（`downloadWorkImages` 下载原图 + `recordUse` 请求服务端），在网络往返和系统分享面板唤起的几秒钟内，界面毫无动静；顶部分类 Tab 的计数也没有就地局部更新。
+- **根因**：
+  1. 缺少“乐观 UI 更新”（Optimistic UI Update）：代码完全走悲观更新流程，只有等网络请求回调成功才局部改变字段，在原图下载（2~3秒）和分享面板唤起期间界面处于完全无反馈状态；
+  2. 平台文案按钮（FlowLayout 内部按钮）没有维护 `isUsed` / `isSelected` 的专属状态机与样式类，点完后外观与普通按钮完全一样。
+- **预定解法**：
+  1. 实施 0ms 乐观更新：用户点击文案按钮瞬间，立刻就地更新卡片状态为“已使用 1 次”、被点击按钮即刻变为翡翠绿高亮激活态（附带 `✓` 图标），顶部分类 Tab 同步就地增减计数；
+  2. 异步网络请求在后台静默跑，成功时校准真实数据，失败时才做软回滚提示。
+
+## DSH-131 手机端分类 Tab 智能频次排序与长按置顶（📌 钉住）机制缺失（待集中解决 · 2026-09-29）
+
+- **现象**：当前手机端（Android 与 iOS）分类栏是完全固定的写死顺序（按服务端返回或默认字典序），用户经常使用的分类（例如安吉、中秋国庆等）无法根据使用习惯自动靠前；且不支持对常用分类进行前排固定，导致每次都要往右滑动很久才能找到想要的分类。
+- **根因**：
+  1. `MainActivity.java:3183`（`updateOnlineCategoryCounts`）和 `ContentView.swift:798` 渲染分类栏时，直接顺序遍历 `catResult.categories`，未引入任何权重和频次排序机制；
+  2. 按钮仅绑定了普通的点击事件 `setOnClickListener`，未实现 `setOnLongClickListener`（Android）或长按手势（iOS）；
+  3. 本地存储（SharedPreferences / UserDefaults）中缺少对用户分类使用频次（`category_usage_counts`）和钉住列表（`pinned_categories`）的持久化。
+- **预定解法**：
+  1. **层级排序算法**：
+     - 第 1 顺位：【全部 N】（永久居首）；
+     - 第 2 顺位：【📌 钉住分类】（按用户钉住时间/频次排列，按钮带 📌 标识）；
+     - 第 3 顺位：【高频常用分类】（根据点击与使用该分类作品的频次热度自动靠前）；
+     - 第 4 顺位：【常规未常用分类】（默认排序）；
+  2. **交互落地**：
+     - 为分类 Tab 添加长按监听（带 50ms 轻微触觉震动 feedback）；
+     - 长按弹出即时切换“📌 已固定到前排” / “已取消固定”，并就地平滑重排 Tab 栏；
+     - 本地 SharedPreferences / UserDefaults 实时持久化保存。
+
+## DSH-132 Android 下拉刷新过程中列表无法顺畅下滑（手势被粗暴截胡）（待集中解决 · 2026-09-29）
+
+- **现象**：用户在手机相册中下拉触发刷新后，在顶部加载中动画（Spinner 转动）或网络请求返回的这一小段时间内，手指往上推（试图向下滑动查看下方作品列表）时，列表完全纹丝不动，整个界面像死机一样被物理锁死；必须等数据全部拉取并渲染完毕后才能恢复滑动。
+- **根因**：
+  1. `SpringScrollView.java:193` 存在粗暴的拦截逻辑：
+     ```java
+     if (refreshing) return true;
+     ```
+  2. 当下拉触发刷新后，`refreshing` 标志被置为 `true`。在此期间，用户的任何手指滑动事件（`ACTION_DOWN`、`ACTION_MOVE`、`ACTION_UP`）进入 `onTouchEvent` 时，直接在第 193 行被 `if (refreshing) return true;` 截断吞掉，完全绕过了底层 `ScrollView` 的 `super.onTouchEvent(event)` 滚动计算！
+  3. 导致在异步拉取数据和解析的 1~3 秒内，页面对向下滑动的手势完全零响应。
+- **预定解法**：
+  1. 重构 `SpringScrollView.onTouchEvent` 中的 `refreshing` 处理分支：
+     在刷新状态下，**仅限制二次下拉过度拉伸（`delta > 0 && atTop`）**，绝不拦截用户向上推滑查看内容的正常滚动（`delta < 0` 或 `getScrollY() > 0`）；
+  2. 将正常滑动事件透明放行给 `super.onTouchEvent(event)`，使用户即使在刷新转圈过程中，依然能够行云流水地下滑浏览已有内容，消除“界面冻结”的卡顿感。
+

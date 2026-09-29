@@ -3180,6 +3180,86 @@ public final class MainActivity extends Activity {
         worksContainer.addView(errorCard, new LinearLayout.LayoutParams(-1, -2));
     }
 
+    // ==================== DSH-131: 分类 Tab 智能频次排序与长按 📌 钉住 ====================
+    private static final String PREF_ONLINE_CATEGORIES = "online_category_prefs";
+    private static final String KEY_PINNED_CATEGORIES = "pinned_categories_json";
+    private static final String KEY_CATEGORY_USAGE_PREFIX = "cat_usage_";
+
+    private List<String> getOnlinePinnedCategories() {
+        android.content.SharedPreferences sp = getSharedPreferences(PREF_ONLINE_CATEGORIES, MODE_PRIVATE);
+        String json = sp.getString(KEY_PINNED_CATEGORIES, "[]");
+        List<String> list = new ArrayList<>();
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                String item = arr.optString(i);
+                if (item != null && !item.isEmpty() && !list.contains(item)) {
+                    list.add(item);
+                }
+            }
+        } catch (Exception ignored) {}
+        return list;
+    }
+
+    private void saveOnlinePinnedCategories(List<String> list) {
+        android.content.SharedPreferences sp = getSharedPreferences(PREF_ONLINE_CATEGORIES, MODE_PRIVATE);
+        org.json.JSONArray arr = new org.json.JSONArray();
+        for (String item : list) {
+            arr.put(item);
+        }
+        sp.edit().putString(KEY_PINNED_CATEGORIES, arr.toString()).apply();
+    }
+
+    private int getOnlineCategoryUsageCount(String catKey) {
+        if (catKey == null) return 0;
+        android.content.SharedPreferences sp = getSharedPreferences(PREF_ONLINE_CATEGORIES, MODE_PRIVATE);
+        return sp.getInt(KEY_CATEGORY_USAGE_PREFIX + catKey, 0);
+    }
+
+    private void incrementOnlineCategoryUsageCount(String catKey) {
+        if (catKey == null || catKey.isEmpty() || WorkCategory.ALL.equals(catKey) || "全部".equals(catKey)) return;
+        android.content.SharedPreferences sp = getSharedPreferences(PREF_ONLINE_CATEGORIES, MODE_PRIVATE);
+        int cur = sp.getInt(KEY_CATEGORY_USAGE_PREFIX + catKey, 0);
+        sp.edit().putInt(KEY_CATEGORY_USAGE_PREFIX + catKey, cur + 1).apply();
+    }
+
+    private void toggleOnlinePinnedCategory(String catKey, String displayBase) {
+        if (catKey == null || WorkCategory.ALL.equals(catKey) || "全部".equals(catKey)) return;
+        List<String> pinned = getOnlinePinnedCategories();
+        if (pinned.contains(catKey)) {
+            pinned.remove(catKey);
+            toast("已取消【" + displayBase + "】固定");
+        } else {
+            pinned.add(catKey);
+            toast("📌 已将【" + displayBase + "】固定在前排最前");
+        }
+        saveOnlinePinnedCategories(pinned);
+        updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
+        Button btn = onlineCategoryButtons.get(catKey);
+        if (btn != null && categoryScrollView != null) {
+            categoryScrollView.post(() -> {
+                int scrollX = btn.getLeft() - (categoryScrollView.getWidth() - btn.getWidth()) / 2;
+                categoryScrollView.smoothScrollTo(Math.max(0, scrollX), 0);
+            });
+        }
+    }
+
+    private static class CategoryDisplayItem {
+        final String key;
+        final String displayBase;
+        final int count;
+        final boolean isPinned;
+        final int usageScore;
+
+        CategoryDisplayItem(String key, String displayBase, int count, boolean isPinned, int usageScore) {
+            this.key = key;
+            this.displayBase = displayBase;
+            this.count = count;
+            this.isPinned = isPinned;
+            this.usageScore = usageScore;
+        }
+    }
+
     private void updateOnlineCategoryCounts(OnlineGalleryClient.CategoriesResult catResult, List<OnlineWorkEntry> entries) {
         categoryBar.removeAllViews();
         onlineCategoryButtons.clear();
@@ -3187,53 +3267,86 @@ public final class MainActivity extends Activity {
 
         int totalCount = catResult != null ? catResult.total : entries.size();
         String allLabel = "全部 " + totalCount;
-        Button allBtn = createOnlineCategoryButton(WorkCategory.ALL, "全部", allLabel, WorkCategory.ALL.equals(selectedOnlineCategory));
+        Button allBtn = createOnlineCategoryButton(WorkCategory.ALL, "全部", allLabel,
+                WorkCategory.ALL.equals(selectedOnlineCategory), false);
         categoryBar.addView(allBtn);
         onlineCategoryButtons.put(WorkCategory.ALL, allBtn);
         onlineCategoryLabels.put(WorkCategory.ALL, "全部");
 
+        List<String> pinnedList = getOnlinePinnedCategories();
+        java.util.Map<String, CategoryDisplayItem> rawItems = new java.util.LinkedHashMap<>();
+
         if (catResult != null && catResult.categories != null) {
             for (OnlineGalleryClient.CategoryItem cat : catResult.categories) {
                 if (cat.count <= 0) continue;
-                if ("全部".equals(cat.name) || WorkCategory.ALL.equals(cat.name) || onlineCategoryButtons.containsKey(cat.name)) continue;
+                if ("全部".equals(cat.name) || WorkCategory.ALL.equals(cat.name) || rawItems.containsKey(cat.name)) continue;
                 if ("待首发".equals(cat.name) || "已发1次".equals(cat.name) || "已发2次".equals(cat.name)) continue;
                 String displayBase = formatFolderLabel(cat.name);
-                String fullLabel = displayBase + " " + cat.count;
-                Button btn = createOnlineCategoryButton(cat.name, displayBase, fullLabel, cat.name.equals(selectedOnlineCategory));
-                categoryBar.addView(btn);
-                onlineCategoryButtons.put(cat.name, btn);
-                onlineCategoryLabels.put(cat.name, displayBase);
+                boolean isPinned = pinnedList.contains(cat.name);
+                int score = getOnlineCategoryUsageCount(cat.name);
+                rawItems.put(cat.name, new CategoryDisplayItem(cat.name, displayBase, cat.count, isPinned, score));
             }
-            return;
+        } else {
+            java.util.Map<String, Integer> destCounts = new java.util.LinkedHashMap<>();
+            for (OnlineWorkEntry w : entries) {
+                String dest = w.destination;
+                if (dest == null || dest.trim().isEmpty()) continue;
+                dest = dest.trim();
+                if (WorkCategory.ALL.equals(dest) || "全部".equals(dest)) continue;
+                if ("待首发".equals(dest) || "已发1次".equals(dest) || "已发2次".equals(dest)) continue;
+                destCounts.put(dest, destCounts.getOrDefault(dest, 0) + 1);
+            }
+            for (java.util.Map.Entry<String, Integer> item : destCounts.entrySet()) {
+                if (item.getValue() <= 0) continue;
+                if (rawItems.containsKey(item.getKey())) continue;
+                String displayBase = formatFolderLabel(item.getKey());
+                boolean isPinned = pinnedList.contains(item.getKey());
+                int score = getOnlineCategoryUsageCount(item.getKey());
+                rawItems.put(item.getKey(), new CategoryDisplayItem(item.getKey(), displayBase, item.getValue(), isPinned, score));
+            }
         }
 
-        // 【体感加速 fallback】没有 categories 快照（首次冷启动 / 快照里只有作品没分类），
-        // 从 onlineWorks 派生目的地计数。这样用户哪怕离线、没拿到服务端分类，
-        // 也能点「全部 N」之外的常用目的地按钮做筛选。
-        java.util.Map<String, Integer> destCounts = new java.util.LinkedHashMap<>();
-        for (OnlineWorkEntry w : entries) {
-            String dest = w.destination;
-            if (dest == null || dest.trim().isEmpty()) continue;
-            dest = dest.trim();
-            if (WorkCategory.ALL.equals(dest) || "全部".equals(dest)) continue;
-            if ("待首发".equals(dest) || "已发1次".equals(dest) || "已发2次".equals(dest)) continue;
-            destCounts.put(dest, destCounts.getOrDefault(dest, 0) + 1);
+        // DSH-131 智能排序流：
+        // 1. 📌 钉住分类（按用户钉住先后顺序排列）
+        // 2. 🔥 高频常用分类（按使用频次降序）
+        // 3. 常规分类（按默认返回顺序）
+        List<CategoryDisplayItem> sortedItems = new ArrayList<>();
+        // 阶段 1: 钉住项
+        for (String pinKey : pinnedList) {
+            if (rawItems.containsKey(pinKey)) {
+                sortedItems.add(rawItems.remove(pinKey));
+            }
         }
-        for (java.util.Map.Entry<String, Integer> item : destCounts.entrySet()) {
-            if (item.getValue() <= 0) continue;
-            if (onlineCategoryButtons.containsKey(item.getKey())) continue;
-            String displayBase = formatFolderLabel(item.getKey());
-            String fullLabel = displayBase + " " + item.getValue();
-            Button btn = createOnlineCategoryButton(item.getKey(), displayBase, fullLabel, item.getKey().equals(selectedOnlineCategory));
+        // 阶段 2: 高频项 (usageScore > 0)
+        List<CategoryDisplayItem> frequentItems = new ArrayList<>();
+        List<CategoryDisplayItem> normalItems = new ArrayList<>();
+        for (CategoryDisplayItem item : rawItems.values()) {
+            if (item.usageScore > 0) {
+                frequentItems.add(item);
+            } else {
+                normalItems.add(item);
+            }
+        }
+        Collections.sort(frequentItems, (a, b) -> Integer.compare(b.usageScore, a.usageScore));
+        sortedItems.addAll(frequentItems);
+        sortedItems.addAll(normalItems);
+
+        // 依次构建并挂载排序后的分类按钮
+        for (CategoryDisplayItem item : sortedItems) {
+            String fullLabel = item.displayBase + " " + item.count;
+            Button btn = createOnlineCategoryButton(item.key, item.displayBase, fullLabel,
+                    item.key.equals(selectedOnlineCategory), item.isPinned);
             categoryBar.addView(btn);
-            onlineCategoryButtons.put(item.getKey(), btn);
-            onlineCategoryLabels.put(item.getKey(), displayBase);
+            onlineCategoryButtons.put(item.key, btn);
+            onlineCategoryLabels.put(item.key, item.displayBase);
         }
     }
 
-    private Button createOnlineCategoryButton(String key, String displayBase, String buttonText, boolean isSelected) {
+    private Button createOnlineCategoryButton(String key, String displayBase, String buttonText,
+                                              boolean isSelected, boolean isPinned) {
         Button button = new Button(this);
-        button.setText(buttonText);
+        String finalLabel = isPinned ? ("📌 " + buttonText) : buttonText;
+        button.setText(finalLabel);
         button.setAllCaps(false);
         button.setTextSize(12);
         button.setMinHeight(dp(34));
@@ -3241,21 +3354,38 @@ public final class MainActivity extends Activity {
         button.setPadding(dp(12), 0, dp(12), 0);
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
-        applyOnlineCategoryButtonStyle(button, isSelected);
+        applyOnlineCategoryButtonStyle(button, isSelected, isPinned);
 
-        button.setOnClickListener(v -> selectOnlineCategory(key, true));
+        button.setOnClickListener(v -> {
+            incrementOnlineCategoryUsageCount(key);
+            selectOnlineCategory(key, true);
+        });
+
+        if (!WorkCategory.ALL.equals(key) && !"全部".equals(key)) {
+            button.setOnLongClickListener(v -> {
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                toggleOnlinePinnedCategory(key, displayBase);
+                return true;
+            });
+        }
+
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
         params.setMargins(dp(2), 0, dp(2), 0);
         button.setLayoutParams(params);
         return button;
     }
 
-    private void applyOnlineCategoryButtonStyle(Button button, boolean isSelected) {
+    private void applyOnlineCategoryButtonStyle(Button button, boolean isSelected, boolean isPinned) {
         if (isSelected) {
             button.setBackground(round(Color.WHITE, 10));
             button.setTextColor(Color.rgb(24, 25, 24));
             button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             button.setElevation(dp(1));
+        } else if (isPinned) {
+            button.setBackground(roundWithStroke(Color.rgb(242, 248, 244), 10, Color.rgb(180, 222, 202)));
+            button.setTextColor(Color.rgb(16, 120, 80));
+            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            button.setElevation(0);
         } else {
             button.setBackgroundColor(Color.TRANSPARENT);
             button.setTextColor(Color.rgb(104, 108, 106));
@@ -3267,8 +3397,10 @@ public final class MainActivity extends Activity {
     private void selectOnlineCategory(String catKey, boolean showToast) {
         if (catKey == null || !onlineCategoryButtons.containsKey(catKey)) return;
         selectedOnlineCategory = catKey;
+        List<String> pinnedList = getOnlinePinnedCategories();
         for (Map.Entry<String, Button> item : onlineCategoryButtons.entrySet()) {
-            applyOnlineCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedOnlineCategory));
+            boolean isPinned = pinnedList.contains(item.getKey());
+            applyOnlineCategoryButtonStyle(item.getValue(), item.getKey().equals(selectedOnlineCategory), isPinned);
         }
         applyOnlineCategoryFilter(selectedOnlineCategory);
         Button activeBtn = onlineCategoryButtons.get(catKey);
@@ -3886,7 +4018,24 @@ public final class MainActivity extends Activity {
                 ? new ArrayList<PlatformCopyParser.AvailableItem>() : platforms)) {
             String extracted = (item.copyText != null && !item.copyText.isEmpty())
                     ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.copyText, item.platform);
-            Button btn = compactButton(item.buttonLabel, work.useCount == 0);
+
+            // DSH-130-B: 判定该版本按钮是否已被使用或分发（dispatchedTo 中包含该标签）
+            boolean isVersionDispatched = false;
+            if (work.dispatchedTo != null) {
+                for (String tag : work.dispatchedTo) {
+                    if (tag != null && (tag.contains(item.buttonLabel)
+                            || (item.platform != null && tag.contains(item.platform.code)))) {
+                        isVersionDispatched = true;
+                        break;
+                    }
+                }
+            }
+            String btnLabel = isVersionDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel;
+            Button btn = compactButton(btnLabel, isVersionDispatched || work.useCount == 0);
+            if (isVersionDispatched) {
+                // 已分发的版本：专属翡翠绿高亮激活态（带 ✓ 打勾）
+                styleNeumorphicButton(btn, STYLE_PRIMARY_GREEN);
+            }
             btn.setOnClickListener(v -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
             btn.setOnLongClickListener(v -> {
                 showCopyPreviewDialog(work.title, item.buttonLabel, extracted,
@@ -4532,6 +4681,62 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void optimisticMarkWorkUsedAndTop(String workId, String dispatchTag, String versionTag, String destination) {
+        // 1. 累计该分类的使用热度（让分类 Tab 智能靠前）
+        incrementOnlineCategoryUsageCount(destination);
+
+        // 2. 本地生命周期打标（启动倒计时）
+        for (OnlineWorkEntry w : onlineWorks) {
+            if (w.id.equals(workId)) {
+                OnlineWorkLifecycle.markUsed(this, w, System.currentTimeMillis());
+                break;
+            }
+        }
+
+        // 3. 内存原子更新数据：useCount += 1，记录 dispatchTag，并将该作品移至最顶端（index 0 置顶）
+        OnlineWorkEntry updatedEntry = null;
+        int foundIndex = -1;
+        for (int i = 0; i < onlineWorks.size(); i++) {
+            OnlineWorkEntry old = onlineWorks.get(i);
+            if (old.id.equals(workId)) {
+                foundIndex = i;
+                List<String> newDispatched = new ArrayList<>(old.dispatchedTo);
+                if (dispatchTag != null && !newDispatched.contains(dispatchTag)) {
+                    newDispatched.add(dispatchTag);
+                }
+                int newCount = old.useCount + 1;
+                int remaining = Math.max(0, old.remainingUses - 1);
+                updatedEntry = new OnlineWorkEntry(
+                        old.id, old.title, old.destination, old.stage,
+                        newCount, old.maxUses, true, remaining,
+                        newCount >= 2 ? "已发送" : "已发1次",
+                        old.images, old.imageCount, old.copyText, old.hasCopyText,
+                        newDispatched, System.currentTimeMillis()
+                );
+                break;
+            }
+        }
+
+        if (updatedEntry != null) {
+            // DSH-130-A: 0ms 内存置顶
+            if (foundIndex >= 0) {
+                onlineWorks.remove(foundIndex);
+            }
+            onlineWorks.add(0, updatedEntry);
+
+            // 4. 0ms 立即就地重绘列表（按钮变绿带 ✓、状态行变已使用）
+            applyOnlineCategoryFilter(selectedOnlineCategory);
+
+            // 5. 平滑滚动到列表最顶部，确保用户肉眼直接看到作品已置顶
+            if (contentScroll != null) {
+                contentScroll.smoothScrollTo(0, 0);
+            }
+
+            // 6. 顶部分类 Tab 计数联动更新
+            updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
+        }
+    }
+
     private void handleOnlineWorkUse(OnlineWorkEntry work, String platformCode, String label, String copyText) {
         // 深度防御：即便被绕过，也绝不复制空壳作品的合成文案
         if (isCopySubstanceMissing(copyText)) {
@@ -4539,6 +4744,12 @@ public final class MainActivity extends Activity {
             return;
         }
         copyToClipboard(label, copyText);
+
+        final String versionTag = (label != null && !label.trim().isEmpty()) ? label.trim() : platformCode;
+        final String dispatchTag = getDeviceName() + "(" + versionTag + ")";
+
+        // ==================== DSH-130: 0ms 乐观 UI 更新与就地置顶 ====================
+        optimisticMarkWorkUsedAndTop(work.id, dispatchTag, versionTag, work.destination);
 
         if (work.images == null || work.images.isEmpty()) {
             toast("已复制 " + label + "（无图片作品）");
@@ -4608,16 +4819,11 @@ public final class MainActivity extends Activity {
             }
         });
 
-        // 手机端本地生命周期记录（启动遵循手机端设置的时间规则倒计时）
-        OnlineWorkLifecycle.markUsed(this, work, System.currentTimeMillis());
-
-        final String versionTag = (label != null && !label.trim().isEmpty()) ? label.trim() : platformCode;
         onlineClient.recordUse(work.id, getDeviceName(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
                 if (result != null && result.ok) {
-                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses,
-                            getDeviceName() + "(" + versionTag + ")");
+                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag);
                 }
             }
 
@@ -4709,7 +4915,8 @@ public final class MainActivity extends Activity {
                         old.images, old.imageCount, old.copyText, old.hasCopyText,
                         newDispatched, System.currentTimeMillis()
                 );
-                onlineWorks.set(i, updated);
+                onlineWorks.remove(i);
+                onlineWorks.add(0, updated);
                 break;
             }
         }
