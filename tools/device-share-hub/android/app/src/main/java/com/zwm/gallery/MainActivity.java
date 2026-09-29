@@ -5170,6 +5170,7 @@ public final class MainActivity extends Activity {
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawable(round(Color.WHITE, 16));
         }
+        dialog.setCanceledOnTouchOutside(false);
         dialog.show();
     }
 
