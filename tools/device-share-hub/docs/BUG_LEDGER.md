@@ -2974,3 +2974,87 @@ totalWorks = 472
      在刷新状态下，**仅限制二次下拉过度拉伸（`delta > 0 && atTop`）**，绝不拦截用户向上推滑查看内容的正常滚动（`delta < 0` 或 `getScrollY() > 0`）；
   2. 将正常滑动事件透明放行给 `super.onTouchEvent(event)`，使用户即使在刷新转圈过程中，依然能够行云流水地下滑浏览已有内容，消除“界面冻结”的卡顿感。
 
+## DSH-133 Android 点击分类 Tab 切换卡顿 3~5 秒（循环内重复反序列化磁盘 JSON）（待解决 · 2026-09-29）
+
+- **现象**：在红米真机上手动点击顶部分类 Tab（如安吉、杭州、团建游戏等）切换分类时，界面出现明显冻结，需要等待 3~5 秒左右作品列表才刷新出来，严重影响操作丝滑度。
+- **根因（逐行铁证）**：
+  1. `MainActivity.java:3811` 中的 `applyOnlineCategoryFilter` 对当前内存中全部作品（516 套）执行 `for (OnlineWorkEntry work : onlineWorks)` 循环；
+  2. 循环体内第 3813 行调用 `OnlineWorkLifecycle.shouldBeInTrash(this, work.id, nowMs, moveAfterMs)`；
+  3. `OnlineWorkLifecycle.java:162` 中的 `shouldBeInTrash` 每次都执行 `loadAll(context)`；
+  4. `loadAll(context)` 每次都从 `SharedPreferences` 读取完整记录并执行 `new JSONArray(raw)` 反序列化所有条目；
+  5. 导致每切换一次分类，主线程就要在毫秒级内**连续反序列化磁盘大 JSON 字符串 516 次**！在红米手机上单次耗时约 6~7ms，516 次累计阻塞主线程达 3.5~4.0 秒；
+  6. 渲染卡片时 `onlineWorkCard`（第 3943 行）又调用 `OnlineWorkLifecycle.getItem`，再次触发数十次重复磁盘反序列化。
+- **预定解法**：
+  1. **内存缓存与 Map 化**：在 `OnlineWorkLifecycle.java` 中建立 `MEMORY_CACHE` 与 `ITEM_MAP` 静态常驻缓存，数据未变时直接从内存获取，0 次磁盘 I/O；
+  2. **批处理集合过滤（对齐 iOS）**：新增 `getTrashedIds(...)` 方法，一次性返回 `Set<String>`；在 `applyOnlineCategoryFilter` 循环外仅获取一次，循环内执行 `trashedIds.contains(work.id)`（$O(1)$ 时间复杂度）；
+  3. 耗时将从 3600ms 暴降至 **< 1ms**，分类切换瞬间完成，达到完全无感的丝滑度。
+
+## DSH-134 Android 切换模式 Toast「已切换至：XXX」遮挡屏幕顶栏核心操作按钮（待解决 · 2026-09-29）
+
+- **现象**：用户点击顶部「电脑/手机」图标进行在线与本地相册模式切换时，系统弹出的 Toast 气泡（“已切换至：电脑在线模式” / “已切换至：本机相册”）直接浮现在屏幕最顶部的标题与操作栏位置，物理遮挡住了模式切换图标、文件夹按钮、回收站与设置按钮，导致用户无法连续操作，必须等待数秒 Toast 消失。
+- **根因（逐行铁证）**：
+  1. `MainActivity.java:2758` 与 `2777` 中：`toast("已切换至：" + (isOnlineMode ? "电脑在线模式" : "本机相册"));`；
+  2. `toast(String msg)` 底层调用系统默认 `Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()`，未显式指定 `Gravity`；
+  3. 在 Redmi/小米澎湃OS、VIVO OriginOS 等高屏占比现代机型上，系统默认的居中偏上或顶部沉浸式 Toast 会不偏不倚地覆盖在 Header 工具栏正上方。
+- **预定解法**：
+  1. 重构 `toast(String msg)` 与相关调用，为 Toast 显式注入位置锚点：
+     `toast.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, dp(120));`（屏幕底部偏上安全区域，远离下导航手势条，同时彻底解放屏幕顶部所有操作按钮）；
+  2. 针对模式切换这类关键状态流转，优先在顶部 `statusText` 状态条以平滑过渡动画呈现，辅助使用底部优雅气泡，杜绝任何 UI 遮挡。
+
+## DSH-135 在线相册作品生命周期跨端状态同步与首发设备时间戳继承架构（待解决 · 2026-09-29）
+
+- **现象**：
+  1. 用户在 VIVO 手机上点击使用作品，VIVO 界面显示“已使用5次”；但同时其他手机（如红米、iPhone）在在线相册中完全看不到该作品，多端状态完全割裂；
+  2. 用户核心诉求：“所有手机都应该同步这个作品使用状态，被使用也要在另外的手机上可以被看见，依旧是被使用被置顶的状态，只要没有删除那就给我同步；关于删除时间，希望能继承第一个使用这个作品的设备的时间”。
+- **根因（逐行铁证）**：
+  1. `online_gallery_service.py:3604` 存在过早移库缺陷：
+     ```python
+     if new_count >= 1:
+         ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
+     ```
+     只要手机端调用 `/api/online/use-work` 点击使用过一次，服务端**直接同步物理执行剪切移库**，将作品从货架目录暴力移入 `_已发送1次（微信公众号可发）` 隔离目录！
+  2. 移库后服务端的常规货架扫描器（`scanner.scan()`）立刻将其排除在待发列表之外；
+  3. 导致其他手机一刷新列表，该作品直接从货架凭空消失；而首发点击的 VIVO 手机由于界面未被清空或本地缓存，依然保留在屏幕上，用户再次点击便累加到了 5 次。
+- **架构决断（坚定选择「继承首发设备时间戳」，彻底否决「各手机单独设置」）**：
+  - **为何否决「各手机单独设置」**：若手机 A 设 1 小时，手机 B 设 2 小时；或手机 A 14:00 首次使用，手机 B 14:30 刚开机并单独计时 1 小时。手机 A 在 15:00 认为作品已到期该删，手机 B 却认为要等到 15:30；多端时间各自为政必然导致数据被某台手机提前斩断或延迟残留，协作状态彻底崩溃。
+  - **为何「继承首发设备时间戳」是极简且唯一的正解**：
+    1. **谁首发，谁定全局钢印**：首发设备（如 VIVO）在首次分发作品时，将本地生命周期策略（如 1 小时 = 3600000ms）上报服务端；
+    2. **服务端落盘唯一真源**：服务端在 `作品标签.json` 写入：
+       - `firstSharedAtMs`: 首发时间戳
+       - `expireAtMs`: 首发时间戳 + 保留时长
+       - `originDevice`: 首发设备名
+       - `useCount`: 1
+    3. **到期前绝不物理移库，全局置顶广播**：服务端在 `useCount >= 1` 时**绝对不执行 `_move_work_to_stage1`**！只要当前时间 `< expireAtMs`，该作品安稳留在货架，全网广播给所有手机（红米、VIVO、iPhone）；
+    4. **多端同频呈现**：所有手机拉取到该作品后，统一排在分类最前排（置顶），显示翡翠绿药丸：`💻 电脑在线 · 已使用1次 (VIVO) · 剩 48 分钟入回收站`；
+    5. **倒计时归零多端同频下架**：当系统时间到达 `expireAtMs` 时，服务端自动将其移入 `_已发送1次`，此时多端同时下架该作品，状态完全统一无缝。
+
+## DSH-136 原图已下载到手机，二次点击依然闪现「正在从电脑拉取到手机…」进度弹窗（待解决 · 2026-09-29）
+
+- **现象**：作品图片之前已经成功从电脑同步下载到手机本地，第二次点击该作品的文案按钮（如“红书种草”或“抖音合规”）准备再次分发时，界面依然会弹出一个闪烁的“正在从电脑同步原图到手机…”进度条弹窗，停顿半秒到一秒后才消失唤起分享，体感明显卡顿。
+- **根因（逐行铁证）**：
+  1. `MainActivity.java:4760-4789`：
+     用户一点击文案按钮，代码在主线程**无条件直接执行 `dlDialog = builder.create(); dlDialog.show();` 弹出下载对话框**；
+  2. 随后才调用异步 `onlineClient.downloadWorkImages(...)`；
+  3. 虽然 `OnlineGalleryClient.java:1362` 检查了本地 `localFile.exists() && localFile.length() > 0` 并跳过了网络 HTTP 请求，但由于 `dlDialog` 已经完成了 `show()` 的 Window 窗口渲染和 UI 主线程调度，导致该弹窗在屏幕上形成至少 300~800ms 的肉眼可见闪现与黑屏遮罩。
+- **预定解法**：
+  1. 在 `OnlineGalleryClient.java` 中增加同步前置检测方法：
+     `boolean areAllWorkImagesCachedLocally(String workId, List<String> fileNames)` 与 `List<File> getCachedLocalWorkImages(...)`；
+  2. 在 `handleOnlineWorkUse` 中，优先在弹窗前进行极速检测：如果本地文件已 100% 完整命中，**0 弹窗直接执行 `launchOnlineShare` 唤起系统分享**！
+  3. 耗时从近 1 秒直接暴降至 **0ms 秒开**，消除多余弹窗与黑屏抖动。
+
+## DSH-137 文案版本按钮翡翠绿对勾 ✓ 一闪而过无法常驻（内存状态被全量网络刷新覆盖洗白）（待解决 · 2026-09-29）
+
+- **现象**：用户点击作品的某个文案按钮（如“红书种草”）后，按钮前如期打上了翡翠绿高亮的 `✓`；但只要从分享面板返回，或稍后列表触发后台静默刷新，这个绿色对勾 `✓` 就会瞬间消失，变回原有的普通白色按钮。
+- **根因（逐行铁证）**：
+  1. `MainActivity.java:4752` 在点击瞬间通过 `optimisticMarkWorkUsedAndTop` 乐观更新了当前内存中该作品的 `dispatchedTo` 列表；
+  2. 但是，当分享返回或网络触发 `refreshOnlineWorks()` 时（`MainActivity.java:3053`），代码粗暴执行：
+     ```java
+     onlineWorks.clear();
+     if (works != null) onlineWorks.addAll(works);
+     ```
+  3. 服务端返回的 `result.works` 中，`dispatchedTo` 并不包含细粒度的按钮版本标识，或者客户端从未在本地对已打勾状态做持久化保护；
+  4. 全量覆盖把内存中带有 `✓` 的本地对象洗白抹除，导致对勾一闪而过。
+- **预定解法**：
+  1. **本地状态持久化（SharedPreferences）**：在本地持久化维护 `online_dispatched_versions_{workId}` 集合，只要用户点击成功，永久落盘保存；
+  2. **状态合并守卫（State Merge）**：在 `refreshOnlineWorks` 接收服务端列表时，遍历合并本地持久化的 `dispatchedTo` 与版本打勾记录，确保任何网络数据拉取绝对不冲掉已使用的绿色对勾 `✓`；
+  3. 服务端 `/api/online/use-work` 同步强化版本标签记录，实现跨设备也可见具体被使用的文案版本。
