@@ -113,7 +113,7 @@ public final class OnlineWorkLifecycle {
                                      deleteAfterMs: Double = 24 * 3600 * 1000) -> [Item] {
         lock.lock()
         defer { lock.unlock() }
-        var list = loadAll()
+        let list = loadAll()
         var changed = false
         var activeTrash: [Item] = []
 

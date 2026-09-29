@@ -1,6 +1,21 @@
 import UIKit
 import ImageIO
 
+enum LocalDispatchedStore {
+    static func get(workId: String) -> Set<String> {
+        let key = "dispatched_vers_\(workId)"
+        let arr = UserDefaults.standard.stringArray(forKey: key) ?? []
+        return Set(arr)
+    }
+
+    static func save(workId: String, version: String) {
+        var set = get(workId: workId)
+        set.insert(version)
+        let key = "dispatched_vers_\(workId)"
+        UserDefaults.standard.set(Array(set), forKey: key)
+    }
+}
+
 final class LibraryViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UISearchBarDelegate {
     private let library: WorkLibrary
     private let emptyStack = UIStackView()
@@ -1134,21 +1149,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 3. 分享载体改为**文件 URL**（2026-09-22 修复，DSH-090）——旧实现把 `[UIImage]` 直接交给
     ///    `UIActivityViewController`，小红书/抖音的 share extension 会把 N 张图读成同一张
     ///    （实测 9 张全变 1 张，而预览正常）。现与本地相册 `prepareShare` 同传 `NSURL`。
-enum LocalDispatchedStore {
-    static func get(workId: String) -> Set<String> {
-        let key = "dispatched_vers_\(workId)"
-        let arr = UserDefaults.standard.stringArray(forKey: key) ?? []
-        return Set(arr)
-    }
-
-    static func save(workId: String, version: String) {
-        var set = get(workId: workId)
-        set.insert(version)
-        let key = "dispatched_vers_\(workId)"
-        UserDefaults.standard.set(Array(set), forKey: key)
-    }
-}
-
     private func optimisticMarkOnlineWorkUsedAndTop(workId: String, versionLabel: String, destination: String) {
         // 1. 累计该分类的使用热度（让分类 Tab 智能靠前）
         incrementOnlineCategoryUsage(key: destination)
