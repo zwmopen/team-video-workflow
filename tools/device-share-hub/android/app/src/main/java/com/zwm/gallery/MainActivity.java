@@ -3983,10 +3983,16 @@ public final class MainActivity extends Activity {
         // Usage protection status badge & lifecycle countdown
         if (work.useCount > 0) {
             String statusText = "已使用 " + work.useCount + " 次";
-            OnlineWorkLifecycle.Item lifeItem = OnlineWorkLifecycle.getItem(this, work.id);
-            if (lifeItem != null && lifeItem.firstSharedAtMs > 0) {
-                CleanupSettings.Values cleanup = CleanupSettings.read(this);
-                long remainMs = (lifeItem.firstSharedAtMs + cleanup.moveAfterMs()) - System.currentTimeMillis();
+            CleanupSettings.Values cleanup = CleanupSettings.read(this);
+            long expireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? work.firstSharedAtMs + cleanup.moveAfterMs() : 0);
+            if (expireMs == 0) {
+                OnlineWorkLifecycle.Item lifeItem = OnlineWorkLifecycle.getItem(this, work.id);
+                if (lifeItem != null && lifeItem.firstSharedAtMs > 0) {
+                    expireMs = lifeItem.firstSharedAtMs + cleanup.moveAfterMs();
+                }
+            }
+            if (expireMs > 0) {
+                long remainMs = expireMs - System.currentTimeMillis();
                 if (remainMs > 0) {
                     int remainMin = Math.max(1, (int) (remainMs / 60000L));
                     statusText = "已使用 · 剩 " + remainMin + " 分钟入回收站";
@@ -4099,8 +4105,8 @@ public final class MainActivity extends Activity {
             }
             btn.setOnClickListener(v -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
             btn.setOnLongClickListener(v -> {
-                showCopyPreviewDialog(work.title, item.buttonLabel, extracted,
-                        () -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
+                showCopyPreviewDialog(work.id, work.title, item.buttonLabel, extracted,
+                        updatedText -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, updatedText));
                 return true;
             });
             platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -5030,7 +5036,15 @@ public final class MainActivity extends Activity {
         applyOnlineCategoryFilter(selectedOnlineCategory);
     }
 
+    private interface CopyShareConsumer {
+        void accept(String currentCopy);
+    }
+
     private void showCopyPreviewDialog(String workTitle, String versionLabel, String copyText, Runnable onShareAction) {
+        showCopyPreviewDialog(null, workTitle, versionLabel, copyText, onShareAction != null ? (c) -> onShareAction.run() : null);
+    }
+
+    private void showCopyPreviewDialog(String workId, String workTitle, String versionLabel, String copyText, CopyShareConsumer onShareAction) {
         if (isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
@@ -5042,8 +5056,9 @@ public final class MainActivity extends Activity {
         titleView.setMaxLines(2);
         container.addView(titleView);
 
-        int charCount = copyText != null ? copyText.length() : 0;
-        TextView subView = text("【" + versionLabel + "】 共 " + charCount + " 字", 12, false);
+        int initialCount = copyText != null ? copyText.length() : 0;
+        final String tipSuffix = (workId != null && !workId.isEmpty()) ? " · ✏️ 可直接编辑" : "";
+        TextView subView = text("【" + versionLabel + "】 共 " + initialCount + " 字" + tipSuffix, 12, false);
         subView.setTextColor(Color.rgb(16, 151, 99));
         LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(-1, -2);
         subParams.setMargins(0, dp(4), 0, dp(12));
@@ -5053,28 +5068,85 @@ public final class MainActivity extends Activity {
         scroll.setBackground(round(Color.rgb(244, 246, 245), 10));
         scroll.setPadding(dp(12), dp(10), dp(12), dp(10));
 
-        TextView contentText = new TextView(this);
-        contentText.setText(copyText != null && !copyText.trim().isEmpty() ? copyText : "（暂无该版本文案）");
-        contentText.setTextSize(13.5f);
-        contentText.setTextColor(Color.rgb(40, 42, 41));
-        contentText.setLineSpacing(dp(3), 1.15f);
-        contentText.setTextIsSelectable(true);
-        scroll.addView(contentText, new FrameLayout.LayoutParams(-1, -2));
+        EditText editContent = new EditText(this);
+        editContent.setText(copyText != null && !copyText.trim().isEmpty() ? copyText : "");
+        editContent.setTextSize(13.5f);
+        editContent.setTextColor(Color.rgb(40, 42, 41));
+        editContent.setLineSpacing(dp(3), 1.15f);
+        editContent.setBackground(null);
+        editContent.setGravity(Gravity.TOP | Gravity.START);
+        editContent.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
 
-        int maxHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.45f);
+        editContent.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                int len = s != null ? s.length() : 0;
+                subView.setText("【" + versionLabel + "】 共 " + len + " 字" + tipSuffix);
+            }
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
+        scroll.addView(editContent, new FrameLayout.LayoutParams(-1, -2));
+
+        int maxHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.42f);
         container.addView(scroll, new LinearLayout.LayoutParams(-1, maxHeight));
+
+        // DSH-138: 手机端在线修改文案并物理写回电脑真源
+        if (workId != null && !workId.isEmpty()) {
+            Button btnSaveToPc = new Button(this);
+            btnSaveToPc.setText("💾 保存修改到电脑真源");
+            styleNeumorphicButton(btnSaveToPc, STYLE_PRIMARY_GREEN);
+            LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(40));
+            saveParams.setMargins(0, dp(10), 0, 0);
+            btnSaveToPc.setOnClickListener(v -> {
+                String latestText = editContent.getText().toString();
+                if (latestText.trim().length() < 30) {
+                    toast("⚠️ 文案内容过少（至少30字），为防误删破坏已拦截保存");
+                    return;
+                }
+                btnSaveToPc.setEnabled(false);
+                btnSaveToPc.setText("⏳ 正在保存至电脑...");
+                onlineClient.updateCopy(workId, latestText, getDeviceName(), versionLabel,
+                        new OnlineGalleryClient.Callback<OnlineGalleryClient.ActionResult>() {
+                            @Override
+                            public void onSuccess(OnlineGalleryClient.ActionResult result) {
+                                btnSaveToPc.setEnabled(true);
+                                btnSaveToPc.setText("💾 保存修改到电脑真源");
+                                if (result.ok) {
+                                    toast("✅ " + result.message);
+                                    refreshOnlineWorks(false);
+                                } else {
+                                    toast("❌ " + result.message);
+                                }
+                            }
+
+                            @Override
+                            public void onError(Exception error) {
+                                btnSaveToPc.setEnabled(true);
+                                btnSaveToPc.setText("💾 保存修改到电脑真源");
+                                toast("❌ 保存失败: " + (error != null ? error.getMessage() : "网络超时"));
+                            }
+                        });
+            });
+            container.addView(btnSaveToPc, saveParams);
+        }
 
         builder.setView(container);
         builder.setNegativeButton("关闭", null);
         builder.setNeutralButton("复制全文", (dialog, which) -> {
-            copyToClipboard(versionLabel, copyText);
-            toast("已复制 " + versionLabel + " 全文 (" + charCount + "字)");
+            String currentText = editContent.getText().toString();
+            copyToClipboard(versionLabel, currentText);
+            toast("已复制 " + versionLabel + " 全文 (" + currentText.length() + "字)");
         });
         builder.setPositiveButton("前往使用", (dialog, which) -> {
-            copyToClipboard(versionLabel, copyText);
+            String currentText = editContent.getText().toString();
+            copyToClipboard(versionLabel, currentText);
             toast("已复制并准备使用");
             if (onShareAction != null) {
-                onShareAction.run();
+                onShareAction.accept(currentText);
             }
         });
 

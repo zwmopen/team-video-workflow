@@ -620,6 +620,57 @@ def sanitize_platform_copy(copy_text: str) -> "tuple[str, Dict[str, Any]]":
     return out, diag
 
 
+def splice_platform_copy(original_full_text: str, version_key: str, new_slot_text: str) -> str:
+    """DSH-138: 若原文是多槽位文案，且 new_slot_text 为单一版本内容，
+    则精确定向替换对应槽位，保护其他平台槽位不丢失。
+    """
+    if not original_full_text or "<<<" not in original_full_text:
+        return new_slot_text
+    if "<<<COPY_FORMAT" in new_slot_text or "_START>>>" in new_slot_text:
+        return new_slot_text
+
+    v_trimmed = (version_key or "").strip()
+    if not v_trimmed:
+        return new_slot_text
+
+    v_upper = v_trimmed.upper()
+    alias_map = {
+        "种草版": "XHS", "小红书": "XHS", "XHS": "XHS",
+        "大纲方案版": "XHS_2", "方案版": "XHS_2", "XHS2": "XHS_2", "XHS_2": "XHS_2",
+        "短文精选版": "XHS_3", "精选版": "XHS_3", "XHS3": "XHS_3", "XHS_3": "XHS_3",
+        "规避营销版": "DOUYIN", "抖音": "DOUYIN", "抖音探店": "DOUYIN", "DOUYIN": "DOUYIN",
+        "公众号版": "WECHAT", "微信": "WECHAT", "WECHAT": "WECHAT",
+        "HR决策版": "HR", "HR": "HR",
+    }
+    target_marker = alias_map.get(v_trimmed, v_upper)
+
+    # 1. 尝试匹配 <<<MK_START>>> ... <<<MK_END>>>
+    def _repl_marker(m):
+        m_tag = m.group(1)
+        if m_tag.upper() == target_marker or m_tag.upper() == v_upper or m_tag == v_trimmed:
+            return f"<<<{m_tag}_START>>>\n{new_slot_text.strip()}\n<<<{m_tag}_END>>>"
+        return m.group(0)
+
+    replaced, count = _PLATFORM_BLOCK_RE.subn(_repl_marker, original_full_text)
+    if count > 0:
+        return replaced
+
+    # 2. 尝试匹配 <<<VERSION_START: tag>>> ... <<<VERSION_END>>>
+    version_pat = re.compile(r"(?s)<<<VERSION_START:\s*([^>\r\n]+?)\s*>>>[\r\n]*(.*?)[\r\n]*<<<VERSION_END>>>")
+    def _repl_ver(m):
+        tag = m.group(1).strip()
+        if tag == v_trimmed or tag.upper() == v_upper or tag.upper() == target_marker:
+            return f"<<<VERSION_START: {tag}>>>\n{new_slot_text.strip()}\n<<<VERSION_END>>>"
+        return m.group(0)
+
+    replaced, count = version_pat.subn(_repl_ver, original_full_text)
+    if count > 0:
+        return replaced
+
+    return new_slot_text
+
+
+
 def work_text_blob(w: dict, with_title: bool = True) -> str:
     """作品的关键词匹配文本：标题/目的地 + 搜索专用正文（回退 copyText）。"""
     blob = (w.get("searchBlob") or w.get("copyText") or "")
@@ -3578,7 +3629,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             new_count = current_count + 1
             dist["useCount"] = new_count
 
-            # DSH-135: 首发设备生命周期继承
+            # DSH-135 & DSH-139: 首发设备生命周期继承与防二次使用异常清空
             now_ms = int(time.time() * 1000)
             retention_ms = req.get("retentionDurationMs")
             if retention_ms is not None:
@@ -3586,14 +3637,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             else:
                 retention_duration_ms = 0
 
-            if retention_duration_ms > 0:
-                if not dist.get("firstSharedAtMs"):
+            # 判定作品当前是否已有活跃且未到期的首发倒计时
+            has_active_lifecycle = bool(dist.get("expireAtMs") and dist["expireAtMs"] > now_ms)
+
+            if not has_active_lifecycle:
+                # 之前没有活跃倒计时（或已过期）：仅当本次显式要求保留时长时，才开启倒计时
+                if retention_duration_ms > 0:
                     dist["firstSharedAtMs"] = now_ms
                     dist["expireAtMs"] = now_ms + retention_duration_ms
                     dist["originDevice"] = device_name
-                else:
-                    if not dist.get("expireAtMs"):
-                        dist["expireAtMs"] = dist["firstSharedAtMs"] + retention_duration_ms
+            else:
+                # 继承原有首发生命周期：绝对保留原有 firstSharedAtMs、expireAtMs 与 originDevice！
+                # 任何第二台设备的使用，绝不允许重置倒计时时间轴或覆盖首发设备标识
+                pass
 
             # DSH-137: 记录具体分发的文案版本标签
             version_tag = req.get("versionTag", "").strip()
@@ -3626,14 +3682,23 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Warn] Failed to write usage log: {e}")
 
-            # DSH-135: 核心业务规则：
-            # 若配置了生命周期保留时长（retention_duration_ms > 0 且未到期），作品继续安稳留在当前货架上，
-            # 供所有连接设备（红米、VIVO、iPhone）同频置顶展示与共享状态；
-            # 仅当未配置保留时长（<=0）、或强制移动 forceMove、或已到达过期时间 expireAtMs 时，才物理移库。
+            # DSH-135 & DSH-139: 核心业务规则加固：
+            # 1. 若显式声明 forceMove，则强制移动；
+            # 2. 若存在活跃且未到期的首发倒计时 (has_active_lifecycle == True)，绝对不移动！作品安稳留在货架上；
+            # 3. 仅当已到达过期时间 expireAtMs，才物理移库；
+            # 4. 若从始至终无任何保留时间配置且无 expireAtMs，才物理移动。
             moved = False
             target_dest_path = ""
             force_move = bool(req.get("forceMove", False))
-            should_move = force_move or (retention_duration_ms <= 0) or (dist.get("expireAtMs") and now_ms >= dist["expireAtMs"])
+
+            if force_move:
+                should_move = True
+            elif has_active_lifecycle:
+                should_move = False
+            elif dist.get("expireAtMs"):
+                should_move = bool(now_ms >= dist["expireAtMs"])
+            else:
+                should_move = bool(retention_duration_ms <= 0)
 
             if should_move and new_count >= 1:
                 ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
@@ -3932,6 +3997,109 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "action": "remark_garbage",
                 "remark": remark,
                 "message": msg,
+            })
+        # ===== DSH-138: 手机端长按文案编辑在线写回真源 =====
+        if path == "/api/online/update-copy":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body)
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+
+            work_id = (req.get("workId") or "").strip()
+            updated_copy = req.get("updatedCopy", "")
+            device_name = (req.get("device") or req.get("deviceName") or "移动端").strip()
+            version_key = (req.get("versionKey") or req.get("versionTag") or "").strip()
+
+            if not work_id:
+                self.send_json(400, {"ok": False, "message": "缺少 workId"})
+                return
+
+            # 防空壳防御：至少 30 个有效字符
+            if not updated_copy or len(updated_copy.strip()) < 30:
+                self.send_json(400, {
+                    "ok": False,
+                    "message": "文案内容过少（至少30字），为防止误删破坏已拦截保存",
+                    "length": len(updated_copy.strip()) if updated_copy else 0
+                })
+                return
+
+            target_work = self.scanner.get_work(work_id)
+            if not target_work and "__link_" in work_id:
+                target_work = self.scanner.get_work(work_id.split("__link_")[0])
+            if not target_work:
+                target_work = self.scanner.resolve_stage_work(work_id)
+
+            if not target_work:
+                self.send_json(404, {"ok": False, "message": "作品不存在或已下架"})
+                return
+
+            dir_path = target_work.get("path")
+            if not dir_path or not os.path.isdir(dir_path):
+                self.send_json(404, {"ok": False, "message": "作品物理目录不存在"})
+                return
+
+            copy_file = os.path.join(dir_path, "文案.txt")
+
+            final_text_to_write = updated_copy
+            # 若原文件存在，先做备份并智能判定多槽位定向替换
+            try:
+                if os.path.exists(copy_file):
+                    shutil.copy2(copy_file, copy_file + ".bak")
+                    with open(copy_file, "r", encoding="utf-8") as fp:
+                        orig_text = fp.read()
+                    final_text_to_write = splice_platform_copy(orig_text, version_key, updated_copy)
+            except Exception as e:
+                print(f"[Warn] 备份或解析原文案失败: {e}")
+
+            # 写入文案真源（原子写入防断电损坏）
+            try:
+                tmp_file = copy_file + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as fp:
+                    fp.write(final_text_to_write)
+                if os.path.exists(copy_file):
+                    os.replace(tmp_file, copy_file)
+                else:
+                    os.rename(tmp_file, copy_file)
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "message": f"物理写盘失败: {e}"})
+
+            # 更新内存缓存与时间戳
+            target_work["copyText"] = final_text_to_write
+            target_work["hasCopyText"] = True
+            target_work["updatedAt"] = int(time.time() * 1000)
+
+            # 更新作品标签与操作记录
+            tag_file = os.path.join(dir_path, "作品标签.json")
+            tag_data = {}
+            if os.path.exists(tag_file):
+                try:
+                    with open(tag_file, "r", encoding="utf-8") as fp:
+                        tag_data = json.load(fp)
+                except Exception:
+                    tag_data = {}
+            if "copy_edits" not in tag_data or not isinstance(tag_data["copy_edits"], list):
+                tag_data["copy_edits"] = []
+            tag_data["copy_edits"].append({
+                "device": device_name,
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "version": version_key,
+                "length": len(updated_copy)
+            })
+            try:
+                with open(tag_file, "w", encoding="utf-8") as fp:
+                    json.dump(tag_data, fp, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+            self.send_json(200, {
+                "ok": True,
+                "workId": work_id,
+                "message": "文案已成功同步保存至电脑真源，多端刷新即生效",
+                "charCount": len(updated_copy),
+                "device": device_name
             })
             return
 

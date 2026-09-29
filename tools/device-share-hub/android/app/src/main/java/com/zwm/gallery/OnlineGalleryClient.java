@@ -1146,6 +1146,33 @@ public final class OnlineGalleryClient {
         });
     }
 
+    /**
+     * DSH-138: 手机端在线修改文案并同步写回电脑真源（文案.txt）。
+     */
+    public void updateCopy(String workId, String updatedCopy, String deviceName, String versionTag, Callback<ActionResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                URL url = new URL(baseUrl + "/api/online/update-copy");
+                JSONObject body = new JSONObject();
+                body.put("workId", workId);
+                body.put("updatedCopy", updatedCopy);
+                body.put("device", deviceName);
+                if (versionTag != null && !versionTag.trim().isEmpty()) {
+                    body.put("versionTag", versionTag.trim());
+                }
+                String resp = httpPost(url, body.toString());
+                JSONObject json = new JSONObject(resp);
+                boolean ok = json.optBoolean("ok", false);
+                String msg = json.optString("message", ok ? "文案已成功同步至电脑" : "更新失败");
+                ActionResult res = new ActionResult(ok, workId, msg, "");
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
     // ------------------------------------------------------------------
     // 在线回收站：已使用（_已发送1次）/ 已标记垃圾（_垃圾作品）
     // ------------------------------------------------------------------

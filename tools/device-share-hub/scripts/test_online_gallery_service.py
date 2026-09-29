@@ -1362,7 +1362,148 @@ class TestDsh135LifecycleInheritance(unittest.TestCase):
             self.assertEqual(target["originDevice"], "VIVO X100")
             self.assertIn("红书种草", target["dispatchedVersions"])
 
+    def test_dsh139_secondary_device_does_not_kill_countdown(self):
+        """DSH-139: 第二台设备使用已有活跃倒计时的作品，绝对不重置倒计时，绝不过早物理移库"""
+        self.scanner.scan(force=True)
+        url = f"http://127.0.0.1:{self.port}/api/online/use-work"
+
+        # 1. 设备 A 首次使用并设置 1 小时保留倒计时
+        req_a = json.dumps({
+            "workId": "20260929_DSH135测试作品",
+            "device": "Device_A_Redmi",
+            "platform": "小红书",
+            "retentionDurationMs": 3600000,
+            "versionTag": "红书种草"
+        }).encode("utf-8")
+        with urllib.request.urlopen(urllib.request.Request(url, data=req_a, headers={"Content-Type": "application/json"})) as resp:
+            data_a = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data_a["ok"])
+            first_expire = data_a["expireAtMs"]
+            first_shared = data_a["firstSharedAtMs"]
+            self.assertFalse(data_a["moved"])
+            self.assertEqual(data_a["originDevice"], "Device_A_Redmi")
+
+        # 2. 设备 B 随后使用该作品，且不传 retentionDurationMs（或传其它时长）
+        req_b = json.dumps({
+            "workId": "20260929_DSH135测试作品",
+            "device": "Device_B_iPhone",
+            "platform": "抖音",
+            "retentionDurationMs": 0,
+            "versionTag": "抖音探店"
+        }).encode("utf-8")
+        with urllib.request.urlopen(urllib.request.Request(url, data=req_b, headers={"Content-Type": "application/json"})) as resp:
+            data_b = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data_b["ok"])
+            self.assertEqual(data_b["useCount"], 2)
+            self.assertFalse(data_b["moved"], "设备 B 使用不应过早移库，需保留设备 A 的倒计时")
+            self.assertEqual(data_b["expireAtMs"], first_expire, "倒计时过期时间戳必须完全锁定，不得被设备 B 清空或重置")
+            self.assertEqual(data_b["firstSharedAtMs"], first_shared, "首次分发时间戳必须锁定")
+            self.assertEqual(data_b["originDevice"], "Device_A_Redmi", "首发设备归属仍为设备 A")
+            self.assertIn("红书种草", data_b["dispatchedVersions"])
+            self.assertIn("抖音探店", data_b["dispatchedVersions"])
+
+        # 验证物理文件依然在原位
+        self.assertTrue(os.path.exists(self.work_dir))
+
+    def test_dsh138_update_copy_atomic_writeback(self):
+        """DSH-138: 手机端在线修改文案并原子写回电脑文案.txt，带防空壳防御与历史备份"""
+        self.scanner.scan(force=True)
+        url = f"http://127.0.0.1:{self.port}/api/online/update-copy"
+
+        # 1. 尝试提交过短文案（<30字），应被拦截
+        short_payload = json.dumps({
+            "workId": "20260929_DSH135测试作品",
+            "updatedCopy": "太短了不要",
+            "device": "Redmi K70"
+        }).encode("utf-8")
+        try:
+            urllib.request.urlopen(urllib.request.Request(url, data=short_payload, headers={"Content-Type": "application/json"}))
+            self.fail("文案过短应返回 400 拦截")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 400)
+            resp_body = json.loads(e.read().decode("utf-8"))
+            self.assertFalse(resp_body["ok"])
+
+        # 2. 提交合规文案（>=30字）
+        new_copy_content = (
+            "【杭州临安大明山团建最新方案】\n"
+            "秋天一定要来一次大明山！万亩草甸+绝美悬崖栈道+超级滑道，"
+            "全程无缝衔接，包含烧烤篝火晚会与露营体验，HR省心省力一键安排！"
+        )
+        valid_payload = json.dumps({
+            "workId": "20260929_DSH135测试作品",
+            "updatedCopy": new_copy_content,
+            "device": "Redmi K70",
+            "versionKey": "红书种草"
+        }).encode("utf-8")
+
+        with urllib.request.urlopen(urllib.request.Request(url, data=valid_payload, headers={"Content-Type": "application/json"})) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["workId"], "20260929_DSH135测试作品")
+
+        # 3. 校验磁盘物理文件
+        txt_path = os.path.join(self.work_dir, "文案.txt")
+        bak_path = os.path.join(self.work_dir, "文案.txt.bak")
+        self.assertTrue(os.path.exists(bak_path), "必须保留备份文件文案.txt.bak")
+        with open(txt_path, "r", encoding="utf-8") as f:
+            written_content = f.read()
+        self.assertEqual(written_content, new_copy_content, "文案.txt 必须被原子写入最新内容")
+
+        # 4. 校验作品标签.json 中的操作记录
+        tag_file = os.path.join(self.work_dir, "作品标签.json")
+        self.assertTrue(os.path.exists(tag_file))
+        with open(tag_file, "r", encoding="utf-8") as f:
+            tag_data = json.load(f)
+        self.assertIn("copy_edits", tag_data)
+        self.assertEqual(tag_data["copy_edits"][-1]["device"], "Redmi K70")
+
+    def test_dsh138_multi_slot_preservation(self):
+        """DSH-138: 当文案为多槽位格式时，修改特定平台槽位必须保留其他平台槽位"""
+        # 初始化带多槽位的文案.txt
+        multi_copy = (
+            "<<<COPY_FORMAT:3>>>\n\n"
+            "<<<DOUYIN_START>>>\n"
+            "抖音专属爆款脚本：杭州周边团建天花板，大明山秋日攻略！抓紧点赞收藏！\n"
+            "<<<DOUYIN_END>>>\n\n"
+            "<<<XHS_START>>>\n"
+            "小红书旧版种草文案：秋天就来这里玩吧，风景超好！\n"
+            "<<<XHS_END>>>"
+        )
+        txt_path = os.path.join(self.work_dir, "文案.txt")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(multi_copy)
+        self.scanner.scan(force=True)
+
+        url = f"http://127.0.0.1:{self.port}/api/online/update-copy"
+        new_xhs_copy = (
+            "【小红书秋季大改版】临安风之谷+大明山2天1晚全套攻略，"
+            "万亩草甸打卡拍照超绝出片，全程无坑避雷，HR直接复制转发群聊！"
+        )
+        payload = json.dumps({
+            "workId": "20260929_DSH135测试作品",
+            "updatedCopy": new_xhs_copy,
+            "device": "iPhone 15",
+            "versionKey": "种草版"
+        }).encode("utf-8")
+
+        with urllib.request.urlopen(urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(res["ok"])
+
+        with open(txt_path, "r", encoding="utf-8") as f:
+            final_content = f.read()
+
+        # 断言：抖音槽位完好无损，小红书槽位已被更新
+        self.assertIn("<<<DOUYIN_START>>>", final_content)
+        self.assertIn("抖音专属爆款脚本", final_content)
+        self.assertIn("<<<XHS_START>>>", final_content)
+        self.assertIn(new_xhs_copy, final_content)
+        self.assertNotIn("小红书旧版种草文案", final_content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
