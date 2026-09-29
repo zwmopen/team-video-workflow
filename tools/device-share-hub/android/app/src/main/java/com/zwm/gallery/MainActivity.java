@@ -2709,7 +2709,15 @@ public final class MainActivity extends Activity {
         return params;
     }
 
-    private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
+    private void toast(String value) {
+        try {
+            Toast t = Toast.makeText(this, value, Toast.LENGTH_SHORT);
+            t.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, dp(120));
+            t.show();
+        } catch (Exception e) {
+            Toast.makeText(this, value, Toast.LENGTH_SHORT).show();
+        }
+    }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 
@@ -3052,8 +3060,42 @@ public final class MainActivity extends Activity {
                 if (!isOnlineMode || showingTrash) return;
                 onlineWorks.clear();
                 if (works != null) {
-                    onlineWorks.addAll(works);
+                    for (OnlineWorkEntry w : works) {
+                        java.util.Set<String> localVers = getLocalDispatchedVersions(w.id);
+                        if (!localVers.isEmpty()) {
+                            List<String> mergedVers = new ArrayList<>(w.dispatchedVersions);
+                            List<String> mergedDisp = new ArrayList<>(w.dispatchedTo);
+                            for (String lv : localVers) {
+                                if (!mergedVers.contains(lv)) mergedVers.add(lv);
+                                String tag = getDeviceName() + "(" + lv + ")";
+                                if (!mergedDisp.contains(tag)) mergedDisp.add(tag);
+                            }
+                            int mergedCount = Math.max(w.useCount, mergedVers.size());
+                            OnlineWorkEntry mergedEntry = new OnlineWorkEntry(
+                                    w.id, w.title, w.destination, w.stage,
+                                    mergedCount, w.maxUses, true, Math.max(0, w.maxUses - mergedCount),
+                                    mergedCount >= 2 ? "已发送" : "已发1次",
+                                    w.images, w.imageCount, w.copyText, w.hasCopyText,
+                                    mergedDisp, w.updatedAt, w.garbage, w.garbageRemark,
+                                    w.path, w.firstSharedAtMs, w.expireAtMs, w.originDevice, mergedVers
+                            );
+                            onlineWorks.add(mergedEntry);
+                        } else {
+                            onlineWorks.add(w);
+                        }
+                    }
                 }
+                // DSH-135: 已使用的作品在到期前统一置顶在货架顶部（多端同步置顶）
+                Collections.sort(onlineWorks, (a, b) -> {
+                    if (a.useCount > 0 && b.useCount == 0) return -1;
+                    if (a.useCount == 0 && b.useCount > 0) return 1;
+                    if (a.useCount > 0 && b.useCount > 0) {
+                        long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
+                        long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
+                        return Long.compare(bTime, aTime);
+                    }
+                    return 0;
+                });
                 mergeLocalSentWorks();
                 onlineListFromSnapshot = false;
                 onlineSnapshotAtMs = 0L;
@@ -3061,8 +3103,6 @@ public final class MainActivity extends Activity {
                     updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
                 }
                 applyOnlineCategoryFilter(selectedOnlineCategory);
-                // DSH-107：用户口径「安卓顶部那个已连接电脑在线相册 (url)就别显示了」
-// line 2906 状态栏只保留作品数，去除电脑名/URL/端口等技术字段。
                 statusText.setText("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
                 finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
             }
@@ -3807,10 +3847,13 @@ public final class MainActivity extends Activity {
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
         long moveAfterMs = cleanup.moveAfterMs();
 
+        // DSH-133: 批处理 O(1) 集合过滤，彻底消除每切换一次分类阻塞 3.6 秒的卡顿
+        java.util.Set<String> trashedIds = OnlineWorkLifecycle.getTrashedIds(this, nowMs, moveAfterMs);
+
         currentOnlineFilteredEntries.clear();
         for (OnlineWorkEntry work : onlineWorks) {
             // 核心生命周期：若已被移入手机回收站或已达设置时间（如1小时），在在线活跃相册中隐藏
-            if (OnlineWorkLifecycle.shouldBeInTrash(this, work.id, nowMs, moveAfterMs)) {
+            if (trashedIds.contains(work.id)) {
                 continue;
             }
             if (!WorkCategory.ALL.equals(catKey) && !"全部".equals(catKey)) {
@@ -3981,6 +4024,19 @@ public final class MainActivity extends Activity {
         if (!timeBadge.isEmpty()) {
             detail.append(" · ").append(timeBadge);
         }
+        // DSH-135: 统一倒计时药丸展示（继承首发设备生命周期）
+        if (work.useCount > 0) {
+            CleanupSettings.Values cValues = CleanupSettings.read(this);
+            long expireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? work.firstSharedAtMs + cValues.moveAfterMs() : 0);
+            long nowMsTime = System.currentTimeMillis();
+            if (expireMs > 0 && expireMs > nowMsTime) {
+                long remainingMin = Math.max(1, (expireMs - nowMsTime) / 60000L);
+                detail.append(" · 剩 ").append(remainingMin).append(" 分钟入回收站");
+                if (work.originDevice != null && !work.originDevice.isEmpty()) {
+                    detail.append(" (来自 ").append(work.originDevice).append(")");
+                }
+            }
+        }
         if (work.useCount > 0 && work.dispatchedTo != null && !work.dispatchedTo.isEmpty()) {
             detail.append("\n记录：").append(String.join("、", work.dispatchedTo));
         }
@@ -4019,9 +4075,14 @@ public final class MainActivity extends Activity {
             String extracted = (item.copyText != null && !item.copyText.isEmpty())
                     ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.copyText, item.platform);
 
-            // DSH-130-B: 判定该版本按钮是否已被使用或分发（dispatchedTo 中包含该标签）
+            // DSH-130-B & DSH-137: 判定该版本按钮是否已被使用或分发（多重来源：本地持久化缓存、dispatchedVersions、dispatchedTo）
             boolean isVersionDispatched = false;
-            if (work.dispatchedTo != null) {
+            java.util.Set<String> localDispatched = getLocalDispatchedVersions(work.id);
+            if (localDispatched.contains(item.buttonLabel) || (item.platform != null && localDispatched.contains(item.platform.code))) {
+                isVersionDispatched = true;
+            } else if (work.dispatchedVersions != null && (work.dispatchedVersions.contains(item.buttonLabel) || (item.platform != null && work.dispatchedVersions.contains(item.platform.code)))) {
+                isVersionDispatched = true;
+            } else if (work.dispatchedTo != null) {
                 for (String tag : work.dispatchedTo) {
                     if (tag != null && (tag.contains(item.buttonLabel)
                             || (item.platform != null && tag.contains(item.platform.code)))) {
@@ -4681,9 +4742,26 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private java.util.Set<String> getLocalDispatchedVersions(String workId) {
+        if (workId == null || workId.isEmpty()) return Collections.emptySet();
+        SharedPreferences sp = getSharedPreferences("online_dispatched_versions", Context.MODE_PRIVATE);
+        return sp.getStringSet(workId, Collections.emptySet());
+    }
+
+    private void recordLocalDispatchedVersion(String workId, String versionTag) {
+        if (workId == null || workId.isEmpty() || versionTag == null || versionTag.trim().isEmpty()) return;
+        SharedPreferences sp = getSharedPreferences("online_dispatched_versions", Context.MODE_PRIVATE);
+        java.util.Set<String> set = new java.util.HashSet<>(sp.getStringSet(workId, Collections.emptySet()));
+        set.add(versionTag.trim());
+        sp.edit().putStringSet(workId, set).apply();
+    }
+
     private void optimisticMarkWorkUsedAndTop(String workId, String dispatchTag, String versionTag, String destination) {
         // 1. 累计该分类的使用热度（让分类 Tab 智能靠前）
         incrementOnlineCategoryUsageCount(destination);
+
+        // DSH-137: 本地持久化记录已使用的文案版本标签，确保任何刷新对勾 ✓ 永不丢失
+        recordLocalDispatchedVersion(workId, versionTag);
 
         // 2. 本地生命周期打标（启动倒计时）
         for (OnlineWorkEntry w : onlineWorks) {
@@ -4704,14 +4782,22 @@ public final class MainActivity extends Activity {
                 if (dispatchTag != null && !newDispatched.contains(dispatchTag)) {
                     newDispatched.add(dispatchTag);
                 }
+                List<String> newVers = new ArrayList<>(old.dispatchedVersions);
+                if (versionTag != null && !newVers.contains(versionTag)) {
+                    newVers.add(versionTag);
+                }
                 int newCount = old.useCount + 1;
                 int remaining = Math.max(0, old.remainingUses - 1);
+                long firstShared = old.firstSharedAtMs > 0 ? old.firstSharedAtMs : System.currentTimeMillis();
+                CleanupSettings.Values cVal = CleanupSettings.read(this);
+                long exp = old.expireAtMs > 0 ? old.expireAtMs : (firstShared + cVal.moveAfterMs());
                 updatedEntry = new OnlineWorkEntry(
                         old.id, old.title, old.destination, old.stage,
                         newCount, old.maxUses, true, remaining,
                         newCount >= 2 ? "已发送" : "已发1次",
                         old.images, old.imageCount, old.copyText, old.hasCopyText,
-                        newDispatched, System.currentTimeMillis()
+                        newDispatched, System.currentTimeMillis(), old.garbage, old.garbageRemark,
+                        old.path, firstShared, exp, getDeviceName(), newVers
                 );
                 break;
             }
@@ -4756,7 +4842,26 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        // 创建并显示动态下载进度弹窗
+        // ==================== DSH-136: 本地命中 0 弹窗秒呼系统分享 ====================
+        if (onlineClient.areAllWorkImagesCachedLocally(work.id, work.images)) {
+            List<java.io.File> cachedFiles = onlineClient.getCachedLocalWorkImages(work.id, work.images);
+            launchOnlineShare(work, cachedFiles, copyText, platformCode);
+            CleanupSettings.Values cleanupVal = CleanupSettings.read(this);
+            onlineClient.recordUse(work.id, getDeviceName(), versionTag, cleanupVal.moveAfterMs(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
+                @Override
+                public void onSuccess(OnlineGalleryClient.UseResult result) {
+                    if (result != null && result.ok) {
+                        updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag);
+                    }
+                }
+
+                @Override
+                public void onError(Exception error) {}
+            });
+            return;
+        }
+
+        // 创建并显示动态下载进度弹窗（仅在未缓存需要真实下载时弹出）
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setCancelable(false);
 
@@ -4819,7 +4924,8 @@ public final class MainActivity extends Activity {
             }
         });
 
-        onlineClient.recordUse(work.id, getDeviceName(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
+        CleanupSettings.Values cleanupVal = CleanupSettings.read(this);
+        onlineClient.recordUse(work.id, getDeviceName(), versionTag, cleanupVal.moveAfterMs(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
                 if (result != null && result.ok) {
@@ -4913,7 +5019,8 @@ public final class MainActivity extends Activity {
                         newCount, old.maxUses, true, remainingUses,
                         newCount >= 2 ? "已发送" : "已发1次",
                         old.images, old.imageCount, old.copyText, old.hasCopyText,
-                        newDispatched, System.currentTimeMillis()
+                        newDispatched, System.currentTimeMillis(), old.garbage, old.garbageRemark,
+                        old.path, old.firstSharedAtMs, old.expireAtMs, old.originDevice, old.dispatchedVersions
                 );
                 onlineWorks.remove(i);
                 onlineWorks.add(0, updated);

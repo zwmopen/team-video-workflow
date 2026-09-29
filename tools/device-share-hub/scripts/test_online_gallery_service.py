@@ -1295,5 +1295,74 @@ class TestThumbInflight(unittest.TestCase):
                       "只过了 1.5 倍冷却期的手机不能被清掉，否则冷却会失效")
 
 
+class TestDsh135LifecycleInheritance(unittest.TestCase):
+    """【DSH-135 闸门】首发设备生命周期时间戳继承与文案版本标签记录。"""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp(prefix="dsh135_test_")
+        self.stage0 = os.path.join(self.tmp_dir, "已发送0次（抖音小红书可发）")
+        os.makedirs(self.stage0, exist_ok=True)
+        self.work_dir = os.path.join(self.stage0, "20260929_DSH135测试作品")
+        os.makedirs(self.work_dir, exist_ok=True)
+        with open(os.path.join(self.work_dir, "文案.txt"), "w", encoding="utf-8") as f:
+            f.write("安吉秋日团建攻略：HR直接抄作业！正文内容丰富真实有效。")
+        from PIL import Image
+        img = Image.new("RGB", (100, 100), color="blue")
+        img.save(os.path.join(self.work_dir, "P1.png"))
+
+        self.scanner = WorkScanner(self.tmp_dir)
+        self.old_scanner = getattr(OnlineGalleryHandler, "scanner", None)
+        OnlineGalleryHandler.scanner = self.scanner
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), OnlineGalleryHandler)
+        self.port = self.server.server_address[1]
+        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_thread.start()
+
+    def tearDown(self):
+        try:
+            self.server.shutdown()
+            self.server.server_close()
+        except Exception:
+            pass
+        OnlineGalleryHandler.scanner = self.old_scanner
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_dsh135_use_work_inherits_lifecycle_without_premature_move(self):
+        self.scanner.scan(force=True)
+        url = f"http://127.0.0.1:{self.port}/api/online/use-work"
+        req_data = json.dumps({
+            "workId": "20260929_DSH135测试作品",
+            "device": "VIVO X100",
+            "platform": "小红书",
+            "retentionDurationMs": 3600000,
+            "versionTag": "红书种草"
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=req_data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["useCount"], 1)
+            self.assertFalse(data["moved"], "配置了保留时长时未到期绝不提前移库")
+            self.assertGreater(data["firstSharedAtMs"], 0)
+            self.assertGreater(data["expireAtMs"], data["firstSharedAtMs"])
+            self.assertEqual(data["originDevice"], "VIVO X100")
+            self.assertIn("红书种草", data["dispatchedVersions"])
+
+        # 作品物理本体依然在原货架，未被过早移走
+        self.assertTrue(os.path.exists(self.work_dir))
+
+        # 再次请求作品列表，验证元数据全量携带
+        works_url = f"http://127.0.0.1:{self.port}/api/online/works"
+        with urllib.request.urlopen(works_url) as resp:
+            wdata = json.loads(resp.read().decode("utf-8"))
+            works = wdata.get("works", [])
+            target = next((w for w in works if w["id"] == "20260929_DSH135测试作品"), None)
+            self.assertIsNotNone(target, "作品应仍留在货架可见")
+            self.assertEqual(target["useCount"], 1)
+            self.assertEqual(target["originDevice"], "VIVO X100")
+            self.assertIn("红书种草", target["dispatchedVersions"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

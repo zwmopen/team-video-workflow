@@ -24,6 +24,10 @@ public final class OnlineWorkLifecycle {
     private static final String PREF_NAME = "online_work_lifecycle";
     private static final String KEY_RECORDS = "lifecycle_records";
 
+    // DSH-133: 静态内存缓存与 Map 化，消除 500+ 套作品在主线程循环中反复读取磁盘反序列化 JSON 的耗时
+    private static List<Item> MEMORY_CACHE = null;
+    private static final java.util.Map<String, Item> ITEM_MAP = new java.util.concurrent.ConcurrentHashMap<>();
+
     public static final class Item {
         public final String id;
         public final String title;
@@ -89,23 +93,34 @@ public final class OnlineWorkLifecycle {
     private OnlineWorkLifecycle() {}
 
     private static synchronized List<Item> loadAll(Context context) {
+        if (MEMORY_CACHE != null) {
+            return new ArrayList<>(MEMORY_CACHE);
+        }
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         String raw = prefs.getString(KEY_RECORDS, "[]");
         List<Item> list = new ArrayList<>();
+        ITEM_MAP.clear();
         try {
             JSONArray arr = new JSONArray(raw);
             for (int i = 0; i < arr.length(); i++) {
                 Item item = Item.fromJson(arr.optJSONObject(i));
-                if (item != null) list.add(item);
+                if (item != null) {
+                    list.add(item);
+                    ITEM_MAP.put(item.id, item);
+                }
             }
         } catch (Exception ignored) {}
+        MEMORY_CACHE = new ArrayList<>(list);
         return list;
     }
 
     private static synchronized void saveAll(Context context, List<Item> list) {
+        MEMORY_CACHE = new ArrayList<>(list);
+        ITEM_MAP.clear();
         JSONArray arr = new JSONArray();
         for (Item it : list) {
             arr.put(it.toJson());
+            ITEM_MAP.put(it.id, it);
         }
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                 .edit().putString(KEY_RECORDS, arr.toString()).apply();
@@ -157,31 +172,46 @@ public final class OnlineWorkLifecycle {
         return existing;
     }
 
+    /** DSH-133: 批处理一次性返回所有在回收站中的作品 ID 集合（O(1) 过滤，对齐 iOS） */
+    public static synchronized java.util.Set<String> getTrashedIds(Context context, long nowMs, long moveAfterMs) {
+        List<Item> list = loadAll(context);
+        java.util.Set<String> trashed = new java.util.HashSet<>();
+        boolean modified = false;
+        for (Item it : list) {
+            if (it.trashedAtMs > 0) {
+                trashed.add(it.id);
+            } else if (it.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= it.firstSharedAtMs + moveAfterMs) {
+                it.trashedAtMs = it.firstSharedAtMs + moveAfterMs;
+                trashed.add(it.id);
+                modified = true;
+            }
+        }
+        if (modified) {
+            saveAll(context, list);
+        }
+        return trashed;
+    }
+
     /** 判断某作品在手机端是否应被移入回收站（包含 1 小时自动到期或手动删除） */
     public static synchronized boolean shouldBeInTrash(Context context, String workId, long nowMs, long moveAfterMs) {
-        List<Item> list = loadAll(context);
-        for (Item it : list) {
-            if (it.id.equals(workId)) {
-                if (it.trashedAtMs > 0) return true;
-                if (it.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= it.firstSharedAtMs + moveAfterMs) {
-                    // 自动到期移入回收站
-                    it.trashedAtMs = it.firstSharedAtMs + moveAfterMs;
-                    saveAll(context, list);
-                    return true;
-                }
-                return false;
+        if (MEMORY_CACHE == null) loadAll(context);
+        Item it = ITEM_MAP.get(workId);
+        if (it != null) {
+            if (it.trashedAtMs > 0) return true;
+            if (it.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= it.firstSharedAtMs + moveAfterMs) {
+                it.trashedAtMs = it.firstSharedAtMs + moveAfterMs;
+                saveAll(context, new ArrayList<>(MEMORY_CACHE));
+                return true;
             }
+            return false;
         }
         return false;
     }
 
-    /** 获取某个作品的使用时间记录（如果存在） */
+    /** 获取某个作品的使用时间记录（如果存在，O(1) Map 命中） */
     public static synchronized Item getItem(Context context, String workId) {
-        List<Item> list = loadAll(context);
-        for (Item it : list) {
-            if (it.id.equals(workId)) return it;
-        }
-        return null;
+        if (MEMORY_CACHE == null) loadAll(context);
+        return ITEM_MAP.get(workId);
     }
 
     /**

@@ -2186,6 +2186,10 @@ class WorkScanner:
             "remainingUses": max(0, 2 - int(use_count)),
             "statusLabel": "已使用" if use_count > 0 else "",
             "dispatchedTo": distribution.get("dispatchedTo", []),
+            "firstSharedAtMs": int(distribution.get("firstSharedAtMs") or 0),
+            "expireAtMs": int(distribution.get("expireAtMs") or 0),
+            "originDevice": str(distribution.get("originDevice") or ""),
+            "dispatchedVersions": distribution.get("dispatchedVersions") or [],
             "imageCount": len(images),
             "images": images,
             "copyText": copy_text,
@@ -3574,6 +3578,30 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             new_count = current_count + 1
             dist["useCount"] = new_count
 
+            # DSH-135: 首发设备生命周期继承
+            now_ms = int(time.time() * 1000)
+            retention_ms = req.get("retentionDurationMs")
+            if retention_ms is not None:
+                retention_duration_ms = max(0, int(retention_ms))
+            else:
+                retention_duration_ms = 0
+
+            if retention_duration_ms > 0:
+                if not dist.get("firstSharedAtMs"):
+                    dist["firstSharedAtMs"] = now_ms
+                    dist["expireAtMs"] = now_ms + retention_duration_ms
+                    dist["originDevice"] = device_name
+                else:
+                    if not dist.get("expireAtMs"):
+                        dist["expireAtMs"] = dist["firstSharedAtMs"] + retention_duration_ms
+
+            # DSH-137: 记录具体分发的文案版本标签
+            version_tag = req.get("versionTag", "").strip()
+            dispatched_versions = dist.get("dispatchedVersions", [])
+            if version_tag and version_tag not in dispatched_versions:
+                dispatched_versions.append(version_tag)
+            dist["dispatchedVersions"] = dispatched_versions
+
             dispatched_list = dist.get("dispatchedTo", [])
             record_str = f"{device_name} ({platform} @ {time.strftime('%Y-%m-%d %H:%M:%S')})"
             if record_str not in dispatched_list:
@@ -3598,10 +3626,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Warn] Failed to write usage log: {e}")
 
-            # 核心业务铁律：只要手机端点击分享并使用过一次，电脑端后台自动将该作品物理移入「_已发送1次（微信公众号可发）」
+            # DSH-135: 核心业务规则：
+            # 若配置了生命周期保留时长（retention_duration_ms > 0 且未到期），作品继续安稳留在当前货架上，
+            # 供所有连接设备（红米、VIVO、iPhone）同频置顶展示与共享状态；
+            # 仅当未配置保留时长（<=0）、或强制移动 forceMove、或已到达过期时间 expireAtMs 时，才物理移库。
             moved = False
             target_dest_path = ""
-            if new_count >= 1:
+            force_move = bool(req.get("forceMove", False))
+            should_move = force_move or (retention_duration_ms <= 0) or (dist.get("expireAtMs") and now_ms >= dist["expireAtMs"])
+
+            if should_move and new_count >= 1:
                 ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
                 moved = ok
                 if moved:
@@ -3611,7 +3645,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     except Exception as _ce:
                         print(f"[Warn] 清理关联软链接失败: {_ce}")
 
-            msg = f"已成功记录第 {new_count} 次使用" + ("，电脑端已自动移入「_已发送1次」" if moved else "")
+            msg = f"已成功记录第 {new_count} 次使用" + ("，电脑端已自动移入「_已发送1次」" if moved else "，保留在货架并已继承首发生命周期")
 
             self.scanner.scan(force=True)
 
@@ -3623,7 +3657,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "moved": moved,
                 "targetPath": target_dest_path,
                 "message": msg,
-                "dispatchedTo": dispatched_list
+                "dispatchedTo": dispatched_list,
+                "firstSharedAtMs": dist.get("firstSharedAtMs", 0),
+                "expireAtMs": dist.get("expireAtMs", 0),
+                "originDevice": dist.get("originDevice", ""),
+                "dispatchedVersions": dist.get("dispatchedVersions", [])
             })
             return
 

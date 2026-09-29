@@ -28,17 +28,25 @@ public final class OnlineWorkLifecycle {
         }
     }
 
+    private static var cachedList: [Item]? = nil
+
     private init() {}
 
     private static func loadAll() -> [Item] {
+        if let mem = cachedList {
+            return mem
+        }
         guard let data = UserDefaults.standard.data(forKey: prefName),
               let list = try? JSONDecoder().decode([Item].self, from: data) else {
+            cachedList = []
             return []
         }
+        cachedList = list
         return list
     }
 
     private static func saveAll(_ list: [Item]) {
+        cachedList = list
         if let data = try? JSONEncoder().encode(list) {
             UserDefaults.standard.set(data, forKey: prefName)
         }
@@ -178,6 +186,11 @@ public final class OnlineWorkLifecycle {
                 trashedIds.insert(item.id)
             }
         }
-        return works.filter { !trashedIds.contains($0.id) }
+        return works.filter { entry in
+            if entry.expireAtMs > 0 && nowMs >= entry.expireAtMs {
+                return false
+            }
+            return !trashedIds.contains(entry.id)
+        }
     }
 }

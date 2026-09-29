@@ -721,7 +721,46 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
             switch workResult {
             case .success(let works)?:
-                self.onlineWorks = works
+                // DSH-135 & DSH-137: 本地状态合并（State Merge）与生命周期未到期作品统一置顶
+                let now = Date().timeIntervalSince1970 * 1000
+                var mergedWorks: [OnlineWorkEntry] = []
+                for w in works {
+                    let localVers = LocalDispatchedStore.get(workId: w.id)
+                    var mergedVers = w.dispatchedVersions
+                    var mergedDisp = w.dispatchedTo
+                    for lv in localVers {
+                        if !mergedVers.contains(lv) { mergedVers.append(lv) }
+                        let tag = "iPhone(\(lv))"
+                        if !mergedDisp.contains(tag) { mergedDisp.append(tag) }
+                    }
+                    let rec = OnlineWorkLifecycle.getRecord(id: w.id)
+                    let usedCount = max(w.useCount, rec?.useCount ?? 0)
+                    var expireAt = w.expireAtMs
+                    var firstShared = w.firstSharedAtMs
+                    if firstShared <= 0, let r = rec, r.firstSharedAtMs > 0 {
+                        firstShared = r.firstSharedAtMs
+                    }
+                    if expireAt <= 0 && firstShared > 0 {
+                        expireAt = firstShared + 3600000
+                    }
+                    let updated = OnlineWorkEntry(
+                        id: w.id, title: w.title, destination: w.destination, stage: w.stage,
+                        useCount: usedCount, maxUses: w.maxUses, used: w.used || usedCount > 0,
+                        remainingUses: max(0, w.maxUses - usedCount),
+                        statusLabel: usedCount >= 2 ? "已发送" : (usedCount > 0 ? "已发1次" : w.statusLabel),
+                        images: w.images, imageCount: w.imageCount, copyText: w.copyText,
+                        hasCopyText: w.hasCopyText, dispatchedTo: mergedDisp,
+                        updatedAt: w.updatedAt, garbage: w.garbage, garbageRemark: w.garbageRemark,
+                        path: w.path, firstSharedAtMs: firstShared, expireAtMs: expireAt,
+                        originDevice: w.originDevice, dispatchedVersions: mergedVers
+                    )
+                    mergedWorks.append(updated)
+                }
+
+                let activeUsed = mergedWorks.filter { $0.expireAtMs > now }
+                    .sorted { $0.firstSharedAtMs > $1.firstSharedAtMs }
+                let remaining = mergedWorks.filter { $0.expireAtMs <= now }
+                self.onlineWorks = activeUsed + remaining
                 self.renderOnlineUI()
             case .failure(let err)?:
                 // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
@@ -1095,6 +1134,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 3. 分享载体改为**文件 URL**（2026-09-22 修复，DSH-090）——旧实现把 `[UIImage]` 直接交给
     ///    `UIActivityViewController`，小红书/抖音的 share extension 会把 N 张图读成同一张
     ///    （实测 9 张全变 1 张，而预览正常）。现与本地相册 `prepareShare` 同传 `NSURL`。
+enum LocalDispatchedStore {
+    static func get(workId: String) -> Set<String> {
+        let key = "dispatched_vers_\(workId)"
+        let arr = UserDefaults.standard.stringArray(forKey: key) ?? []
+        return Set(arr)
+    }
+
+    static func save(workId: String, version: String) {
+        var set = get(workId: workId)
+        set.insert(version)
+        let key = "dispatched_vers_\(workId)"
+        UserDefaults.standard.set(Array(set), forKey: key)
+    }
+}
+
     private func optimisticMarkOnlineWorkUsedAndTop(workId: String, versionLabel: String, destination: String) {
         // 1. 累计该分类的使用热度（让分类 Tab 智能靠前）
         incrementOnlineCategoryUsage(key: destination)
@@ -1106,15 +1160,25 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         var newDispatched = old.dispatchedTo
         let tag = "iPhone(\(versionLabel))"
         if !newDispatched.contains(tag) { newDispatched.append(tag) }
+        var newVers = old.dispatchedVersions
+        if !newVers.contains(versionLabel) { newVers.append(versionLabel) }
+
+        let now = Date().timeIntervalSince1970 * 1000
         let newCount = old.useCount + 1
         let remaining = max(0, old.remainingUses - 1)
+        let firstShared = old.firstSharedAtMs > 0 ? old.firstSharedAtMs : now
+        let expireAt = old.expireAtMs > 0 ? old.expireAtMs : (firstShared + 3600000)
+
         let updated = OnlineWorkEntry(
             id: old.id, title: old.title, destination: old.destination, stage: old.stage,
             useCount: newCount, maxUses: old.maxUses, used: true, remainingUses: remaining,
             statusLabel: newCount >= 2 ? "已发送" : "已发1次",
             images: old.images, imageCount: old.imageCount, copyText: old.copyText,
             hasCopyText: old.hasCopyText, dispatchedTo: newDispatched,
-            updatedAt: Date().timeIntervalSince1970 * 1000
+            updatedAt: now, garbage: old.garbage, garbageRemark: old.garbageRemark,
+            path: old.path, firstSharedAtMs: firstShared, expireAtMs: expireAt,
+            originDevice: old.originDevice.isEmpty ? UIDevice.current.name : old.originDevice,
+            dispatchedVersions: newVers
         )
 
         // DSH-130-A: 0ms 内存置顶
@@ -1140,7 +1204,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         UIPasteboard.general.string = textToCopy
         showToast("已复制：\(item.buttonLabel)")
 
-        // ==================== DSH-130: 0ms 乐观 UI 更新与就地置顶 ====================
+        // ==================== DSH-130 & DSH-137: 本地持久化与 0ms 乐观 UI 更新与就地置顶 ====================
+        LocalDispatchedStore.save(workId: entry.id, version: item.buttonLabel)
         optimisticMarkOnlineWorkUsedAndTop(workId: entry.id, versionLabel: item.buttonLabel, destination: entry.destination)
 
         guard !entry.images.isEmpty else {
@@ -1148,43 +1213,56 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             return
         }
 
-        let total = entry.images.count
-        let progress = UIAlertController(title: "正在从电脑同步原图到手机…",
-                                         message: "准备连接电脑拉取 \(total) 张原图…",
-                                         preferredStyle: .alert)
-        progress.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(progress, animated: true)
+        // DSH-136: 极速检测本地是否已 100% 缓存所有图片，若是则 0 弹窗秒呼系统分享
+        let allCached = OnlineGalleryClient.shared.areAllWorkImagesCachedLocally(entry)
+        var progress: UIAlertController? = nil
+        if !allCached {
+            let total = entry.images.count
+            let alert = UIAlertController(title: "正在从电脑同步原图到手机…",
+                                          message: "准备连接电脑拉取 \(total) 张原图…",
+                                          preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+            progress = alert
+            present(alert, animated: true)
+        }
 
         // DSH-102：传 workId 给服务端，避免 image_name_index 同名冲突导致图错位
         downloadAllImages(paths: entry.images, workId: entry.id, onProgress: { [weak progress] done, count, name in
             progress?.message = "正在下载：\(name)（\(done)/\(count) 张）"
         }, completion: { [weak self] urls in
             guard let self = self else { return }
-            progress.dismiss(animated: true) {
+            let launchShare = {
                 guard !urls.isEmpty else {
                     self.showError("图片加载失败，无法拉起分享；文案已在剪贴板")
                     return
                 }
-                self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
-                // DSH-090：与本地相册 prepareShare 同机制 —— 传**文件 URL**（`as NSURL`），
-                // 不传内存 UIImage，否则小红书/抖音会把多张图读成同一张。
+                if !allCached {
+                    self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
+                }
+                // DSH-090：与本地相册 prepareShare 同机制 —— 传文件 URL（as NSURL）
                 let activity = UIActivityViewController(activityItems: urls.map { $0 as NSURL },
                                                         applicationActivities: nil)
                 activity.popoverPresentationController?.sourceView = source
                 activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                    // 分享面板关闭后清理临时文件（无论是否真的分享出去）
+                    // 分享面板关闭后清理临时文件
                     if let dir = urls.first?.deletingLastPathComponent() {
                         try? FileManager.default.removeItem(at: dir)
                     }
                     guard completed, let self = self else { return }
-                    // 1. 通知电脑端物理归档移动至 _已发送1次（记录所选文案版本名，解绑特定平台）
-                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.buttonLabel)
+                    // 1. DSH-135: 继承首发设备生命周期，上报保留时长 1 小时与版本标签
+                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.buttonLabel, retentionDurationMs: 3600000, versionTag: item.buttonLabel)
                     // 2. 本地记录生命周期打标
                     OnlineWorkLifecycle.markUsed(work: entry)
-                    self.showToast("🚀 分享完成，电脑端已自动归档")
+                    self.showToast("🚀 分享完成，已同步全网生命周期")
                     self.loadOnlineData(silent: true)
                 }
                 self.present(activity, animated: true)
+            }
+
+            if let prg = progress {
+                prg.dismiss(animated: true, completion: launchShare)
+            } else {
+                launchShare()
             }
         })
     }
@@ -2239,18 +2317,37 @@ private final class WorkCell: UICollectionViewCell {
 
         name.text = "[\(entry.destination)] \(entry.title)"
         let record = OnlineWorkLifecycle.getRecord(id: entry.id)
-        let usedCount = record?.useCount ?? entry.useCount
+        let usedCount = max(entry.useCount, record?.useCount ?? 0)
         // 日期后缀：与 Android `extractTimestampBadge` 同源同格式（MM-dd HH:mm），
         // 取作品 id/title 的 `yyyyMMdd_HHmmss` 前缀；取不到就省略（不显示占位）。
         let onlineDate = WorkCell.cardDateSuffix(entry.id, entry.title)
         let onlineDatePart = onlineDate.isEmpty ? "" : " · " + onlineDate
+
+        // DSH-135: 统一生命周期倒计时药丸展示
+        let now = Date().timeIntervalSince1970 * 1000
+        var expireAt = entry.expireAtMs
+        var firstShared = entry.firstSharedAtMs
+        if firstShared <= 0, let r = record, r.firstSharedAtMs > 0 {
+            firstShared = r.firstSharedAtMs
+        }
+        if expireAt <= 0 && firstShared > 0 {
+            expireAt = firstShared + 3600000
+        }
+
         var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "
-            + (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
-        // DSH-093 C10：分发去向我们对齐 Android 在线卡 —— 安卓有这行，iOS 一直没渲染。
+        if expireAt > now {
+            let remainMin = max(1, Int((expireAt - now) / 60000))
+            let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
+            onlineDetail += "已使用\(usedCount)次\(dev) · 剩\(remainMin)分钟入回收站" + onlineDatePart
+        } else {
+            onlineDetail += (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
+        }
+
+        // DSH-093 C10：分发去向我们对齐 Android 在线卡
         if !entry.dispatchedTo.isEmpty {
             onlineDetail += "\n记录：" + entry.dispatchedTo.joined(separator: "、")
         }
-        // DSH-093 C11：垃圾备注。称呼统一叫「垃圾备注：」（回收站两处原本叫「备注：」）。
+        // DSH-093 C11：垃圾备注。称呼统一叫「垃圾备注：」
         if entry.garbage {
             onlineDetail += " · 🗑️ 垃圾样本\n垃圾备注：" + (entry.garbageRemark.isEmpty ? "（未填写）" : entry.garbageRemark)
         }
@@ -2301,14 +2398,16 @@ private final class WorkCell: UICollectionViewCell {
 
     private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
         let platforms = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
-        // 【文案缺失守卫】与 Android `onlineWorkCard` 1:1 对齐：剔除 `<<<…>>>` 后实质
-        // 字数不足 30 视为空壳作品 —— 不渲染任何可点击文案按钮（防止骨架/兜底冒充
-        // 真实文案），改为置灰标红占位；分享入口再做一次深度防御（见 shareOnline）。
         let copyMissing = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
+        // DSH-137: 多来源持久化对勾 ✓ 判定
+        let localDispatched = LocalDispatchedStore.get(workId: entry.id)
         let isDispatched: (Int) -> Bool = { idx in
             guard idx >= 0 && idx < platforms.count else { return false }
             let label = platforms[idx].buttonLabel
-            return entry.dispatchedTo.contains(where: { $0.contains(label) })
+            if localDispatched.contains(label) { return true }
+            if entry.dispatchedVersions.contains(label) { return true }
+            if entry.dispatchedTo.contains(where: { $0.contains(label) }) { return true }
+            return false
         }
         rebuildPlatformButtons(copyMissing ? [] : platforms, isOptimistic: isDispatched,
                                action: #selector(platformButtonTapped(_:)))

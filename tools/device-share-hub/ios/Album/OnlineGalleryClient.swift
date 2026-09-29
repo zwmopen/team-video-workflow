@@ -33,13 +33,22 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let garbageRemark: String
     /// 电脑端作品文件夹的绝对路径（用于「复制路径」按钮）
     public let path: String
+    /// DSH-135: 首次分享时间戳（毫秒）
+    public let firstSharedAtMs: Double
+    /// DSH-135: 移入回收站倒计时过期时间戳（毫秒）
+    public let expireAtMs: Double
+    /// DSH-135: 首发设备名称
+    public let originDevice: String
+    /// DSH-137: 已分发版本标签列表
+    public let dispatchedVersions: [String]
 
     public init(id: String, title: String, destination: String, stage: String,
                 useCount: Int, maxUses: Int, used: Bool, remainingUses: Int,
                 statusLabel: String, images: [String], imageCount: Int,
                 copyText: String, hasCopyText: Bool, dispatchedTo: [String],
                 updatedAt: Double, garbage: Bool = false, garbageRemark: String = "",
-                path: String = "") {
+                path: String = "", firstSharedAtMs: Double = 0, expireAtMs: Double = 0,
+                originDevice: String = "", dispatchedVersions: [String] = []) {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.destination = destination.isEmpty ? "其他" : destination
@@ -58,6 +67,10 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.garbage = garbage
         self.garbageRemark = garbageRemark
         self.path = path
+        self.firstSharedAtMs = firstSharedAtMs
+        self.expireAtMs = expireAtMs
+        self.originDevice = originDevice
+        self.dispatchedVersions = dispatchedVersions
     }
 
     public static func from(dict: [String: Any]) -> OnlineWorkEntry? {
@@ -87,13 +100,20 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        let firstSharedAtMs = (dict["firstSharedAtMs"] as? Double) ?? Double((dict["firstSharedAtMs"] as? Int) ?? 0)
+        let expireAtMs = (dict["expireAtMs"] as? Double) ?? Double((dict["expireAtMs"] as? Int) ?? 0)
+        let originDevice = (dict["originDevice"] as? String) ?? ""
+        let dispatchedVersions = (dict["dispatchedVersions"] as? [String]) ?? []
+
         return OnlineWorkEntry(
             id: id, title: title, destination: destination, stage: stage,
             useCount: useCount, maxUses: maxUses, used: used, remainingUses: remainingUses,
             statusLabel: statusLabel, images: images, imageCount: imageCount,
             copyText: copyText, hasCopyText: hasCopyText, dispatchedTo: dispatchedTo,
             updatedAt: updatedAt, garbage: garbage, garbageRemark: garbageRemark,
-            path: (dict["path"] as? String) ?? ""
+            path: (dict["path"] as? String) ?? "",
+            firstSharedAtMs: firstSharedAtMs, expireAtMs: expireAtMs,
+            originDevice: originDevice, dispatchedVersions: dispatchedVersions
         )
     }
 }
@@ -551,7 +571,18 @@ public final class OnlineGalleryClient {
         return fileManager.fileExists(atPath: diskURL.path)
     }
 
-    public func recordUse(workId: String, platform: String? = nil, completion: ((OnlineUseResult) -> Void)? = nil) {
+    /// 检查某作品的所有原画图片是否均已在本地就绪
+    public func areAllWorkImagesCachedLocally(_ entry: OnlineWorkEntry) -> Bool {
+        guard !entry.images.isEmpty else { return true }
+        for img in entry.images {
+            if !hasFullImageCached(path: img, workId: entry.id) {
+                return false
+            }
+        }
+        return true
+    }
+
+    public func recordUse(workId: String, platform: String? = nil, retentionDurationMs: Double = 3600000, versionTag: String? = nil, completion: ((OnlineUseResult) -> Void)? = nil) {
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/use-work") else {
             completion?(OnlineUseResult(ok: false, workId: workId, useCount: 0, remainingUses: 0, moved: false, message: "URL 错误"))
@@ -560,8 +591,15 @@ public final class OnlineGalleryClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var payload: [String: Any] = ["workId": workId, "device": UIDevice.current.name]
+        var payload: [String: Any] = [
+            "workId": workId,
+            "device": UIDevice.current.name,
+            "retentionDurationMs": retentionDurationMs
+        ]
         if let p = platform { payload["platform"] = p }
+        if let vt = versionTag, !vt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["versionTag"] = vt.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         session.dataTask(with: request) { data, _, _ in

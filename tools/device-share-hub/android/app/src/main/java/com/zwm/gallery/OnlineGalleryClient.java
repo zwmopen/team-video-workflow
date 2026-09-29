@@ -1094,6 +1094,10 @@ public final class OnlineGalleryClient {
     }
 
     public void recordUse(String workId, String deviceName, String platform, Callback<UseResult> callback) {
+        recordUse(workId, deviceName, platform, 3600000L, "", callback);
+    }
+
+    public void recordUse(String workId, String deviceName, String platform, long retentionDurationMs, String versionTag, Callback<UseResult> callback) {
         executor.execute(() -> {
             try {
                 String baseUrl = resolveBaseUrl();
@@ -1102,6 +1106,10 @@ public final class OnlineGalleryClient {
                 body.put("workId", workId);
                 body.put("device", deviceName);
                 body.put("platform", platform);
+                body.put("retentionDurationMs", retentionDurationMs);
+                if (versionTag != null && !versionTag.trim().isEmpty()) {
+                    body.put("versionTag", versionTag.trim());
+                }
                 String resp = httpPost(url, body.toString());
                 JSONObject json = new JSONObject(resp);
                 UseResult res = new UseResult(
@@ -1323,6 +1331,37 @@ public final class OnlineGalleryClient {
         void onProgress(int downloaded, int total, String currentFileName);
         void onSuccess(List<java.io.File> files);
         void onError(Exception error);
+    }
+
+    /**
+     * DSH-136: 极速检测本地是否已 100% 缓存该作品所有图片
+     */
+    public boolean areAllWorkImagesCachedLocally(String workId, List<String> fileNames) {
+        if (fileNames == null || fileNames.isEmpty()) return true;
+        java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
+        for (String fileName : fileNames) {
+            java.io.File localFile = new java.io.File(targetDir, fileName);
+            if (!localFile.exists() || localFile.length() <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * DSH-136: 获取本地已完整缓存的文件列表（用于 0 弹窗直接秒开系统分享）
+     */
+    public List<java.io.File> getCachedLocalWorkImages(String workId, List<String> fileNames) {
+        List<java.io.File> result = new ArrayList<>();
+        if (fileNames == null || fileNames.isEmpty()) return result;
+        java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
+        for (String fileName : fileNames) {
+            java.io.File localFile = new java.io.File(targetDir, fileName);
+            if (localFile.exists() && localFile.length() > 0) {
+                result.add(localFile);
+            }
+        }
+        return result;
     }
 
     public void downloadWorkImages(String workId, List<String> fileNames, Callback<List<java.io.File>> callback) {

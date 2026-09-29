@@ -31,6 +31,14 @@ public final class OnlineWorkEntry {
     public final String garbageRemark;
     /** 电脑端作品文件夹的绝对路径（用于「复制路径」按钮） */
     public final String path;
+    /** DSH-135: 首次分享时间戳（毫秒） */
+    public final long firstSharedAtMs;
+    /** DSH-135: 移入回收站倒计时过期时间戳（毫秒） */
+    public final long expireAtMs;
+    /** DSH-135: 首发设备名称 */
+    public final String originDevice;
+    /** DSH-137: 已分发的版本标签列表（如 xhs_grass、douyin 等） */
+    public final List<String> dispatchedVersions;
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
                            int useCount, int maxUses, boolean used, int remainingUses,
@@ -39,7 +47,7 @@ public final class OnlineWorkEntry {
                            long updatedAt) {
         this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
                 statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
-                updatedAt, false, "");
+                updatedAt, false, "", "", 0L, 0L, "", Collections.emptyList());
     }
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
@@ -49,7 +57,7 @@ public final class OnlineWorkEntry {
                            long updatedAt, boolean garbage, String garbageRemark) {
         this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
                 statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
-                updatedAt, garbage, garbageRemark, "");
+                updatedAt, garbage, garbageRemark, "", 0L, 0L, "", Collections.emptyList());
     }
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
@@ -57,6 +65,17 @@ public final class OnlineWorkEntry {
                            String statusLabel, List<String> images, int imageCount,
                            String copyText, boolean hasCopyText, List<String> dispatchedTo,
                            long updatedAt, boolean garbage, String garbageRemark, String path) {
+        this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
+                statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
+                updatedAt, garbage, garbageRemark, path, 0L, 0L, "", Collections.emptyList());
+    }
+
+    public OnlineWorkEntry(String id, String title, String destination, String stage,
+                           int useCount, int maxUses, boolean used, int remainingUses,
+                           String statusLabel, List<String> images, int imageCount,
+                           String copyText, boolean hasCopyText, List<String> dispatchedTo,
+                           long updatedAt, boolean garbage, String garbageRemark, String path,
+                           long firstSharedAtMs, long expireAtMs, String originDevice, List<String> dispatchedVersions) {
         this.id = id;
         this.title = title == null ? "" : title;
         this.destination = destination == null ? "其他" : destination;
@@ -75,6 +94,10 @@ public final class OnlineWorkEntry {
         this.garbage = garbage;
         this.garbageRemark = garbageRemark == null ? "" : garbageRemark;
         this.path = path == null ? "" : path;
+        this.firstSharedAtMs = firstSharedAtMs;
+        this.expireAtMs = expireAtMs;
+        this.originDevice = originDevice == null ? "" : originDevice;
+        this.dispatchedVersions = dispatchedVersions == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(dispatchedVersions));
     }
 
     public static OnlineWorkEntry fromJson(JSONObject json) {
@@ -121,9 +144,21 @@ public final class OnlineWorkEntry {
             garbageRemark = garbageObj.optString("remark", "").trim();
         }
 
+        long firstSharedAtMs = json.optLong("firstSharedAtMs", 0L);
+        long expireAtMs = json.optLong("expireAtMs", 0L);
+        String originDevice = json.optString("originDevice", "");
+        List<String> dispatchedVersions = new ArrayList<>();
+        JSONArray versArr = json.optJSONArray("dispatchedVersions");
+        if (versArr != null) {
+            for (int i = 0; i < versArr.length(); i++) {
+                String v = versArr.optString(i, "").trim();
+                if (!v.isEmpty()) dispatchedVersions.add(v);
+            }
+        }
+
         return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
                 hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark,
-                json.optString("path", ""));
+                json.optString("path", ""), firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions);
     }
 }
