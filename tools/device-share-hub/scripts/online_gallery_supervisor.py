@@ -209,10 +209,16 @@ def start_service() -> bool:
         log(f"拉起相册服务进程失败: {e}", "ERROR")
         return False
 
-    # 轮询等待就绪（每 0.5 秒一次，最多等 60 秒，充分容纳全库 529 套作品扫描）
+    # 轮询等待就绪（每 0.5 秒一次，最多等 180 秒）
+    # 2026-09-29 修复：原为 60 秒。冷启动首扫要重建缩略图（磁盘缓存被淘汰时尤甚），
+    # 实测超过 60 秒 → 被误判「拉起失败」→ 杀掉重来 → 永远起不来的死循环。
+    # 同时：等待期间若子进程已退出，立即放弃（避免干等）。
     ready = False
-    for _ in range(120):
+    for _ in range(360):
         time.sleep(0.5)
+        if not is_child_proc_running(_last_child_proc):
+            log("服务子进程在就绪等待期间已退出，放弃本次等待", "WARN")
+            break
         if probe_status(timeout=2.0):
             ready = True
             break
@@ -251,9 +257,17 @@ def main():
             if is_child_proc_running(_last_child_proc):
                 # 子进程仍在运行，执行宽容防抖探活
                 if not is_service_healthy():
-                    log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
-                    start_service()
-                    consecutive_ok_count = 0
+                    # 2026-09-29 修复：子进程活着 + 端口仍在监听 ≠ 死锁，
+                    # 很可能只是「忙」（冷启动首扫 / 缩略图重建 / watchdog force scan）。
+                    # 原逻辑只要 HTTP 探活超时就 kill 重启，导致首扫永远完不成的死循环。
+                    busy_pid = get_listening_pid(PORT)
+                    if busy_pid:
+                        log(f"服务进程存活且端口 {PORT} 仍在监听(PID={busy_pid})，"
+                            f"判定为「忙」而非死锁（首扫/缩略图重建中），本轮跳过自愈重启", "INFO")
+                    else:
+                        log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
+                        start_service()
+                        consecutive_ok_count = 0
                 else:
                     consecutive_ok_count += 1
                     if consecutive_ok_count % 720 == 0:
@@ -271,10 +285,25 @@ def main():
                             pass
                     consecutive_ok_count += 1
                 else:
-                    # 端口无服务且探活失败，立即自愈拉起！
-                    log("检测到相册服务进程已离线且端口无响应，立即启动自愈！", "INFO")
-                    start_service()
-                    consecutive_ok_count = 0
+                    # 2026-09-29 修复（真正的循环点）：守护每次被计划任务重启后
+                    # _last_child_proc 都是 None，必然走这里；若服务正在首扫（HTTP 不响应）
+                    # 就会 start_service() → kill_stale_processes() 把正在干活的服务杀掉，
+                    # 形成「永远起不来」的死循环。
+                    # 兜底：只要端口上已有进程在监听，就视为「首扫中」，接管而不自愈。
+                    busy_pid = get_listening_pid(PORT)
+                    if busy_pid:
+                        log(f"端口 {PORT} 已有服务在监听(PID={busy_pid})但暂未响应，"
+                            f"判定为首扫/重建中，本轮跳过自愈并直接接管", "INFO")
+                        try:
+                            import psutil
+                            _last_child_proc = psutil.Process(busy_pid)
+                        except Exception:
+                            pass
+                    else:
+                        # 端口无服务且探活失败，立即自愈拉起！
+                        log("检测到相册服务进程已离线且端口无响应，立即启动自愈！", "INFO")
+                        start_service()
+                        consecutive_ok_count = 0
         except Exception as e:
             log(f"守护主循环捕捉到未预期异常: {e}", "ERROR")
 
