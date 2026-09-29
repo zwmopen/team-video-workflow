@@ -2989,6 +2989,7 @@ public final class MainActivity extends Activity {
             if (present) continue;
             List<String> images = item.images == null ? new ArrayList<String>() : new ArrayList<>(item.images);
             String copyText = item.copyText == null ? "" : item.copyText;
+            String stage = "已发送" + item.useCount + "次";
             long itemExp = item.firstSharedAtMs > 0 ? (item.firstSharedAtMs + cleanup.moveAfterMs()) : 0L;
             onlineWorks.add(new OnlineWorkEntry(
                     item.id, item.title, item.destination, stage,
