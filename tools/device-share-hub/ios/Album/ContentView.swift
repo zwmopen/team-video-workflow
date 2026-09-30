@@ -2401,6 +2401,9 @@ private final class WorkCell: UICollectionViewCell {
             let remainMin = max(1, Int((expireAt - now) / 60000))
             let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
             onlineDetail += "已使用\(usedCount)次\(dev) · 剩\(remainMin)分钟入回收站" + onlineDatePart
+        } else if expireAt > 0 && usedCount > 0 {
+            let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
+            onlineDetail += "已到期 · 正在移入回收站…" + onlineDatePart
         } else {
             onlineDetail += (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
         }

@@ -3091,3 +3091,33 @@ totalWorks = 472
      - `OnlineWorkLifecycle.markUsed` 继承 `work.firstSharedAtMs`，彻底杜绝第二台手机本地重置时间轴；
      - iOS `OnlineUseResult` 与 `configureOnline` 保持全链路同频。
 
+## DSH-140 首发倒计时到期后长期停留在「即将入回收站」且电脑端未自动移库下架缺陷（已闭环交付 · v0.8.69 / build 180 · 2026-09-30）
+
+- **用户原始反馈（现场还原）**：
+  > “记录问题：目前手机上有一个被两个设备使用过的，他那个一直没有被删除到回收站不是应该显示多久后到回收站吗，这个一直显示即将进入回收站，但是有好久好久了一直没进去。也没个倒计时，没到回收站，算是个BUG”
+- **根因（逐行铁证）**：
+  1. **服务端移库动作过度被动（被锁在 `use-work` 入口）**：
+     - `online_gallery_service.py:3735` 原移库逻辑仅在客户端调用 `/api/online/use-work` 时才被动判定 `now_ms >= dist["expireAtMs"]`；
+     - 当两个设备分发完毕后，大家都在等待作品到期自动下架，没有任何设备会再去点击已过期的文案按钮；
+     - 导致服务端的后台轮询线程（`_poll_diff()`）每 60 秒只对比目录结构是否有文件增删，**完全没有主动定时巡检各作品 `expireAtMs` 并下架移库的职责**！作品永久滞留在待发货架目录（现场实盘抓取到 `20260913_101447` 超时 1013 分钟未移库）；
+  2. **Android 客户端货架过滤缺失**：
+     - `MainActivity.java:3858` 的 `applyOnlineCategoryFilter` 原逻辑只依赖本地 `trashedIds.contains(work.id)` 进行过滤；
+     - 若该作品由其他设备首发，本地 Lifecycle 没有持久化记录，代码漏写了 `work.expireAtMs > 0 && nowMs >= work.expireAtMs` 判定，导致已过期的僵尸作品继续穿透渲染在货架列表中；
+  3. **倒计时超时文案冰冷僵死**：
+     - `MainActivity.java:4002` 在 `remainMs <= 0` 时硬编码为 `已使用 · 即将入回收站`，无任何动效与状态推进感，造成用户体感“卡死且没倒计时”。
+- **修复与加固闭环**：
+  1. **服务端构建主动到期移库守护引擎**：
+     - `OnlineGalleryScanner` 实现 `move_work_to_stage1` 与 `cleanup_expired_works()`：主动巡检货架所有作品，一旦 `expireAtMs <= nowMs`，立即自动物理剪切至 `_已发送1次（微信公众号可发）`，联动清理相关软链接镜像（`cleanup_junctions_for_source`），写盘 csv 审计日志并 `scan(force=True)`；
+     - **后台守护**：Watchdog 轮询周期由 60s 优化为 30s，每轮首要执行 `cleanup_expired_works()`；
+     - **接口即时巡检兜底**：在 `/api/online/works` 与 `/api/online/categories` 请求入口加入即时巡检，确保任何客户端拉取时 100% 绝对拿不到已过期作品；
+     - **运维接口落地**：新增 `/api/online/cleanup-expired`，支持显式按需运维；
+  2. **Android 客户端双重守卫与回收站同步**：
+     - `applyOnlineCategoryFilter` 补充对齐 iOS：检测到 `work.expireAtMs > 0 && nowMs >= work.expireAtMs` 立即强制剔除出待发列表，并调用 `OnlineWorkLifecycle.ensureTrashed` 沉淀进本地回收站；
+     - `mergeLocalSentWorks()` 守卫：超时作品绝对不逆向合并回货架列表；
+     - 超时文案优化为 `已到期 · 正在移入回收站…`；
+  3. **iOS 客户端对等优化**：
+     - `ContentView.swift` 超时文案同步优化为 `已到期 · 正在移入回收站…`；
+  4. **版本号升版**：Android `v0.8.69` (180) / iOS `v0.8.50` (122)；
+  5. **自动化回归测试**：新增 `tests/test_dsh140_expired_cleanup.py`，静态契约 4 项与动态物理移库实测 100% PASS。
+
+

@@ -2991,6 +2991,7 @@ public final class MainActivity extends Activity {
             String copyText = item.copyText == null ? "" : item.copyText;
             String stage = "已发送" + item.useCount + "次";
             long itemExp = item.firstSharedAtMs > 0 ? (item.firstSharedAtMs + cleanup.moveAfterMs()) : 0L;
+            if (itemExp > 0 && nowMs >= itemExp) continue;
             onlineWorks.add(new OnlineWorkEntry(
                     item.id, item.title, item.destination, stage,
                     item.useCount, 2, true, Math.max(0, 2 - item.useCount), stage,
@@ -3854,7 +3855,11 @@ public final class MainActivity extends Activity {
 
         currentOnlineFilteredEntries.clear();
         for (OnlineWorkEntry work : onlineWorks) {
-            // 核心生命周期：若已被移入手机回收站或已达设置时间（如1小时），在在线活跃相册中隐藏
+            // DSH-140: 核心生命周期对齐：若服务端或本地首发倒计时已到期（expireAtMs <= nowMs），或已被移入手机回收站，在在线活跃相册中彻底隐藏
+            if (work.expireAtMs > 0 && nowMs >= work.expireAtMs) {
+                OnlineWorkLifecycle.ensureTrashed(this, work, work.expireAtMs);
+                continue;
+            }
             if (trashedIds.contains(work.id)) {
                 continue;
             }
@@ -3999,7 +4004,7 @@ public final class MainActivity extends Activity {
                     int remainMin = Math.max(1, (int) (remainMs / 60000L));
                     statusText = "已使用 · 剩 " + remainMin + " 分钟入回收站";
                 } else {
-                    statusText = "已使用 · 即将入回收站";
+                    statusText = "已到期 · 正在移入回收站…";
                 }
             }
             TextView useBadge = text(statusText, 11, true);

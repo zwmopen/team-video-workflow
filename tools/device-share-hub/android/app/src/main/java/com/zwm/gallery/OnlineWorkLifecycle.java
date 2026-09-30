@@ -173,6 +173,30 @@ public final class OnlineWorkLifecycle {
         return existing;
     }
 
+    /** DSH-140: 确保作品被记入回收站（到期时自动沉淀，避免手机端货架遗留） */
+    public static synchronized void ensureTrashed(Context context, OnlineWorkEntry work, long expireAtMs) {
+        if (work == null || work.id == null || work.id.isEmpty()) return;
+        List<Item> list = loadAll(context);
+        Item existing = null;
+        for (Item it : list) {
+            if (it.id.equals(work.id)) {
+                existing = it;
+                break;
+            }
+        }
+        long effExp = expireAtMs > 0 ? expireAtMs : System.currentTimeMillis();
+        if (existing == null) {
+            existing = new Item(work.id, work.title, work.destination,
+                    work.firstSharedAtMs > 0 ? work.firstSharedAtMs : effExp,
+                    effExp, work.useCount, work.images, work.copyText);
+            list.add(existing);
+            saveAll(context, list);
+        } else if (existing.trashedAtMs <= 0) {
+            existing.trashedAtMs = effExp;
+            saveAll(context, list);
+        }
+    }
+
     /** DSH-133: 批处理一次性返回所有在回收站中的作品 ID 集合（O(1) 过滤，对齐 iOS） */
     public static synchronized java.util.Set<String> getTrashedIds(Context context, long nowMs, long moveAfterMs) {
         List<Item> list = loadAll(context);

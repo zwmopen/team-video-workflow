@@ -2045,21 +2045,26 @@ class WorkScanner:
 
         def _run():
             self._watchdog_active = True
-            # 启动后等 10 秒再做第一次轮询（让首次 force scan 先完成，避免重复触发）
-            time.sleep(10.0)
+            # 启动后等 5 秒再做第一次轮询（让首次 force scan 先完成）
+            time.sleep(5.0)
             while not self._watchdog_stop.is_set():
+                # DSH-140: 每次轮询优先主动巡检货架上到期的作品并自动移入回收站
+                try:
+                    self.cleanup_expired_works()
+                except Exception as e:
+                    print(f"[DSH-140 watchdog] 到期巡检异常：{e!r}")
                 try:
                     self._poll_diff()
                 except Exception as e:
                     print(f"[DSH-110 watchdog] 轮询异常：{e!r}")
-                # wait_for 比 sleep 更快响应 stop
-                if self._watchdog_stop.wait(self._watchdog_interval):
+                # DSH-140: 改为每 30 秒轮询一次，保障作品到期后快速自动下架
+                if self._watchdog_stop.wait(30.0):
                     break
             self._watchdog_active = False
 
         self._watchdog_thread = threading.Thread(target=_run, name="DSH110-watchdog", daemon=True)
         self._watchdog_thread.start()
-        print(f"[DSH-110 watchdog] 启动完成，每 {self._watchdog_interval:.0f}s 轮询一次")
+        print(f"[DSH-110 watchdog] 启动完成，每 30s 轮询一次")
 
     def stop_watchdog(self) -> None:
         self._watchdog_stop.set()
@@ -2070,12 +2075,115 @@ class WorkScanner:
         """暴露给 /api/online/status：监控线程状态 + 上次轮询/变更时间。"""
         return {
             "active": self._watchdog_active,
-            "intervalSec": self._watchdog_interval,
+            "intervalSec": 30.0,
             "lastPollAt": self._watchdog_last_poll,
             "lastChangeAt": self._watchdog_last_change,
             "trackedPaths": len(self._watchdog_paths),
             "rootDir": self.root,
         }
+
+    def move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str = "系统自动守护", action_type: str = "dispatched") -> Tuple[bool, str, str]:
+        """DSH-140: 将作品从货架目录物理移入「_已发送1次（微信公众号可发）」。"""
+        src_path = target_work.get("path", "")
+        if not src_path or not os.path.exists(src_path):
+            return False, "", "原作品路径不存在"
+        folder_name = os.path.basename(src_path)
+        use_count = target_work.get("useCount", 0)
+        work_id = target_work.get("id", "")
+
+        root_dir = self.root
+        dest_base = os.path.join(root_dir, "_已发送1次（微信公众号可发）")
+        os.makedirs(dest_base, exist_ok=True)
+
+        target_dest = os.path.join(dest_base, folder_name)
+        if os.path.exists(target_dest) and os.path.abspath(target_dest) != os.path.abspath(src_path):
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
+
+        if os.path.abspath(target_dest) == os.path.abspath(src_path):
+            return True, target_dest, "作品已位于「_已发送1次（微信公众号可发）」"
+
+        move_err = None
+        for attempt in range(3):
+            try:
+                shutil.move(src_path, target_dest)
+                move_err = None
+                break
+            except Exception as e:
+                move_err = e
+                time.sleep(0.3)
+
+        if move_err is not None:
+            try:
+                shutil.copytree(src_path, target_dest, dirs_exist_ok=True)
+                shutil.rmtree(src_path, ignore_errors=True)
+                move_err = None
+            except Exception as e2:
+                move_err = e2
+
+        if move_err is not None:
+            return False, "", f"物理移动失败: {str(move_err)}"
+
+        target_work["path"] = target_dest
+        self._moved_works[work_id] = target_work
+
+        log_dir = _get_portfolio_move_logs_dir(root_dir)
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+        try:
+            header_needed = not os.path.exists(log_file)
+            with open(log_file, "a", encoding="utf-8-sig") as fp:
+                if header_needed:
+                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
+                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{src_path},{target_dest},{use_count},{action_type}\n")
+        except Exception:
+            pass
+
+        return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
+
+    def cleanup_expired_works(self) -> List[Dict[str, Any]]:
+        """DSH-140: 主动巡检货架上到期未下架的作品，自动移入回收站并清理软链接镜像。"""
+        now_ms = int(time.time() * 1000)
+        cleaned: List[Dict[str, Any]] = []
+        with self._lock:
+            works_to_check = list(self._cached_works)
+
+        for work in works_to_check:
+            expire_at = int(work.get("expireAtMs") or 0)
+            if expire_at > 0 and now_ms >= expire_at:
+                work_id = work.get("id", "")
+                work_path = work.get("path", "")
+                is_link = work.get("is_symlink", False) or is_junction_or_symlink(work_path)
+
+                if is_link:
+                    unlink_ok, unlink_msg = unlink_junction(work_path, self.root)
+                    cleaned.append({
+                        "workId": work_id,
+                        "type": "symlink_unlinked",
+                        "path": work_path,
+                        "message": unlink_msg
+                    })
+                    continue
+
+                ok, dest_path, msg = self.move_work_to_stage1(work, "系统自动到期守护", "expired_auto_clean")
+                if ok:
+                    try:
+                        cleanup_junctions_for_source(work_path, self.root)
+                    except Exception as ce:
+                        print(f"[Warn] 清理关联软链接失败: {ce}")
+                    cleaned.append({
+                        "workId": work_id,
+                        "type": "moved_to_stage1",
+                        "path": dest_path,
+                        "message": msg
+                    })
+                    print(f"[DSH-140] 作品倒计时已到期，系统守护已自动移入「_已发送1次」: {work_id} -> {dest_path}")
+
+        if cleaned:
+            self.invalidate_stage_cache()
+            self.scan(force=True)
+
+        return cleaned
 
     def _collect_images(self, dir_path: str, files: List[str]) -> List[str]:
         """收集作品成品图的客户端标识列表。
@@ -2681,7 +2789,23 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/online/cleanup-expired":
+            # DSH-140: 显式触发到期作品清理接口
+            cleaned = self.scanner.cleanup_expired_works()
+            self.send_json(200, {
+                "ok": True,
+                "cleanedCount": len(cleaned),
+                "cleanedWorks": cleaned,
+                "timestamp": int(time.time() * 1000)
+            })
+            return
+
         if path == "/api/online/categories":
+            # DSH-140: 聚合分类前快速巡检到期作品，防止已到期作品污染分类计数
+            try:
+                self.scanner.cleanup_expired_works()
+            except Exception as _ce:
+                print(f"[DSH-140] categories 巡检异常: {_ce!r}")
             works = self.scanner.scan_throttled()
             counts: Dict[str, int] = {}
             count_stage0 = 0
@@ -2727,6 +2851,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/works":
+            # DSH-140: 拉取作品列表前快速巡检到期作品，杜绝已到期僵尸作品滞留货架
+            try:
+                self.scanner.cleanup_expired_works()
+            except Exception as _we:
+                print(f"[DSH-140] works 巡检异常: {_we!r}")
             category = query.get("category", ["全部"])[0]
             search_query = query.get("query", [""])[0].strip().lower()
             force_refresh = query.get("refresh", ["0"])[0] == "1"
@@ -2974,60 +3103,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def _move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str, action_type: str = "dispatched") -> Tuple[bool, str, str]:
-        src_path = target_work["path"]
-        folder_name = os.path.basename(src_path)
-        use_count = target_work.get("useCount", 0)
-        work_id = target_work.get("id", "")
-
-        root_dir = self.scanner.root
-        dest_base = os.path.join(root_dir, "_已发送1次（微信公众号可发）")
-        os.makedirs(dest_base, exist_ok=True)
-
-        target_dest = os.path.join(dest_base, folder_name)
-        if os.path.exists(target_dest) and os.path.abspath(target_dest) != os.path.abspath(src_path):
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
-
-        if os.path.abspath(target_dest) == os.path.abspath(src_path):
-            return True, target_dest, "作品已位于「_已发送1次（微信公众号可发）」"
-
-        move_err = None
-        for attempt in range(3):
-            try:
-                shutil.move(src_path, target_dest)
-                move_err = None
-                break
-            except Exception as e:
-                move_err = e
-                time.sleep(0.3)
-
-        if move_err is not None:
-            try:
-                shutil.copytree(src_path, target_dest, dirs_exist_ok=True)
-                shutil.rmtree(src_path, ignore_errors=True)
-                move_err = None
-            except Exception as e2:
-                move_err = e2
-
-        if move_err is not None:
-            return False, "", f"物理移动失败: {str(move_err)}"
-
-        target_work["path"] = target_dest
-        self.scanner._moved_works[work_id] = target_work
-
-        log_dir = _get_portfolio_move_logs_dir(root_dir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-        try:
-            header_needed = not os.path.exists(log_file)
-            with open(log_file, "a", encoding="utf-8-sig") as fp:
-                if header_needed:
-                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
-                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{src_path},{target_dest},{use_count},{action_type}\n")
-        except Exception:
-            pass
-
-        return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
+        return self.scanner.move_work_to_stage1(target_work, device_name, action_type)
 
     def _move_work_to_stage0(self, target_work: Dict[str, Any]) -> Tuple[bool, str, str]:
         """把作品从「_已发送1次」移回「已发送0次」——「重置使用状态」的另一半。
