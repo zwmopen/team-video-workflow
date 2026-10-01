@@ -359,8 +359,15 @@ final class PlatformCopyParser {
 
     static String extractVersionFromRecord(String record) {
         if (record == null) return "";
-        int openParen = record.indexOf('(');
-        int closeParen = record.indexOf(')', openParen + 1);
+        // 服务端写入格式固定为: "{device_name} ({version_tag} @ {now})"
+        // 设备名本身可能包含括号（如 "红米13(微信) 1号"），因此必须从后向前匹配最后一对括号
+        int closeParen = record.lastIndexOf(')');
+        int openParen = (closeParen >= 0) ? record.lastIndexOf('(', closeParen) : -1;
+        if (openParen < 0 || closeParen <= openParen) {
+            // 兼容中文全角括号 "（" 和 "）"
+            closeParen = record.lastIndexOf('）');
+            openParen = (closeParen >= 0) ? record.lastIndexOf('（', closeParen) : -1;
+        }
         if (openParen >= 0 && closeParen > openParen) {
             String inside = record.substring(openParen + 1, closeParen).trim();
             int atIdx = inside.indexOf('@');
@@ -398,9 +405,11 @@ final class PlatformCopyParser {
                 if (!extracted.isEmpty()) {
                     if (isVersionTagMatched(buttonLabel, extracted)) return true;
                     if (platformCode != null && isVersionTagMatched(platformCode, extracted)) return true;
+                } else {
+                    // 仅在未能解析出结构化版本时，才作为历史无括号脏数据做全字符串兜底匹配（防止设备名包含关键字导致误判）
+                    if (tag.contains(buttonLabel)) return true;
+                    if (platformCode != null && tag.contains(platformCode)) return true;
                 }
-                if (tag.contains(buttonLabel)) return true;
-                if (platformCode != null && tag.contains(platformCode)) return true;
             }
         }
         return false;

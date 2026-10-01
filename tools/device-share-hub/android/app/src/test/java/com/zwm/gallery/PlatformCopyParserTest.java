@@ -263,4 +263,67 @@ public final class PlatformCopyParserTest {
             assertTrue("多版本块漏标记: " + item.copyText, !item.copyText.contains("<<<"));
         }
     }
+
+    // ==================== DSH-143: 跨设备文案打勾同步与版本提取 ====================
+
+    @Test
+    public void testExtractVersionFromRecordWithNestedOrDeviceParentheses() {
+        // 标准格式
+        assertEquals(
+                "备用岗",
+                PlatformCopyParser.extractVersionFromRecord("Google Pixel 7 (备用岗 @ 2026-09-30 14:06:16)")
+        );
+        // 设备名自身带括号（英文）
+        assertEquals(
+                "种草版",
+                PlatformCopyParser.extractVersionFromRecord("红米13(微信) 1号 (种草版 @ 2026-09-30 14:06:16)")
+        );
+        // 设备名自身带中文括号
+        assertEquals(
+                "HR决策版",
+                PlatformCopyParser.extractVersionFromRecord("红米13（微信专用） 1号 (HR决策版 @ 2026-09-30 14:06:16)")
+        );
+        // 全角中文外括号
+        assertEquals(
+                "短文精选版",
+                PlatformCopyParser.extractVersionFromRecord("测试机（短文精选版 @ 2026-09-30 14:06:16）")
+        );
+    }
+
+    @Test
+    public void testCrossDeviceSyncDispatchedVersionsAndAliasMatch() {
+        java.util.Set<String> emptyLocal = java.util.Collections.emptySet();
+        // 场景：设备 A 上报了 "HR决策版"，设备 B 的按钮是 "备用岗"（别名族匹配）
+        java.util.List<String> dispatchedVersions = java.util.Collections.singletonList("HR决策版");
+        java.util.List<String> dispatchedTo = java.util.Collections.singletonList("iPhone 15 Pro (HR决策版 @ 2026-09-30 14:06:16)");
+
+        assertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(
+                "备用岗",
+                "hr",
+                emptyLocal,
+                dispatchedVersions,
+                dispatchedTo
+        ));
+
+        // 场景：设备 A 本地记录了 "种草版"，按钮是 "发布" / "小红书"
+        java.util.Set<String> localDispatched = new java.util.HashSet<>();
+        localDispatched.add("种草版");
+        assertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(
+                "小红书",
+                "xhs",
+                localDispatched,
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList()
+        ));
+
+        // 场景：设备名含有 "微信"，但上报的是 "抖音"，检查 "微信" 按钮不应误打勾
+        java.util.List<String> tagWithDeviceName = java.util.Collections.singletonList("微信客服机 (抖音 @ 2026-09-30 14:06:16)");
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(
+                "公众号版",
+                "wechat",
+                emptyLocal,
+                java.util.Collections.singletonList("抖音"),
+                tagWithDeviceName
+        ));
+    }
 }

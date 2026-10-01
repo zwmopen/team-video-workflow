@@ -226,4 +226,63 @@ final class PlatformCopyParserTests: XCTestCase {
             XCTAssertFalse(item.copyText.contains("<<<"), "多版本块漏标记: \(item.copyText)")
         }
     }
+
+    // MARK: - DSH-143: 跨设备文案打勾同步与版本提取
+
+    func testExtractVersionFromRecordWithNestedOrDeviceParentheses() {
+        // 标准格式
+        XCTAssertEqual(
+            PlatformCopyParser.extractVersionFromRecord("Google Pixel 7 (备用岗 @ 2026-09-30 14:06:16)"),
+            "备用岗"
+        )
+        // 设备名自身带括号（英文）
+        XCTAssertEqual(
+            PlatformCopyParser.extractVersionFromRecord("红米13(微信) 1号 (种草版 @ 2026-09-30 14:06:16)"),
+            "种草版"
+        )
+        // 设备名自身带中文括号
+        XCTAssertEqual(
+            PlatformCopyParser.extractVersionFromRecord("红米13（微信专用） 1号 (HR决策版 @ 2026-09-30 14:06:16)"),
+            "HR决策版"
+        )
+        // 全角中文外括号
+        XCTAssertEqual(
+            PlatformCopyParser.extractVersionFromRecord("测试机（短文精选版 @ 2026-09-30 14:06:16）"),
+            "短文精选版"
+        )
+    }
+
+    func testCrossDeviceSyncDispatchedVersionsAndAliasMatch() {
+        let emptyLocal = Set<String>()
+        // 场景：设备 A 上报了 "HR决策版"，设备 B 的按钮是 "备用岗"（别名族匹配）
+        let dispatchedVersions = ["HR决策版"]
+        let dispatchedTo = ["iPhone 15 Pro (HR决策版 @ 2026-09-30 14:06:16)"]
+
+        XCTAssertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(
+            buttonLabel: "备用岗",
+            platformCode: "hr",
+            localDispatched: emptyLocal,
+            dispatchedVersions: dispatchedVersions,
+            dispatchedTo: dispatchedTo
+        ))
+
+        // 场景：设备 A 上报了 "种草版"，设备 B 的按钮是 "发布" / "小红书"
+        XCTAssertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(
+            buttonLabel: "小红书",
+            platformCode: "xhs",
+            localDispatched: ["种草版"],
+            dispatchedVersions: [],
+            dispatchedTo: []
+        ))
+
+        // 场景：设备名含有 "微信"，但上报的是 "抖音"，检查 "微信" 按钮不应误打勾
+        let tagWithDeviceName = ["微信客服机 (抖音 @ 2026-09-30 14:06:16)"]
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(
+            buttonLabel: "公众号版",
+            platformCode: "wechat",
+            localDispatched: emptyLocal,
+            dispatchedVersions: ["抖音"],
+            dispatchedTo: tagWithDeviceName
+        ))
+    }
 }

@@ -395,8 +395,21 @@ enum PlatformCopyParser {
 
     /// 从 dispatchedTo 记录字符串（如 "Google Pixel 7 (备用岗 @ 2026-09-30 14:06:16)"）中提取版本名
     static func extractVersionFromRecord(_ record: String) -> String {
-        guard let openParen = record.range(of: "("),
-              let closeParen = record.range(of: ")", range: openParen.upperBound..<record.endIndex) else {
+        // 服务端写入格式固定为: "{device_name} ({version_tag} @ {now})"
+        // 设备名本身可能包含括号（如 "红米13(微信) 1号"），因此从后向前查找最后一对括号
+        var closeRange = record.range(of: ")", options: .backwards)
+        var openRange: Range<String.Index>? = nil
+        if let close = closeRange {
+            openRange = record.range(of: "(", options: .backwards, range: record.startIndex..<close.lowerBound)
+        }
+        if openRange == nil || closeRange == nil {
+            // 兼容中文全角括号 "（" 和 "）"
+            if let closeZh = record.range(of: "）", options: .backwards) {
+                closeRange = closeZh
+                openRange = record.range(of: "（", options: .backwards, range: record.startIndex..<closeZh.lowerBound)
+            }
+        }
+        guard let openParen = openRange, let closeParen = closeRange, openParen.upperBound <= closeParen.lowerBound else {
             return ""
         }
         let inside = String(record[openParen.upperBound..<closeParen.lowerBound])
@@ -430,9 +443,11 @@ enum PlatformCopyParser {
             if !extracted.isEmpty {
                 if isVersionTagMatched(buttonLabel, extracted) { return true }
                 if let code = platformCode, isVersionTagMatched(code, extracted) { return true }
+            } else {
+                // 仅在未能解析出结构化版本时，才作为历史无括号脏数据做全字符串兜底匹配（防止设备名包含关键字导致误判）
+                if tag.contains(buttonLabel) { return true }
+                if let code = platformCode, tag.contains(code) { return true }
             }
-            if tag.contains(buttonLabel) { return true }
-            if let code = platformCode, tag.contains(code) { return true }
         }
         return false
     }

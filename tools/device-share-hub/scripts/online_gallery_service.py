@@ -2323,7 +2323,7 @@ class WorkScanner:
         elif copy_raw and not copy_is_real(copy_text):
             copy_missing = True
 
-        # 读取作品标签.json
+        # 读取作品标签.json 与 manifest.json（双源合并兜底）
         tag_file = os.path.join(dir_path, "作品标签.json")
         tag_data = {}
         if os.path.exists(tag_file):
@@ -2333,7 +2333,28 @@ class WorkScanner:
             except Exception:
                 pass
 
+        manifest_file = os.path.join(dir_path, "manifest.json")
+        manifest_dist = {}
+        if os.path.exists(manifest_file):
+            try:
+                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as mfp:
+                    manifest_data = json.load(mfp)
+                    manifest_dist = manifest_data.get("distribution", {})
+            except Exception:
+                pass
+
         distribution = tag_data.get("distribution", {})
+        if not distribution and manifest_dist:
+            distribution = dict(manifest_dist)
+        elif distribution and manifest_dist:
+            # 并集合并 dispatchedVersions 和 dispatchedTo，确保双源互补零遗漏
+            d_vers = list(dict.fromkeys((distribution.get("dispatchedVersions") or []) + (manifest_dist.get("dispatchedVersions") or [])))
+            d_to = list(dict.fromkeys((distribution.get("dispatchedTo") or []) + (manifest_dist.get("dispatchedTo") or [])))
+            distribution["dispatchedVersions"] = d_vers
+            distribution["dispatchedTo"] = d_to
+            if not distribution.get("useCount") and manifest_dist.get("useCount"):
+                distribution["useCount"] = manifest_dist["useCount"]
+
         # 发送次数判定：优先从作品标签读取，其次以目录默认阶数为基准
         use_count = distribution.get("useCount")
         if use_count is None:
@@ -3460,7 +3481,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         """向后兼容：检查是否为合法的成品库归属目录。"""
         return self._is_valid_restore_parent(path)
 
-    def _record_work_usage(self, dir_path: str, device_name: str, platform: str, work_id: str) -> None:
+    def _record_work_usage(self, dir_path: str, device_name: str, platform: str, work_id: str, version_tag: str = "") -> None:
         """为物理作品目录更新使用标签和设备使用日志（软链接镜像被使用时触发）"""
         tag_file = os.path.join(dir_path, "作品标签.json")
         tag_data = {}
@@ -3476,6 +3497,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         current_count = int(dist.get("useCount", 0))
         new_count = current_count + 1
         dist["useCount"] = new_count
+
+        # 记录具体分发的文案版本标签（优先 version_tag，兜底 platform）
+        v_tag = (version_tag or platform).strip()
+        dispatched_versions = dist.get("dispatchedVersions", [])
+        if v_tag and v_tag not in dispatched_versions:
+            dispatched_versions.append(v_tag)
+        dist["dispatchedVersions"] = dispatched_versions
+
         dispatched_list = dist.get("dispatchedTo", [])
         record_str = f"{device_name} ({platform} @ {time.strftime('%Y-%m-%d %H:%M:%S')})"
         if record_str not in dispatched_list:
@@ -3488,6 +3517,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 json.dump(tag_data, fp, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+        # 同步双写 manifest.json（如果存在）
+        manifest_file = os.path.join(dir_path, "manifest.json")
+        if os.path.exists(manifest_file):
+            try:
+                with open(manifest_file, "r", encoding="utf-8") as mfp:
+                    m_data = json.load(mfp)
+                m_data["distribution"] = dist
+                m_data["used"] = True
+                with open(manifest_file, "w", encoding="utf-8") as mfp:
+                    json.dump(m_data, mfp, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
         log_file = _get_device_usage_log_file(self.scanner.root)
         try:
@@ -3763,6 +3805,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             work_id = req.get("workId", "").strip()
             device_name = req.get("device", "手机端未知设备").strip()
             platform = req.get("platform", "小红书/抖音").strip()
+            version_tag = req.get("versionTag", "").strip() or platform
 
             if not work_id:
                 self.send_error(400, "Missing workId")
@@ -3785,7 +3828,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 source_p = target_work.get("source_path") or resolve_junction_source(dir_path)
                 if source_p and os.path.isdir(source_p):
                     try:
-                        self._record_work_usage(source_p, device_name, platform, work_id)
+                        self._record_work_usage(source_p, device_name, platform, work_id, version_tag)
                     except Exception:
                         pass
                 self.scanner.scan(force=True)
@@ -3842,7 +3885,6 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 pass
 
             # DSH-137: 记录具体分发的文案版本标签
-            version_tag = req.get("versionTag", "").strip()
             dispatched_versions = dist.get("dispatchedVersions", [])
             if version_tag and version_tag not in dispatched_versions:
                 dispatched_versions.append(version_tag)
@@ -3861,6 +3903,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     json.dump(tag_data, fp, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] Failed to write tag file: {e}")
+
+            # 同步写回 manifest.json（如果存在）
+            manifest_file = os.path.join(dir_path, "manifest.json")
+            if os.path.exists(manifest_file):
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as mfp:
+                        m_data = json.load(mfp)
+                    m_data["distribution"] = dist
+                    m_data["used"] = True
+                    with open(manifest_file, "w", encoding="utf-8") as mfp:
+                        json.dump(m_data, mfp, ensure_ascii=False, indent=2)
+                except Exception as _me:
+                    print(f"[Warn] Failed to sync manifest.json: {_me}")
 
             log_file = _get_device_usage_log_file(self.scanner.root)
             try:

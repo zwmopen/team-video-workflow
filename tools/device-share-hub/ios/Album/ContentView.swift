@@ -1208,6 +1208,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         LocalDispatchedStore.save(workId: entry.id, version: item.buttonLabel)
         optimisticMarkOnlineWorkUsedAndTop(workId: entry.id, versionLabel: item.buttonLabel, destination: entry.destination)
 
+        // ==================== DSH-143: 0 秒立即向服务端同步使用记录（彻底切断对系统分享回调的依赖） ====================
+        OnlineGalleryClient.shared.recordUse(
+            workId: entry.id,
+            platform: item.buttonLabel,
+            retentionDurationMs: 3600000,
+            versionTag: item.buttonLabel
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                if result.ok {
+                    self?.loadOnlineData(silent: true)
+                }
+            }
+        }
+        OnlineWorkLifecycle.markUsed(work: entry)
+
         guard !entry.images.isEmpty else {
             showToast("已复制 \(item.buttonLabel)（无图片作品）")
             return
@@ -1248,12 +1263,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     if let dir = urls.first?.deletingLastPathComponent() {
                         try? FileManager.default.removeItem(at: dir)
                     }
-                    guard completed, let self = self else { return }
-                    // 1. DSH-135: 继承首发设备生命周期，上报保留时长 1 小时与版本标签
-                    OnlineGalleryClient.shared.recordUse(workId: entry.id, platform: item.buttonLabel, retentionDurationMs: 3600000, versionTag: item.buttonLabel)
-                    // 2. 本地记录生命周期打标
-                    OnlineWorkLifecycle.markUsed(work: entry)
-                    self.showToast("🚀 分享完成，已同步全网生命周期")
+                    guard let self = self else { return }
+                    if completed {
+                        self.showToast("🚀 分享完成")
+                    }
                     self.loadOnlineData(silent: true)
                 }
                 self.present(activity, animated: true)

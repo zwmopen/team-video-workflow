@@ -4913,6 +4913,21 @@ public final class MainActivity extends Activity {
         // ==================== DSH-130: 0ms 乐观 UI 更新与就地置顶 ====================
         optimisticMarkWorkUsedAndTop(work.id, dispatchTag, versionTag, work.destination);
 
+        // ==================== DSH-143: 0 秒立即向服务端同步使用记录（彻底切断对后续下载或分支的依赖） ====================
+        CleanupSettings.Values cleanupVal = CleanupSettings.read(this);
+        onlineClient.recordUse(work.id, getDeviceName(), versionTag, cleanupVal.moveAfterMs(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.UseResult result) {
+                if (result != null && result.ok) {
+                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag,
+                            result.firstSharedAtMs, result.expireAtMs, result.originDevice);
+                }
+            }
+
+            @Override
+            public void onError(Exception error) {}
+        });
+
         if (work.images == null || work.images.isEmpty()) {
             toast("已复制 " + label + "（无图片作品）");
             return;
@@ -4922,19 +4937,6 @@ public final class MainActivity extends Activity {
         if (onlineClient.areAllWorkImagesCachedLocally(work.id, work.images)) {
             List<java.io.File> cachedFiles = onlineClient.getCachedLocalWorkImages(work.id, work.images);
             launchOnlineShare(work, cachedFiles, copyText, platformCode);
-            CleanupSettings.Values cleanupVal = CleanupSettings.read(this);
-            onlineClient.recordUse(work.id, getDeviceName(), versionTag, cleanupVal.moveAfterMs(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
-                @Override
-                public void onSuccess(OnlineGalleryClient.UseResult result) {
-                    if (result != null && result.ok) {
-                        updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag,
-                                result.firstSharedAtMs, result.expireAtMs, result.originDevice);
-                    }
-                }
-
-                @Override
-                public void onError(Exception error) {}
-            });
             return;
         }
 
@@ -4998,22 +5000,6 @@ public final class MainActivity extends Activity {
                     try { dlDialog.dismiss(); } catch (Exception ignored) {}
                 }
                 toast("下载图片失败: " + (error != null ? error.getMessage() : "网络超时") + "，文案已在剪贴板");
-            }
-        });
-
-        CleanupSettings.Values cleanupVal = CleanupSettings.read(this);
-        onlineClient.recordUse(work.id, getDeviceName(), versionTag, cleanupVal.moveAfterMs(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
-            @Override
-            public void onSuccess(OnlineGalleryClient.UseResult result) {
-                if (result != null && result.ok) {
-                    updateOnlineWorkUseCount(work.id, result.useCount, result.remainingUses, dispatchTag,
-                            result.firstSharedAtMs, result.expireAtMs, result.originDevice);
-                }
-            }
-
-            @Override
-            public void onError(Exception error) {
-                // Background tag update error
             }
         });
     }
