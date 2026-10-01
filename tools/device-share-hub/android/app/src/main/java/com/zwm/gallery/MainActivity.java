@@ -5125,9 +5125,9 @@ public final class MainActivity extends Activity {
                 List<String> newImgs = new ArrayList<>(remainingImages);
                 OnlineWorkEntry updated = new OnlineWorkEntry(
                         old.id, old.title, old.destination, old.stage,
-                        old.useCount, old.maxUses, old.isUsed, old.remainingUses,
-                        old.status, newImgs, newImgs.size(), old.copyText, old.hasCopyText,
-                        old.dispatchedTo, old.lastDispatchedAt, old.garbage, old.garbageRemark,
+                        old.useCount, old.maxUses, old.used, old.remainingUses,
+                        old.statusLabel, newImgs, newImgs.size(), old.copyText, old.hasCopyText,
+                        old.dispatchedTo, old.updatedAt, old.garbage, old.garbageRemark,
                         old.path, old.firstSharedAtMs, old.expireAtMs, old.originDevice, old.dispatchedVersions
                 );
                 onlineWorks.set(i, updated);

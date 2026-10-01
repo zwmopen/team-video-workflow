@@ -1335,36 +1335,35 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         for (i, w) in onlineWorks.enumerated() {
             if w.id == workId {
                 onlineWorks[i] = OnlineWorkEntry(
-                    id: w.id, title: w.title, cover: remainingImages.first ?? "",
-                    images: remainingImages, imageCount: remainingImages.count,
-                    copyText: w.copyText, hasCopyText: w.hasCopyText,
-                    category: w.category, destination: w.destination,
-                    useCount: w.useCount, dispatchedTo: w.dispatchedTo,
-                    lastDispatchedAt: w.lastDispatchedAt, garbage: w.garbage,
-                    garbageRemark: w.garbageRemark, path: w.path,
-                    firstSharedAtMs: w.firstSharedAtMs, expireAtMs: w.expireAtMs,
-                    originDevice: w.originDevice, dispatchedVersions: w.dispatchedVersions
+                    id: w.id,
+                    title: w.title,
+                    destination: w.destination,
+                    stage: w.stage,
+                    useCount: w.useCount,
+                    maxUses: w.maxUses,
+                    used: w.used,
+                    remainingUses: w.remainingUses,
+                    statusLabel: w.statusLabel,
+                    images: remainingImages,
+                    imageCount: remainingImages.count,
+                    copyText: w.copyText,
+                    hasCopyText: w.hasCopyText,
+                    dispatchedTo: w.dispatchedTo,
+                    updatedAt: w.updatedAt,
+                    garbage: w.garbage,
+                    garbageRemark: w.garbageRemark,
+                    path: w.path,
+                    firstSharedAtMs: w.firstSharedAtMs,
+                    expireAtMs: w.expireAtMs,
+                    originDevice: w.originDevice,
+                    dispatchedVersions: w.dispatchedVersions
                 )
                 break
             }
         }
-        for (i, w) in displayedOnlineWorks.enumerated() {
-            if w.id == workId {
-                displayedOnlineWorks[i] = OnlineWorkEntry(
-                    id: w.id, title: w.title, cover: remainingImages.first ?? "",
-                    images: remainingImages, imageCount: remainingImages.count,
-                    copyText: w.copyText, hasCopyText: w.hasCopyText,
-                    category: w.category, destination: w.destination,
-                    useCount: w.useCount, dispatchedTo: w.dispatchedTo,
-                    lastDispatchedAt: w.lastDispatchedAt, garbage: w.garbage,
-                    garbageRemark: w.garbageRemark, path: w.path,
-                    firstSharedAtMs: w.firstSharedAtMs, expireAtMs: w.expireAtMs,
-                    originDevice: w.originDevice, dispatchedVersions: w.dispatchedVersions
-                )
-                break
-            }
+        DispatchQueue.main.async { [weak self] in
+            self?.collectionView.reloadData()
         }
-        collectionView.reloadData()
     }
 
     /// 「重置」（在线）：与 Android `confirmResetOnlineWork` 交互 1:1 对齐。
@@ -2458,7 +2457,7 @@ private final class WorkCell: UICollectionViewCell {
             onlineDetail += "已使用\(usedCount)次\(dev) · 剩\(remainMin)分钟入回收站" + onlineDatePart
         } else if expireAt > 0 && usedCount > 0 {
             let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
-            onlineDetail += "已到期 · 正在移入回收站…" + onlineDatePart
+            onlineDetail += "已到期\(dev) · 正在移入回收站…" + onlineDatePart
         } else {
             onlineDetail += (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
         }
@@ -3096,16 +3095,19 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
                 self.entry = OnlineWorkEntry(
                     id: self.entry.id,
                     title: self.entry.title,
-                    cover: newImages.first ?? "",
+                    destination: self.entry.destination,
+                    stage: self.entry.stage,
+                    useCount: self.entry.useCount,
+                    maxUses: self.entry.maxUses,
+                    used: self.entry.used,
+                    remainingUses: self.entry.remainingUses,
+                    statusLabel: self.entry.statusLabel,
                     images: newImages,
                     imageCount: newImages.count,
                     copyText: self.entry.copyText,
                     hasCopyText: self.entry.hasCopyText,
-                    category: self.entry.category,
-                    destination: self.entry.destination,
-                    useCount: self.entry.useCount,
                     dispatchedTo: self.entry.dispatchedTo,
-                    lastDispatchedAt: self.entry.lastDispatchedAt,
+                    updatedAt: self.entry.updatedAt,
                     garbage: self.entry.garbage,
                     garbageRemark: self.entry.garbageRemark,
                     path: self.entry.path,
