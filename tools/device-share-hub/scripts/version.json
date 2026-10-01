@@ -7,13 +7,13 @@
   "file_name": "album-Android-v0.8.71.apk",
   "apk_url": "/album-Android-v0.8.71.apk",
   "url": "/album-Android-v0.8.71.apk",
-  "sha256": "",
+  "sha256": "6143f8a60351600153042ed1903fd9cb8e301fdac20592f79fd2fb36f97d91b9",
   "source": "lan",
   "notes": "相册 Android 0.8.71 (versionCode 182) / iOS 0.8.52 (build 124)：\n1. DSH-143 跨设备文案打勾同步三根因全链路根治：服务端 scan() 双源（作品标签+manifest）并集合并兜底\n2. DSH-143 服务端 /api/online/use-work 增强 versionTag 兜底并同步双写 manifest.json 与作品标签\n3. DSH-143 iOS shareOnline 彻底解耦分享面板回调，文案复制第 0 秒立即触发异步 recordUse 远端上报\n4. DSH-143 双端 extractVersionFromRecord 升级逆向括号检索，彻底避免设备名内括号干扰版本判定",
   "ios": {
     "version_name": "0.8.52",
     "build": 124,
-    "sha256": "",
+    "sha256": "8d405f792aa85fb8f91ff575c6329e3e00518a4431ab724e2b6f43513c4e5647",
     "ipa_url": "/album-iOS-v0.8.52-altstore.ipa",
     "ipa_file_name": "album-iOS-v0.8.52-altstore.ipa",
     "release_url": "https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.71"
