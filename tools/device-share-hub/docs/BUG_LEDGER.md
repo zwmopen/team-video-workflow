@@ -3120,4 +3120,36 @@ totalWorks = 472
   4. **版本号升版**：Android `v0.8.69` (180) / iOS `v0.8.50` (122)；
   5. **自动化回归测试**：新增 `tests/test_dsh140_expired_cleanup.py`，静态契约 4 项与动态物理移库实测 100% PASS。
 
+## DSH-143 跨设备文案打勾未同步三根因全链路根治（Android v0.8.71 / iOS v0.8.52 · 2026-10-01）
+
+- **用户原始反馈（现场纠偏还原）**：
+  > “备用岗是语音识别错误，我是说某个版本文案在其他手机用过会被打勾，这边另外一台没用过，但是使用状态应该被同步过来是这个意思。。”
+- **三大根因（逐行证据）**：
+  1. **根因一（iOS 端上报过度滞后且被弹窗回调阻断）**：
+     - `ios/Album/ContentView.swift` 中 `shareOnline` 的 `recordUse` 被包裹在 `activity.completionWithItemsHandler` + `guard completed` 中；
+     - iOS 系统分享面板（UIActivityViewController）若用户点击复制/取消/仅保存图片或关闭面板，`completed` 返回 `false`，导致 `recordUse` 完全被拦截，根本没有发送给服务端；无图作品甚至直接提前 return 跳过上报！
+  2. **根因二（双端括号匹配从头查找被设备名内括号破坏）**：
+     - Android `PlatformCopyParser.java:362` 使用 `record.indexOf('(')`，iOS `PlatformCopyParser.swift:398` 使用 `record.range(of: "(")`；
+     - 提取记录格式为 `"{device_name} ({version_tag} @ {now})"`，当设备名自身包含括号（如“红米13(微信) 1号”）时，从头查找直接命中设备名的括号，提取出乱码；
+     - 且在提取失败或旧数据下，直接全字符串 contains 匹配，导致设备名包含“微信”时误伤“微信/公众号”文案按钮打勾；
+  3. **根因三（服务端单写与单读缺失兜底）**：
+     - 服务端 `/api/online/use-work` 仅更新 `作品标签.json`，未同步写回 `manifest.json`；且当 `versionTag` 为空时直接跳过版本记录；
+     - `WorkScanner.scan()` 只读 `作品标签.json`，若磁盘只有 `manifest.json` 则打勾版本信息丢失。
+- **全链路修复与加固闭环**：
+  1. **iOS 客户端 0 秒立即上报**：
+     - 将 `OnlineGalleryClient.shared.recordUse` 移至用户点击文案复制第 0 秒立即触发（与 Android 对齐），彻底解耦 `completionWithItemsHandler` 与 `guard completed`，无图/有图/分享取消均 100% 可靠上报；
+  2. **双端括号逆向提取与提取优先防污染**：
+     - Android 与 iOS 的 `extractVersionFromRecord` 升级为 `lastIndexOf(')')` 与 `lastIndexOf('(')` 逆向匹配最后一对括号（并深度兼容中文全角括号 `（）`）；
+     - `isPlatformOrVersionDispatched` 规则：提取出非空结构化版本时，严格以结构化版本与别名族进行匹配，禁止设备名前缀污染打勾；
+  3. **服务端双写与双源并集合并**：
+     - `scan()` 同时读取 `作品标签.json` 与 `manifest.json` 的 `distribution` 块，对 `dispatchedVersions` 与 `dispatchedTo` 做双源并集合并（`list(dict.fromkeys(...))`）；
+     - `/api/online/use-work` 增强 `version_tag` 兜底（`req.get("versionTag", "").strip() or platform`），并同步原子双写 `manifest.json`（`distribution` 字段 + `used=True`）；
+  4. **版本号升版**：
+     - Android `0.8.71` (versionCode 182)；
+     - iOS `0.8.52` (build 124)；
+  5. **自动化测试守卫**：
+     - 新增 Python `tests/test_dsh143_cross_device_sync.py` 验证双源合并与 manifest 兜底；
+     - 新增 Android `PlatformCopyParserTest.java` 与 iOS `PlatformCopyParserTests.swift` 跨设备别名同步与设备名含括号提取单元测试。
+
+
 
