@@ -3272,6 +3272,88 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             msg += f"（备注：{remark}）"
         return True, target_dest, msg
 
+    def _delete_single_image(self, target_work: Dict[str, Any], image_name: str, device_name: str = "") -> Tuple[bool, str, List[str]]:
+        """
+        DSH-141: 预览界面直接删除单张图片
+        - 安全移入 _垃圾作品样本/_deleted_images/{work_id}/{image_name}（零丢失可恢复）
+        - 联动清理缓存 (%TEMP%/gallery_thumb_cache)
+        - 联动更新 manifest.json
+        - 保证作品至少保留 1 张图（最后 1 张图拦截提醒整套删除）
+        """
+        src_path = target_work["path"]
+        real_dir = os.path.realpath(src_path)
+        work_id = target_work.get("id", "")
+        img_name = os.path.basename(image_name).strip()
+
+        file_path = os.path.join(real_dir, img_name)
+        if not os.path.exists(file_path):
+            matched = False
+            for f in os.listdir(real_dir):
+                if f.lower() == img_name.lower():
+                    file_path = os.path.join(real_dir, f)
+                    img_name = f
+                    matched = True
+                    break
+            if not matched:
+                return False, f"图片文件 {img_name} 不存在", target_work.get("images", [])
+
+        current_images = [img for img in target_work.get("images", [])]
+        if len(current_images) <= 1:
+            return False, "作品至少需保留 1 张图片，如需整套下架请直接点击删除作品", current_images
+
+        # 1. 物理备份移入 _垃圾作品样本/_deleted_images/ (零丢失)
+        root_dir = self.scanner.root
+        trash_dir = os.path.join(root_dir, "_垃圾作品样本", "_deleted_images", work_id)
+        os.makedirs(trash_dir, exist_ok=True)
+        dest_img_path = os.path.join(trash_dir, f"{time.strftime('%Y%m%d_%H%M%S')}_{img_name}")
+        try:
+            shutil.move(file_path, dest_img_path)
+        except Exception as e:
+            return False, f"删除图片失败: {e}", current_images
+
+        # 2. 清理临时缩略图和预览图缓存
+        try:
+            thumb_cache_dir = os.path.join(tempfile.gettempdir(), "gallery_thumb_cache")
+            if os.path.isdir(thumb_cache_dir):
+                for cf in os.listdir(thumb_cache_dir):
+                    if img_name in cf or work_id in cf:
+                        try:
+                            os.remove(os.path.join(thumb_cache_dir, cf))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        # 3. 联动更新 manifest.json
+        manifest_path = os.path.join(real_dir, "manifest.json")
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as fp:
+                    mdata = json.load(fp)
+                if "images" in mdata and isinstance(mdata["images"], list):
+                    new_m_imgs = []
+                    for item in mdata["images"]:
+                        if isinstance(item, dict):
+                            fname = item.get("filename", "")
+                            if fname != img_name:
+                                new_m_imgs.append(item)
+                        elif isinstance(item, str):
+                            if os.path.basename(item) != img_name:
+                                new_m_imgs.append(item)
+                    mdata["images"] = new_m_imgs
+                    mdata["image_count"] = len(new_m_imgs)
+                with open(manifest_path, "w", encoding="utf-8") as fp:
+                    json.dump(mdata, fp, ensure_ascii=False, indent=2)
+            except Exception as _me:
+                print(f"[Warn] 更新 manifest.json 失败: {_me}")
+
+        # 4. 强制刷新扫描器缓存
+        self.scanner.scan(force=True)
+        updated_work = self.scanner.get_work(work_id)
+        remaining_images = updated_work.get("images", []) if updated_work else [img for img in current_images if img != img_name]
+
+        return True, f"已成功删除图片 {img_name}", remaining_images
+
     def _find_target_shelf_dir(self, destination: str = "", folder_name: str = "") -> str:
         """智能查找作品在待发货架中的目标归属目录（支持 24 大细分货架与主题货架）"""
         root_dir = self.scanner.root
@@ -4019,6 +4101,44 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "targetPath": target_dest,
                 "remark": remark,
                 "remainingWorks": len(self.scanner.scan())
+            })
+            return
+
+        if path in ("/api/online/delete-image", "/api/online/delete-single-image"):
+            # DSH-141: 预览界面直接删除单张图片（零丢失安全物理备份至 _垃圾作品样本/_deleted_images/）
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body)
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+
+            work_id = (req.get("workId") or req.get("id") or "").strip()
+            image_name = (req.get("image") or req.get("imageName") or req.get("filename") or "").strip()
+            device_name = (req.get("deviceName") or req.get("device") or "移动相册客户端").strip()
+
+            if not work_id or not image_name:
+                self.send_json(200, {"ok": False, "error": "缺少作品ID或图片文件名"})
+                return
+
+            target_work = self.scanner.get_work(work_id)
+            if not target_work and "__link_" in work_id:
+                target_work = self.scanner.get_work(work_id.split("__link_")[0])
+            if not target_work:
+                target_work = self.scanner.resolve_stage_work(work_id)
+            if not target_work:
+                self.send_json(200, {"ok": False, "error": "作品不存在或已被移除"})
+                return
+
+            ok, msg, remaining_images = self._delete_single_image(target_work, image_name, device_name)
+            self.send_json(200, {
+                "ok": ok,
+                "workId": work_id,
+                "image": image_name,
+                "message": msg if ok else "",
+                "error": "" if ok else msg,
+                "remainingImages": remaining_images
             })
             return
 

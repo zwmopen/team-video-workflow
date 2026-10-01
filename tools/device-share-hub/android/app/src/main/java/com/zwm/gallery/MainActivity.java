@@ -4053,7 +4053,10 @@ public final class MainActivity extends Activity {
             }
         }
         if (work.useCount > 0 && work.dispatchedTo != null && !work.dispatchedTo.isEmpty()) {
-            detail.append("\n记录：").append(String.join("、", work.dispatchedTo));
+            String compact = formatCompactDispatchedRecords(work.dispatchedTo);
+            if (!compact.isEmpty()) {
+                detail.append("\n记录：").append(compact);
+            }
         }
         TextView meta = text(detail.toString(), 12, false);
         meta.setTextColor(work.useCount == 0 ? Color.rgb(75, 82, 78) : Color.rgb(115, 120, 118));
@@ -4090,22 +4093,15 @@ public final class MainActivity extends Activity {
             String extracted = (item.copyText != null && !item.copyText.isEmpty())
                     ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.copyText, item.platform);
 
-            // DSH-130-B & DSH-137: 判定该版本按钮是否已被使用或分发（多重来源：本地持久化缓存、dispatchedVersions、dispatchedTo）
-            boolean isVersionDispatched = false;
+            // DSH-130-B, DSH-137 & DSH-142: 判定该版本按钮是否已被使用或分发（多重来源：本地持久化缓存、dispatchedVersions、dispatchedTo，支持跨端别名模糊匹配）
             java.util.Set<String> localDispatched = getLocalDispatchedVersions(work.id);
-            if (localDispatched.contains(item.buttonLabel) || (item.platform != null && localDispatched.contains(item.platform.code))) {
-                isVersionDispatched = true;
-            } else if (work.dispatchedVersions != null && (work.dispatchedVersions.contains(item.buttonLabel) || (item.platform != null && work.dispatchedVersions.contains(item.platform.code)))) {
-                isVersionDispatched = true;
-            } else if (work.dispatchedTo != null) {
-                for (String tag : work.dispatchedTo) {
-                    if (tag != null && (tag.contains(item.buttonLabel)
-                            || (item.platform != null && tag.contains(item.platform.code)))) {
-                        isVersionDispatched = true;
-                        break;
-                    }
-                }
-            }
+            boolean isVersionDispatched = PlatformCopyParser.isPlatformOrVersionDispatched(
+                    item.buttonLabel,
+                    item.platform != null ? item.platform.code : null,
+                    localDispatched,
+                    work.dispatchedVersions,
+                    work.dispatchedTo
+            );
             String btnLabel = isVersionDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel;
             Button btn = compactButton(btnLabel, isVersionDispatched || work.useCount == 0);
             if (isVersionDispatched) {
@@ -4516,6 +4512,16 @@ public final class MainActivity extends Activity {
         badge.setPadding(dp(8), dp(3), dp(8), dp(3));
         headerRow.addView(badge, new LinearLayout.LayoutParams(-2, -2));
 
+        // DSH-141: 右上角垃圾箱单图删除按钮
+        Button deleteImgBtn = new Button(this);
+        deleteImgBtn.setText("🗑️");
+        deleteImgBtn.setTextSize(13);
+        deleteImgBtn.setPadding(dp(6), 0, dp(6), 0);
+        deleteImgBtn.setBackground(round(Color.rgb(240, 240, 240), 8));
+        LinearLayout.LayoutParams delParams = new LinearLayout.LayoutParams(dp(36), dp(30));
+        delParams.setMargins(dp(6), 0, 0, 0);
+        headerRow.addView(deleteImgBtn, delParams);
+
         layout.addView(headerRow, margins(0, 0, 0, dp(8)));
 
         ImageView fullView = new ImageView(this);
@@ -4555,12 +4561,67 @@ public final class MainActivity extends Activity {
         });
         dialog.show();
 
+        final List<String> mutableImages = new ArrayList<>(images);
         final int[] currentIndex = new int[]{imageIndex};
 
         final Runnable[] renderHolder = new Runnable[1];
+
+        deleteImgBtn.setOnClickListener(v -> {
+            if (mutableImages.size() <= 1) {
+                new AlertDialog.Builder(this)
+                        .setTitle("无法删除单张")
+                        .setMessage("作品至少需保留 1 张图片。如需整套下架，请直接在相册卡片底部点击「删除」按钮。")
+                        .setPositiveButton("我知道了", null)
+                        .show();
+                return;
+            }
+            int curr = currentIndex[0];
+            if (curr < 0 || curr >= mutableImages.size()) return;
+            String targetImg = mutableImages.get(curr);
+
+            new AlertDialog.Builder(this)
+                    .setTitle("删除单张图片")
+                    .setMessage("确定要删除第 " + (curr + 1) + " 张图片（" + targetImg + "）吗？\n\n图片将安全备份至垃圾样本库，作品其余图片仍将保留。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("删除单图", (d, which) -> {
+                        badge.setText("🗑️ 删除中…");
+                        onlineClient.deleteImage(workId, targetImg, getDeviceName(), new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteImageResult>() {
+                            @Override
+                            public void onSuccess(OnlineGalleryClient.DeleteImageResult result) {
+                                if (result != null && result.ok) {
+                                    toast("已删除单图: " + targetImg);
+                                    mutableImages.remove(targetImg);
+                                    if (result.remainingImages != null && !result.remainingImages.isEmpty()) {
+                                        mutableImages.clear();
+                                        mutableImages.addAll(result.remainingImages);
+                                    }
+                                    syncOnlineWorkImageDeleted(workId, mutableImages);
+                                    if (mutableImages.isEmpty()) {
+                                        dialog.dismiss();
+                                    } else {
+                                        if (currentIndex[0] >= mutableImages.size()) {
+                                            currentIndex[0] = Math.max(0, mutableImages.size() - 1);
+                                        }
+                                        renderHolder[0].run();
+                                    }
+                                } else {
+                                    String errMsg = (result != null && result.error != null && !result.error.isEmpty()) ? result.error : "删除失败";
+                                    toast(errMsg);
+                                }
+                            }
+
+                            @Override
+                            public void onError(Exception error) {
+                                toast("删除请求失败: " + error.getMessage());
+                            }
+                        });
+                    })
+                    .show();
+        });
+
         renderHolder[0] = () -> {
-            String imageName = images.get(currentIndex[0]);
-            title.setText(workTitle + " (" + (currentIndex[0] + 1) + "/" + images.size() + ")");
+            String imageName = mutableImages.get(currentIndex[0]);
+            title.setText(workTitle + " (" + (currentIndex[0] + 1) + "/" + mutableImages.size() + ")");
             boolean isFullCached = onlineClient.hasFullImageCached(workId, imageName);
             badge.setText(isFullCached ? "✅ 100% 原画" : "⏳ 拉取原画中…");
             badge.setTextColor(isFullCached ? Color.rgb(15, 135, 88) : Color.rgb(180, 120, 20));
@@ -4569,8 +4630,8 @@ public final class MainActivity extends Activity {
 
             prevBtn.setEnabled(currentIndex[0] > 0);
             prevBtn.setAlpha(currentIndex[0] > 0 ? 1f : 0.4f);
-            nextBtn.setEnabled(currentIndex[0] < images.size() - 1);
-            nextBtn.setAlpha(currentIndex[0] < images.size() - 1 ? 1f : 0.4f);
+            nextBtn.setEnabled(currentIndex[0] < mutableImages.size() - 1);
+            nextBtn.setAlpha(currentIndex[0] < mutableImages.size() - 1 ? 1f : 0.4f);
 
             // 1. 先展示缩略图占位（0 秒白屏）
             String cacheKeyThumb = "online:" + workId + ":" + imageName;
@@ -4586,7 +4647,7 @@ public final class MainActivity extends Activity {
                 badge.setText("✅ 100% 原画");
                 badge.setTextColor(Color.rgb(15, 135, 88));
                 badge.setBackground(round(Color.rgb(235, 247, 240), 8));
-                prefetchOnlineImages(workId, images, currentIndex[0]);
+                prefetchOnlineImages(workId, mutableImages, currentIndex[0]);
                 return;
             }
 
@@ -4594,7 +4655,7 @@ public final class MainActivity extends Activity {
             onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
                 @Override
                 public void onSuccess(Bitmap result) {
-                    if (currentIndex[0] >= images.size() || !images.get(currentIndex[0]).equals(imageName)) return;
+                    if (currentIndex[0] >= mutableImages.size() || !mutableImages.get(currentIndex[0]).equals(imageName)) return;
                     spinner.setVisibility(View.GONE);
                     if (result != null && !result.isRecycled()) {
                         THUMBNAIL_CACHE.put(cacheKeyFull, result);
@@ -4617,7 +4678,7 @@ public final class MainActivity extends Activity {
             });
 
             // 4. 同作品大图后台并发静默预加载
-            prefetchOnlineImages(workId, images, currentIndex[0]);
+            prefetchOnlineImages(workId, mutableImages, currentIndex[0]);
         };
 
         Runnable stepPrev = () -> {
@@ -4627,7 +4688,7 @@ public final class MainActivity extends Activity {
             }
         };
         Runnable stepNext = () -> {
-            if (currentIndex[0] < images.size() - 1) {
+            if (currentIndex[0] < mutableImages.size() - 1) {
                 currentIndex[0]++;
                 renderHolder[0].run();
             }
@@ -5055,6 +5116,68 @@ public final class MainActivity extends Activity {
             }
         }
         applyOnlineCategoryFilter(selectedOnlineCategory);
+    }
+
+    private void syncOnlineWorkImageDeleted(String workId, List<String> remainingImages) {
+        for (int i = 0; i < onlineWorks.size(); i++) {
+            OnlineWorkEntry old = onlineWorks.get(i);
+            if (old.id.equals(workId)) {
+                List<String> newImgs = new ArrayList<>(remainingImages);
+                OnlineWorkEntry updated = new OnlineWorkEntry(
+                        old.id, old.title, old.destination, old.stage,
+                        old.useCount, old.maxUses, old.isUsed, old.remainingUses,
+                        old.status, newImgs, newImgs.size(), old.copyText, old.hasCopyText,
+                        old.dispatchedTo, old.lastDispatchedAt, old.garbage, old.garbageRemark,
+                        old.path, old.firstSharedAtMs, old.expireAtMs, old.originDevice, old.dispatchedVersions
+                );
+                onlineWorks.set(i, updated);
+                break;
+            }
+        }
+        applyOnlineCategoryFilter(selectedOnlineCategory);
+    }
+
+    private String formatCompactDispatchedRecords(List<String> records) {
+        if (records == null || records.isEmpty()) return "";
+        List<String> compactList = new ArrayList<>();
+        for (String r : records) {
+            if (r == null) continue;
+            String trimmed = r.trim();
+            if (trimmed.isEmpty()) continue;
+            String dev = trimmed;
+            int parenIdx = dev.indexOf('(');
+            if (parenIdx >= 0) {
+                dev = dev.substring(0, parenIdx).trim();
+            }
+            if (dev.length() > 10) {
+                dev = dev.substring(0, 10);
+            }
+            String ver = PlatformCopyParser.extractVersionFromRecord(trimmed);
+            String timeStr = "";
+            int atIdx = trimmed.indexOf('@');
+            if (atIdx >= 0) {
+                String afterAt = trimmed.substring(atIdx + 1).trim();
+                String[] parts = afterAt.split("\\s+");
+                if (parts.length >= 2 && parts[1].length() >= 5) {
+                    timeStr = parts[1].substring(0, 5);
+                }
+            }
+            String item = dev;
+            if (!ver.isEmpty()) {
+                item += "·" + ver;
+            }
+            if (!timeStr.isEmpty()) {
+                item += " " + timeStr;
+            }
+            if (!compactList.contains(item)) {
+                compactList.add(item);
+            }
+        }
+        if (compactList.isEmpty()) return "";
+        if (compactList.size() <= 2) {
+            return String.join(" | ", compactList);
+        }
+        return compactList.get(0) + " | " + compactList.get(1) + " 等" + compactList.size() + "条";
     }
 
     private interface CopyShareConsumer {

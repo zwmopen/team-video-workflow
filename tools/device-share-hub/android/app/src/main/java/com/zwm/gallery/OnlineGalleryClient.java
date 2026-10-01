@@ -1336,6 +1336,24 @@ public final class OnlineGalleryClient {
         }
     }
 
+    public static class DeleteImageResult {
+        public final boolean ok;
+        public final String workId;
+        public final String image;
+        public final String message;
+        public final String error;
+        public final List<String> remainingImages;
+
+        public DeleteImageResult(boolean ok, String workId, String image, String message, String error, List<String> remainingImages) {
+            this.ok = ok;
+            this.workId = workId;
+            this.image = image;
+            this.message = message;
+            this.error = error;
+            this.remainingImages = remainingImages != null ? remainingImages : Collections.emptyList();
+        }
+    }
+
     public void deleteWork(String workId, Callback<DeleteResult> callback) {
         deleteWork(workId, "", callback);
     }
@@ -1360,6 +1378,42 @@ public final class OnlineGalleryClient {
                         json.optString("message", ""),
                         json.optString("targetPath", ""),
                         json.optInt("remainingWorks", -1)
+                );
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
+    /**
+     * DSH-141: 预览界面直接删除单张图片（安全移入 _垃圾作品样本/_deleted_images/ 零丢失备份）
+     */
+    public void deleteImage(String workId, String imageName, String deviceName, Callback<DeleteImageResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                URL url = new URL(baseUrl + "/api/online/delete-image");
+                JSONObject body = new JSONObject();
+                body.put("workId", workId);
+                body.put("image", imageName);
+                body.put("deviceName", (deviceName != null && !deviceName.isEmpty()) ? deviceName : (android.os.Build.MODEL != null ? android.os.Build.MODEL : "移动端"));
+                String resp = httpPost(url, body.toString());
+                JSONObject json = new JSONObject(resp);
+                List<String> remaining = new ArrayList<>();
+                JSONArray arr = json.optJSONArray("remainingImages");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        remaining.add(arr.getString(i));
+                    }
+                }
+                DeleteImageResult res = new DeleteImageResult(
+                        json.optBoolean("ok", false),
+                        json.optString("workId", workId),
+                        json.optString("image", imageName),
+                        json.optString("message", ""),
+                        json.optString("error", ""),
+                        remaining
                 );
                 mainHandler.post(() -> callback.onSuccess(res));
             } catch (Exception e) {

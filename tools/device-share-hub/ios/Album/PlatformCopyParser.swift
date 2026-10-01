@@ -350,7 +350,7 @@ enum PlatformCopyParser {
         case .xhs:
             return vname.contains("种草") || vname.contains("小红书") || vname.contains("原生")
         case .hr:
-            return lower.contains("hr") || vname.contains("决策")
+            return lower.contains("hr") || vname.contains("决策") || vname.contains("备用") || vname.contains("方案")
         case .wechat:
             return vname.contains("公众号") || vname.contains("微信")
         case .xhs3:
@@ -358,5 +358,82 @@ enum PlatformCopyParser {
         case .general:
             return false
         }
+    }
+
+    /// DSH-142: 平台与版本别名族（跨端与多版本完全对齐）
+    static let aliasFamilies: [Set<String>] = [
+        // HR / 备用 / 方案族
+        ["hr", "hr决策版", "决策版", "备用", "备用岗", "备用文案", "备用方案", "方案", "方案版"],
+        // 小红书种草族
+        ["xhs", "种草版", "种草", "小红书", "红书", "红书种草", "自然种草版", "小红书自然种草版", "发布"],
+        // 小红书大纲方案族
+        ["xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲"],
+        // 抖音无营销族
+        ["douyin", "规避营销版", "抖音", "抖音无营销", "抖音避坑", "无营销版", "避坑版"],
+        // 微信公众号族
+        ["wechat", "公众号版", "公众号", "微信", "微信公众号"],
+        // 短文精选族
+        ["xhs3", "xhs_3", "短文精选版", "短文版", "精选版"]
+    ]
+
+    /// 判断两个版本标签或别名是否等价
+    static func isVersionTagMatched(_ a: String, _ b: String) -> Bool {
+        let cleanA = a.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanB = b.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if cleanA.isEmpty || cleanB.isEmpty { return false }
+        if cleanA == cleanB { return true }
+        if cleanA.count >= 2 && cleanB.count >= 2 {
+            if cleanA.contains(cleanB) || cleanB.contains(cleanA) { return true }
+        }
+        for family in aliasFamilies {
+            let inA = family.contains(where: { cleanA == $0 || (cleanA.count >= 2 && cleanA.contains($0)) })
+            let inB = family.contains(where: { cleanB == $0 || (cleanB.count >= 2 && cleanB.contains($0)) })
+            if inA && inB { return true }
+        }
+        return false
+    }
+
+    /// 从 dispatchedTo 记录字符串（如 "Google Pixel 7 (备用岗 @ 2026-09-30 14:06:16)"）中提取版本名
+    static func extractVersionFromRecord(_ record: String) -> String {
+        guard let openParen = record.range(of: "("),
+              let closeParen = record.range(of: ")", range: openParen.upperBound..<record.endIndex) else {
+            return ""
+        }
+        let inside = String(record[openParen.upperBound..<closeParen.lowerBound])
+        if let atIdx = inside.range(of: "@") {
+            return String(inside[..<atIdx.lowerBound]).trimmingCharacters(in: .whitespaces)
+        }
+        return inside.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// DSH-142: 全局对齐的判断某按钮是否已分发（支持多端别名模糊匹配）
+    static func isPlatformOrVersionDispatched(
+        buttonLabel: String,
+        platformCode: String?,
+        localDispatched: Set<String>,
+        dispatchedVersions: [String],
+        dispatchedTo: [String]
+    ) -> Bool {
+        // 1. 本地分发记录
+        for local in localDispatched {
+            if isVersionTagMatched(buttonLabel, local) { return true }
+            if let code = platformCode, isVersionTagMatched(code, local) { return true }
+        }
+        // 2. 服务端返回的 dispatchedVersions
+        for ver in dispatchedVersions {
+            if isVersionTagMatched(buttonLabel, ver) { return true }
+            if let code = platformCode, isVersionTagMatched(code, ver) { return true }
+        }
+        // 3. 服务端返回的 dispatchedTo（如 "设备名 (版本 @ 时间)"）
+        for tag in dispatchedTo {
+            let extracted = extractVersionFromRecord(tag)
+            if !extracted.isEmpty {
+                if isVersionTagMatched(buttonLabel, extracted) { return true }
+                if let code = platformCode, isVersionTagMatched(code, extracted) { return true }
+            }
+            if tag.contains(buttonLabel) { return true }
+            if let code = platformCode, tag.contains(code) { return true }
+        }
+        return false
     }
 }

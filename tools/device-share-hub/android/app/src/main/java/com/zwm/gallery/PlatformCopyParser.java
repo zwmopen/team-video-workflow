@@ -326,4 +326,83 @@ final class PlatformCopyParser {
 
         boolean isOk() { return status == Status.OK; }
     }
+
+    // DSH-142: 平台与版本别名族（全跨端对齐）
+    private static final String[][] ALIAS_FAMILIES = new String[][] {
+        {"hr", "hr决策版", "决策版", "备用", "备用岗", "备用文案", "备用方案", "方案", "方案版"},
+        {"xhs", "种草版", "种草", "小红书", "红书", "红书种草", "自然种草版", "小红书自然种草版", "发布"},
+        {"xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲"},
+        {"douyin", "规避营销版", "抖音", "抖音无营销", "抖音避坑", "无营销版", "避坑版"},
+        {"wechat", "公众号版", "公众号", "微信", "微信公众号"},
+        {"xhs3", "xhs_3", "短文精选版", "短文版", "精选版"}
+    };
+
+    static boolean isVersionTagMatched(String a, String b) {
+        if (a == null || b == null) return false;
+        String cleanA = a.trim().toLowerCase(java.util.Locale.ROOT);
+        String cleanB = b.trim().toLowerCase(java.util.Locale.ROOT);
+        if (cleanA.isEmpty() || cleanB.isEmpty()) return false;
+        if (cleanA.equals(cleanB)) return true;
+        if (cleanA.length() >= 2 && cleanB.length() >= 2) {
+            if (cleanA.contains(cleanB) || cleanB.contains(cleanA)) return true;
+        }
+        for (String[] family : ALIAS_FAMILIES) {
+            boolean inA = false, inB = false;
+            for (String item : family) {
+                if (cleanA.equals(item) || (cleanA.length() >= 2 && cleanA.contains(item))) inA = true;
+                if (cleanB.equals(item) || (cleanB.length() >= 2 && cleanB.contains(item))) inB = true;
+            }
+            if (inA && inB) return true;
+        }
+        return false;
+    }
+
+    static String extractVersionFromRecord(String record) {
+        if (record == null) return "";
+        int openParen = record.indexOf('(');
+        int closeParen = record.indexOf(')', openParen + 1);
+        if (openParen >= 0 && closeParen > openParen) {
+            String inside = record.substring(openParen + 1, closeParen).trim();
+            int atIdx = inside.indexOf('@');
+            if (atIdx >= 0) {
+                return inside.substring(0, atIdx).trim();
+            }
+            return inside;
+        }
+        return "";
+    }
+
+    static boolean isPlatformOrVersionDispatched(
+            String buttonLabel,
+            String platformCode,
+            java.util.Set<String> localDispatched,
+            List<String> dispatchedVersions,
+            List<String> dispatchedTo
+    ) {
+        if (localDispatched != null) {
+            for (String local : localDispatched) {
+                if (isVersionTagMatched(buttonLabel, local)) return true;
+                if (platformCode != null && isVersionTagMatched(platformCode, local)) return true;
+            }
+        }
+        if (dispatchedVersions != null) {
+            for (String ver : dispatchedVersions) {
+                if (isVersionTagMatched(buttonLabel, ver)) return true;
+                if (platformCode != null && isVersionTagMatched(platformCode, ver)) return true;
+            }
+        }
+        if (dispatchedTo != null) {
+            for (String tag : dispatchedTo) {
+                if (tag == null) continue;
+                String extracted = extractVersionFromRecord(tag);
+                if (!extracted.isEmpty()) {
+                    if (isVersionTagMatched(buttonLabel, extracted)) return true;
+                    if (platformCode != null && isVersionTagMatched(platformCode, extracted)) return true;
+                }
+                if (tag.contains(buttonLabel)) return true;
+                if (platformCode != null && tag.contains(platformCode)) return true;
+            }
+        }
+        return false;
+    }
 }

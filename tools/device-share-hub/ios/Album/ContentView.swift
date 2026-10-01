@@ -1324,7 +1324,47 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let vc = OnlineImagePreviewController(entry: entry, initialIndex: initialIndex, initialImage: initialImage)
         vc.modalPresentationStyle = .fullScreen
         vc.modalTransitionStyle = .crossDissolve
+        vc.onImageDeleted = { [weak self] workId, remainingImages in
+            guard let self = self else { return }
+            self.handleOnlineImageDeleted(workId: workId, remainingImages: remainingImages)
+        }
         present(vc, animated: true)
+    }
+
+    private func handleOnlineImageDeleted(workId: String, remainingImages: [String]) {
+        for (i, w) in onlineWorks.enumerated() {
+            if w.id == workId {
+                onlineWorks[i] = OnlineWorkEntry(
+                    id: w.id, title: w.title, cover: remainingImages.first ?? "",
+                    images: remainingImages, imageCount: remainingImages.count,
+                    copyText: w.copyText, hasCopyText: w.hasCopyText,
+                    category: w.category, destination: w.destination,
+                    useCount: w.useCount, dispatchedTo: w.dispatchedTo,
+                    lastDispatchedAt: w.lastDispatchedAt, garbage: w.garbage,
+                    garbageRemark: w.garbageRemark, path: w.path,
+                    firstSharedAtMs: w.firstSharedAtMs, expireAtMs: w.expireAtMs,
+                    originDevice: w.originDevice, dispatchedVersions: w.dispatchedVersions
+                )
+                break
+            }
+        }
+        for (i, w) in displayedOnlineWorks.enumerated() {
+            if w.id == workId {
+                displayedOnlineWorks[i] = OnlineWorkEntry(
+                    id: w.id, title: w.title, cover: remainingImages.first ?? "",
+                    images: remainingImages, imageCount: remainingImages.count,
+                    copyText: w.copyText, hasCopyText: w.hasCopyText,
+                    category: w.category, destination: w.destination,
+                    useCount: w.useCount, dispatchedTo: w.dispatchedTo,
+                    lastDispatchedAt: w.lastDispatchedAt, garbage: w.garbage,
+                    garbageRemark: w.garbageRemark, path: w.path,
+                    firstSharedAtMs: w.firstSharedAtMs, expireAtMs: w.expireAtMs,
+                    originDevice: w.originDevice, dispatchedVersions: w.dispatchedVersions
+                )
+                break
+            }
+        }
+        collectionView.reloadData()
     }
 
     /// 「重置」（在线）：与 Android `confirmResetOnlineWork` 交互 1:1 对齐。
@@ -1419,6 +1459,16 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             labels = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
                 ? [WorkCell.copyMissingTitle]
                 : PlatformCopyParser.parseAvailablePlatforms(entry.copyText).map { $0.buttonLabel }
+            // DSH-142: 动态根据在线作品 detail 行数累加高度，彻底杜绝按钮被挤压
+            if !entry.dispatchedTo.isEmpty {
+                extraDetailLines += 1
+                if entry.dispatchedTo.count > 1 {
+                    extraDetailLines += 1
+                }
+            }
+            if entry.garbage {
+                extraDetailLines += 1
+            }
         } else {
             guard indexPath.item < filteredWorks.count else {
                 return CGSize(width: width, height: WorkCell.cardBaseHeight)
@@ -2303,6 +2353,11 @@ private final class WorkCell: UICollectionViewCell {
         platformContainer.spacing = 6
         platformContainer.addArrangedSubview(platformRow)
         platformContainer.addArrangedSubview(actionRow)
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+        actionRow.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        actionRow.setContentCompressionResistancePriority(.required, for: .vertical)
+        platformContainer.setContentCompressionResistancePriority(.required, for: .vertical)
+
         let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformContainer])
         stack.axis = .vertical
         stack.spacing = 5
@@ -2408,9 +2463,12 @@ private final class WorkCell: UICollectionViewCell {
             onlineDetail += (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
         }
 
-        // DSH-093 C10：分发去向我们对齐 Android 在线卡
+        // DSH-093 & DSH-142：分发去向精简展示，彻底防止文字超长挤压按钮
         if !entry.dispatchedTo.isEmpty {
-            onlineDetail += "\n记录：" + entry.dispatchedTo.joined(separator: "、")
+            let compactRec = WorkCell.formatCompactDispatchedRecords(entry.dispatchedTo)
+            if !compactRec.isEmpty {
+                onlineDetail += "\n记录：" + compactRec
+            }
         }
         // DSH-093 C11：垃圾备注。称呼统一叫「垃圾备注：」
         if entry.garbage {
@@ -2424,6 +2482,48 @@ private final class WorkCell: UICollectionViewCell {
         // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键
         renderOnlinePreviews(entry.images, workId: entry.id)
         configureOnlineButtons(entry)
+    }
+
+    /// DSH-142: 精简分发记录展示，避免冗长文字挤压底部按钮
+    static func formatCompactDispatchedRecords(_ records: [String]) -> String {
+        guard !records.isEmpty else { return "" }
+        var compactList: [String] = []
+        for r in records {
+            let trimmed = r.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            var dev = trimmed
+            if let parenIdx = dev.range(of: "(") {
+                dev = String(dev[..<parenIdx.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            if dev.count > 10 {
+                dev = String(dev.prefix(10))
+            }
+            let ver = PlatformCopyParser.extractVersionFromRecord(trimmed)
+            var timeStr = ""
+            if let atIdx = trimmed.range(of: "@") {
+                let afterAt = String(trimmed[atIdx.upperBound...]).trimmingCharacters(in: .whitespaces)
+                let parts = afterAt.components(separatedBy: " ")
+                if parts.count >= 2 {
+                    let hm = parts[1].prefix(5)
+                    timeStr = String(hm)
+                }
+            }
+            var item = dev
+            if !ver.isEmpty {
+                item += "·" + ver
+            }
+            if !timeStr.isEmpty {
+                item += " " + timeStr
+            }
+            if !compactList.contains(item) {
+                compactList.append(item)
+            }
+        }
+        if compactList.isEmpty { return "" }
+        if compactList.count <= 2 {
+            return compactList.joined(separator: " | ")
+        }
+        return compactList.prefix(2).joined(separator: " | ") + " 等\(compactList.count)条"
     }
 
     private func renderOnlinePreviews(_ paths: [String], workId: String) {
@@ -2464,15 +2564,18 @@ private final class WorkCell: UICollectionViewCell {
     private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
         let platforms = PlatformCopyParser.parseAvailablePlatforms(entry.copyText)
         let copyMissing = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
-        // DSH-137: 多来源持久化对勾 ✓ 判定
+        // DSH-137 & DSH-142: 多来源持久化与模糊别名精准打勾 ✓ 判定
         let localDispatched = LocalDispatchedStore.get(workId: entry.id)
         let isDispatched: (Int) -> Bool = { idx in
             guard idx >= 0 && idx < platforms.count else { return false }
-            let label = platforms[idx].buttonLabel
-            if localDispatched.contains(label) { return true }
-            if entry.dispatchedVersions.contains(label) { return true }
-            if entry.dispatchedTo.contains(where: { $0.contains(label) }) { return true }
-            return false
+            let item = platforms[idx]
+            return PlatformCopyParser.isPlatformOrVersionDispatched(
+                buttonLabel: item.buttonLabel,
+                platformCode: item.platform.code,
+                localDispatched: localDispatched,
+                dispatchedVersions: entry.dispatchedVersions,
+                dispatchedTo: entry.dispatchedTo
+            )
         }
         rebuildPlatformButtons(copyMissing ? [] : platforms, isOptimistic: isDispatched,
                                action: #selector(platformButtonTapped(_:)))
@@ -2722,12 +2825,18 @@ private final class WorkCell: UICollectionViewCell {
 }
 
 final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate {
-    private let entry: OnlineWorkEntry
+    private var entry: OnlineWorkEntry
     private var currentIndex: Int
     private var initialImage: UIImage?
     private let scrollView = UIScrollView()
     private let counterLabel = UILabel()
     private let imageView = UIImageView()
+
+    /// DSH-141: 删除单图后的外部联动回调 (workId, remainingImages)
+    var onImageDeleted: ((String, [String]) -> Void)?
+
+    // 右上角垃圾箱单图删除按钮（DSH-141）
+    private let trashBtn = UIButton(type: .system)
 
     // 右上角原画加载状态药丸（对齐 Android）
     private let statusBadge = UIControl()
@@ -2809,6 +2918,17 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         closeBtn.addTarget(self, action: #selector(close), for: .touchUpInside)
         view.addSubview(closeBtn)
 
+        // DSH-141: 右上角垃圾箱单图删除按钮
+        trashBtn.setTitle("🗑️", for: .normal)
+        trashBtn.titleLabel?.font = .systemFont(ofSize: 16)
+        trashBtn.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        trashBtn.layer.cornerRadius = 18
+        trashBtn.clipsToBounds = true
+        trashBtn.translatesAutoresizingMaskIntoConstraints = false
+        trashBtn.addTarget(self, action: #selector(trashBtnTapped), for: .touchUpInside)
+        trashBtn.accessibilityLabel = "删除当前图片"
+        view.addSubview(trashBtn)
+
         // 右上角原画加载状态药丸（对齐 Android）
         statusBadge.backgroundColor = UIColor.black.withAlphaComponent(0.55)
         statusBadge.layer.cornerRadius = 16
@@ -2840,8 +2960,13 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
             closeBtn.widthAnchor.constraint(equalToConstant: 36),
             closeBtn.heightAnchor.constraint(equalToConstant: 36),
 
+            trashBtn.centerYAnchor.constraint(equalTo: closeBtn.centerYAnchor),
+            trashBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -10),
+            trashBtn.widthAnchor.constraint(equalToConstant: 36),
+            trashBtn.heightAnchor.constraint(equalToConstant: 36),
+
             statusBadge.centerYAnchor.constraint(equalTo: closeBtn.centerYAnchor),
-            statusBadge.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -10),
+            statusBadge.trailingAnchor.constraint(equalTo: trashBtn.leadingAnchor, constant: -10),
             statusBadge.heightAnchor.constraint(equalToConstant: 32),
 
             badgeStack.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: 10),
@@ -2919,6 +3044,117 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
 
     @objc private func retryLoadOriginal() {
         loadCurrent(forceReloadOriginal: true)
+    }
+
+    // MARK: - DSH-141: 删除单张图片
+    @objc private func trashBtnTapped() {
+        if entry.images.count <= 1 {
+            let alert = UIAlertController(
+                title: "无法删除单张",
+                message: "作品至少需保留 1 张图片。如需整套下架，请直接在相册卡片底部点击「删除」按钮。",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "我知道了", style: .default, handler: nil))
+            present(alert, animated: true, completion: nil)
+            return
+        }
+
+        guard currentIndex >= 0 && currentIndex < entry.images.count else { return }
+        let targetImage = entry.images[currentIndex]
+
+        let alert = UIAlertController(
+            title: "删除单张图片",
+            message: "确定要删除第 \(currentIndex + 1) 张图片（\(targetImage)）吗？\n\n图片将安全备份至垃圾样本库，作品其余图片仍将保留。",
+            preferredStyle: .actionSheet
+        )
+        alert.addAction(UIAlertAction(title: "删除单图", style: .destructive, handler: { [weak self] _ in
+            guard let self = self else { return }
+            self.performDeleteCurrentImage(targetImage)
+        }))
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = trashBtn
+            popover.sourceRect = trashBtn.bounds
+            popover.permittedArrowDirections = [.up, .down]
+        }
+        present(alert, animated: true, completion: nil)
+    }
+
+    private func performDeleteCurrentImage(_ imageName: String) {
+        let wid = entry.id
+        badgeLabel.text = "🗑️ 正在删除…"
+        OnlineGalleryClient.shared.deleteOnlineImage(workId: wid, image: imageName) { [weak self] ok, msg, remaining in
+            guard let self = self else { return }
+            if ok {
+                self.showToast("已删除: \(imageName)")
+                var newImages = self.entry.images
+                newImages.removeAll { $0 == imageName }
+                if !remaining.isEmpty {
+                    newImages = remaining
+                }
+                self.entry = OnlineWorkEntry(
+                    id: self.entry.id,
+                    title: self.entry.title,
+                    cover: newImages.first ?? "",
+                    images: newImages,
+                    imageCount: newImages.count,
+                    copyText: self.entry.copyText,
+                    hasCopyText: self.entry.hasCopyText,
+                    category: self.entry.category,
+                    destination: self.entry.destination,
+                    useCount: self.entry.useCount,
+                    dispatchedTo: self.entry.dispatchedTo,
+                    lastDispatchedAt: self.entry.lastDispatchedAt,
+                    garbage: self.entry.garbage,
+                    garbageRemark: self.entry.garbageRemark,
+                    path: self.entry.path,
+                    firstSharedAtMs: self.entry.firstSharedAtMs,
+                    expireAtMs: self.entry.expireAtMs,
+                    originDevice: self.entry.originDevice,
+                    dispatchedVersions: self.entry.dispatchedVersions
+                )
+                self.onImageDeleted?(wid, newImages)
+
+                if self.entry.images.isEmpty {
+                    self.close()
+                } else {
+                    if self.currentIndex >= self.entry.images.count {
+                        self.currentIndex = max(0, self.entry.images.count - 1)
+                    }
+                    self.imageView.image = nil
+                    self.loadCurrent(isInitial: false)
+                }
+            } else {
+                let errAlert = UIAlertController(title: "删除失败", message: msg.isEmpty ? "网络错误" : msg, preferredStyle: .alert)
+                errAlert.addAction(UIAlertAction(title: "确定", style: .default, handler: nil))
+                self.present(errAlert, animated: true, completion: nil)
+            }
+        }
+    }
+
+    private func showToast(_ text: String) {
+        let toast = UILabel()
+        toast.text = text
+        toast.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
+        toast.textColor = .white
+        toast.font = .systemFont(ofSize: 13, weight: .semibold)
+        toast.textAlignment = .center
+        toast.layer.cornerRadius = 14
+        toast.clipsToBounds = true
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(toast)
+        NSLayoutConstraint.activate([
+            toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toast.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            toast.heightAnchor.constraint(equalToConstant: 32),
+            toast.widthAnchor.constraint(greaterThanOrEqualToConstant: 120)
+        ])
+        UIView.animate(withDuration: 0.3, delay: 1.5, options: .curveEaseOut, animations: {
+            toast.alpha = 0
+        }, completion: { _ in
+            toast.removeFromSuperview()
+        })
     }
 
     private func updateBadge(status: ImageLoadStatus) {

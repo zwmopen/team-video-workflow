@@ -699,6 +699,36 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    /// DSH-141: 删除单张图片（安全移入 _垃圾作品样本/_deleted_images/ 零丢失备份）
+    public func deleteOnlineImage(workId: String, image: String, completion: ((Bool, String, [String]) -> Void)? = nil) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/delete-image") else {
+            completion?(false, "URL 错误", [])
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "workId": workId,
+            "image": image,
+            "deviceName": UIDevice.current.name.isEmpty ? UIDevice.current.model : UIDevice.current.name
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        session.dataTask(with: request) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async { completion?(false, "请求失败", []) }
+                return
+            }
+            let ok = (json["ok"] as? Bool) ?? false
+            let msg = (json["message"] as? String) ?? (json["error"] as? String) ?? ""
+            let remaining = (json["remainingImages"] as? [String]) ?? []
+            DispatchQueue.main.async { completion?(ok, msg, remaining) }
+        }.resume()
+    }
+
     public func resetWork(workId: String, completion: ((Bool, String) -> Void)? = nil) {
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/reset-work") else {
