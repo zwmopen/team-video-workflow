@@ -285,4 +285,21 @@ final class PlatformCopyParserTests: XCTestCase {
             dispatchedTo: tagWithDeviceName
         ))
     }
+
+    func testNormalizeCopyTextForClipboard() {
+        // 场景 1：单行内联盲文空格粘连展开为物理换行
+        let glued = "标题123\u{2800}正文内容\u{2800}1️⃣ 玩法一\u{2800}#标签"
+        let normGlued = PlatformCopyParser.normalizeCopyTextForClipboard(glued)
+        XCTAssertEqual(normGlued, "标题123\n\u{2800}\n正文内容\n\u{2800}\n1️⃣ 玩法一\n\u{2800}\n#标签")
+
+        // 场景 2：连续回车转换为防吞空行
+        let multiNewlines = "标题123\n\n正文内容\n\n\n1️⃣ 玩法一\n\n#标签"
+        let normNewlines = PlatformCopyParser.normalizeCopyTextForClipboard(multiNewlines)
+        XCTAssertEqual(normNewlines, "标题123\n\u{2800}\n正文内容\n\u{2800}\n1️⃣ 玩法一\n\u{2800}\n#标签")
+
+        // 场景 3：已具有标准防吞空行，保持原样
+        let standard = "标题123\n\u{2800}\n正文内容\n\u{2800}\n#标签"
+        let normStandard = PlatformCopyParser.normalizeCopyTextForClipboard(standard)
+        XCTAssertEqual(normStandard, standard)
+    }
 }

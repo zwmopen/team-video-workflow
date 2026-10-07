@@ -722,10 +722,17 @@ DESTINATIONS = [
 ]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
-# 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/` 子目录里。
+# 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/`、`规范图/`、`原生高清/` 子目录里。
 # 【2026-09-21 修】老实现只 os.listdir 看顶层 ⇒ 图在子目录的 103 套作品
 # 在手机在线相册里完全不可见（实测 totalWorks 389，磁盘实为 483）。
-IMAGE_SUBDIR_FALLBACKS = ("产出素材",)
+IMAGE_SUBDIR_FALLBACKS = ("产出素材", "规范图", "原生高清")
+
+# 作品内部结构子目录黑名单：严禁将其误判为独立作品或货架目录
+WORK_INTERNAL_SUBDIRS = {
+    "规范图", "原生高清", "qa", "qa_source_links", "_meta", "prompts",
+    "模板选择", "产出素材", "原素材", "素材", "文案", "提示词",
+    "飞书上传副本", "飞书压缩副本", "images", "output", "imgs"
+}
 
 # 内存缩略图缓存 (cache_key -> bytes)，带 LRU 淘汰。
 # ⚠️ 2026-09-20 修复：此前 THUMB_CACHE 只有声明、从未被读取（死代码），
@@ -1802,6 +1809,18 @@ class WorkScanner:
                     self._last_force_scan = now
         return self.scan(force=force)
 
+    def _is_shelf_dir(self, entry: str, full_path: str) -> bool:
+        """判定根目录下的文件夹是否为标准货架/阶段库目录，防止将残缺作品文件夹当成货架深入扫描。"""
+        if not entry or entry.startswith(".") or entry.startswith("_") or entry in WORK_INTERNAL_SUBDIRS:
+            return False
+        if not (entry.endswith(("成品", "作品", "合集")) or entry in ("综合与其它城市", self.STAGE0_FOLDER)):
+            return False
+        # 若目录自身含有作品级特征文件或作品内部子目录，则它是普通作品而非货架
+        for marker in ("manifest.json", "作品标签.json", "文案.txt", "规范图", "原生高清", "产出素材"):
+            if os.path.exists(os.path.join(full_path, marker)):
+                return False
+        return True
+
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
         with self._lock:
@@ -1842,26 +1861,29 @@ class WorkScanner:
                 root_entries = []
 
             for entry in root_entries:
-                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
+                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES or entry in WORK_INTERNAL_SUBDIRS:
                     continue
                 full_path = os.path.join(self.root, entry)
                 if not os.path.isdir(full_path):
                     continue
 
-                # 兼容根目录下直接出图的单个作品
-                try:
-                    direct_work = self._inspect_work_dir(full_path, entry, "待首发", 0)
-                except Exception as _e:
-                    _scan_error("root-entry", full_path, _e)
-                    direct_work = None
+                is_shelf = self._is_shelf_dir(entry, full_path)
 
-                if direct_work:
-                    if direct_work["id"] not in seen_ids:
+                # 兼容根目录下直接出图的单个作品（非标准货架目录才尝试作为单作品解析）
+                if not is_shelf:
+                    try:
+                        direct_work = self._inspect_work_dir(full_path, entry, "待首发", 0)
+                    except Exception as _e:
+                        _scan_error("root-entry", full_path, _e)
+                        direct_work = None
+
+                    if direct_work and direct_work["id"] not in seen_ids:
                         seen_ids.add(direct_work["id"])
                         results.append(direct_work)
+                    # 严禁将非标准货架目录当成货架深入扫描，彻底杜绝将作品内 规范图/原生高清/qa/_meta 误判为独立幽灵作品
                     continue
 
-                # 扫描各分类目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
+                # 扫描各标准分类货架目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
                 default_cat = extract_category_from_folder_name(entry)
                 try:
                     sub_entries = os.listdir(full_path)
@@ -1870,7 +1892,7 @@ class WorkScanner:
                     continue
 
                 for sub in sub_entries:
-                    if sub.startswith(".") or sub.startswith("_"):
+                    if sub.startswith(".") or sub.startswith("_") or sub in WORK_INTERNAL_SUBDIRS:
                         continue
                     sub_path = os.path.join(full_path, sub)
                     if not os.path.isdir(sub_path):
@@ -1892,7 +1914,7 @@ class WorkScanner:
                             try:
                                 child_entries = os.listdir(sub_path)
                                 for child in child_entries:
-                                    if child.startswith(".") or child.startswith("_"):
+                                    if child.startswith(".") or child.startswith("_") or child in WORK_INTERNAL_SUBDIRS:
                                         continue
                                     child_path = os.path.join(sub_path, child)
                                     if not os.path.isdir(child_path):
@@ -1950,16 +1972,18 @@ class WorkScanner:
         # 1. 扫描所有非 . 非 _ 开头的目录及根目录直出作品
         try:
             for entry in os.listdir(self.root):
-                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
+                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES or entry in WORK_INTERNAL_SUBDIRS:
                     continue
                 full = os.path.join(self.root, entry)
                 if not os.path.isdir(full):
                     continue
                 out.add((full, _safe_mtime(full)))
+                if not self._is_shelf_dir(entry, full):
+                    continue
                 # 遍历分类目录下的作品或中间层
                 try:
                     for sub in os.listdir(full):
-                        if sub.startswith(".") or sub.startswith("_"):
+                        if sub.startswith(".") or sub.startswith("_") or sub in WORK_INTERNAL_SUBDIRS:
                             continue
                         sub_full = os.path.join(full, sub)
                         if os.path.isdir(sub_full):
@@ -1968,7 +1992,7 @@ class WorkScanner:
                             if sub.startswith("作品集") or sub in ("团建游戏", "游戏", "游戏类"):
                                 try:
                                     for child in os.listdir(sub_full):
-                                        if child.startswith(".") or child.startswith("_"):
+                                        if child.startswith(".") or child.startswith("_") or child in WORK_INTERNAL_SUBDIRS:
                                             continue
                                         child_full = os.path.join(sub_full, child)
                                         if os.path.isdir(child_full):
@@ -2199,7 +2223,7 @@ class WorkScanner:
         """
         root_real = os.path.realpath(self.root)
         top = [f for f in files if os.path.splitext(f.lower())[1] in IMAGE_EXTENSIONS]
-        if top:
+        if len(top) >= 4:
             # 【2026-09-24 修「iPhone 全库串图」】布局 A 同样禁止返回裸文件名：
             # 393 套作品共用 P1_封面.png / P1.png 这类同名标识，iOS 走
             # /api/online/image?path=<裸文件名> 会命中 image_name_index 的「同名首命中」，
@@ -2224,11 +2248,18 @@ class WorkScanner:
                     continue
                 rel = os.path.relpath(os.path.join(sub_dir, f), root_real)
                 hits.append(rel.replace(os.sep, "/"))
-            if hits:
+            if len(hits) > len(top):
                 return hits
+        if top:
+            return [
+                os.path.relpath(os.path.join(dir_path, f), root_real).replace(os.sep, "/")
+                for f in top
+            ]
         return []
 
     def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int, default_category: str = "") -> Optional[Dict[str, Any]]:
+        if folder_name in WORK_INTERNAL_SUBDIRS:
+            return None
         # Junction / 软链接检测与解析
         is_symlink = False
         source_path = dir_path

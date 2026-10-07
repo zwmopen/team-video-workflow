@@ -451,4 +451,31 @@ enum PlatformCopyParser {
         }
         return false
     }
+
+    /// 统一文案剪贴板排版清洗：防止移动端复制粘贴到小红书/微信后吞空行或单行粘连。
+    static func normalizeCopyTextForClipboard(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        var formatted = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+
+        // 1. 如果包含内联盲文空格 \u{2800} 却缺少物理换行（单行粘连病灶），展开为真实换行
+        let braillePattern = "(?<!\n)\u{2800}"
+        if let regex = try? NSRegularExpression(pattern: braillePattern, options: []) {
+            let range = NSRange(location: 0, length: formatted.utf16.count)
+            formatted = regex.stringByReplacingMatches(in: formatted, options: [], range: range, withTemplate: "\n\u{2800}")
+        }
+        let brailleAfterPattern = "\u{2800}(?!\n)"
+        if let regex = try? NSRegularExpression(pattern: brailleAfterPattern, options: []) {
+            let range = NSRange(location: 0, length: formatted.utf16.count)
+            formatted = regex.stringByReplacingMatches(in: formatted, options: [], range: range, withTemplate: "\u{2800}\n")
+        }
+
+        // 2. 将连续纯回车（如 \n\n+）转换为小红书防吞空行 \n⠀\n
+        let emptyLinePattern = "\n([ \t\u{2800}]*\n)+"
+        if let regex = try? NSRegularExpression(pattern: emptyLinePattern, options: []) {
+            let range = NSRange(location: 0, length: formatted.utf16.count)
+            formatted = regex.stringByReplacingMatches(in: formatted, options: [], range: range, withTemplate: "\n\u{2800}\n")
+        }
+
+        return formatted.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
