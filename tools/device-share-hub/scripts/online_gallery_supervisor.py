@@ -28,6 +28,18 @@ SUPERVISOR_LOG = os.path.join(LOG_DIR, "supervisor.log")
 LOCK_FILE = os.path.join(SCRIPT_DIR, "online_gallery_supervisor.lock")
 LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
 PORT = 45835
+PAUSE_FLAG = r"D:\AICode\运行数据\应用状态\后台服务控制\online-gallery.paused"
+
+def supervision_paused() -> bool:
+    """An existing flag blocks recovery; only its owner creates/removes it."""
+    try:
+        os.stat(PAUSE_FLAG)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        # An unreadable control state is not permission to restart a service.
+        return True
 
 # 确保日志目录存在
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -188,11 +200,17 @@ def kill_stale_processes():
 # ----------------- 启动在线相册服务 -----------------
 def start_service() -> bool:
     global _last_child_proc
+    if supervision_paused():
+        return False
     t0 = time.time()
     log("正在启动/自愈相册主服务 (online_gallery_service.py)...", "INFO")
     
     # 启动前彻底清道，确保无端口冲突
     kill_stale_processes()
+
+    # The UI may pause while cleanup is in progress. Do not resurrect it.
+    if supervision_paused():
+        return False
 
     cmd = [PYTHONW, SERVICE_SCRIPT, str(PORT), LIBRARY_ROOT]
     CREATE_NO_WINDOW = 0x08000000
@@ -216,6 +234,8 @@ def start_service() -> bool:
     ready = False
     for _ in range(360):
         time.sleep(0.5)
+        if supervision_paused():
+            return False
         if not is_child_proc_running(_last_child_proc):
             log("服务子进程在就绪等待期间已退出，放弃本次等待", "WARN")
             break
@@ -253,6 +273,10 @@ def main():
 
     while True:
         try:
+            if supervision_paused():
+                consecutive_ok_count = 0
+                time.sleep(5.0)
+                continue
             # 优先检查子进程是否真实存活：如果子进程还在跑，绝不盲目强杀
             if is_child_proc_running(_last_child_proc):
                 # 子进程仍在运行，执行宽容防抖探活

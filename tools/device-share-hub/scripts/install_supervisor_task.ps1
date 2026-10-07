@@ -78,37 +78,12 @@ Write-Host "[2/3] Registry Run Key Guard Ready: HKCU\...\Run\$TaskName -> $runCm
 
 # 3. Windows Scheduled Task via Schedule.Service COM
 try {
-    $service = New-Object -ComObject("Schedule.Service")
-    $service.Connect()
-    $root = $service.GetFolder("\")
-    $taskDef = $service.NewTask(0)
-    $taskDef.RegistrationInfo.Description = "Online Gallery Service High-Availability Supervisor"
-    $taskDef.RegistrationInfo.Author = $env:USERNAME
-
-    $settings = $taskDef.Settings
-    $settings.Enabled = $true
-    $settings.StartWhenAvailable = $true
-    $settings.Hidden = $false
-    $settings.RestartCount = 999
-    $settings.RestartInterval = "PT1M"
-    $settings.ExecutionTimeLimit = "PT0S"
-    $settings.DisallowStartIfOnBatteries = $false
-    $settings.StopIfGoingOnBatteries = $false
-
-    # Trigger: AtLogon (9)
-    $trigger = $taskDef.Triggers.Create(9)
-    $trigger.UserId = $env:USERNAME
-    $trigger.Enabled = $true
-
-    # Action: Exec (0)
-    $action = $taskDef.Actions.Create(0)
-    $action.Path = $pythonwExe
-    $action.Arguments = "`"$SupervisorPy`""
-    $action.WorkingDirectory = $ScriptDir
-
-    # TASK_CREATE_OR_UPDATE = 6, TASK_LOGON_INTERACTIVE_TOKEN = 3
-    $root.RegisterTaskDefinition($TaskName, $taskDef, 6, $null, $null, 3) | Out-Null
-    Write-Host "[3/3] Windows Scheduled Task Guard Ready: $TaskName (AtLogon / 1-min retry / Permanent / 0 Window)" -ForegroundColor Green
+    $taskAction = New-ScheduledTaskAction -Execute $pythonwExe -Argument "`"$SupervisorPy`"" -WorkingDirectory $ScriptDir
+    $triggerLogon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger @($triggerLogon, $triggerRepeat) -Settings $taskSettings -Force | Out-Null
+    Write-Host "[3/3] Windows Scheduled Task Guard Ready: $TaskName (AtLogOn + 5-min Loop / Permanent / 0 Window)" -ForegroundColor Green
 } catch {
     Write-Warning "Scheduled task registration error: $($_.Exception.Message)"
 }
