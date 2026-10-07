@@ -7,7 +7,7 @@
   "file_name": "album-Android-v0.8.72.apk",
   "apk_url": "/album-Android-v0.8.72.apk",
   "url": "/album-Android-v0.8.72.apk",
-  "sha256": "",
+  "sha256": "96b3e7043a4e75ab511fb9d3af5d22c398d03d74b635a61c5fcf5dd3d4ce048e",
   "source": "lan",
   "notes": "相册 Android 0.8.72 (versionCode 183)：\n1. 应用名升级为「团队工作相册」，彻底消除与手机系统原生相册重名触发的钓鱼/伪装风险拦截\n2. 启用 V1+V2+V3 全版本强签名链，提升现代 Android 11~15 安装安全性与防篡改验证",
   "ios": {
