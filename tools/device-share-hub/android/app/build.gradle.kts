@@ -10,8 +10,8 @@ android {
         applicationId = "com.zwm.gallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 182
-        versionName = "0.8.71"
+        versionCode = 183
+        versionName = "0.8.72"
     }
 
     signingConfigs {
@@ -20,9 +20,11 @@ android {
             storePassword = "gallerydev"
             keyAlias = "gallery-debug"
             keyPassword = "gallerydev"
-            // 老机型（华为 P30 / Android 10）只能通过 v1 (JAR) 签名读取安装包签名，
-            // v2-only 包会被 UpdatePackageValidator 判定为「安装包没有签名」而拒绝更新。
+            // 老机型（华为 P30 / Android 10）依赖 v1 (JAR) 签名，
+            // 现代机型（Android 11~15）强制要求 v2/v3 块签名，全链路开启避免杀软拦截
             enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 

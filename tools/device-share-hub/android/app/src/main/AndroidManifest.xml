@@ -19,7 +19,7 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="相册"
+        android:label="团队工作相册"
         android:requestLegacyExternalStorage="true"
         android:largeHeap="true"
         android:supportsRtl="true"
