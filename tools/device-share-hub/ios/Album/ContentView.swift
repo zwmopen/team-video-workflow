@@ -1334,7 +1334,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         for (index, path) in paths.enumerated() {
             group.enter()
             queue.async {
-                semaphore.wait()
+                _ = semaphore.wait(timeout: .now() + 30.0)
                 let src = (path as NSString).lastPathComponent
 
                 OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: false, retries: 2) { image in
