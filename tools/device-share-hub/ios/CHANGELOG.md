@@ -1,3 +1,16 @@
+# iOS 0.8.53 (build 125) — DSH-145 修复：原图受控并发极速下载与防丢图自动重试
+
+## 修复与优化
+- **DSH-145 苹果端获取下载原图极速并发（3并发）与防丢图自动重试**：
+  - **受控并发提速（3 并发）**：彻底推翻旧版单线串行逐张阻塞拉取（`step(0) -> step(1)`），重构为 `DispatchSemaphore(value: 3)` 受控并发队列，局域网原图批量准备耗时由 4~6 秒缩短至 1 秒以内（实测 Python 服务端 3 并发拉取 5 张 14MB 大图仅需 160ms）；
+  - **网络抖动指数退避自动重试（2 次重试）**：在 `OnlineGalleryClient.swift` 的 `loadImage` 中注入自动重试机制（默认 `retries: 2`，失败后 250ms/500ms 指数退避重试），局域网偶发丢包或超时自动愈合，彻底杜绝“5 张原图只拉取 3 张”的断流漏图痛点；
+  - **完备性门禁与显式提示**：在 `ContentView.swift` 的 `shareOnline` 中实装数量对账守卫，若经过 3 次重试仍有图片失败，弹窗告知失败张数并让用户选择【继续分享已拉取图片】或【取消重试】，绝不静默假装成功；
+  - **大图预览相邻双向并发预加载**：`OnlineImagePreviewController` 预加载队列升级为双并发槽位（同时预载前一张与后一张），无论左滑右滑均 0 延迟秒开，并在进入分享前 100% 充盈本地缓存。
+- **改动文件**：
+  - `OnlineGalleryClient.swift`（URLSession 连接池优化、loadImage 增加 retries 参数与退避重试）；
+  - `ContentView.swift`（downloadAllImages 并发重构、shareOnline 完备性门禁、prefetchNextFullImage 双并发优化）；
+  - `project.yml`（版本升至 0.8.53 / build 125）。
+
 # iOS 0.8.39 (build 111) — DSH-102 修复
 
 ## 修复

@@ -170,8 +170,9 @@ public final class OnlineGalleryClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 30
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 45
+        config.httpMaximumConnectionsPerHost = 6
         self.session = URLSession(configuration: config)
         imageCache.countLimit = 300
         imageCache.totalCostLimit = 60 * 1024 * 1024 // 60MB 内存缓存
@@ -502,7 +503,7 @@ public final class OnlineGalleryClient {
     ///   彻底绕开 image_name_index 同名冲突索引。
     /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
     /// DSH-099 失败 NSLog 保留。
-    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
+    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, retries: Int = 2, completion: @escaping (UIImage?) -> Void) {
         let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
         let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
@@ -538,24 +539,36 @@ public final class OnlineGalleryClient {
             return
         }
 
-        session.dataTask(with: url) { [weak self] data, _, _ in
-            guard let self = self, let data = data, let image = UIImage(data: data) else {
-                // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
-                NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
-                      path, isThumbnail ? 1 : 0)
-                DispatchQueue.main.async { completion(nil) }
+        session.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self else { return }
+            if let data = data, let image = UIImage(data: data) {
+                // 写入内存与磁盘缓存
+                self.imageCache.setObject(image, forKey: cacheKey)
+                do {
+                    try data.write(to: diskURL)
+                } catch {
+                    NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
+                          path, error.localizedDescription)
+                }
+                DispatchQueue.main.async { completion(image) }
                 return
             }
-            // 写入内存与磁盘缓存
-            self.imageCache.setObject(image, forKey: cacheKey)
-            // DSH-099 iOS 等价：磁盘缓存写失败也要 NSLog（之前 try? 吞掉全静默）
-            do {
-                try data.write(to: diskURL)
-            } catch {
-                NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
-                      path, error.localizedDescription)
+
+            // DSH-145：失败分支 —— 自动进行指数退避重试，防御局域网瞬间抖动丢包
+            if retries > 0 {
+                let delay = 0.25 * Double(3 - retries) // 0.25s, 0.5s
+                NSLog("[OnlineGalleryClient] loadImage failed (retry in %.2fs, remaining=%d): path=%@ error=%@",
+                      delay, retries, path, error?.localizedDescription ?? "unknown")
+                DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.loadImage(path: path, workId: workId, isThumbnail: isThumbnail, maxPixel: maxPixel, retries: retries - 1, completion: completion)
+                }
+                return
             }
-            DispatchQueue.main.async { completion(image) }
+
+            // DSH-099 iOS 等价：重试耗尽后 NSLog 永久失败留证
+            NSLog("[OnlineGalleryClient] loadImage failed permanently: path=%@ isThumbnail=%d error=%@",
+                  path, isThumbnail ? 1 : 0, error?.localizedDescription ?? "unknown")
+            DispatchQueue.main.async { completion(nil) }
         }.resume()
     }
 
