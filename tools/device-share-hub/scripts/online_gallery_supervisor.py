@@ -270,6 +270,7 @@ def main():
     log(f"==================================================", "INFO")
 
     consecutive_ok_count = 0
+    consecutive_unhealthy_count = 0
 
     while True:
         try:
@@ -284,15 +285,22 @@ def main():
                     # 2026-09-29 修复：子进程活着 + 端口仍在监听 ≠ 死锁，
                     # 很可能只是「忙」（冷启动首扫 / 缩略图重建 / watchdog force scan）。
                     # 原逻辑只要 HTTP 探活超时就 kill 重启，导致首扫永远完不成的死循环。
+                    consecutive_unhealthy_count += 1
                     busy_pid = get_listening_pid(PORT)
-                    if busy_pid:
+                    # 容忍首扫繁忙，但最多容忍 12 次探活失败（约 120 秒）；超限坚决判定为假死强杀
+                    if busy_pid and consecutive_unhealthy_count < 12:
                         log(f"服务进程存活且端口 {PORT} 仍在监听(PID={busy_pid})，"
-                            f"判定为「忙」而非死锁（首扫/缩略图重建中），本轮跳过自愈重启", "INFO")
+                            f"判定为「忙」而非死锁（首扫/缩略图重建中，连续 {consecutive_unhealthy_count}/12 次），本轮跳过自愈重启", "INFO")
                     else:
-                        log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
+                        if busy_pid:
+                            log(f"服务进程虽然端口仍在监听(PID={busy_pid})，但连续 {consecutive_unhealthy_count} 次探活超时（>120s），判定为深层假死，强制触发自愈重启！", "WARN")
+                        else:
+                            log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
                         start_service()
                         consecutive_ok_count = 0
+                        consecutive_unhealthy_count = 0
                 else:
+                    consecutive_unhealthy_count = 0
                     consecutive_ok_count += 1
                     if consecutive_ok_count % 720 == 0:
                         log(f"相册服务常驻健康心跳: 持续稳定运行中 (累计正常探活 {consecutive_ok_count} 次)", "INFO")
