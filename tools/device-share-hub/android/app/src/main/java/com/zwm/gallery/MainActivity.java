@@ -1074,6 +1074,9 @@ public final class MainActivity extends Activity {
         if ("name_desc".equals(sortKey)) return "名称Z▾";
         if ("size_desc".equals(sortKey)) return "多图▾";
         if ("size_asc".equals(sortKey))  return "少图▾";
+        for (String[] pair : SORT_MENU) {
+            if (pair[0].equals(DEFAULT_ONLINE_SORT)) return pair[1];
+        }
         return "最新▾";
     }
 

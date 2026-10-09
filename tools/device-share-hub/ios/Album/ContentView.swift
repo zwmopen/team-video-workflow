@@ -709,7 +709,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     @objc private func viewModeButtonTapped(_ sender: UIButton) {
         let sheet = UIAlertController(
             title: "切换视图模式（与电脑端实时联动）",
-            message: "选择视图模式后，手机端与电脑端成品库将同步切换；对比视图可逐页同框查看「原素材 vs AI成品」",
+            message: "选择视图模式后，手机端与电脑端成品库将同步切换；对比视图可逐页同框查看「素材 vs 成品」",
             preferredStyle: .actionSheet
         )
         let allModes: [GalleryViewMode] = [.grid, .list, .compare]
@@ -808,7 +808,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             self.updateFilterButtonStyle()
             self.resetOnlinePaging()
             if self.isOnlineMode {
-                self.renderOnlineWorks()
+                self.renderOnlineUI()
             } else {
                 self.render()
             }
@@ -2307,7 +2307,7 @@ private final class ComparePairThumbView: UIControl {
         emptySourceLabel.translatesAutoresizingMaskIntoConstraints = false
         leftImageView.addSubview(emptySourceLabel)
 
-        leftBadge.text = "原素材"
+        leftBadge.text = "素材"
         leftBadge.font = .systemFont(ofSize: 9.5, weight: .bold)
         leftBadge.textColor = .white
         leftBadge.backgroundColor = UIColor.black.withAlphaComponent(0.62)
@@ -2317,7 +2317,7 @@ private final class ComparePairThumbView: UIControl {
         leftBadge.translatesAutoresizingMaskIntoConstraints = false
         leftImageView.addSubview(leftBadge)
 
-        rightBadge.text = "AI成品"
+        rightBadge.text = "成品"
         rightBadge.font = .systemFont(ofSize: 9.5, weight: .bold)
         rightBadge.textColor = .white
         rightBadge.backgroundColor = UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.85)
@@ -2370,7 +2370,7 @@ private final class ComparePairThumbView: UIControl {
         leftImageView.image = nil
         rightImageView.image = nil
 
-        headerLabel.text = "P\(pageIndex + 1) 原素材 ➔ 成品"
+        headerLabel.text = "P\(pageIndex + 1) 素材 ➔ 成品"
         if sourcePath.isEmpty {
             emptySourceLabel.isHidden = false
             emptySourceLabel.text = "无对应原图"
@@ -2994,7 +2994,7 @@ private final class WorkCell: UICollectionViewCell {
             } else if entry.hasSourceCompare {
                 onlineDetail += " · 🆚 点击卡片同框对比"
             } else {
-                onlineDetail += " · ⚠️ 未关联原素材"
+                onlineDetail += " · ⚠️ 未关联素材"
             }
         }
 
