@@ -327,4 +327,29 @@ public final class PlatformCopyParserTest {
                 tagWithDeviceName
         ));
     }
+
+    @Test
+    public void testSiblingVersionsNeverFalsePositiveCheckmark() {
+        java.util.Set<String> emptyLocal = java.util.Collections.emptySet();
+        // 回归 DSH-144：点击 "红书自然" 时，"红书种草"、"红书大纲" 绝不能连带被打勾
+        java.util.List<String> naturalUsed = java.util.Collections.singletonList("红书自然");
+        java.util.List<String> naturalTo = java.util.Collections.singletonList("vivo (红书自然 @ 2026-10-09 10:31:37)");
+        assertTrue(PlatformCopyParser.isPlatformOrVersionDispatched("红书自然", "general", emptyLocal, naturalUsed, naturalTo));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("红书种草", "general", emptyLocal, naturalUsed, naturalTo));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("红书大纲", "general", emptyLocal, naturalUsed, naturalTo));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("数字爆款", "general", emptyLocal, naturalUsed, naturalTo));
+
+        // 回归 DSH-144：点击 "抖音攻略" 时，同带 platformCode="douyin" 的 "抖音无营销"、"抖音避坑" 绝不能连带被打勾
+        java.util.List<String> dyGuideUsed = java.util.Collections.singletonList("抖音攻略");
+        java.util.List<String> dyGuideTo = java.util.Collections.singletonList("vivo (抖音攻略 @ 2026-10-09 10:32:00)");
+        assertTrue(PlatformCopyParser.isPlatformOrVersionDispatched("抖音攻略", "douyin", emptyLocal, dyGuideUsed, dyGuideTo));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("抖音无营销", "douyin", emptyLocal, dyGuideUsed, dyGuideTo));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("抖音避坑", "douyin", emptyLocal, dyGuideUsed, dyGuideTo));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("规避营销版", "douyin", emptyLocal, dyGuideUsed, dyGuideTo));
+
+        // 回归 DSH-144：点击 "大纲方案版" 时，"HR决策版" 不得因共享 "方案" 二字误打勾
+        java.util.List<String> outlineUsed = java.util.Collections.singletonList("大纲方案版");
+        assertTrue(PlatformCopyParser.isPlatformOrVersionDispatched("红书大纲", "xhs2", emptyLocal, outlineUsed, java.util.Collections.emptyList()));
+        assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("HR决策版", "hr", emptyLocal, outlineUsed, java.util.Collections.emptyList()));
+    }
 }

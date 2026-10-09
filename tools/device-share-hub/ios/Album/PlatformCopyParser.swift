@@ -360,35 +360,46 @@ enum PlatformCopyParser {
         }
     }
 
-    /// DSH-142: 平台与版本别名族（跨端与多版本完全对齐）
+    /// DSH-142 & DSH-144: 平台与版本别名族（全跨端对齐，严格按独立版本拆分，严禁包含"红书"/"抖音"/"方案"等泛词子串防止跨按钮误打勾）
     static let aliasFamilies: [Set<String>] = [
-        // HR / 备用 / 方案族
-        ["hr", "hr决策版", "决策版", "备用", "备用岗", "备用文案", "备用方案", "方案", "方案版"],
+        // HR / 备用 / 方案决策族
+        ["hr", "hr决策版", "决策版", "hr方案决策版", "备用", "备用岗", "备用文案", "备用方案", "方案版", "决策矩阵", "hr决策讨论"],
         // 小红书种草族
-        ["xhs", "种草版", "种草", "小红书", "红书", "红书种草", "自然种草版", "小红书自然种草版", "发布"],
+        ["xhs", "种草版", "种草", "小红书", "红书种草", "原生种草", "自然种草版", "小红书自然种草版", "小红书种草版", "发布"],
         // 小红书大纲方案族
-        ["xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲"],
+        ["xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"],
+        // 小红书自然族
+        ["红书自然", "小红书自然", "小红书自然版"],
         // 抖音无营销族
-        ["douyin", "规避营销版", "抖音", "抖音无营销", "抖音避坑", "无营销版", "避坑版"],
+        ["douyin", "规避营销版", "抖音", "抖音无营销", "无营销版", "抖音规避营销版"],
+        // 抖音攻略族
+        ["抖音攻略", "抖音攻略版"],
+        // 抖音避坑族
+        ["抖音避坑", "避坑版", "抖音避坑版", "抖音玩法避坑版"],
         // 微信公众号族
-        ["wechat", "公众号版", "公众号", "微信", "微信公众号"],
+        ["wechat", "公众号版", "公众号", "微信", "微信公众号", "微信公众号版"],
         // 短文精选族
         ["xhs3", "xhs_3", "短文精选版", "短文版", "精选版"]
     ]
 
-    /// 判断两个版本标签或别名是否等价
+    private static func normalizeVersionTag(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        while t.hasPrefix("✓") || t.hasPrefix("✔") {
+            t = String(t.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return t.lowercased()
+    }
+
+    /// 判断两个版本标签或别名是否等价（严格精确相等或同属唯一精确同义词集合，严禁子串模糊包含误伤）
     static func isVersionTagMatched(_ a: String, _ b: String) -> Bool {
-        let cleanA = a.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let cleanB = b.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanA = normalizeVersionTag(a)
+        let cleanB = normalizeVersionTag(b)
         if cleanA.isEmpty || cleanB.isEmpty { return false }
         if cleanA == cleanB { return true }
-        if cleanA.count >= 2 && cleanB.count >= 2 {
-            if cleanA.contains(cleanB) || cleanB.contains(cleanA) { return true }
-        }
         for family in aliasFamilies {
-            let inA = family.contains(where: { cleanA == $0 || (cleanA.count >= 2 && cleanA.contains($0)) })
-            let inB = family.contains(where: { cleanB == $0 || (cleanB.count >= 2 && cleanB.contains($0)) })
-            if inA && inB { return true }
+            if family.contains(cleanA) && family.contains(cleanB) {
+                return true
+            }
         }
         return false
     }
@@ -419,7 +430,7 @@ enum PlatformCopyParser {
         return inside.trimmingCharacters(in: .whitespaces)
     }
 
-    /// DSH-142: 全局对齐的判断某按钮是否已分发（支持多端别名模糊匹配）
+    /// DSH-142 & DSH-144: 全局对齐的判断某按钮是否已分发（有 buttonLabel 时严格按 buttonLabel 匹配，避免 platformCode 跨按钮串号）
     static func isPlatformOrVersionDispatched(
         buttonLabel: String,
         platformCode: String?,
@@ -427,26 +438,25 @@ enum PlatformCopyParser {
         dispatchedVersions: [String],
         dispatchedTo: [String]
     ) -> Bool {
+        let trimmedLabel = buttonLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetTag = !trimmedLabel.isEmpty ? trimmedLabel : (platformCode ?? "")
+        if targetTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+
         // 1. 本地分发记录
         for local in localDispatched {
-            if isVersionTagMatched(buttonLabel, local) { return true }
-            if let code = platformCode, isVersionTagMatched(code, local) { return true }
+            if isVersionTagMatched(targetTag, local) { return true }
         }
         // 2. 服务端返回的 dispatchedVersions
         for ver in dispatchedVersions {
-            if isVersionTagMatched(buttonLabel, ver) { return true }
-            if let code = platformCode, isVersionTagMatched(code, ver) { return true }
+            if isVersionTagMatched(targetTag, ver) { return true }
         }
         // 3. 服务端返回的 dispatchedTo（如 "设备名 (版本 @ 时间)"）
         for tag in dispatchedTo {
             let extracted = extractVersionFromRecord(tag)
             if !extracted.isEmpty {
-                if isVersionTagMatched(buttonLabel, extracted) { return true }
-                if let code = platformCode, isVersionTagMatched(code, extracted) { return true }
+                if isVersionTagMatched(targetTag, extracted) { return true }
             } else {
-                // 仅在未能解析出结构化版本时，才作为历史无括号脏数据做全字符串兜底匹配（防止设备名包含关键字导致误判）
-                if tag.contains(buttonLabel) { return true }
-                if let code = platformCode, tag.contains(code) { return true }
+                if isVersionTagMatched(targetTag, tag) { return true }
             }
         }
         return false

@@ -327,30 +327,38 @@ final class PlatformCopyParser {
         boolean isOk() { return status == Status.OK; }
     }
 
-    // DSH-142: 平台与版本别名族（全跨端对齐）
+    // DSH-142 & DSH-144: 平台与版本别名族（全跨端对齐，严格按独立版本拆分，严禁包含"红书"/"抖音"/"方案"等泛词子串防止跨按钮误打勾）
     private static final String[][] ALIAS_FAMILIES = new String[][] {
-        {"hr", "hr决策版", "决策版", "备用", "备用岗", "备用文案", "备用方案", "方案", "方案版"},
-        {"xhs", "种草版", "种草", "小红书", "红书", "红书种草", "自然种草版", "小红书自然种草版", "发布"},
-        {"xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲"},
-        {"douyin", "规避营销版", "抖音", "抖音无营销", "抖音避坑", "无营销版", "避坑版"},
-        {"wechat", "公众号版", "公众号", "微信", "微信公众号"},
+        {"hr", "hr决策版", "决策版", "hr方案决策版", "备用", "备用岗", "备用文案", "备用方案", "方案版", "决策矩阵", "hr决策讨论"},
+        {"xhs", "种草版", "种草", "小红书", "红书种草", "原生种草", "自然种草版", "小红书自然种草版", "小红书种草版", "发布"},
+        {"xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"},
+        {"红书自然", "小红书自然", "小红书自然版"},
+        {"douyin", "规避营销版", "抖音", "抖音无营销", "无营销版", "抖音规避营销版"},
+        {"抖音攻略", "抖音攻略版"},
+        {"抖音避坑", "避坑版", "抖音避坑版", "抖音玩法避坑版"},
+        {"wechat", "公众号版", "公众号", "微信", "微信公众号", "微信公众号版"},
         {"xhs3", "xhs_3", "短文精选版", "短文版", "精选版"}
     };
 
+    private static String normalizeVersionTag(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        while (t.startsWith("✓") || t.startsWith("✔")) {
+            t = t.substring(1).trim();
+        }
+        return t.toLowerCase(java.util.Locale.ROOT);
+    }
+
     static boolean isVersionTagMatched(String a, String b) {
-        if (a == null || b == null) return false;
-        String cleanA = a.trim().toLowerCase(java.util.Locale.ROOT);
-        String cleanB = b.trim().toLowerCase(java.util.Locale.ROOT);
+        String cleanA = normalizeVersionTag(a);
+        String cleanB = normalizeVersionTag(b);
         if (cleanA.isEmpty() || cleanB.isEmpty()) return false;
         if (cleanA.equals(cleanB)) return true;
-        if (cleanA.length() >= 2 && cleanB.length() >= 2) {
-            if (cleanA.contains(cleanB) || cleanB.contains(cleanA)) return true;
-        }
         for (String[] family : ALIAS_FAMILIES) {
             boolean inA = false, inB = false;
             for (String item : family) {
-                if (cleanA.equals(item) || (cleanA.length() >= 2 && cleanA.contains(item))) inA = true;
-                if (cleanB.equals(item) || (cleanB.length() >= 2 && cleanB.contains(item))) inB = true;
+                if (cleanA.equals(item)) inA = true;
+                if (cleanB.equals(item)) inB = true;
             }
             if (inA && inB) return true;
         }
@@ -386,16 +394,18 @@ final class PlatformCopyParser {
             List<String> dispatchedVersions,
             List<String> dispatchedTo
     ) {
+        boolean hasLabel = buttonLabel != null && !buttonLabel.trim().isEmpty();
+        String targetTag = hasLabel ? buttonLabel : platformCode;
+        if (targetTag == null || targetTag.trim().isEmpty()) return false;
+
         if (localDispatched != null) {
             for (String local : localDispatched) {
-                if (isVersionTagMatched(buttonLabel, local)) return true;
-                if (platformCode != null && isVersionTagMatched(platformCode, local)) return true;
+                if (isVersionTagMatched(targetTag, local)) return true;
             }
         }
         if (dispatchedVersions != null) {
             for (String ver : dispatchedVersions) {
-                if (isVersionTagMatched(buttonLabel, ver)) return true;
-                if (platformCode != null && isVersionTagMatched(platformCode, ver)) return true;
+                if (isVersionTagMatched(targetTag, ver)) return true;
             }
         }
         if (dispatchedTo != null) {
@@ -403,12 +413,9 @@ final class PlatformCopyParser {
                 if (tag == null) continue;
                 String extracted = extractVersionFromRecord(tag);
                 if (!extracted.isEmpty()) {
-                    if (isVersionTagMatched(buttonLabel, extracted)) return true;
-                    if (platformCode != null && isVersionTagMatched(platformCode, extracted)) return true;
+                    if (isVersionTagMatched(targetTag, extracted)) return true;
                 } else {
-                    // 仅在未能解析出结构化版本时，才作为历史无括号脏数据做全字符串兜底匹配（防止设备名包含关键字导致误判）
-                    if (tag.contains(buttonLabel)) return true;
-                    if (platformCode != null && tag.contains(platformCode)) return true;
+                    if (isVersionTagMatched(targetTag, tag)) return true;
                 }
             }
         }

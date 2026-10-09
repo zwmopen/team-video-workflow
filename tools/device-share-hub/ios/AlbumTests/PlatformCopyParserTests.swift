@@ -286,6 +286,30 @@ final class PlatformCopyParserTests: XCTestCase {
         ))
     }
 
+    func testSiblingVersionsNeverFalsePositiveCheckmark() {
+        let emptyLocal = Set<String>()
+        // 回归 DSH-144：点击 "红书自然" 时，"红书种草"、"红书大纲" 绝不能连带被打勾
+        let naturalUsed = ["红书自然"]
+        let naturalTo = ["vivo (红书自然 @ 2026-10-09 10:31:37)"]
+        XCTAssertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "红书自然", platformCode: "general", localDispatched: emptyLocal, dispatchedVersions: naturalUsed, dispatchedTo: naturalTo))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "红书种草", platformCode: "general", localDispatched: emptyLocal, dispatchedVersions: naturalUsed, dispatchedTo: naturalTo))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "红书大纲", platformCode: "general", localDispatched: emptyLocal, dispatchedVersions: naturalUsed, dispatchedTo: naturalTo))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "数字爆款", platformCode: "general", localDispatched: emptyLocal, dispatchedVersions: naturalUsed, dispatchedTo: naturalTo))
+
+        // 回归 DSH-144：点击 "抖音攻略" 时，同带 platformCode="douyin" 的 "抖音无营销"、"抖音避坑" 绝不能连带被打勾
+        let dyGuideUsed = ["抖音攻略"]
+        let dyGuideTo = ["vivo (抖音攻略 @ 2026-10-09 10:32:00)"]
+        XCTAssertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "抖音攻略", platformCode: "douyin", localDispatched: emptyLocal, dispatchedVersions: dyGuideUsed, dispatchedTo: dyGuideTo))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "抖音无营销", platformCode: "douyin", localDispatched: emptyLocal, dispatchedVersions: dyGuideUsed, dispatchedTo: dyGuideTo))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "抖音避坑", platformCode: "douyin", localDispatched: emptyLocal, dispatchedVersions: dyGuideUsed, dispatchedTo: dyGuideTo))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "规避营销版", platformCode: "douyin", localDispatched: emptyLocal, dispatchedVersions: dyGuideUsed, dispatchedTo: dyGuideTo))
+
+        // 回归 DSH-144：点击 "大纲方案版" 时，"HR决策版" 不得因共享 "方案" 二字误打勾
+        let outlineUsed = ["大纲方案版"]
+        XCTAssertTrue(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "红书大纲", platformCode: "xhs2", localDispatched: emptyLocal, dispatchedVersions: outlineUsed, dispatchedTo: []))
+        XCTAssertFalse(PlatformCopyParser.isPlatformOrVersionDispatched(buttonLabel: "HR决策版", platformCode: "hr", localDispatched: emptyLocal, dispatchedVersions: outlineUsed, dispatchedTo: []))
+    }
+
     func testNormalizeCopyTextForClipboard() {
         // 场景 1：单行内联盲文空格粘连展开为物理换行
         let glued = "标题123\u{2800}正文内容\u{2800}1️⃣ 玩法一\u{2800}#标签"

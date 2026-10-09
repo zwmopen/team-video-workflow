@@ -1163,13 +1163,45 @@ def _rewrite_manifest_for_lan(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+LOCAL_OUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "android", "out"))
+LOCAL_LATEST_JSON = os.path.join(LOCAL_OUT_DIR, "local_latest.json")
+
+
+def _read_local_update_manifest() -> Optional[Dict[str, Any]]:
+    """优先读取本机刚编译落盘的 local_latest.json（若存在且对应的本地 APK 文件真实有效）。"""
+    try:
+        if not os.path.isfile(LOCAL_LATEST_JSON):
+            return None
+        with open(LOCAL_LATEST_JSON, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        if not isinstance(data, dict):
+            return None
+        local_apk = data.get("local_apk_path") or ""
+        if local_apk and os.path.isfile(local_apk) and os.path.getsize(local_apk) > 64 * 1024:
+            return data
+    except Exception:
+        pass
+    return None
+
+
 def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
-    """取发布清单（TTL 缓存）。失败返回空 dict —— 中转挂了不能拖垮相册服务。"""
+    """取发布清单（TTL 缓存 + 本地构建优先）。失败返回空 dict —— 中转挂了不能拖垮相册服务。"""
+    local_data = _read_local_update_manifest()
     with _UPDATE_LOCK:
         now = time.time()
         cached = _UPDATE_MANIFEST_CACHE.get("data")
         if (not force) and cached and (
                 now - float(_UPDATE_MANIFEST_CACHE.get("at", 0.0)) < UPDATE_MANIFEST_TTL):
+            if local_data:
+                local_vc = int(local_data.get("version_code", local_data.get("versionCode", 0)) or 0)
+                cached_vc = int(cached.get("version_code", cached.get("versionCode", 0)) or 0)
+                if local_vc >= cached_vc:
+                    _UPDATE_ORIGIN_URLS["local_apk"] = local_data.get("local_apk_path", "")
+                    merged = dict(cached)
+                    merged.update({k: v for k, v in local_data.items() if k != "local_apk_path"})
+                    merged = _rewrite_manifest_for_lan(merged)
+                    _UPDATE_MANIFEST_CACHE["data"] = merged
+                    return merged
             return cached
     try:
         req = urllib.request.Request(
@@ -1180,10 +1212,19 @@ def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
         data = json.loads(raw.decode("utf-8"))
         if not isinstance(data, dict) or not data.get("apk_url"):
             raise ValueError("发布清单里没有 apk_url")
+        if local_data:
+            local_vc = int(local_data.get("version_code", local_data.get("versionCode", 0)) or 0)
+            remote_vc = int(data.get("version_code", data.get("versionCode", 0)) or 0)
+            if local_vc >= remote_vc:
+                for k, v in local_data.items():
+                    if k != "local_apk_path":
+                        data[k] = v
         with _UPDATE_LOCK:
             # 先把原始地址存下来（改写后就找不回来了）
             _UPDATE_ORIGIN_URLS["apk"] = data.get("apk_url", "")
             _UPDATE_ORIGIN_URLS["ipa"] = (data.get("ios") or {}).get("ipa_url", "")
+            if local_data:
+                _UPDATE_ORIGIN_URLS["local_apk"] = local_data.get("local_apk_path", "")
         data = _rewrite_manifest_for_lan(data)
         with _UPDATE_LOCK:
             _UPDATE_MANIFEST_CACHE["at"] = time.time()
@@ -1194,6 +1235,15 @@ def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
             _UPDATE_RELAY_STATS["lastError"] = ""
         return data
     except Exception as e:
+        if local_data:
+            with _UPDATE_LOCK:
+                _UPDATE_ORIGIN_URLS["local_apk"] = local_data.get("local_apk_path", "")
+                fallback = _rewrite_manifest_for_lan({k: v for k, v in local_data.items() if k != "local_apk_path"})
+                _UPDATE_MANIFEST_CACHE["at"] = time.time()
+                _UPDATE_MANIFEST_CACHE["data"] = fallback
+                _UPDATE_RELAY_STATS["manifestFetches"] = int(
+                    _UPDATE_RELAY_STATS.get("manifestFetches", 0)) + 1
+            return fallback
         with _UPDATE_LOCK:
             _UPDATE_RELAY_STATS["manifestFailures"] = int(
                 _UPDATE_RELAY_STATS.get("manifestFailures", 0)) + 1
@@ -1225,10 +1275,27 @@ def _update_cache_file(kind: str, version: str, sha: str) -> str:
 
 
 def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
-    """代取安装包（按版本落磁盘缓存，两台手机只出网一次）。"""
+    """代取安装包（按版本落磁盘缓存，两台手机只出网一次；若本机有最新编译包则 0 秒直供）。"""
     manifest = fetch_update_manifest()
     if not manifest:
         return None, "拿不到发布清单（检查 7897 代理）"
+    if kind == "apk":
+        local_data = _read_local_update_manifest()
+        if local_data:
+            local_apk = local_data.get("local_apk_path", "")
+            expected_sha = _update_expected_sha(manifest, "apk")
+            if local_apk and os.path.isfile(local_apk):
+                try:
+                    with open(local_apk, "rb") as lfh:
+                        lpayload = lfh.read()
+                    if (not expected_sha) or hashlib.sha256(lpayload).hexdigest().lower() == expected_sha:
+                        with _UPDATE_LOCK:
+                            _UPDATE_RELAY_STATS["downloads"] = int(
+                                _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
+                            _UPDATE_RELAY_STATS["cachedSha"] = expected_sha
+                        return lpayload, ""
+                except Exception:
+                    pass
     with _UPDATE_LOCK:
         url = _UPDATE_ORIGIN_URLS.get(kind, "")
     if not url:
@@ -2517,19 +2584,24 @@ class WorkScanner:
         if not distribution and manifest_dist:
             distribution = dict(manifest_dist)
         elif distribution and manifest_dist:
-            # 并集合并 dispatchedVersions 和 dispatchedTo，确保双源互补零遗漏
-            d_vers = list(dict.fromkeys((distribution.get("dispatchedVersions") or []) + (manifest_dist.get("dispatchedVersions") or [])))
-            d_to = list(dict.fromkeys((distribution.get("dispatchedTo") or []) + (manifest_dist.get("dispatchedTo") or [])))
-            distribution["dispatchedVersions"] = d_vers
-            distribution["dispatchedTo"] = d_to
-            if not distribution.get("useCount") and manifest_dist.get("useCount"):
-                distribution["useCount"] = manifest_dist["useCount"]
+            # 若作品标签已显式重置为 useCount == 0，则以作品标签为准，绝不把 manifest 旧残留合并回来
+            if distribution.get("useCount") == 0 and not distribution.get("dispatchedTo") and not distribution.get("dispatchedVersions"):
+                pass
+            else:
+                # 并集合并 dispatchedVersions 和 dispatchedTo，确保双源互补零遗漏
+                d_vers = list(dict.fromkeys((distribution.get("dispatchedVersions") or []) + (manifest_dist.get("dispatchedVersions") or [])))
+                d_to = list(dict.fromkeys((distribution.get("dispatchedTo") or []) + (manifest_dist.get("dispatchedTo") or [])))
+                distribution["dispatchedVersions"] = d_vers
+                distribution["dispatchedTo"] = d_to
+                if not distribution.get("useCount") and manifest_dist.get("useCount"):
+                    distribution["useCount"] = manifest_dist["useCount"]
 
         # 发送次数判定：优先从作品标签读取，其次以目录默认阶数为基准
         use_count = distribution.get("useCount")
         if use_count is None:
             dispatched = distribution.get("dispatchedTo", [])
             use_count = len(dispatched) if dispatched else default_count
+        use_count_int = int(use_count or 0)
 
         if default_category:
             destination = default_category
@@ -2567,16 +2639,16 @@ class WorkScanner:
             "is_symlink": is_symlink,
             "source_path": source_path,
             "shelf": default_category or os.path.basename(os.path.dirname(dir_path)),
-            "useCount": int(use_count),
+            "useCount": use_count_int,
             "maxUses": 2,
-            "used": bool(use_count > 0),
-            "remainingUses": max(0, 2 - int(use_count)),
-            "statusLabel": "已使用" if use_count > 0 else "",
-            "dispatchedTo": distribution.get("dispatchedTo", []),
-            "firstSharedAtMs": int(distribution.get("firstSharedAtMs") or 0),
-            "expireAtMs": int(distribution.get("expireAtMs") or 0),
-            "originDevice": str(distribution.get("originDevice") or ""),
-            "dispatchedVersions": distribution.get("dispatchedVersions") or [],
+            "used": bool(use_count_int > 0),
+            "remainingUses": max(0, 2 - use_count_int),
+            "statusLabel": "已使用" if use_count_int > 0 else "",
+            "dispatchedTo": (distribution.get("dispatchedTo") or []) if use_count_int > 0 else [],
+            "firstSharedAtMs": int(distribution.get("firstSharedAtMs") or 0) if use_count_int > 0 else 0,
+            "expireAtMs": int(distribution.get("expireAtMs") or 0) if use_count_int > 0 else 0,
+            "originDevice": str(distribution.get("originDevice") or "") if use_count_int > 0 else "",
+            "dispatchedVersions": (distribution.get("dispatchedVersions") or []) if use_count_int > 0 else [],
             "imageCount": len(images),
             "images": images,
             "sourceImages": src_imgs,
@@ -2603,10 +2675,20 @@ class WorkScanner:
             "updatedAt": os.path.getmtime(dir_path),
             # DSH-109：作品目录总字节数（含子目录，用于 size_desc/size_asc 排序）
             "sizeBytes": _dir_size_bytes(dir_path),
-            # 标签与时令元数据 (季节 season / 流量类型 flowType / 完整标签 tags)
+            # 标签与时令元数据 (季节 season / 流量类型 flowType / 完整标签 tags / 生产溯源与精品标杆)
             "season": manifest_data.get("season") or ("秋季" if any(k in folder_name for k in ["秋", "中秋", "国庆"]) else ("夏季" if any(k in folder_name for k in ["夏", "避暑", "溯溪"]) else ("冬季" if any(k in folder_name for k in ["冬", "年会", "滑雪", "温泉"]) else "四季通用"))),
             "flowType": manifest_data.get("flowType") or ("泛流量游戏攻略" if any(k in folder_name for k in ["游戏", "桌游", "破冰", "冷场"]) else "精准流量团建"),
             "tags": manifest_data.get("tags") or [],
+            "pipeline": manifest_data.get("pipeline") or ("CDP双浏览器产线" if "CDP" in folder_name else ("Codex-API产线" if "Codex" in folder_name else "GPT扩展+本地脚本产线")),
+            "workflowVersion": manifest_data.get("workflowVersion") or manifest_data.get("packagerVersion") or ("gpt-ext-v2.0" if manifest_data.get("recordType") == "gpt_work_package" else "v2.0"),
+            "productionMode": manifest_data.get("productionMode") or manifest_data.get("apiSubMode") or ("reuse-conversation" if manifest_data.get("conversationUrl") else "1_shuffle"),
+            "productionModeName": manifest_data.get("productionModeName") or ("会话母版复刻模式" if manifest_data.get("conversationUrl") else "原图复刻打乱模式"),
+            "templateId": manifest_data.get("templateId") or manifest_data.get("template") or ("会话锁定母版" if manifest_data.get("conversationUrl") else "原图自身构图"),
+            "producedAt": manifest_data.get("producedAt") or manifest_data.get("completedAt") or manifest_data.get("created_at") or manifest_data.get("createdAt") or "",
+            "accountName": manifest_data.get("accountName") or manifest_data.get("account") or "",
+            "conversationUrl": manifest_data.get("conversationUrl") or "",
+            "isStarred": bool(manifest_data.get("isStarred") or ("⭐精品标杆" in (manifest_data.get("tags") or []))),
+            "starRemark": str(manifest_data.get("starRemark") or ""),
         }
         self._inspect_cache[cache_key] = (dir_stamp, work_result, slot_diag)
         return dict(work_result)
@@ -3868,6 +3950,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         tag["distribution"] = dist
                     dist["useCount"] = 0
                     dist["dispatchedTo"] = []
+                    dist["dispatchedVersions"] = []
+                    dist["firstSharedAtMs"] = 0
+                    dist["expireAtMs"] = 0
+                    dist["originDevice"] = ""
                     dist["status"] = "待发手机"
                     dist["restoredAt"] = restored_at
                     with open(tag_file, "w", encoding="utf-8") as fp:
@@ -3895,6 +3981,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             "previousRemark": old.get("remark", ""),
                         })
                     manifest["shareCount"] = 0
+                    manifest["useCount"] = 0
+                    manifest["used"] = False
+                    if isinstance(manifest.get("distribution"), dict):
+                        manifest["distribution"]["useCount"] = 0
+                        manifest["distribution"]["dispatchedTo"] = []
+                        manifest["distribution"]["dispatchedVersions"] = []
+                        manifest["distribution"]["firstSharedAtMs"] = 0
+                        manifest["distribution"]["expireAtMs"] = 0
+                        manifest["distribution"]["originDevice"] = ""
+                        manifest["distribution"]["status"] = "待发手机"
                     with open(manifest_file, "w", encoding="utf-8") as fp:
                         json.dump(manifest, fp, ensure_ascii=False, indent=2)
             except Exception as e:
@@ -3928,6 +4024,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["path"] = target_dest
         target_work["stage"] = "已发送0次"
         target_work["useCount"] = 0
+        target_work["used"] = False
+        target_work["dispatchedTo"] = []
+        target_work["dispatchedVersions"] = []
+        target_work["firstSharedAtMs"] = 0
+        target_work["expireAtMs"] = 0
+        target_work["originDevice"] = ""
         target_work["folder"] = self.scanner.STAGE0_FOLDER
 
         label = "垃圾样本库" if was_garbage else "已发送1次"
@@ -4039,6 +4141,55 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 + ("（预演，未落盘）" if dry_run else "")
             )
             self.send_json(200, report)
+            return
+
+        if path == "/api/online/star-work":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return
+            work_id = str(req.get("workId") or req.get("id") or "").strip()
+            starred = bool(req.get("starred", True))
+            remark = str(req.get("remark") or "").strip()
+            device_name = str(req.get("deviceName") or "人工标注").strip()
+            target_work = self.scanner.get_work(work_id) or self.scanner.resolve_stage_work(work_id)
+            if not target_work or not target_work.get("path"):
+                self.send_json(404, {"ok": False, "error": f"找不到作品: {work_id}"})
+                return
+            w_dir = os.path.realpath(target_work["path"])
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            for fname in ("manifest.json", "作品标签.json", "GPT作品记录.json"):
+                fpath = os.path.join(w_dir, fname)
+                if os.path.isfile(fpath):
+                    try:
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as fp:
+                            mdata = json.load(fp)
+                        if isinstance(mdata, dict):
+                            mdata["isStarred"] = starred
+                            mdata["starRemark"] = remark
+                            mdata["starredAt"] = ts if starred else ""
+                            mdata["starredBy"] = device_name if starred else ""
+                            tags = mdata.get("tags") if isinstance(mdata.get("tags"), list) else []
+                            if starred and "⭐精品标杆" not in tags:
+                                tags.insert(0, "⭐精品标杆")
+                            elif not starred and "⭐精品标杆" in tags:
+                                tags = [t for t in tags if t != "⭐精品标杆"]
+                            mdata["tags"] = tags
+                            with open(fpath, "w", encoding="utf-8") as fp:
+                                json.dump(mdata, fp, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+            self.scanner._inspect_cache.clear()
+            self.send_json(200, {
+                "ok": True,
+                "workId": work_id,
+                "isStarred": starred,
+                "starRemark": remark,
+                "message": "已标注为「⭐精品标杆」好作品，支持一键追溯复现" if starred else "已取消「⭐精品标杆」标注"
+            })
             return
 
         if path == "/api/online/view-state":
@@ -4280,9 +4431,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 try:
                     with open(tag_file, "r", encoding="utf-8") as fp:
                         tag_data = json.load(fp)
-                    if "distribution" in tag_data:
+                    if "distribution" in tag_data and isinstance(tag_data["distribution"], dict):
                         tag_data["distribution"]["useCount"] = 0
                         tag_data["distribution"]["dispatchedTo"] = []
+                        tag_data["distribution"]["dispatchedVersions"] = []
+                        tag_data["distribution"]["firstSharedAtMs"] = 0
+                        tag_data["distribution"]["expireAtMs"] = 0
+                        tag_data["distribution"]["originDevice"] = ""
                         tag_data["distribution"]["status"] = "待发手机"
                     with open(tag_file, "w", encoding="utf-8") as fp:
                         json.dump(tag_data, fp, ensure_ascii=False, indent=2)
@@ -4300,6 +4455,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         if isinstance(manifest.get("distribution"), dict):
                             manifest["distribution"]["useCount"] = 0
                             manifest["distribution"]["dispatchedTo"] = []
+                            manifest["distribution"]["dispatchedVersions"] = []
+                            manifest["distribution"]["firstSharedAtMs"] = 0
+                            manifest["distribution"]["expireAtMs"] = 0
+                            manifest["distribution"]["originDevice"] = ""
                             manifest["distribution"]["status"] = "待发手机"
                         manifest["resetAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
                         with open(manifest_file, "w", encoding="utf-8") as fp:
@@ -4324,6 +4483,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             target_work["used"] = False
             target_work["remainingUses"] = 2
             target_work["statusLabel"] = ""
+            target_work["dispatchedTo"] = []
+            target_work["dispatchedVersions"] = []
+            target_work["firstSharedAtMs"] = 0
+            target_work["expireAtMs"] = 0
+            target_work["originDevice"] = ""
             target_work["path"] = new_path
             target_work["stage"] = "已发送0次"
             shelf_candidate = os.path.basename(os.path.dirname(new_path))

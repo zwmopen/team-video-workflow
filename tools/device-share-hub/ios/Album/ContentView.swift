@@ -2,6 +2,8 @@ import UIKit
 import ImageIO
 
 enum LocalDispatchedStore {
+    private static var recentSavedAtMs: [String: Double] = [:]
+
     static func get(workId: String) -> Set<String> {
         let key = "dispatched_vers_\(workId)"
         let arr = UserDefaults.standard.stringArray(forKey: key) ?? []
@@ -9,10 +11,26 @@ enum LocalDispatchedStore {
     }
 
     static func save(workId: String, version: String) {
+        recentSavedAtMs[workId] = Date().timeIntervalSince1970 * 1000
         var set = get(workId: workId)
         set.insert(version)
         let key = "dispatched_vers_\(workId)"
         UserDefaults.standard.set(Array(set), forKey: key)
+    }
+
+    static func isRecentlySaved(workId: String, nowMs: Double = Date().timeIntervalSince1970 * 1000) -> Bool {
+        guard let ts = recentSavedAtMs[workId] else { return false }
+        return (nowMs - ts) < 15000
+    }
+
+    static func clear(workId: String) {
+        recentSavedAtMs.removeValue(forKey: workId)
+        UserDefaults.standard.removeObject(forKey: "dispatched_vers_\(workId)")
+        if workId.contains("__link_") {
+            let baseId = workId.components(separatedBy: "__link_").first ?? workId
+            recentSavedAtMs.removeValue(forKey: baseId)
+            UserDefaults.standard.removeObject(forKey: "dispatched_vers_\(baseId)")
+        }
     }
 }
 
@@ -63,6 +81,51 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let saved = UserDefaults.standard.string(forKey: LibraryViewController.sortDefaultsKey)
         return (saved?.isEmpty == false) ? saved! : LibraryViewController.defaultSortKey
     }()
+
+    // MARK: - 多选标签筛选（季节标签：春季/夏季/秋季/冬季/四季通用 + 流量标签：精准流量团建/泛流量游戏攻略）
+    private let onlineFilterButton = UIButton(type: .system)
+    private static let filterSeasonsDefaultsKey = "online_filter_seasons"
+    private static let filterFlowTypesDefaultsKey = "online_filter_flow_types"
+    static let allSeasonOptions = ["春季", "夏季", "秋季", "冬季", "四季通用"]
+    static let allFlowTypeOptions = ["精准流量团建", "泛流量游戏攻略"]
+    private lazy var selectedSeasons: Set<String> = {
+        let arr = UserDefaults.standard.stringArray(forKey: LibraryViewController.filterSeasonsDefaultsKey) ?? []
+        return Set(arr)
+    }()
+    private lazy var selectedFlowTypes: Set<String> = {
+        let arr = UserDefaults.standard.stringArray(forKey: LibraryViewController.filterFlowTypesDefaultsKey) ?? []
+        return Set(arr)
+    }()
+
+    // MARK: - 视图模式切换与电脑端实时联动（图标 grid / 列表 list / 对比 compare）
+    enum GalleryViewMode: String {
+        case grid = "grid"
+        case list = "list"
+        case compare = "compare"
+
+        var shortLabel: String {
+            switch self {
+            case .grid: return "▣图标"
+            case .list: return "☰列表"
+            case .compare: return "⚖️对比"
+            }
+        }
+
+        var menuTitle: String {
+            switch self {
+            case .grid: return "▣ 图标视图（默认卡片）"
+            case .list: return "☰ 列表视图（紧凑速览）"
+            case .compare: return "⚖️ 对比视图（原素材 vs 成品同框）"
+            }
+        }
+    }
+    private let onlineViewModeButton = UIButton(type: .system)
+    private static let viewModeDefaultsKey = "online_view_mode"
+    private lazy var currentViewMode: GalleryViewMode = {
+        let raw = UserDefaults.standard.string(forKey: LibraryViewController.viewModeDefaultsKey) ?? "grid"
+        return GalleryViewMode(rawValue: raw) ?? .grid
+    }()
+
     /// DSH-092 C6：在线作品列表分页上限（对齐 Android `onlinePageLimit`，首屏 30 条）。
     /// 成品库 400+ 套时，一次性渲染会让 `sizeForItemAt` 把 400 份文案全解析一遍 ——
     /// 既卡首屏，也和 Android「加载更多」的观感不一致。
@@ -70,10 +133,29 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 每次「加载更多」追加的条数（与 Android 同为 30）
     private static let onlinePageStep = 30
 
+    private static func inferLocalWorkSeason(_ text: String) -> String {
+        if ["秋", "中秋", "国庆", "红枫", "银杏", "蟹", "晒秋", "柿子", "桂花"].contains(where: { text.contains($0) }) { return "秋季" }
+        if ["冬", "滑雪", "温泉", "私汤", "泡汤", "年会", "跨年", "围炉"].contains(where: { text.contains($0) }) { return "冬季" }
+        if ["夏", "避暑", "玩水", "漂流", "溯溪", "水枪", "桨板", "皮划艇"].contains(where: { text.contains($0) }) { return "夏季" }
+        if ["春", "踏青", "赏花", "樱花", "采茶", "春游"].contains(where: { text.contains($0) }) { return "春季" }
+        return "四季通用"
+    }
+
+    private static func inferLocalWorkFlowType(_ text: String) -> String {
+        if ["游戏", "桌游", "破冰", "冷场", "惩罚"].contains(where: { text.contains($0) }) { return "泛流量游戏攻略" }
+        return "精准流量团建"
+    }
+
     private var filteredWorks: [WorkItem] {
         var base = library.works
         if selectedCategory != WorkCategory.all {
             base = base.filter { $0.folderName == selectedCategory }
+        }
+        if !selectedSeasons.isEmpty {
+            base = base.filter { selectedSeasons.contains(Self.inferLocalWorkSeason("\($0.name) \($0.folderName)")) }
+        }
+        if !selectedFlowTypes.isEmpty {
+            base = base.filter { selectedFlowTypes.contains(Self.inferLocalWorkFlowType("\($0.name) \($0.folderName)")) }
         }
         guard !searchQuery.isEmpty else { return base }
         return base.filter { work in
@@ -113,12 +195,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if selectedOnlineCategory != "全部" {
             base = base.filter { matchesOnlineCategory(work: $0, catKey: selectedOnlineCategory) }
         }
+        if !selectedSeasons.isEmpty {
+            base = base.filter { selectedSeasons.contains($0.season) }
+        }
+        if !selectedFlowTypes.isEmpty {
+            base = base.filter { selectedFlowTypes.contains($0.flowType) }
+        }
         guard !searchQuery.isEmpty else { return base }
         // ⚠️ OnlineWorkEntry 没有 `name` 成员（只有 title / destination）——
         // 上一版写成 entry.name，CI 直接编译失败。destination 对应本地的「合集名」。
         return base.filter { entry in
             entry.title.localizedCaseInsensitiveContains(searchQuery)
                 || entry.destination.localizedCaseInsensitiveContains(searchQuery)
+                || entry.season.localizedCaseInsensitiveContains(searchQuery)
+                || entry.flowType.localizedCaseInsensitiveContains(searchQuery)
+                || entry.tags.contains(where: { $0.localizedCaseInsensitiveContains(searchQuery) })
         }
     }
 
@@ -150,6 +241,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             self.render()
         }
 
+        // 监听电脑端或其他设备发起的视图切换（图标/列表/对比实时联动）
+        OnlineGalleryClient.shared.onRemoteViewStateChanged = { [weak self] state in
+            guard let self = self,
+                  let remoteMode = GalleryViewMode(rawValue: state.viewMode),
+                  remoteMode != self.currentViewMode else { return }
+            self.applyViewMode(remoteMode, syncToServer: false, remoteSource: state.updatedBy)
+        }
+
         if isOnlineMode {
             // 【体感加速】先读本地快照进内存（几十毫秒级），再后台拉最新；
             // 这样从本地相册切到在线相册是「秒开」而不是「正在连接」。
@@ -164,11 +263,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationController?.pushViewController(TransferViewController(), animated: true)
     }
 
-    // MARK: - DSH-111 在线相册自动刷新（与安卓同口径）
-    // 用户口径：「新增的作品，无论是手动移动文件夹进去，还是添加什么东西，手机端都能自动刷新」
-    // 做法：页面在前台时每 30 秒问电脑一句「你那儿变了吗」（一个极轻的 /status 请求，
-    //       只取 totalWorks + watchdog.lastChangeAt），**变了才调 loadOnlineData**。
-    //       没变就完全不动 UI —— 不会把用户正在看的列表拽回去。
+    // MARK: - DSH-111 在线相册自动刷新与跨端视图联动
     private var autoRefreshTimer: Timer?
     private var lastUserTouchAt: Date = .distantPast
     private var lastServerFingerprint: String?
@@ -176,9 +271,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func startOnlineAutoRefresh() {
         stopOnlineAutoRefresh()
         lastServerFingerprint = nil   // 第一轮只记指纹（viewWillAppear 刚刷过列表）
-        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            guard self.canAutoRefreshNow() else { return }
+            // 无论是否正在滑动，都可以轻量同步视图状态与指纹（作品列表仅在非交互时重刷）
             self.pollForOnlineChanges()
         }
     }
@@ -205,8 +300,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         lastUserTouchAt = Date()
     }
 
-    /// 问一句「变了吗」，不变就什么都不做
+    /// 问一句「变了吗」（同时捎带拉取跨端 viewState 同步），不变就什么都不做
     private func pollForOnlineChanges() {
+        guard UIApplication.shared.applicationState == .active else { return }
         OnlineGalleryClient.shared.fetchServerFingerprint { [weak self] result in
             guard let self = self else { return }
             guard case .success(let fingerprint) = result else { return }  // 失败静默等下一轮
@@ -527,7 +623,30 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         workSearchBar.autocapitalizationType = .none
         view.addSubview(workSearchBar)
         view.addSubview(collectionView)
-        // DSH-112：排序按钮放在搜索框右侧（与 Android「搜索框右侧排序按钮」同一位置）
+        // 视图切换按钮（图标 / 列表 / 对比，与电脑端实时联动）
+        onlineViewModeButton.translatesAutoresizingMaskIntoConstraints = false
+        onlineViewModeButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        onlineViewModeButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        onlineViewModeButton.layer.cornerRadius = 8
+        onlineViewModeButton.accessibilityLabel = "视图切换（图标/列表/对比）"
+        onlineViewModeButton.addTarget(self, action: #selector(viewModeButtonTapped(_:)), for: .touchUpInside)
+        let vmLongPress = UILongPressGestureRecognizer(target: self, action: #selector(viewModeButtonLongPressed(_:)))
+        vmLongPress.minimumPressDuration = 0.35
+        onlineViewModeButton.addGestureRecognizer(vmLongPress)
+        view.addSubview(onlineViewModeButton)
+        updateViewModeButtonStyle()
+
+        // 多选标签筛选按钮（放在视图按钮与排序按钮之间）
+        onlineFilterButton.translatesAutoresizingMaskIntoConstraints = false
+        onlineFilterButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        onlineFilterButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        onlineFilterButton.layer.cornerRadius = 8
+        onlineFilterButton.accessibilityLabel = "多选标签筛选"
+        onlineFilterButton.addTarget(self, action: #selector(filterButtonTapped(_:)), for: .touchUpInside)
+        view.addSubview(onlineFilterButton)
+        updateFilterButtonStyle()
+
+        // DSH-112：排序按钮放在搜索框最右侧（与 Android「搜索框右侧排序按钮」同一位置）
         onlineSortButton.translatesAutoresizingMaskIntoConstraints = false
         onlineSortButton.setTitle(sortKeyLabel(currentSortKey), for: .normal)
         onlineSortButton.titleLabel?.font = UIFont.systemFont(ofSize: 11)
@@ -536,22 +655,174 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineSortButton.addTarget(self, action: #selector(sortButtonTapped(_:)), for: .touchUpInside)
         view.addSubview(onlineSortButton)
         NSLayoutConstraint.activate([
-            workSearchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            // 搜索栏给右侧排序按钮让位，不再顶到屏幕右边
-            workSearchBar.trailingAnchor.constraint(equalTo: onlineSortButton.leadingAnchor, constant: -6),
+            workSearchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            // 搜索栏右侧并排：视图切换 | 筛选 | 排序
+            workSearchBar.trailingAnchor.constraint(equalTo: onlineViewModeButton.leadingAnchor, constant: -2),
             workSearchBar.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 2),
             workSearchBar.heightAnchor.constraint(equalToConstant: 44),
 
-            onlineSortButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            onlineViewModeButton.trailingAnchor.constraint(equalTo: onlineFilterButton.leadingAnchor, constant: -4),
+            onlineViewModeButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
+            onlineViewModeButton.widthAnchor.constraint(equalToConstant: 52),
+            onlineViewModeButton.heightAnchor.constraint(equalToConstant: 30),
+
+            onlineFilterButton.trailingAnchor.constraint(equalTo: onlineSortButton.leadingAnchor, constant: -4),
+            onlineFilterButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
+            onlineFilterButton.widthAnchor.constraint(equalToConstant: 54),
+            onlineFilterButton.heightAnchor.constraint(equalToConstant: 30),
+
+            onlineSortButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
             onlineSortButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
-            onlineSortButton.widthAnchor.constraint(equalToConstant: 96),
-            onlineSortButton.heightAnchor.constraint(equalToConstant: 32),
+            onlineSortButton.widthAnchor.constraint(equalToConstant: 78),
+            onlineSortButton.heightAnchor.constraint(equalToConstant: 30),
 
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             collectionView.topAnchor.constraint(equalTo: workSearchBar.bottomAnchor, constant: 4),
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    // MARK: - 视图模式切换与电脑端实时联动（图标 grid / 列表 list / 对比 compare）
+
+    private func updateViewModeButtonStyle() {
+        onlineViewModeButton.setTitle(currentViewMode.shortLabel, for: .normal)
+        switch currentViewMode {
+        case .grid:
+            let fg = UIColor(red: 2/255, green: 132/255, blue: 199/255, alpha: 1)
+            let bg = UIColor(red: 224/255, green: 242/255, blue: 254/255, alpha: 1)
+            onlineViewModeButton.backgroundColor = bg
+            onlineViewModeButton.setTitleColor(fg, for: .normal)
+        case .list:
+            let fg = UIColor(red: 124/255, green: 58/255, blue: 237/255, alpha: 1)
+            let bg = UIColor(red: 237/255, green: 233/255, blue: 254/255, alpha: 1)
+            onlineViewModeButton.backgroundColor = bg
+            onlineViewModeButton.setTitleColor(fg, for: .normal)
+        case .compare:
+            let fg = UIColor.white
+            let bg = UIColor(red: 217/255, green: 119/255, blue: 6/255, alpha: 1)
+            onlineViewModeButton.backgroundColor = bg
+            onlineViewModeButton.setTitleColor(fg, for: .normal)
+        }
+    }
+
+    @objc private func viewModeButtonTapped(_ sender: UIButton) {
+        let sheet = UIAlertController(
+            title: "切换视图模式（与电脑端实时联动）",
+            message: "选择视图模式后，手机端与电脑端成品库将同步切换；对比视图可逐页同框查看「原素材 vs AI成品」",
+            preferredStyle: .actionSheet
+        )
+        let allModes: [GalleryViewMode] = [.grid, .list, .compare]
+        for mode in allModes {
+            let title = (mode == currentViewMode) ? "✓ " + mode.menuTitle : mode.menuTitle
+            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.applyViewMode(mode, syncToServer: true, remoteSource: nil)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let pop = sheet.popoverPresentationController {
+            pop.sourceView = onlineViewModeButton
+            pop.sourceRect = onlineViewModeButton.bounds
+        }
+        present(sheet, animated: true)
+    }
+
+    @objc private func viewModeButtonLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let nextMode: GalleryViewMode
+        switch currentViewMode {
+        case .grid: nextMode = .list
+        case .list: nextMode = .compare
+        case .compare: nextMode = .grid
+        }
+        applyViewMode(nextMode, syncToServer: true, remoteSource: nil)
+    }
+
+    private func applyViewMode(_ mode: GalleryViewMode, syncToServer: Bool, remoteSource: String?) {
+        currentViewMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.viewModeDefaultsKey)
+        updateViewModeButtonStyle()
+        collectionView.collectionViewLayout.invalidateLayout()
+        collectionView.reloadData()
+
+        if syncToServer {
+            OnlineGalleryClient.shared.pushViewState(viewMode: mode.rawValue)
+            showToast("已切换：\(mode.shortLabel)视图（已联动电脑端）")
+        } else if let src = remoteSource, !src.isEmpty {
+            showToast("🔗 已跟随 \(src) 切换为：\(mode.shortLabel)视图")
+        } else {
+            showToast("🔗 已联动切换为：\(mode.shortLabel)视图")
+        }
+    }
+
+    // MARK: - 多选标签筛选（季节标签 + 流量标签）
+
+    private func updateFilterButtonStyle() {
+        let activeCount = selectedSeasons.count + selectedFlowTypes.count
+        let primaryGreen = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
+        let lightGreenBg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+        if activeCount > 0 {
+            onlineFilterButton.setTitle("筛选(\(activeCount))", for: .normal)
+            onlineFilterButton.backgroundColor = primaryGreen
+            onlineFilterButton.setTitleColor(.white, for: .normal)
+        } else {
+            onlineFilterButton.setTitle("筛选 ▾", for: .normal)
+            onlineFilterButton.backgroundColor = lightGreenBg
+            onlineFilterButton.setTitleColor(primaryGreen, for: .normal)
+        }
+    }
+
+    @objc private func filterButtonTapped(_ sender: UIButton) {
+        let activeWorks = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
+        var seasonCounts: [String: Int] = [:]
+        var flowCounts: [String: Int] = [:]
+        if isOnlineMode {
+            for w in activeWorks {
+                seasonCounts[w.season, default: 0] += 1
+                flowCounts[w.flowType, default: 0] += 1
+            }
+        } else {
+            for w in library.works {
+                let s = Self.inferLocalWorkSeason("\(w.name) \(w.folderName)")
+                let f = Self.inferLocalWorkFlowType("\(w.name) \(w.folderName)")
+                seasonCounts[s, default: 0] += 1
+                flowCounts[f, default: 0] += 1
+            }
+        }
+
+        let sheetVC = OnlineFilterSheetViewController(
+            seasonOptions: Self.allSeasonOptions,
+            flowTypeOptions: Self.allFlowTypeOptions,
+            seasonCounts: seasonCounts,
+            flowCounts: flowCounts,
+            selectedSeasons: selectedSeasons,
+            selectedFlowTypes: selectedFlowTypes
+        )
+        sheetVC.onApply = { [weak self] newSeasons, newFlows in
+            guard let self = self else { return }
+            self.selectedSeasons = newSeasons
+            self.selectedFlowTypes = newFlows
+            UserDefaults.standard.set(Array(newSeasons), forKey: Self.filterSeasonsDefaultsKey)
+            UserDefaults.standard.set(Array(newFlows), forKey: Self.filterFlowTypesDefaultsKey)
+            self.updateFilterButtonStyle()
+            self.resetOnlinePaging()
+            if self.isOnlineMode {
+                self.renderOnlineWorks()
+            } else {
+                self.render()
+            }
+            let totalSelected = newSeasons.count + newFlows.count
+            if totalSelected == 0 {
+                self.showToast("已重置标签筛选，显示全部作品")
+            } else {
+                let count = self.isOnlineMode ? self.filteredOnlineWorks.count : self.filteredWorks.count
+                self.showToast("筛选已生效：匹配 \(count) 套作品")
+            }
+        }
+        sheetVC.modalPresentationStyle = .overFullScreen
+        sheetVC.modalTransitionStyle = .crossDissolve
+        present(sheetVC, animated: true)
     }
 
     // MARK: - DSH-112 在线相册排序（对齐 Android SORT_MENU）
@@ -740,7 +1011,15 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 let now = Date().timeIntervalSince1970 * 1000
                 var mergedWorks: [OnlineWorkEntry] = []
                 for w in works {
-                    let localVers = LocalDispatchedStore.get(workId: w.id)
+                    var localVers = LocalDispatchedStore.get(workId: w.id)
+                    let recentlyClicked = LocalDispatchedStore.isRecentlySaved(workId: w.id, nowMs: now)
+                    if w.useCount == 0 && w.dispatchedVersions.isEmpty && w.dispatchedTo.isEmpty && !recentlyClicked {
+                        if !localVers.isEmpty {
+                            LocalDispatchedStore.clear(workId: w.id)
+                            localVers = []
+                        }
+                        OnlineWorkLifecycle.deletePermanently(id: w.id)
+                    }
                     var mergedVers = w.dispatchedVersions
                     var mergedDisp = w.dispatchedTo
                     for lv in localVers {
@@ -749,7 +1028,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         if !mergedDisp.contains(tag) { mergedDisp.append(tag) }
                     }
                     let rec = OnlineWorkLifecycle.getRecord(id: w.id)
-                    let usedCount = max(w.useCount, rec?.useCount ?? 0)
+                    let usedCount = max(w.useCount, rec?.useCount ?? 0, mergedVers.count)
                     var expireAt = w.expireAtMs
                     var firstShared = w.firstSharedAtMs
                     if firstShared <= 0, let r = rec, r.firstSharedAtMs > 0 {
@@ -1073,12 +1352,20 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
         if isOnlineMode {
             let entry = displayedOnlineWorks[indexPath.item]
-            cell.configureOnline(entry)
+            cell.configureOnline(entry, viewMode: currentViewMode)
             cell.onOnlineShare = { [weak self, weak cell] item in
                 self?.shareOnline(entry, item: item, source: cell)
             }
             cell.onOnlinePreview = { [weak self] index, img in
-                self?.openOnlinePreview(entry: entry, initialIndex: index, initialImage: img)
+                guard let self = self else { return }
+                if self.currentViewMode == .compare && entry.hasSourceCompare {
+                    self.openOnlineComparePreview(entry: entry, initialIndex: index)
+                } else {
+                    self.openOnlinePreview(entry: entry, initialIndex: index, initialImage: img)
+                }
+            }
+            cell.onOnlineComparePreview = { [weak self] index in
+                self?.openOnlineComparePreview(entry: entry, initialIndex: index)
             }
             cell.onOnlineDelete = { [weak self] in
                 self?.confirmDeleteOnline(entry)
@@ -1098,7 +1385,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
 
         let work = filteredWorks[indexPath.item]
-        cell.configure(work)
+        cell.configure(work, viewMode: currentViewMode)
         cell.onShare = { [weak self, weak cell] item in self?.share(work, item: item, source: cell) }
         cell.onCopyPreview = { [weak self, weak cell] item in
             self?.presentCopyPreview(item) {
@@ -1130,8 +1417,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if isOnlineMode {
             let entry = displayedOnlineWorks[indexPath.item]
-            let cell = collectionView.cellForItem(at: indexPath) as? WorkCell
-            openOnlinePreview(entry: entry, initialIndex: 0, initialImage: cell?.firstThumbnailImage)
+            if currentViewMode == .compare && entry.hasSourceCompare {
+                openOnlineComparePreview(entry: entry, initialIndex: 0)
+            } else {
+                let cell = collectionView.cellForItem(at: indexPath) as? WorkCell
+                openOnlinePreview(entry: entry, initialIndex: 0, initialImage: cell?.firstThumbnailImage)
+            }
         } else {
             let work = filteredWorks[indexPath.item]
             navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
@@ -1178,7 +1469,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             updatedAt: now, garbage: old.garbage, garbageRemark: old.garbageRemark,
             path: old.path, firstSharedAtMs: firstShared, expireAtMs: expireAt,
             originDevice: old.originDevice.isEmpty ? UIDevice.current.name : old.originDevice,
-            dispatchedVersions: newVers
+            dispatchedVersions: newVers,
+            season: old.season, flowType: old.flowType, tags: old.tags,
+            sourceImages: old.sourceImages, sourceNames: old.sourceNames,
+            hasSourceCompare: old.hasSourceCompare, maxSimilarity: old.maxSimilarity,
+            similarityTag: old.similarityTag
         )
 
         // DSH-130-A: 0ms 内存置顶
@@ -1201,7 +1496,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             showError("⚠️ 该作品文案缺失（空壳作品），已阻止分发")
             return
         }
-        UIPasteboard.general.string = PlatformCopyParser.normalizeCopyTextForClipboard(textToCopy)
+        UIPasteboard.general.string = textToCopy
         showToast("已复制：\(item.buttonLabel)")
 
         // ==================== DSH-130 & DSH-137: 本地持久化与 0ms 乐观 UI 更新与就地置顶 ====================
@@ -1243,7 +1538,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         // DSH-102：传 workId 给服务端，避免 image_name_index 同名冲突导致图错位
         downloadAllImages(paths: entry.images, workId: entry.id, onProgress: { [weak progress] done, count, name in
-            progress?.message = "正在同步原图：\(name)（\(done)/\(count) 张）"
+            progress?.message = "正在下载：\(name)（\(done)/\(count) 张）"
         }, completion: { [weak self] urls in
             guard let self = self else { return }
             let launchShare = {
@@ -1251,50 +1546,25 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     self.showError("图片加载失败，无法拉起分享；文案已在剪贴板")
                     return
                 }
-
-                let doPresentActivity: () -> Void = {
-                    if !allCached {
-                        self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
-                    }
-                    // DSH-090：与本地相册 prepareShare 同机制 —— 传文件 URL（as NSURL）
-                    let activity = UIActivityViewController(activityItems: urls.map { $0 as NSURL },
-                                                            applicationActivities: nil)
-                    activity.popoverPresentationController?.sourceView = source
-                    activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                        // 分享面板关闭后清理临时文件
-                        if let dir = urls.first?.deletingLastPathComponent() {
-                            try? FileManager.default.removeItem(at: dir)
-                        }
-                        guard let self = self else { return }
-                        if completed {
-                            self.showToast("🚀 分享完成")
-                        }
-                        self.loadOnlineData(silent: true)
-                    }
-                    self.present(activity, animated: true)
+                if !allCached {
+                    self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
                 }
-
-                if urls.count < entry.images.count {
-                    // DSH-145：完备性门禁 —— 网络波动导致部分丢图时显式提示，绝不静默漏图
-                    let missing = entry.images.count - urls.count
-                    let alert = UIAlertController(
-                        title: "部分原图下载失败",
-                        message: "本作品共 \(entry.images.count) 张图片，已拉取成功 \(urls.count) 张（有 \(missing) 张因网络波动未拉取到）。\n是否继续分享已下载的 \(urls.count) 张？",
-                        preferredStyle: .alert
-                    )
-                    alert.addAction(UIAlertAction(title: "继续分享(\(urls.count)张)", style: .default, handler: { _ in
-                        doPresentActivity()
-                    }))
-                    alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: { _ in
-                        if let dir = urls.first?.deletingLastPathComponent() {
-                            try? FileManager.default.removeItem(at: dir)
-                        }
-                    }))
-                    self.present(alert, animated: true)
-                    return
+                // DSH-090：与本地相册 prepareShare 同机制 —— 传文件 URL（as NSURL）
+                let activity = UIActivityViewController(activityItems: urls.map { $0 as NSURL },
+                                                        applicationActivities: nil)
+                activity.popoverPresentationController?.sourceView = source
+                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                    // 分享面板关闭后清理临时文件
+                    if let dir = urls.first?.deletingLastPathComponent() {
+                        try? FileManager.default.removeItem(at: dir)
+                    }
+                    guard let self = self else { return }
+                    if completed {
+                        self.showToast("🚀 分享完成")
+                    }
+                    self.loadOnlineData(silent: true)
                 }
-
-                doPresentActivity()
+                self.present(activity, animated: true)
             }
 
             if let prg = progress {
@@ -1305,87 +1575,56 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         })
     }
 
-    /// 并发受控拉取全部原图并落盘为临时文件（最大并发 3 + 自动重试 2 次 + 完备性校验）
+    /// 按电脑端给出的顺序**依次**拉取全部原图并落盘为临时文件（`loadImage` 的回调保证在主线程）。
     ///
-    /// DSH-145: 将原本的单线串行逐张等待重构为受控并发队列（maxConcurrent = 3），
-    /// 下载耗时从 4~6 秒缩短至 1 秒以内；同时单张下载已注入 2 次指数退避重试，
-    /// 彻底解决偶发网络抖动导致「5张只拉取3张」的漏图痛点。
+    /// DSH-090：返回 `[URL]` 而非 `[UIImage]` —— 与本地相册 `WorkLibrary.prepareShare`
+    /// （`selected.map { $0 as NSURL }`）及 Android `launchOnlineShare`
+    /// （`ACTION_SEND_MULTIPLE` + `Uri`）同机制。
+    /// 把 `[UIImage]` 直接交给 `UIActivityViewController` 时，小红书/抖音的 share extension
+    /// 会把 N 张图读成同一张（实测 9 张全变 1 张），改传文件 URL 后不再串图。
     private func downloadAllImages(paths: [String],
                                    workId: String,
                                    onProgress: @escaping (Int, Int, String) -> Void,
                                    completion: @escaping ([URL]) -> Void) {
-        guard !paths.isEmpty else {
-            completion([])
-            return
-        }
-
         var collected = [URL?](repeating: nil, count: paths.count)
         let total = paths.count
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("online-share-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        let queue = DispatchQueue(label: "com.zwm.gallery.shareDownload", qos: .userInitiated, attributes: .concurrent)
-        let group = DispatchGroup()
-        let semaphore = DispatchSemaphore(value: 3)
-        let lock = NSLock()
-        var completedCount = 0
-
-        for (index, path) in paths.enumerated() {
-            group.enter()
-            queue.async {
-                _ = semaphore.wait(timeout: .now() + 30.0)
-                let src = (path as NSString).lastPathComponent
-
-                OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: false, retries: 2) { image in
-                    defer {
-                        semaphore.signal()
-                        group.leave()
-                    }
-
-                    guard let image = image else {
-                        lock.lock()
-                        completedCount += 1
-                        let done = completedCount
-                        lock.unlock()
-                        DispatchQueue.main.async {
-                            onProgress(done, total, src)
-                        }
-                        return
-                    }
-
-                    // 序号前缀保证分享顺序与电脑端一致，且不会因重名互相覆盖
-                    let safeName = NSString(format: "%02d_%@", index + 1,
-                                            src.isEmpty ? "image.jpg" : src) as String
-                    let fileURL = dir.appendingPathComponent(safeName)
-                    let ext = (src as NSString).pathExtension.lowercased()
-                    let data = (ext == "png") ? image.pngData() : image.jpegData(compressionQuality: 0.95)
-
-                    if let payload = data {
-                        do {
-                            try payload.write(to: fileURL)
-                            lock.lock()
-                            collected[index] = fileURL
-                            lock.unlock()
-                        } catch {
-                            print("[Share] 写盘失败 \(fileURL.lastPathComponent)：\(error)")
-                        }
-                    }
-
-                    lock.lock()
-                    completedCount += 1
-                    let done = completedCount
-                    lock.unlock()
-                    DispatchQueue.main.async {
-                        onProgress(done, total, src)
-                    }
+        func step(_ index: Int) {
+            guard index < total else {
+                completion(collected.compactMap { $0 })
+                return
+            }
+            let path = paths[index]
+            let src = (path as NSString).lastPathComponent
+            onProgress(index + 1, total, src)
+            OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: false) { image in
+                defer { step(index + 1) }
+                guard let image = image else { return }
+                // 序号前缀保证分享顺序与电脑端一致，且不会因重名互相覆盖
+                let safeName = NSString(format: "%02d_%@", index + 1,
+                                        src.isEmpty ? "image.jpg" : src) as String
+                let fileURL = dir.appendingPathComponent(safeName)
+                let ext = (src as NSString).pathExtension.lowercased()
+                let data = (ext == "png") ? image.pngData() : image.jpegData(compressionQuality: 0.95)
+                guard let payload = data else { return }
+                do {
+                    try payload.write(to: fileURL)
+                } catch {
+                    // 【DSH-118】原本是 `try?`：写盘失败（磁盘满 / 目录只读 /
+                    // 文件名非法）时被静默吞掉，而下面仍会把这个 URL 记进 collected
+                    // ⇒ 后续分享指向一个**根本不存在**的文件，用户只看到「分享失败」，
+                    // 完全查不到是哪一步没写成。这里必须留痕并跳过。
+                    print("[Share] 写盘失败 \(fileURL.lastPathComponent)：\(error)")
+                    return
                 }
+                collected[index] = fileURL
             }
         }
 
-        group.notify(queue: .main) {
-            completion(collected.compactMap { $0 })
-        }
+        step(0)
     }
 
     private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int, initialImage: UIImage? = nil) {
@@ -1397,6 +1636,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             guard let self = self else { return }
             self.handleOnlineImageDeleted(workId: workId, remainingImages: remainingImages)
         }
+        present(vc, animated: true)
+    }
+
+    private func openOnlineComparePreview(entry: OnlineWorkEntry, initialIndex: Int) {
+        guard !entry.images.isEmpty else { return }
+        let vc = OnlineComparePreviewController(entry: entry, initialIndex: initialIndex)
+        vc.modalPresentationStyle = .fullScreen
+        vc.modalTransitionStyle = .crossDissolve
         present(vc, animated: true)
     }
 
@@ -1425,7 +1672,15 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     firstSharedAtMs: w.firstSharedAtMs,
                     expireAtMs: w.expireAtMs,
                     originDevice: w.originDevice,
-                    dispatchedVersions: w.dispatchedVersions
+                    dispatchedVersions: w.dispatchedVersions,
+                    season: w.season,
+                    flowType: w.flowType,
+                    tags: w.tags,
+                    sourceImages: w.sourceImages,
+                    sourceNames: w.sourceNames,
+                    hasSourceCompare: w.hasSourceCompare,
+                    maxSimilarity: w.maxSimilarity,
+                    similarityTag: w.similarityTag
                 )
                 break
             }
@@ -1445,6 +1700,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             OnlineGalleryClient.shared.resetWork(workId: entry.id) { ok, _ in
                 DispatchQueue.main.async {
                     if ok {
+                        LocalDispatchedStore.clear(workId: entry.id)
+                        OnlineWorkLifecycle.deletePermanently(id: entry.id)
+                        if entry.id.contains("__link_") {
+                            let baseId = entry.id.components(separatedBy: "__link_").first ?? entry.id
+                            OnlineWorkLifecycle.deletePermanently(id: baseId)
+                        }
                         self?.showToast("已重置为待首发状态")
                         self?.loadOnlineData(silent: true)
                     } else {
@@ -1513,9 +1774,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        // DSH-091 C3：卡片高度随「平台按钮换行后的行数」自适应。
-        // 1 行 = 212（与旧版一致），每多一行 +（36 按钮 + 8 行距）。
-        // 故意把可用宽度收窄 1pt —— 宁可高估（留白）也不要低估（按钮被裁）。
+        // DSH-091 C3：卡片高度随「平台按钮换行后的行数」及「当前视图模式(grid/list/compare)」自适应。
         let inner = width - 25
         var extraDetailLines = 0
         let labels: [String]
@@ -1527,15 +1786,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             labels = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
                 ? [WorkCell.copyMissingTitle]
                 : PlatformCopyParser.parseAvailablePlatforms(entry.copyText).map { $0.buttonLabel }
-            // DSH-142: 动态根据在线作品 detail 行数累加高度，彻底杜绝按钮被挤压
-            if !entry.dispatchedTo.isEmpty {
-                extraDetailLines += 1
-                if entry.dispatchedTo.count > 1 {
+            if currentViewMode != .list {
+                if !entry.dispatchedTo.isEmpty {
+                    extraDetailLines += 1
+                    if entry.dispatchedTo.count > 1 {
+                        extraDetailLines += 1
+                    }
+                }
+                if entry.garbage {
                     extraDetailLines += 1
                 }
-            }
-            if entry.garbage {
-                extraDetailLines += 1
+                if currentViewMode == .compare {
+                    extraDetailLines += 1
+                }
             }
         } else {
             guard indexPath.item < filteredWorks.count else {
@@ -1543,11 +1806,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             }
             let work = filteredWorks[indexPath.item]
             labels = CopyParserCache.platforms(for: work.textURL).map { $0.buttonLabel }
-            // C4：已使用的本地卡多一行「✓ 小红书 X · 抖音 Y」
-            if work.shareCount > 0 { extraDetailLines = 1 }
+            if currentViewMode != .list && work.shareCount > 0 { extraDetailLines = 1 }
         }
         let rows = platformRowCount(labels: labels, width: inner)
-        let height = WorkCell.cardBaseHeight
+        let baseH: CGFloat
+        switch currentViewMode {
+        case .grid:
+            baseH = WorkCell.cardBaseHeight
+        case .list:
+            baseH = WorkCell.listBaseHeight
+        case .compare:
+            baseH = WorkCell.compareBaseHeight
+        }
+        let height = baseH
             + CGFloat(max(rows, 1) - 1) * (WorkCell.platformRowHeight + WorkCell.platformSpacing)
             + CGFloat(extraDetailLines) * WorkCell.cardDetailLineStep
         return CGSize(width: width, height: height)
@@ -1926,6 +2197,8 @@ private final class ThumbnailButton: UIButton {
     let imageViewWidget = UIImageView()
     var currentURL: URL?
     var currentOnlinePath: String?
+    private var widthConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1939,17 +2212,27 @@ private final class ThumbnailButton: UIButton {
         layer.borderWidth = 1
         layer.borderColor = AppColors.separator.cgColor
         clipsToBounds = true
+        let wc = widthAnchor.constraint(equalToConstant: 64)
+        let hc = heightAnchor.constraint(equalToConstant: 64)
+        widthConstraint = wc
+        heightConstraint = hc
         NSLayoutConstraint.activate([
             imageViewWidget.leadingAnchor.constraint(equalTo: leadingAnchor),
             imageViewWidget.trailingAnchor.constraint(equalTo: trailingAnchor),
             imageViewWidget.topAnchor.constraint(equalTo: topAnchor),
             imageViewWidget.bottomAnchor.constraint(equalTo: bottomAnchor),
-            widthAnchor.constraint(equalToConstant: 64),
-            heightAnchor.constraint(equalToConstant: 64)
+            wc,
+            hc
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setSize(_ side: CGFloat) {
+        widthConstraint?.constant = side
+        heightConstraint?.constant = side
+        layer.cornerRadius = side <= 48 ? 7 : 10
+    }
 
     func load(url: URL) {
         currentURL = url
@@ -1968,6 +2251,137 @@ private final class ThumbnailButton: UIButton {
         OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: true, maxPixel: 200) { [weak self] image in
             guard let self = self, self.currentOnlinePath == path else { return }
             self.imageViewWidget.image = image
+        }
+    }
+}
+
+/// 对比视图专用双图卡片（左：原素材 / 右：AI 成品）
+private final class ComparePairThumbView: UIControl {
+    private let headerLabel = UILabel()
+    private let leftImageView = UIImageView()
+    private let rightImageView = UIImageView()
+    private let leftBadge = UILabel()
+    private let rightBadge = UILabel()
+    private let emptySourceLabel = UILabel()
+
+    var currentWorkId: String?
+    var currentSourcePath: String?
+    var currentOutputPath: String?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = UIColor(red: 0.95, green: 0.97, blue: 0.96, alpha: 1)
+        layer.cornerRadius = 10
+        layer.borderWidth = 1
+        layer.borderColor = UIColor(red: 0.15, green: 0.55, blue: 0.40, alpha: 0.35).cgColor
+        clipsToBounds = true
+
+        headerLabel.font = .boldSystemFont(ofSize: 10.5)
+        headerLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
+        headerLabel.textAlignment = .center
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(headerLabel)
+
+        for iv in [leftImageView, rightImageView] {
+            iv.contentMode = .scaleAspectFill
+            iv.clipsToBounds = true
+            iv.layer.cornerRadius = 6
+            iv.backgroundColor = AppColors.sharedBackground
+            iv.isUserInteractionEnabled = false
+            iv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(iv)
+        }
+
+        emptySourceLabel.text = "无原图"
+        emptySourceLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        emptySourceLabel.textColor = AppColors.secondaryText
+        emptySourceLabel.textAlignment = .center
+        emptySourceLabel.translatesAutoresizingMaskIntoConstraints = false
+        leftImageView.addSubview(emptySourceLabel)
+
+        leftBadge.text = "原素材"
+        leftBadge.font = .systemFont(ofSize: 9.5, weight: .bold)
+        leftBadge.textColor = .white
+        leftBadge.backgroundColor = UIColor.black.withAlphaComponent(0.62)
+        leftBadge.textAlignment = .center
+        leftBadge.layer.cornerRadius = 4
+        leftBadge.clipsToBounds = true
+        leftBadge.translatesAutoresizingMaskIntoConstraints = false
+        leftImageView.addSubview(leftBadge)
+
+        rightBadge.text = "AI成品"
+        rightBadge.font = .systemFont(ofSize: 9.5, weight: .bold)
+        rightBadge.textColor = .white
+        rightBadge.backgroundColor = UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.85)
+        rightBadge.textAlignment = .center
+        rightBadge.layer.cornerRadius = 4
+        rightBadge.clipsToBounds = true
+        rightBadge.translatesAutoresizingMaskIntoConstraints = false
+        rightImageView.addSubview(rightBadge)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 148),
+            heightAnchor.constraint(equalToConstant: 112),
+
+            headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            headerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            headerLabel.heightAnchor.constraint(equalToConstant: 16),
+
+            leftImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
+            leftImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            leftImageView.widthAnchor.constraint(equalToConstant: 66),
+
+            rightImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
+            rightImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            rightImageView.widthAnchor.constraint(equalToConstant: 66),
+
+            emptySourceLabel.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor),
+            emptySourceLabel.centerYAnchor.constraint(equalTo: leftImageView.centerYAnchor),
+
+            leftBadge.leadingAnchor.constraint(equalTo: leftImageView.leadingAnchor, constant: 3),
+            leftBadge.bottomAnchor.constraint(equalTo: leftImageView.bottomAnchor, constant: -3),
+            leftBadge.widthAnchor.constraint(equalToConstant: 36),
+            leftBadge.heightAnchor.constraint(equalToConstant: 15),
+
+            rightBadge.trailingAnchor.constraint(equalTo: rightImageView.trailingAnchor, constant: -3),
+            rightBadge.bottomAnchor.constraint(equalTo: rightImageView.bottomAnchor, constant: -3),
+            rightBadge.widthAnchor.constraint(equalToConstant: 36),
+            rightBadge.heightAnchor.constraint(equalToConstant: 15)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(pageIndex: Int, workId: String, sourcePath: String, outputPath: String) {
+        currentWorkId = workId
+        currentSourcePath = sourcePath
+        currentOutputPath = outputPath
+        leftImageView.image = nil
+        rightImageView.image = nil
+
+        headerLabel.text = "P\(pageIndex + 1) 原素材 ➔ 成品"
+        if sourcePath.isEmpty {
+            emptySourceLabel.isHidden = false
+            emptySourceLabel.text = "无对应原图"
+        } else {
+            emptySourceLabel.isHidden = true
+            OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: workId, isThumbnail: true, maxPixel: 220) { [weak self] img in
+                guard let self = self, self.currentWorkId == workId, self.currentSourcePath == sourcePath else { return }
+                self.leftImageView.image = img
+                self.emptySourceLabel.isHidden = (img != nil)
+                if img == nil {
+                    self.emptySourceLabel.text = "原图未命中"
+                }
+            }
+        }
+
+        OnlineGalleryClient.shared.loadImage(path: outputPath, workId: workId, isThumbnail: true, maxPixel: 220) { [weak self] img in
+            guard let self = self, self.currentWorkId == workId, self.currentOutputPath == outputPath else { return }
+            self.rightImageView.image = img
         }
     }
 }
@@ -2136,7 +2550,7 @@ private final class CopyPreviewViewController: UIViewController, UITextViewDeleg
     /// 复制全文：**不分享、不计使用次数**（Android `setNeutralButton` 同语义）。
     @objc private func copyAllTapped() {
         let textToCopy = textView.text ?? bodyText
-        UIPasteboard.general.string = PlatformCopyParser.normalizeCopyTextForClipboard(textToCopy)
+        UIPasteboard.general.string = textToCopy
         showToast("已复制 \(versionLabel) 全文 (\(textToCopy.utf16.count)字)")
     }
 
@@ -2167,7 +2581,7 @@ private final class CopyPreviewViewController: UIViewController, UITextViewDeleg
 
     /// 前往使用：复制 + 关闭 + 交回外层唤起分享（有副作用，与长按预览的只读语义严格分开）。
     @objc private func useTapped() {
-        UIPasteboard.general.string = PlatformCopyParser.normalizeCopyTextForClipboard(textView.text ?? bodyText)
+        UIPasteboard.general.string = textView.text ?? bodyText
         let handler = onUse
         dismiss(animated: true) { handler?() }
     }
@@ -2339,12 +2753,18 @@ private final class WorkCell: UICollectionViewCell {
     static let platformRowHeight: CGFloat = 36
     /// 卡片基准高度（平台按钮 1 行时）。多行时按 `platformRowHeight + platformSpacing` 递增。
     static let cardBaseHeight: CGFloat = 212
+    /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
+    static let listBaseHeight: CGFloat = 148
+    /// 对比视图卡片基准高度（双图并排对比区 116pt + 底部操作行）
+    static let compareBaseHeight: CGFloat = 268
     /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度
     static let cardDetailLineStep: CGFloat = 14
     /// 空壳作品占位按钮文案（单一真源：`makeCopyMissingButton` 与 `sizeForItemAt` 共用）
     static let copyMissingTitle = "⚠️ 文案缺失（空壳作品，不可分发）"
     /// 本卡片当前渲染的是「在线作品」还是「手机本地作品」——决定平台按钮走哪个回调。
     private var isOnlineCard = false
+    private var currentViewMode: LibraryViewController.GalleryViewMode = .grid
+    private var previewScrollHeightConstraint: NSLayoutConstraint?
 
     /// 本地作品：回调直接携带「被点的那一条」（按钮文案 + 正文），不再只传平台。
     var onShare: ((AvailableCopyPlatform) -> Void)?
@@ -2362,6 +2782,8 @@ private final class WorkCell: UICollectionViewCell {
     /// 在线作品：同上，携带「被点的那一条」。
     var onOnlineShare: ((AvailableCopyPlatform) -> Void)?
     var onOnlinePreview: ((Int, UIImage?) -> Void)?
+    /// 在线作品对比视图：点击任意对比卡打开全屏同框对比预览
+    var onOnlineComparePreview: ((Int) -> Void)?
     var onOnlineDelete: (() -> Void)?
     var onOnlineReset: (() -> Void)?
     /// 在线作品：复制电脑成品库里的作品文件夹路径
@@ -2431,11 +2853,13 @@ private final class WorkCell: UICollectionViewCell {
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
+        let pshc = previewScroll.heightAnchor.constraint(equalToConstant: 64)
+        previewScrollHeightConstraint = pshc
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            previewScroll.heightAnchor.constraint(equalToConstant: 64),
+            pshc,
             // 平台区高度由 `PlatformFlowView.intrinsicContentSize` 决定（换行后自动增高），
             // 不再写死 36 —— 卡片高度在 `sizeForItemAt` 里按行数同步补偿。
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
@@ -2452,6 +2876,7 @@ private final class WorkCell: UICollectionViewCell {
         onDelete = nil
         onOnlineShare = nil
         onOnlinePreview = nil
+        onOnlineComparePreview = nil
         onOnlineDelete = nil
         onOnlineReset = nil
         for view in previewStack.arrangedSubviews {
@@ -2459,7 +2884,26 @@ private final class WorkCell: UICollectionViewCell {
                 tb.currentURL = nil
                 tb.currentOnlinePath = nil
                 tb.imageViewWidget.image = nil
+            } else if let cp = view as? ComparePairThumbView {
+                cp.currentWorkId = nil
+                cp.currentSourcePath = nil
+                cp.currentOutputPath = nil
             }
+        }
+    }
+
+    private func applyViewModeLayout(_ viewMode: LibraryViewController.GalleryViewMode) {
+        currentViewMode = viewMode
+        switch viewMode {
+        case .grid:
+            previewScrollHeightConstraint?.constant = 64
+            actionRow.isHidden = false
+        case .list:
+            previewScrollHeightConstraint?.constant = 44
+            actionRow.isHidden = true
+        case .compare:
+            previewScrollHeightConstraint?.constant = 116
+            actionRow.isHidden = false
         }
     }
 
@@ -2495,10 +2939,13 @@ private final class WorkCell: UICollectionViewCell {
         return ""
     }
 
-    func configureOnline(_ entry: OnlineWorkEntry) {
+    func configureOnline(_ entry: OnlineWorkEntry, viewMode: LibraryViewController.GalleryViewMode = .grid) {
         isOnlineCard = true
+        applyViewModeLayout(viewMode)
         contentView.backgroundColor = AppColors.secondaryBackground
-        contentView.layer.borderColor = UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 0.25).cgColor
+        contentView.layer.borderColor = (viewMode == .compare)
+            ? UIColor(red: 0.08, green: 0.56, blue: 0.36, alpha: 0.42).cgColor
+            : UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 0.25).cgColor
 
         name.text = "[\(entry.destination)] \(entry.title)"
         let record = OnlineWorkLifecycle.getRecord(id: entry.id)
@@ -2519,7 +2966,8 @@ private final class WorkCell: UICollectionViewCell {
             expireAt = firstShared + 3600000
         }
 
-        var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "
+        let flowShort = entry.flowType.contains("游戏") ? "泛流量游戏" : "精准团建"
+        var onlineDetail = "💻 \(entry.season)·\(flowShort) · \(entry.imageCount) 图 · "
         if expireAt > now {
             let remainMin = max(1, Int((expireAt - now) / 60000))
             let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
@@ -2529,6 +2977,18 @@ private final class WorkCell: UICollectionViewCell {
             onlineDetail += "已到期\(dev) · 正在移入回收站…" + onlineDatePart
         } else {
             onlineDetail += (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
+        }
+
+        if viewMode == .compare {
+            if entry.maxSimilarity > 0 {
+                let pct = Int(round(entry.maxSimilarity * 100))
+                let simBadge = entry.similarityTag.isEmpty ? "原图相似度 \(pct)%" : "\(entry.similarityTag)(\(pct)%)"
+                onlineDetail += " · 🆚 \(simBadge)"
+            } else if entry.hasSourceCompare {
+                onlineDetail += " · 🆚 点击卡片同框对比"
+            } else {
+                onlineDetail += " · ⚠️ 未关联原素材"
+            }
         }
 
         // DSH-093 & DSH-142：分发去向精简展示，彻底防止文字超长挤压按钮
@@ -2547,8 +3007,12 @@ private final class WorkCell: UICollectionViewCell {
             ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
             : AppColors.secondaryText
 
-        // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键
-        renderOnlinePreviews(entry.images, workId: entry.id)
+        if viewMode == .compare {
+            renderOnlineComparePreviews(entry)
+        } else {
+            // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键
+            renderOnlinePreviews(entry.images, workId: entry.id, thumbSide: viewMode == .list ? 44 : 64)
+        }
         configureOnlineButtons(entry)
     }
 
@@ -2594,7 +3058,11 @@ private final class WorkCell: UICollectionViewCell {
         return compactList.prefix(2).joined(separator: " | ") + " 等\(compactList.count)条"
     }
 
-    private func renderOnlinePreviews(_ paths: [String], workId: String) {
+    private func renderOnlinePreviews(_ paths: [String], workId: String, thumbSide: CGFloat = 64) {
+        for v in previewStack.arrangedSubviews where !(v is ThumbnailButton) {
+            previewStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
         let currentViews = previewStack.arrangedSubviews.compactMap { $0 as? ThumbnailButton }
         if currentViews.count > paths.count {
             for v in currentViews[paths.count...] {
@@ -2611,15 +3079,48 @@ private final class WorkCell: UICollectionViewCell {
                 button.addTarget(self, action: #selector(onlineThumbnailTapped(_:)), for: .touchUpInside)
                 previewStack.addArrangedSubview(button)
             }
+            button.setSize(thumbSide)
             button.tag = index
             // DSH-102：loadOnline 传入 workId，让 loadImage 走 ?id+?file 双键
             button.loadOnline(path: path, workId: workId)
         }
     }
 
+    private func renderOnlineComparePreviews(_ entry: OnlineWorkEntry) {
+        for v in previewStack.arrangedSubviews where !(v is ComparePairThumbView) {
+            previewStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        let currentViews = previewStack.arrangedSubviews.compactMap { $0 as? ComparePairThumbView }
+        let paths = entry.images
+        if currentViews.count > paths.count {
+            for v in currentViews[paths.count...] {
+                previewStack.removeArrangedSubview(v)
+                v.removeFromSuperview()
+            }
+        }
+        for (index, outputPath) in paths.enumerated() {
+            let pairView: ComparePairThumbView
+            if index < currentViews.count {
+                pairView = currentViews[index]
+            } else {
+                pairView = ComparePairThumbView()
+                pairView.addTarget(self, action: #selector(onlineComparePairTapped(_:)), for: .touchUpInside)
+                previewStack.addArrangedSubview(pairView)
+            }
+            pairView.tag = index
+            let sourcePath = index < entry.sourceImages.count ? entry.sourceImages[index] : ""
+            pairView.configure(pageIndex: index, workId: entry.id, sourcePath: sourcePath, outputPath: outputPath)
+        }
+    }
+
     @objc private func cardHeaderTapped() {
         if isOnlineCard {
-            onOnlinePreview?(0, firstThumbnailImage)
+            if currentViewMode == .compare {
+                onOnlineComparePreview?(0)
+            } else {
+                onOnlinePreview?(0, firstThumbnailImage)
+            }
         } else {
             onPreview?(0)
         }
@@ -2627,6 +3128,10 @@ private final class WorkCell: UICollectionViewCell {
 
     @objc private func onlineThumbnailTapped(_ sender: ThumbnailButton) {
         onOnlinePreview?(sender.tag, sender.imageViewWidget.image)
+    }
+
+    @objc private func onlineComparePairTapped(_ sender: ComparePairThumbView) {
+        onOnlineComparePreview?(sender.tag)
     }
 
     private func configureOnlineButtons(_ entry: OnlineWorkEntry) {
@@ -2746,8 +3251,9 @@ private final class WorkCell: UICollectionViewCell {
     @objc private func onlineDeleteTapped() { onOnlineDelete?() }
     @objc private func onlineCopyPathTapped() { onOnlineCopyPath?() }
 
-    func configure(_ work: WorkItem) {
+    func configure(_ work: WorkItem, viewMode: LibraryViewController.GalleryViewMode = .grid) {
         isOnlineCard = false
+        applyViewModeLayout(viewMode)
         contentView.backgroundColor = AppColors.secondaryBackground
         contentView.layer.borderColor = AppColors.separator.cgColor
 
@@ -2770,11 +3276,15 @@ private final class WorkCell: UICollectionViewCell {
         detail.text = localDetail
         detail.textColor = AppColors.secondaryText
 
-        renderPreviews(work.imageURLs)
+        renderPreviews(work.imageURLs, thumbSide: viewMode == .list ? 44 : 64)
         configureButtons(work)
     }
 
-    private func renderPreviews(_ urls: [URL]) {
+    private func renderPreviews(_ urls: [URL], thumbSide: CGFloat = 64) {
+        for v in previewStack.arrangedSubviews where !(v is ThumbnailButton) {
+            previewStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
         let currentViews = previewStack.arrangedSubviews.compactMap { $0 as? ThumbnailButton }
         if currentViews.count > urls.count {
             for v in currentViews[urls.count...] {
@@ -2792,6 +3302,7 @@ private final class WorkCell: UICollectionViewCell {
                 button.addTarget(self, action: #selector(thumbnailTapped(_:)), for: .touchUpInside)
                 previewStack.addArrangedSubview(button)
             }
+            button.setSize(thumbSide)
             button.tag = index
             button.load(url: url)
         }
@@ -3344,15 +3855,11 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
             OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: true) { _ in }
         }
 
-        // 2. 紧接着在后台按滑动可能顺序预加载 100% 高清原图（isThumbnail: false）
-        // DSH-145: 启动双并发槽位（0, 2, 4... 与 1, 3, 5...），同时预载后一张与前一张，无论往左往右滑均 0 延迟秒开
-        prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: 0, prefetchId: prefetchId, stepStride: 2)
-        if orderedIndices.count > 1 {
-            prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: 1, prefetchId: prefetchId, stepStride: 2)
-        }
+        // 2. 紧接着在后台按滑动可能顺序逐张预加载 100% 高清原图（isThumbnail: false）
+        prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: 0, prefetchId: prefetchId)
     }
 
-    private func prefetchNextFullImage(for entry: OnlineWorkEntry, orderedIndices: [Int], pointer: Int, prefetchId: String, stepStride: Int = 1) {
+    private func prefetchNextFullImage(for entry: OnlineWorkEntry, orderedIndices: [Int], pointer: Int, prefetchId: String) {
         guard pointer < orderedIndices.count else { return }
         guard self.currentPrefetchId == prefetchId else { return }
 
@@ -3361,17 +3868,591 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
 
         // 检查原图是否已在磁盘/内存中缓存，若已就绪直接递归检查下一张
         if OnlineGalleryClient.shared.hasFullImageCached(path: path, workId: entry.id) {
-            self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + stepStride, prefetchId: prefetchId, stepStride: stepStride)
+            self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + 1, prefetchId: prefetchId)
             return
         }
 
         OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] _ in
             guard let self = self, self.currentPrefetchId == prefetchId else { return }
-            self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + stepStride, prefetchId: prefetchId, stepStride: stepStride)
+            self.prefetchNextFullImage(for: entry, orderedIndices: orderedIndices, pointer: pointer + 1, prefetchId: prefetchId)
         }
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         return imageView
+    }
+}
+
+// MARK: - 多选标签筛选半屏面板（季节标签 + 流量标签，支持同时多选，iOS 12+ 全兼容）
+
+final class OnlineFilterSheetViewController: UIViewController {
+    private let seasonOptions: [String]
+    private let flowTypeOptions: [String]
+    private let seasonCounts: [String: Int]
+    private let flowCounts: [String: Int]
+    private var selectedSeasons: Set<String>
+    private var selectedFlowTypes: Set<String>
+
+    var onApply: ((Set<String>, Set<String>) -> Void)?
+
+    private let cardView = UIView()
+    private var seasonButtons: [String: UIButton] = [:]
+    private var flowButtons: [String: UIButton] = [:]
+    private let confirmButton = UIButton(type: .system)
+
+    private let primaryGreen = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
+    private let lightGreenBg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+
+    init(
+        seasonOptions: [String],
+        flowTypeOptions: [String],
+        seasonCounts: [String: Int],
+        flowCounts: [String: Int],
+        selectedSeasons: Set<String>,
+        selectedFlowTypes: Set<String>
+    ) {
+        self.seasonOptions = seasonOptions
+        self.flowTypeOptions = flowTypeOptions
+        self.seasonCounts = seasonCounts
+        self.flowCounts = flowCounts
+        self.selectedSeasons = selectedSeasons
+        self.selectedFlowTypes = selectedFlowTypes
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+
+        let bgTap = UITapGestureRecognizer(target: self, action: #selector(dismissCancel))
+        let backdrop = UIView()
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        backdrop.addGestureRecognizer(bgTap)
+        view.addSubview(backdrop)
+
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = AppColors.background
+        cardView.layer.cornerRadius = 18
+        if #available(iOS 11.0, *) {
+            cardView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        }
+        view.addSubview(cardView)
+
+        // 顶部栏：重置 | 标题 | 关闭
+        let resetBtn = UIButton(type: .system)
+        resetBtn.translatesAutoresizingMaskIntoConstraints = false
+        resetBtn.setTitle("重置清空", for: .normal)
+        resetBtn.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+        resetBtn.setTitleColor(.systemRed, for: .normal)
+        resetBtn.addTarget(self, action: #selector(resetTapped), for: .touchUpInside)
+
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "作品标签筛选（支持多选）"
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.textAlignment = .center
+
+        let closeBtn = UIButton(type: .system)
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        closeBtn.setTitle("取消", for: .normal)
+        closeBtn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        closeBtn.setTitleColor(AppColors.secondaryText, for: .normal)
+        closeBtn.addTarget(self, action: #selector(dismissCancel), for: .touchUpInside)
+
+        let headerRow = UIStackView(arrangedSubviews: [resetBtn, titleLabel, closeBtn])
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.axis = .horizontal
+        headerRow.alignment = .center
+        headerRow.distribution = .equalCentering
+        cardView.addSubview(headerRow)
+
+        // 季节分栏标题
+        let seasonTitle = UILabel()
+        seasonTitle.translatesAutoresizingMaskIntoConstraints = false
+        seasonTitle.text = "1. 季节标签（可多选，不选默认显示全部季节）"
+        seasonTitle.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        seasonTitle.textColor = AppColors.secondaryText
+
+        // 季节按钮两行网格
+        let seasonRow1 = UIStackView()
+        seasonRow1.axis = .horizontal
+        seasonRow1.spacing = 8
+        seasonRow1.distribution = .fillEqually
+
+        let seasonRow2 = UIStackView()
+        seasonRow2.axis = .horizontal
+        seasonRow2.spacing = 8
+        seasonRow2.distribution = .fillEqually
+
+        for (idx, opt) in seasonOptions.enumerated() {
+            let count = seasonCounts[opt] ?? 0
+            let btn = makePillButton(title: "\(opt) (\(count))", key: opt, action: #selector(seasonOptionTapped(_:)))
+            seasonButtons[opt] = btn
+            if idx < 3 {
+                seasonRow1.addArrangedSubview(btn)
+            } else {
+                seasonRow2.addArrangedSubview(btn)
+            }
+        }
+
+        // 流量分栏标题
+        let flowTitle = UILabel()
+        flowTitle.translatesAutoresizingMaskIntoConstraints = false
+        flowTitle.text = "2. 流量标签（可多选，不选默认显示全部类型）"
+        flowTitle.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        flowTitle.textColor = AppColors.secondaryText
+
+        let flowRow = UIStackView()
+        flowRow.axis = .horizontal
+        flowRow.spacing = 10
+        flowRow.distribution = .fillEqually
+        for opt in flowTypeOptions {
+            let count = flowCounts[opt] ?? 0
+            let btn = makePillButton(title: "\(opt) (\(count))", key: opt, action: #selector(flowOptionTapped(_:)))
+            flowButtons[opt] = btn
+            flowRow.addArrangedSubview(btn)
+        }
+
+        confirmButton.translatesAutoresizingMaskIntoConstraints = false
+        confirmButton.backgroundColor = primaryGreen
+        confirmButton.setTitleColor(.white, for: .normal)
+        confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        confirmButton.layer.cornerRadius = 12
+        confirmButton.addTarget(self, action: #selector(confirmTapped), for: .touchUpInside)
+
+        let bodyStack = UIStackView(arrangedSubviews: [
+            seasonTitle,
+            seasonRow1,
+            seasonRow2,
+            flowTitle,
+            flowRow,
+            confirmButton
+        ])
+        bodyStack.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack.axis = .vertical
+        bodyStack.spacing = 12
+        cardView.addSubview(bodyStack)
+
+        NSLayoutConstraint.activate([
+            backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: view.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: cardView.topAnchor),
+
+            cardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cardView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            headerRow.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
+            headerRow.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
+            headerRow.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
+            headerRow.heightAnchor.constraint(equalToConstant: 32),
+
+            bodyStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
+            bodyStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
+            bodyStack.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 12),
+            bodyStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            seasonRow1.heightAnchor.constraint(equalToConstant: 38),
+            seasonRow2.heightAnchor.constraint(equalToConstant: 38),
+            flowRow.heightAnchor.constraint(equalToConstant: 40),
+            confirmButton.heightAnchor.constraint(equalToConstant: 46)
+        ])
+
+        refreshAllPillStyles()
+    }
+
+    private func makePillButton(title: String, key: String, action: Selector) -> UIButton {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.accessibilityIdentifier = key
+        btn.setTitle(title, for: .normal)
+        btn.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .medium)
+        btn.titleLabel?.adjustsFontSizeToFitWidth = true
+        btn.layer.cornerRadius = 10
+        btn.layer.borderWidth = 1
+        btn.addTarget(self, action: action, for: .touchUpInside)
+        return btn
+    }
+
+    private func refreshAllPillStyles() {
+        for (opt, btn) in seasonButtons {
+            let count = seasonCounts[opt] ?? 0
+            let isSel = selectedSeasons.contains(opt)
+            applyPillStyle(btn, title: (isSel ? "✓ " : "") + "\(opt) (\(count))", isSelected: isSel)
+        }
+        for (opt, btn) in flowButtons {
+            let count = flowCounts[opt] ?? 0
+            let isSel = selectedFlowTypes.contains(opt)
+            applyPillStyle(btn, title: (isSel ? "✓ " : "") + "\(opt) (\(count))", isSelected: isSel)
+        }
+        let totalSel = selectedSeasons.count + selectedFlowTypes.count
+        if totalSel == 0 {
+            confirmButton.setTitle("确定（显示全部作品）", for: .normal)
+        } else {
+            confirmButton.setTitle("确定应用（已选 \(totalSel) 项标签）", for: .normal)
+        }
+    }
+
+    private func applyPillStyle(_ btn: UIButton, title: String, isSelected: Bool) {
+        btn.setTitle(title, for: .normal)
+        if isSelected {
+            btn.backgroundColor = primaryGreen
+            btn.setTitleColor(.white, for: .normal)
+            btn.layer.borderColor = primaryGreen.cgColor
+        } else {
+            btn.backgroundColor = AppColors.secondaryBackground
+            btn.setTitleColor(UIColor.labelCompatible, for: .normal)
+            btn.layer.borderColor = UIColor.lightGray.withAlphaComponent(0.35).cgColor
+        }
+    }
+
+    @objc private func seasonOptionTapped(_ sender: UIButton) {
+        guard let key = sender.accessibilityIdentifier else { return }
+        if selectedSeasons.contains(key) {
+            selectedSeasons.remove(key)
+        } else {
+            selectedSeasons.insert(key)
+        }
+        refreshAllPillStyles()
+    }
+
+    @objc private func flowOptionTapped(_ sender: UIButton) {
+        guard let key = sender.accessibilityIdentifier else { return }
+        if selectedFlowTypes.contains(key) {
+            selectedFlowTypes.remove(key)
+        } else {
+            selectedFlowTypes.insert(key)
+        }
+        refreshAllPillStyles()
+    }
+
+    @objc private func resetTapped() {
+        selectedSeasons.removeAll()
+        selectedFlowTypes.removeAll()
+        refreshAllPillStyles()
+    }
+
+    @objc private func confirmTapped() {
+        let s = selectedSeasons
+        let f = selectedFlowTypes
+        dismiss(animated: true) { [weak self] in
+            self?.onApply?(s, f)
+        }
+    }
+
+    @objc private func dismissCancel() {
+        dismiss(animated: true)
+    }
+}
+
+private extension UIColor {
+    static var labelCompatible: UIColor {
+        if #available(iOS 13.0, *) {
+            return .label
+        }
+        return .darkText
+    }
+}
+
+// MARK: - 全屏原素材 vs AI 成品同框对比预览控制器（支持左右/上下同框切换、逐页翻页）
+
+final class OnlineComparePreviewController: UIViewController, UIScrollViewDelegate {
+    private let entry: OnlineWorkEntry
+    private var currentIndex: Int
+
+    private let topBar = UIView()
+    private let titleLabel = UILabel()
+    private let pageLabel = UILabel()
+    private let similarityBadge = UILabel()
+    private let layoutModeButton = UIButton(type: .system)
+    private let closeButton = UIButton(type: .system)
+
+    private let containerStack = UIStackView()
+    private let leftContainer = UIView()
+    private let rightContainer = UIView()
+    private let leftImageView = UIImageView()
+    private let rightImageView = UIImageView()
+    private let leftBadge = UILabel()
+    private let rightBadge = UILabel()
+    private let emptyLeftLabel = UILabel()
+
+    private let bottomBar = UIView()
+    private let prevButton = UIButton(type: .system)
+    private let nextButton = UIButton(type: .system)
+
+    /// 对比排布模式：水平左右并排 vs 垂直上下堆叠
+    private var isHorizontalLayout: Bool = true
+
+    init(entry: OnlineWorkEntry, initialIndex: Int = 0) {
+        self.entry = entry
+        self.currentIndex = max(0, min(initialIndex, max(0, entry.images.count - 1)))
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        setupUI()
+        setupGestures()
+        loadPage(currentIndex)
+    }
+
+    private func setupUI() {
+        // 顶部导航栏
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        view.addSubview(topBar)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "原素材 vs AI成品同框对比 · \(entry.title)"
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        topBar.addSubview(titleLabel)
+
+        similarityBadge.translatesAutoresizingMaskIntoConstraints = false
+        if entry.maxSimilarity > 0 {
+            let pct = Int(round(entry.maxSimilarity * 100))
+            similarityBadge.text = "🛡️ 相似度 \(pct)%"
+        } else {
+            similarityBadge.text = "🆚 同框对比"
+        }
+        similarityBadge.font = .systemFont(ofSize: 11, weight: .bold)
+        similarityBadge.textColor = UIColor(red: 0.35, green: 0.95, blue: 0.55, alpha: 1.0)
+        similarityBadge.backgroundColor = UIColor(red: 0.06, green: 0.35, blue: 0.18, alpha: 0.8)
+        similarityBadge.textAlignment = .center
+        similarityBadge.layer.cornerRadius = 6
+        similarityBadge.clipsToBounds = true
+        topBar.addSubview(similarityBadge)
+
+        layoutModeButton.translatesAutoresizingMaskIntoConstraints = false
+        layoutModeButton.setTitle("↔️ 左右并排", for: .normal)
+        layoutModeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        layoutModeButton.setTitleColor(.white, for: .normal)
+        layoutModeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
+        layoutModeButton.layer.cornerRadius = 8
+        layoutModeButton.addTarget(self, action: #selector(toggleLayoutMode), for: .touchUpInside)
+        topBar.addSubview(layoutModeButton)
+
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle("✕", for: .normal)
+        closeButton.setTitleColor(.white, for: .normal)
+        closeButton.titleLabel?.font = .systemFont(ofSize: 20, weight: .medium)
+        closeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
+        closeButton.layer.cornerRadius = 16
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        topBar.addSubview(closeButton)
+
+        // 底部控制栏
+        bottomBar.translatesAutoresizingMaskIntoConstraints = false
+        bottomBar.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        view.addSubview(bottomBar)
+
+        prevButton.translatesAutoresizingMaskIntoConstraints = false
+        prevButton.setTitle("◀ 上一页", for: .normal)
+        prevButton.setTitleColor(.white, for: .normal)
+        prevButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        prevButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
+        prevButton.layer.cornerRadius = 8
+        prevButton.addTarget(self, action: #selector(prevPage), for: .touchUpInside)
+        bottomBar.addSubview(prevButton)
+
+        pageLabel.translatesAutoresizingMaskIntoConstraints = false
+        pageLabel.textAlignment = .center
+        pageLabel.textColor = .white
+        pageLabel.font = .systemFont(ofSize: 14, weight: .bold)
+        bottomBar.addSubview(pageLabel)
+
+        nextButton.translatesAutoresizingMaskIntoConstraints = false
+        nextButton.setTitle("下一页 ▶", for: .normal)
+        nextButton.setTitleColor(.white, for: .normal)
+        nextButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        nextButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
+        nextButton.layer.cornerRadius = 8
+        nextButton.addTarget(self, action: #selector(nextPage), for: .touchUpInside)
+        bottomBar.addSubview(nextButton)
+
+        // 中间主对比区域
+        containerStack.translatesAutoresizingMaskIntoConstraints = false
+        containerStack.axis = .horizontal
+        containerStack.spacing = 8
+        containerStack.distribution = .fillEqually
+        containerStack.alignment = .fill
+        view.addSubview(containerStack)
+
+        setupImageViewContainer(container: leftContainer, imageView: leftImageView, badge: leftBadge, badgeText: "原素材 (原料)", badgeBg: UIColor.black.withAlphaComponent(0.72))
+        emptyLeftLabel.text = "该页未关联原素材\n或原图已删除"
+        emptyLeftLabel.textColor = .lightGray
+        emptyLeftLabel.font = .systemFont(ofSize: 13)
+        emptyLeftLabel.textAlignment = .center
+        emptyLeftLabel.numberOfLines = 2
+        emptyLeftLabel.translatesAutoresizingMaskIntoConstraints = false
+        leftContainer.addSubview(emptyLeftLabel)
+        NSLayoutConstraint.activate([
+            emptyLeftLabel.centerXAnchor.constraint(equalTo: leftContainer.centerXAnchor),
+            emptyLeftLabel.centerYAnchor.constraint(equalTo: leftContainer.centerYAnchor)
+        ])
+
+        setupImageViewContainer(container: rightContainer, imageView: rightImageView, badge: rightBadge, badgeText: "AI 成品 (产出)", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88))
+
+        containerStack.addArrangedSubview(leftContainer)
+        containerStack.addArrangedSubview(rightContainer)
+
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 44),
+
+            closeButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -12),
+            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+
+            layoutModeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -10),
+            layoutModeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            layoutModeButton.widthAnchor.constraint(equalToConstant: 92),
+            layoutModeButton.heightAnchor.constraint(equalToConstant: 30),
+
+            similarityBadge.trailingAnchor.constraint(equalTo: layoutModeButton.leadingAnchor, constant: -10),
+            similarityBadge.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            similarityBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            similarityBadge.heightAnchor.constraint(equalToConstant: 24),
+
+            titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 14),
+            titleLabel.trailingAnchor.constraint(equalTo: similarityBadge.leadingAnchor, constant: -8),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+
+            bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomBar.heightAnchor.constraint(equalToConstant: 50),
+
+            prevButton.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
+            prevButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            prevButton.widthAnchor.constraint(equalToConstant: 88),
+            prevButton.heightAnchor.constraint(equalToConstant: 36),
+
+            pageLabel.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
+            pageLabel.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+
+            nextButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
+            nextButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            nextButton.widthAnchor.constraint(equalToConstant: 88),
+            nextButton.heightAnchor.constraint(equalToConstant: 36),
+
+            containerStack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 6),
+            containerStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            containerStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            containerStack.bottomAnchor.constraint(equalTo: bottomBar.topAnchor, constant: -6)
+        ])
+    }
+
+    private func setupImageViewContainer(container: UIView, imageView: UIImageView, badge: UILabel, badgeText: String, badgeBg: UIColor) {
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = UIColor(white: 0.08, alpha: 1)
+        container.layer.cornerRadius = 12
+        container.layer.borderWidth = 1
+        container.layer.borderColor = UIColor(white: 0.22, alpha: 1).cgColor
+        container.clipsToBounds = true
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
+        container.addSubview(imageView)
+
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.text = badgeText
+        badge.font = .systemFont(ofSize: 11, weight: .bold)
+        badge.textColor = .white
+        badge.backgroundColor = badgeBg
+        badge.textAlignment = .center
+        badge.layer.cornerRadius = 6
+        badge.clipsToBounds = true
+        container.addSubview(badge)
+
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: container.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            badge.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            badge.heightAnchor.constraint(equalToConstant: 22),
+            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 84)
+        ])
+    }
+
+    private func setupGestures() {
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(nextPage))
+        swipeLeft.direction = .left
+        view.addGestureRecognizer(swipeLeft)
+
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(prevPage))
+        swipeRight.direction = .right
+        view.addGestureRecognizer(swipeRight)
+    }
+
+    private func loadPage(_ pageIndex: Int) {
+        guard pageIndex >= 0 && pageIndex < entry.images.count else { return }
+        currentIndex = pageIndex
+        pageLabel.text = "P\(pageIndex + 1) / \(entry.images.count)"
+
+        prevButton.isEnabled = (currentIndex > 0)
+        prevButton.alpha = (currentIndex > 0) ? 1.0 : 0.4
+        nextButton.isEnabled = (currentIndex < entry.images.count - 1)
+        nextButton.alpha = (currentIndex < entry.images.count - 1) ? 1.0 : 0.4
+
+        let outputPath = entry.images[pageIndex]
+        let sourcePath = pageIndex < entry.sourceImages.count ? entry.sourceImages[pageIndex] : ""
+
+        leftImageView.image = nil
+        rightImageView.image = nil
+
+        if sourcePath.isEmpty {
+            emptyLeftLabel.isHidden = false
+        } else {
+            emptyLeftLabel.isHidden = true
+            // 加载原素材图片
+            OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: entry.id, isThumbnail: false) { [weak self] img in
+                guard let self = self, self.currentIndex == pageIndex else { return }
+                self.leftImageView.image = img
+                self.emptyLeftLabel.isHidden = (img != nil)
+            }
+        }
+
+        // 加载成品高清图
+        OnlineGalleryClient.shared.loadImage(path: outputPath, workId: entry.id, isThumbnail: false) { [weak self] img in
+            guard let self = self, self.currentIndex == pageIndex else { return }
+            self.rightImageView.image = img
+        }
+    }
+
+    @objc private func toggleLayoutMode() {
+        isHorizontalLayout.toggle()
+        containerStack.axis = isHorizontalLayout ? .horizontal : .vertical
+        layoutModeButton.setTitle(isHorizontalLayout ? "↔️ 左右并排" : "↕️ 上下同框", for: .normal)
+    }
+
+    @objc private func prevPage() {
+        if currentIndex > 0 {
+            loadPage(currentIndex - 1)
+        }
+    }
+
+    @objc private func nextPage() {
+        if currentIndex < entry.images.count - 1 {
+            loadPage(currentIndex + 1)
+        }
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: true)
     }
 }

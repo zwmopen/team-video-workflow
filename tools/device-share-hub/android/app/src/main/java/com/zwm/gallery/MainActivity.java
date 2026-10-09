@@ -116,6 +116,9 @@ public final class MainActivity extends Activity {
     // DSH-109：在线相册列表排序键（与 services/online_gallery_service.py SORT_KEYS 对齐）
     private static final String PREF_ONLINE_SORT_KEY = "online_sort_key";
     private static final String DEFAULT_ONLINE_SORT = "time_asc";
+    // 视图切换（图标 / 列表 / 对比）
+    private static final String PREF_ONLINE_VIEW_MODE = "online_view_mode";
+    private static final String DEFAULT_ONLINE_VIEW_MODE = "grid";
     private static final int REQUEST_TREE = 61;
     private static final int REQUEST_LEGACY_STORAGE = 62;
     public static volatile boolean isVisible;
@@ -189,6 +192,10 @@ public final class MainActivity extends Activity {
     // DSH-109：搜索框右侧排序按钮（PopupMenu 弹出 6 种排序）
     private Button sortKeyButton;
     private String currentSortKey = DEFAULT_ONLINE_SORT;
+    // 视图切换（图标 / 列表 / 对比）
+    private Button viewModeButton;
+    private String currentViewMode = DEFAULT_ONLINE_VIEW_MODE;
+    private long lastRemoteViewStateUpdatedAt = 0L;
     // DSH-111：在线相册自动刷新（页面可见时周期探测，服务端有变化才真刷列表）
     private Runnable onlineAutoRefreshRunnable;
     private volatile long lastUserTouchMs = 0L;
@@ -591,6 +598,25 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams sClearParams = new LinearLayout.LayoutParams(dp(32), dp(32));
         searchBar.addView(clearSearchButton, sClearParams);
 
+        // ---- 视图切换按钮（图标 / 列表 / 对比，与电脑端联动） ----
+        currentViewMode = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_ONLINE_VIEW_MODE, DEFAULT_ONLINE_VIEW_MODE);
+        viewModeButton = new Button(this);
+        viewModeButton.setText(viewModeLabel(currentViewMode));
+        styleNeumorphicButton(viewModeButton, STYLE_MUTED_GRAY);
+        viewModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        viewModeButton.setContentDescription("视图切换 (图标/列表/对比)");
+        LinearLayout.LayoutParams sViewModeParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
+        sViewModeParams.setMargins(dp(2), 0, dp(2), 0);
+        viewModeButton.setPadding(dp(8), 0, dp(8), 0);
+        viewModeButton.setOnClickListener(v -> showViewModeMenu());
+        viewModeButton.setOnLongClickListener(v -> {
+            cycleViewMode();
+            return true;
+        });
+        searchBar.addView(viewModeButton, sViewModeParams);
+
         // ---- DSH-109：搜索框右侧排序按钮（与 iOS 对等），5 种排序：默认最新在底 / 名称升降 / 大小升降 ----
         currentSortKey = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(PREF_ONLINE_SORT_KEY, DEFAULT_ONLINE_SORT);
@@ -601,7 +627,7 @@ public final class MainActivity extends Activity {
         sortKeyButton.setContentDescription("排序方式（DSH-109）");
         LinearLayout.LayoutParams sSortParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
-        sSortParams.setMargins(dp(4), 0, dp(2), 0);
+        sSortParams.setMargins(dp(2), 0, dp(2), 0);
         sortKeyButton.setPadding(dp(8), 0, dp(8), 0);
         sortKeyButton.setOnClickListener(v -> showSortKeyMenu());
         searchBar.addView(sortKeyButton, sSortParams);
@@ -1088,6 +1114,66 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private String viewModeLabel(String mode) {
+        if ("list".equals(mode)) return "📑 列表";
+        if ("compare".equals(mode)) return "🆚 对比";
+        return "🔲 图标";
+    }
+
+    private void showViewModeMenu() {
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(this, viewModeButton);
+        android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（标准网格）");
+        android.view.MenuItem miList = popup.getMenu().add("📑 列表视图（紧凑明细）");
+        android.view.MenuItem miComp = popup.getMenu().add("🆚 对比视图（原素材 vs AI成品）");
+
+        if ("grid".equals(currentViewMode)) { miGrid.setCheckable(true); miGrid.setChecked(true); }
+        else if ("list".equals(currentViewMode)) { miList.setCheckable(true); miList.setChecked(true); }
+        else if ("compare".equals(currentViewMode)) { miComp.setCheckable(true); miComp.setChecked(true); }
+
+        popup.setOnMenuItemClickListener(item -> {
+            CharSequence title = item.getTitle();
+            if (title != null) {
+                if (title.toString().contains("列表")) applyViewMode("list", false);
+                else if (title.toString().contains("对比")) applyViewMode("compare", false);
+                else applyViewMode("grid", false);
+                return true;
+            }
+            return false;
+        });
+        popup.show();
+    }
+
+    private void cycleViewMode() {
+        if ("grid".equals(currentViewMode)) {
+            applyViewMode("list", false);
+        } else if ("list".equals(currentViewMode)) {
+            applyViewMode("compare", false);
+        } else {
+            applyViewMode("grid", false);
+        }
+    }
+
+    private void applyViewMode(String mode, boolean fromRemote) {
+        currentViewMode = mode != null ? mode : DEFAULT_ONLINE_VIEW_MODE;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_ONLINE_VIEW_MODE, currentViewMode)
+                .apply();
+        if (viewModeButton != null) {
+            viewModeButton.setText(viewModeLabel(currentViewMode));
+        }
+        if (!fromRemote) {
+            lastRemoteViewStateUpdatedAt = System.currentTimeMillis();
+            if (isOnlineMode) {
+                onlineClient.pushViewState(currentViewMode, "Android真机", null);
+            }
+        }
+        if (isOnlineMode) {
+            applyOnlineCategoryFilter(selectedOnlineCategory);
+        } else {
+            refreshWorks();
+        }
+    }
+
     // ---- DSH-111：在线相册自动刷新 ----
     // 用户口径：「新增的作品，无论是手动移动文件夹进去，还是添加什么东西，手机端都能自动刷新」
     // 做法：页面在前台时每 30 秒问电脑一句「你那儿变了吗」（一个极轻的 /status 请求，
@@ -1131,7 +1217,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** 问一句「变了吗」，不变就什么都不做 */
+    /** 问一句「变了吗」，不变就什么都不做；同时保持跨端视图模式同频联动 */
     private void pollForOnlineChanges() {
         onlineClient.fetchServerFingerprint(new OnlineGalleryClient.Callback<String>() {
             @Override
@@ -1148,6 +1234,24 @@ public final class MainActivity extends Activity {
             public void onError(Exception error) {
                 // 探测失败静默等下一轮：电脑关机/断网很常见，不弹提示也不清屏
             }
+        });
+
+        // 视图模式跨端实时联动同步探测
+        onlineClient.fetchViewState(new OnlineGalleryClient.Callback<OnlineGalleryClient.ViewStateResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.ViewStateResult res) {
+                if (!canAutoRefreshNow() || res == null) return;
+                if (res.updatedAt > lastRemoteViewStateUpdatedAt && res.viewMode != null && !res.viewMode.isEmpty()) {
+                    if (!res.viewMode.equals(currentViewMode)) {
+                        lastRemoteViewStateUpdatedAt = res.updatedAt;
+                        applyViewMode(res.viewMode, true);
+                        toast("已同步电脑端视图：" + viewModeLabel(res.viewMode));
+                    }
+                }
+            }
+
+            @Override
+            public void onError(Exception error) {}
         });
     }
 
@@ -3063,8 +3167,21 @@ public final class MainActivity extends Activity {
                 if (!isOnlineMode || showingTrash) return;
                 onlineWorks.clear();
                 if (works != null) {
+                    long nowMs = System.currentTimeMillis();
                     for (OnlineWorkEntry w : works) {
                         java.util.Set<String> localVers = getLocalDispatchedVersions(w.id);
+                        Long recentAt = recentLocalUseAtMs.get(w.id);
+                        boolean recentlyClickedLocally = (recentAt != null && (nowMs - recentAt) < 15000L);
+                        if (w.useCount == 0
+                                && (w.dispatchedVersions == null || w.dispatchedVersions.isEmpty())
+                                && (w.dispatchedTo == null || w.dispatchedTo.isEmpty())
+                                && !recentlyClickedLocally) {
+                            if (!localVers.isEmpty()) {
+                                clearLocalDispatchedVersions(w.id);
+                                localVers = Collections.emptySet();
+                            }
+                            OnlineWorkLifecycle.deletePermanently(MainActivity.this, w.id);
+                        }
                         if (!localVers.isEmpty()) {
                             List<String> mergedVers = new ArrayList<>(w.dispatchedVersions);
                             List<String> mergedDisp = new ArrayList<>(w.dispatchedTo);
@@ -4024,7 +4141,13 @@ public final class MainActivity extends Activity {
         card.addView(titleRow);
 
         if (work.images != null && !work.images.isEmpty()) {
-            card.addView(onlinePreviewStrip(work), margins(0, dp(4), 0, dp(2)));
+            if ("compare".equals(currentViewMode)) {
+                card.addView(onlineComparePreviewStrip(work), margins(0, dp(4), 0, dp(2)));
+            } else if ("list".equals(currentViewMode)) {
+                card.addView(onlineListPreviewStrip(work), margins(0, dp(4), 0, dp(2)));
+            } else {
+                card.addView(onlinePreviewStrip(work), margins(0, dp(4), 0, dp(2)));
+            }
         }
 
         StringBuilder detail = new StringBuilder();
@@ -4038,6 +4161,15 @@ public final class MainActivity extends Activity {
         }
         if (!timeBadge.isEmpty()) {
             detail.append(" · ").append(timeBadge);
+        }
+        if ("compare".equals(currentViewMode)) {
+            if (work.similarityTag != null && !work.similarityTag.isEmpty()) {
+                detail.append(" · ").append(work.similarityTag);
+            } else if (work.maxSimilarity > 0) {
+                detail.append(" · 🛡️ 原图相似度 ").append((int) Math.round(work.maxSimilarity * 100)).append("%");
+            } else if (work.hasSourceCompare) {
+                detail.append(" · 🆚 支持原图对比");
+            }
         }
         // DSH-135: 统一倒计时药丸展示（继承首发设备生命周期）
         if (work.useCount > 0) {
@@ -4190,6 +4322,11 @@ public final class MainActivity extends Activity {
                         @Override
                         public void onSuccess(OnlineGalleryClient.ActionResult res) {
                             if (res != null && res.ok) {
+                                clearLocalDispatchedVersions(workId);
+                                OnlineWorkLifecycle.deletePermanently(MainActivity.this, workId);
+                                if (workId.contains("__link_")) {
+                                    OnlineWorkLifecycle.deletePermanently(MainActivity.this, workId.split("__link_")[0]);
+                                }
                                 toast(res.message.isEmpty() ? "已重置为待首发状态" : res.message);
                                 for (int i = 0; i < onlineWorks.size(); i++) {
                                     OnlineWorkEntry old = onlineWorks.get(i);
@@ -4198,7 +4335,8 @@ public final class MainActivity extends Activity {
                                                 old.id, old.title, old.destination, "已发送0次",
                                                 0, old.maxUses, false, 2, "",
                                                 old.images, old.imageCount, old.copyText, old.hasCopyText,
-                                                new ArrayList<>(), System.currentTimeMillis()
+                                                new ArrayList<>(), System.currentTimeMillis(), old.garbage, old.garbageRemark,
+                                                old.path, 0L, 0L, "", Collections.emptyList()
                                         );
                                         onlineWorks.set(i, updated);
                                         break;
@@ -4448,6 +4586,451 @@ public final class MainActivity extends Activity {
 
         scroll.addView(strip);
         return scroll;
+    }
+
+    /** 紧凑列表视图走马灯（较小尺寸缩略图，提升单屏信息密度） */
+    private View onlineListPreviewStrip(OnlineWorkEntry work) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+        scroll.setClipChildren(true);
+        scroll.setClipToPadding(true);
+
+        LinearLayout strip = new LinearLayout(this);
+        strip.setOrientation(LinearLayout.HORIZONTAL);
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setPadding(0, 0, dp(2), 0);
+
+        int thumbW = dp(60);
+        int thumbH = dp(80);
+
+        for (int i = 0; i < work.images.size(); i++) {
+            String imageName = work.images.get(i);
+            ImageView thumbView = new ImageView(this);
+            thumbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbView.setBackground(round(Color.rgb(230, 235, 232), 6));
+            thumbView.setClipToOutline(true);
+
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(thumbW, thumbH);
+            params.setMargins(0, 0, dp(5), 0);
+
+            String cacheKey = "online:" + work.id + ":" + imageName;
+            Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
+            if (cached != null && !cached.isRecycled()) {
+                thumbView.setImageBitmap(cached);
+            } else {
+                thumbView.setTag(cacheKey);
+                final String finalCacheKey = cacheKey;
+                scheduleOnlineThumb(() -> onlineClient.loadThumbnail(work.id, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+                    @Override
+                    public void onSuccess(Bitmap result) {
+                        if (result != null && !result.isRecycled()) {
+                            THUMBNAIL_CACHE.put(finalCacheKey, result);
+                            if (finalCacheKey.equals(thumbView.getTag())) {
+                                thumbView.setImageBitmap(result);
+                            }
+                        }
+                    }
+                    @Override public void onError(Exception error) {}
+                }));
+            }
+
+            final int imgIndex = i;
+            thumbView.setOnClickListener(v -> showOnlineImageDialog(work.id, work.title, work.images, imgIndex));
+            strip.addView(thumbView, params);
+        }
+
+        scroll.addView(strip);
+        return scroll;
+    }
+
+    /** 对比视图专用双图预览条（左：原素材 / 右：AI成品） */
+    private View onlineComparePreviewStrip(OnlineWorkEntry work) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+        scroll.setClipChildren(true);
+        scroll.setClipToPadding(true);
+
+        LinearLayout strip = new LinearLayout(this);
+        strip.setOrientation(LinearLayout.HORIZONTAL);
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setPadding(0, 0, dp(2), 0);
+
+        int total = work.images != null ? work.images.size() : 0;
+        for (int i = 0; i < total; i++) {
+            final int pageIndex = i;
+            String outImg = work.images.get(i);
+            String srcImg = (work.sourceImages != null && i < work.sourceImages.size())
+                    ? work.sourceImages.get(i) : null;
+
+            // 对比卡片：宽 148dp，高 112dp
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setBackground(roundWithStroke(Color.rgb(243, 248, 245), 10, Color.rgb(180, 220, 200)));
+            card.setPadding(dp(5), dp(3), dp(5), dp(5));
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(148), dp(112));
+            cardParams.setMargins(0, 0, dp(8), 0);
+
+            // 标头：P1 原素材 ➔ 成品
+            TextView header = text("P" + (i + 1) + " 原素材 ➔ 成品", 10, true);
+            header.setTextColor(Color.rgb(20, 115, 75));
+            header.setGravity(Gravity.CENTER);
+            card.addView(header, new LinearLayout.LayoutParams(-1, dp(16)));
+
+            // 双图并排
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER);
+
+            // 左：原素材
+            FrameLayout leftBox = new FrameLayout(this);
+            leftBox.setBackground(round(Color.rgb(230, 235, 232), 6));
+            leftBox.setClipToOutline(true);
+            ImageView leftIv = new ImageView(this);
+            leftIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            leftBox.addView(leftIv, new FrameLayout.LayoutParams(-1, -1));
+
+            TextView leftBadge = text("原素材", 9, true);
+            leftBadge.setTextColor(Color.WHITE);
+            leftBadge.setBackground(round(Color.argb(160, 0, 0, 0), 4));
+            leftBadge.setPadding(dp(3), dp(1), dp(3), dp(1));
+            FrameLayout.LayoutParams leftBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
+            leftBadgeParams.setMargins(dp(2), 0, 0, dp(2));
+            leftBox.addView(leftBadge, leftBadgeParams);
+
+            if (srcImg != null && !srcImg.isEmpty()) {
+                String cacheKey = "online:" + work.id + ":" + srcImg;
+                Bitmap cached = THUMBNAIL_CACHE.get(cacheKey);
+                if (cached != null && !cached.isRecycled()) {
+                    leftIv.setImageBitmap(cached);
+                } else {
+                    leftIv.setTag(cacheKey);
+                    final String fKey = cacheKey;
+                    scheduleOnlineThumb(() -> onlineClient.loadThumbnail(work.id, srcImg, new OnlineGalleryClient.Callback<Bitmap>() {
+                        @Override
+                        public void onSuccess(Bitmap result) {
+                            if (result != null && !result.isRecycled()) {
+                                THUMBNAIL_CACHE.put(fKey, result);
+                                if (fKey.equals(leftIv.getTag())) {
+                                    leftIv.setImageBitmap(result);
+                                }
+                            }
+                        }
+                        @Override public void onError(Exception e) {}
+                    }));
+                }
+            } else {
+                TextView noSrc = text("无原图", 9, false);
+                noSrc.setTextColor(Color.rgb(150, 155, 153));
+                FrameLayout.LayoutParams noSrcParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
+                leftBox.addView(noSrc, noSrcParams);
+            }
+
+            // 右：AI 成品
+            FrameLayout rightBox = new FrameLayout(this);
+            rightBox.setBackground(round(Color.rgb(230, 235, 232), 6));
+            rightBox.setClipToOutline(true);
+            ImageView rightIv = new ImageView(this);
+            rightIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            rightBox.addView(rightIv, new FrameLayout.LayoutParams(-1, -1));
+
+            TextView rightBadge = text("AI成品", 9, true);
+            rightBadge.setTextColor(Color.WHITE);
+            rightBadge.setBackground(round(Color.argb(200, 16, 133, 87), 4));
+            rightBadge.setPadding(dp(3), dp(1), dp(3), dp(1));
+            FrameLayout.LayoutParams rightBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+            rightBadgeParams.setMargins(0, 0, dp(2), dp(2));
+            rightBox.addView(rightBadge, rightBadgeParams);
+
+            String outCacheKey = "online:" + work.id + ":" + outImg;
+            Bitmap outCached = THUMBNAIL_CACHE.get(outCacheKey);
+            if (outCached != null && !outCached.isRecycled()) {
+                rightIv.setImageBitmap(outCached);
+            } else {
+                rightIv.setTag(outCacheKey);
+                final String fOutKey = outCacheKey;
+                scheduleOnlineThumb(() -> onlineClient.loadThumbnail(work.id, outImg, new OnlineGalleryClient.Callback<Bitmap>() {
+                    @Override
+                    public void onSuccess(Bitmap result) {
+                        if (result != null && !result.isRecycled()) {
+                            THUMBNAIL_CACHE.put(fOutKey, result);
+                            if (fOutKey.equals(rightIv.getTag())) {
+                                rightIv.setImageBitmap(result);
+                            }
+                        }
+                    }
+                    @Override public void onError(Exception e) {}
+                }));
+            }
+
+            LinearLayout.LayoutParams halfParams = new LinearLayout.LayoutParams(dp(66), dp(84));
+            row.addView(leftBox, halfParams);
+            LinearLayout.LayoutParams rightHalfParams = new LinearLayout.LayoutParams(dp(66), dp(84));
+            rightHalfParams.setMargins(dp(6), 0, 0, 0);
+            row.addView(rightBox, rightHalfParams);
+
+            card.addView(row, new LinearLayout.LayoutParams(-1, -1));
+            card.setOnClickListener(v -> showOnlineCompareDialog(work, pageIndex));
+            strip.addView(card, cardParams);
+        }
+
+        scroll.addView(strip);
+        return scroll;
+    }
+
+    /** 全屏同框对比弹窗：原素材 vs AI 成品同框核验预览 */
+    private void showOnlineCompareDialog(OnlineWorkEntry work, int imageIndex) {
+        if (work == null || work.images == null || work.images.isEmpty()) return;
+        final int total = work.images.size();
+        final int[] currentIndex = new int[]{Math.max(0, Math.min(imageIndex, total - 1))};
+        final boolean[] isHorizontal = new boolean[]{true}; // 默认左右并排
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.BLACK);
+        root.setPadding(dp(12), dp(16), dp(12), dp(16));
+
+        // 顶部导航栏
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(0, 0, 0, dp(10));
+
+        TextView titleView = text("原素材 vs AI成品同框对比 · " + work.title, 13, true);
+        titleView.setTextColor(Color.WHITE);
+        titleView.setSingleLine(true);
+        titleView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        topBar.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1.0f));
+
+        TextView simBadge = text("", 11, true);
+        if (work.maxSimilarity > 0) {
+            simBadge.setText("🛡️ 相似度 " + (int) Math.round(work.maxSimilarity * 100) + "%");
+        } else {
+            simBadge.setText("🆚 同框对比");
+        }
+        simBadge.setTextColor(Color.rgb(90, 240, 140));
+        simBadge.setBackground(round(Color.rgb(15, 90, 45), 6));
+        simBadge.setPadding(dp(6), dp(3), dp(6), dp(3));
+        LinearLayout.LayoutParams simParams = new LinearLayout.LayoutParams(-2, -2);
+        simParams.setMargins(dp(6), 0, dp(6), 0);
+        topBar.addView(simBadge, simParams);
+
+        Button toggleLayoutBtn = new Button(this);
+        toggleLayoutBtn.setText("↔️ 左右并排");
+        toggleLayoutBtn.setTextSize(11);
+        toggleLayoutBtn.setTextColor(Color.WHITE);
+        toggleLayoutBtn.setBackground(round(Color.rgb(55, 60, 58), 8));
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-2, dp(32));
+        toggleParams.setMargins(0, 0, dp(6), 0);
+        topBar.addView(toggleLayoutBtn, toggleParams);
+
+        Button closeBtn = new Button(this);
+        closeBtn.setText("✕");
+        closeBtn.setTextSize(14);
+        closeBtn.setTextColor(Color.WHITE);
+        closeBtn.setBackground(round(Color.rgb(55, 60, 58), 16));
+        topBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(32), dp(32)));
+
+        root.addView(topBar, new LinearLayout.LayoutParams(-1, -2));
+
+        // 中间主对比容器（可横向并排或纵向排布）
+        LinearLayout compareContainer = new LinearLayout(this);
+        compareContainer.setOrientation(LinearLayout.HORIZONTAL);
+        compareContainer.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams compParams = new LinearLayout.LayoutParams(-1, 0, 1.0f);
+        root.addView(compareContainer, compParams);
+
+        // 左/上：原素材容器
+        FrameLayout leftFrame = new FrameLayout(this);
+        leftFrame.setBackground(round(Color.rgb(20, 22, 21), 10));
+        ImageView leftImage = new ImageView(this);
+        leftImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        leftImage.setAdjustViewBounds(true);
+        leftFrame.addView(leftImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+
+        TextView leftBadge = text("原素材 (原料)", 10, true);
+        leftBadge.setTextColor(Color.WHITE);
+        leftBadge.setBackground(round(Color.argb(190, 0, 0, 0), 4));
+        leftBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
+        lBadgeParams.setMargins(dp(8), 0, 0, dp(8));
+        leftFrame.addView(leftBadge, lBadgeParams);
+
+        TextView leftEmpty = text("该页未关联原素材\n或原图已删除", 12, false);
+        leftEmpty.setTextColor(Color.GRAY);
+        leftEmpty.setGravity(Gravity.CENTER);
+        leftFrame.addView(leftEmpty, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+
+        // 右/下：AI成品容器
+        FrameLayout rightFrame = new FrameLayout(this);
+        rightFrame.setBackground(round(Color.rgb(20, 22, 21), 10));
+        ImageView rightImage = new ImageView(this);
+        rightImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        rightImage.setAdjustViewBounds(true);
+        rightFrame.addView(rightImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+
+        TextView rightBadge = text("AI 成品 (产出)", 10, true);
+        rightBadge.setTextColor(Color.WHITE);
+        rightBadge.setBackground(round(Color.argb(210, 16, 133, 87), 4));
+        rightBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+        rBadgeParams.setMargins(0, 0, dp(8), dp(8));
+        rightFrame.addView(rightBadge, rBadgeParams);
+
+        // 底部控制栏
+        LinearLayout bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setGravity(Gravity.CENTER);
+        bottomBar.setPadding(0, dp(10), 0, 0);
+
+        Button prevBtn = smallButton("‹ 上一页", false);
+        TextView pageText = text("P1 / P1", 13, true);
+        pageText.setTextColor(Color.WHITE);
+        pageText.setGravity(Gravity.CENTER);
+        Button nextBtn = smallButton("下一页 ›", true);
+
+        bottomBar.addView(prevBtn, new LinearLayout.LayoutParams(-2, dp(38)));
+        LinearLayout.LayoutParams pageParams = new LinearLayout.LayoutParams(dp(100), -2);
+        pageParams.setMargins(dp(12), 0, dp(12), 0);
+        bottomBar.addView(pageText, pageParams);
+        bottomBar.addView(nextBtn, new LinearLayout.LayoutParams(-2, dp(38)));
+
+        root.addView(bottomBar, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView navHint = text("💡 提示：点击「↔️/↕️」切换排布，点击上一页/下一页或左右轻扫翻页", 11, false);
+        navHint.setTextColor(Color.rgb(140, 145, 142));
+        navHint.setGravity(Gravity.CENTER);
+        root.addView(navHint, margins(0, dp(6), 0, 0));
+
+        builder.setView(root);
+        AlertDialog dialog = builder.create();
+        closeBtn.setOnClickListener(v -> dialog.dismiss());
+
+        // 重新排布函数
+        Runnable updateLayoutStructure = () -> {
+            compareContainer.removeAllViews();
+            if (isHorizontal[0]) {
+                compareContainer.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(0, -1, 1.0f);
+                p1.setMargins(0, 0, dp(6), 0);
+                LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(0, -1, 1.0f);
+                compareContainer.addView(leftFrame, p1);
+                compareContainer.addView(rightFrame, p2);
+                toggleLayoutBtn.setText("↔️ 左右并排");
+            } else {
+                compareContainer.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
+                p1.setMargins(0, 0, 0, dp(6));
+                LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
+                compareContainer.addView(leftFrame, p1);
+                compareContainer.addView(rightFrame, p2);
+                toggleLayoutBtn.setText("↕️ 上下同框");
+            }
+        };
+
+        toggleLayoutBtn.setOnClickListener(v -> {
+            isHorizontal[0] = !isHorizontal[0];
+            updateLayoutStructure.run();
+        });
+
+        // 刷新单页内容
+        Runnable renderPage = () -> {
+            int idx = currentIndex[0];
+            pageText.setText("P" + (idx + 1) + " / P" + total);
+            prevBtn.setEnabled(idx > 0);
+            prevBtn.setAlpha(idx > 0 ? 1f : 0.4f);
+            nextBtn.setEnabled(idx < total - 1);
+            nextBtn.setAlpha(idx < total - 1 ? 1f : 0.4f);
+
+            String outImg = work.images.get(idx);
+            String srcImg = (work.sourceImages != null && idx < work.sourceImages.size())
+                    ? work.sourceImages.get(idx) : null;
+
+            // 加载成品图
+            rightImage.setImageBitmap(null);
+            onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.Callback<Bitmap>() {
+                @Override
+                public void onSuccess(Bitmap result) {
+                    if (currentIndex[0] == idx) {
+                        rightImage.setImageBitmap(result);
+                    }
+                }
+                @Override public void onError(Exception e) {}
+            });
+
+            // 加载原素材图
+            leftImage.setImageBitmap(null);
+            if (srcImg != null && !srcImg.isEmpty()) {
+                leftEmpty.setVisibility(View.GONE);
+                onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.Callback<Bitmap>() {
+                    @Override
+                    public void onSuccess(Bitmap result) {
+                        if (currentIndex[0] == idx) {
+                            leftImage.setImageBitmap(result);
+                            leftEmpty.setVisibility(result != null ? View.GONE : View.VISIBLE);
+                        }
+                    }
+                    @Override public void onError(Exception e) {
+                        if (currentIndex[0] == idx) {
+                            leftEmpty.setVisibility(View.VISIBLE);
+                        }
+                    }
+                });
+            } else {
+                leftEmpty.setVisibility(View.VISIBLE);
+            }
+        };
+
+        prevBtn.setOnClickListener(v -> {
+            if (currentIndex[0] > 0) {
+                currentIndex[0]--;
+                renderPage.run();
+            }
+        });
+
+        nextBtn.setOnClickListener(v -> {
+            if (currentIndex[0] < total - 1) {
+                currentIndex[0]++;
+                renderPage.run();
+            }
+        });
+
+        // 手势检测：左右滑动整张对比图切换页码
+        final android.view.GestureDetector gestureDetector = new android.view.GestureDetector(this,
+                new android.view.GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float velocityX, float velocityY) {
+                        if (e1 == null || e2 == null) return false;
+                        float diffX = e2.getX() - e1.getX();
+                        float diffY = e2.getY() - e1.getY();
+                        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 100 && Math.abs(velocityX) > 200) {
+                            if (diffX > 0 && currentIndex[0] > 0) {
+                                currentIndex[0]--;
+                                renderPage.run();
+                                return true;
+                            } else if (diffX < 0 && currentIndex[0] < total - 1) {
+                                currentIndex[0]++;
+                                renderPage.run();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                });
+
+        View.OnTouchListener touchListener = (v, event) -> {
+            gestureDetector.onTouchEvent(event);
+            return true;
+        };
+        leftFrame.setOnTouchListener(touchListener);
+        rightFrame.setOnTouchListener(touchListener);
+        compareContainer.setOnTouchListener(touchListener);
+
+        updateLayoutStructure.run();
+        renderPage.run();
+        dialog.show();
     }
 
     /** 整页渲染开始时重置首发预算：只让最先出现的少量缩略图立刻加载。 */
@@ -4818,6 +5401,8 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private final java.util.Map<String, Long> recentLocalUseAtMs = new java.util.concurrent.ConcurrentHashMap<>();
+
     private java.util.Set<String> getLocalDispatchedVersions(String workId) {
         if (workId == null || workId.isEmpty()) return Collections.emptySet();
         SharedPreferences sp = getSharedPreferences("online_dispatched_versions", Context.MODE_PRIVATE);
@@ -4826,10 +5411,24 @@ public final class MainActivity extends Activity {
 
     private void recordLocalDispatchedVersion(String workId, String versionTag) {
         if (workId == null || workId.isEmpty() || versionTag == null || versionTag.trim().isEmpty()) return;
+        recentLocalUseAtMs.put(workId, System.currentTimeMillis());
         SharedPreferences sp = getSharedPreferences("online_dispatched_versions", Context.MODE_PRIVATE);
         java.util.Set<String> set = new java.util.HashSet<>(sp.getStringSet(workId, Collections.emptySet()));
         set.add(versionTag.trim());
         sp.edit().putStringSet(workId, set).apply();
+    }
+
+    private void clearLocalDispatchedVersions(String workId) {
+        if (workId == null || workId.isEmpty()) return;
+        recentLocalUseAtMs.remove(workId);
+        SharedPreferences sp = getSharedPreferences("online_dispatched_versions", Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = sp.edit().remove(workId);
+        if (workId.contains("__link_")) {
+            String baseId = workId.split("__link_")[0];
+            recentLocalUseAtMs.remove(baseId);
+            editor.remove(baseId);
+        }
+        editor.apply();
     }
 
     private void optimisticMarkWorkUsedAndTop(String workId, String dispatchTag, String versionTag, String destination) {
@@ -5288,29 +5887,10 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
-    /**
-     * 统一文案剪贴板排版清洗：防止移动端复制粘贴到小红书/微信后吞空行或单行粘连。
-     */
-    public static String normalizeCopyTextForClipboard(String text) {
-        if (text == null || text.isEmpty()) return "";
-        String formatted = text.replace("\r\n", "\n").replace("\r", "\n");
-        // 1. 如果包含内联盲文空格 U+2800 却缺少物理换行（单行粘连病灶），展开为真实换行
-        formatted = formatted.replaceAll("(?<!\n)\u2800", "\n\u2800");
-        formatted = formatted.replaceAll("\u2800(?!\n)", "\u2800\n");
-        // 2. 将连续纯回车（如 \n\n+）转换为小红书防吞空行 \n⠀\n
-        formatted = formatted.replaceAll("\n([ \t\u2800]*\n)+", "\n\u2800\n");
-        return formatted.trim();
-    }
-
     private void copyToClipboard(String label, String text) {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         if (clipboard != null && text != null) {
-            String processed = text;
-            boolean isPath = label != null && (label.contains("路径") || label.contains("path"));
-            if (!isPath && (text.contains("\n") || text.contains("\u2800"))) {
-                processed = normalizeCopyTextForClipboard(text);
-            }
-            ClipData clip = ClipData.newPlainText(label, processed);
+            ClipData clip = ClipData.newPlainText(label, text);
             clipboard.setPrimaryClip(clip);
         }
     }
