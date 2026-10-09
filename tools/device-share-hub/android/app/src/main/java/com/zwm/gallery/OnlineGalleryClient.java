@@ -1691,4 +1691,61 @@ public final class OnlineGalleryClient {
         conn.disconnect();
         return respOut.toString(StandardCharsets.UTF_8.name());
     }
+
+    public static final class ViewStateResult {
+        public final String viewMode;
+        public final long updatedAt;
+        public final String updatedBy;
+
+        public ViewStateResult(String viewMode, long updatedAt, String updatedBy) {
+            this.viewMode = viewMode == null ? "grid" : viewMode;
+            this.updatedAt = updatedAt;
+            this.updatedBy = updatedBy == null ? "" : updatedBy;
+        }
+    }
+
+    public void fetchViewState(Callback<ViewStateResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                String raw = httpGet(new URL(baseUrl + "/api/online/view-state"));
+                JSONObject obj = new JSONObject(raw);
+                JSONObject vs = obj.optJSONObject("viewState");
+                if (vs == null) vs = obj;
+                String mode = vs.optString("viewMode", "grid");
+                long updated = vs.optLong("updatedAt", 0L);
+                String by = vs.optString("updatedBy", "");
+                final ViewStateResult res = new ViewStateResult(mode, updated, by);
+                mainHandler.post(() -> callback.onSuccess(res));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
+    public void pushViewState(String viewMode, String device, Callback<ViewStateResult> callback) {
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                JSONObject body = new JSONObject();
+                body.put("viewMode", viewMode);
+                body.put("device", device != null ? device : "Android真机");
+                String raw = httpPost(new URL(baseUrl + "/api/online/view-state"), body.toString());
+                JSONObject obj = new JSONObject(raw);
+                JSONObject vs = obj.optJSONObject("viewState");
+                if (vs == null) vs = obj;
+                String mode = vs.optString("viewMode", viewMode);
+                long updated = vs.optLong("updatedAt", System.currentTimeMillis());
+                String by = vs.optString("updatedBy", device != null ? device : "Android真机");
+                final ViewStateResult res = new ViewStateResult(mode, updated, by);
+                if (callback != null) {
+                    mainHandler.post(() -> callback.onSuccess(res));
+                }
+            } catch (Exception e) {
+                if (callback != null) {
+                    mainHandler.post(() -> callback.onError(e));
+                }
+            }
+        });
+    }
 }

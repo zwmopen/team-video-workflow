@@ -1057,32 +1057,31 @@ public final class MainActivity extends Activity {
     }
 
     // ---- DSH-109：在线相册排序 PopupMenu（6 种排序键 = 时间/名称/大小 各两个方向） ----
-    // DSH-109 fix2：补 time_desc（新→旧）。服务端 SORT_KEYS 早就支持，只是客户端菜单漏列。
+    // DSH-109 排序菜单选项（展开时展示详细说明，收起时按钮展示紧凑缩略词）
     private static final String[][] SORT_MENU = new String[][]{
-            {"time_desc", "按时间（新→旧）"},
-            {"time_asc",  "按时间（旧→新）"},
-            {"name_asc",  "按名称（A→Z）"},
-            {"name_desc", "按名称（Z→A）"},
-            {"size_desc", "按大小（大→小）"},
-            {"size_asc",  "按大小（小→大）"},
+            {"time_desc", "时间最新在前（倒序）"},
+            {"time_asc",  "时间最早在前（正序）"},
+            {"name_asc",  "作品名称（A 到 Z 正序）"},
+            {"name_desc", "作品名称（Z 到 A 倒序）"},
+            {"size_desc", "作品张数（多图优先）"},
+            {"size_asc",  "作品张数（少图优先）"},
     };
 
     private String sortKeyLabel(String sortKey) {
-        for (String[] pair : SORT_MENU) {
-            if (pair[0].equals(sortKey)) return pair[1];
-        }
-        // fallback = 默认排序（time_asc「按时间（旧→新）」），不是菜单第一项
-        for (String[] pair : SORT_MENU) {
-            if (pair[0].equals(DEFAULT_ONLINE_SORT)) return pair[1];
-        }
-        return "按时间（旧→新）";
+        if ("time_desc".equals(sortKey)) return "最新▾";
+        if ("time_asc".equals(sortKey))  return "最早▾";
+        if ("name_asc".equals(sortKey))  return "名称A▾";
+        if ("name_desc".equals(sortKey)) return "名称Z▾";
+        if ("size_desc".equals(sortKey)) return "多图▾";
+        if ("size_asc".equals(sortKey))  return "少图▾";
+        return "最新▾";
     }
 
     private void showSortKeyMenu() {
         android.widget.PopupMenu popup = new android.widget.PopupMenu(this, sortKeyButton);
         for (String[] pair : SORT_MENU) {
             android.view.MenuItem mi = popup.getMenu().add(pair[1]);
-            // DSH-109 fix: 给当前选中的排序打勾（视觉状态显示）
+            // 给当前选中的排序打勾（视觉状态显示）
             if (pair[0].equals(currentSortKey)) {
                 mi.setCheckable(true);
                 mi.setChecked(true);
@@ -1115,16 +1114,16 @@ public final class MainActivity extends Activity {
     }
 
     private String viewModeLabel(String mode) {
-        if ("list".equals(mode)) return "📑 列表";
-        if ("compare".equals(mode)) return "🆚 对比";
-        return "🔲 图标";
+        if ("list".equals(mode)) return "列表▾";
+        if ("compare".equals(mode)) return "对比▾";
+        return "图标▾";
     }
 
     private void showViewModeMenu() {
         android.widget.PopupMenu popup = new android.widget.PopupMenu(this, viewModeButton);
-        android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（标准网格）");
-        android.view.MenuItem miList = popup.getMenu().add("📑 列表视图（紧凑明细）");
-        android.view.MenuItem miComp = popup.getMenu().add("🆚 对比视图（原素材 vs AI成品）");
+        android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（双列网格大图）");
+        android.view.MenuItem miList = popup.getMenu().add("📑 列表视图（单列紧凑清单）");
+        android.view.MenuItem miComp = popup.getMenu().add("🆚 对比视图（素材 vs 成品并排）");
 
         if ("grid".equals(currentViewMode)) { miGrid.setCheckable(true); miGrid.setChecked(true); }
         else if ("list".equals(currentViewMode)) { miList.setCheckable(true); miList.setChecked(true); }
@@ -4672,8 +4671,8 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(148), dp(112));
             cardParams.setMargins(0, 0, dp(8), 0);
 
-            // 标头：P1 原素材 ➔ 成品
-            TextView header = text("P" + (i + 1) + " 原素材 ➔ 成品", 10, true);
+            // 标头：P1 素材 ➔ 成品
+            TextView header = text("P" + (i + 1) + " 素材 ➔ 成品", 10, true);
             header.setTextColor(Color.rgb(20, 115, 75));
             header.setGravity(Gravity.CENTER);
             card.addView(header, new LinearLayout.LayoutParams(-1, dp(16)));
@@ -4683,7 +4682,7 @@ public final class MainActivity extends Activity {
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER);
 
-            // 左：原素材
+            // 左：素材
             FrameLayout leftBox = new FrameLayout(this);
             leftBox.setBackground(round(Color.rgb(230, 235, 232), 6));
             leftBox.setClipToOutline(true);
@@ -4691,7 +4690,7 @@ public final class MainActivity extends Activity {
             leftIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             leftBox.addView(leftIv, new FrameLayout.LayoutParams(-1, -1));
 
-            TextView leftBadge = text("原素材", 9, true);
+            TextView leftBadge = text("素材", 9, true);
             leftBadge.setTextColor(Color.WHITE);
             leftBadge.setBackground(round(Color.argb(160, 0, 0, 0), 4));
             leftBadge.setPadding(dp(3), dp(1), dp(3), dp(1));
@@ -4727,7 +4726,7 @@ public final class MainActivity extends Activity {
                 leftBox.addView(noSrc, noSrcParams);
             }
 
-            // 右：AI 成品
+            // 右：成品
             FrameLayout rightBox = new FrameLayout(this);
             rightBox.setBackground(round(Color.rgb(230, 235, 232), 6));
             rightBox.setClipToOutline(true);
@@ -4735,7 +4734,7 @@ public final class MainActivity extends Activity {
             rightIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             rightBox.addView(rightIv, new FrameLayout.LayoutParams(-1, -1));
 
-            TextView rightBadge = text("AI成品", 9, true);
+            TextView rightBadge = text("成品", 9, true);
             rightBadge.setTextColor(Color.WHITE);
             rightBadge.setBackground(round(Color.argb(200, 16, 133, 87), 4));
             rightBadge.setPadding(dp(3), dp(1), dp(3), dp(1));
@@ -4798,7 +4797,7 @@ public final class MainActivity extends Activity {
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(0, 0, 0, dp(10));
 
-        TextView titleView = text("原素材 vs AI成品同框对比 · " + work.title, 13, true);
+        TextView titleView = text("素材 vs 成品同框对比 · " + work.title, 13, true);
         titleView.setTextColor(Color.WHITE);
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
@@ -4842,7 +4841,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams compParams = new LinearLayout.LayoutParams(-1, 0, 1.0f);
         root.addView(compareContainer, compParams);
 
-        // 左/上：原素材容器
+        // 左/上：素材容器
         FrameLayout leftFrame = new FrameLayout(this);
         leftFrame.setBackground(round(Color.rgb(20, 22, 21), 10));
         ImageView leftImage = new ImageView(this);
@@ -4850,7 +4849,7 @@ public final class MainActivity extends Activity {
         leftImage.setAdjustViewBounds(true);
         leftFrame.addView(leftImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
 
-        TextView leftBadge = text("原素材 (原料)", 10, true);
+        TextView leftBadge = text("素材", 10, true);
         leftBadge.setTextColor(Color.WHITE);
         leftBadge.setBackground(round(Color.argb(190, 0, 0, 0), 4));
         leftBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
@@ -4858,12 +4857,12 @@ public final class MainActivity extends Activity {
         lBadgeParams.setMargins(dp(8), 0, 0, dp(8));
         leftFrame.addView(leftBadge, lBadgeParams);
 
-        TextView leftEmpty = text("该页未关联原素材\n或原图已删除", 12, false);
+        TextView leftEmpty = text("该页未关联素材\n或原图已删除", 12, false);
         leftEmpty.setTextColor(Color.GRAY);
         leftEmpty.setGravity(Gravity.CENTER);
         leftFrame.addView(leftEmpty, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
 
-        // 右/下：AI成品容器
+        // 右/下：成品容器
         FrameLayout rightFrame = new FrameLayout(this);
         rightFrame.setBackground(round(Color.rgb(20, 22, 21), 10));
         ImageView rightImage = new ImageView(this);
@@ -4871,7 +4870,7 @@ public final class MainActivity extends Activity {
         rightImage.setAdjustViewBounds(true);
         rightFrame.addView(rightImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
 
-        TextView rightBadge = text("AI 成品 (产出)", 10, true);
+        TextView rightBadge = text("成品", 10, true);
         rightBadge.setTextColor(Color.WHITE);
         rightBadge.setBackground(round(Color.argb(210, 16, 133, 87), 4));
         rightBadge.setPadding(dp(6), dp(2), dp(6), dp(2));

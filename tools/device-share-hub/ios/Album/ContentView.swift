@@ -70,12 +70,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private static let defaultSortKey = "time_asc"
     /// 6 种排序 = 时间 / 名称 / 大小，各两个方向（与 Android SORT_MENU 逐项对齐）
     private let sortMenu: [(key: String, label: String)] = [
-        ("time_desc", "按时间（新→旧）"),
-        ("time_asc",  "按时间（旧→新）"),
-        ("name_asc",  "按名称（A→Z）"),
-        ("name_desc", "按名称（Z→A）"),
-        ("size_desc", "按大小（大→小）"),
-        ("size_asc",  "按大小（小→大）"),
+        ("time_desc", "时间最新在前（倒序）"),
+        ("time_asc",  "时间最早在前（正序）"),
+        ("name_asc",  "作品名称（A 到 Z 正序）"),
+        ("name_desc", "作品名称（Z 到 A 倒序）"),
+        ("size_desc", "作品张数（多图优先）"),
+        ("size_asc",  "作品张数（少图优先）"),
     ]
     private lazy var currentSortKey: String = {
         let saved = UserDefaults.standard.string(forKey: LibraryViewController.sortDefaultsKey)
@@ -105,17 +105,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         var shortLabel: String {
             switch self {
-            case .grid: return "▣图标"
-            case .list: return "☰列表"
-            case .compare: return "⚖️对比"
+            case .grid: return "图标▾"
+            case .list: return "列表▾"
+            case .compare: return "对比▾"
             }
         }
 
         var menuTitle: String {
             switch self {
-            case .grid: return "▣ 图标视图（默认卡片）"
-            case .list: return "☰ 列表视图（紧凑速览）"
-            case .compare: return "⚖️ 对比视图（原素材 vs 成品同框）"
+            case .grid: return "🔲 图标视图（双列网格大图）"
+            case .list: return "📑 列表视图（单列紧凑清单）"
+            case .compare: return "🆚 对比视图（素材 vs 成品并排）"
             }
         }
     }
@@ -642,7 +642,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineFilterButton.titleLabel?.adjustsFontSizeToFitWidth = true
         onlineFilterButton.layer.cornerRadius = 8
         onlineFilterButton.accessibilityLabel = "多选标签筛选"
-        onlineFilterButton.addTarget(self, action: #selector(filterButtonTapped(_:)), for: .touchUpInside)
+        onlineFilterButton.addTarget(self, action: #selector(onlineTagFilterButtonTapped(_:)), for: .touchUpInside)
         view.addSubview(onlineFilterButton)
         updateFilterButtonStyle()
 
@@ -773,7 +773,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
     }
 
-    @objc private func filterButtonTapped(_ sender: UIButton) {
+    @objc private func onlineTagFilterButtonTapped(_ sender: UIButton) {
         let activeWorks = OnlineWorkLifecycle.filterActiveOnlineWorks(works: onlineWorks)
         var seasonCounts: [String: Int] = [:]
         var flowCounts: [String: Int] = [:]
@@ -828,8 +828,15 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     // MARK: - DSH-112 在线相册排序（对齐 Android SORT_MENU）
 
     private func sortKeyLabel(_ key: String) -> String {
-        for pair in sortMenu where pair.key == key { return pair.label }
-        return "按时间（旧→新）"   // fallback = 默认排序，不是菜单第一项
+        switch key {
+        case "time_desc": return "最新▾"
+        case "time_asc":  return "最早▾"
+        case "name_asc":  return "名称A▾"
+        case "name_desc": return "名称Z▾"
+        case "size_desc": return "多图▾"
+        case "size_asc":  return "少图▾"
+        default: return "最新▾"
+        }
     }
 
     @objc private func sortButtonTapped(_ sender: UIButton) {
@@ -4209,7 +4216,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         view.addSubview(topBar)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "原素材 vs AI成品同框对比 · \(entry.title)"
+        titleLabel.text = "素材 vs 成品同框对比 · \(entry.title)"
         titleLabel.textColor = .white
         titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingMiddle
@@ -4285,8 +4292,8 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         containerStack.alignment = .fill
         view.addSubview(containerStack)
 
-        setupImageViewContainer(container: leftContainer, imageView: leftImageView, badge: leftBadge, badgeText: "原素材 (原料)", badgeBg: UIColor.black.withAlphaComponent(0.72))
-        emptyLeftLabel.text = "该页未关联原素材\n或原图已删除"
+        setupImageViewContainer(container: leftContainer, imageView: leftImageView, badge: leftBadge, badgeText: "素材", badgeBg: UIColor.black.withAlphaComponent(0.72))
+        emptyLeftLabel.text = "该页未关联素材\n或原图已删除"
         emptyLeftLabel.textColor = .lightGray
         emptyLeftLabel.font = .systemFont(ofSize: 13)
         emptyLeftLabel.textAlignment = .center
@@ -4298,7 +4305,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             emptyLeftLabel.centerYAnchor.constraint(equalTo: leftContainer.centerYAnchor)
         ])
 
-        setupImageViewContainer(container: rightContainer, imageView: rightImageView, badge: rightBadge, badgeText: "AI 成品 (产出)", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88))
+        setupImageViewContainer(container: rightContainer, imageView: rightImageView, badge: rightBadge, badgeText: "成品", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88))
 
         containerStack.addArrangedSubview(leftContainer)
         containerStack.addArrangedSubview(rightContainer)

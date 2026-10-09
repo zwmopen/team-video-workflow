@@ -41,6 +41,22 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let originDevice: String
     /// DSH-137: 已分发版本标签列表
     public let dispatchedVersions: [String]
+    /// 季节标签：春季 / 夏季 / 秋季 / 冬季 / 四季通用
+    public let season: String
+    /// 流量标签：精准流量团建 / 泛流量游戏攻略
+    public let flowType: String
+    /// 完整标签数组
+    public let tags: [String]
+    /// 对比视图专用：每页成品图对应的原素材请求标识（如 "__src__:P1_封面.png"）
+    public let sourceImages: [String]
+    /// 对比视图专用：每页原素材原始文件名（如 "cover.jpg"）
+    public let sourceNames: [String]
+    /// 是否具备原素材对比图
+    public let hasSourceCompare: Bool
+    /// 原素材与成品最大相似度（0.0 ~ 1.0）
+    public let maxSimilarity: Double
+    /// 相似度安全审计标签（如 "🛡️相似度安全"）
+    public let similarityTag: String
 
     public init(id: String, title: String, destination: String, stage: String,
                 useCount: Int, maxUses: Int, used: Bool, remainingUses: Int,
@@ -48,7 +64,10 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
                 copyText: String, hasCopyText: Bool, dispatchedTo: [String],
                 updatedAt: Double, garbage: Bool = false, garbageRemark: String = "",
                 path: String = "", firstSharedAtMs: Double = 0, expireAtMs: Double = 0,
-                originDevice: String = "", dispatchedVersions: [String] = []) {
+                originDevice: String = "", dispatchedVersions: [String] = [],
+                season: String = "四季通用", flowType: String = "精准流量团建", tags: [String] = [],
+                sourceImages: [String] = [], sourceNames: [String] = [],
+                hasSourceCompare: Bool = false, maxSimilarity: Double = 0, similarityTag: String = "") {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.destination = destination.isEmpty ? "其他" : destination
@@ -71,6 +90,14 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.expireAtMs = expireAtMs
         self.originDevice = originDevice
         self.dispatchedVersions = dispatchedVersions
+        self.season = season
+        self.flowType = flowType
+        self.tags = tags
+        self.sourceImages = sourceImages
+        self.sourceNames = sourceNames
+        self.hasSourceCompare = hasSourceCompare || sourceImages.contains(where: { !$0.isEmpty })
+        self.maxSimilarity = maxSimilarity
+        self.similarityTag = similarityTag
     }
 
     public static func from(dict: [String: Any]) -> OnlineWorkEntry? {
@@ -104,6 +131,38 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let expireAtMs = (dict["expireAtMs"] as? Double) ?? Double((dict["expireAtMs"] as? Int) ?? 0)
         let originDevice = (dict["originDevice"] as? String) ?? ""
         let dispatchedVersions = (dict["dispatchedVersions"] as? [String]) ?? []
+        let tags = (dict["tags"] as? [String]) ?? []
+        let sourceImages = (dict["sourceImages"] as? [String]) ?? []
+        let sourceNames = (dict["sourceNames"] as? [String]) ?? []
+        let hasSourceCompare = (dict["hasSourceCompare"] as? Bool) ?? sourceImages.contains(where: { !$0.isEmpty })
+        let maxSimilarity = (dict["maxSimilarity"] as? Double) ?? Double((dict["maxSimilarity"] as? Int) ?? 0)
+        let similarityTag = (dict["similarityTag"] as? String) ?? ""
+
+        var season = ((dict["season"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if season.isEmpty {
+            let combined = "\(title) \(destination)"
+            if ["秋", "中秋", "国庆", "红枫", "银杏", "蟹", "晒秋", "柿子", "桂花"].contains(where: { combined.contains($0) }) {
+                season = "秋季"
+            } else if ["冬", "滑雪", "温泉", "私汤", "泡汤", "年会", "跨年", "围炉"].contains(where: { combined.contains($0) }) {
+                season = "冬季"
+            } else if ["夏", "避暑", "玩水", "漂流", "溯溪", "水枪", "桨板", "皮划艇"].contains(where: { combined.contains($0) }) {
+                season = "夏季"
+            } else if ["春", "踏青", "赏花", "樱花", "采茶", "春游"].contains(where: { combined.contains($0) }) {
+                season = "春季"
+            } else {
+                season = "四季通用"
+            }
+        }
+
+        var flowType = ((dict["flowType"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if flowType.isEmpty {
+            let combined = "\(title) \(destination)"
+            if destination.contains("游戏") || ["游戏", "桌游", "破冰", "冷场", "惩罚"].contains(where: { combined.contains($0) }) {
+                flowType = "泛流量游戏攻略"
+            } else {
+                flowType = "精准流量团建"
+            }
+        }
 
         return OnlineWorkEntry(
             id: id, title: title, destination: destination, stage: stage,
@@ -113,9 +172,19 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
             updatedAt: updatedAt, garbage: garbage, garbageRemark: garbageRemark,
             path: (dict["path"] as? String) ?? "",
             firstSharedAtMs: firstSharedAtMs, expireAtMs: expireAtMs,
-            originDevice: originDevice, dispatchedVersions: dispatchedVersions
+            originDevice: originDevice, dispatchedVersions: dispatchedVersions,
+            season: season, flowType: flowType, tags: tags,
+            sourceImages: sourceImages, sourceNames: sourceNames,
+            hasSourceCompare: hasSourceCompare, maxSimilarity: maxSimilarity,
+            similarityTag: similarityTag
         )
     }
+}
+
+public struct OnlineViewState: Codable, Equatable {
+    public let viewMode: String
+    public let updatedAt: Double
+    public let updatedBy: String
 }
 
 public struct OnlineUseResult {
@@ -170,9 +239,8 @@ public final class OnlineGalleryClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 45
-        config.httpMaximumConnectionsPerHost = 6
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
         self.session = URLSession(configuration: config)
         imageCache.countLimit = 300
         imageCache.totalCostLimit = 60 * 1024 * 1024 // 60MB 内存缓存
@@ -347,6 +415,84 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    /// 跨端视图模式实时联动回调（当电脑端或其他手机切换图标/列表/对比视图时触发）
+    public var onRemoteViewStateChanged: ((OnlineViewState) -> Void)?
+    private var lastKnownViewStateUpdatedAt: Double = 0
+
+    private func consumeRemoteViewState(_ dict: [String: Any]?) {
+        guard let vs = dict,
+              let vm = vs["viewMode"] as? String, !vm.isEmpty else { return }
+        let updatedAt = (vs["updatedAt"] as? Double) ?? Double((vs["updatedAt"] as? Int) ?? 0)
+        let updatedBy = (vs["updatedBy"] as? String) ?? ""
+        if updatedAt > lastKnownViewStateUpdatedAt {
+            lastKnownViewStateUpdatedAt = updatedAt
+            let state = OnlineViewState(viewMode: vm, updatedAt: updatedAt, updatedBy: updatedBy)
+            DispatchQueue.main.async { [weak self] in
+                self?.onRemoteViewStateChanged?(state)
+            }
+        }
+    }
+
+    public func fetchViewState(completion: ((OnlineViewState?) -> Void)? = nil) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/view-state") else {
+            completion?(nil)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        session.dataTask(with: request) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let vm = json["viewMode"] as? String else {
+                DispatchQueue.main.async { completion?(nil) }
+                return
+            }
+            let updatedAt = (json["updatedAt"] as? Double) ?? Double((json["updatedAt"] as? Int) ?? 0)
+            let updatedBy = (json["updatedBy"] as? String) ?? ""
+            let state = OnlineViewState(viewMode: vm, updatedAt: updatedAt, updatedBy: updatedBy)
+            self?.consumeRemoteViewState(json)
+            DispatchQueue.main.async { completion?(state) }
+        }.resume()
+    }
+
+    public func pushViewState(viewMode: String, completion: ((OnlineViewState?) -> Void)? = nil) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/view-state") else {
+            completion?(nil)
+            return
+        }
+        // 先预推进本地时间戳，防止本机上报的状态在下一拍心跳里回弹
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        if nowMs > lastKnownViewStateUpdatedAt {
+            lastKnownViewStateUpdatedAt = nowMs
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 3
+        let payload: [String: Any] = [
+            "viewMode": viewMode,
+            "device": UIDevice.current.name
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        session.dataTask(with: request) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let vm = json["viewMode"] as? String else {
+                DispatchQueue.main.async { completion?(nil) }
+                return
+            }
+            let updatedAt = (json["updatedAt"] as? Double) ?? Double((json["updatedAt"] as? Int) ?? 0)
+            let updatedBy = (json["updatedBy"] as? String) ?? ""
+            if let self = self, updatedAt > self.lastKnownViewStateUpdatedAt {
+                self.lastKnownViewStateUpdatedAt = updatedAt
+            }
+            let state = OnlineViewState(viewMode: vm, updatedAt: updatedAt, updatedBy: updatedBy)
+            DispatchQueue.main.async { completion?(state) }
+        }.resume()
+    }
+
     /// DSH-111：轻量探测「电脑端的作品有没有变」——只请求 `/api/online/status`，
     /// 用 `totalWorks` + `watchdog.lastChangeAt` 拼成一个指纹串。
     ///
@@ -367,7 +513,7 @@ public final class OnlineGalleryClient {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 2.5
-        session.dataTask(with: request) { data, _, error in
+        session.dataTask(with: request) { [weak self] data, _, error in
             if let error = error {
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
@@ -379,6 +525,9 @@ public final class OnlineGalleryClient {
                                                 userInfo: [NSLocalizedDescriptionKey: "返回数据为空"])))
                 }
                 return
+            }
+            if let vs = json["viewState"] as? [String: Any] {
+                self?.consumeRemoteViewState(vs)
             }
             let total = json["totalWorks"] as? Int ?? -1
             // watchdog 缺字段时留空，调用方见空串会保守地照常刷新（宁可多刷，不可漏刷）
@@ -460,7 +609,7 @@ public final class OnlineGalleryClient {
             return
         }
 
-        session.dataTask(with: url) { data, _, error in
+        session.dataTask(with: url) { [weak self] data, _, error in
             if let error = error {
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
@@ -477,6 +626,9 @@ public final class OnlineGalleryClient {
             }
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                if let vs = json["viewState"] as? [String: Any] {
+                    self?.consumeRemoteViewState(vs)
+                }
                 var entries: [OnlineWorkEntry] = []
                 if let arr = json["works"] as? [[String: Any]] {
                     for w in arr {
@@ -503,7 +655,7 @@ public final class OnlineGalleryClient {
     ///   彻底绕开 image_name_index 同名冲突索引。
     /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
     /// DSH-099 失败 NSLog 保留。
-    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, retries: Int = 2, completion: @escaping (UIImage?) -> Void) {
+    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
         let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
         let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
@@ -512,7 +664,10 @@ public final class OnlineGalleryClient {
         }
 
         // 尝试磁盘缓存
-        let safeFileName = cacheKey.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
+        let safeFileName = cacheKey
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
         let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
         if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
             imageCache.setObject(diskImage, forKey: cacheKey)
@@ -525,8 +680,8 @@ public final class OnlineGalleryClient {
         // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
         if let workId = workId, !workId.isEmpty {
-            // DSH-102 新契约：id+file 双键，basename 永远在作品目录里
-            let bn = (path as NSString).lastPathComponent
+            // DSH-102 新契约：id+file 双键，支持 __src__: 原素材对比标识
+            let bn = path.hasPrefix("__src__:") ? path : (path as NSString).lastPathComponent
             queryItems.append(URLQueryItem(name: "id", value: workId))
             queryItems.append(URLQueryItem(name: "file", value: bn))
         } else {
@@ -539,36 +694,24 @@ public final class OnlineGalleryClient {
             return
         }
 
-        session.dataTask(with: url) { [weak self] data, _, error in
-            guard let self = self else { return }
-            if let data = data, let image = UIImage(data: data) {
-                // 写入内存与磁盘缓存
-                self.imageCache.setObject(image, forKey: cacheKey)
-                do {
-                    try data.write(to: diskURL)
-                } catch {
-                    NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
-                          path, error.localizedDescription)
-                }
-                DispatchQueue.main.async { completion(image) }
+        session.dataTask(with: url) { [weak self] data, _, _ in
+            guard let self = self, let data = data, let image = UIImage(data: data) else {
+                // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
+                NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
+                      path, isThumbnail ? 1 : 0)
+                DispatchQueue.main.async { completion(nil) }
                 return
             }
-
-            // DSH-145：失败分支 —— 自动进行指数退避重试，防御局域网瞬间抖动丢包
-            if retries > 0 {
-                let delay = 0.25 * Double(3 - retries) // 0.25s, 0.5s
-                NSLog("[OnlineGalleryClient] loadImage failed (retry in %.2fs, remaining=%d): path=%@ error=%@",
-                      delay, retries, path, error?.localizedDescription ?? "unknown")
-                DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.loadImage(path: path, workId: workId, isThumbnail: isThumbnail, maxPixel: maxPixel, retries: retries - 1, completion: completion)
-                }
-                return
+            // 写入内存与磁盘缓存
+            self.imageCache.setObject(image, forKey: cacheKey)
+            // DSH-099 iOS 等价：磁盘缓存写失败也要 NSLog（之前 try? 吞掉全静默）
+            do {
+                try data.write(to: diskURL)
+            } catch {
+                NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
+                      path, error.localizedDescription)
             }
-
-            // DSH-099 iOS 等价：重试耗尽后 NSLog 永久失败留证
-            NSLog("[OnlineGalleryClient] loadImage failed permanently: path=%@ isThumbnail=%d error=%@",
-                  path, isThumbnail ? 1 : 0, error?.localizedDescription ?? "unknown")
-            DispatchQueue.main.async { completion(nil) }
+            DispatchQueue.main.async { completion(image) }
         }.resume()
     }
 
@@ -579,7 +722,10 @@ public final class OnlineGalleryClient {
         if let mem = imageCache.object(forKey: cacheKey) {
             return mem
         }
-        let safeFileName = cacheKey.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
+        let safeFileName = cacheKey
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
         let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
         if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
             imageCache.setObject(diskImage, forKey: cacheKey)
@@ -595,7 +741,10 @@ public final class OnlineGalleryClient {
         if imageCache.object(forKey: cacheKey) != nil {
             return true
         }
-        let safeFileName = cacheKey.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
+        let safeFileName = cacheKey
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
         let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
         return fileManager.fileExists(atPath: diskURL.path)
     }

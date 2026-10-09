@@ -2684,7 +2684,7 @@ class WorkScanner:
             "productionMode": manifest_data.get("productionMode") or manifest_data.get("apiSubMode") or ("reuse-conversation" if manifest_data.get("conversationUrl") else "1_shuffle"),
             "productionModeName": manifest_data.get("productionModeName") or ("会话母版复刻模式" if manifest_data.get("conversationUrl") else "原图复刻打乱模式"),
             "templateId": manifest_data.get("templateId") or manifest_data.get("template") or ("会话锁定母版" if manifest_data.get("conversationUrl") else "原图自身构图"),
-            "producedAt": manifest_data.get("producedAt") or manifest_data.get("completedAt") or manifest_data.get("created_at") or manifest_data.get("createdAt") or "",
+            "producedAt": manifest_data.get("producedAt") or manifest_data.get("completedAt") or manifest_data.get("created_at") or manifest_data.get("createdAt") or (str(manifest_data.get("completedAtUtc") or "")[:19].replace("T", " ") if manifest_data.get("completedAtUtc") else ""),
             "accountName": manifest_data.get("accountName") or manifest_data.get("account") or "",
             "conversationUrl": manifest_data.get("conversationUrl") or "",
             "isStarred": bool(manifest_data.get("isStarred") or ("⭐精品标杆" in (manifest_data.get("tags") or []))),
@@ -3177,7 +3177,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as _we:
                 print(f"[DSH-140] works 巡检异常: {_we!r}")
             category = query.get("category", ["全部"])[0]
-            search_query = query.get("query", [""])[0].strip().lower()
+            search_query = query.get("query", [""])[0].strip().strip("\"'").strip().lower()
+            is_path_search = ("\\" in search_query or "/" in search_query or ":" in search_query)
+            if is_path_search:
+                search_query = search_query.replace("/", "\\").rstrip("\\")
             force_refresh = query.get("refresh", ["0"])[0] == "1"
             # DSH-109：排序键 = default|time_asc|time_desc|name_asc|name_desc|size_desc|size_asc
             # 默认 default 保持 DSH-104 行为（useCount desc 已用置顶），向后兼容
@@ -3194,15 +3197,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             target_tags = {t.strip() for t in tags_raw.split(",") if t.strip()}
 
             works = self.scanner.scan_throttled(force=force_refresh)
-            tokens = search_query.split() if search_query else []
+            tokens = [search_query] if is_path_search else (search_query.split() if search_query else [])
 
             # 手机打开在线相册（拉列表）也顺手回读一次本地分享次数
             self._maybe_background_phone_sync(self.client_address[0] if self.client_address else "")
 
             filtered = []
             for w in works:
-                # 分类过滤（支持专题分类、游戏与地域分类，严格 1:1 匹配本地货架）
-                if category and category != "全部":
+                # 分类过滤（支持专题分类、游戏与地域分类，严格 1:1 匹配本地货架；若粘贴路径搜索则跨全部分类匹配）
+                if category and category != "全部" and not is_path_search:
                     clean_cat = category.replace("🌕", "").replace("🇨🇳", "").replace("🎮", "").replace("🏷️", "").strip()
                     if clean_cat in ("游戏", "团建游戏"):
                         if w.get("destination") not in ("游戏", "团建游戏") and w.get("shelf") not in ("游戏", "团建游戏"):
@@ -3239,9 +3242,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     if not target_tags.intersection(w_tags):
                         continue
 
-                # 搜索关键词过滤（含标题、季节、流量类型、标签与正文）
+                # 搜索关键词过滤（含标题、路径、ID、季节、流量类型、标签与正文）
                 if tokens:
-                    extra_meta = f"{w.get('title', '')} {w.get('season', '')} {w.get('flowType', '')} {' '.join(w.get('tags') or [])}".lower()
+                    extra_meta = f"{w.get('title', '')} {w.get('rawTitle', '')} {w.get('path', '')} {w.get('id', '')} {w.get('season', '')} {w.get('flowType', '')} {' '.join(w.get('tags') or [])}".lower()
                     text_blob = (extra_meta + " " + work_text_blob(w, with_title=False).lower())
                     if not all(token in text_blob for token in tokens):
                         continue

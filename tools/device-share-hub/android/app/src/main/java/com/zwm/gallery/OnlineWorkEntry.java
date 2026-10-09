@@ -40,6 +40,15 @@ public final class OnlineWorkEntry {
     /** DSH-137: 已分发的版本标签列表（如 xhs_grass、douyin 等） */
     public final List<String> dispatchedVersions;
 
+    public final String season;
+    public final String flowType;
+    public final List<String> tags;
+    public final List<String> sourceImages;
+    public final List<String> sourceNames;
+    public final boolean hasSourceCompare;
+    public final double maxSimilarity;
+    public final String similarityTag;
+
     public OnlineWorkEntry(String id, String title, String destination, String stage,
                            int useCount, int maxUses, boolean used, int remainingUses,
                            String statusLabel, List<String> images, int imageCount,
@@ -47,7 +56,9 @@ public final class OnlineWorkEntry {
                            long updatedAt) {
         this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
                 statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
-                updatedAt, false, "", "", 0L, 0L, "", Collections.emptyList());
+                updatedAt, false, "", "", 0L, 0L, "", Collections.emptyList(),
+                "四季通用", "精准流量团建", Collections.emptyList(),
+                Collections.emptyList(), Collections.emptyList(), false, 0.0, "");
     }
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
@@ -57,7 +68,9 @@ public final class OnlineWorkEntry {
                            long updatedAt, boolean garbage, String garbageRemark) {
         this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
                 statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
-                updatedAt, garbage, garbageRemark, "", 0L, 0L, "", Collections.emptyList());
+                updatedAt, garbage, garbageRemark, "", 0L, 0L, "", Collections.emptyList(),
+                "四季通用", "精准流量团建", Collections.emptyList(),
+                Collections.emptyList(), Collections.emptyList(), false, 0.0, "");
     }
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
@@ -67,7 +80,9 @@ public final class OnlineWorkEntry {
                            long updatedAt, boolean garbage, String garbageRemark, String path) {
         this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
                 statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
-                updatedAt, garbage, garbageRemark, path, 0L, 0L, "", Collections.emptyList());
+                updatedAt, garbage, garbageRemark, path, 0L, 0L, "", Collections.emptyList(),
+                "四季通用", "精准流量团建", Collections.emptyList(),
+                Collections.emptyList(), Collections.emptyList(), false, 0.0, "");
     }
 
     public OnlineWorkEntry(String id, String title, String destination, String stage,
@@ -76,6 +91,22 @@ public final class OnlineWorkEntry {
                            String copyText, boolean hasCopyText, List<String> dispatchedTo,
                            long updatedAt, boolean garbage, String garbageRemark, String path,
                            long firstSharedAtMs, long expireAtMs, String originDevice, List<String> dispatchedVersions) {
+        this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
+                statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
+                updatedAt, garbage, garbageRemark, path, firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions,
+                "四季通用", "精准流量团建", Collections.emptyList(),
+                Collections.emptyList(), Collections.emptyList(), false, 0.0, "");
+    }
+
+    public OnlineWorkEntry(String id, String title, String destination, String stage,
+                           int useCount, int maxUses, boolean used, int remainingUses,
+                           String statusLabel, List<String> images, int imageCount,
+                           String copyText, boolean hasCopyText, List<String> dispatchedTo,
+                           long updatedAt, boolean garbage, String garbageRemark, String path,
+                           long firstSharedAtMs, long expireAtMs, String originDevice, List<String> dispatchedVersions,
+                           String season, String flowType, List<String> tags,
+                           List<String> sourceImages, List<String> sourceNames,
+                           boolean hasSourceCompare, double maxSimilarity, String similarityTag) {
         this.id = id;
         this.title = title == null ? "" : title;
         this.destination = destination == null ? "其他" : destination;
@@ -98,6 +129,14 @@ public final class OnlineWorkEntry {
         this.expireAtMs = expireAtMs;
         this.originDevice = originDevice == null ? "" : originDevice;
         this.dispatchedVersions = dispatchedVersions == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(dispatchedVersions));
+        this.season = season == null || season.trim().isEmpty() ? "四季通用" : season;
+        this.flowType = flowType == null || flowType.trim().isEmpty() ? "精准流量团建" : flowType;
+        this.tags = tags == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(tags));
+        this.sourceImages = sourceImages == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(sourceImages));
+        this.sourceNames = sourceNames == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(sourceNames));
+        this.hasSourceCompare = hasSourceCompare;
+        this.maxSimilarity = maxSimilarity;
+        this.similarityTag = similarityTag == null ? "" : similarityTag;
     }
 
     public static OnlineWorkEntry fromJson(JSONObject json) {
@@ -156,9 +195,43 @@ public final class OnlineWorkEntry {
             }
         }
 
+        String season = json.optString("season", "四季通用");
+        String flowType = json.optString("flowType", "精准流量团建");
+        List<String> tags = new ArrayList<>();
+        JSONArray tagArr = json.optJSONArray("tags");
+        if (tagArr != null) {
+            for (int i = 0; i < tagArr.length(); i++) {
+                String t = tagArr.optString(i, "").trim();
+                if (!t.isEmpty()) tags.add(t);
+            }
+        }
+
+        List<String> sourceImages = new ArrayList<>();
+        JSONArray srcImgArr = json.optJSONArray("sourceImages");
+        if (srcImgArr != null) {
+            for (int i = 0; i < srcImgArr.length(); i++) {
+                String s = srcImgArr.optString(i, "").trim();
+                if (!s.isEmpty()) sourceImages.add(s);
+            }
+        }
+
+        List<String> sourceNames = new ArrayList<>();
+        JSONArray srcNameArr = json.optJSONArray("sourceNames");
+        if (srcNameArr != null) {
+            for (int i = 0; i < srcNameArr.length(); i++) {
+                String n = srcNameArr.optString(i, "").trim();
+                if (!n.isEmpty()) sourceNames.add(n);
+            }
+        }
+
+        boolean hasSourceCompare = json.optBoolean("hasSourceCompare", false);
+        double maxSimilarity = json.optDouble("maxSimilarity", 0.0);
+        String similarityTag = json.optString("similarityTag", "");
+
         return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
                 hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark,
-                json.optString("path", ""), firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions);
+                json.optString("path", ""), firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions,
+                season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag);
     }
 }
