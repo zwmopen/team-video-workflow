@@ -648,32 +648,34 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         // DSH-112：排序按钮放在搜索框最右侧（与 Android「搜索框右侧排序按钮」同一位置）
         onlineSortButton.translatesAutoresizingMaskIntoConstraints = false
-        onlineSortButton.setTitle(sortKeyLabel(currentSortKey), for: .normal)
-        onlineSortButton.titleLabel?.font = UIFont.systemFont(ofSize: 11)
+        onlineSortButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         onlineSortButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        onlineSortButton.layer.cornerRadius = 8
         onlineSortButton.accessibilityLabel = "排序方式"
         onlineSortButton.addTarget(self, action: #selector(sortButtonTapped(_:)), for: .touchUpInside)
         view.addSubview(onlineSortButton)
+        updateSortButtonStyle()
+
         NSLayoutConstraint.activate([
             workSearchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
-            // 搜索栏右侧并排：视图切换 | 筛选 | 排序
+            // 搜索栏右侧并排：视图切换(48) | 筛选(48) | 排序(48)
             workSearchBar.trailingAnchor.constraint(equalTo: onlineViewModeButton.leadingAnchor, constant: -2),
             workSearchBar.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 2),
             workSearchBar.heightAnchor.constraint(equalToConstant: 44),
 
             onlineViewModeButton.trailingAnchor.constraint(equalTo: onlineFilterButton.leadingAnchor, constant: -4),
             onlineViewModeButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
-            onlineViewModeButton.widthAnchor.constraint(equalToConstant: 52),
+            onlineViewModeButton.widthAnchor.constraint(equalToConstant: 48),
             onlineViewModeButton.heightAnchor.constraint(equalToConstant: 30),
 
             onlineFilterButton.trailingAnchor.constraint(equalTo: onlineSortButton.leadingAnchor, constant: -4),
             onlineFilterButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
-            onlineFilterButton.widthAnchor.constraint(equalToConstant: 54),
+            onlineFilterButton.widthAnchor.constraint(equalToConstant: 48),
             onlineFilterButton.heightAnchor.constraint(equalToConstant: 30),
 
             onlineSortButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
             onlineSortButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
-            onlineSortButton.widthAnchor.constraint(equalToConstant: 78),
+            onlineSortButton.widthAnchor.constraint(equalToConstant: 48),
             onlineSortButton.heightAnchor.constraint(equalToConstant: 30),
 
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -686,7 +688,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     // MARK: - 视图模式切换与电脑端实时联动（图标 grid / 列表 list / 对比 compare）
 
     private func updateViewModeButtonStyle() {
-        onlineViewModeButton.setTitle(currentViewMode.shortLabel, for: .normal)
+        onlineViewModeButton.setTitle("视图▾", for: .normal)
         switch currentViewMode {
         case .grid:
             let fg = UIColor(red: 2/255, green: 132/255, blue: 199/255, alpha: 1)
@@ -767,9 +769,23 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             onlineFilterButton.backgroundColor = primaryGreen
             onlineFilterButton.setTitleColor(.white, for: .normal)
         } else {
-            onlineFilterButton.setTitle("筛选 ▾", for: .normal)
+            onlineFilterButton.setTitle("筛选▾", for: .normal)
             onlineFilterButton.backgroundColor = lightGreenBg
             onlineFilterButton.setTitleColor(primaryGreen, for: .normal)
+        }
+    }
+
+    private func updateSortButtonStyle() {
+        onlineSortButton.setTitle("排序▾", for: .normal)
+        let isCustom = (currentSortKey != "time_desc")
+        if isCustom {
+            let fg = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
+            let bg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+            onlineSortButton.backgroundColor = bg
+            onlineSortButton.setTitleColor(fg, for: .normal)
+        } else {
+            onlineSortButton.backgroundColor = UIColor(red: 240/255, green: 242/255, blue: 241/255, alpha: 1)
+            onlineSortButton.setTitleColor(UIColor(red: 60/255, green: 65/255, blue: 63/255, alpha: 1), for: .normal)
         }
     }
 
@@ -860,7 +876,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func applySortKey(_ key: String) {
         currentSortKey = key
         UserDefaults.standard.set(key, forKey: LibraryViewController.sortDefaultsKey)
-        onlineSortButton.setTitle(sortKeyLabel(key), for: .normal)
+        updateSortButtonStyle()
         if isOnlineMode {
             loadOnlineData(silent: true)
         } else {

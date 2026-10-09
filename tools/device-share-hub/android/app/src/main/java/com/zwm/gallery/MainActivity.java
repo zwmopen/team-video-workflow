@@ -66,6 +66,7 @@ import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -119,6 +120,9 @@ public final class MainActivity extends Activity {
     // 视图切换（图标 / 列表 / 对比）
     private static final String PREF_ONLINE_VIEW_MODE = "online_view_mode";
     private static final String DEFAULT_ONLINE_VIEW_MODE = "grid";
+    // 多选标签筛选（季节标签 + 流量标签）
+    private static final String PREF_ONLINE_FILTER_SEASONS = "online_filter_seasons";
+    private static final String PREF_ONLINE_FILTER_FLOWS = "online_filter_flows";
     private static final int REQUEST_TREE = 61;
     private static final int REQUEST_LEGACY_STORAGE = 62;
     public static volatile boolean isVisible;
@@ -195,6 +199,10 @@ public final class MainActivity extends Activity {
     // 视图切换（图标 / 列表 / 对比）
     private Button viewModeButton;
     private String currentViewMode = DEFAULT_ONLINE_VIEW_MODE;
+    // 多选标签筛选（春夏秋冬季节 + 流量场景多选）
+    private Button filterButton;
+    private final Set<String> selectedSeasons = new HashSet<>();
+    private final Set<String> selectedFlowTypes = new HashSet<>();
     private long lastRemoteViewStateUpdatedAt = 0L;
     // DSH-111：在线相册自动刷新（页面可见时周期探测，服务端有变化才真刷列表）
     private Runnable onlineAutoRefreshRunnable;
@@ -598,18 +606,25 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams sClearParams = new LinearLayout.LayoutParams(dp(32), dp(32));
         searchBar.addView(clearSearchButton, sClearParams);
 
-        // ---- 视图切换按钮（图标 / 列表 / 对比，与电脑端联动） ----
+        // ---- 恢复保存的多选标签筛选条件（季节 + 场景） ----
+        Set<String> savedSeasons = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getStringSet(PREF_ONLINE_FILTER_SEASONS, null);
+        if (savedSeasons != null) selectedSeasons.addAll(savedSeasons);
+        Set<String> savedFlows = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getStringSet(PREF_ONLINE_FILTER_FLOWS, null);
+        if (savedFlows != null) selectedFlowTypes.addAll(savedFlows);
+
+        // ---- 1. 视图切换按钮（固定二字「视图▾」，点击选 图标/列表/对比） ----
         currentViewMode = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(PREF_ONLINE_VIEW_MODE, DEFAULT_ONLINE_VIEW_MODE);
         viewModeButton = new Button(this);
-        viewModeButton.setText(viewModeLabel(currentViewMode));
-        styleNeumorphicButton(viewModeButton, STYLE_MUTED_GRAY);
         viewModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         viewModeButton.setContentDescription("视图切换 (图标/列表/对比)");
+        updateViewModeButtonStyle();
         LinearLayout.LayoutParams sViewModeParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
-        sViewModeParams.setMargins(dp(2), 0, dp(2), 0);
-        viewModeButton.setPadding(dp(8), 0, dp(8), 0);
+                dp(48), dp(30));
+        sViewModeParams.setMargins(dp(2), 0, dp(1), 0);
+        viewModeButton.setPadding(0, 0, 0, 0);
         viewModeButton.setOnClickListener(v -> showViewModeMenu());
         viewModeButton.setOnLongClickListener(v -> {
             cycleViewMode();
@@ -617,18 +632,29 @@ public final class MainActivity extends Activity {
         });
         searchBar.addView(viewModeButton, sViewModeParams);
 
-        // ---- DSH-109：搜索框右侧排序按钮（与 iOS 对等），5 种排序：默认最新在底 / 名称升降 / 大小升降 ----
+        // ---- 2. 筛选按钮（春夏秋冬季节 + 流量场景多选，选中显示「筛选(N)」且翡翠绿高亮） ----
+        filterButton = new Button(this);
+        filterButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        filterButton.setContentDescription("作品标签筛选 (春夏秋冬/流量场景)");
+        updateFilterButtonStyle();
+        LinearLayout.LayoutParams sFilterParams = new LinearLayout.LayoutParams(
+                dp(48), dp(30));
+        sFilterParams.setMargins(dp(1), 0, dp(1), 0);
+        filterButton.setPadding(0, 0, 0, 0);
+        filterButton.setOnClickListener(v -> showOnlineFilterDialog());
+        searchBar.addView(filterButton, sFilterParams);
+
+        // ---- 3. 排序按钮（固定二字「排序▾」，点击选 6 种排序方式） ----
         currentSortKey = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(PREF_ONLINE_SORT_KEY, DEFAULT_ONLINE_SORT);
         sortKeyButton = new Button(this);
-        sortKeyButton.setText(sortKeyLabel(currentSortKey));
-        styleNeumorphicButton(sortKeyButton, STYLE_MUTED_GRAY);
         sortKeyButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         sortKeyButton.setContentDescription("排序方式（DSH-109）");
+        updateSortKeyButtonStyle();
         LinearLayout.LayoutParams sSortParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
-        sSortParams.setMargins(dp(2), 0, dp(2), 0);
-        sortKeyButton.setPadding(dp(8), 0, dp(8), 0);
+                dp(48), dp(30));
+        sSortParams.setMargins(dp(1), 0, dp(2), 0);
+        sortKeyButton.setPadding(0, 0, 0, 0);
         sortKeyButton.setOnClickListener(v -> showSortKeyMenu());
         searchBar.addView(sortKeyButton, sSortParams);
 
@@ -1108,7 +1134,7 @@ public final class MainActivity extends Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putString(PREF_ONLINE_SORT_KEY, newSortKey)
                 .apply();
-        if (sortKeyButton != null) sortKeyButton.setText(sortKeyLabel(newSortKey));
+        if (sortKeyButton != null) updateSortKeyButtonStyle();
         if (isOnlineMode) {
             applyOnlineCategoryFilter(selectedOnlineCategory);
         } else {
@@ -1161,7 +1187,7 @@ public final class MainActivity extends Activity {
                 .putString(PREF_ONLINE_VIEW_MODE, currentViewMode)
                 .apply();
         if (viewModeButton != null) {
-            viewModeButton.setText(viewModeLabel(currentViewMode));
+            updateViewModeButtonStyle();
         }
         if (!fromRemote) {
             lastRemoteViewStateUpdatedAt = System.currentTimeMillis();
@@ -1173,6 +1199,292 @@ public final class MainActivity extends Activity {
             applyOnlineCategoryFilter(selectedOnlineCategory);
         } else {
             refreshWorks();
+        }
+    }
+
+    static final String[] ALL_SEASON_OPTIONS = {"春季", "夏季", "秋季", "冬季", "四季通用"};
+    static final String[] ALL_FLOW_OPTIONS = {"精准流量团建", "泛流量游戏攻略"};
+
+    static String inferWorkSeason(String text) {
+        if (text == null) return "四季通用";
+        String[] autumn = {"秋", "中秋", "国庆", "红枫", "银杏", "蟹", "晒秋", "柿子", "桂花"};
+        for (String k : autumn) { if (text.contains(k)) return "秋季"; }
+        String[] winter = {"冬", "滑雪", "温泉", "私汤", "泡汤", "年会", "跨年", "围炉"};
+        for (String k : winter) { if (text.contains(k)) return "冬季"; }
+        String[] summer = {"夏", "避暑", "玩水", "漂流", "溯溪", "水枪", "桨板", "皮划艇"};
+        for (String k : summer) { if (text.contains(k)) return "夏季"; }
+        String[] spring = {"春", "踏青", "赏花", "樱花", "采茶", "春游"};
+        for (String k : spring) { if (text.contains(k)) return "春季"; }
+        return "四季通用";
+    }
+
+    static String inferWorkFlowType(String text) {
+        if (text == null) return "精准流量团建";
+        String[] games = {"游戏", "桌游", "破冰", "冷场", "惩罚"};
+        for (String k : games) { if (text.contains(k)) return "泛流量游戏攻略"; }
+        return "精准流量团建";
+    }
+
+    private void updateViewModeButtonStyle() {
+        if (viewModeButton == null) return;
+        viewModeButton.setText("视图▾");
+        if (!DEFAULT_ONLINE_VIEW_MODE.equals(currentViewMode)) {
+            styleNeumorphicButton(viewModeButton, STYLE_PRIMARY_GREEN);
+        } else {
+            styleNeumorphicButton(viewModeButton, STYLE_MUTED_GRAY);
+        }
+        viewModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        viewModeButton.setMinHeight(0);
+        viewModeButton.setMinimumHeight(0);
+        viewModeButton.setPadding(0, 0, 0, 0);
+    }
+
+    private void updateSortKeyButtonStyle() {
+        if (sortKeyButton == null) return;
+        sortKeyButton.setText("排序▾");
+        if (!DEFAULT_ONLINE_SORT.equals(currentSortKey)) {
+            styleNeumorphicButton(sortKeyButton, STYLE_PRIMARY_GREEN);
+        } else {
+            styleNeumorphicButton(sortKeyButton, STYLE_MUTED_GRAY);
+        }
+        sortKeyButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        sortKeyButton.setMinHeight(0);
+        sortKeyButton.setMinimumHeight(0);
+        sortKeyButton.setPadding(0, 0, 0, 0);
+    }
+
+    private void updateFilterButtonStyle() {
+        if (filterButton == null) return;
+        int activeCount = selectedSeasons.size() + selectedFlowTypes.size();
+        if (activeCount > 0) {
+            filterButton.setText("筛选(" + activeCount + ")");
+            styleNeumorphicButton(filterButton, STYLE_PRIMARY_GREEN);
+        } else {
+            filterButton.setText("筛选▾");
+            styleNeumorphicButton(filterButton, STYLE_MUTED_GRAY);
+        }
+        filterButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        filterButton.setMinHeight(0);
+        filterButton.setMinimumHeight(0);
+        filterButton.setPadding(0, 0, 0, 0);
+    }
+
+    private void updatePillStyle(Button btn, boolean selected) {
+        if (selected) {
+            btn.setTextColor(Color.WHITE);
+            btn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            btn.setBackground(round(Color.rgb(16, 151, 99), 10));
+        } else {
+            btn.setTextColor(Color.rgb(50, 55, 53));
+            btn.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            btn.setBackground(roundWithStroke(Color.rgb(243, 246, 244), 10, Color.rgb(218, 224, 220)));
+        }
+    }
+
+    private void showOnlineFilterDialog() {
+        if (isFinishing()) return;
+
+        Map<String, Integer> seasonCounts = new HashMap<>();
+        Map<String, Integer> flowCounts = new HashMap<>();
+        for (String s : ALL_SEASON_OPTIONS) seasonCounts.put(s, 0);
+        for (String f : ALL_FLOW_OPTIONS) flowCounts.put(f, 0);
+
+        if (isOnlineMode) {
+            long nowMs = System.currentTimeMillis();
+            CleanupSettings.Values cleanup = CleanupSettings.read(this);
+            long moveAfterMs = cleanup.moveAfterMs();
+            Set<String> trashedIds = OnlineWorkLifecycle.getTrashedIds(this, nowMs, moveAfterMs);
+
+            for (OnlineWorkEntry work : onlineWorks) {
+                if (work.expireAtMs > 0 && nowMs >= work.expireAtMs) continue;
+                if (trashedIds.contains(work.id)) continue;
+                String s = (work.season != null && !work.season.isEmpty()) ? work.season : inferWorkSeason(work.title + " " + work.destination);
+                String f = (work.flowType != null && !work.flowType.isEmpty()) ? work.flowType : inferWorkFlowType(work.title + " " + work.destination);
+                seasonCounts.put(s, seasonCounts.containsKey(s) ? seasonCounts.get(s) + 1 : 1);
+                flowCounts.put(f, flowCounts.containsKey(f) ? flowCounts.get(f) + 1 : 1);
+            }
+        } else {
+            if (renderedWorks != null) {
+                for (WorkLibrary.WorkEntry work : renderedWorks) {
+                    if (pendingTrashIds.contains(work.id)) continue;
+                    String s = inferWorkSeason(work.name + " " + work.getFolderName());
+                    String f = inferWorkFlowType(work.name + " " + work.getFolderName());
+                    seasonCounts.put(s, seasonCounts.containsKey(s) ? seasonCounts.get(s) + 1 : 1);
+                    flowCounts.put(f, flowCounts.containsKey(f) ? flowCounts.get(f) + 1 : 1);
+                }
+            }
+        }
+
+        final Set<String> tempSeasons = new HashSet<>(selectedSeasons);
+        final Set<String> tempFlows = new HashSet<>(selectedFlowTypes);
+
+        ScrollView scrollView = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(16), dp(18), dp(16));
+        scrollView.addView(root);
+
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText("作品标签筛选（支持多选）");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setTextColor(Color.rgb(32, 34, 33));
+        topBar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+
+        Button resetBtn = new Button(this);
+        resetBtn.setText("重置清空");
+        resetBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        resetBtn.setTextColor(Color.rgb(205, 58, 48));
+        resetBtn.setBackground(null);
+        resetBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
+        topBar.addView(resetBtn);
+        root.addView(topBar);
+
+        View div1 = new View(this);
+        div1.setBackgroundColor(Color.rgb(230, 233, 231));
+        LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+        divParams.setMargins(0, dp(10), 0, dp(12));
+        root.addView(div1, divParams);
+
+        TextView sec1 = new TextView(this);
+        sec1.setText("1. 季节标签（不选默认显示全部季节）");
+        sec1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        sec1.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        sec1.setTextColor(Color.rgb(80, 85, 83));
+        root.addView(sec1);
+
+        LinearLayout seasonRow1 = new LinearLayout(this);
+        seasonRow1.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams row1Params = new LinearLayout.LayoutParams(-1, -2);
+        row1Params.setMargins(0, dp(8), 0, dp(4));
+        root.addView(seasonRow1, row1Params);
+
+        LinearLayout seasonRow2 = new LinearLayout(this);
+        seasonRow2.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams row2Params = new LinearLayout.LayoutParams(-1, -2);
+        row2Params.setMargins(0, dp(4), 0, dp(12));
+        root.addView(seasonRow2, row2Params);
+
+        Map<String, Button> seasonButtonMap = new HashMap<>();
+        for (int i = 0; i < ALL_SEASON_OPTIONS.length; i++) {
+            String opt = ALL_SEASON_OPTIONS[i];
+            int count = seasonCounts.containsKey(opt) ? seasonCounts.get(opt) : 0;
+            Button b = new Button(this);
+            b.setText(opt + " (" + count + ")");
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+            b.setMinHeight(0);
+            b.setMinimumHeight(0);
+            b.setPadding(dp(4), dp(8), dp(4), dp(8));
+            seasonButtonMap.put(opt, b);
+
+            b.setOnClickListener(v -> {
+                if (tempSeasons.contains(opt)) {
+                    tempSeasons.remove(opt);
+                } else {
+                    tempSeasons.add(opt);
+                }
+                updatePillStyle(b, tempSeasons.contains(opt));
+            });
+            updatePillStyle(b, tempSeasons.contains(opt));
+
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(34), 1);
+            p.setMargins(dp(3), 0, dp(3), 0);
+            if (i < 3) {
+                seasonRow1.addView(b, p);
+            } else {
+                seasonRow2.addView(b, p);
+            }
+        }
+
+        TextView sec2 = new TextView(this);
+        sec2.setText("2. 流量标签（不选默认显示全部场景）");
+        sec2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        sec2.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        sec2.setTextColor(Color.rgb(80, 85, 83));
+        root.addView(sec2);
+
+        LinearLayout flowRow = new LinearLayout(this);
+        flowRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams flowParams = new LinearLayout.LayoutParams(-1, -2);
+        flowParams.setMargins(0, dp(8), 0, dp(16));
+        root.addView(flowRow, flowParams);
+
+        Map<String, Button> flowButtonMap = new HashMap<>();
+        for (String opt : ALL_FLOW_OPTIONS) {
+            int count = flowCounts.containsKey(opt) ? flowCounts.get(opt) : 0;
+            Button b = new Button(this);
+            b.setText(opt + " (" + count + ")");
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+            b.setMinHeight(0);
+            b.setMinimumHeight(0);
+            b.setPadding(dp(4), dp(8), dp(4), dp(8));
+            flowButtonMap.put(opt, b);
+
+            b.setOnClickListener(v -> {
+                if (tempFlows.contains(opt)) {
+                    tempFlows.remove(opt);
+                } else {
+                    tempFlows.add(opt);
+                }
+                updatePillStyle(b, tempFlows.contains(opt));
+            });
+            updatePillStyle(b, tempFlows.contains(opt));
+
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(34), 1);
+            p.setMargins(dp(3), 0, dp(3), 0);
+            flowRow.addView(b, p);
+        }
+
+        resetBtn.setOnClickListener(v -> {
+            tempSeasons.clear();
+            tempFlows.clear();
+            for (Map.Entry<String, Button> entry : seasonButtonMap.entrySet()) {
+                updatePillStyle(entry.getValue(), false);
+            }
+            for (Map.Entry<String, Button> entry : flowButtonMap.entrySet()) {
+                updatePillStyle(entry.getValue(), false);
+            }
+        });
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(scrollView)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认筛选", (d, which) -> {
+                    selectedSeasons.clear();
+                    selectedSeasons.addAll(tempSeasons);
+                    selectedFlowTypes.clear();
+                    selectedFlowTypes.addAll(tempFlows);
+
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putStringSet(PREF_ONLINE_FILTER_SEASONS, new HashSet<>(selectedSeasons))
+                            .putStringSet(PREF_ONLINE_FILTER_FLOWS, new HashSet<>(selectedFlowTypes))
+                            .apply();
+
+                    updateFilterButtonStyle();
+                    if (isOnlineMode) {
+                        applyOnlineCategoryFilter(selectedOnlineCategory);
+                    } else {
+                        applyCategoryFilter(selectedCategory);
+                    }
+
+                    int totalActive = selectedSeasons.size() + selectedFlowTypes.size();
+                    if (totalActive == 0) {
+                        toast("已重置标签筛选，显示全部作品");
+                    } else {
+                        int matchedCount = isOnlineMode ? currentOnlineFilteredEntries.size() : (renderedWorks != null ? renderedWorks.size() : 0);
+                        toast("筛选已生效：匹配 " + matchedCount + " 套作品");
+                    }
+                })
+                .create();
+        dialog.show();
+        Button posBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (posBtn != null) {
+            posBtn.setTextColor(Color.rgb(16, 151, 99));
+            posBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         }
     }
 
@@ -1296,6 +1608,14 @@ public final class MainActivity extends Activity {
             if (pendingTrashIds.contains(entry.id)) continue;
             if (!WorkCategory.ALL.equals(folderKey) && !folderKey.equals(entry.getFolderName())) {
                 continue;
+            }
+            if (!selectedSeasons.isEmpty()) {
+                String s = inferWorkSeason(entry.name + " " + entry.getFolderName());
+                if (!selectedSeasons.contains(s)) continue;
+            }
+            if (!selectedFlowTypes.isEmpty()) {
+                String f = inferWorkFlowType(entry.name + " " + entry.getFolderName());
+                if (!selectedFlowTypes.contains(f)) continue;
             }
             if (tokens.length > 0 && !matchesSearchTokens(entry.name, entry.getFolderName(), tokens)) {
                 continue;
@@ -3999,6 +4319,14 @@ public final class MainActivity extends Activity {
                     }
                 }
                 if (!matchesCategory) continue;
+            }
+            if (!selectedSeasons.isEmpty()) {
+                String s = (work.season != null && !work.season.isEmpty()) ? work.season : inferWorkSeason(work.title + " " + work.destination);
+                if (!selectedSeasons.contains(s)) continue;
+            }
+            if (!selectedFlowTypes.isEmpty()) {
+                String f = (work.flowType != null && !work.flowType.isEmpty()) ? work.flowType : inferWorkFlowType(work.title + " " + work.destination);
+                if (!selectedFlowTypes.contains(f)) continue;
             }
             if (tokens.length > 0 && !matchesSearchTokens(work.title, work.destination, tokens)) {
                 continue;
