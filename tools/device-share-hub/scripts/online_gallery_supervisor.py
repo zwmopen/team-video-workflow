@@ -130,11 +130,13 @@ def is_child_proc_running(proc) -> bool:
             return False
     return False
 
-def probe_status(timeout: float = 3.0) -> bool:
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+def probe_status(timeout: float = 2.0) -> bool:
     try:
         url = f"http://127.0.0.1:{PORT}/api/online/status"
         req = urllib.request.Request(url, headers={"User-Agent": "GallerySupervisor/2.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _NO_PROXY_OPENER.open(req, timeout=timeout) as resp:
             if resp.status == 200:
                 raw = resp.read()
                 data = json.loads(raw.decode("utf-8", errors="replace"))
@@ -144,20 +146,12 @@ def probe_status(timeout: float = 3.0) -> bool:
     return False
 
 def is_service_healthy() -> bool:
-    # 第一次探活（非阻塞毫秒级）
-    if probe_status(timeout=4.0):
+    # 第一次探活（非阻塞毫秒级，强制直连绕开本地代理）
+    if probe_status(timeout=2.0):
         return True
-    # 偶发波动重试二次确认（防抖 2.0s）
-    time.sleep(2.0)
-    if probe_status(timeout=5.0):
-        return True
-    # 第三次防抖确认（容忍后台磁盘全量扫描期 3.0s）
-    time.sleep(3.0)
-    if probe_status(timeout=8.0):
-        return True
-    # 第四次终极死锁超时确认（防抖 3.0s）
-    time.sleep(3.0)
-    return probe_status(timeout=12.0)
+    # 快速防抖确认（1.0s 后重试，超时 3.0s）
+    time.sleep(1.0)
+    return probe_status(timeout=3.0)
 
 # ----------------- 清理僵死/孤儿进程 -----------------
 _last_child_proc = None
@@ -194,8 +188,24 @@ def kill_stale_processes():
     except Exception:
         pass
 
+    # 3. 按进程命令行扫描残留的 online_gallery_service.py 进程
+    try:
+        import psutil
+        for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+            if p.pid != current_pid and p.pid not in cleaned_pids:
+                cmd = p.info.get('cmdline') or []
+                if any('online_gallery_service.py' in str(arg) for arg in cmd):
+                    try:
+                        log(f"发现残留相册服务进程 PID={p.pid}，执行强杀清理", "WARN")
+                        p.kill()
+                        cleaned_pids.add(p.pid)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     if cleaned_pids:
-        time.sleep(0.15)
+        time.sleep(0.2)
 
 # ----------------- 启动在线相册服务 -----------------
 def start_service() -> bool:
@@ -287,15 +297,15 @@ def main():
                     # 原逻辑只要 HTTP 探活超时就 kill 重启，导致首扫永远完不成的死循环。
                     consecutive_unhealthy_count += 1
                     busy_pid = get_listening_pid(PORT)
-                    # 容忍首扫繁忙，但最多容忍 12 次探活失败（约 120 秒）；超限坚决判定为假死强杀
-                    if busy_pid and consecutive_unhealthy_count < 12:
+                    # 容忍首扫繁忙，但最多容忍 2 次探活失败（约 15 秒）；超限坚决判定为假死强杀
+                    if busy_pid and consecutive_unhealthy_count < 2:
                         log(f"服务进程存活且端口 {PORT} 仍在监听(PID={busy_pid})，"
-                            f"判定为「忙」而非死锁（首扫/缩略图重建中，连续 {consecutive_unhealthy_count}/12 次），本轮跳过自愈重启", "INFO")
+                            f"判定为「忙」而非死锁（连续 {consecutive_unhealthy_count}/2 次），本轮跳过自愈重启", "INFO")
                     else:
                         if busy_pid:
-                            log(f"服务进程虽然端口仍在监听(PID={busy_pid})，但连续 {consecutive_unhealthy_count} 次探活超时（>120s），判定为深层假死，强制触发自愈重启！", "WARN")
+                            log(f"服务进程虽监听端口 {PORT}(PID={busy_pid})，但连续 {consecutive_unhealthy_count} 次探活超时，判定为深层假死，强制触发自愈重启！", "WARN")
                         else:
-                            log("相册服务无响应且多次防抖确认全部超时，判定为真正死锁，触发自愈重启！", "WARN")
+                            log("相册服务无响应且防抖确认超时，判定为死锁，触发自愈重启！", "WARN")
                         start_service()
                         consecutive_ok_count = 0
                         consecutive_unhealthy_count = 0
@@ -316,26 +326,24 @@ def main():
                         except Exception:
                             pass
                     consecutive_ok_count += 1
+                    consecutive_unhealthy_count = 0
                 else:
-                    # 2026-09-29 修复（真正的循环点）：守护每次被计划任务重启后
-                    # _last_child_proc 都是 None，必然走这里；若服务正在首扫（HTTP 不响应）
-                    # 就会 start_service() → kill_stale_processes() 把正在干活的服务杀掉，
-                    # 形成「永远起不来」的死循环。
-                    # 兜底：只要端口上已有进程在监听，就视为「首扫中」，接管而不自愈。
                     busy_pid = get_listening_pid(PORT)
-                    if busy_pid:
+                    if busy_pid and consecutive_unhealthy_count < 2:
+                        consecutive_unhealthy_count += 1
                         log(f"端口 {PORT} 已有服务在监听(PID={busy_pid})但暂未响应，"
-                            f"判定为首扫/重建中，本轮跳过自愈并直接接管", "INFO")
+                            f"判定为首扫/重建中（连续 {consecutive_unhealthy_count}/2 次），本轮跳过自愈并直接接管", "INFO")
                         try:
                             import psutil
                             _last_child_proc = psutil.Process(busy_pid)
                         except Exception:
                             pass
                     else:
-                        # 端口无服务且探活失败，立即自愈拉起！
-                        log("检测到相册服务进程已离线且端口无响应，立即启动自愈！", "INFO")
+                        # 端口无服务或长时间无响应，立即自愈拉起！
+                        log("检测到相册服务进程已离线或长时间无响应，立即启动自愈！", "INFO")
                         start_service()
                         consecutive_ok_count = 0
+                        consecutive_unhealthy_count = 0
         except Exception as e:
             log(f"守护主循环捕捉到未预期异常: {e}", "ERROR")
 

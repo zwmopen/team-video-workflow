@@ -495,7 +495,59 @@ FORCE_SCAN_MIN_INTERVAL = 3.0
 # 服务常驻几个月就是上万条 ⇒ 常驻内存单调涨到上百 MB 且零报错。
 # 800 条足够覆盖「最近移走的作品」，按作品库现规模相当于几个月的使用量。
 MOVED_WORKS_LIMIT = 800
-_WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard")
+_WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard", "_sourceLookup")
+
+# ── 跨端视图模式实时联动状态 (手机端 <-> 电脑端双向同步) ──────────────────────
+_VIEW_STATE_LOCK = threading.Lock()
+_VIEW_STATE_FILE = r"D:\AICode\运行数据\江湖有旅人\gallery_ui_state.json"
+_VIEW_STATE_MEM: Optional[Dict[str, Any]] = None
+VALID_VIEW_MODES = ("grid", "list", "compare")
+
+
+def get_gallery_view_state() -> Dict[str, Any]:
+    """读取当前全局跨端视图模式状态（grid=图标视图, list=列表视图, compare=对比视图）。"""
+    global _VIEW_STATE_MEM
+    with _VIEW_STATE_LOCK:
+        if _VIEW_STATE_MEM is not None:
+            return dict(_VIEW_STATE_MEM)
+        state: Dict[str, Any] = {"viewMode": "grid", "updatedAt": 0, "updatedBy": "default"}
+        try:
+            if os.path.exists(_VIEW_STATE_FILE):
+                with open(_VIEW_STATE_FILE, "r", encoding="utf-8") as fp:
+                    loaded = json.load(fp)
+                if isinstance(loaded, dict) and loaded.get("viewMode") in VALID_VIEW_MODES:
+                    state["viewMode"] = loaded["viewMode"]
+                    state["updatedAt"] = int(loaded.get("updatedAt") or 0)
+                    state["updatedBy"] = str(loaded.get("updatedBy") or "default")
+        except Exception:
+            pass
+        _VIEW_STATE_MEM = state
+        return dict(_VIEW_STATE_MEM)
+
+
+def set_gallery_view_state(view_mode: str, updated_by: str = "unknown") -> Dict[str, Any]:
+    """更新并持久化全局跨端视图模式状态。"""
+    global _VIEW_STATE_MEM
+    vm = (view_mode or "").strip().lower()
+    if vm not in VALID_VIEW_MODES:
+        vm = "grid"
+    now_ms = int(time.time() * 1000)
+    with _VIEW_STATE_LOCK:
+        state: Dict[str, Any] = {
+            "viewMode": vm,
+            "updatedAt": now_ms,
+            "updatedBy": (updated_by or "unknown").strip() or "unknown",
+        }
+        _VIEW_STATE_MEM = state
+        try:
+            os.makedirs(os.path.dirname(_VIEW_STATE_FILE), exist_ok=True)
+            tmp_p = _VIEW_STATE_FILE + ".tmp"
+            with open(tmp_p, "w", encoding="utf-8") as fp:
+                json.dump(state, fp, ensure_ascii=False, indent=2)
+            os.replace(tmp_p, _VIEW_STATE_FILE)
+        except Exception:
+            pass
+        return dict(state)
 
 # gzip 结果缓存。实测瘦身后的全量列表 1568.5 KB，gzip.compress(body, 6) 要烧约 66 ms CPU，
 # 而这份内容在两次扫描之间是**字节级不变**的（手机端一次进页面只发一次请求，
@@ -639,7 +691,7 @@ def splice_platform_copy(original_full_text: str, version_key: str, new_slot_tex
         "种草版": "XHS", "小红书": "XHS", "XHS": "XHS", "红书种草": "XHS", "自然种草": "XHS",
         "大纲方案版": "XHS_2", "方案版": "XHS_2", "XHS2": "XHS_2", "XHS_2": "XHS_2", "红书大纲": "XHS_2",
         "短文精选版": "XHS_3", "精选版": "XHS_3", "XHS3": "XHS_3", "XHS_3": "XHS_3",
-        "规避营销版": "DOUYIN", "抖音": "DOUYIN", "抖音探店": "DOUYIN", "DOUYIN": "DOUYIN", "抖音无营销": "DOUYIN", "抖音避坑": "DOUYIN",
+        "规避营销版": "DOUYIN", "抖音": "DOUYIN", "抖音探店": "DOUYIN", "DOUYIN": "DOUYIN", "抖音无营销": "DOUYIN", "抖音避坑": "DOUYIN", "抖音攻略": "DOUYIN",
         "公众号版": "WECHAT", "微信": "WECHAT", "WECHAT": "WECHAT",
         "HR决策版": "HR", "HR": "HR", "决策版": "HR",
     }
@@ -722,17 +774,10 @@ DESTINATIONS = [
 ]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
-# 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/`、`规范图/`、`原生高清/` 子目录里。
+# 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/` 子目录里。
 # 【2026-09-21 修】老实现只 os.listdir 看顶层 ⇒ 图在子目录的 103 套作品
 # 在手机在线相册里完全不可见（实测 totalWorks 389，磁盘实为 483）。
-IMAGE_SUBDIR_FALLBACKS = ("产出素材", "规范图", "原生高清")
-
-# 作品内部结构子目录黑名单：严禁将其误判为独立作品或货架目录
-WORK_INTERNAL_SUBDIRS = {
-    "规范图", "原生高清", "qa", "qa_source_links", "_meta", "prompts",
-    "模板选择", "产出素材", "原素材", "素材", "文案", "提示词",
-    "飞书上传副本", "飞书压缩副本", "images", "output", "imgs"
-}
+IMAGE_SUBDIR_FALLBACKS = ("产出素材",)
 
 # 内存缩略图缓存 (cache_key -> bytes)，带 LRU 淘汰。
 # ⚠️ 2026-09-20 修复：此前 THUMB_CACHE 只有声明、从未被读取（死代码），
@@ -1370,16 +1415,15 @@ _SCAN_ERRORS: "deque" = None  # 延迟到下方 import 完成后初始化
 
 
 def _get_portfolio_move_logs_dir(root_dir: str) -> str:
-    internal = os.path.join(root_dir, "_内部台账与历史数据")
-    base = internal if os.path.isdir(internal) else root_dir
-    p = os.path.join(base, "_portfolio_move_logs")
-    os.makedirs(p, exist_ok=True)
-    return p
+    # 严格遵守规范：所有操作与移动流水日志一律归集到全局运行数据目录，严禁污染成品库！
+    runtime_dir = r"D:\AICode\运行数据\江湖有旅人\portfolio_move_logs"
+    os.makedirs(runtime_dir, exist_ok=True)
+    return runtime_dir
 
 def _get_device_usage_log_file(root_dir: str) -> str:
-    internal = os.path.join(root_dir, "_内部台账与历史数据")
-    base = internal if os.path.isdir(internal) else root_dir
-    return os.path.join(base, "device-usage-log.csv")
+    runtime_dir = r"D:\AICode\运行数据\江湖有旅人"
+    os.makedirs(runtime_dir, exist_ok=True)
+    return os.path.join(runtime_dir, "device-usage-log.csv")
 
 def _scan_error(tag: str, path: str, exc: "Exception") -> None:
     """记录一次被跳过的扫描异常（有界，不增长、不落盘、不阻塞）。"""
@@ -1440,6 +1484,8 @@ class WorkScanner:
         # 在线回收站各 Tab 的列表缓存：{folder: (时间戳, 作品列表)}
         # 阶段库作品数可达 500+，每条都要读文案文件，不缓存的话手机每次切 Tab 都要等 1.5s+
         self._stage_cache: Dict[str, Any] = {}
+        # 单作品目录级 mtime+size 极速增量缓存：避免每次 force scan 重复跑 414 万次正则与磁盘递归
+        self._inspect_cache: Dict[Tuple[str, str, str], Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
         # 「文件名 -> 绝对路径」索引：兼容 iOS 旧契约 /api/online/image?path=<文件名>
         self._image_name_index: Optional[Dict[str, str]] = None
         # DSH-110：文件系统监听（轮询版，无第三方依赖）
@@ -1546,6 +1592,83 @@ class WorkScanner:
                     return w
         return None
 
+    def _resolve_source_compare_info(
+        self, dir_path: str, images: List[str], manifest_data: Dict[str, Any]
+    ) -> Tuple[List[str], List[str], Dict[str, str], float, str]:
+        """解析作品每页对应的原素材对比图（供手机端与电脑端「对比视图」同框展示）。"""
+        source_images: List[str] = []
+        source_names: List[str] = []
+        source_lookup: Dict[str, str] = {}
+
+        if not isinstance(manifest_data, dict):
+            manifest_data = {}
+
+        page_map = manifest_data.get("pageMap") if isinstance(manifest_data.get("pageMap"), list) else []
+        src_root = str(
+            manifest_data.get("sourceMaterialPath")
+            or manifest_data.get("rawMaterialPath")
+            or ""
+        ).strip()
+
+        pm_by_out: Dict[str, Dict[str, Any]] = {}
+        for item in page_map:
+            if isinstance(item, dict):
+                out_k = os.path.basename(str(item.get("output") or "").strip().replace("\\", "/"))
+                if out_k:
+                    pm_by_out[out_k] = item
+
+        src_dir_imgs: List[str] = []
+        if not page_map and src_root and os.path.isdir(src_root):
+            try:
+                for fn in sorted(os.listdir(src_root)):
+                    if os.path.splitext(fn)[1].lower() in IMAGE_EXTENSIONS:
+                        full_s = os.path.join(src_root, fn)
+                        if os.path.isfile(full_s):
+                            src_dir_imgs.append(full_s)
+            except Exception:
+                pass
+
+        for idx, img_rel in enumerate(images):
+            out_bn = os.path.basename(str(img_rel).replace("\\", "/"))
+            pm = pm_by_out.get(out_bn)
+            if not pm and idx < len(page_map) and isinstance(page_map[idx], dict):
+                pm = page_map[idx]
+
+            src_phys = ""
+            if pm:
+                sp = str(pm.get("sourcePath") or "").strip()
+                if sp and os.path.isfile(sp):
+                    src_phys = sp
+                elif src_root and pm.get("sourceImage"):
+                    cand = os.path.join(src_root, str(pm.get("sourceImage")).strip())
+                    if os.path.isfile(cand):
+                        src_phys = cand
+            elif idx < len(src_dir_imgs):
+                src_phys = src_dir_imgs[idx]
+
+            if src_phys:
+                token = f"__src__:{out_bn}"
+                source_images.append(token)
+                source_names.append(os.path.basename(src_phys))
+                source_lookup[token] = src_phys
+                source_lookup[out_bn] = src_phys
+            else:
+                source_images.append("")
+                source_names.append("")
+
+        sim_audit = (
+            manifest_data.get("similarityAudit")
+            if isinstance(manifest_data.get("similarityAudit"), dict)
+            else {}
+        )
+        try:
+            max_sim = round(float(sim_audit.get("maxSimilarity") or 0.0), 4)
+        except Exception:
+            max_sim = 0.0
+        sim_tag = str(sim_audit.get("warningTag") or "").strip()
+
+        return source_images, source_names, source_lookup, max_sim, sim_tag
+
     def resolve_image_for_work(self, work: Dict[str, Any], file_name: str) -> Optional[str]:
         """严格在指定作品目录及其子目录内解析图片路径，绝对物理隔离，彻底杜绝跨作品串图。"""
         if not work:
@@ -1554,7 +1677,29 @@ class WorkScanner:
         if not work_path or not os.path.exists(work_path):
             return None
 
-        clean_file = (file_name or "").strip().replace("\\", "/")
+        raw_f = (file_name or "").strip()
+        if raw_f.startswith("__src__:"):
+            target_out = raw_f[len("__src__:"):].strip().replace("\\", "/").rsplit("/", 1)[-1]
+            lookup = work.get("_sourceLookup") or {}
+            hit = lookup.get(raw_f) or lookup.get(target_out)
+            if hit and os.path.isfile(hit):
+                return os.path.realpath(hit)
+            mf = os.path.join(work_path, "manifest.json")
+            if os.path.isfile(mf):
+                try:
+                    with open(mf, "r", encoding="utf-8", errors="ignore") as fp:
+                        mdata = json.load(fp)
+                    _, _, dyn_lookup, _, _ = self._resolve_source_compare_info(
+                        work_path, work.get("images") or [], mdata
+                    )
+                    hit = dyn_lookup.get(raw_f) or dyn_lookup.get(target_out)
+                    if hit and os.path.isfile(hit):
+                        return os.path.realpath(hit)
+                except Exception:
+                    pass
+            return None
+
+        clean_file = raw_f.replace("\\", "/")
         bn = clean_file.rsplit("/", 1)[-1]
         if not bn:
             return None
@@ -1809,20 +1954,10 @@ class WorkScanner:
                     self._last_force_scan = now
         return self.scan(force=force)
 
-    def _is_shelf_dir(self, entry: str, full_path: str) -> bool:
-        """判定根目录下的文件夹是否为标准货架/阶段库目录，防止将残缺作品文件夹当成货架深入扫描。"""
-        if not entry or entry.startswith(".") or entry.startswith("_") or entry in WORK_INTERNAL_SUBDIRS:
-            return False
-        if not (entry.endswith(("成品", "作品", "合集")) or entry in ("综合与其它城市", self.STAGE0_FOLDER)):
-            return False
-        # 若目录自身含有作品级特征文件或作品内部子目录，则它是普通作品而非货架
-        for marker in ("manifest.json", "作品标签.json", "文案.txt", "规范图", "原生高清", "产出素材"):
-            if os.path.exists(os.path.join(full_path, marker)):
-                return False
-        return True
-
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
+        if not force and self._cached_works and (now - self._last_scan_time < SCAN_CACHE_TTL):
+            return self._cached_works
         with self._lock:
             if force:
                 # 【2026-09-21 修复】force 的语义是「磁盘已变，缓存一律作废」。
@@ -1833,8 +1968,8 @@ class WorkScanner:
             if not force and self._cached_works and (now - self._last_scan_time < SCAN_CACHE_TTL):
                 return self._cached_works
 
-            # 自愈扫描：自动清理失效死链软链接 (DSH Junction Healer)，仅 force 或间隔 >300s 触发
-            if force or (now - getattr(self, "_last_healer_time", 0) > 300):
+            # 自愈扫描：自动清理失效死链软链接 (DSH Junction Healer)，每 300s 触发一次
+            if (now - getattr(self, "_last_healer_time", 0) > 300):
                 self._last_healer_time = now
                 try:
                     prune_dangling_junctions(self.root)
@@ -1861,29 +1996,26 @@ class WorkScanner:
                 root_entries = []
 
             for entry in root_entries:
-                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES or entry in WORK_INTERNAL_SUBDIRS:
+                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
                     continue
                 full_path = os.path.join(self.root, entry)
                 if not os.path.isdir(full_path):
                     continue
 
-                is_shelf = self._is_shelf_dir(entry, full_path)
+                # 兼容根目录下直接出图的单个作品
+                try:
+                    direct_work = self._inspect_work_dir(full_path, entry, "待首发", 0)
+                except Exception as _e:
+                    _scan_error("root-entry", full_path, _e)
+                    direct_work = None
 
-                # 兼容根目录下直接出图的单个作品（非标准货架目录才尝试作为单作品解析）
-                if not is_shelf:
-                    try:
-                        direct_work = self._inspect_work_dir(full_path, entry, "待首发", 0)
-                    except Exception as _e:
-                        _scan_error("root-entry", full_path, _e)
-                        direct_work = None
-
-                    if direct_work and direct_work["id"] not in seen_ids:
+                if direct_work:
+                    if direct_work["id"] not in seen_ids:
                         seen_ids.add(direct_work["id"])
                         results.append(direct_work)
-                    # 严禁将非标准货架目录当成货架深入扫描，彻底杜绝将作品内 规范图/原生高清/qa/_meta 误判为独立幽灵作品
                     continue
 
-                # 扫描各标准分类货架目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
+                # 扫描各分类目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
                 default_cat = extract_category_from_folder_name(entry)
                 try:
                     sub_entries = os.listdir(full_path)
@@ -1892,7 +2024,7 @@ class WorkScanner:
                     continue
 
                 for sub in sub_entries:
-                    if sub.startswith(".") or sub.startswith("_") or sub in WORK_INTERNAL_SUBDIRS:
+                    if sub.startswith(".") or sub.startswith("_"):
                         continue
                     sub_path = os.path.join(full_path, sub)
                     if not os.path.isdir(sub_path):
@@ -1914,7 +2046,7 @@ class WorkScanner:
                             try:
                                 child_entries = os.listdir(sub_path)
                                 for child in child_entries:
-                                    if child.startswith(".") or child.startswith("_") or child in WORK_INTERNAL_SUBDIRS:
+                                    if child.startswith(".") or child.startswith("_"):
                                         continue
                                     child_path = os.path.join(sub_path, child)
                                     if not os.path.isdir(child_path):
@@ -1972,18 +2104,16 @@ class WorkScanner:
         # 1. 扫描所有非 . 非 _ 开头的目录及根目录直出作品
         try:
             for entry in os.listdir(self.root):
-                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES or entry in WORK_INTERNAL_SUBDIRS:
+                if entry.startswith(".") or entry.startswith("_") or entry in IGNORED_NAMES:
                     continue
                 full = os.path.join(self.root, entry)
                 if not os.path.isdir(full):
                     continue
                 out.add((full, _safe_mtime(full)))
-                if not self._is_shelf_dir(entry, full):
-                    continue
                 # 遍历分类目录下的作品或中间层
                 try:
                     for sub in os.listdir(full):
-                        if sub.startswith(".") or sub.startswith("_") or sub in WORK_INTERNAL_SUBDIRS:
+                        if sub.startswith(".") or sub.startswith("_"):
                             continue
                         sub_full = os.path.join(full, sub)
                         if os.path.isdir(sub_full):
@@ -1992,7 +2122,7 @@ class WorkScanner:
                             if sub.startswith("作品集") or sub in ("团建游戏", "游戏", "游戏类"):
                                 try:
                                     for child in os.listdir(sub_full):
-                                        if child.startswith(".") or child.startswith("_") or child in WORK_INTERNAL_SUBDIRS:
+                                        if child.startswith(".") or child.startswith("_"):
                                             continue
                                         child_full = os.path.join(sub_full, child)
                                         if os.path.isdir(child_full):
@@ -2223,7 +2353,7 @@ class WorkScanner:
         """
         root_real = os.path.realpath(self.root)
         top = [f for f in files if os.path.splitext(f.lower())[1] in IMAGE_EXTENSIONS]
-        if len(top) >= 4:
+        if top:
             # 【2026-09-24 修「iPhone 全库串图」】布局 A 同样禁止返回裸文件名：
             # 393 套作品共用 P1_封面.png / P1.png 这类同名标识，iOS 走
             # /api/online/image?path=<裸文件名> 会命中 image_name_index 的「同名首命中」，
@@ -2248,18 +2378,11 @@ class WorkScanner:
                     continue
                 rel = os.path.relpath(os.path.join(sub_dir, f), root_real)
                 hits.append(rel.replace(os.sep, "/"))
-            if len(hits) > len(top):
+            if hits:
                 return hits
-        if top:
-            return [
-                os.path.relpath(os.path.join(dir_path, f), root_real).replace(os.sep, "/")
-                for f in top
-            ]
         return []
 
     def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int, default_category: str = "") -> Optional[Dict[str, Any]]:
-        if folder_name in WORK_INTERNAL_SUBDIRS:
-            return None
         # Junction / 软链接检测与解析
         is_symlink = False
         source_path = dir_path
@@ -2282,6 +2405,31 @@ class WorkScanner:
 
         images.sort()
 
+        def _f_stamp(p: str) -> Tuple[int, int]:
+            try:
+                st = os.stat(p)
+                return (st.st_mtime_ns, st.st_size)
+            except OSError:
+                return (0, 0)
+
+        txt_candidates = [f for f in files if f.lower().endswith(".txt")]
+        cache_key = (dir_path, stage_name, default_category)
+        dir_stamp = (
+            default_count,
+            _f_stamp(dir_path)[0],
+            tuple(images),
+            tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in txt_candidates),
+            _f_stamp(os.path.join(dir_path, "作品标签.json")),
+            _f_stamp(os.path.join(dir_path, "manifest.json")),
+        )
+        cached_entry = self._inspect_cache.get(cache_key)
+        if cached_entry is not None and cached_entry[0] == dir_stamp:
+            _, cached_work, cached_slot_diag = cached_entry
+            if cached_slot_diag.get("droppedCount"):
+                _slot_guard_stat("worksAffected")
+                _slot_guard_stat("slotsDropped", cached_slot_diag["droppedCount"])
+            return dict(cached_work)
+
         # 读取下发文案：【唯一真源 = 文案.txt】（2026-09-22 用户口径）
         # 「软件只识别 文案.txt」—— `三平台文案.txt` 是早期 Codex 产线遗留，不是它的改名版；
         # 实测库内 145 套两份都有、其中 32 套内容并不相同，按旧 priority 优先读它
@@ -2289,7 +2437,6 @@ class WorkScanner:
         # 其余历史 txt（三平台文案 / 小红书文案 / 全量生成记录…）仅供服务端关键词检索，不参与下发。
         copy_text = ""
         copy_search_blob = ""   # 搜索专用：即使判定为缺失也保留原文，避免空壳/薄文案失去关键词可检索性
-        txt_candidates = [f for f in files if f.lower().endswith(".txt")]
         AUTHORITATIVE_COPY = "文案.txt"
         txt_candidates.sort(key=lambda x: (x != AUTHORITATIVE_COPY, x))
 
@@ -2354,7 +2501,7 @@ class WorkScanner:
         elif copy_raw and not copy_is_real(copy_text):
             copy_missing = True
 
-        # 读取作品标签.json 与 manifest.json（双源合并兜底）
+        # 读取作品标签.json 与 manifest.json（双源合并兜底，直接复用已加载的 manifest_data）
         tag_file = os.path.join(dir_path, "作品标签.json")
         tag_data = {}
         if os.path.exists(tag_file):
@@ -2364,15 +2511,7 @@ class WorkScanner:
             except Exception:
                 pass
 
-        manifest_file = os.path.join(dir_path, "manifest.json")
-        manifest_dist = {}
-        if os.path.exists(manifest_file):
-            try:
-                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as mfp:
-                    manifest_data = json.load(mfp)
-                    manifest_dist = manifest_data.get("distribution", {})
-            except Exception:
-                pass
+        manifest_dist = manifest_data.get("distribution", {}) if isinstance(manifest_data, dict) else {}
 
         distribution = tag_data.get("distribution", {})
         if not distribution and manifest_dist:
@@ -2413,7 +2552,12 @@ class WorkScanner:
         # 针对软链接镜像，生成独立 workId 避免与主货架本体在前端排重时冲突
         work_id = f"{folder_name}__link_{default_category}" if is_symlink and default_category else folder_name
 
-        return {
+        # 解析原素材对比映射与相似度审计指标（供手机端与电脑端「对比视图」同框展示）
+        src_imgs, src_names, src_lookup, max_sim, sim_tag = self._resolve_source_compare_info(
+            dir_path, images, manifest_data
+        )
+
+        work_result = {
             "id": work_id,
             "title": clean_title,
             "rawTitle": folder_name,
@@ -2435,6 +2579,12 @@ class WorkScanner:
             "dispatchedVersions": distribution.get("dispatchedVersions") or [],
             "imageCount": len(images),
             "images": images,
+            "sourceImages": src_imgs,
+            "sourceNames": src_names,
+            "hasSourceCompare": any(bool(x) for x in src_imgs),
+            "maxSimilarity": max_sim,
+            "similarityTag": sim_tag,
+            "_sourceLookup": src_lookup,
             "copyText": copy_text,
             # 【未填模板守卫】判定口径 = 剔除占位脚手架后的正文，未填模板不再算"有文案"
             "hasCopyText": copy_is_real(copy_text),
@@ -2453,7 +2603,13 @@ class WorkScanner:
             "updatedAt": os.path.getmtime(dir_path),
             # DSH-109：作品目录总字节数（含子目录，用于 size_desc/size_asc 排序）
             "sizeBytes": _dir_size_bytes(dir_path),
+            # 标签与时令元数据 (季节 season / 流量类型 flowType / 完整标签 tags)
+            "season": manifest_data.get("season") or ("秋季" if any(k in folder_name for k in ["秋", "中秋", "国庆"]) else ("夏季" if any(k in folder_name for k in ["夏", "避暑", "溯溪"]) else ("冬季" if any(k in folder_name for k in ["冬", "年会", "滑雪", "温泉"]) else "四季通用"))),
+            "flowType": manifest_data.get("flowType") or ("泛流量游戏攻略" if any(k in folder_name for k in ["游戏", "桌游", "破冰", "冷场"]) else "精准流量团建"),
+            "tags": manifest_data.get("tags") or [],
         }
+        self._inspect_cache[cache_key] = (dir_stamp, work_result, slot_diag)
+        return dict(work_result)
 
 
 # DSH-109：在线相册列表排序键（服务端 /api/online/works?sort=）
@@ -2538,6 +2694,7 @@ def _normalize_sync_host(raw: str) -> Optional[str]:
 
 
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
+    timeout = 15.0  # 15秒 socket 读写超时，防手机息屏/脱网后 socket 挂在 CLOSE_WAIT 耗尽工作线程
     scanner: WorkScanner = None
     # 手机在线发现缓存（30s TTL）：面板与「顺手回读」共用，避免每次请求都全量扫网段
     phone_cache = phone_sync.DiscoverCache()
@@ -2750,7 +2907,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "phoneCountSync",     # 手机本地分享次数回读电脑
                     "phoneDiscovery",     # 电脑主动扫描在线手机
                     "lanUpdateRelay",     # 局域网更新中转：手机连不上 GitHub，电脑代取清单+安装包
+                    "viewModeSync",       # 手机端与电脑端视图模式（图标/列表/对比）实时联动
+                    "sourceCompare",      # 手机端原素材 vs 成品对比视图支持
                 ],
+                "viewState": get_gallery_view_state(),
                 "phoneSyncApi": "/api/online/sync-phone-counts",
                 "phonePanelApi": "/api/online/phones",
                 # 缩略图链路自检：2026-09-20 曾因「进程跑的是旧代码 / Pillow 缺失」导致
@@ -2779,6 +2939,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 },
             }
             self.send_json(200, data)
+            return
+
+        if path == "/api/online/view-state":
+            self.send_json(200, {"ok": True, **get_gallery_view_state()})
             return
 
         # -- DSH-113：局域网更新中转路由（必须在 /api 兜底之前） --
@@ -2902,6 +3066,28 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, "categories": categories, "stages": [], "total": len(works)})
             return
 
+        if path == "/api/online/filter-options":
+            works = self.scanner.scan_throttled()
+            season_counts: Dict[str, int] = {k: 0 for k in ("春季", "夏季", "秋季", "冬季", "四季通用")}
+            flow_counts: Dict[str, int] = {k: 0 for k in ("精准流量团建", "泛流量游戏攻略")}
+            tag_counts: Dict[str, int] = {}
+            for w in works:
+                s = w.get("season") or "四季通用"
+                season_counts[s] = season_counts.get(s, 0) + 1
+                ft = w.get("flowType") or "精准流量团建"
+                flow_counts[ft] = flow_counts.get(ft, 0) + 1
+                for t in w.get("tags") or []:
+                    if t not in season_counts and t not in flow_counts:
+                        tag_counts[t] = tag_counts.get(t, 0) + 1
+            self.send_json(200, {
+                "ok": True,
+                "seasons": [{"name": k, "count": season_counts.get(k, 0)} for k in ("春季", "夏季", "秋季", "冬季", "四季通用")],
+                "flowTypes": [{"name": k, "count": flow_counts.get(k, 0)} for k in ("精准流量团建", "泛流量游戏攻略")],
+                "tags": [{"name": k, "count": v} for k, v in sorted(tag_counts.items(), key=lambda x: -x[1])[:20]],
+                "total": len(works),
+            })
+            return
+
         if path == "/api/online/works":
             # DSH-140: 拉取作品列表前快速巡检到期作品，杜绝已到期僵尸作品滞留货架
             try:
@@ -2916,6 +3102,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             sort_key = query.get("sort", ["default"])[0]
             if sort_key not in SORT_KEYS:
                 sort_key = "default"
+
+            # 多选标签筛选参数（支持逗号分隔或多参数：seasons, flow_types, tags）
+            seasons_raw = ",".join(query.get("seasons", []))
+            target_seasons = {s.strip() for s in seasons_raw.split(",") if s.strip()}
+            flow_raw = ",".join(query.get("flow_types", []) + query.get("flowTypes", []))
+            target_flows = {f.strip() for f in flow_raw.split(",") if f.strip()}
+            tags_raw = ",".join(query.get("tags", []))
+            target_tags = {t.strip() for t in tags_raw.split(",") if t.strip()}
 
             works = self.scanner.scan_throttled(force=force_refresh)
             tokens = search_query.split() if search_query else []
@@ -2945,9 +3139,28 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                                 and w.get("destination") != category and w.get("shelf") != category):
                             continue
 
-                # 搜索关键词过滤
+                # 季节多选过滤
+                if target_seasons:
+                    w_season = w.get("season") or "四季通用"
+                    if w_season not in target_seasons:
+                        continue
+
+                # 流量类型多选过滤
+                if target_flows:
+                    w_flow = w.get("flowType") or "精准流量团建"
+                    if w_flow not in target_flows:
+                        continue
+
+                # 自定义标签多选过滤
+                if target_tags:
+                    w_tags = set(w.get("tags") or [])
+                    if not target_tags.intersection(w_tags):
+                        continue
+
+                # 搜索关键词过滤（含标题、季节、流量类型、标签与正文）
                 if tokens:
-                    text_blob = work_text_blob(w, with_title=False).lower()
+                    extra_meta = f"{w.get('title', '')} {w.get('season', '')} {w.get('flowType', '')} {' '.join(w.get('tags') or [])}".lower()
+                    text_blob = (extra_meta + " " + work_text_blob(w, with_title=False).lower())
                     if not all(token in text_blob for token in tokens):
                         continue
 
@@ -3000,6 +3213,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "category": category,
                 "total": len(filtered),
+                "viewState": get_gallery_view_state(),
                 # 剥离 searchBlob / slotGuard：两端客户端都不解析，47% 体积纯属白送
                 "works": slim_works_for_wire(filtered)
             })
@@ -3047,7 +3261,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/image":
-            work_id = query.get("id", [""])[0]
+            work_id = query.get("id", [""])[0] or query.get("workId", [""])[0]
             file_name = query.get("file", [""])[0]
             raw_path = query.get("path", [""])[0]
             thumb = query.get("thumb", ["0"])[0] == "1"
@@ -3060,12 +3274,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     target_work = self.scanner.resolve_stage_work(work_id)
 
                 if target_work:
-                    bn = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                    direct_p = os.path.join(target_work["path"], bn)
-                    if os.path.isfile(direct_p):
-                        img_path = direct_p
-                    else:
+                    if file_name.startswith("__src__:"):
                         img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
+                    else:
+                        bn = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                        direct_p = os.path.join(target_work["path"], bn)
+                        if os.path.isfile(direct_p):
+                            img_path = direct_p
+                        else:
+                            img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
 
                 if not img_path and "__link_" in work_id:
                     base_id = work_id.split("__link_")[0]
@@ -3822,6 +4039,22 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 + ("（预演，未落盘）" if dry_run else "")
             )
             self.send_json(200, report)
+            return
+
+        if path == "/api/online/view-state":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return
+            if not isinstance(req, dict):
+                req = {}
+            view_mode = str(req.get("viewMode") or "grid").strip().lower()
+            updated_by = str(req.get("device") or req.get("updatedBy") or "unknown").strip()
+            st = set_gallery_view_state(view_mode, updated_by)
+            self.send_json(200, {"ok": True, **st})
             return
 
         if path == "/api/online/use-work":
