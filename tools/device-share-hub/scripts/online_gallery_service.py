@@ -2972,8 +2972,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         if path == "/api/online/ping":
-            # 极速轻量探活端点：纯内存直接返回，耗时 < 1ms，不碰锁、不碰磁盘，并发完全隔离
-            self.send_json(200, {"ok": True, "ping": "pong", "ts": int(time.time())})
+            # 极速轻量探活端点：纯内存响应，同时主动探测 scanner 核心锁，杜绝假健康
+            lock_ok = True
+            try:
+                if hasattr(self.server, "scanner") and hasattr(self.server.scanner, "_lock"):
+                    acquired = self.server.scanner._lock.acquire(timeout=0.5)
+                    if acquired:
+                        self.server.scanner._lock.release()
+                    else:
+                        lock_ok = False
+            except Exception:
+                pass
+            status_code = 200 if lock_ok else 503
+            self.send_json(status_code, {
+                "ok": lock_ok,
+                "ping": "pong",
+                "lockOk": lock_ok,
+                "ts": int(time.time())
+            })
             return
 
         if path == "/" or path == "/api/online/status":
