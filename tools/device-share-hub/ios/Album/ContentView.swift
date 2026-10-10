@@ -54,9 +54,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var modeButton: UIButton!
     private var folderItem: UIBarButtonItem?
     private let prefOnlineModeKey = "pref_is_online_mode"
-    /// 自动发现节流：用「15 秒冷却」代替「一次性开关」，失败后可反复重试
+    /// 自动发现失败后按 15/30/60/120 秒退避；成功同步列表后恢复初始间隔。
     private var autoDiscovering = false
     private var lastAutoDiscoverAt: Date = .distantPast
+    private var autoDiscoverRetryDelay: TimeInterval = 15
+    private let autoDiscoverMaxRetryDelay: TimeInterval = 120
 
     /// DSH-091 C2：顶部作品搜索框 —— 对齐 Android / 工作台的搜索入口。
     private let workSearchBar = UISearchBar()
@@ -305,7 +307,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         guard UIApplication.shared.applicationState == .active else { return }
         OnlineGalleryClient.shared.fetchServerFingerprint { [weak self] result in
             guard let self = self else { return }
-            guard case .success(let fingerprint) = result else { return }  // 失败静默等下一轮
+            guard case .success(let fingerprint) = result else {
+                // 电脑关机、换网段或旧地址失效时，定时指纹探测也负责触发受退避控制的重发现。
+                if self.canAutoRefreshNow() { self.tryAutoDiscoverPc() }
+                return
+            }
             guard self.canAutoRefreshNow() else { return }                 // 请求期间用户开始操作了
             let first = self.lastServerFingerprint == nil
             let same = fingerprint == self.lastServerFingerprint
@@ -1067,6 +1073,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
             switch workResult {
             case .success(let works)?:
+                self.autoDiscoverRetryDelay = 15
                 // DSH-135 & DSH-137: 本地状态合并（State Merge）与生命周期未到期作品统一置顶
                 let now = Date().timeIntervalSince1970 * 1000
                 var mergedWorks: [OnlineWorkEntry] = []
@@ -1158,7 +1165,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     /// 连接失败时自动在局域网搜索电脑在线相册服务。
-    /// 带 15 秒冷却，可反复重试 —— 不会像旧逻辑那样一次失败就永久放弃。
+    /// 失败后按 15/30/60/120 秒退避重试，不会永久放弃，也不会短间隔重复扫描。
     ///
     /// 两段式：**先快轨再慢轨**。
     /// ① `probeBeacon`：广播探测电脑信标端口（UDP 45832），电脑收到立刻单播回它**当前**的地址，
@@ -1168,12 +1175,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// - Parameter alertOnFailure: 非 nil 时表示「这次自愈是用户可见失败的兜底」：
     ///   自愈最终也没找到电脑、或自愈压根没跑起来（冷却/在途），才弹阻塞弹窗。
     private func tryAutoDiscoverPc(alertOnFailure: String? = nil) {
-        // 自愈没能真正开跑（上一次还在跑 / 15 秒冷却内）时，不能把错误吞掉 —— 直接如实告知。
+        guard isOnlineMode, UIApplication.shared.applicationState == .active else { return }
+        // 自愈没能真正开跑（上一次还在跑 / 退避窗口内）时，不能把错误吞掉 —— 直接如实告知。
         if autoDiscovering {
             if let message = alertOnFailure { showError(message) }
             return
         }
-        if Date().timeIntervalSince(lastAutoDiscoverAt) < 15 {
+        if Date().timeIntervalSince(lastAutoDiscoverAt) < autoDiscoverRetryDelay {
             if let message = alertOnFailure { showError(message) }
             return
         }
@@ -1195,7 +1203,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func finishAutoDiscover(url: String?, viaBeacon: Bool, alertOnFailure: String? = nil) {
         autoDiscovering = false
         guard isOnlineMode else { return }
+        lastAutoDiscoverAt = Date()
         guard let url = url else {
+            // 从失败完成时开始计时，避免 20 秒网段扫描结束后立刻再启动一轮。
+            autoDiscoverRetryDelay = min(autoDiscoverRetryDelay * 2, autoDiscoverMaxRetryDelay)
             // 只有「自愈也彻底失败」才允许弹阻塞弹窗；普通场景一律用轻量 toast。
             if let message = alertOnFailure {
                 showError(message + "\n暂未搜索到局域网内的电脑在线相册，请确认手机与电脑在同一 Wi-Fi。")

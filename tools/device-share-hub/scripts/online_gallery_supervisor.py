@@ -174,9 +174,10 @@ def probe_categories(timeout: float = 4.0) -> bool:
     return False
 
 _last_categories_probe_time = 0.0
+_categories_probe_failed = False
 
 def is_service_healthy(force_deep: bool = False) -> bool:
-    global _last_categories_probe_time
+    global _last_categories_probe_time, _categories_probe_failed
     # 1. 极速 ping 优先（内置 scanner._lock 锁探活，死锁时返回 503）
     ping_ok = probe_ping(timeout=3.5)
     if not ping_ok:
@@ -193,8 +194,13 @@ def is_service_healthy(force_deep: bool = False) -> bool:
             # 业务抽检防抖确认（1.5s 后重试）
             time.sleep(1.5)
             if not probe_categories(timeout=6.0):
+                _categories_probe_failed = True
                 log("业务端点 /api/online/categories 深度抽检超时/失败，判定为业务卡死", "WARN")
                 return False
+        _categories_probe_failed = False
+    elif _categories_probe_failed:
+        # 深度抽检失败后，30 秒抽检窗口内不能因 ping 成功而假报健康、清零连续故障计数。
+        return False
 
     return True
 
@@ -254,9 +260,11 @@ def kill_stale_processes():
 
 # ----------------- 启动在线相册服务 -----------------
 def start_service() -> bool:
-    global _last_child_proc
+    global _last_child_proc, _last_categories_probe_time, _categories_probe_failed
     if supervision_paused():
         return False
+    _last_categories_probe_time = 0.0
+    _categories_probe_failed = False
     t0 = time.time()
     log("正在启动/自愈相册主服务 (online_gallery_service.py)...", "INFO")
     

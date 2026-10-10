@@ -3151,5 +3151,38 @@ totalWorks = 472
      - 新增 Python `tests/test_dsh143_cross_device_sync.py` 验证双源合并与 manifest 兜底；
      - 新增 Android `PlatformCopyParserTest.java` 与 iOS `PlatformCopyParserTests.swift` 跨设备别名同步与设备名含括号提取单元测试。
 
+## DSH-147 在线相册分类接口超时未形成连续故障计数（代码修复候选 · 未部署 · 2026-10-10）
 
+- **现象**：在线相册服务 `/api/online/ping` 返回 200 且 `lockOk=true`，但看门狗在 15:07–15:23 多次记录 `/api/online/categories` 深度抽检超时/失败；监听进程仍存活。故障期间分类/作品列表体验可能卡顿，当前分类接口实时状态尚未复核。
+- **环境**：Windows 本地在线相册服务，监听 `0.0.0.0:45835`；服务 PID 19556，Supervisor PID 24104；检查时间 2026-10-10（+08:00）。
+- **已确认根因**：`scripts/online_gallery_supervisor.py` 的 `is_service_healthy()` 在发起分类深度抽检前就更新 `_last_categories_probe_time`。一次抽检失败返回不健康后，主循环下一轮 30 秒窗口内跳过分类抽检；ping 成功便返回健康并清零 `consecutive_unhealthy_count`。因此分类业务连续超时无法累计到三次自愈阈值，日志反复显示 `consecutive 1/3`，看门狗不能可靠重启卡住的业务进程。相关逻辑见 `is_service_healthy()` 与主循环不健康计数处理。
+- **尚未确认**：分类接口超时的底层慢点（扫描、文件系统、到期清理或其他并发负载）未定位。分类路由会调用 `cleanup_expired_works()`，可能搬移到期作品；本次未直接调用该接口，避免审计动作改变素材。
+- **修复状态**：Supervisor 源码已修复失败状态在 30 秒抽检窗口内被 ping 清零的问题；本次未重启正在运行的服务、未执行测试，运行中实例是否加载修复仍未验证。
+- **回归验收**：以可重复的分类接口超时注入/模拟验证看门狗能累计连续失败并按策略恢复；验证成功抽检可清零计数；确认探活方式不会意外触发素材移库，并检查移动端与电脑端相册分类/作品列表。
+- **证据**：`scripts/online_gallery_supervisor.py`（深度抽检时间戳与连续失败计数）；`logs/supervisor.log`（15:07:18 至 15:23:45 多次分类抽检失败且反复 1/3）；`GET /api/online/ping` 只证明锁探活成功，不代表分类业务成功。
 
+## DSH-148 在线相册电脑断连后不主动重发现，自动扫描退避不足（代码已改 · 2026-10-10）
+
+- **现象**：电脑在线相册地址失效或电脑暂时离线时，手机端可能保留离线快照但持续连不上；前台周期探测失败原先只静默等下一轮，不能保证电脑恢复后重新发现。自动发现仅 15 秒冷却，iOS 一轮兜底网段扫描最长约 20 秒，扫描刚结束后很快可能再次扫描。
+- **环境**：iOS 与 Android 在线相册客户端；`ios/Album/ContentView.swift`、`android/app/src/main/java/com/zwm/gallery/MainActivity.java`。
+- **根因**：前台 fingerprint 探测错误路径没有调用自动发现；发现失败的节流固定 15 秒且从扫描开始计时，长扫描结束时冷却可能已过期。
+- **本次修改**：两端 fingerprint 探测失败时在前台触发自动重发现；失败冷却从本轮发现完成时开始并指数增加至最多 120 秒；作品列表同步成功后恢复 15 秒初始间隔；安卓手动重试绕过快照保护和自动退避。自动发现仍先走现有信标快轨，再按原逻辑使用网段扫描兜底。
+- **验收状态**：仅源码静态检查；未连接手机，未做 iOS/Android 真机回归，未打包或安装，因此不能视为已升级到用户设备。
+- **回归要求**：电脑关闭期间确认发现频率按 15/30/60/120 秒退避且不后台运行；电脑恢复或换 IP 后前台能自动连接；手动重试可立即启动；连接恢复后退避重置；验证 iOS 与 Android。
+- **证据**：iOS `ContentView.swift` 的 `pollForOnlineChanges()` / `tryAutoDiscoverPc()`；Android `MainActivity.java` 的 `pollForOnlineChanges()` / `refreshOnlineWorks()` / `tryAutoDiscoverPc()`。
+## DSH-149 在线相册卡片小图加载慢（客户端磁盘/队列瓶颈 · 源码候选 · 2026-10-10）
+
+- **现象**：用户反馈在线相册列表卡片的小图加载慢，尚未打开大图预览。
+- **定位证据**：Windows `GET /api/online/status` 只读返回 Pillow 12.3.0 可用、`fallbackOriginal=0`、内存缩略图缓存 500/500、磁盘缓存 1616/2000，当前服务没有把缩略图降级为原图的迹象。Android 源码整页首批仅放 18 张，后续每 260ms 仅提交 6 张，即约 23 张/秒的客户端队列上限；iOS `loadImage` 在调用线程同步 `Data(contentsOf:)` 并构造 `UIImage`，在线卡片渲染会因此被磁盘缓存读取/解码阻塞。
+- **修复候选**：Android 调度调整为每 100ms 提交 12 张，仍保留小批量放行与独立 8 线程取图池；iOS 磁盘缓存读取和解码移到后台队列，回调仍回主线程更新 UI。
+- **版本**：Android 0.8.76 / versionCode 187；iOS 0.8.76 / build 187。
+- **验收状态**：源码层改动已落；未运行自动测试或编译、未连真机，实际首屏耗时和滚动帧率尚未确认。更快队列也不能替代移动端真机下的网络测量。
+- **回归要求**：冷缓存与热缓存分别测首屏前 12 张及完整列表耗时；检查 iOS 滚动/点按无卡顿、Android 列表请求未被缩略图挤压、服务端 `fallbackOriginal` 不增长。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

@@ -99,8 +99,8 @@ public final class MainActivity extends Activity {
     // （382 作品 → 1500+ 请求同时压进 4 线程池），手机端直接卡在「正在读取…」。
     // 现在整页只给固定「首发预算」，其余入队按节拍渐进放行，UI 先出骨架再补图。
     private static final int ONLINE_THUMB_BURST_BUDGET = 18;
-    private static final int ONLINE_THUMB_DRAIN_STEP = 6;
-    private static final long ONLINE_THUMB_DRAIN_INTERVAL_MS = 260L;
+    private static final int ONLINE_THUMB_DRAIN_STEP = 12;
+    private static final long ONLINE_THUMB_DRAIN_INTERVAL_MS = 100L;
     // DSH-111：在线相册自动刷新。服务端 watchdog 60 秒轮询一遍作品目录，
     // 客户端 30 秒问一次「变了吗」，所以最快 30 秒、最慢 90 秒手机上就能看到新作品。
     private static final long ONLINE_AUTO_REFRESH_INTERVAL_MS = 30_000L;
@@ -1581,7 +1581,8 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onError(Exception error) {
-                // 探测失败静默等下一轮：电脑关机/断网很常见，不弹提示也不清屏
+                // 旧地址失效或电脑恢复上线时，触发受退避控制的自动重发现。
+                if (canAutoRefreshNow()) tryAutoDiscoverPc();
             }
         });
 
@@ -3428,6 +3429,8 @@ public final class MainActivity extends Activity {
     private boolean autoDiscovering = false;
     /** 上次自动发现的时间戳：用「冷却」代替「一次性开关」，保证失败后可反复重试 */
     private long lastAutoDiscoverAtMs = 0L;
+    private long autoDiscoverRetryDelayMs = 15000L;
+    private static final long AUTO_DISCOVER_MAX_RETRY_DELAY_MS = 120000L;
 
     /**
      * 电脑端会把已使用的作品物理移走到对应次数文件夹，但手机端已同步到本地，
@@ -3520,6 +3523,7 @@ public final class MainActivity extends Activity {
         onlineClient.fetchWorks(null, null, currentSortKey, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
             @Override
             public void onSuccess(List<OnlineWorkEntry> works) {
+                autoDiscoverRetryDelayMs = 15000L;
                 // 连通成功：记住这条可用地址，下次直接复用
                 onlineClient.markBaseUrlGood(onlineClient.resolveBaseUrl());
                 if (!isOnlineMode || showingTrash) return;
@@ -3587,7 +3591,7 @@ public final class MainActivity extends Activity {
                 } else {
                     handleOnlineError("读取作品列表失败", error);
                 }
-                tryAutoDiscoverPc();
+                tryAutoDiscoverPc(userInitiated);
             }
         });
     }
@@ -3608,18 +3612,21 @@ public final class MainActivity extends Activity {
      * 连接失败时自动在局域网搜索电脑在线相册服务。
      * 修复要点：早期版本用「一次性开关」，一旦首次搜索失败就永久放弃，
      * 导致纯 Wi-Fi 设备（vivo/华为）整个进程都卡在 127.0.0.1 读不到作品。
-     * 现在改为 15 秒冷却，失败后可反复重试。
+     * 现在失败后按 15/30/60/120 秒退避；手动重试可立即执行。
      */
     private void tryAutoDiscoverPc() {
+        tryAutoDiscoverPc(false);
+    }
+
+    private void tryAutoDiscoverPc(boolean force) {
         if (autoDiscovering) return;
-        // 【0.8.43 修】已有本地快照就别打断用户：snapshot 秒开体验 > auto-discover 的修复率。
-        // 用户手动点「重试连接」依然会走自动搜索（不经过 tryAutoDiscoverPc）。
-        if (onlineListFromSnapshot && onlineWorks != null && !onlineWorks.isEmpty()) {
+        // 自动恢复时已有本地快照就别打断用户；手动重试会绕过此保护。
+        if (!force && onlineListFromSnapshot && onlineWorks != null && !onlineWorks.isEmpty()) {
             String age = snapshotAgeText();
             if (age != null) return;
         }
         long now = System.currentTimeMillis();
-        if (now - lastAutoDiscoverAtMs < 15000L) return;
+        if (!force && now - lastAutoDiscoverAtMs < autoDiscoverRetryDelayMs) return;
         lastAutoDiscoverAtMs = now;
         autoDiscovering = true;
         statusText.setText("正在自动搜索局域网内的电脑在线相册…");
@@ -3627,6 +3634,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onSuccess(String baseUrl) {
                 autoDiscovering = false;
+                lastAutoDiscoverAtMs = System.currentTimeMillis();
                 if (!isOnlineMode) return;
                 toast("✅ 已自动发现电脑相册服务 " + baseUrl);
                 refreshOnlineWorks(false);
@@ -3635,6 +3643,9 @@ public final class MainActivity extends Activity {
             @Override
             public void onError(Exception error) {
                 autoDiscovering = false;
+                lastAutoDiscoverAtMs = System.currentTimeMillis();
+                autoDiscoverRetryDelayMs = Math.min(autoDiscoverRetryDelayMs * 2,
+                        AUTO_DISCOVER_MAX_RETRY_DELAY_MS);
                 if (!isOnlineMode) return;
                 // 【0.8.43 修】不再覆盖 snapshot 状态条；改成在底部悄悄提示，让顶部状态栏继续显示「本地快照 · X 分钟前」。
                 String snapNote = snapshotAgeText();

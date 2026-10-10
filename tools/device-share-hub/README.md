@@ -1,7 +1,7 @@
-# 文件收发中控（当前版本：Windows V4.3.33 / Android 0.8.63 / iPhone 0.8.45）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.76 / iPhone 0.8.76）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.62 / versionCode 173**、**iPhone 0.8.45 / build 117**。
+> 本轮源码候选：**Android 0.8.76 / versionCode 187**、**iPhone 0.8.76 / build 187**。安装包、CI 与真机回归尚未完成。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
 ## 先搞清这几个东西分别是谁
@@ -171,12 +171,18 @@
 - **Android / iPhone（推荐，走局域网中转）**：`http://<电脑局域网IP>:45835/latest.json`
 - **Android / iPhone（回落，手机上通常不可达）**：<https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json>
 - **iPhone AltStore**：<https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json>，或走中转的 `/altstore.json`
-- **安装包**：中转 `/download/apk`、`/download/ipa`；或 GitHub Releases 原地址
-- **电脑端（Windows 面板）**：点「检查更新」时读的是发布仓库 `latest.json` 里的 `windows` 段
-  —— 那一节是 CI 每次发版自动写的，不会漏。装包在
-  <https://github.com/zwmopen/gallery-updates/releases/latest>，文件名形如
-  `DeviceShareHub-Windows-V4.3.33.exe`。
-  以前这里读的是主仓库的手工 Release：漏发就永远停在旧版；而且一旦那个 tag 不是 Windows
+- **安装包**：中转 `/download/apk`、`/download/ipa`；或 GitHub Releases 原地址
+
+- **电脑端（Windows 面板）**：点「检查更新」时读的是发布仓库 `latest.json` 里的 `windows` 段
+
+  —— 那一节是 CI 每次发版自动写的，不会漏。装包在
+
+  <https://github.com/zwmopen/gallery-updates/releases/latest>，文件名形如
+
+  `DeviceShareHub-Windows-V4.3.33.exe`。
+
+  以前这里读的是主仓库的手工 Release：漏发就永远停在旧版；而且一旦那个 tag 不是 Windows
+
   版本（比如手机端的 v0.8.63），`4.3.33 > 0.8.63` 会让它**永远提示「已是最新」**（DSH-121）。
 - iOS 仍需 AltStore/AltServer 或 Sideloadly 用用户自己的 Apple ID 完成签名；Android 下载后由系统确认安装。
   **应用不能静默替换自身 —— iPhone 尤其永远不会自己升级，只能电脑侧载。**
@@ -651,3 +657,11 @@ GitHub Actions 负责：
 - 仓库质量检查和密钥扫描。
 
 完整源码、三端构建和恢复方式见 [docs/SOURCE_BUILD_AND_RECOVERY.md](docs/SOURCE_BUILD_AND_RECOVERY.md)。发布说明、设计语言、开发资产和复用避坑见 [docs/V3_RELEASE_AND_ASSET_INVENTORY.md](docs/V3_RELEASE_AND_ASSET_INVENTORY.md)；设计与边界见 [docs/ALBUM_WORKFLOW_DESIGN.md](docs/ALBUM_WORKFLOW_DESIGN.md)。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

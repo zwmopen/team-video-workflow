@@ -228,6 +228,8 @@ public final class OnlineGalleryClient {
     private var cachedBaseUrl: String?
 
     private let session: URLSession
+    // Cache reads and UIImage decoding must stay off the main thread during list rendering.
+    private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
     private let fileManager = FileManager.default
     private lazy var diskCacheURL: URL = {
@@ -663,18 +665,6 @@ public final class OnlineGalleryClient {
             return
         }
 
-        // 尝试磁盘缓存
-        let safeFileName = cacheKey
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "\\", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
-        if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
-            imageCache.setObject(diskImage, forKey: cacheKey)
-            completion(diskImage)
-            return
-        }
-
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/image")
         // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目
@@ -694,25 +684,38 @@ public final class OnlineGalleryClient {
             return
         }
 
-        session.dataTask(with: url) { [weak self] data, _, _ in
-            guard let self = self, let data = data, let image = UIImage(data: data) else {
-                // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
-                NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
-                      path, isThumbnail ? 1 : 0)
-                DispatchQueue.main.async { completion(nil) }
+        let safeFileName = cacheKey
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
+        // 列表渲染时可能连续请求几十张缓存图；磁盘读取和 UIImage 解码放后台，避免阻塞主线程。
+        imageIOQueue.async { [weak self] in
+            guard let self = self else { return }
+            if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
+                self.imageCache.setObject(diskImage, forKey: cacheKey)
+                DispatchQueue.main.async { completion(diskImage) }
                 return
             }
-            // 写入内存与磁盘缓存
-            self.imageCache.setObject(image, forKey: cacheKey)
-            // DSH-099 iOS 等价：磁盘缓存写失败也要 NSLog（之前 try? 吞掉全静默）
-            do {
-                try data.write(to: diskURL)
-            } catch {
-                NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
-                      path, error.localizedDescription)
-            }
-            DispatchQueue.main.async { completion(image) }
-        }.resume()
+
+            self.session.dataTask(with: url) { [weak self] data, _, _ in
+                guard let self = self, let data = data, let image = UIImage(data: data) else {
+                    // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
+                    NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
+                          path, isThumbnail ? 1 : 0)
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
+                self.imageCache.setObject(image, forKey: cacheKey)
+                do {
+                    try data.write(to: diskURL)
+                } catch {
+                    NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
+                          path, error.localizedDescription)
+                }
+                DispatchQueue.main.async { completion(image) }
+            }.resume()
+        }
     }
 
     /// 同步快速获取缓存图片（若内存或磁盘命中直接返回，0毫秒无缝秒开）

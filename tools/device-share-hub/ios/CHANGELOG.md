@@ -1,3 +1,19 @@
+## 2026-10-10 DSH-149：在线相册小图加载提速（源码候选 Android/iOS 0.8.76）
+
+- iOS 在线缩略图的磁盘缓存读取和 UIImage 解码移至后台队列，避免同步阻塞主线程；Android 列表缩略图队列放行速率提升至每 100ms 12 张。
+- Android `versionCode=187` / `versionName=0.8.76`；iOS `CURRENT_PROJECT_VERSION=187` / `MARKETING_VERSION=0.8.76`。
+- **影响文档**：`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`README.md`；协议未变化。`docs/ALBUM_WORKFLOW_DESIGN.md` 正在另一路重写，本次不改。
+- **验证状态**：`git diff --check` 通过；未运行自动测试、CI 构建或真机回归，未生成/发布/安装 APK 或 IPA。
+
+## 2026-10-10 DSH-148：在线相册断连后自动重发现与退避（源码候选 Android/iOS 0.8.75）
+
+- 前台电脑地址探测失败时触发受限自动重发现，改善电脑恢复上线或地址变化后的恢复机会。
+- 发现失败后从扫描完成时开始退避，间隔 15/30/60/120 秒封顶；作品列表同步成功后恢复初始间隔。
+- 电脑端 Supervisor 在分类业务抽检失败后保持不健康状态，避免 ping 成功掩盖故障并清零连续失败计数。
+- Android `versionCode=186` / `versionName=0.8.75`；iOS `CURRENT_PROJECT_VERSION=186` / `MARKETING_VERSION=0.8.75`。
+- **影响文档**：`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`README.md`；协议未变化。`docs/ALBUM_WORKFLOW_DESIGN.md` 正在另一路重写，本次不改。
+- **验证状态**：源码静态差异检查通过；未运行自动测试、CI 构建或真机回归，未生成/发布/安装 APK 或 IPA。
+
 # iOS 0.8.53 (build 125) — DSH-145 修复：原图受控并发极速下载与防丢图自动重试
 
 ## 修复与优化
@@ -214,3 +230,11 @@
   - 改后：9/9 PASS（验过）
 - **iOS 升 0.8.40/112 → 0.8.41/113**。
 - **Android 端**：同步做相同底部三按钮布局对齐（详见 `CHANGELOG.md` DSH-108 条目），Android 升 0.8.56/167 → **0.8.57/168**。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

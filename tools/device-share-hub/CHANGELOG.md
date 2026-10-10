@@ -1,3 +1,20 @@
+## 2026-10-10 DSH-149：在线相册小图加载提速（源码候选 Android/iOS 0.8.76）
+
+- Android 列表缩略图调度从每 260ms 放行 6 张改为每 100ms 放行 12 张，降低整页补图等待时间，同时保留分批放行和 8 线程网络池。
+- iOS 在线缩略图读取磁盘缓存与 UIImage 解码改在后台队列进行，避免卡片渲染期间阻塞主线程。
+- **影响文档**：`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`README.md`；协议未变化。`docs/ALBUM_WORKFLOW_DESIGN.md` 正在另一路重写，本次不改。
+- Android `versionCode=187` / `versionName=0.8.76`；iOS `CURRENT_PROJECT_VERSION=187` / `MARKETING_VERSION=0.8.76`。
+- **验证状态**：`git diff --check` 通过；只读服务状态证实 Pillow 可用且当前没有原图降级。未运行自动测试、CI 构建或真机回归；未生成/发布/安装 APK 或 IPA。
+
+## 2026-10-10 DSH-148：在线相册断连后自动重发现与退避（源码候选 Android/iOS 0.8.75）
+
+- 前台电脑地址探测失败时触发受限自动重发现，改善电脑恢复上线或地址变化后的恢复机会。
+- 发现失败后从扫描完成时开始退避，间隔 15/30/60/120 秒封顶；作品列表同步成功后恢复初始间隔。
+- 电脑端 Supervisor 在分类业务抽检失败后保持不健康状态，避免 ping 成功掩盖故障并清零连续失败计数。
+- Android `versionCode=186` / `versionName=0.8.75`；iOS `CURRENT_PROJECT_VERSION=186` / `MARKETING_VERSION=0.8.75`。
+- **影响文档**：`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`README.md`；协议未变化。`docs/ALBUM_WORKFLOW_DESIGN.md` 正在另一路重写，本次不改。
+- **验证状态**：源码静态差异检查通过；未运行自动测试、CI 构建或真机回归，未生成/发布/安装 APK 或 IPA。
+
 # DSH-102 — iPhone 在线相册串图（image_name_index 同名冲突）
 
 **修复日期**: 2026-09-24
@@ -3334,3 +3351,11 @@ M2（把 `try:` 改成 `if True:`）单独施加时，原来的 `finally:` 没�
 IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`。
 扫描器不解码所以一直没暴露。`TestThumbInflight` 要用 Pillow 自己生成一张真图，
 不能复用它。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |
