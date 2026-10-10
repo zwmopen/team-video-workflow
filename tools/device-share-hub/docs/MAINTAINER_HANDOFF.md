@@ -1,3 +1,14 @@
+# 2026-10-11 对比视图修复候选（DSH-150）
+
+- 源码候选：Android 0.8.79 / versionCode 190；iOS 0.8.79 / build 190。
+- 变更：Android 对比视图使用全屏纯黑窗口；整理标题、模式切换与关闭控件；原图和素材百分比进度在成功/失败后短暂保留，并阻止旧页面回调覆盖当前页。iOS 本轮没有代码变化，沿用 0.8.78 的素材映射、进度、3:4 缩略图、同步状态和重置按钮。
+- 自动验证：候选版本号 190 的 Android 单测 100 项通过；testDebugUnitTest、lintDebug、lintRelease、assembleDebug、assembleRelease 均通过。
+- Release APK：android/app/build/outputs/apk/release/app-release.apk；包名 com.zwm.gallery，版本 0.8.79/190，签名校验通过且 debuggable=false；SHA-256 B6396E3F0C383BFFCAA12F28722DF601DDDBE396ED10BAF266E01EBFD068D2A9。
+- 未完成验收：本机没有 Android ADB 设备；尚未对 Android/iPhone 做真实界面操作，候选版也尚未运行 GitHub Actions。不得记录为真机通过或正式发布。
+- 下一步：设备可用后，在 Android/iPhone 分别检查全屏边缘、标题、切换/关闭、原图与素材进度、快速翻页后的状态归属、并排图垂直居中和「重置状态」；冷缓存与热缓存都要覆盖。完成后再核对候选 CI、发布清单与安装包哈希。
+
+---
+
 # 2026-10-10 在线相册缩略图提速候选（DSH-149）
 
 - **源码候选**：Android 0.8.76 / versionCode 187；iOS 0.8.76 / build 187。
@@ -1093,4 +1104,5 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

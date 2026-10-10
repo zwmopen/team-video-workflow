@@ -1,3 +1,12 @@
+## 2026-10-11 DSH-150：Android 在线相册对比视图全屏与进度显示修复（源码候选 Android/iOS 0.8.79）
+
+- Android 对比视图改用全屏黑底窗口，标题固定为「对比视图」，切换与关闭控件固定尺寸；相似度为零时不再重复显示标题。
+- 原图与素材加载状态显示百分比；完成状态保留 1.5 秒、失败状态短暂可见，并用页码代次隔离旧页面的异步回调。
+- iOS 0.8.78 已有的素材映射、进度、3:4 缩略图、同步状态和「重置状态」继续保留，本轮未改 iOS 业务代码。
+- Android versionCode=190 / versionName=0.8.79；iOS CURRENT_PROJECT_VERSION=190 / MARKETING_VERSION=0.8.79。
+- 影响文档：README.md、docs/BUG_LEDGER.md、docs/MAINTAINER_HANDOFF.md、docs/MULTI_PLATFORM_SPEC_AND_GOALS.md、docs/TEST_PLAYBOOK.md、docs/COMPATIBILITY_AND_TEST_MATRIX.md；协议未变化。docs/ALBUM_WORKFLOW_DESIGN.md 正在另一路重写，本次不改。
+- 验证状态：Android 单测 100 项通过；Debug/Release Lint 与 APK 构建均通过。Release APK 清单确认包名、版本 0.8.79/190，签名校验通过且 debuggable=false。候选版 CI、iOS 构建和真机回归尚未执行；当前没有可用 Android ADB 设备。
+
 ## 2026-10-10 DSH-149：在线相册小图加载提速（源码候选 Android/iOS 0.8.76）
 
 - Android 列表缩略图调度从每 260ms 放行 6 张改为每 100ms 放行 12 张，降低整页补图等待时间，同时保留分批放行和 8 线程网络池。
@@ -3358,4 +3367,5 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

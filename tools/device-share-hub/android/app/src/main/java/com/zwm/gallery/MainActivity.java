@@ -5155,9 +5155,9 @@ public final class MainActivity extends Activity {
         if (work == null || work.images == null || work.images.isEmpty()) return;
         final int total = work.images.size();
         final int[] currentIndex = new int[]{Math.max(0, Math.min(imageIndex, total - 1))};
+        final int[] pageGeneration = new int[]{0};
         final boolean[] isHorizontal = new boolean[]{false}; // 默认上下同框
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
@@ -5169,29 +5169,39 @@ public final class MainActivity extends Activity {
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(0, 0, 0, dp(8));
 
-        TextView titleView = text("对比视图 · " + work.title, 13, true);
+        TextView titleView = text("对比视图", 14, true);
         titleView.setTextColor(Color.WHITE);
         titleView.setSingleLine(true);
-        titleView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-        topBar.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1.0f));
+        titleView.setGravity(Gravity.CENTER_VERTICAL);
+        titleView.setContentDescription("对比视图，" + work.title);
+        topBar.addView(titleView, new LinearLayout.LayoutParams(0, dp(32), 1.0f));
 
-        TextView simBadge = text(work.maxSimilarity > 0 ? ("🛡️ " + (int) Math.round(work.maxSimilarity * 100) + "%") : "对比视图", 11, true);
+        boolean hasSimilarity = work.maxSimilarity > 0;
+        TextView simBadge = text(hasSimilarity
+                ? ("相似度 " + (int) Math.round(work.maxSimilarity * 100) + "%") : "", 12, true);
         simBadge.setTextColor(Color.rgb(90, 240, 140));
         simBadge.setBackground(round(Color.rgb(45, 50, 48), 8));
         simBadge.setGravity(Gravity.CENTER);
         simBadge.setPadding(dp(10), dp(4), dp(10), dp(4));
+        simBadge.setVisibility(hasSimilarity ? View.VISIBLE : View.GONE);
         LinearLayout.LayoutParams simParams = new LinearLayout.LayoutParams(-2, dp(32));
         simParams.setMargins(dp(6), 0, dp(6), 0);
         topBar.addView(simBadge, simParams);
 
         Button toggleLayoutBtn = new Button(this);
-        toggleLayoutBtn.setText("↕️ 上下同框");
-        toggleLayoutBtn.setTextSize(11);
+        toggleLayoutBtn.setText("上下同框");
+        toggleLayoutBtn.setTextSize(12);
         toggleLayoutBtn.setTextColor(Color.WHITE);
         toggleLayoutBtn.setGravity(Gravity.CENTER);
         toggleLayoutBtn.setBackground(round(Color.rgb(45, 50, 48), 8));
-        toggleLayoutBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
-        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-2, dp(32));
+        toggleLayoutBtn.setPadding(dp(4), 0, dp(4), 0);
+        toggleLayoutBtn.setIncludeFontPadding(false);
+        toggleLayoutBtn.setMinWidth(0);
+        toggleLayoutBtn.setMinimumWidth(0);
+        toggleLayoutBtn.setMinimumHeight(0);
+        toggleLayoutBtn.setAllCaps(false);
+        toggleLayoutBtn.setContentDescription("当前上下同框，点击切换左右并排");
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(96), dp(32));
         toggleParams.setMargins(0, 0, dp(6), 0);
         topBar.addView(toggleLayoutBtn, toggleParams);
 
@@ -5202,8 +5212,13 @@ public final class MainActivity extends Activity {
         closeBtn.setGravity(Gravity.CENTER);
         closeBtn.setPadding(0, 0, 0, 0);
         closeBtn.setIncludeFontPadding(false);
+        closeBtn.setMinWidth(0);
+        closeBtn.setMinimumWidth(0);
+        closeBtn.setMinimumHeight(0);
+        closeBtn.setAllCaps(false);
+        closeBtn.setContentDescription("关闭对比视图");
         closeBtn.setBackground(round(Color.rgb(55, 60, 58), 16));
-        topBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        topBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(36), dp(32)));
 
         root.addView(topBar, new LinearLayout.LayoutParams(-1, -2));
 
@@ -5312,8 +5327,10 @@ public final class MainActivity extends Activity {
         navHint.setGravity(Gravity.CENTER);
         root.addView(navHint, margins(0, dp(4), 0, 0));
 
-        builder.setView(root);
-        AlertDialog dialog = builder.create();
+        android.app.Dialog dialog = new android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(false);
         closeBtn.setOnClickListener(v -> dialog.dismiss());
 
         // 重新排布函数
@@ -5331,7 +5348,8 @@ public final class MainActivity extends Activity {
                 p2.gravity = Gravity.CENTER_VERTICAL;
                 compareContainer.addView(leftFrame, p1);
                 compareContainer.addView(rightFrame, p2);
-                toggleLayoutBtn.setText("↔️ 左右并排");
+                toggleLayoutBtn.setText("左右并排");
+                toggleLayoutBtn.setContentDescription("当前左右并排，点击切换上下同框");
                 if (lp != null) {
                     lp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
                     lp.setMargins(0, 0, dp(8), 0);
@@ -5350,7 +5368,8 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
                 compareContainer.addView(leftFrame, p1);
                 compareContainer.addView(rightFrame, p2);
-                toggleLayoutBtn.setText("↕️ 上下同框");
+                toggleLayoutBtn.setText("上下同框");
+                toggleLayoutBtn.setContentDescription("当前上下同框，点击切换左右并排");
                 if (lp != null) {
                     lp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
                     lp.setMargins(0, 0, dp(8), 0);
@@ -5372,6 +5391,7 @@ public final class MainActivity extends Activity {
         // 刷新单页内容
         Runnable renderPage = () -> {
             int idx = currentIndex[0];
+            final int requestGeneration = ++pageGeneration[0];
             pageText.setText("P" + (idx + 1) + " / P" + total);
             prevBtn.setEnabled(idx > 0);
             prevBtn.setAlpha(idx > 0 ? 1f : 0.4f);
@@ -5404,27 +5424,41 @@ public final class MainActivity extends Activity {
 
             // 异步加载成品 100% 高清原图（带百分比进度）
             rightProgress.setVisibility(View.VISIBLE);
-            rightProgress.setText("原图加载中…");
+            rightProgress.setText("原图 0%");
             onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                 @Override
                 public void onProgress(int percent) {
-                    if (currentIndex[0] == idx) {
+                    if (dialog.isShowing() && currentIndex[0] == idx
+                            && pageGeneration[0] == requestGeneration) {
                         rightProgress.setVisibility(View.VISIBLE);
                         rightProgress.setText("原图 " + percent + "%");
                     }
                 }
                 @Override
                 public void onSuccess(Bitmap result) {
-                    if (currentIndex[0] == idx && result != null && !result.isRecycled()) {
+                    if (dialog.isShowing() && currentIndex[0] == idx
+                            && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                         rightImage.setImageBitmap(result);
-                        rightProgress.setText("原图已就绪");
+                        rightProgress.setText("原图 100%");
                         rightProgress.postDelayed(() -> {
-                            if (currentIndex[0] == idx) rightProgress.setVisibility(View.GONE);
-                        }, 800);
+                            if (dialog.isShowing() && currentIndex[0] == idx
+                                    && pageGeneration[0] == requestGeneration) {
+                                rightProgress.setVisibility(View.GONE);
+                            }
+                        }, 1500);
                     }
                 }
                 @Override public void onError(Exception e) {
-                    if (currentIndex[0] == idx) rightProgress.setVisibility(View.GONE);
+                    if (dialog.isShowing() && currentIndex[0] == idx
+                            && pageGeneration[0] == requestGeneration) {
+                        rightProgress.setText("原图加载失败");
+                        rightProgress.postDelayed(() -> {
+                            if (dialog.isShowing() && currentIndex[0] == idx
+                                    && pageGeneration[0] == requestGeneration) {
+                                rightProgress.setVisibility(View.GONE);
+                            }
+                        }, 2000);
+                    }
                 }
             });
 
@@ -5452,29 +5486,41 @@ public final class MainActivity extends Activity {
 
                 // 异步加载原素材 100% 高清原图（带百分比进度）
                 leftProgress.setVisibility(View.VISIBLE);
-                leftProgress.setText("素材加载中…");
+                leftProgress.setText("素材 0%");
                 onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                     @Override
                     public void onProgress(int percent) {
-                        if (currentIndex[0] == idx) {
+                        if (dialog.isShowing() && currentIndex[0] == idx
+                                && pageGeneration[0] == requestGeneration) {
                             leftProgress.setVisibility(View.VISIBLE);
                             leftProgress.setText("素材 " + percent + "%");
                         }
                     }
                     @Override
                     public void onSuccess(Bitmap result) {
-                        if (currentIndex[0] == idx && result != null && !result.isRecycled()) {
+                        if (dialog.isShowing() && currentIndex[0] == idx
+                                && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                             leftImage.setImageBitmap(result);
                             leftEmpty.setVisibility(View.GONE);
-                            leftProgress.setText("素材已就绪");
+                            leftProgress.setText("素材 100%");
                             leftProgress.postDelayed(() -> {
-                                if (currentIndex[0] == idx) leftProgress.setVisibility(View.GONE);
-                            }, 800);
+                                if (dialog.isShowing() && currentIndex[0] == idx
+                                        && pageGeneration[0] == requestGeneration) {
+                                    leftProgress.setVisibility(View.GONE);
+                                }
+                            }, 1500);
                         }
                     }
                     @Override public void onError(Exception e) {
-                        if (currentIndex[0] == idx) {
-                            leftProgress.setVisibility(View.GONE);
+                        if (dialog.isShowing() && currentIndex[0] == idx
+                                && pageGeneration[0] == requestGeneration) {
+                            leftProgress.setText("素材加载失败");
+                            leftProgress.postDelayed(() -> {
+                                if (dialog.isShowing() && currentIndex[0] == idx
+                                        && pageGeneration[0] == requestGeneration) {
+                                    leftProgress.setVisibility(View.GONE);
+                                }
+                            }, 2000);
                             if (leftImage.getDrawable() == null) {
                                 leftEmpty.setVisibility(View.VISIBLE);
                             }
@@ -5555,16 +5601,21 @@ public final class MainActivity extends Activity {
         compareContainer.setOnTouchListener(touchListener);
 
         updateLayoutStructure.run();
-        renderPage.run();
         dialog.show();
 
         // 彻底消除浅色外线框与边缘发光，全屏沉浸呈现
         android.view.Window win = dialog.getWindow();
         if (win != null) {
             win.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.BLACK));
+            win.getDecorView().setBackgroundColor(Color.BLACK);
             win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            win.setGravity(Gravity.FILL);
+            win.setDimAmount(0f);
             win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            win.setStatusBarColor(Color.BLACK);
+            win.setNavigationBarColor(Color.BLACK);
         }
+        renderPage.run();
     }
 
     /** 整页渲染开始时重置首发预算：只让最先出现的少量缩略图立刻加载。 */

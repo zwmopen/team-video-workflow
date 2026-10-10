@@ -1,7 +1,7 @@
-# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.76 / iPhone 0.8.76）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.79 / iPhone 0.8.79）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.76 / versionCode 187**、**iPhone 0.8.76 / build 187**。安装包、CI 与真机回归尚未完成。
+> 本轮源码候选：**Android 0.8.79 / versionCode 190**、**iPhone 0.8.79 / build 190**。Android 的 100 项单测、Debug/Release Lint 与 Debug/Release APK 构建通过；候选版 CI、iOS 构建和两端真机回归尚未完成。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
 ## 先搞清这几个东西分别是谁
@@ -664,4 +664,5 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

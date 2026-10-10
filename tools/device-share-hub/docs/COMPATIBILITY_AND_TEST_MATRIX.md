@@ -1,6 +1,13 @@
 # 三端兼容与测试矩阵
 
-更新时间：2026-08-26
+更新时间：2026-10-11
+
+## 2026-10-11 Android/iOS 0.8.79 对比视图修复候选
+
+- Android versionCode 190、iOS build 190；候选说明见 docs/MAINTAINER_HANDOFF.md。
+- Android 单测 100 项通过；Debug/Release Lint 与 APK 构建均通过，Release 包名/版本/签名和 debuggable 状态已核对；iOS 候选构建和本轮 CI 尚未执行。
+- 当前无在线 Android ADB 设备，Android/iPhone 真机界面、缓存进度和覆盖安装均待验收；旧版本截图不作为候选版通过证据。
+- 两端验收按 docs/TEST_PLAYBOOK.md 的 DSH-150 清单执行，尤其覆盖快速翻页、全屏边缘和 iOS 素材图片映射。
 
 ## 2026-08-27 Android 0.6.62 / iPhone 0.6.45 / Windows V4.3.29 正式发布
 
@@ -79,3 +86,11 @@
 - macOS CI runner 不一定预装可启动的 iPhone 模拟器：有运行时就执行测试；没有时至少编译 App 与测试包，再执行真机 SDK 构建。
 - iPhone 6 不能依赖 SwiftUI 生命周期、NavigationStack、SF Symbols 或 iOS 13 动态系统色；兼容 UI 使用 UIKit 和版本保护。
 - 实机测试数据完成后必须清理，并再次核对用户原作品数量，避免测试素材污染作品库。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
