@@ -668,9 +668,22 @@ public final class OnlineGalleryClient {
     /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
     /// DSH-099 失败 NSLog 保留。
     public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
+        loadImageWithProgress(path: path, workId: workId, isThumbnail: isThumbnail, maxPixel: maxPixel, onProgress: nil, completion: completion)
+    }
+
+    /// 支持实时下载进度回调的原图/缩略图拉取
+    public func loadImageWithProgress(
+        path: String,
+        workId: String? = nil,
+        isThumbnail: Bool = true,
+        maxPixel: CGFloat = 200,
+        onProgress: ((Int) -> Void)? = nil,
+        completion: @escaping (UIImage?) -> Void
+    ) {
         let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
         let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
+            onProgress?(100)
             completion(memoryCached)
             return
         }
@@ -704,11 +717,16 @@ public final class OnlineGalleryClient {
             guard let self = self else { return }
             if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
                 self.imageCache.setObject(diskImage, forKey: cacheKey)
-                DispatchQueue.main.async { completion(diskImage) }
+                DispatchQueue.main.async {
+                    onProgress?(100)
+                    completion(diskImage)
+                }
                 return
             }
 
-            self.session.dataTask(with: url) { [weak self] data, _, _ in
+            var observation: NSKeyValueObservation?
+            let task = self.session.dataTask(with: url) { [weak self] data, _, _ in
+                observation?.invalidate()
                 guard let self = self, let data = data, let image = UIImage(data: data) else {
                     // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
                     NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
@@ -723,8 +741,18 @@ public final class OnlineGalleryClient {
                     NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
                           path, error.localizedDescription)
                 }
-                DispatchQueue.main.async { completion(image) }
-            }.resume()
+                DispatchQueue.main.async {
+                    onProgress?(100)
+                    completion(image)
+                }
+            }
+            if let onProg = onProgress {
+                observation = task.progress.observe(\.fractionCompleted) { progress, _ in
+                    let pct = Int(progress.fractionCompleted * 100)
+                    DispatchQueue.main.async { onProg(pct) }
+                }
+            }
+            task.resume()
         }
     }
 

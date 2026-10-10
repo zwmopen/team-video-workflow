@@ -4624,7 +4624,7 @@ public final class MainActivity extends Activity {
         // 三按钮从 platformRow 拆出，单独一行横排在平台按钮下方。
         // 重置按钮 DSH-108 同步去掉 useCount>0 守卫（与 DSH-105 iOS 对齐），常驻可见。
         Button reset = new Button(this);
-        reset.setText("重置");
+        reset.setText("重置状态");
         styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
         reset.setContentDescription("重置电脑在线作品使用记录");
         reset.setOnClickListener(v -> confirmResetOnlineWork(work.id));
@@ -4637,13 +4637,13 @@ public final class MainActivity extends Activity {
 
         LinearLayout bottomActionRow = new LinearLayout(this);
         bottomActionRow.setOrientation(LinearLayout.HORIZONTAL);
-        bottomActionRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        bottomActionRow.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(-1, -2);
         bottomParams.setMargins(0, dp(8), 0, dp(2));
         // DSH-108：bottomActionRow 的子视图需要用 LinearLayout.LayoutParams 才能设置 margin
         LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        btnParams.setMargins(dp(6), 0, 0, 0);
+        btnParams.setMargins(dp(4), 0, dp(4), 0);
         bottomActionRow.addView(reset, btnParams);
         bottomActionRow.addView(copyPathButton(work.path, "电脑在线作品"), btnParams);
         bottomActionRow.addView(delete, btnParams);
@@ -5161,30 +5161,26 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
-        root.setPadding(dp(12), dp(16), dp(12), dp(16));
+        root.setPadding(dp(10), dp(10), dp(10), dp(10));
 
         // 顶部导航栏
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(0, 0, 0, dp(10));
+        topBar.setPadding(0, 0, 0, dp(8));
 
-        TextView titleView = text("素材 vs 成品同框对比 · " + work.title, 13, true);
+        TextView titleView = text("对比视图 · " + work.title, 13, true);
         titleView.setTextColor(Color.WHITE);
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         topBar.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1.0f));
 
-        TextView simBadge = text("", 11, true);
-        if (work.maxSimilarity > 0) {
-            simBadge.setText("🛡️ 相似度 " + (int) Math.round(work.maxSimilarity * 100) + "%");
-        } else {
-            simBadge.setText("🆚 同框对比");
-        }
+        TextView simBadge = text(work.maxSimilarity > 0 ? ("🛡️ " + (int) Math.round(work.maxSimilarity * 100) + "%") : "对比视图", 11, true);
         simBadge.setTextColor(Color.rgb(90, 240, 140));
-        simBadge.setBackground(round(Color.rgb(15, 90, 45), 6));
-        simBadge.setPadding(dp(6), dp(3), dp(6), dp(3));
-        LinearLayout.LayoutParams simParams = new LinearLayout.LayoutParams(-2, -2);
+        simBadge.setBackground(round(Color.rgb(45, 50, 48), 8));
+        simBadge.setGravity(Gravity.CENTER);
+        simBadge.setPadding(dp(10), dp(4), dp(10), dp(4));
+        LinearLayout.LayoutParams simParams = new LinearLayout.LayoutParams(-2, dp(32));
         simParams.setMargins(dp(6), 0, dp(6), 0);
         topBar.addView(simBadge, simParams);
 
@@ -5192,7 +5188,9 @@ public final class MainActivity extends Activity {
         toggleLayoutBtn.setText("↕️ 上下同框");
         toggleLayoutBtn.setTextSize(11);
         toggleLayoutBtn.setTextColor(Color.WHITE);
-        toggleLayoutBtn.setBackground(round(Color.rgb(55, 60, 58), 8));
+        toggleLayoutBtn.setGravity(Gravity.CENTER);
+        toggleLayoutBtn.setBackground(round(Color.rgb(45, 50, 48), 8));
+        toggleLayoutBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
         LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-2, dp(32));
         toggleParams.setMargins(0, 0, dp(6), 0);
         topBar.addView(toggleLayoutBtn, toggleParams);
@@ -5201,6 +5199,9 @@ public final class MainActivity extends Activity {
         closeBtn.setText("✕");
         closeBtn.setTextSize(14);
         closeBtn.setTextColor(Color.WHITE);
+        closeBtn.setGravity(Gravity.CENTER);
+        closeBtn.setPadding(0, 0, 0, 0);
+        closeBtn.setIncludeFontPadding(false);
         closeBtn.setBackground(round(Color.rgb(55, 60, 58), 16));
         topBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(32), dp(32)));
 
@@ -5215,19 +5216,28 @@ public final class MainActivity extends Activity {
 
         // 左/上：素材容器
         FrameLayout leftFrame = new FrameLayout(this);
-        leftFrame.setBackground(round(Color.rgb(20, 22, 21), 10));
+        leftFrame.setBackgroundColor(Color.BLACK);
         ImageView leftImage = new ImageView(this);
         leftImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
         leftImage.setAdjustViewBounds(true);
         leftFrame.addView(leftImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
 
-        TextView leftBadge = text("📷 素材原片", 10, true);
+        TextView leftBadge = text("素材", 10, true);
         leftBadge.setTextColor(Color.WHITE);
         leftBadge.setBackground(round(Color.argb(190, 0, 0, 0), 4));
         leftBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
         FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.END);
-        lBadgeParams.setMargins(0, 0, dp(10), 0);
+        lBadgeParams.setMargins(0, 0, dp(8), 0);
         leftFrame.addView(leftBadge, lBadgeParams);
+
+        TextView leftProgress = text("", 10, false);
+        leftProgress.setTextColor(Color.rgb(200, 200, 200));
+        leftProgress.setBackground(round(Color.argb(190, 0, 0, 0), 4));
+        leftProgress.setPadding(dp(6), dp(2), dp(6), dp(2));
+        leftProgress.setVisibility(View.GONE);
+        FrameLayout.LayoutParams lProgParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+        lProgParams.setMargins(0, 0, dp(8), dp(8));
+        leftFrame.addView(leftProgress, lProgParams);
 
         TextView leftEmpty = text("该页未关联素材\n或原图已删除", 12, false);
         leftEmpty.setTextColor(Color.GRAY);
@@ -5236,44 +5246,71 @@ public final class MainActivity extends Activity {
 
         // 右/下：成品容器
         FrameLayout rightFrame = new FrameLayout(this);
-        rightFrame.setBackground(round(Color.rgb(20, 22, 21), 10));
+        rightFrame.setBackgroundColor(Color.BLACK);
         ImageView rightImage = new ImageView(this);
         rightImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
         rightImage.setAdjustViewBounds(true);
         rightFrame.addView(rightImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
 
-        TextView rightBadge = text("✨ AI 成品", 10, true);
+        TextView rightBadge = text("成品", 10, true);
         rightBadge.setTextColor(Color.WHITE);
         rightBadge.setBackground(round(Color.argb(210, 16, 133, 87), 4));
         rightBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
         FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.END);
-        rBadgeParams.setMargins(0, 0, dp(10), 0);
+        rBadgeParams.setMargins(0, 0, dp(8), 0);
         rightFrame.addView(rightBadge, rBadgeParams);
+
+        TextView rightProgress = text("", 10, false);
+        rightProgress.setTextColor(Color.rgb(200, 200, 200));
+        rightProgress.setBackground(round(Color.argb(190, 0, 0, 0), 4));
+        rightProgress.setPadding(dp(6), dp(2), dp(6), dp(2));
+        rightProgress.setVisibility(View.GONE);
+        FrameLayout.LayoutParams rProgParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+        rProgParams.setMargins(0, 0, dp(8), dp(8));
+        rightFrame.addView(rightProgress, rProgParams);
 
         // 底部控制栏
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setGravity(Gravity.CENTER);
-        bottomBar.setPadding(0, dp(10), 0, 0);
+        bottomBar.setPadding(0, dp(8), 0, 0);
 
-        Button prevBtn = smallButton("‹ 上一页", false);
-        TextView pageText = text("P1 / P1", 13, true);
+        Button prevBtn = new Button(this);
+        prevBtn.setText("‹");
+        prevBtn.setTextSize(20);
+        prevBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        prevBtn.setTextColor(Color.WHITE);
+        prevBtn.setGravity(Gravity.CENTER);
+        prevBtn.setPadding(0, 0, 0, 0);
+        prevBtn.setIncludeFontPadding(false);
+        prevBtn.setBackground(round(Color.rgb(45, 50, 48), 18));
+
+        TextView pageText = text("P1 / P1", 12, true);
         pageText.setTextColor(Color.WHITE);
         pageText.setGravity(Gravity.CENTER);
-        Button nextBtn = smallButton("下一页 ›", true);
 
-        bottomBar.addView(prevBtn, new LinearLayout.LayoutParams(-2, dp(38)));
-        LinearLayout.LayoutParams pageParams = new LinearLayout.LayoutParams(dp(100), -2);
+        Button nextBtn = new Button(this);
+        nextBtn.setText("›");
+        nextBtn.setTextSize(20);
+        nextBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        nextBtn.setTextColor(Color.WHITE);
+        nextBtn.setGravity(Gravity.CENTER);
+        nextBtn.setPadding(0, 0, 0, 0);
+        nextBtn.setIncludeFontPadding(false);
+        nextBtn.setBackground(round(Color.rgb(45, 50, 48), 18));
+
+        bottomBar.addView(prevBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        LinearLayout.LayoutParams pageParams = new LinearLayout.LayoutParams(dp(80), -2);
         pageParams.setMargins(dp(12), 0, dp(12), 0);
         bottomBar.addView(pageText, pageParams);
-        bottomBar.addView(nextBtn, new LinearLayout.LayoutParams(-2, dp(38)));
+        bottomBar.addView(nextBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
 
         root.addView(bottomBar, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView navHint = text("💡 提示：点击「↔️/↕️」切换排布，点击上一页/下一页或左右轻扫翻页", 11, false);
+        TextView navHint = text("左右轻扫或点击 ‹ › 翻页", 11, false);
         navHint.setTextColor(Color.rgb(140, 145, 142));
         navHint.setGravity(Gravity.CENTER);
-        root.addView(navHint, margins(0, dp(6), 0, 0));
+        root.addView(navHint, margins(0, dp(4), 0, 0));
 
         builder.setView(root);
         AlertDialog dialog = builder.create();
@@ -5286,24 +5323,28 @@ public final class MainActivity extends Activity {
             FrameLayout.LayoutParams rp = (FrameLayout.LayoutParams) rightBadge.getLayoutParams();
             if (isHorizontal[0]) {
                 compareContainer.setOrientation(LinearLayout.HORIZONTAL);
+                compareContainer.setGravity(Gravity.CENTER);
                 LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(0, -1, 1.0f);
+                p1.gravity = Gravity.CENTER_VERTICAL;
                 p1.setMargins(0, 0, dp(6), 0);
                 LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(0, -1, 1.0f);
+                p2.gravity = Gravity.CENTER_VERTICAL;
                 compareContainer.addView(leftFrame, p1);
                 compareContainer.addView(rightFrame, p2);
                 toggleLayoutBtn.setText("↔️ 左右并排");
                 if (lp != null) {
-                    lp.gravity = Gravity.BOTTOM | Gravity.START;
-                    lp.setMargins(dp(8), 0, 0, dp(8));
+                    lp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
+                    lp.setMargins(0, 0, dp(8), 0);
                     leftBadge.setLayoutParams(lp);
                 }
                 if (rp != null) {
-                    rp.gravity = Gravity.BOTTOM | Gravity.END;
-                    rp.setMargins(0, 0, dp(8), dp(8));
+                    rp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
+                    rp.setMargins(0, 0, dp(8), 0);
                     rightBadge.setLayoutParams(rp);
                 }
             } else {
                 compareContainer.setOrientation(LinearLayout.VERTICAL);
+                compareContainer.setGravity(Gravity.CENTER);
                 LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
                 p1.setMargins(0, 0, 0, dp(6));
                 LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
@@ -5312,12 +5353,12 @@ public final class MainActivity extends Activity {
                 toggleLayoutBtn.setText("↕️ 上下同框");
                 if (lp != null) {
                     lp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-                    lp.setMargins(0, 0, dp(10), 0);
+                    lp.setMargins(0, 0, dp(8), 0);
                     leftBadge.setLayoutParams(lp);
                 }
                 if (rp != null) {
                     rp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-                    rp.setMargins(0, 0, dp(10), 0);
+                    rp.setMargins(0, 0, dp(8), 0);
                     rightBadge.setLayoutParams(rp);
                 }
             }
@@ -5361,15 +5402,30 @@ public final class MainActivity extends Activity {
                 });
             }
 
-            // 异步加载成品 100% 高清原图
-            onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.Callback<Bitmap>() {
+            // 异步加载成品 100% 高清原图（带百分比进度）
+            rightProgress.setVisibility(View.VISIBLE);
+            rightProgress.setText("原图加载中…");
+            onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
+                @Override
+                public void onProgress(int percent) {
+                    if (currentIndex[0] == idx) {
+                        rightProgress.setVisibility(View.VISIBLE);
+                        rightProgress.setText("原图 " + percent + "%");
+                    }
+                }
                 @Override
                 public void onSuccess(Bitmap result) {
                     if (currentIndex[0] == idx && result != null && !result.isRecycled()) {
                         rightImage.setImageBitmap(result);
+                        rightProgress.setText("原图已就绪");
+                        rightProgress.postDelayed(() -> {
+                            if (currentIndex[0] == idx) rightProgress.setVisibility(View.GONE);
+                        }, 800);
                     }
                 }
-                @Override public void onError(Exception e) {}
+                @Override public void onError(Exception e) {
+                    if (currentIndex[0] == idx) rightProgress.setVisibility(View.GONE);
+                }
             });
 
             // 2. 原素材图：优先缩略图秒开占位（0ms 防黑屏）
@@ -5394,24 +5450,41 @@ public final class MainActivity extends Activity {
                     });
                 }
 
-                // 异步加载原素材 100% 高清原图
-                onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.Callback<Bitmap>() {
+                // 异步加载原素材 100% 高清原图（带百分比进度）
+                leftProgress.setVisibility(View.VISIBLE);
+                leftProgress.setText("素材加载中…");
+                onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
+                    @Override
+                    public void onProgress(int percent) {
+                        if (currentIndex[0] == idx) {
+                            leftProgress.setVisibility(View.VISIBLE);
+                            leftProgress.setText("素材 " + percent + "%");
+                        }
+                    }
                     @Override
                     public void onSuccess(Bitmap result) {
                         if (currentIndex[0] == idx && result != null && !result.isRecycled()) {
                             leftImage.setImageBitmap(result);
                             leftEmpty.setVisibility(View.GONE);
+                            leftProgress.setText("素材已就绪");
+                            leftProgress.postDelayed(() -> {
+                                if (currentIndex[0] == idx) leftProgress.setVisibility(View.GONE);
+                            }, 800);
                         }
                     }
                     @Override public void onError(Exception e) {
-                        if (currentIndex[0] == idx && leftImage.getDrawable() == null) {
-                            leftEmpty.setVisibility(View.VISIBLE);
+                        if (currentIndex[0] == idx) {
+                            leftProgress.setVisibility(View.GONE);
+                            if (leftImage.getDrawable() == null) {
+                                leftEmpty.setVisibility(View.VISIBLE);
+                            }
                         }
                     }
                 });
             } else {
                 leftImage.setImageBitmap(null);
                 leftEmpty.setVisibility(View.VISIBLE);
+                leftProgress.setVisibility(View.GONE);
             }
 
             // 3. 静默预加载同作品相邻前后图片（idx+1, idx-1, idx+2）的原图与缩略图
@@ -5484,6 +5557,14 @@ public final class MainActivity extends Activity {
         updateLayoutStructure.run();
         renderPage.run();
         dialog.show();
+
+        // 彻底消除浅色外线框与边缘发光，全屏沉浸呈现
+        android.view.Window win = dialog.getWindow();
+        if (win != null) {
+            win.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.BLACK));
+            win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        }
     }
 
     /** 整页渲染开始时重置首发预算：只让最先出现的少量缩略图立刻加载。 */

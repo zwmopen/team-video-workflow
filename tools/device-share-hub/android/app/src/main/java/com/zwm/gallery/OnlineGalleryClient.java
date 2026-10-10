@@ -94,6 +94,10 @@ public final class OnlineGalleryClient {
         void onError(Exception error);
     }
 
+    public interface ProgressCallback<T> extends Callback<T> {
+        void onProgress(int percent);
+    }
+
     public static final class CategoriesResult {
         public final List<CategoryItem> categories;
         public final List<CategoryItem> stages;
@@ -1048,6 +1052,9 @@ public final class OnlineGalleryClient {
                     opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
                     Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
                     if (bmp != null) {
+                        if (callback instanceof ProgressCallback) {
+                            mainHandler.post(() -> ((ProgressCallback<Bitmap>) callback).onProgress(100));
+                        }
                         mainHandler.post(() -> callback.onSuccess(bmp));
                         return;
                     }
@@ -1070,12 +1077,19 @@ public final class OnlineGalleryClient {
                 if (code != 200) {
                     throw new Exception("HTTP " + code);
                 }
+                int totalBytes = conn.getContentLength();
                 InputStream in = new BufferedInputStream(conn.getInputStream());
                 FileOutputStream fos = new FileOutputStream(tempFile);
                 byte[] buf = new byte[8192];
                 int len;
+                long readBytes = 0;
                 while ((len = in.read(buf)) != -1) {
                     fos.write(buf, 0, len);
+                    readBytes += len;
+                    if (totalBytes > 0 && callback instanceof ProgressCallback) {
+                        final int percent = (int) Math.min(99, (readBytes * 100L) / totalBytes);
+                        mainHandler.post(() -> ((ProgressCallback<Bitmap>) callback).onProgress(percent));
+                    }
                 }
                 fos.flush();
                 fos.close();
@@ -1090,6 +1104,9 @@ public final class OnlineGalleryClient {
                 opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
                 Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
                 if (bmp == null) throw new Exception("Failed to decode saved bitmap");
+                if (callback instanceof ProgressCallback) {
+                    mainHandler.post(() -> ((ProgressCallback<Bitmap>) callback).onProgress(100));
+                }
                 mainHandler.post(() -> callback.onSuccess(bmp));
             } catch (Exception e) {
                 if (tempFile.exists()) tempFile.delete();

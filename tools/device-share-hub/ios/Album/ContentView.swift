@@ -45,6 +45,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var filterScrollView: UIScrollView!
     private var filterStackView: UIStackView!
     private var filterButtons: [String: UIButton] = [:]
+    private let onlineStatusLabel = UILabel()
 
     // MARK: - 在线相册状态
     private var isOnlineMode: Bool = false
@@ -499,6 +500,16 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func configureFilterBar() {
+        onlineStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        onlineStatusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        onlineStatusLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
+        onlineStatusLabel.backgroundColor = UIColor(red: 231/255, green: 239/255, blue: 233/255, alpha: 1)
+        onlineStatusLabel.layer.cornerRadius = 6
+        onlineStatusLabel.clipsToBounds = true
+        onlineStatusLabel.textAlignment = .center
+        onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
+        view.addSubview(onlineStatusLabel)
+
         filterScrollView = UIScrollView()
         filterScrollView.translatesAutoresizingMaskIntoConstraints = false
         filterScrollView.showsHorizontalScrollIndicator = false
@@ -518,9 +529,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         filterScrollView.addSubview(filterStackView)
 
         NSLayoutConstraint.activate([
+            onlineStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            onlineStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            onlineStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            onlineStatusLabel.heightAnchor.constraint(equalToConstant: 24),
+
             filterScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             filterScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            filterScrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            filterScrollView.topAnchor.constraint(equalTo: onlineStatusLabel.bottomAnchor, constant: 5),
             filterScrollView.heightAnchor.constraint(equalToConstant: 36),
 
             filterStackView.leadingAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.leadingAnchor),
@@ -529,6 +545,18 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             filterStackView.bottomAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.bottomAnchor),
             filterStackView.heightAnchor.constraint(equalTo: filterScrollView.frameLayoutGuide.heightAnchor)
         ])
+    }
+
+    private func updateOnlineStatusHint() {
+        if isOnlineMode {
+            onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
+            onlineStatusLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
+            onlineStatusLabel.backgroundColor = UIColor(red: 231/255, green: 239/255, blue: 233/255, alpha: 1)
+        } else {
+            onlineStatusLabel.text = "📱 手机本地作品 · 共 \(library.works.count) 套"
+            onlineStatusLabel.textColor = UIColor(red: 0.15, green: 0.35, blue: 0.55, alpha: 1)
+            onlineStatusLabel.backgroundColor = UIColor(red: 235/255, green: 243/255, blue: 250/255, alpha: 1)
+        }
     }
 
     private final class CategoryFilterButton: UIButton {
@@ -1113,7 +1141,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         hasCopyText: w.hasCopyText, dispatchedTo: mergedDisp,
                         updatedAt: w.updatedAt, garbage: w.garbage, garbageRemark: w.garbageRemark,
                         path: w.path, firstSharedAtMs: firstShared, expireAtMs: expireAt,
-                        originDevice: w.originDevice, dispatchedVersions: mergedVers
+                        originDevice: w.originDevice, dispatchedVersions: mergedVers,
+                        season: w.season, flowType: w.flowType, tags: w.tags,
+                        sourceImages: w.sourceImages, sourceNames: w.sourceNames,
+                        hasSourceCompare: w.hasSourceCompare, maxSimilarity: w.maxSimilarity,
+                        similarityTag: w.similarityTag
                     )
                     mergedWorks.append(updated)
                 }
@@ -1302,6 +1334,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             filterStackView.addArrangedSubview(btn)
             filterButtons[key] = btn
         }
+        updateOnlineStatusHint()
     }
 
     // MARK: - 本地模式渲染
@@ -1376,6 +1409,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             filterButtons[folder] = button
         }
         filterScrollView.accessibilityLabel = "作品合集分类"
+        updateOnlineStatusHint()
     }
 
     private func createFilterButton(key: String, display: String, fullTitle: String, isSelected: Bool, isPinned: Bool = false) -> UIButton {
@@ -2297,8 +2331,8 @@ private final class ThumbnailButton: UIButton {
         layer.borderWidth = 1
         layer.borderColor = AppColors.separator.cgColor
         clipsToBounds = true
-        let wc = widthAnchor.constraint(equalToConstant: 64)
-        let hc = heightAnchor.constraint(equalToConstant: 64)
+        let wc = widthAnchor.constraint(equalToConstant: 84)
+        let hc = heightAnchor.constraint(equalToConstant: 112)
         widthConstraint = wc
         heightConstraint = hc
         NSLayoutConstraint.activate([
@@ -2313,10 +2347,14 @@ private final class ThumbnailButton: UIButton {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    func setDimensions(width: CGFloat, height: CGFloat) {
+        widthConstraint?.constant = width
+        heightConstraint?.constant = height
+        layer.cornerRadius = width <= 48 ? 6 : 8
+    }
+
     func setSize(_ side: CGFloat) {
-        widthConstraint?.constant = side
-        heightConstraint?.constant = side
-        layer.cornerRadius = side <= 48 ? 7 : 10
+        setDimensions(width: side, height: side)
     }
 
     func load(url: URL) {
@@ -2837,7 +2875,7 @@ private final class WorkCell: UICollectionViewCell {
     /// 平台按钮行高（对齐 Android `compactButton` 的 dp(36)）
     static let platformRowHeight: CGFloat = 36
     /// 卡片基准高度（平台按钮 1 行时）。多行时按 `platformRowHeight + platformSpacing` 递增。
-    static let cardBaseHeight: CGFloat = 212
+    static let cardBaseHeight: CGFloat = 264
     /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
     static let listBaseHeight: CGFloat = 148
     /// 对比视图卡片基准高度（双图并排对比区 116pt + 底部操作行）
@@ -2938,7 +2976,7 @@ private final class WorkCell: UICollectionViewCell {
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
-        let pshc = previewScroll.heightAnchor.constraint(equalToConstant: 64)
+        let pshc = previewScroll.heightAnchor.constraint(equalToConstant: 116)
         previewScrollHeightConstraint = pshc
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
@@ -2981,13 +3019,13 @@ private final class WorkCell: UICollectionViewCell {
         currentViewMode = viewMode
         switch viewMode {
         case .grid:
-            previewScrollHeightConstraint?.constant = 64
+            previewScrollHeightConstraint?.constant = 116
             actionRow.isHidden = false
         case .list:
             previewScrollHeightConstraint?.constant = 44
             actionRow.isHidden = true
         case .compare:
-            previewScrollHeightConstraint?.constant = hasSourceCompare ? 116 : 64
+            previewScrollHeightConstraint?.constant = 116
             actionRow.isHidden = false
         }
     }
@@ -3096,7 +3134,7 @@ private final class WorkCell: UICollectionViewCell {
             renderOnlineComparePreviews(entry)
         } else {
             // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键
-            renderOnlinePreviews(entry.images, workId: entry.id, thumbSide: viewMode == .list ? 44 : 64)
+            renderOnlinePreviews(entry.images, workId: entry.id, thumbSide: viewMode == .list ? 44 : 84)
         }
         configureOnlineButtons(entry)
     }
@@ -3143,7 +3181,7 @@ private final class WorkCell: UICollectionViewCell {
         return compactList.prefix(2).joined(separator: " | ") + " 等\(compactList.count)条"
     }
 
-    private func renderOnlinePreviews(_ paths: [String], workId: String, thumbSide: CGFloat = 64) {
+    private func renderOnlinePreviews(_ paths: [String], workId: String, thumbSide: CGFloat = 84) {
         for v in previewStack.arrangedSubviews where !(v is ThumbnailButton) {
             previewStack.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -3164,7 +3202,11 @@ private final class WorkCell: UICollectionViewCell {
                 button.addTarget(self, action: #selector(onlineThumbnailTapped(_:)), for: .touchUpInside)
                 previewStack.addArrangedSubview(button)
             }
-            button.setSize(thumbSide)
+            if thumbSide <= 44 {
+                button.setDimensions(width: 44, height: 44)
+            } else {
+                button.setDimensions(width: 84, height: 112)
+            }
             button.tag = index
             // DSH-102：loadOnline 传入 workId，让 loadImage 走 ?id+?file 双键
             // 封面（第 1 张）立刻秒级上屏，后续图片错峰微延迟加载，杜绝打满 URLSession
@@ -3368,11 +3410,11 @@ private final class WorkCell: UICollectionViewCell {
         detail.text = localDetail
         detail.textColor = AppColors.secondaryText
 
-        renderPreviews(work.imageURLs, thumbSide: viewMode == .list ? 44 : 64)
+        renderPreviews(work.imageURLs, thumbSide: viewMode == .list ? 44 : 84)
         configureButtons(work)
     }
 
-    private func renderPreviews(_ urls: [URL], thumbSide: CGFloat = 64) {
+    private func renderPreviews(_ urls: [URL], thumbSide: CGFloat = 84) {
         for v in previewStack.arrangedSubviews where !(v is ThumbnailButton) {
             previewStack.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -3394,7 +3436,11 @@ private final class WorkCell: UICollectionViewCell {
                 button.addTarget(self, action: #selector(thumbnailTapped(_:)), for: .touchUpInside)
                 previewStack.addArrangedSubview(button)
             }
-            button.setSize(thumbSide)
+            if thumbSide <= 44 {
+                button.setDimensions(width: 44, height: 44)
+            } else {
+                button.setDimensions(width: 84, height: 112)
+            }
             button.tag = index
             button.load(url: url)
         }
@@ -3440,7 +3486,7 @@ private final class WorkCell: UICollectionViewCell {
 
     private func configureResetButton() {
         // DSH-097：撤销 DSH-096 高对比（橙底橙字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
-        resetButton.setTitle("重置", for: .normal)
+        resetButton.setTitle("重置状态", for: .normal)
         resetButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
         resetButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
         resetButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
@@ -3786,7 +3832,15 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
                     firstSharedAtMs: self.entry.firstSharedAtMs,
                     expireAtMs: self.entry.expireAtMs,
                     originDevice: self.entry.originDevice,
-                    dispatchedVersions: self.entry.dispatchedVersions
+                    dispatchedVersions: self.entry.dispatchedVersions,
+                    season: self.entry.season,
+                    flowType: self.entry.flowType,
+                    tags: self.entry.tags,
+                    sourceImages: self.entry.sourceImages,
+                    sourceNames: self.entry.sourceNames,
+                    hasSourceCompare: self.entry.hasSourceCompare,
+                    maxSimilarity: self.entry.maxSimilarity,
+                    similarityTag: self.entry.similarityTag
                 )
                 self.onImageDeleted?(wid, newImages)
 
@@ -4258,6 +4312,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let topBar = UIView()
     private let titleLabel = UILabel()
     private let pageLabel = UILabel()
+    private let hintLabel = UILabel()
     private let similarityBadge = UILabel()
     private let layoutModeButton = UIButton(type: .system)
     private let closeButton = UIButton(type: .system)
@@ -4269,6 +4324,8 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let rightImageView = UIImageView()
     private let leftBadge = UILabel()
     private let rightBadge = UILabel()
+    private let leftProgressLabel = UILabel()
+    private let rightProgressLabel = UILabel()
     private let emptyLeftLabel = UILabel()
 
     private let bottomBar = UIView()
@@ -4301,9 +4358,9 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         view.addSubview(topBar)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "素材 vs 成品同框对比 · \(entry.title)"
+        titleLabel.text = "对比视图 · \(entry.title)"
         titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingMiddle
         topBar.addSubview(titleLabel)
 
@@ -4312,31 +4369,33 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             let pct = Int(round(entry.maxSimilarity * 100))
             similarityBadge.text = "🛡️ 相似度 \(pct)%"
         } else {
-            similarityBadge.text = "🆚 同框对比"
+            similarityBadge.text = "对比视图"
         }
-        similarityBadge.font = .systemFont(ofSize: 11, weight: .bold)
+        similarityBadge.font = .systemFont(ofSize: 12, weight: .semibold)
         similarityBadge.textColor = UIColor(red: 0.35, green: 0.95, blue: 0.55, alpha: 1.0)
         similarityBadge.backgroundColor = UIColor(red: 0.06, green: 0.35, blue: 0.18, alpha: 0.8)
         similarityBadge.textAlignment = .center
-        similarityBadge.layer.cornerRadius = 6
+        similarityBadge.layer.cornerRadius = 8
         similarityBadge.clipsToBounds = true
         topBar.addSubview(similarityBadge)
 
         layoutModeButton.translatesAutoresizingMaskIntoConstraints = false
         layoutModeButton.setTitle("↕️ 上下同框", for: .normal)
-        layoutModeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        layoutModeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
         layoutModeButton.setTitleColor(.white, for: .normal)
         layoutModeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
         layoutModeButton.layer.cornerRadius = 8
+        layoutModeButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         layoutModeButton.addTarget(self, action: #selector(toggleLayoutMode), for: .touchUpInside)
         topBar.addSubview(layoutModeButton)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("✕", for: .normal)
         closeButton.setTitleColor(.white, for: .normal)
-        closeButton.titleLabel?.font = .systemFont(ofSize: 20, weight: .medium)
+        closeButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
         closeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
         closeButton.layer.cornerRadius = 16
+        closeButton.contentEdgeInsets = .zero
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         topBar.addSubview(closeButton)
 
@@ -4345,29 +4404,36 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         bottomBar.backgroundColor = UIColor.black.withAlphaComponent(0.65)
         view.addSubview(bottomBar)
 
-        prevButton.translatesAutoresizingMaskIntoConstraints = false
-        prevButton.setTitle("◀ 上一页", for: .normal)
-        prevButton.setTitleColor(.white, for: .normal)
-        prevButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
-        prevButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
-        prevButton.layer.cornerRadius = 8
-        prevButton.addTarget(self, action: #selector(prevPage), for: .touchUpInside)
-        bottomBar.addSubview(prevButton)
-
         pageLabel.translatesAutoresizingMaskIntoConstraints = false
         pageLabel.textAlignment = .center
         pageLabel.textColor = .white
-        pageLabel.font = .systemFont(ofSize: 14, weight: .bold)
+        pageLabel.font = .systemFont(ofSize: 13, weight: .bold)
         bottomBar.addSubview(pageLabel)
 
+        prevButton.translatesAutoresizingMaskIntoConstraints = false
+        prevButton.setTitle("‹", for: .normal)
+        prevButton.setTitleColor(.white, for: .normal)
+        prevButton.titleLabel?.font = .systemFont(ofSize: 22, weight: .bold)
+        prevButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
+        prevButton.layer.cornerRadius = 16
+        prevButton.addTarget(self, action: #selector(prevPage), for: .touchUpInside)
+        bottomBar.addSubview(prevButton)
+
         nextButton.translatesAutoresizingMaskIntoConstraints = false
-        nextButton.setTitle("下一页 ▶", for: .normal)
+        nextButton.setTitle("›", for: .normal)
         nextButton.setTitleColor(.white, for: .normal)
-        nextButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        nextButton.titleLabel?.font = .systemFont(ofSize: 22, weight: .bold)
         nextButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
-        nextButton.layer.cornerRadius = 8
+        nextButton.layer.cornerRadius = 16
         nextButton.addTarget(self, action: #selector(nextPage), for: .touchUpInside)
         bottomBar.addSubview(nextButton)
+
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+        hintLabel.text = "左右轻扫或点击 ‹ › 翻页"
+        hintLabel.textColor = UIColor(white: 0.65, alpha: 1.0)
+        hintLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        hintLabel.textAlignment = .center
+        bottomBar.addSubview(hintLabel)
 
         // 中间主对比区域
         containerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -4377,7 +4443,11 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         containerStack.alignment = .fill
         view.addSubview(containerStack)
 
-        setupImageViewContainer(container: leftContainer, imageView: leftImageView, badge: leftBadge, badgeText: "📷 素材原片", badgeBg: UIColor.black.withAlphaComponent(0.72))
+        setupImageViewContainer(
+            container: leftContainer, imageView: leftImageView,
+            badge: leftBadge, badgeText: "素材", badgeBg: UIColor.black.withAlphaComponent(0.72),
+            progressLabel: leftProgressLabel
+        )
         emptyLeftLabel.text = "该页未关联素材\n或原图已删除"
         emptyLeftLabel.textColor = .lightGray
         emptyLeftLabel.font = .systemFont(ofSize: 13)
@@ -4390,7 +4460,11 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             emptyLeftLabel.centerYAnchor.constraint(equalTo: leftContainer.centerYAnchor)
         ])
 
-        setupImageViewContainer(container: rightContainer, imageView: rightImageView, badge: rightBadge, badgeText: "✨ AI 成品", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88))
+        setupImageViewContainer(
+            container: rightContainer, imageView: rightImageView,
+            badge: rightBadge, badgeText: "成品", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88),
+            progressLabel: rightProgressLabel
+        )
 
         containerStack.addArrangedSubview(leftContainer)
         containerStack.addArrangedSubview(rightContainer)
@@ -4406,15 +4480,14 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
 
-            layoutModeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -10),
+            layoutModeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
             layoutModeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            layoutModeButton.widthAnchor.constraint(equalToConstant: 92),
-            layoutModeButton.heightAnchor.constraint(equalToConstant: 30),
+            layoutModeButton.heightAnchor.constraint(equalToConstant: 32),
 
-            similarityBadge.trailingAnchor.constraint(equalTo: layoutModeButton.leadingAnchor, constant: -10),
+            similarityBadge.trailingAnchor.constraint(equalTo: layoutModeButton.leadingAnchor, constant: -8),
             similarityBadge.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            similarityBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
-            similarityBadge.heightAnchor.constraint(equalToConstant: 24),
+            similarityBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
+            similarityBadge.heightAnchor.constraint(equalToConstant: 32),
 
             titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 14),
             titleLabel.trailingAnchor.constraint(equalTo: similarityBadge.leadingAnchor, constant: -8),
@@ -4423,20 +4496,23 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomBar.heightAnchor.constraint(equalToConstant: 50),
-
-            prevButton.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
-            prevButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            prevButton.widthAnchor.constraint(equalToConstant: 88),
-            prevButton.heightAnchor.constraint(equalToConstant: 36),
+            bottomBar.heightAnchor.constraint(equalToConstant: 52),
 
             pageLabel.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
-            pageLabel.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            pageLabel.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 5),
 
-            nextButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
-            nextButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            nextButton.widthAnchor.constraint(equalToConstant: 88),
-            nextButton.heightAnchor.constraint(equalToConstant: 36),
+            prevButton.trailingAnchor.constraint(equalTo: pageLabel.leadingAnchor, constant: -16),
+            prevButton.centerYAnchor.constraint(equalTo: pageLabel.centerYAnchor),
+            prevButton.widthAnchor.constraint(equalToConstant: 32),
+            prevButton.heightAnchor.constraint(equalToConstant: 32),
+
+            nextButton.leadingAnchor.constraint(equalTo: pageLabel.trailingAnchor, constant: 16),
+            nextButton.centerYAnchor.constraint(equalTo: pageLabel.centerYAnchor),
+            nextButton.widthAnchor.constraint(equalToConstant: 32),
+            nextButton.heightAnchor.constraint(equalToConstant: 32),
+
+            hintLabel.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
+            hintLabel.topAnchor.constraint(equalTo: pageLabel.bottomAnchor, constant: 3),
 
             containerStack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 6),
             containerStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
@@ -4445,12 +4521,15 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         ])
     }
 
-    private func setupImageViewContainer(container: UIView, imageView: UIImageView, badge: UILabel, badgeText: String, badgeBg: UIColor) {
+    private func setupImageViewContainer(
+        container: UIView, imageView: UIImageView,
+        badge: UILabel, badgeText: String, badgeBg: UIColor,
+        progressLabel: UILabel
+    ) {
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = UIColor(white: 0.08, alpha: 1)
-        container.layer.cornerRadius = 12
-        container.layer.borderWidth = 1
-        container.layer.borderColor = UIColor(white: 0.22, alpha: 1).cgColor
+        container.layer.cornerRadius = 10
+        container.layer.borderWidth = 0
         container.clipsToBounds = true
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -4460,13 +4539,23 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
         badge.translatesAutoresizingMaskIntoConstraints = false
         badge.text = badgeText
-        badge.font = .systemFont(ofSize: 11, weight: .bold)
+        badge.font = .systemFont(ofSize: 10.5, weight: .bold)
         badge.textColor = .white
         badge.backgroundColor = badgeBg
         badge.textAlignment = .center
-        badge.layer.cornerRadius = 6
+        badge.layer.cornerRadius = 4
         badge.clipsToBounds = true
         container.addSubview(badge)
+
+        progressLabel.translatesAutoresizingMaskIntoConstraints = false
+        progressLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        progressLabel.textColor = UIColor(white: 0.9, alpha: 1)
+        progressLabel.backgroundColor = UIColor.black.withAlphaComponent(0.68)
+        progressLabel.textAlignment = .center
+        progressLabel.layer.cornerRadius = 4
+        progressLabel.clipsToBounds = true
+        progressLabel.isHidden = true
+        container.addSubview(progressLabel)
 
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: container.topAnchor),
@@ -4474,10 +4563,15 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             badge.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            badge.heightAnchor.constraint(equalToConstant: 24),
-            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 84)
+            badge.heightAnchor.constraint(equalToConstant: 22),
+            badge.widthAnchor.constraint(equalToConstant: 38),
+
+            progressLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            progressLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            progressLabel.heightAnchor.constraint(equalToConstant: 20),
+            progressLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 58)
         ])
     }
 
@@ -4497,9 +4591,9 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         pageLabel.text = "P\(pageIndex + 1) / \(entry.images.count)"
 
         prevButton.isEnabled = (currentIndex > 0)
-        prevButton.alpha = (currentIndex > 0) ? 1.0 : 0.4
+        prevButton.alpha = (currentIndex > 0) ? 1.0 : 0.35
         nextButton.isEnabled = (currentIndex < entry.images.count - 1)
-        nextButton.alpha = (currentIndex < entry.images.count - 1) ? 1.0 : 0.4
+        nextButton.alpha = (currentIndex < entry.images.count - 1) ? 1.0 : 0.35
 
         let outputPath = entry.images[pageIndex]
         let sourcePath = pageIndex < entry.sourceImages.count ? entry.sourceImages[pageIndex] : ""
@@ -4516,18 +4610,36 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             }
         }
 
-        // 异步加载成品 100% 高清原图
-        OnlineGalleryClient.shared.loadImage(path: outputPath, workId: entry.id, isThumbnail: false) { [weak self] img in
-            guard let self = self, self.currentIndex == pageIndex else { return }
-            if let img = img {
-                self.rightImageView.image = img
+        // 异步加载成品 100% 高清原图（带百分比进度）
+        rightProgressLabel.isHidden = false
+        rightProgressLabel.text = "原图加载中…"
+        OnlineGalleryClient.shared.loadImageWithProgress(
+            path: outputPath, workId: entry.id, isThumbnail: false,
+            onProgress: { [weak self] pct in
+                guard let self = self, self.currentIndex == pageIndex else { return }
+                self.rightProgressLabel.isHidden = false
+                self.rightProgressLabel.text = "原图 \(pct)%"
+            },
+            completion: { [weak self] img in
+                guard let self = self, self.currentIndex == pageIndex else { return }
+                if let img = img {
+                    self.rightImageView.image = img
+                    self.rightProgressLabel.text = "原图已就绪"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                        guard let self = self, self.currentIndex == pageIndex else { return }
+                        self.rightProgressLabel.isHidden = true
+                    }
+                } else {
+                    self.rightProgressLabel.text = "加载失败"
+                }
             }
-        }
+        )
 
         // 2. 原素材图：优先缩略图秒开占位（0ms 防黑屏）
         if sourcePath.isEmpty {
             leftImageView.image = nil
             emptyLeftLabel.isHidden = false
+            leftProgressLabel.isHidden = true
         } else {
             emptyLeftLabel.isHidden = true
             if let fastCachedSrc = OnlineGalleryClient.shared.getFastCachedImage(path: sourcePath, workId: entry.id, isThumbnail: true) {
@@ -4541,16 +4653,32 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                 }
             }
 
-            // 异步加载原素材 100% 高清原图
-            OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: entry.id, isThumbnail: false) { [weak self] img in
-                guard let self = self, self.currentIndex == pageIndex else { return }
-                if let img = img {
-                    self.leftImageView.image = img
-                    self.emptyLeftLabel.isHidden = true
-                } else if self.leftImageView.image == nil {
-                    self.emptyLeftLabel.isHidden = false
+            // 异步加载原素材 100% 高清原图（带百分比进度）
+            leftProgressLabel.isHidden = false
+            leftProgressLabel.text = "素材加载中…"
+            OnlineGalleryClient.shared.loadImageWithProgress(
+                path: sourcePath, workId: entry.id, isThumbnail: false,
+                onProgress: { [weak self] pct in
+                    guard let self = self, self.currentIndex == pageIndex else { return }
+                    self.leftProgressLabel.isHidden = false
+                    self.leftProgressLabel.text = "素材 \(pct)%"
+                },
+                completion: { [weak self] img in
+                    guard let self = self, self.currentIndex == pageIndex else { return }
+                    if let img = img {
+                        self.leftImageView.image = img
+                        self.emptyLeftLabel.isHidden = true
+                        self.leftProgressLabel.text = "素材已就绪"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                            guard let self = self, self.currentIndex == pageIndex else { return }
+                            self.leftProgressLabel.isHidden = true
+                        }
+                    } else if self.leftImageView.image == nil {
+                        self.emptyLeftLabel.isHidden = false
+                        self.leftProgressLabel.text = "加载失败"
+                    }
                 }
-            }
+            )
         }
 
         // 3. 静默预加载同作品相邻前后页面（pageIndex+1, pageIndex-1, pageIndex+2）
@@ -4571,6 +4699,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     @objc private func toggleLayoutMode() {
         isHorizontalLayout.toggle()
         containerStack.axis = isHorizontalLayout ? .horizontal : .vertical
+        containerStack.alignment = isHorizontalLayout ? .center : .fill
         layoutModeButton.setTitle(isHorizontalLayout ? "↔️ 左右并排" : "↕️ 上下同框", for: .normal)
     }
 
