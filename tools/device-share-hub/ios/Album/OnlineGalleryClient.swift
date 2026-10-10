@@ -232,18 +232,17 @@ public final class OnlineGalleryClient {
     private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
     private let fileManager = FileManager.default
-    private lazy var diskCacheURL: URL = {
-        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let dir = caches.appendingPathComponent("OnlineGalleryImageCache", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
+    private let diskCacheURL: URL
 
     private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let cacheDirectory = caches.appendingPathComponent("OnlineGalleryImageCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         self.session = URLSession(configuration: config)
+        self.diskCacheURL = cacheDirectory
         imageCache.countLimit = 300
         imageCache.totalCostLimit = 60 * 1024 * 1024 // 60MB 内存缓存
     }
