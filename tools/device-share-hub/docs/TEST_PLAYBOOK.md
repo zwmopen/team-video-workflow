@@ -24,6 +24,14 @@
 - 覆盖安装后确认 versionName 0.8.80、versionCode 191，在线作品仍为 395 套；只读浏览，不点分享、重置或删除。Logcat 以 `FATAL EXCEPTION` 与本包 `Process` 过滤，结果为空。
 - iPhone 26.6 本轮只执行 App 启动与截图；CoreDevice 没有可用触屏注入，不能据截图代替点击验收。新 IPA 需先经 macOS CI 生成并签名侧载。
 
+## Android 跨页面状态栏回归（DSH-152 / 0.8.81）
+
+- 在 Android 15/API 35 Redmi 上确认本地文件浏览能列目录，进入作品文件夹后出现“返回上一级”；返回本地作品列表后，状态栏显示本地作品来源和套数，不能继续显示文件项数。
+- 打开手机本地回收站，分别切换“已删除”和“已标记垃圾”；状态栏需显示当前标签和对应列表数量。再切换电脑在线/手机本地来源，确认本地页不残留在线回收站的两个计数，在线列表仍显示电脑同步状态。
+- 检查主作品页分类、搜索、视图、筛选、排序及卡片；只用无写操作控件。系统文件与文件夹选择器打开后立即返回，不选内容，以免发送或导入用户文件。
+- 设置页上下滚动，确认最后一项与“完成”按钮能滚入可见区域；不要更改自动接收、自动整理或提醒设置。
+- iPhone 新构建和触屏尚未验收时，记录为待设备验收，不可用 Android 通过替代。
+
 ## 远程混合传输验收（DSH-046）
 
 - 先确认两台手机已完成电脑登记、远程开关打开并在 `/v1/p2p/sessions` 可见；Cloudflare 请求只应出现会话和 SDP/ICE 信令，不应出现作品字节上传到 R2。
@@ -182,5 +190,6 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

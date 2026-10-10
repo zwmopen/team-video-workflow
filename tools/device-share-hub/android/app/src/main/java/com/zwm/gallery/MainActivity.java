@@ -887,6 +887,7 @@ public final class MainActivity extends Activity {
             enteredTrashFromOnline = false;
             switchToOnlineMode();
         } else {
+            statusText.setText(isOnlineMode ? "正在读取电脑在线作品…" : "正在读取手机本地作品…");
             refreshWorks();
         }
     }
@@ -910,6 +911,7 @@ public final class MainActivity extends Activity {
         rightModeButton.setImageResource(R.drawable.ic_album_trash);
         rightModeButton.setContentDescription("清空回收站");
         headingText.setText("回收站");
+        statusText.setText("正在读取手机本地回收站…");
         refreshWorks();
     }
 
@@ -979,6 +981,12 @@ public final class MainActivity extends Activity {
             cleanEntries.removeIf(entry -> pendingTrashIds.contains(entry.id));
         }
         renderedWorks = new ArrayList<>(cleanEntries);
+        if (showingTrash) {
+            String trashLabel = "garbage".equals(localTrashTab) ? "已标记垃圾" : "已删除";
+            statusText.setText("📱 手机本地回收站 · " + trashLabel + " " + cleanEntries.size() + " 套");
+        } else if (!isOnlineMode) {
+            statusText.setText("📱 手机本地作品 · 共 " + cleanEntries.size() + " 套");
+        }
         if (!showingTrash) updateCategoryCounts(cleanEntries);
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");

@@ -3199,12 +3199,24 @@ totalWorks = 472
 - **自动检查**：100 项 Android 单测通过；Release Lint 0 错误；Release APK 签名验证通过。候选 CI 与正式发布未执行。
 - **iPhone 边界**：iOS 26.6 上 0.8.77/188 能由 CoreDevice 启动并截图；触屏注入不可用，本轮 iOS 全屏点击操作未验收；0.8.80 IPA 尚待 macOS CI。
 
+## DSH-152 Android 本地页面切换后固定状态栏残留上一页内容（已修复并实机回归 · 2026-10-11）
+
+- **现象**：从电脑在线回收站切到手机本地作品后，顶部仍显示在线回收站数量；从本地文件浏览返回作品列表后，状态栏仍显示文件项数（例如“共 10 项”，而作品卡只有 4 套）；本地空回收站也继续沿用该文件项数。
+- **复现**：Android 15/API 35 Redmi 上打开本地文件浏览，进入作品文件夹后返回作品页；再打开本地回收站。页面内容已切换，状态栏却没有同步数据源与计数。
+- **根因**：`showWorks()` / `showTrash()` 不设置过渡状态；`renderWorks()` 只更新卡片和分类数量，不重写固定 `statusText`。文件页的 `refreshFiles()` 会更新该控件，因此旧文件计数留在后续页面。
+- **修复**：本地作品、回收站入口显示对应读取提示；本地列表渲染后显示作品总数或当前“已删除/已标记垃圾”标签与数量；在线作品状态仍由在线同步回调更新。候选版本 Android 0.8.81/code 192、iOS 0.8.81/build 192（iOS 业务代码未改）。
+- **实机验收**：覆盖安装 0.8.81 后重复“文件浏览→作品文件夹→返回作品→回收站→切换两个 Tab”并交叉切换在线/本地来源；状态文案与当前列表一致。文件和文件夹选择器打开/返回正常；未选择或发送文件。设置页滚动到底部可完整看到“完成”按钮。
+- **自动验证**：`testDebugUnitTest` 100/100 通过；`lintRelease` 0 错误、93 条警告；`assembleRelease` 成功。APK `com.zwm.gallery` / `0.8.81/192`、Release 签名通过，SHA-256 `B79C8108BD1CC4D912B27664BE130F00E91BE2CD95AF503CD904315F6FAD505F`；Logcat 无本次回归产生的 FATAL。
+- **iPhone 边界**：iOS 源码版本号仅对齐；当前可用 iPhone 仍为 0.8.77/188，新 IPA 未构建且当前环境不能注入 iOS 26.6 触屏。
+- **发布边界**：仅本地源码与候选 APK；没有推送、Actions、Release 或发布索引变更。
+
 ---
 
 ## 📝 变更记录
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

@@ -1,3 +1,15 @@
+# 2026-10-11 本地作品/回收站状态栏修复候选（DSH-152）
+
+- 源码候选：Android 0.8.81 / versionCode 192；iOS 0.8.81 / build 192（iOS 业务代码未改）。
+- Android 修复文件浏览、手机本地作品/回收站和电脑在线回收站往返后，固定状态栏沿用上一页消息的问题；本地页面现在显示当前来源、回收站标签和列表数量。
+- Redmi Android 15/API 35 真实点击证据：本地文件根目录 33 项；进入首个作品文件夹 10 项；返回手机本地作品后显示 4 套；本地回收站“已删除”和“已标记垃圾”均为空且状态标签随 Tab 更新。切换在线/本地来源后，不再保留在线回收站计数。
+- 设置页各分区可滚动到底部，“完成”按钮完整可见。传输页显示接收设备；方式弹窗、Android 文件选择器与文件夹选择器可打开并返回，未挑选内容或发送数据。
+- 自动验证：Android `testDebugUnitTest` 100/100 通过；`lintRelease` 0 错误、93 条警告；`assembleRelease` 成功。Release APK `com.zwm.gallery`、0.8.81/192、签名校验通过，SHA-256 `B79C8108BD1CC4D912B27664BE130F00E91BE2CD95AF503CD904315F6FAD505F`；已同签名保留数据覆盖安装，设备包版本回读为 192。Logcat 未见 `FATAL EXCEPTION`。
+- iPhone 仍安装 0.8.77/188；当前 Windows 环境不能注入 iOS 26.6 触屏，且没有 0.8.81 IPA。本轮仅对齐 iOS 源码版本，不能据此宣称 iPhone 验收。
+- 当前候选已完成 Android 构建、安装和跨模式回归；iOS IPA 与触屏验收仍待 macOS 构建/可用触控链。APK 只留在本机候选目录；未推送源码、未运行 GitHub Actions、未创建 Release 或改发布索引。
+
+---
+
 # 2026-10-11 对比视图修复候选（DSH-151）
 
 - 源码候选：Android 0.8.80 / versionCode 191；iOS 0.8.80 / build 191。
@@ -1115,6 +1127,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

@@ -2,6 +2,13 @@
 
 更新时间：2026-10-11
 
+## 2026-10-11 Android/iOS 0.8.81 本地状态栏修复候选
+
+- Android 0.8.81/code 192 修复切换文件浏览、手机本地作品/回收站和电脑在线来源后，固定状态栏残留上一页计数的问题；iOS build 192 仅对齐版本号，没有 iOS 业务代码变化。
+- Redmi Android 15/API 35 实机检查：本地文件浏览 33 项、子文件夹 10 项；返回作品列表显示 4 套；本地回收站两个 Tab 的标签/数量与空列表一致；在线/本地往返不再显示旧在线回收站计数。
+- 设置滚动、传输方式选择、系统文件/文件夹选择器打开/取消通过；未选择文件、未传送内容。自动构建、单测、候选 APK 安装结果及完整版本信息见 `docs/MAINTAINER_HANDOFF.md`。
+- iPhone 当前仍为 0.8.77/188；0.8.81 IPA 与 iOS 26.6 触屏验收待完成。没有源码推送、正式发布或发布索引更新。
+
 ## 2026-10-11 Android/iOS 0.8.80 对比视图安全区候选
 
 - Android 版本 0.8.80 / code 191 在 Redmi 23013RK75C、Android 15/API 35、显示区 1080×2400 实测；对比控件底部 y=2250，系统导航栏起点 y=2276，安全间距 26px。
@@ -99,5 +106,6 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

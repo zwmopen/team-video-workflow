@@ -1,3 +1,12 @@
+## 2026-10-11 DSH-152：Android 本地作品与回收站状态栏跟随当前页面（源码候选 Android/iOS 0.8.81）
+
+- 修复从电脑在线回收站、本地文件浏览切回手机本地作品/回收站时，固定状态栏继续显示上一页计数或在线回收站状态的问题。
+- 进入本地作品和回收站先显示当前页面读取提示；列表渲染后分别显示手机本地作品数，或当前回收站标签及数量。
+- Android `versionCode=192` / `versionName=0.8.81`；iOS `CURRENT_PROJECT_VERSION=192` / `MARKETING_VERSION=0.8.81`，iOS 业务代码未改。
+- Android Redmi Android 15/API 35 已覆盖安装候选包；作品列表、文件浏览往返、回收站两个 Tab、设置页、传输方式和系统文件/文件夹选择器完成只读点击巡检。选择器均返回，没有挑选文件或传送内容。
+- 自动验证：Android `testDebugUnitTest` 100 项通过；`lintRelease` 0 错误、93 条警告；`assembleRelease` 成功。APK 包名 `com.zwm.gallery`、版本 `0.8.81/192`、Release 签名核验通过，SHA-256 `B79C8108BD1CC4D912B27664BE130F00E91BE2CD95AF503CD904315F6FAD505F`；已保留数据覆盖安装并在 Redmi 实机回归。iPhone 新 IPA/触屏操作仍待 macOS 构建与可用触控链。
+- 未推送源码、未运行 GitHub Actions、未创建 Release 或更新发布索引。
+
 ## 2026-10-11 DSH-151：Android 全屏对比视图底栏安全区修复（源码候选 Android/iOS 0.8.80）
 
 - Redmi 实机 Android 15/API 35 上确认 0.8.79 全屏弹窗把页码、翻页按钮和提示画到系统导航栏后方。
@@ -3377,6 +3386,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 02:08 | 反重力 | report Android lint warning count precisely |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

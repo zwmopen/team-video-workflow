@@ -1,3 +1,8 @@
+## 2026-10-11 DSH-152：版本号与 Android 0.8.81 候选对齐（源码记录）
+
+- iOS `MARKETING_VERSION=0.8.81` / `CURRENT_PROJECT_VERSION=192`，仅对齐 Android 候选版本；本次没有修改 iOS 业务代码。
+- IPA 未生成、未安装；iPhone 触屏回归未执行。没有推送、CI 或发布。
+
 ## 2026-10-10 DSH-149：在线相册小图加载提速（源码候选 Android/iOS 0.8.76）
 
 - iOS 在线缩略图的磁盘缓存读取和 UIImage 解码移至后台队列，避免同步阻塞主线程；Android 列表缩略图队列放行速率提升至每 100ms 12 张。
@@ -237,4 +242,5 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |
