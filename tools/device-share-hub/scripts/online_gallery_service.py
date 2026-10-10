@@ -197,6 +197,7 @@ import urllib.parse
 import urllib.request
 import tempfile
 import re
+import datetime
 import shutil
 import subprocess
 from io import BytesIO
@@ -487,7 +488,7 @@ GZIP_MIN_BYTES = 1024
 # 改成 30 秒后：命中即毫秒级返回。
 # 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 30 秒轮询一次，发现增删改就
 # scan(force=True) 主动作废缓存，所以放宽 TTL 至 300s 彻底消除浏览时的 6s 磁盘重扫锁死。
-SCAN_CACHE_TTL = 300.0
+SCAN_CACHE_TTL = 30.0
 # DSH-117：refresh=1（强制全盘扫描）的最小间隔。
 # 手机端下拉刷新连点、或多部手机同一秒一起下拉，会在几秒内叠 N 次 5~10 秒的全盘
 # 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
@@ -2637,6 +2638,39 @@ class WorkScanner:
             dir_path, images, manifest_data
         )
 
+        def _extract_work_timestamp(fname: str, dpath: str, mdata: Dict[str, Any]) -> float:
+            """提取作品绝对真实生产时间戳（毫秒），优先文件夹名时间戳，杜绝因文件更新导致排序漂移。"""
+            if fname:
+                m = re.search(r'(\d{8})_(\d{6})', fname)
+                if m:
+                    try:
+                        dt = datetime.datetime.strptime(f"{m.group(1)}{m.group(2)}", "%Y%m%d%H%M%S")
+                        return dt.timestamp() * 1000.0
+                    except Exception:
+                        pass
+                m2 = re.search(r'(\d{8})', fname)
+                if m2:
+                    try:
+                        dt = datetime.datetime.strptime(m2.group(1), "%Y%m%d")
+                        return dt.timestamp() * 1000.0
+                    except Exception:
+                        pass
+            if isinstance(mdata, dict):
+                for k in ["producedAt", "completedAt", "completedAtUtc", "createdAt", "created_at"]:
+                    val = str(mdata.get(k) or "").strip()
+                    if val:
+                        clean_v = val.replace("T", " ")[:19]
+                        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                            try:
+                                dt = datetime.datetime.strptime(clean_v, fmt)
+                                return dt.timestamp() * 1000.0
+                            except Exception:
+                                pass
+            try:
+                return os.path.getmtime(dpath) * 1000.0
+            except Exception:
+                return 0.0
+
         work_result = {
             "id": work_id,
             "title": clean_title,
@@ -2680,7 +2714,7 @@ class WorkScanner:
                 "placeholderOnly": is_placeholder_copy(copy_raw),
             },
             "searchBlob": copy_search_blob,
-            "updatedAt": os.path.getmtime(dir_path),
+            "updatedAt": _extract_work_timestamp(folder_name, dir_path, manifest_data),
             # DSH-109：作品目录总字节数（含子目录，用于 size_desc/size_asc 排序）
             "sizeBytes": _dir_size_bytes(dir_path),
             # 标签与时令元数据 (季节 season / 流量类型 flowType / 完整标签 tags / 生产溯源与精品标杆)

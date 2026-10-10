@@ -171,7 +171,12 @@ public final class OnlineWorkEntry {
                 if (!d.isEmpty()) dispatchedTo.add(d);
             }
         }
-        long updatedAt = json.optLong("updatedAt", System.currentTimeMillis());
+        long updatedAt = json.optLong("updatedAt", 0L);
+        if (updatedAt <= 0) {
+            updatedAt = System.currentTimeMillis();
+        } else if (updatedAt < 10000000000L) {
+            updatedAt *= 1000L;
+        }
 
         // 在线回收站接口会在每套作品上挂一个 garbage 对象：
         // {"marked": bool, "remark": str, "markedBy": str, "markedAt": str}

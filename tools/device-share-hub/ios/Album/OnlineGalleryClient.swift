@@ -114,8 +114,17 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let imageCount = (dict["imageCount"] as? Int) ?? images.count
         let copyText = (dict["copyText"] as? String) ?? ""
         let hasCopyText = (dict["hasCopyText"] as? Bool) ?? !copyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let dispatchedTo = (dict["dispatchedTo"] as? [String]) ?? []
-        let updatedAt = (dict["updatedAt"] as? Double) ?? Date().timeIntervalSince1970 * 1000
+        let rawUpdated = (dict["updatedAt"] as? NSNumber)?.doubleValue
+            ?? (dict["updatedAt"] as? Double)
+            ?? Double((dict["updatedAt"] as? Int64) ?? Int64((dict["updatedAt"] as? Int) ?? 0))
+        let updatedAt: Double
+        if rawUpdated <= 0 {
+            updatedAt = Date().timeIntervalSince1970 * 1000
+        } else if rawUpdated < 10000000000.0 {
+            updatedAt = rawUpdated * 1000.0
+        } else {
+            updatedAt = rawUpdated
+        }
 
         // 在线回收站接口在每套作品上挂一个 garbage 对象：
         // ["marked": Bool, "remark": String, "markedBy": String, "markedAt": String]
@@ -236,15 +245,16 @@ public final class OnlineGalleryClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 30
+        config.timeoutIntervalForRequest = 25
+        config.timeoutIntervalForResource = 60
+        config.httpMaximumConnectionsPerHost = 20
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let cacheDirectory = caches.appendingPathComponent("OnlineGalleryImageCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         self.session = URLSession(configuration: config)
         self.diskCacheURL = cacheDirectory
-        imageCache.countLimit = 300
-        imageCache.totalCostLimit = 60 * 1024 * 1024 // 60MB 内存缓存
+        imageCache.countLimit = 500
+        imageCache.totalCostLimit = 120 * 1024 * 1024 // 120MB 内存缓存
     }
 
     /// 回环地址：只有存在 USB / ADB 转发隧道时才可达，纯 Wi-Fi 下必然失败

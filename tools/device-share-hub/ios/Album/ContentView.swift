@@ -69,7 +69,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     // 所以用 UIAlertController 的 actionSheet（iOS 8+，全版本安全）。
     private let onlineSortButton = UIButton(type: .system)
     private static let sortDefaultsKey = "online_sort_key"
-    private static let defaultSortKey = "time_asc"
+    private static let defaultSortKey = "time_desc"
     /// 6 种排序 = 时间 / 名称 / 大小，各两个方向（与 Android SORT_MENU 逐项对齐）
     private let sortMenu: [(key: String, label: String)] = [
         ("time_desc", "时间最新在前（倒序）"),
@@ -1216,13 +1216,15 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             return
         }
         let currentResolved = OnlineGalleryClient.shared.resolveBaseUrl()
-        let isNewHost = (url != currentResolved)
+        let cleanCurrent = currentResolved.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).lowercased()
+        let cleanUrl = url.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).lowercased()
+        let isNewHost = (cleanUrl != cleanCurrent && !cleanCurrent.contains(cleanUrl) && !cleanUrl.contains(cleanCurrent))
         // 关键防护：如果已经定位到相同电脑地址，静默刷新即可，绝不频繁弹「已定位电脑相册服务」Toast 刷屏！
-        if isNewHost {
+        if isNewHost && !cleanCurrent.isEmpty && !cleanCurrent.contains("127.0.0.1") {
             showToast(viaBeacon ? "✅ 已定位电脑相册服务 \(url)" : "✅ 已自动发现电脑相册服务 \(url)")
         }
         OnlineGalleryClient.shared.setCustomBaseUrl(url)
-        loadOnlineData(silent: !isNewHost)
+        loadOnlineData(silent: true)
     }
 
     private func renderOnlineUI() {
@@ -1437,7 +1439,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             }
             cell.onOnlinePreview = { [weak self] index, img in
                 guard let self = self else { return }
-                if self.currentViewMode == .compare && entry.hasSourceCompare {
+                if self.currentViewMode == .compare {
                     self.openOnlineComparePreview(entry: entry, initialIndex: index)
                 } else {
                     self.openOnlinePreview(entry: entry, initialIndex: index, initialImage: img)
@@ -3090,7 +3092,7 @@ private final class WorkCell: UICollectionViewCell {
             ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
             : AppColors.secondaryText
 
-        if viewMode == .compare && entry.hasSourceCompare {
+        if viewMode == .compare {
             renderOnlineComparePreviews(entry)
         } else {
             // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键
@@ -3165,7 +3167,14 @@ private final class WorkCell: UICollectionViewCell {
             button.setSize(thumbSide)
             button.tag = index
             // DSH-102：loadOnline 传入 workId，让 loadImage 走 ?id+?file 双键
-            button.loadOnline(path: path, workId: workId)
+            // 封面（第 1 张）立刻秒级上屏，后续图片错峰微延迟加载，杜绝打满 URLSession
+            if index == 0 {
+                button.loadOnline(path: path, workId: workId)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.04) { [weak button] in
+                    button?.loadOnline(path: path, workId: workId)
+                }
+            }
         }
     }
 
@@ -4267,7 +4276,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let nextButton = UIButton(type: .system)
 
     /// 对比排布模式：水平左右并排 vs 垂直上下堆叠
-    private var isHorizontalLayout: Bool = true
+    private var isHorizontalLayout: Bool = false
 
     init(entry: OnlineWorkEntry, initialIndex: Int = 0) {
         self.entry = entry
@@ -4314,7 +4323,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         topBar.addSubview(similarityBadge)
 
         layoutModeButton.translatesAutoresizingMaskIntoConstraints = false
-        layoutModeButton.setTitle("↔️ 左右并排", for: .normal)
+        layoutModeButton.setTitle("↕️ 上下同框", for: .normal)
         layoutModeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
         layoutModeButton.setTitleColor(.white, for: .normal)
         layoutModeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
@@ -4362,13 +4371,13 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
         // 中间主对比区域
         containerStack.translatesAutoresizingMaskIntoConstraints = false
-        containerStack.axis = .horizontal
+        containerStack.axis = .vertical
         containerStack.spacing = 8
         containerStack.distribution = .fillEqually
         containerStack.alignment = .fill
         view.addSubview(containerStack)
 
-        setupImageViewContainer(container: leftContainer, imageView: leftImageView, badge: leftBadge, badgeText: "素材", badgeBg: UIColor.black.withAlphaComponent(0.72))
+        setupImageViewContainer(container: leftContainer, imageView: leftImageView, badge: leftBadge, badgeText: "📷 素材原片", badgeBg: UIColor.black.withAlphaComponent(0.72))
         emptyLeftLabel.text = "该页未关联素材\n或原图已删除"
         emptyLeftLabel.textColor = .lightGray
         emptyLeftLabel.font = .systemFont(ofSize: 13)
@@ -4381,7 +4390,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             emptyLeftLabel.centerYAnchor.constraint(equalTo: leftContainer.centerYAnchor)
         ])
 
-        setupImageViewContainer(container: rightContainer, imageView: rightImageView, badge: rightBadge, badgeText: "成品", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88))
+        setupImageViewContainer(container: rightContainer, imageView: rightImageView, badge: rightBadge, badgeText: "✨ AI 成品", badgeBg: UIColor(red: 0.06, green: 0.52, blue: 0.34, alpha: 0.88))
 
         containerStack.addArrangedSubview(leftContainer)
         containerStack.addArrangedSubview(rightContainer)
@@ -4465,9 +4474,9 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            badge.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            badge.heightAnchor.constraint(equalToConstant: 22),
+            badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            badge.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            badge.heightAnchor.constraint(equalToConstant: 24),
             badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 84)
         ])
     }
@@ -4495,25 +4504,67 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         let outputPath = entry.images[pageIndex]
         let sourcePath = pageIndex < entry.sourceImages.count ? entry.sourceImages[pageIndex] : ""
 
-        leftImageView.image = nil
-        rightImageView.image = nil
-
-        if sourcePath.isEmpty {
-            emptyLeftLabel.isHidden = false
+        // 1. 成品图：优先缩略图秒开占位（0ms 防黑屏）
+        if let fastCachedOut = OnlineGalleryClient.shared.getFastCachedImage(path: outputPath, workId: entry.id, isThumbnail: true) {
+            rightImageView.image = fastCachedOut
         } else {
-            emptyLeftLabel.isHidden = true
-            // 加载原素材图片
-            OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: entry.id, isThumbnail: false) { [weak self] img in
+            OnlineGalleryClient.shared.loadImage(path: outputPath, workId: entry.id, isThumbnail: true, maxPixel: 300) { [weak self] thumb in
                 guard let self = self, self.currentIndex == pageIndex else { return }
-                self.leftImageView.image = img
-                self.emptyLeftLabel.isHidden = (img != nil)
+                if self.rightImageView.image == nil {
+                    self.rightImageView.image = thumb
+                }
             }
         }
 
-        // 加载成品高清图
+        // 异步加载成品 100% 高清原图
         OnlineGalleryClient.shared.loadImage(path: outputPath, workId: entry.id, isThumbnail: false) { [weak self] img in
             guard let self = self, self.currentIndex == pageIndex else { return }
-            self.rightImageView.image = img
+            if let img = img {
+                self.rightImageView.image = img
+            }
+        }
+
+        // 2. 原素材图：优先缩略图秒开占位（0ms 防黑屏）
+        if sourcePath.isEmpty {
+            leftImageView.image = nil
+            emptyLeftLabel.isHidden = false
+        } else {
+            emptyLeftLabel.isHidden = true
+            if let fastCachedSrc = OnlineGalleryClient.shared.getFastCachedImage(path: sourcePath, workId: entry.id, isThumbnail: true) {
+                leftImageView.image = fastCachedSrc
+            } else {
+                OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: entry.id, isThumbnail: true, maxPixel: 300) { [weak self] thumb in
+                    guard let self = self, self.currentIndex == pageIndex else { return }
+                    if self.leftImageView.image == nil {
+                        self.leftImageView.image = thumb
+                    }
+                }
+            }
+
+            // 异步加载原素材 100% 高清原图
+            OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: entry.id, isThumbnail: false) { [weak self] img in
+                guard let self = self, self.currentIndex == pageIndex else { return }
+                if let img = img {
+                    self.leftImageView.image = img
+                    self.emptyLeftLabel.isHidden = true
+                } else if self.leftImageView.image == nil {
+                    self.emptyLeftLabel.isHidden = false
+                }
+            }
+        }
+
+        // 3. 静默预加载同作品相邻前后页面（pageIndex+1, pageIndex-1, pageIndex+2）
+        let prefetchIndices = [pageIndex + 1, pageIndex - 1, pageIndex + 2]
+        for pIdx in prefetchIndices {
+            guard pIdx >= 0 && pIdx < entry.images.count else { continue }
+            let pOut = entry.images[pIdx]
+            OnlineGalleryClient.shared.loadImage(path: pOut, workId: entry.id, isThumbnail: false) { _ in }
+            if pIdx < entry.sourceImages.count {
+                let pSrc = entry.sourceImages[pIdx]
+                if !pSrc.isEmpty {
+                    OnlineGalleryClient.shared.loadImage(path: pSrc, workId: entry.id, isThumbnail: false) { _ in }
+                }
+            }
         }
     }
 
