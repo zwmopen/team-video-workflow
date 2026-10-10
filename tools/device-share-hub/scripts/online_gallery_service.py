@@ -485,9 +485,9 @@ GZIP_MIN_BYTES = 1024
 # 每一次 /api/online/status 都在全库重扫 —— 手机端「正在连接电脑在线相册…」
 # 干等 8~11 秒的根因就在这里（实测三次间隔 7 秒的请求，分别耗时 11.4 / 10.6 / 8.0 秒）。
 # 改成 30 秒后：命中即毫秒级返回。
-# 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 60 秒轮询一次，发现增删改就
-# scan(force=True) 主动作废缓存，所以放宽 TTL **不会**让手机看到更旧的数据。
-SCAN_CACHE_TTL = 30.0
+# 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 30 秒轮询一次，发现增删改就
+# scan(force=True) 主动作废缓存，所以放宽 TTL 至 300s 彻底消除浏览时的 6s 磁盘重扫锁死。
+SCAN_CACHE_TTL = 300.0
 # DSH-117：refresh=1（强制全盘扫描）的最小间隔。
 # 手机端下拉刷新连点、或多部手机同一秒一起下拉，会在几秒内叠 N 次 5~10 秒的全盘
 # 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
@@ -2368,7 +2368,11 @@ class WorkScanner:
 
     def cleanup_expired_works(self) -> List[Dict[str, Any]]:
         """DSH-140: 主动巡检货架上到期未下架的作品，自动移入回收站并清理软链接镜像。"""
-        now_ms = int(time.time() * 1000)
+        now = time.time()
+        if now - getattr(self, "_last_cleanup_expired_time", 0.0) < 60.0:
+            return []
+        self._last_cleanup_expired_time = now
+        now_ms = int(now * 1000)
         cleaned: List[Dict[str, Any]] = []
         with self._lock:
             works_to_check = list(self._cached_works)
