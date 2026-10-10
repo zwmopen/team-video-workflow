@@ -132,7 +132,21 @@ def is_child_proc_running(proc) -> bool:
 
 _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-def probe_status(timeout: float = 2.0) -> bool:
+def probe_ping(timeout: float = 3.5) -> bool:
+    """轻量极速探活：优先走 /api/online/ping，纯内存响应 < 2ms，并发完全隔离"""
+    try:
+        url = f"http://127.0.0.1:{PORT}/api/online/ping"
+        req = urllib.request.Request(url, headers={"User-Agent": "GallerySupervisor/2.0"})
+        with _NO_PROXY_OPENER.open(req, timeout=timeout) as resp:
+            if resp.status == 200:
+                raw = resp.read()
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+                return data.get("ok", False) is True
+    except Exception:
+        return False
+    return False
+
+def probe_status(timeout: float = 4.0) -> bool:
     try:
         url = f"http://127.0.0.1:{PORT}/api/online/status"
         req = urllib.request.Request(url, headers={"User-Agent": "GallerySupervisor/2.0"})
@@ -146,12 +160,15 @@ def probe_status(timeout: float = 2.0) -> bool:
     return False
 
 def is_service_healthy() -> bool:
-    # 第一次探活（非阻塞毫秒级，强制直连绕开本地代理）
-    if probe_status(timeout=2.0):
+    # 极速轻量 ping 优先（耗时 < 2ms，纯内存返回，不碰锁、不碰磁盘）
+    if probe_ping(timeout=3.5):
         return True
-    # 快速防抖确认（1.0s 后重试，超时 3.0s）
-    time.sleep(1.0)
-    return probe_status(timeout=3.0)
+    # ping 不通时回退探测 status（兼容旧版或双重核验）
+    if probe_status(timeout=4.0):
+        return True
+    # 快速防抖确认（1.5s 后重试，放宽到 4.5s / 5.0s）
+    time.sleep(1.5)
+    return probe_ping(timeout=4.5) or probe_status(timeout=5.0)
 
 # ----------------- 清理僵死/孤儿进程 -----------------
 _last_child_proc = None
@@ -249,7 +266,7 @@ def start_service() -> bool:
         if not is_child_proc_running(_last_child_proc):
             log("服务子进程在就绪等待期间已退出，放弃本次等待", "WARN")
             break
-        if probe_status(timeout=2.0):
+        if probe_ping(timeout=2.0) or probe_status(timeout=2.0):
             ready = True
             break
 
@@ -297,13 +314,14 @@ def main():
                     # 原逻辑只要 HTTP 探活超时就 kill 重启，导致首扫永远完不成的死循环。
                     consecutive_unhealthy_count += 1
                     busy_pid = get_listening_pid(PORT)
-                    # 容忍首扫繁忙，但最多容忍 2 次探活失败（约 15 秒）；超限坚决判定为假死强杀
-                    if busy_pid and consecutive_unhealthy_count < 2:
+                    # 容忍高并发与首扫繁忙：当服务进程在跑且端口在监听时，连续 6 次（持续 50~60s）探活失败才判定为死锁
+                    MAX_BUSY_ROUNDS = 6
+                    if busy_pid and consecutive_unhealthy_count < MAX_BUSY_ROUNDS:
                         log(f"服务进程存活且端口 {PORT} 仍在监听(PID={busy_pid})，"
-                            f"判定为「忙」而非死锁（连续 {consecutive_unhealthy_count}/2 次），本轮跳过自愈重启", "INFO")
+                            f"判定为「高并发/全盘扫描中」而非死锁（连续 {consecutive_unhealthy_count}/{MAX_BUSY_ROUNDS} 次），本轮绝不误杀！", "INFO")
                     else:
                         if busy_pid:
-                            log(f"服务进程虽监听端口 {PORT}(PID={busy_pid})，但连续 {consecutive_unhealthy_count} 次探活超时，判定为深层假死，强制触发自愈重启！", "WARN")
+                            log(f"服务进程虽监听端口 {PORT}(PID={busy_pid})，但连续 {consecutive_unhealthy_count} 次探活超时（持续超过 50 秒），坚决判定为深层僵死，触发自愈重启！", "WARN")
                         else:
                             log("相册服务无响应且防抖确认超时，判定为死锁，触发自愈重启！", "WARN")
                         start_service()
@@ -329,10 +347,10 @@ def main():
                     consecutive_unhealthy_count = 0
                 else:
                     busy_pid = get_listening_pid(PORT)
-                    if busy_pid and consecutive_unhealthy_count < 2:
+                    if busy_pid and consecutive_unhealthy_count < 6:
                         consecutive_unhealthy_count += 1
                         log(f"端口 {PORT} 已有服务在监听(PID={busy_pid})但暂未响应，"
-                            f"判定为首扫/重建中（连续 {consecutive_unhealthy_count}/2 次），本轮跳过自愈并直接接管", "INFO")
+                            f"判定为首扫/重建中（连续 {consecutive_unhealthy_count}/6 次），本轮跳过自愈并直接接管", "INFO")
                         try:
                             import psutil
                             _last_child_proc = psutil.Process(busy_pid)

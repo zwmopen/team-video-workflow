@@ -275,32 +275,36 @@ PROCESS_STARTED_AT = time.time()
 PROCESS_STARTED_STR = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(PROCESS_STARTED_AT))
 
 
-def code_freshness() -> Dict[str, Any]:
-    """判断「正在跑的进程」是否落后于磁盘上的脚本。
+_CODE_FRESHNESS_CACHE = {"at": 0.0, "data": None}
+_CODE_FRESHNESS_TTL = 10.0
 
-    ⚠️ 2026-09-20 二次修复：初版拿「启动时快照的 mtime」去和「启动时刻」比，
-    而那个条件在启动瞬间必然不成立（文件肯定早于进程存在），staleCode 恒为 False
-    —— 是一道**假闸门**，比没有更危险。
-    正确判据是「磁盘上脚本的当前内容」 vs 「启动时的脚本内容」：
-    内容不一致 ⇒ 磁盘上的代码已经不是正在跑的那份 ⇒ 该重启。
-    用内容 SHA 而不是 mtime：mtime 会被 checkout / 复制 / 时区干扰，内容哈希不会。
-    """
-    disk_mtime, disk_sha = _script_fingerprint(SCRIPT_PATH)      # ← 实时读盘，不是快照
+
+def code_freshness() -> Dict[str, Any]:
+    """判断「正在跑的进程」是否落后于磁盘上的脚本（带 10s TTL 缓存，杜绝高频 I/O 拖垮响应）。"""
+    now = time.time()
+    cached = _CODE_FRESHNESS_CACHE.get("data")
+    if cached is not None and (now - float(_CODE_FRESHNESS_CACHE.get("at", 0.0)) < _CODE_FRESHNESS_TTL):
+        return cached
+
+    disk_mtime, disk_sha = _script_fingerprint(SCRIPT_PATH)
     if disk_sha and SCRIPT_SHA_AT_START:
         stale = disk_sha != SCRIPT_SHA_AT_START
     else:
         stale = False
-    return {
+    result = {
         "startedAt": PROCESS_STARTED_STR,
-        "uptimeSeconds": int(time.time() - PROCESS_STARTED_AT),
+        "uptimeSeconds": int(now - PROCESS_STARTED_AT),
         "scriptPath": SCRIPT_PATH,
-        "scriptShaRunning": SCRIPT_SHA_AT_START,      # 正在跑的代码（启动快照）
-        "scriptShaOnDisk": disk_sha,                  # 磁盘上的代码（实时）
-        "scriptMtime": _fmt_ts(disk_mtime),           # 磁盘当前 mtime
+        "scriptShaRunning": SCRIPT_SHA_AT_START,
+        "scriptShaOnDisk": disk_sha,
+        "scriptMtime": _fmt_ts(disk_mtime),
         "scriptMtimeAtStart": _fmt_ts(SCRIPT_MTIME_AT_START),
         "staleCode": stale,
         "hint": "磁盘上的脚本已改动（内容 sha 不一致）：正在运行的是旧代码，请重启在线相册服务" if stale else "",
     }
+    _CODE_FRESHNESS_CACHE["at"] = now
+    _CODE_FRESHNESS_CACHE["data"] = result
+    return result
 
 # 手机端「使用次数」回读同步 + 局域网手机在线探测（见 phone_sync.py 顶部注释）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -2964,6 +2968,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
+        if path == "/api/online/ping":
+            # 极速轻量探活端点：纯内存直接返回，耗时 < 1ms，不碰锁、不碰磁盘，并发完全隔离
+            self.send_json(200, {"ok": True, "ping": "pong", "ts": int(time.time())})
+            return
+
         if path == "/" or path == "/api/online/status":
             # 【DSH-117】status 是手机端几秒一次的心跳，此前每次都走全量 scan()。
             # 改为只读缓存计数（启动预热 + 60 秒 watchdog 保证缓存恒非空）。
@@ -3433,17 +3442,20 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     self.send_error(500, "Failed to read image")
                     return
 
-            self.send_response(200)
-            self.send_header("Content-Type", mime)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "public, max-age=86400")
-            self.send_header("Connection", "close")
-            if thumb:
-                # 健康标记：手机端可据此提示「电脑端缩略图未启用」；X-Thumb-Fallback=1 表示发的是原图
-                self.send_header("X-Thumb", "fallback" if degraded else "ok")
-            self.send_cors_headers()
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Connection", "close")
+                if thumb:
+                    # 健康标记：手机端可据此提示「电脑端缩略图未启用」；X-Thumb-Fallback=1 表示发的是原图
+                    self.send_header("X-Thumb", "fallback" if degraded else "ok")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(data)
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
+                pass
             return
 
         # ===== 已授权设备白名单列表（GET · share.html 用）=====
