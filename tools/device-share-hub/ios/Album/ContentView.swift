@@ -873,11 +873,46 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         present(sheet, animated: true)
     }
 
+    private func sortOnlineWorksLocally(_ list: inout [OnlineWorkEntry], sortKey: String) {
+        let now = Date().timeIntervalSince1970 * 1000
+        list.sort { a, b in
+            // 一级规则（DSH-135）：已使用的作品在到期前统一置顶在货架顶部
+            let aUsed = (a.expireAtMs > now && a.useCount > 0)
+            let bUsed = (b.expireAtMs > now && b.useCount > 0)
+            if aUsed && !bUsed { return true }
+            if !aUsed && bUsed { return false }
+            if aUsed && bUsed {
+                let aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt
+                let bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt
+                if aTime != bTime { return aTime > bTime }
+            }
+            // 二级规则（DSH-109）：按指定的 sortKey 排序（与 Android / 服务端 SORT_KEYS 统一）
+            switch sortKey {
+            case "time_desc":
+                return a.updatedAt > b.updatedAt
+            case "time_asc":
+                return a.updatedAt < b.updatedAt
+            case "name_asc":
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            case "name_desc":
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedDescending
+            case "size_desc":
+                return a.imageCount > b.imageCount
+            case "size_asc":
+                return a.imageCount < b.imageCount
+            default:
+                return a.updatedAt > b.updatedAt
+            }
+        }
+    }
+
     private func applySortKey(_ key: String) {
         currentSortKey = key
         UserDefaults.standard.set(key, forKey: LibraryViewController.sortDefaultsKey)
         updateSortButtonStyle()
         if isOnlineMode {
+            sortOnlineWorksLocally(&onlineWorks, sortKey: key)
+            renderOnlineUI()
             loadOnlineData(silent: true)
         } else {
             render()
@@ -980,7 +1015,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         // 已经有更新的数据就别用旧快照盖掉（例如 viewWillAppear 里刚刷完）
         if !self.onlineWorks.isEmpty { return }
 
-        self.onlineWorks = parsed
+        var sortedParsed = parsed
+        self.sortOnlineWorksLocally(&sortedParsed, sortKey: currentSortKey)
+        self.onlineWorks = sortedParsed
         if let catsData = OnlineListCache.loadCategories() {
             if let json = try? JSONSerialization.jsonObject(with: catsData) as? [String: Any],
                let arr = json["categories"] as? [[String: Any]] {
@@ -1077,7 +1114,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 let activeUsed = mergedWorks.filter { $0.expireAtMs > now }
                     .sorted { $0.firstSharedAtMs > $1.firstSharedAtMs }
                 let remaining = mergedWorks.filter { $0.expireAtMs <= now }
-                self.onlineWorks = activeUsed + remaining
+                var finalWorks = activeUsed + remaining
+                self.sortOnlineWorksLocally(&finalWorks, sortKey: self.currentSortKey)
+                self.onlineWorks = finalWorks
                 self.renderOnlineUI()
             case .failure(let err)?:
                 // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
@@ -1165,8 +1204,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             }
             return
         }
-        showToast(viaBeacon ? "✅ 已定位电脑相册服务 \(url)" : "✅ 已自动发现电脑相册服务 \(url)")
-        loadOnlineData(silent: false)
+        let currentResolved = OnlineGalleryClient.shared.resolveBaseUrl()
+        let isNewHost = (url != currentResolved)
+        // 关键防护：如果已经定位到相同电脑地址，静默刷新即可，绝不频繁弹「已定位电脑相册服务」Toast 刷屏！
+        if isNewHost {
+            showToast(viaBeacon ? "✅ 已定位电脑相册服务 \(url)" : "✅ 已自动发现电脑相册服务 \(url)")
+        }
+        OnlineGalleryClient.shared.setCustomBaseUrl(url)
+        loadOnlineData(silent: !isNewHost)
     }
 
     private func renderOnlineUI() {
@@ -1839,7 +1884,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         case .list:
             baseH = WorkCell.listBaseHeight
         case .compare:
-            baseH = WorkCell.compareBaseHeight
+            if isOnlineMode, indexPath.item < displayedOnlineWorks.count, !displayedOnlineWorks[indexPath.item].hasSourceCompare {
+                baseH = WorkCell.cardBaseHeight
+            } else {
+                baseH = WorkCell.compareBaseHeight
+            }
         }
         let height = baseH
             + CGFloat(max(rows, 1) - 1) * (WorkCell.platformRowHeight + WorkCell.platformSpacing)
@@ -2389,7 +2438,7 @@ private final class ComparePairThumbView: UIControl {
         headerLabel.text = "P\(pageIndex + 1) 素材 ➔ 成品"
         if sourcePath.isEmpty {
             emptySourceLabel.isHidden = false
-            emptySourceLabel.text = "无对应原图"
+            emptySourceLabel.text = "无素材原片"
         } else {
             emptySourceLabel.isHidden = true
             OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: workId, isThumbnail: true, maxPixel: 220) { [weak self] img in
@@ -2915,7 +2964,7 @@ private final class WorkCell: UICollectionViewCell {
         }
     }
 
-    private func applyViewModeLayout(_ viewMode: LibraryViewController.GalleryViewMode) {
+    private func applyViewModeLayout(_ viewMode: LibraryViewController.GalleryViewMode, hasSourceCompare: Bool = true) {
         currentViewMode = viewMode
         switch viewMode {
         case .grid:
@@ -2925,7 +2974,7 @@ private final class WorkCell: UICollectionViewCell {
             previewScrollHeightConstraint?.constant = 44
             actionRow.isHidden = true
         case .compare:
-            previewScrollHeightConstraint?.constant = 116
+            previewScrollHeightConstraint?.constant = hasSourceCompare ? 116 : 64
             actionRow.isHidden = false
         }
     }
@@ -2964,7 +3013,7 @@ private final class WorkCell: UICollectionViewCell {
 
     func configureOnline(_ entry: OnlineWorkEntry, viewMode: LibraryViewController.GalleryViewMode = .grid) {
         isOnlineCard = true
-        applyViewModeLayout(viewMode)
+        applyViewModeLayout(viewMode, hasSourceCompare: entry.hasSourceCompare)
         contentView.backgroundColor = AppColors.secondaryBackground
         contentView.layer.borderColor = (viewMode == .compare)
             ? UIColor(red: 0.08, green: 0.56, blue: 0.36, alpha: 0.42).cgColor
@@ -3010,7 +3059,7 @@ private final class WorkCell: UICollectionViewCell {
             } else if entry.hasSourceCompare {
                 onlineDetail += " · 🆚 点击卡片同框对比"
             } else {
-                onlineDetail += " · ⚠️ 未关联素材"
+                onlineDetail += " · 纯AI直出作品"
             }
         }
 
@@ -3030,7 +3079,7 @@ private final class WorkCell: UICollectionViewCell {
             ? UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 1)
             : AppColors.secondaryText
 
-        if viewMode == .compare {
+        if viewMode == .compare && entry.hasSourceCompare {
             renderOnlineComparePreviews(entry)
         } else {
             // DSH-102：传 workId 给 renderOnlinePreviews → 缩略图取图用 id+file 双键

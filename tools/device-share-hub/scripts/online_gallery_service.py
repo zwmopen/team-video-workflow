@@ -484,10 +484,10 @@ GZIP_MIN_BYTES = 1024
 # 枚举图片 + 跑槽位守卫正则）。**扫描耗时 > 缓存时长 ⇒ 缓存永远命中不了**，
 # 每一次 /api/online/status 都在全库重扫 —— 手机端「正在连接电脑在线相册…」
 # 干等 8~11 秒的根因就在这里（实测三次间隔 7 秒的请求，分别耗时 11.4 / 10.6 / 8.0 秒）。
-# 改成 30 秒后：命中即毫秒级返回。
+# 改成 300 秒后：命中即毫秒级返回。
 # 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 60 秒轮询一次，发现增删改就
 # scan(force=True) 主动作废缓存，所以放宽 TTL **不会**让手机看到更旧的数据。
-SCAN_CACHE_TTL = 30.0
+SCAN_CACHE_TTL = 300.0
 # DSH-117：refresh=1（强制全盘扫描）的最小间隔。
 # 手机端下拉刷新连点、或多部手机同一秒一起下拉，会在几秒内叠 N 次 5~10 秒的全盘
 # 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
@@ -2838,11 +2838,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # 无论压缩与否都要声明 Vary，否则中间层/代理可能缓存错版本
             self.send_header("Vary", "Accept-Encoding")
             self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(payload)
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
             pass
+        finally:
+            self.close_connection = True
 
     # ── 手机次数回读同步 / 在线探测（见 phone_sync.py）─────────────────
     def _computer_works_index(self, force: bool = False) -> Dict[str, Dict[str, Any]]:
@@ -3456,6 +3459,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
                 pass
+            finally:
+                self.close_connection = True
             return
 
         # ===== 已授权设备白名单列表（GET · share.html 用）=====

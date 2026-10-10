@@ -1129,6 +1129,40 @@ public final class MainActivity extends Activity {
         popup.show();
     }
 
+    private void sortOnlineWorks(List<OnlineWorkEntry> list, String sortKey) {
+        if (list == null || list.size() <= 1) return;
+        Collections.sort(list, (a, b) -> {
+            // 一级规则（DSH-135）：已使用的作品在到期前统一置顶在货架顶部
+            if (a.useCount > 0 && b.useCount == 0) return -1;
+            if (a.useCount == 0 && b.useCount > 0) return 1;
+            if (a.useCount > 0 && b.useCount > 0) {
+                long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
+                long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
+                int cmp = Long.compare(bTime, aTime);
+                if (cmp != 0) return cmp;
+            }
+            // 二级规则（DSH-109）：按选定的 sortKey 排序（与 iOS / 服务端 SORT_KEYS 统一）
+            if ("time_desc".equals(sortKey)) {
+                return Long.compare(b.updatedAt, a.updatedAt);
+            } else if ("time_asc".equals(sortKey)) {
+                return Long.compare(a.updatedAt, b.updatedAt);
+            } else if ("name_asc".equals(sortKey)) {
+                String titleA = a.title != null ? a.title : "";
+                String titleB = b.title != null ? b.title : "";
+                return titleA.compareToIgnoreCase(titleB);
+            } else if ("name_desc".equals(sortKey)) {
+                String titleA = a.title != null ? a.title : "";
+                String titleB = b.title != null ? b.title : "";
+                return titleB.compareToIgnoreCase(titleA);
+            } else if ("size_desc".equals(sortKey)) {
+                return Integer.compare(b.imageCount, a.imageCount);
+            } else if ("size_asc".equals(sortKey)) {
+                return Integer.compare(a.imageCount, b.imageCount);
+            }
+            return Long.compare(a.updatedAt, b.updatedAt);
+        });
+    }
+
     private void applySortKeyChange(String newSortKey) {
         currentSortKey = newSortKey;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -1136,6 +1170,7 @@ public final class MainActivity extends Activity {
                 .apply();
         if (sortKeyButton != null) updateSortKeyButtonStyle();
         if (isOnlineMode) {
+            sortOnlineWorks(onlineWorks, currentSortKey);
             applyOnlineCategoryFilter(selectedOnlineCategory);
         } else {
             applyCategoryFilter(selectedCategory);
@@ -3330,6 +3365,7 @@ public final class MainActivity extends Activity {
                 if (isOnlineMode) return;
                 onlineWorks.clear();
                 onlineWorks.addAll(works);
+                sortOnlineWorks(onlineWorks, currentSortKey);
                 mergeLocalSentWorks();
                 onlineListFromSnapshot = false;
             }
@@ -3527,17 +3563,8 @@ public final class MainActivity extends Activity {
                         }
                     }
                 }
-                // DSH-135: 已使用的作品在到期前统一置顶在货架顶部（多端同步置顶）
-                Collections.sort(onlineWorks, (a, b) -> {
-                    if (a.useCount > 0 && b.useCount == 0) return -1;
-                    if (a.useCount == 0 && b.useCount > 0) return 1;
-                    if (a.useCount > 0 && b.useCount > 0) {
-                        long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
-                        long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
-                        return Long.compare(bTime, aTime);
-                    }
-                    return 0;
-                });
+                // DSH-135: 已使用的作品在到期前统一置顶在货架顶部，并按当前选中排序方式排序（多端同步置顶）
+                sortOnlineWorks(onlineWorks, currentSortKey);
                 mergeLocalSentWorks();
                 onlineListFromSnapshot = false;
                 onlineSnapshotAtMs = 0L;
