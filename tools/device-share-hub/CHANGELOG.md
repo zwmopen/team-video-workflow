@@ -1,3 +1,13 @@
+## 2026-10-11 DSH-151：Android 全屏对比视图底栏安全区修复（源码候选 Android/iOS 0.8.80）
+
+- Redmi 实机 Android 15/API 35 上确认 0.8.79 全屏弹窗把页码、翻页按钮和提示画到系统导航栏后方。
+- 0.8.80 通过系统栏/屏幕缺口 Insets 为根布局增加左右与底部安全边距；状态栏在全屏主题下隐藏，因此不再额外保留顶部 inset 空白。
+- Android 版本 0.8.80 / versionCode 191；iOS 源码版本 0.8.80 / build 191，本轮未改 iOS 业务代码。
+- 自动验证：`testDebugUnitTest` 100 项通过，0 失败/错误；`lintRelease` 0 错误（91 条既有警告）；`assembleRelease` 成功。APK 包名/版本/签名已核对，SHA-256：`CA6D42F67A76C472FA93407BAD138D8980D5B46F6F1423DE82FD42EB33E72244`。
+- Android 实机：同签名覆盖安装 0.8.80 成功，版本 191；页码与箭头底部 y=2197、提示底部 y=2250，系统导航栏从 y=2276 起。上下/并排切换、P1→P2 按钮、快速前后翻页、左右手势返回 P1、P6 边界与关闭回首页通过；作品列表保持 395 套，未执行分享/重置/删除。
+- iPhone 实机已启动当前 0.8.77/188 并截图；源代码 bundle 后缀由 Sideloadly 生成。iOS 26.6 当前工具可启动/截图、不能注入触屏；0.8.80 IPA 尚未由 macOS CI 构建，因此 iPhone 全屏操作和新版本安装仍待完成。
+- 影响文档：README.md、docs/BUG_LEDGER.md、docs/MAINTAINER_HANDOFF.md、docs/TEST_PLAYBOOK.md、docs/COMPATIBILITY_AND_TEST_MATRIX.md、docs/MULTI_PLATFORM_SPEC_AND_GOALS.md；协议和 `docs/ALBUM_WORKFLOW_DESIGN.md` 无本次变更点。当前没有推送或正式发布。
+
 ## 2026-10-11 DSH-150：Android 在线相册对比视图全屏与进度显示修复（源码候选 Android/iOS 0.8.79）
 
 - Android 对比视图改用全屏黑底窗口，标题固定为「对比视图」，切换与关闭控件固定尺寸；相似度为零时不再重复显示标题。
@@ -3367,5 +3377,6 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

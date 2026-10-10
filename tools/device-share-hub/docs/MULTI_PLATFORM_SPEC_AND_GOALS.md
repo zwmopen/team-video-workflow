@@ -68,8 +68,15 @@
 
 ---
 
+## 2026-10-11 DSH-151 Android 全屏对比视图安全区修复
+
+- 0.8.80 Android dialog 根布局根据系统栏/缺口 Insets 留出侧边与导航栏空间；隐藏状态栏的顶部 inset 不占布局，保留图片可用高度。
+- API 35 实机验证控件与导航栏间距、纵向/横向比较、翻页、关闭和状态保留；接口、数据协议与 iOS 业务代码无变化。
+- iPhone 当前 0.8.77 可启动/截图；新版本包与触屏操作验收留待 macOS CI 和可用的 iOS 触控链。
+
 ## 📝 变更记录
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

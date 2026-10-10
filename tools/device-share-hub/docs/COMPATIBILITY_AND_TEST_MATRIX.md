@@ -2,6 +2,12 @@
 
 更新时间：2026-10-11
 
+## 2026-10-11 Android/iOS 0.8.80 对比视图安全区候选
+
+- Android 版本 0.8.80 / code 191 在 Redmi 23013RK75C、Android 15/API 35、显示区 1080×2400 实测；对比控件底部 y=2250，系统导航栏起点 y=2276，安全间距 26px。
+- 上下同框与左右并排、按钮翻到 P2、快速前后翻页、左右滑回 P1、P6 边界、关闭回列表均通过；395 套在线作品仍在，未触发作品写操作；logcat 未发现应用 FATAL。
+- 自动结果：Android 单测 100/100 通过；Release Lint 0 错误；Release APK 已签名并安装。当前 iPhone 实装为 0.8.77/188，仅验证启动和截图；0.8.80 IPA 与 iOS 触屏操作仍待 macOS CI/可用触控链。
+
 ## 2026-10-11 Android/iOS 0.8.79 对比视图修复候选
 
 - Android versionCode 190、iOS build 190；候选说明见 docs/MAINTAINER_HANDOFF.md。
@@ -93,4 +99,5 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

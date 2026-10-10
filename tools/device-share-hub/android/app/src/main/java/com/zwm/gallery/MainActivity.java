@@ -5161,7 +5161,32 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
-        root.setPadding(dp(10), dp(10), dp(10), dp(10));
+        int compareInsetPadding = dp(10);
+        root.setPadding(compareInsetPadding, compareInsetPadding, compareInsetPadding, compareInsetPadding);
+        // Android 15+ lets fullscreen dialog content draw behind the navigation bar.
+        // Keep the footer and page controls inside the visible area on gesture and 3-button nav.
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int leftInset;
+            int rightInset;
+            int bottomInset;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                android.graphics.Insets safeInsets = insets.getInsets(
+                        android.view.WindowInsets.Type.systemBars()
+                                | android.view.WindowInsets.Type.displayCutout());
+                leftInset = safeInsets.left;
+                rightInset = safeInsets.right;
+                bottomInset = safeInsets.bottom;
+            } else {
+                leftInset = insets.getSystemWindowInsetLeft();
+                rightInset = insets.getSystemWindowInsetRight();
+                bottomInset = insets.getSystemWindowInsetBottom();
+            }
+            // The fullscreen theme hides the status bar; its reported top inset is
+            // still non-zero on some devices, so only consume side and bottom insets.
+            view.setPadding(compareInsetPadding + leftInset, compareInsetPadding,
+                    compareInsetPadding + rightInset, compareInsetPadding + bottomInset);
+            return insets;
+        });
 
         // 顶部导航栏
         LinearLayout topBar = new LinearLayout(this);

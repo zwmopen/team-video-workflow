@@ -3189,11 +3189,22 @@ totalWorks = 472
 - **设备验收状态**：本轮 ADB 未发现在线设备；恢复对话里的旧截图仅作为历史缺陷证据。Android/iPhone 当前页面布局、缓存进度和快速翻页仍待真机检查。
 - **回归要求**：冷热缓存下分别检查进度可见性；连续快速切换页面，确认旧回调不覆盖当前页；检查纯黑全屏边缘、标签、模式切换、关闭按钮、素材/成品徽标与并排图片居中；iOS 复核素材路径与图片页号一一对应。
 
+## DSH-151 Android 全屏对比视图控制栏被系统导航栏遮挡（已修复并实机回归 · 2026-10-11）
+
+- **现象**：Redmi 23013RK75C（Android 15/API 35，显示区 1080×2400）上的 0.8.79 全屏对比弹窗把页码、左右翻页按钮和提示绘制到系统底部导航栏后方。
+- **复现**：打开在线相册中的对比预览；UI 树显示翻页按钮 bounds 延伸到导航栏起点之后，截图也能看到控件被遮挡。
+- **根因**：Android 15 对目标 SDK 36 的全屏窗口会让内容延伸到系统栏后方；弹窗根布局没有消费导航栏/屏幕缺口 Insets。隐藏状态栏仍回报非零顶部 inset，若一并消费会产生多余黑边。
+- **修复**：0.8.80 / versionCode 191；仅将左右与底部系统栏/缺口 Insets 加到全屏比较根布局，保留顶部原间距。
+- **验收**：同签名覆盖安装成功；控件底部 y=2250、导航栏起点 y=2276；上下/并排切换、按钮与手势翻页、快速前后切页、P6 边界、关闭回到作品列表通过。395 套在线作品数保持，未触发分享、重置、删除；应用 FATAL 扫描为空。
+- **自动检查**：100 项 Android 单测通过；Release Lint 0 错误；Release APK 签名验证通过。候选 CI 与正式发布未执行。
+- **iPhone 边界**：iOS 26.6 上 0.8.77/188 能由 CoreDevice 启动并截图；触屏注入不可用，本轮 iOS 全屏点击操作未验收；0.8.80 IPA 尚待 macOS CI。
+
 ---
 
 ## 📝 变更记录
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

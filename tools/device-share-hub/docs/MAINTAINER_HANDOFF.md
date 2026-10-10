@@ -1,3 +1,14 @@
+# 2026-10-11 对比视图修复候选（DSH-151）
+
+- 源码候选：Android 0.8.80 / versionCode 191；iOS 0.8.80 / build 191。
+- 变更：Android 全屏比较弹窗只消费系统左右/底部安全 Insets，避免 Android 15/API 35 上翻页区被导航栏盖住，同时不为隐藏状态栏留空白。
+- 自动验证：`testDebugUnitTest` 100 项通过；`lintRelease` 0 错误；`assembleRelease` 成功；APK 版本、包名、签名已核对，SHA-256 `CA6D42F67A76C472FA93407BAD138D8980D5B46F6F1423DE82FD42EB33E72244`。
+- Android 真机已覆盖安装 0.8.80；安全边距 y=2250 < 系统导航栏 y=2276；上下/左右切换、下一页、快速翻页、手势返回、P6 边界、关闭回首页通过，395 套作品未变。
+- iPhone 当前安装 0.8.77/188，CoreDevice 启动和截图成功；iOS 26.6 触屏注入不可用，且 0.8.80 IPA 尚未构建。iOS 业务代码本轮未改。
+- 当前提交仅在本机；没有推送、GitHub Actions 候选构建或正式发布。若要完成 iPhone 0.8.80 覆盖安装，需要授权把本次范围限定提交推送至私有源码仓库触发 macOS CI，再经 Sideloadly 签名安装。
+
+---
+
 # 2026-10-11 对比视图修复候选（DSH-150）
 
 - 源码候选：Android 0.8.79 / versionCode 190；iOS 0.8.79 / build 190。
@@ -1104,5 +1115,6 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

@@ -16,6 +16,14 @@
 - iOS 额外核对 sourceImages 与成品页号配对、首页同步电脑状态、缩略图 84×112pt（3:4）和作品操作按钮「重置状态」。
 - Android 单测 100 项通过，Debug/Release Lint 与 Debug/Release APK 构建通过；候选 CI、iOS 构建和实体设备操作需分别记录，不可互相替代。
 
+## 对比视图安全区修复回归（DSH-151 / Android 0.8.80）
+
+- 设备：Redmi 23013RK75C，Android 15/API 35，显示区域 1080×2400，目标 SDK 36。
+- 在上下同框与左右并排模式分别确认标题、素材/成品徽标、页码和翻页按钮；最大控件底部 y=2250，导航栏起点 y=2276。
+- 点击下一页确认 P1→P2；连续 P2→P3→P2 后等待旧回调完成，页码仍为 P2；横向滑动返回 P1；末页确认 P6/P6 且下一页按钮禁用；关闭后回到在线作品列表。
+- 覆盖安装后确认 versionName 0.8.80、versionCode 191，在线作品仍为 395 套；只读浏览，不点分享、重置或删除。Logcat 以 `FATAL EXCEPTION` 与本包 `Process` 过滤，结果为空。
+- iPhone 26.6 本轮只执行 App 启动与截图；CoreDevice 没有可用触屏注入，不能据截图代替点击验收。新 IPA 需先经 macOS CI 生成并签名侧载。
+
 ## 远程混合传输验收（DSH-046）
 
 - 先确认两台手机已完成电脑登记、远程开关打开并在 `/v1/p2p/sessions` 可见；Cloudflare 请求只应出现会话和 SDP/ICE 信令，不应出现作品字节上传到 R2。
@@ -174,4 +182,5 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
