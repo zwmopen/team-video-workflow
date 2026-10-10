@@ -5,7 +5,7 @@
 ## 2026-10-11 Android/iOS 0.8.79 对比视图修复候选
 
 - Android versionCode 190、iOS build 190；候选说明见 docs/MAINTAINER_HANDOFF.md。
-- Android 单测 100 项通过；Debug/Release Lint 与 APK 构建均通过，Release 包名/版本/签名和 debuggable 状态已核对；iOS 候选构建和本轮 CI 尚未执行。
+- Android 单测 100 项通过；testDebugUnitTest、lintDebug、lintRelease、assembleDebug、assembleRelease 均通过；Release 包名/版本/签名和 debuggable 状态已核对；iOS 候选构建和本轮 CI 尚未执行。
 - 当前无在线 Android ADB 设备，Android/iPhone 真机界面、缓存进度和覆盖安装均待验收；旧版本截图不作为候选版通过证据。
 - 两端验收按 docs/TEST_PLAYBOOK.md 的 DSH-150 清单执行，尤其覆盖快速翻页、全屏边缘和 iOS 素材图片映射。
 
@@ -93,4 +93,4 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
-| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
+| 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
