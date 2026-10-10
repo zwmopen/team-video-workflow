@@ -114,6 +114,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let imageCount = (dict["imageCount"] as? Int) ?? images.count
         let copyText = (dict["copyText"] as? String) ?? ""
         let hasCopyText = (dict["hasCopyText"] as? Bool) ?? !copyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let dispatchedTo = (dict["dispatchedTo"] as? [String]) ?? []
         let rawUpdated = (dict["updatedAt"] as? NSNumber)?.doubleValue
             ?? (dict["updatedAt"] as? Double)
             ?? Double((dict["updatedAt"] as? Int64) ?? Int64((dict["updatedAt"] as? Int) ?? 0))
