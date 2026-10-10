@@ -13,7 +13,7 @@
   "ios": {
     "version_name": "0.8.77",
     "build": 188,
-    "sha256": "",
+    "sha256": "d6f8062b0e602235df5f31889810ed5b4c0fbaa2e3ad3b63345078e523d58794",
     "ipa_url": "/album-iOS-v0.8.77-altstore.ipa",
     "ipa_file_name": "album-iOS-v0.8.77-altstore.ipa",
     "release_url": "https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.77"
