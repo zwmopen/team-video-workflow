@@ -1,7 +1,7 @@
 # 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.92 / iPhone 0.8.92）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.92 / versionCode 203**、**iPhone 0.8.92 / build 203**。Android `.92` Release APK 已本地构建并验签，103/103 单测、Lint 0 错误/93 警告、源码守卫 6/6；手机系统拒绝覆盖安装，设备锁屏，当前仍为 `.91/202`，尚未点击验收。iOS 静态守卫 15/15，但无 IPA、Xcode 或可用 iPhone USB mux。服务端 DSH-157 阶段计时已在现场重启后回读 `staleCode=false`、库存 395、扫描错误 0；手机超时根因仍未确认。交接见 `docs/MAINTAINER_HANDOFF.md`；没有推送或发布。
+> 本轮源码候选：**Android 0.8.92 / versionCode 203**、**iPhone 0.8.92 / build 203**。最终 Android `.92` Release APK SHA-256 为 `29236975AC57AC33AC6B7788341F71D1E793692BFD515166F88935F46B0048FC`，103/103 单测、Lint 0 错误/94 警告、APK v2/v3 验签通过；已在解锁 Redmi `e3b58850` 覆盖安装并回读本地预览、在线 395 套和对比视图上下/左右模式。对比卡片使用 3:4 图块，素材页位保持对齐，移动端操作栏居中且统一为“重置状态 / 复制路径 / 删除”。iOS 静态守卫 15/15、跨端契约 49/49，但无 IPA、Xcode 或可用 iPhone USB mux，未做 iOS 实机验收；Vivo 未绕过锁屏、未安装。没有推送或发布。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
 ## 先搞清这几个东西分别是谁

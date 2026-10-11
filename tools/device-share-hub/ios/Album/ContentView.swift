@@ -2454,8 +2454,9 @@ private final class ComparePairThumbView: UIControl {
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = UIColor(red: 0.95, green: 0.97, blue: 0.96, alpha: 1)
         layer.cornerRadius = 10
-        layer.borderWidth = 1
-        layer.borderColor = UIColor(red: 0.15, green: 0.55, blue: 0.40, alpha: 0.35).cgColor
+        // The compare preview is a content surface, not a framed card.
+        layer.borderWidth = 0
+        layer.borderColor = UIColor.clear.cgColor
         clipsToBounds = true
 
         headerLabel.font = .boldSystemFont(ofSize: 10.5)
@@ -2489,7 +2490,7 @@ private final class ComparePairThumbView: UIControl {
         leftBadge.layer.cornerRadius = 4
         leftBadge.clipsToBounds = true
         leftBadge.translatesAutoresizingMaskIntoConstraints = false
-        leftImageView.addSubview(leftBadge)
+        addSubview(leftBadge)
 
         rightBadge.text = "成品"
         rightBadge.font = .systemFont(ofSize: 9.5, weight: .bold)
@@ -2499,11 +2500,11 @@ private final class ComparePairThumbView: UIControl {
         rightBadge.layer.cornerRadius = 4
         rightBadge.clipsToBounds = true
         rightBadge.translatesAutoresizingMaskIntoConstraints = false
-        rightImageView.addSubview(rightBadge)
+        addSubview(rightBadge)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 148),
-            heightAnchor.constraint(equalToConstant: 112),
+            widthAnchor.constraint(equalToConstant: 190),
+            heightAnchor.constraint(equalToConstant: 158),
 
             headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -2512,24 +2513,24 @@ private final class ComparePairThumbView: UIControl {
 
             leftImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
             leftImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
-            leftImageView.widthAnchor.constraint(equalToConstant: 66),
+            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
+            leftImageView.widthAnchor.constraint(equalToConstant: 84),
 
             rightImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
             rightImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
-            rightImageView.widthAnchor.constraint(equalToConstant: 66),
+            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
+            rightImageView.widthAnchor.constraint(equalToConstant: 84),
 
             emptySourceLabel.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor),
             emptySourceLabel.centerYAnchor.constraint(equalTo: leftImageView.centerYAnchor),
 
-            leftBadge.leadingAnchor.constraint(equalTo: leftImageView.leadingAnchor, constant: 3),
-            leftBadge.bottomAnchor.constraint(equalTo: leftImageView.bottomAnchor, constant: -3),
+            leftBadge.trailingAnchor.constraint(equalTo: leftImageView.trailingAnchor),
+            leftBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             leftBadge.widthAnchor.constraint(equalToConstant: 36),
             leftBadge.heightAnchor.constraint(equalToConstant: 15),
 
             rightBadge.trailingAnchor.constraint(equalTo: rightImageView.trailingAnchor, constant: -3),
-            rightBadge.bottomAnchor.constraint(equalTo: rightImageView.bottomAnchor, constant: -3),
+            rightBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             rightBadge.widthAnchor.constraint(equalToConstant: 36),
             rightBadge.heightAnchor.constraint(equalToConstant: 15)
         ])
@@ -2936,8 +2937,8 @@ private final class WorkCell: UICollectionViewCell {
     static let cardBaseHeight: CGFloat = 264
     /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
     static let listBaseHeight: CGFloat = 148
-    /// 对比视图卡片基准高度（双图并排对比区 116pt + 底部操作行）
-    static let compareBaseHeight: CGFloat = 268
+    /// 对比视图卡片基准高度（双图并排对比区 158pt + 底部操作行）
+    static let compareBaseHeight: CGFloat = 310
     /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度
     static let cardDetailLineStep: CGFloat = 14
     /// 空壳作品占位按钮文案（单一真源：`makeCopyMissingButton` 与 `sizeForItemAt` 共用）
@@ -3081,7 +3082,7 @@ private final class WorkCell: UICollectionViewCell {
             previewScrollHeightConstraint?.constant = 44
             actionRow.isHidden = true
         case .compare:
-            previewScrollHeightConstraint?.constant = 116
+            previewScrollHeightConstraint?.constant = 162
             actionRow.isHidden = false
         }
     }
@@ -4418,14 +4419,14 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "对比视图 · \(entry.title)"
         titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingMiddle
         topBar.addSubview(titleLabel)
 
         similarityBadge.translatesAutoresizingMaskIntoConstraints = false
         if entry.maxSimilarity > 0 {
             let pct = Int(round(entry.maxSimilarity * 100))
-            similarityBadge.text = "🛡️ 相似度 \(pct)%"
+            similarityBadge.text = "相似度 \(pct)%"
         } else {
             similarityBadge.text = "对比视图"
         }
@@ -4438,7 +4439,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         topBar.addSubview(similarityBadge)
 
         layoutModeButton.translatesAutoresizingMaskIntoConstraints = false
-        layoutModeButton.setTitle("↕️ 上下同框", for: .normal)
+        layoutModeButton.setTitle("上下同框", for: .normal)
         layoutModeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
         layoutModeButton.setTitleColor(.white, for: .normal)
         layoutModeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
@@ -4448,7 +4449,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         topBar.addSubview(layoutModeButton)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("✕", for: .normal)
+        closeButton.setTitle("×", for: .normal)
         closeButton.setTitleColor(.white, for: .normal)
         closeButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
         closeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
@@ -4485,13 +4486,6 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         nextButton.layer.cornerRadius = 16
         nextButton.addTarget(self, action: #selector(nextPage), for: .touchUpInside)
         bottomBar.addSubview(nextButton)
-
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.text = "左右轻扫或点击 ‹ › 翻页"
-        hintLabel.textColor = UIColor(white: 0.65, alpha: 1.0)
-        hintLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        hintLabel.textAlignment = .center
-        bottomBar.addSubview(hintLabel)
 
         // 中间主对比区域
         containerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -4540,11 +4534,12 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
             layoutModeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
             layoutModeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            layoutModeButton.widthAnchor.constraint(equalToConstant: 92),
             layoutModeButton.heightAnchor.constraint(equalToConstant: 32),
 
             similarityBadge.trailingAnchor.constraint(equalTo: layoutModeButton.leadingAnchor, constant: -8),
             similarityBadge.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            similarityBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
+            similarityBadge.widthAnchor.constraint(equalToConstant: 92),
             similarityBadge.heightAnchor.constraint(equalToConstant: 32),
 
             titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 14),
@@ -4568,9 +4563,6 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             nextButton.centerYAnchor.constraint(equalTo: pageLabel.centerYAnchor),
             nextButton.widthAnchor.constraint(equalToConstant: 32),
             nextButton.heightAnchor.constraint(equalToConstant: 32),
-
-            hintLabel.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
-            hintLabel.topAnchor.constraint(equalTo: pageLabel.bottomAnchor, constant: 3),
 
             containerStack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 6),
             containerStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
@@ -4598,8 +4590,11 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         badge.translatesAutoresizingMaskIntoConstraints = false
         badge.text = badgeText
         badge.font = .systemFont(ofSize: 10.5, weight: .bold)
-        badge.textColor = .white
-        badge.backgroundColor = badgeBg
+        badge.textColor = badgeText == "成品"
+            ? UIColor(red: 0.35, green: 0.95, blue: 0.55, alpha: 1)
+            : UIColor(white: 0.82, alpha: 1)
+        // Keep the short label in a narrow rail on the right, outside the image.
+        badge.backgroundColor = .clear
         badge.textAlignment = .center
         badge.layer.cornerRadius = 4
         badge.clipsToBounds = true
@@ -4618,7 +4613,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: container.topAnchor),
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
             badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
@@ -4758,7 +4753,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         isHorizontalLayout.toggle()
         containerStack.axis = isHorizontalLayout ? .horizontal : .vertical
         containerStack.alignment = isHorizontalLayout ? .center : .fill
-        layoutModeButton.setTitle(isHorizontalLayout ? "↔️ 左右并排" : "↕️ 上下同框", for: .normal)
+        layoutModeButton.setTitle(isHorizontalLayout ? "左右并排" : "上下同框", for: .normal)
     }
 
     @objc private func prevPage() {

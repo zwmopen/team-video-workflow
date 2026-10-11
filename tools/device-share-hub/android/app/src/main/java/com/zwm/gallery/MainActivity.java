@@ -1210,7 +1210,9 @@ public final class MainActivity extends Activity {
 
     private void showViewModeMenu() {
         android.widget.PopupMenu popup = new android.widget.PopupMenu(this, viewModeButton);
-        android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（双列网格大图）");
+        // The current renderer keeps one work card per row and enlarges its thumbnail strip.
+        // Keep the menu text truthful until a real two-column card layout is implemented.
+        android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（大图缩略图）");
         android.view.MenuItem miList = popup.getMenu().add("📑 列表视图（单列紧凑清单）");
         android.view.MenuItem miComp = popup.getMenu().add("🆚 对比视图（素材 vs 成品并排）");
 
@@ -1842,28 +1844,35 @@ public final class MainActivity extends Activity {
                 });
                 platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             }
-            if (work.shareCount > 0) {
-                Button reset = new Button(this);
-                reset.setText("重置");
-                styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
-                reset.setContentDescription("重置作品状态为未发布");
-                reset.setOnClickListener(v -> confirmResetWork(work.id));
-                platformRow.addView(reset, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            }
+            Button reset = new Button(this);
+            reset.setText("重置状态");
+            styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
+            reset.setContentDescription("重置作品状态为未发布");
+            reset.setOnClickListener(v -> confirmResetWork(work.id));
             Button delete = new Button(this);
             delete.setText("删除");
             styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
             delete.setContentDescription("删除作品，移到回收站");
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
-            platformRow.addView(delete, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            // 「复制路径」紧跟在「删除」之后：本地作品复制手机上的作品文件夹路径
+            // 本地作品底部三按钮与在线卡片保持同一顺序与居中布局。
             String localPath = work.directory != null ? work.directory.getAbsolutePath() : "";
-            platformRow.addView(copyPathButton(localPath, "手机本地作品"),
-                    new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            Button copyPath = copyPathButton(localPath, "手机本地作品");
             LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
             platformRowParams.setMargins(0, dp(8), 0, dp(2));
             card.addView(platformRow, platformRowParams);
+
+            LinearLayout bottomActionRow = new LinearLayout(this);
+            bottomActionRow.setOrientation(LinearLayout.HORIZONTAL);
+            bottomActionRow.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(-1, -2);
+            bottomParams.setMargins(0, dp(8), 0, dp(2));
+            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            actionParams.setMargins(dp(4), 0, dp(4), 0);
+            bottomActionRow.addView(reset, actionParams);
+            bottomActionRow.addView(copyPath, actionParams);
+            bottomActionRow.addView(delete, actionParams);
+            card.addView(bottomActionRow, bottomParams);
         }
         return card;
     }
@@ -5019,19 +5028,19 @@ public final class MainActivity extends Activity {
             String srcImg = (work.sourceImages != null && i < work.sourceImages.size())
                     ? work.sourceImages.get(i) : null;
 
-            // 对比卡片：宽 148dp，高 112dp
+            // 对比卡片：每张图保持 3:4，避免 iOS/Android 上被压成半张图。
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setBackground(roundWithStroke(Color.rgb(243, 248, 245), 10, Color.rgb(180, 220, 200)));
+            card.setBackground(round(Color.rgb(243, 248, 245), 10));
             card.setPadding(dp(5), dp(3), dp(5), dp(5));
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(148), dp(112));
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(190), dp(158));
             cardParams.setMargins(0, 0, dp(8), 0);
 
             // 标头：P1 素材 ➔ 成品
             TextView header = text("P" + (i + 1) + " 素材 ➔ 成品", 10, true);
             header.setTextColor(Color.rgb(20, 115, 75));
             header.setGravity(Gravity.CENTER);
-            card.addView(header, new LinearLayout.LayoutParams(-1, dp(16)));
+            card.addView(header, new LinearLayout.LayoutParams(-1, dp(18)));
 
             // 双图并排
             LinearLayout row = new LinearLayout(this);
@@ -5045,14 +5054,6 @@ public final class MainActivity extends Activity {
             ImageView leftIv = new ImageView(this);
             leftIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             leftBox.addView(leftIv, new FrameLayout.LayoutParams(-1, -1));
-
-            TextView leftBadge = text("素材", 9, true);
-            leftBadge.setTextColor(Color.WHITE);
-            leftBadge.setBackground(round(Color.argb(160, 0, 0, 0), 4));
-            leftBadge.setPadding(dp(3), dp(1), dp(3), dp(1));
-            FrameLayout.LayoutParams leftBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
-            leftBadgeParams.setMargins(dp(2), 0, 0, dp(2));
-            leftBox.addView(leftBadge, leftBadgeParams);
 
             if (srcImg != null && !srcImg.isEmpty()) {
                 String cacheKey = "online:" + work.id + ":" + srcImg;
@@ -5090,14 +5091,6 @@ public final class MainActivity extends Activity {
             rightIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             rightBox.addView(rightIv, new FrameLayout.LayoutParams(-1, -1));
 
-            TextView rightBadge = text("成品", 9, true);
-            rightBadge.setTextColor(Color.WHITE);
-            rightBadge.setBackground(round(Color.argb(200, 16, 133, 87), 4));
-            rightBadge.setPadding(dp(3), dp(1), dp(3), dp(1));
-            FrameLayout.LayoutParams rightBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
-            rightBadgeParams.setMargins(0, 0, dp(2), dp(2));
-            rightBox.addView(rightBadge, rightBadgeParams);
-
             String outCacheKey = "online:" + work.id + ":" + outImg;
             Bitmap outCached = THUMBNAIL_CACHE.get(outCacheKey);
             if (outCached != null && !outCached.isRecycled()) {
@@ -5119,13 +5112,27 @@ public final class MainActivity extends Activity {
                 }));
             }
 
-            LinearLayout.LayoutParams halfParams = new LinearLayout.LayoutParams(dp(66), dp(84));
+            LinearLayout.LayoutParams halfParams = new LinearLayout.LayoutParams(dp(84), dp(112));
             row.addView(leftBox, halfParams);
-            LinearLayout.LayoutParams rightHalfParams = new LinearLayout.LayoutParams(dp(66), dp(84));
+            LinearLayout.LayoutParams rightHalfParams = new LinearLayout.LayoutParams(dp(84), dp(112));
             rightHalfParams.setMargins(dp(6), 0, 0, 0);
             row.addView(rightBox, rightHalfParams);
 
-            card.addView(row, new LinearLayout.LayoutParams(-1, -1));
+            card.addView(row, new LinearLayout.LayoutParams(-1, dp(112)));
+            LinearLayout badgeRow = new LinearLayout(this);
+            badgeRow.setOrientation(LinearLayout.HORIZONTAL);
+            badgeRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            TextView leftBadge = text("素材", 9, true);
+            leftBadge.setTextColor(Color.rgb(75, 82, 78));
+            leftBadge.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            TextView rightBadge = text("成品", 9, true);
+            rightBadge.setTextColor(Color.rgb(20, 115, 75));
+            rightBadge.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            badgeRow.addView(leftBadge, new LinearLayout.LayoutParams(dp(84), dp(16)));
+            LinearLayout.LayoutParams rightBadgeParams = new LinearLayout.LayoutParams(dp(84), dp(16));
+            rightBadgeParams.setMargins(dp(6), 0, 0, 0);
+            badgeRow.addView(rightBadge, rightBadgeParams);
+            card.addView(badgeRow, new LinearLayout.LayoutParams(-1, dp(16)));
             card.setOnClickListener(v -> showOnlineCompareDialog(work, pageIndex));
             strip.addView(card, cardParams);
         }
@@ -5215,7 +5222,7 @@ public final class MainActivity extends Activity {
         topBar.addView(toggleLayoutBtn, toggleParams);
 
         Button closeBtn = new Button(this);
-        closeBtn.setText("✕");
+        closeBtn.setText("×");
         closeBtn.setTextSize(14);
         closeBtn.setTextColor(Color.WHITE);
         closeBtn.setGravity(Gravity.CENTER);
@@ -5244,14 +5251,17 @@ public final class MainActivity extends Activity {
         ImageView leftImage = new ImageView(this);
         leftImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
         leftImage.setAdjustViewBounds(true);
-        leftFrame.addView(leftImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+        FrameLayout.LayoutParams leftImageParams = new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER);
+        leftImageParams.rightMargin = dp(48);
+        leftFrame.addView(leftImage, leftImageParams);
 
         TextView leftBadge = text("素材", 10, true);
-        leftBadge.setTextColor(Color.WHITE);
-        leftBadge.setBackground(round(Color.argb(190, 0, 0, 0), 4));
-        leftBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
-        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.END);
-        lBadgeParams.setMargins(0, 0, dp(8), 0);
+        leftBadge.setTextColor(Color.rgb(205, 215, 210));
+        leftBadge.setGravity(Gravity.CENTER);
+        leftBadge.setBackgroundColor(Color.TRANSPARENT);
+        leftBadge.setPadding(0, 0, 0, 0);
+        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(dp(44), dp(24), Gravity.CENTER_VERTICAL | Gravity.END);
+        lBadgeParams.setMargins(0, 0, dp(4), 0);
         leftFrame.addView(leftBadge, lBadgeParams);
 
         TextView leftProgress = text("", 10, false);
@@ -5274,14 +5284,17 @@ public final class MainActivity extends Activity {
         ImageView rightImage = new ImageView(this);
         rightImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
         rightImage.setAdjustViewBounds(true);
-        rightFrame.addView(rightImage, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+        FrameLayout.LayoutParams rightImageParams = new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER);
+        rightImageParams.rightMargin = dp(48);
+        rightFrame.addView(rightImage, rightImageParams);
 
         TextView rightBadge = text("成品", 10, true);
-        rightBadge.setTextColor(Color.WHITE);
-        rightBadge.setBackground(round(Color.argb(210, 16, 133, 87), 4));
-        rightBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
-        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.END);
-        rBadgeParams.setMargins(0, 0, dp(8), 0);
+        rightBadge.setTextColor(Color.rgb(90, 240, 140));
+        rightBadge.setGravity(Gravity.CENTER);
+        rightBadge.setBackgroundColor(Color.TRANSPARENT);
+        rightBadge.setPadding(0, 0, 0, 0);
+        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(dp(44), dp(24), Gravity.CENTER_VERTICAL | Gravity.END);
+        rBadgeParams.setMargins(0, 0, dp(4), 0);
         rightFrame.addView(rightBadge, rBadgeParams);
 
         TextView rightProgress = text("", 10, false);
@@ -5330,11 +5343,6 @@ public final class MainActivity extends Activity {
         bottomBar.addView(nextBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
 
         root.addView(bottomBar, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView navHint = text("左右轻扫或点击 ‹ › 翻页", 11, false);
-        navHint.setTextColor(Color.rgb(140, 145, 142));
-        navHint.setGravity(Gravity.CENTER);
-        root.addView(navHint, margins(0, dp(4), 0, 0));
 
         android.app.Dialog dialog = new android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         dialog.setContentView(root);
@@ -5720,18 +5728,13 @@ public final class MainActivity extends Activity {
         LinearLayout navRow = new LinearLayout(this);
         navRow.setOrientation(LinearLayout.HORIZONTAL);
         navRow.setGravity(Gravity.CENTER);
-        Button prevBtn = smallButton("‹ 上一张", false);
-        Button nextBtn = smallButton("下一张 ›", true);
+        Button prevBtn = smallButton("‹", false);
+        Button nextBtn = smallButton("›", true);
         navRow.addView(prevBtn, new LinearLayout.LayoutParams(-2, dp(38)));
         navRow.addView(nextBtn, new LinearLayout.LayoutParams(-2, dp(38)));
         LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(-1, -2);
         navParams.setMargins(0, dp(10), 0, 0);
         layout.addView(navRow, navParams);
-
-        TextView navHint = text("提示：左右滑动图片即可切换上一张 / 下一张", 11, false);
-        navHint.setTextColor(Color.rgb(120, 125, 122));
-        navHint.setGravity(Gravity.CENTER);
-        layout.addView(navHint, margins(0, dp(6), 0, 0));
 
         builder.setView(layout);
         builder.setPositiveButton("关闭", null);
@@ -5803,7 +5806,7 @@ public final class MainActivity extends Activity {
             String imageName = mutableImages.get(currentIndex[0]);
             title.setText(workTitle + " (" + (currentIndex[0] + 1) + "/" + mutableImages.size() + ")");
             boolean isFullCached = onlineClient.hasFullImageCached(workId, imageName);
-            badge.setText(isFullCached ? "✅ 100% 原画" : "⏳ 拉取原画中…");
+            badge.setText(isFullCached ? "原图 100%" : "原图 0%");
             badge.setTextColor(isFullCached ? Color.rgb(15, 135, 88) : Color.rgb(180, 120, 20));
             badge.setBackground(round(isFullCached ? Color.rgb(235, 247, 240) : Color.rgb(255, 246, 230), 8));
             if (!isFullCached) spinner.setVisibility(View.VISIBLE);
@@ -5824,7 +5827,7 @@ public final class MainActivity extends Activity {
             if (cachedFull != null && !cachedFull.isRecycled()) {
                 fullView.setImageBitmap(cachedFull);
                 spinner.setVisibility(View.GONE);
-                badge.setText("✅ 100% 原画");
+                badge.setText("原图 100%");
                 badge.setTextColor(Color.rgb(15, 135, 88));
                 badge.setBackground(round(Color.rgb(235, 247, 240), 8));
                 prefetchOnlineImages(workId, mutableImages, currentIndex[0]);
@@ -5832,7 +5835,15 @@ public final class MainActivity extends Activity {
             }
 
             // 3. 异步拉取 100% 原始画质（本地磁盘秒开，无本地磁盘则向电脑拉取）
-            onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.Callback<Bitmap>() {
+            final int requestIndex = currentIndex[0];
+            onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
+                @Override
+                public void onProgress(int percent) {
+                    if (currentIndex[0] == requestIndex) {
+                        badge.setText("原图 " + percent + "%");
+                    }
+                }
+
                 @Override
                 public void onSuccess(Bitmap result) {
                     if (currentIndex[0] >= mutableImages.size() || !mutableImages.get(currentIndex[0]).equals(imageName)) return;
@@ -5842,7 +5853,7 @@ public final class MainActivity extends Activity {
                         fullView.setImageBitmap(result);
                         fullView.requestLayout();
                         fullView.invalidate();
-                        badge.setText("✅ 100% 原画");
+                        badge.setText("原图 100%");
                         badge.setTextColor(Color.rgb(15, 135, 88));
                         badge.setBackground(round(Color.rgb(235, 247, 240), 8));
                     }
@@ -5851,7 +5862,7 @@ public final class MainActivity extends Activity {
                 @Override
                 public void onError(Exception error) {
                     spinner.setVisibility(View.GONE);
-                    badge.setText("缩略图预览 (点此重拉)");
+                    badge.setText("原图加载失败");
                     badge.setTextColor(Color.GRAY);
                     badge.setBackground(round(Color.rgb(240, 240, 240), 8));
                 }

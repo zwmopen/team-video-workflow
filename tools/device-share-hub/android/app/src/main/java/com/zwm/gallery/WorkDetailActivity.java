@@ -325,8 +325,8 @@ public final class WorkDetailActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(16), topPadding, dp(16), dp(8));
 
-        Button close = button("✕", Color.argb(160, 35, 35, 35), Color.WHITE);
-        close.setTextSize(15);
+        Button close = button("×", Color.argb(160, 35, 35, 35), Color.WHITE);
+        close.setTextSize(18);
         close.setContentDescription("关闭全屏预览");
         close.setPadding(0, 0, 0, 0);
         close.setGravity(Gravity.CENTER);
@@ -352,11 +352,12 @@ public final class WorkDetailActivity extends Activity {
         footer.setGravity(Gravity.CENTER_VERTICAL);
         footer.setPadding(dp(18), dp(10), dp(18), safeBottomPadding);
 
-        Button previous = button("‹ 上一张", Color.argb(160, 45, 45, 45), Color.WHITE);
-        previous.setTextSize(12.5f);
+        Button previous = button("‹", Color.argb(160, 45, 45, 45), Color.WHITE);
+        previous.setTextSize(22);
         previous.setMinHeight(dp(38));
-        previous.setPadding(dp(14), 0, dp(14), 0);
-        footer.addView(previous, new LinearLayout.LayoutParams(-2, dp(38)));
+        previous.setPadding(0, 0, 0, 0);
+        previous.setGravity(Gravity.CENTER);
+        footer.addView(previous, new LinearLayout.LayoutParams(dp(42), dp(38)));
 
         TextView counter = text("", 13, true);
         counter.setGravity(Gravity.CENTER);
@@ -368,11 +369,12 @@ public final class WorkDetailActivity extends Activity {
         counter.setLayoutParams(counterParams);
         footer.addView(counter);
 
-        Button next = button("下一张 ›", Color.rgb(38, 145, 94), Color.WHITE);
-        next.setTextSize(12.5f);
+        Button next = button("›", Color.rgb(38, 145, 94), Color.WHITE);
+        next.setTextSize(22);
         next.setMinHeight(dp(38));
-        next.setPadding(dp(14), 0, dp(14), 0);
-        footer.addView(next, new LinearLayout.LayoutParams(-2, dp(38)));
+        next.setPadding(0, 0, 0, 0);
+        next.setGravity(Gravity.CENTER);
+        footer.addView(next, new LinearLayout.LayoutParams(dp(42), dp(38)));
 
         FrameLayout.LayoutParams footerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         container.addView(footer, footerParams);

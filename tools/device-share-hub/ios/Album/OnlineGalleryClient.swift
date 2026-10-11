@@ -142,8 +142,14 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let originDevice = (dict["originDevice"] as? String) ?? ""
         let dispatchedVersions = (dict["dispatchedVersions"] as? [String]) ?? []
         let tags = (dict["tags"] as? [String]) ?? []
-        let sourceImages = (dict["sourceImages"] as? [String]) ?? []
-        let sourceNames = (dict["sourceNames"] as? [String]) ?? []
+        // Keep empty slots: sourceImages/sourceNames are page-aligned with images.
+        // Filtering or compressing them shifts later pages onto the wrong output.
+        let sourceImages = (dict["sourceImages"] as? [Any] ?? []).map {
+            ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        let sourceNames = (dict["sourceNames"] as? [Any] ?? []).map {
+            ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
         let hasSourceCompare = (dict["hasSourceCompare"] as? Bool) ?? sourceImages.contains(where: { !$0.isEmpty })
         let maxSimilarity = (dict["maxSimilarity"] as? Double) ?? Double((dict["maxSimilarity"] as? Int) ?? 0)
         let similarityTag = (dict["similarityTag"] as? String) ?? ""
