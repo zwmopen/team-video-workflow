@@ -5180,11 +5180,16 @@ public final class MainActivity extends Activity {
             return insets;
         });
 
-        // 顶部导航栏
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        // 顶部导航栏：控件靠左，关闭按钮独立固定在右上角。
+        FrameLayout topBar = new FrameLayout(this);
         topBar.setPadding(0, 0, 0, dp(8));
+        LinearLayout topControls = new LinearLayout(this);
+        topControls.setOrientation(LinearLayout.HORIZONTAL);
+        topControls.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams topControlsParams = new FrameLayout.LayoutParams(-1, -1,
+                Gravity.TOP | Gravity.START);
+        topControlsParams.rightMargin = dp(42);
+        topBar.addView(topControls, topControlsParams);
 
         TextView titleView = text("对比视图", 12, true);
         titleView.setTextColor(Color.WHITE);
@@ -5193,9 +5198,9 @@ public final class MainActivity extends Activity {
         titleView.setGravity(Gravity.CENTER);
         titleView.setIncludeFontPadding(false);
         titleView.setContentDescription("对比视图，" + work.title);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(dp(96), dp(32));
-        titleParams.setMargins(0, 0, dp(6), 0);
-        topBar.addView(titleView, titleParams);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(dp(88), dp(32));
+        titleParams.setMargins(0, 0, dp(4), 0);
+        topControls.addView(titleView, titleParams);
 
         boolean hasSimilarity = work.maxSimilarity > 0;
         TextView simBadge = text(hasSimilarity
@@ -5206,8 +5211,8 @@ public final class MainActivity extends Activity {
         simBadge.setPadding(dp(10), dp(4), dp(10), dp(4));
         simBadge.setVisibility(hasSimilarity ? View.VISIBLE : View.GONE);
         LinearLayout.LayoutParams simParams = new LinearLayout.LayoutParams(-2, dp(32));
-        simParams.setMargins(dp(6), 0, dp(6), 0);
-        topBar.addView(simBadge, simParams);
+        simParams.setMargins(dp(4), 0, dp(4), 0);
+        topControls.addView(simBadge, simParams);
 
         Button toggleLayoutBtn = new Button(this);
         toggleLayoutBtn.setText("上下同框");
@@ -5222,9 +5227,9 @@ public final class MainActivity extends Activity {
         toggleLayoutBtn.setMinimumHeight(0);
         toggleLayoutBtn.setAllCaps(false);
         toggleLayoutBtn.setContentDescription("当前上下同框，点击切换左右并排");
-        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(96), dp(32));
-        toggleParams.setMargins(0, 0, dp(6), 0);
-        topBar.addView(toggleLayoutBtn, toggleParams);
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(88), dp(32));
+        toggleParams.setMargins(0, 0, dp(4), 0);
+        topControls.addView(toggleLayoutBtn, toggleParams);
 
         Button closeBtn = new Button(this);
         closeBtn.setText("×");
@@ -5239,9 +5244,11 @@ public final class MainActivity extends Activity {
         closeBtn.setAllCaps(false);
         closeBtn.setContentDescription("关闭对比视图");
         closeBtn.setBackground(round(Color.rgb(55, 60, 58), 16));
-        topBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(36), dp(32)));
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(36), dp(32),
+                Gravity.TOP | Gravity.END);
+        topBar.addView(closeBtn, closeParams);
 
-        root.addView(topBar, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(topBar, new LinearLayout.LayoutParams(-1, dp(40)));
 
         // 中间主对比容器（可横向并排或纵向排布）
         LinearLayout compareContainer = new LinearLayout(this);
@@ -5265,7 +5272,7 @@ public final class MainActivity extends Activity {
         leftBadge.setBackgroundColor(Color.TRANSPARENT);
         leftBadge.setPadding(0, 0, 0, 0);
         leftBadge.setVisibility(View.GONE);
-        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(dp(44), dp(24), Gravity.CENTER_VERTICAL | Gravity.END);
+        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(-2, dp(20), Gravity.CENTER_VERTICAL | Gravity.END);
         lBadgeParams.setMargins(0, 0, dp(4), 0);
         leftFrame.addView(leftBadge, lBadgeParams);
 
@@ -5298,7 +5305,7 @@ public final class MainActivity extends Activity {
         rightBadge.setBackgroundColor(Color.TRANSPARENT);
         rightBadge.setPadding(0, 0, 0, 0);
         rightBadge.setVisibility(View.GONE);
-        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(dp(44), dp(24), Gravity.CENTER_VERTICAL | Gravity.END);
+        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(-2, dp(20), Gravity.CENTER_VERTICAL | Gravity.END);
         rBadgeParams.setMargins(0, 0, dp(4), 0);
         rightFrame.addView(rightBadge, rBadgeParams);
 
@@ -5366,6 +5373,10 @@ public final class MainActivity extends Activity {
             if (isHorizontal[0]) {
                 compareContainer.setOrientation(LinearLayout.HORIZONTAL);
                 compareContainer.setGravity(Gravity.CENTER);
+                // Leave a compact label strip below the bitmap while FIT_CENTER
+                // continues to show the complete image without cropping.
+                leftImage.setPadding(0, 0, 0, dp(24));
+                rightImage.setPadding(0, 0, 0, dp(24));
                 LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(0, -1, 1.0f);
                 p1.gravity = Gravity.CENTER_VERTICAL;
                 p1.setMargins(0, 0, dp(6), 0);
@@ -5376,18 +5387,36 @@ public final class MainActivity extends Activity {
                 toggleLayoutBtn.setText("左右并排");
                 toggleLayoutBtn.setContentDescription("当前左右并排，点击切换上下同框");
                 if (lp != null) {
-                    lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-                    lp.setMargins(0, dp(8), 0, 0);
+                    lp.gravity = Gravity.TOP | Gravity.START;
+                    lp.setMargins(0, 0, 0, 0);
                     leftBadge.setLayoutParams(lp);
                 }
                 if (rp != null) {
-                    rp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-                    rp.setMargins(0, dp(8), 0, 0);
+                    rp.gravity = Gravity.TOP | Gravity.START;
+                    rp.setMargins(0, 0, 0, 0);
                     rightBadge.setLayoutParams(rp);
                 }
+                leftFrame.post(() -> {
+                    if (leftBadge.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, true);
+                    }
+                    if (leftProgress.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
+                    }
+                });
+                rightFrame.post(() -> {
+                    if (rightBadge.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, true);
+                    }
+                    if (rightProgress.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
+                    }
+                });
             } else {
                 compareContainer.setOrientation(LinearLayout.VERTICAL);
                 compareContainer.setGravity(Gravity.CENTER);
+                leftImage.setPadding(0, 0, 0, 0);
+                rightImage.setPadding(0, 0, 0, 0);
                 LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
                 p1.setMargins(0, 0, 0, dp(6));
                 LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(-1, 0, 1.0f);
@@ -5407,6 +5436,25 @@ public final class MainActivity extends Activity {
                 }
             }
         };
+
+        leftImage.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                             oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (leftProgress.getVisibility() == View.VISIBLE) {
+                positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
+            }
+            if (isHorizontal[0] && leftBadge.getVisibility() == View.VISIBLE) {
+                positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, true);
+            }
+        });
+        rightImage.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                              oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (rightProgress.getVisibility() == View.VISIBLE) {
+                positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
+            }
+            if (isHorizontal[0] && rightBadge.getVisibility() == View.VISIBLE) {
+                positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, true);
+            }
+        });
 
         toggleLayoutBtn.setOnClickListener(v -> {
             isHorizontal[0] = !isHorizontal[0];
@@ -5504,6 +5552,9 @@ public final class MainActivity extends Activity {
                             THUMBNAIL_CACHE.put(outThumbKey, result);
                             if (rightImage.getDrawable() == null) {
                                 rightImage.setImageBitmap(result);
+                                if (rightProgress.getVisibility() == View.VISIBLE) {
+                                    positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
+                                }
                             }
                         }
                     }
@@ -5514,6 +5565,7 @@ public final class MainActivity extends Activity {
             // 异步加载成品 100% 高清原图（带百分比进度）
             rightProgress.setVisibility(View.VISIBLE);
             rightProgress.setText("正在加载原图 0%");
+            positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
             onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                 @Override
                 public void onProgress(int percent) {
@@ -5521,6 +5573,7 @@ public final class MainActivity extends Activity {
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setVisibility(View.VISIBLE);
                         rightProgress.setText("正在加载原图 " + percent + "%");
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
                     }
                 }
                 @Override
@@ -5529,6 +5582,9 @@ public final class MainActivity extends Activity {
                             && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                         rightImage.setImageBitmap(result);
                         rightBadge.setVisibility(View.VISIBLE);
+                        if (isHorizontal[0]) {
+                            positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, true);
+                        }
                         rightProgress.setVisibility(View.GONE);
                     }
                     visibleOriginalFinished.run();
@@ -5537,6 +5593,7 @@ public final class MainActivity extends Activity {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setText("原图加载失败");
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
                     }
                     visibleOriginalFinished.run();
                 }
@@ -5557,6 +5614,9 @@ public final class MainActivity extends Activity {
                                 THUMBNAIL_CACHE.put(srcThumbKey, result);
                                 if (leftImage.getDrawable() == null) {
                                     leftImage.setImageBitmap(result);
+                                    if (leftProgress.getVisibility() == View.VISIBLE) {
+                                        positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
+                                    }
                                 }
                             }
                         }
@@ -5567,6 +5627,7 @@ public final class MainActivity extends Activity {
                 // 异步加载原素材 100% 高清原图（带百分比进度）
                 leftProgress.setVisibility(View.VISIBLE);
                 leftProgress.setText("正在加载原图 0%");
+                positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
                 onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                     @Override
                     public void onProgress(int percent) {
@@ -5574,6 +5635,7 @@ public final class MainActivity extends Activity {
                                 && pageGeneration[0] == requestGeneration) {
                             leftProgress.setVisibility(View.VISIBLE);
                             leftProgress.setText("正在加载原图 " + percent + "%");
+                            positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
                         }
                     }
                     @Override
@@ -5583,6 +5645,9 @@ public final class MainActivity extends Activity {
                             leftImage.setImageBitmap(result);
                             leftEmpty.setVisibility(View.GONE);
                             leftBadge.setVisibility(View.VISIBLE);
+                            if (isHorizontal[0]) {
+                                positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, true);
+                            }
                             leftProgress.setVisibility(View.GONE);
                         }
                         visibleOriginalFinished.run();
@@ -5591,6 +5656,7 @@ public final class MainActivity extends Activity {
                         if (dialog.isShowing() && currentIndex[0] == idx
                                 && pageGeneration[0] == requestGeneration) {
                             leftProgress.setText("素材原图加载失败");
+                            positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
                             if (leftImage.getDrawable() == null) {
                                 leftEmpty.setVisibility(View.VISIBLE);
                             }
@@ -5669,6 +5735,74 @@ public final class MainActivity extends Activity {
             win.setNavigationBarColor(Color.BLACK);
         }
         renderPage.run();
+    }
+
+    /**
+     * Aligns compare status and side-by-side captions to the bitmap's actual FIT_CENTER
+     * rectangle, rather than the larger black pane around it.
+     */
+    private void positionCompareOverlayOnImage(FrameLayout frame, ImageView image,
+                                               TextView overlay, boolean belowImage) {
+        if (frame == null || image == null || overlay == null) return;
+        frame.post(() -> {
+            if (overlay.getParent() != frame || overlay.getVisibility() != View.VISIBLE
+                    || frame.getWidth() <= 0 || frame.getHeight() <= 0
+                    || image.getWidth() <= 0 || image.getHeight() <= 0) {
+                return;
+            }
+
+            int contentWidth = Math.max(1, image.getWidth()
+                    - image.getPaddingLeft() - image.getPaddingRight());
+            int contentHeight = Math.max(1, image.getHeight()
+                    - image.getPaddingTop() - image.getPaddingBottom());
+            android.graphics.drawable.Drawable drawable = image.getDrawable();
+            int sourceWidth = drawable == null ? contentWidth : drawable.getIntrinsicWidth();
+            int sourceHeight = drawable == null ? contentHeight : drawable.getIntrinsicHeight();
+            if (sourceWidth <= 0 || sourceHeight <= 0) {
+                sourceWidth = contentWidth;
+                sourceHeight = contentHeight;
+            }
+
+            float scale = Math.min(contentWidth / (float) sourceWidth,
+                    contentHeight / (float) sourceHeight);
+            float displayedWidth = sourceWidth * scale;
+            float displayedHeight = sourceHeight * scale;
+            float imageLeft = image.getLeft() + image.getPaddingLeft()
+                    + (contentWidth - displayedWidth) / 2f;
+            float imageTop = image.getTop() + image.getPaddingTop()
+                    + (contentHeight - displayedHeight) / 2f;
+            float imageRight = imageLeft + displayedWidth;
+            float imageBottom = imageTop + displayedHeight;
+
+            overlay.measure(
+                    View.MeasureSpec.makeMeasureSpec(frame.getWidth(), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(frame.getHeight(), View.MeasureSpec.AT_MOST));
+            int overlayWidth = overlay.getMeasuredWidth();
+            int overlayHeight = overlay.getMeasuredHeight();
+            int left;
+            int top;
+            if (belowImage) {
+                left = Math.round((imageLeft + imageRight - overlayWidth) / 2f);
+                top = Math.round(imageBottom) + dp(2);
+                top = Math.min(top, frame.getHeight() - overlayHeight);
+            } else {
+                left = Math.round(imageRight) - overlayWidth - dp(8);
+                top = Math.round(imageBottom) - overlayHeight - dp(8);
+                left = Math.max(left, Math.round(imageLeft) + dp(2));
+                top = Math.max(top, Math.round(imageTop) + dp(2));
+            }
+            left = Math.max(0, Math.min(left, frame.getWidth() - overlayWidth));
+            top = Math.max(0, Math.min(top, frame.getHeight() - overlayHeight));
+
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) overlay.getLayoutParams();
+            if (params.gravity != (Gravity.TOP | Gravity.START)
+                    || params.leftMargin != left || params.topMargin != top
+                    || params.rightMargin != 0 || params.bottomMargin != 0) {
+                params.gravity = Gravity.TOP | Gravity.START;
+                params.setMargins(left, top, 0, 0);
+                overlay.setLayoutParams(params);
+            }
+        });
     }
 
     /** 整页渲染开始时重置首发预算：只让最先出现的少量缩略图立刻加载。 */
