@@ -5147,6 +5147,7 @@ public final class MainActivity extends Activity {
         final int total = work.images.size();
         final int[] currentIndex = new int[]{Math.max(0, Math.min(imageIndex, total - 1))};
         final int[] pageGeneration = new int[]{0};
+        final int[] comparePrefetchGeneration = new int[]{0};
         final boolean[] isHorizontal = new boolean[]{false}; // 默认上下同框
 
         LinearLayout root = new LinearLayout(this);
@@ -5185,12 +5186,16 @@ public final class MainActivity extends Activity {
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(0, 0, 0, dp(8));
 
-        TextView titleView = text("对比视图", 14, true);
+        TextView titleView = text("对比视图", 12, true);
         titleView.setTextColor(Color.WHITE);
+        titleView.setBackground(round(Color.rgb(45, 50, 48), 8));
         titleView.setSingleLine(true);
-        titleView.setGravity(Gravity.CENTER_VERTICAL);
+        titleView.setGravity(Gravity.CENTER);
+        titleView.setIncludeFontPadding(false);
         titleView.setContentDescription("对比视图，" + work.title);
-        topBar.addView(titleView, new LinearLayout.LayoutParams(0, dp(32), 1.0f));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(dp(96), dp(32));
+        titleParams.setMargins(0, 0, dp(6), 0);
+        topBar.addView(titleView, titleParams);
 
         boolean hasSimilarity = work.maxSimilarity > 0;
         TextView simBadge = text(hasSimilarity
@@ -5350,6 +5355,7 @@ public final class MainActivity extends Activity {
         dialog.setContentView(root);
         dialog.setCancelable(true);
         dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnDismissListener(ignored -> comparePrefetchGeneration[0]++);
         closeBtn.setOnClickListener(v -> dialog.dismiss());
 
         // 重新排布函数
@@ -5411,6 +5417,7 @@ public final class MainActivity extends Activity {
         Runnable renderPage = () -> {
             int idx = currentIndex[0];
             final int requestGeneration = ++pageGeneration[0];
+            final int requestPrefetchGeneration = ++comparePrefetchGeneration[0];
             // Never leave the previous page visible under the new page number while
             // this page's thumbnail/original is still loading or has failed.
             leftImage.setImageDrawable(null);
@@ -5429,6 +5436,60 @@ public final class MainActivity extends Activity {
             String outImg = work.images.get(idx);
             String srcImg = (work.sourceImages != null && idx < work.sourceImages.size())
                     ? work.sourceImages.get(idx) : null;
+            final boolean hasSourceImage = srcImg != null && !srcImg.isEmpty();
+            final int[] visibleOriginalsRemaining = new int[]{hasSourceImage ? 2 : 1};
+            final boolean[] comparePrefetchStarted = new boolean[]{false};
+
+            // Prepare only the next two pages. They remain idle until both visible originals
+            // finish (success or failure), then each image is loaded one at a time.
+            final List<String> comparePrefetchImages = new ArrayList<>();
+            for (int p = idx + 1; p <= idx + 2 && p < total; p++) {
+                String nextOutput = work.images.get(p);
+                if (nextOutput != null && !nextOutput.isEmpty()) {
+                    comparePrefetchImages.add(nextOutput);
+                }
+                if (work.sourceImages != null && p < work.sourceImages.size()) {
+                    String nextSource = work.sourceImages.get(p);
+                    if (nextSource != null && !nextSource.isEmpty()) {
+                        comparePrefetchImages.add(nextSource);
+                    }
+                }
+            }
+            // loadFullImage has no cancel handle; generation checks stop the queue after at most one already-started request completes.
+            final Runnable[] startNextComparePrefetch = new Runnable[1];
+            startNextComparePrefetch[0] = () -> {
+                if (!dialog.isShowing() || currentIndex[0] != idx
+                        || pageGeneration[0] != requestGeneration
+                        || comparePrefetchGeneration[0] != requestPrefetchGeneration) {
+                    return;
+                }
+                if (comparePrefetchImages.isEmpty()) return;
+                final String nextImage = comparePrefetchImages.remove(0);
+                onlineClient.loadFullImage(work.id, nextImage, new OnlineGalleryClient.Callback<Bitmap>() {
+                    @Override public void onSuccess(Bitmap bitmap) {
+                        startNextComparePrefetch[0].run();
+                    }
+                    @Override public void onError(Exception error) {
+                        startNextComparePrefetch[0].run();
+                    }
+                });
+            };
+            final Runnable maybeStartComparePrefetch = () -> {
+                if (visibleOriginalsRemaining[0] > 0 || comparePrefetchStarted[0]) return;
+                if (!dialog.isShowing() || currentIndex[0] != idx
+                        || pageGeneration[0] != requestGeneration
+                        || comparePrefetchGeneration[0] != requestPrefetchGeneration) {
+                    return;
+                }
+                comparePrefetchStarted[0] = true;
+                startNextComparePrefetch[0].run();
+            };
+            final Runnable visibleOriginalFinished = () -> {
+                if (visibleOriginalsRemaining[0] > 0) {
+                    visibleOriginalsRemaining[0]--;
+                }
+                maybeStartComparePrefetch.run();
+            };
 
             // 1. 成品图：优先缩略图秒开占位（0ms 防黑屏）
             String outThumbKey = "online:" + work.id + ":" + outImg;
@@ -5470,12 +5531,14 @@ public final class MainActivity extends Activity {
                         rightBadge.setVisibility(View.VISIBLE);
                         rightProgress.setVisibility(View.GONE);
                     }
+                    visibleOriginalFinished.run();
                 }
                 @Override public void onError(Exception e) {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setText("原图加载失败");
                     }
+                    visibleOriginalFinished.run();
                 }
             });
 
@@ -5522,6 +5585,7 @@ public final class MainActivity extends Activity {
                             leftBadge.setVisibility(View.VISIBLE);
                             leftProgress.setVisibility(View.GONE);
                         }
+                        visibleOriginalFinished.run();
                     }
                     @Override public void onError(Exception e) {
                         if (dialog.isShowing() && currentIndex[0] == idx
@@ -5531,6 +5595,7 @@ public final class MainActivity extends Activity {
                                 leftEmpty.setVisibility(View.VISIBLE);
                             }
                         }
+                        visibleOriginalFinished.run();
                     }
                 });
             } else {
@@ -5539,26 +5604,8 @@ public final class MainActivity extends Activity {
                 leftProgress.setVisibility(View.GONE);
             }
 
-            // 3. 静默预加载同作品相邻前后图片（idx+1, idx-1, idx+2）的原图与缩略图
-            int[] prefetchPages = new int[]{idx + 1, idx - 1, idx + 2};
-            for (int p : prefetchPages) {
-                if (p >= 0 && p < total) {
-                    String pOut = work.images.get(p);
-                    onlineClient.loadFullImage(work.id, pOut, new OnlineGalleryClient.Callback<Bitmap>() {
-                        @Override public void onSuccess(Bitmap b) {}
-                        @Override public void onError(Exception e) {}
-                    });
-                    if (work.sourceImages != null && p < work.sourceImages.size()) {
-                        String pSrc = work.sourceImages.get(p);
-                        if (pSrc != null && !pSrc.isEmpty()) {
-                            onlineClient.loadFullImage(work.id, pSrc, new OnlineGalleryClient.Callback<Bitmap>() {
-                                @Override public void onSuccess(Bitmap b) {}
-                                @Override public void onError(Exception e) {}
-                            });
-                        }
-                    }
-                }
-            }
+            // Visible originals have priority; the callbacks start this guarded serial queue
+            // only after all visible originals have finished.
         };
 
         prevBtn.setOnClickListener(v -> {

@@ -4459,16 +4459,30 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
     private func setupUI() {
         let hasSimilarity = entry.maxSimilarity > 0
+        let moduleBackground = UIColor(white: 0.22, alpha: 0.8)
+        let moduleCornerRadius: CGFloat = 8
+        let moduleFont = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        // Keep the title and mode chip equal while leaving room for the status badge and close control.
+        let topBarWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+        let fixedTopBarWidth: CGFloat = 80 // side insets + close button + three gaps
+        let minimumModuleWidth: CGFloat = 64
+        let similarityWidth = hasSimilarity
+            ? min(92, max(60, topBarWidth - fixedTopBarWidth - 2 * minimumModuleWidth))
+            : 0
+        let moduleWidth = min(92, max(minimumModuleWidth, (topBarWidth - fixedTopBarWidth - similarityWidth) / 2))
         // 顶部导航栏
         topBar.translatesAutoresizingMaskIntoConstraints = false
         topBar.backgroundColor = UIColor.black.withAlphaComponent(0.65)
         view.addSubview(topBar)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "对比视图 · \(entry.title)"
+        titleLabel.text = "对比视图"
         titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.font = moduleFont
+        titleLabel.textAlignment = .center
+        titleLabel.backgroundColor = moduleBackground
+        titleLabel.layer.cornerRadius = moduleCornerRadius
+        titleLabel.clipsToBounds = true
         topBar.addSubview(titleLabel)
 
         similarityBadge.translatesAutoresizingMaskIntoConstraints = false
@@ -4489,10 +4503,12 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
         layoutModeButton.translatesAutoresizingMaskIntoConstraints = false
         layoutModeButton.setTitle("上下同框", for: .normal)
-        layoutModeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+        layoutModeButton.titleLabel?.font = moduleFont
         layoutModeButton.setTitleColor(.white, for: .normal)
-        layoutModeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
-        layoutModeButton.layer.cornerRadius = 8
+        layoutModeButton.backgroundColor = moduleBackground
+        layoutModeButton.layer.cornerRadius = moduleCornerRadius
+        layoutModeButton.contentHorizontalAlignment = .center
+        layoutModeButton.contentVerticalAlignment = .center
         layoutModeButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         layoutModeButton.addTarget(self, action: #selector(toggleLayoutMode), for: .touchUpInside)
         topBar.addSubview(layoutModeButton)
@@ -4504,6 +4520,9 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         closeButton.backgroundColor = UIColor(white: 0.22, alpha: 0.8)
         closeButton.layer.cornerRadius = 16
         closeButton.contentEdgeInsets = .zero
+        closeButton.contentHorizontalAlignment = .center
+        closeButton.contentVerticalAlignment = .center
+        closeButton.titleLabel?.textAlignment = .center
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         topBar.addSubview(closeButton)
 
@@ -4589,17 +4608,18 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
             layoutModeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
             layoutModeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            layoutModeButton.widthAnchor.constraint(equalToConstant: 92),
+            layoutModeButton.widthAnchor.constraint(equalToConstant: moduleWidth),
             layoutModeButton.heightAnchor.constraint(equalToConstant: 32),
 
             similarityBadge.trailingAnchor.constraint(equalTo: layoutModeButton.leadingAnchor, constant: -8),
             similarityBadge.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            similarityBadge.widthAnchor.constraint(equalToConstant: hasSimilarity ? 92 : 0),
+            similarityBadge.widthAnchor.constraint(equalToConstant: similarityWidth),
             similarityBadge.heightAnchor.constraint(equalToConstant: 32),
 
-            titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(equalTo: similarityBadge.leadingAnchor, constant: -8),
+            titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 12),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.widthAnchor.constraint(equalToConstant: moduleWidth),
+            titleLabel.heightAnchor.constraint(equalToConstant: 32),
 
             bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -4632,8 +4652,8 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         progressLabel: UILabel
     ) {
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor(white: 0.08, alpha: 1)
-        container.layer.cornerRadius = 10
+        container.backgroundColor = .black
+        container.layer.cornerRadius = 0
         container.layer.borderWidth = 0
         container.clipsToBounds = true
 

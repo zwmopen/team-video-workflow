@@ -24,6 +24,9 @@ def main() -> None:
     container_start = preview.index("private func setupImageViewContainer(")
     container_end = preview.index("private func setupGestures()", container_start)
     container = preview[container_start:container_end]
+    setup_start = preview.index("private func setupUI()")
+    setup_end = preview.index("private func setupImageViewContainer(", setup_start)
+    setup = preview[setup_start:setup_end]
     load_start = preview.index("private func loadPage(_ pageIndex: Int)")
     load_end = preview.index("private func finishVisiblePageLoad", load_start)
     load_page = preview[load_start:load_end]
@@ -39,9 +42,14 @@ def main() -> None:
     check("compare preview height follows the card", "previewScrollHeightConstraint?.constant = ComparePairThumbView.cardHeight" in CONTENT)
     check("horizontal compare containers get an explicit height", "horizontalContainerHeightConstraints" in CONTENT and "multiplier: 1.18" in CONTENT)
     check("compare mode opens even when a page has no source", "if currentViewMode == .compare {" in CONTENT)
+    check("fullscreen title uses the fixed short compare label", 'titleLabel.text = "对比视图"' in setup and 'titleLabel.text = "对比视图 · \\(entry.title)"' not in setup)
+    check("title and layout selector share centered typography and styling", "let moduleBackground = UIColor(white: 0.22, alpha: 0.8)" in setup and "let moduleCornerRadius: CGFloat = 8" in setup and "let moduleFont = UIFont.systemFont(ofSize: 12, weight: .semibold)" in setup and "titleLabel.font = moduleFont" in setup and "titleLabel.textAlignment = .center" in setup and "titleLabel.backgroundColor = moduleBackground" in setup and "titleLabel.layer.cornerRadius = moduleCornerRadius" in setup and "layoutModeButton.titleLabel?.font = moduleFont" in setup and "layoutModeButton.backgroundColor = moduleBackground" in setup and "layoutModeButton.layer.cornerRadius = moduleCornerRadius" in setup and "layoutModeButton.contentHorizontalAlignment = .center" in setup and "layoutModeButton.contentVerticalAlignment = .center" in setup)
+    check("title and layout selector share an adaptive width and 32 point height", "let moduleWidth = min(92, max(minimumModuleWidth, (topBarWidth - fixedTopBarWidth - similarityWidth) / 2))" in setup and "titleLabel.widthAnchor.constraint(equalToConstant: moduleWidth)" in setup and "layoutModeButton.widthAnchor.constraint(equalToConstant: moduleWidth)" in setup and "titleLabel.heightAnchor.constraint(equalToConstant: 32)" in setup and "layoutModeButton.heightAnchor.constraint(equalToConstant: 32)" in setup)
+    check("close control keeps a centered title in its fixed bounds", "closeButton.contentHorizontalAlignment = .center" in setup and "closeButton.contentVerticalAlignment = .center" in setup and "closeButton.titleLabel?.textAlignment = .center" in setup and "closeButton.widthAnchor.constraint(equalToConstant: 32)" in setup and "closeButton.heightAnchor.constraint(equalToConstant: 32)" in setup)
     check("iOS source arrays stay aligned to output pages", "var sourceImages = images.indices.map" in CLIENT and "var sourceNames = images.indices.map" in CLIENT)
     check("old cache can rebuild a source token from sourceNames", 'sourceImages[index] = "__src__:\\(outputName)"' in CLIENT)
     check("comparison images fill the pane and remain aspect-fit centered", "imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor)" in container and "imageView.contentMode = .scaleAspectFit" in container and "badge.leadingAnchor" not in container)
+    check("comparison panes match the black fullscreen canvas without a card edge", "container.backgroundColor = .black" in container and "container.layer.cornerRadius = 0" in container and "container.layer.borderWidth = 0" in container)
     check("original-load percentage stays at bottom-right", "progressLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8)" in container and "progressLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8)" in container)
     check("stacked mode places labels in the right-side rail", "badge.centerYAnchor.constraint(equalTo: container.centerYAnchor)" in container and "leftBadgeCenterYConstraint?.isActive = !isHorizontalLayout" in toggle)
     check("side-by-side mode moves labels to the top", "badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8)" in container and "leftBadgeTopConstraint?.isActive = isHorizontalLayout" in toggle and "rightBadgeTopConstraint?.isActive = isHorizontalLayout" in toggle)

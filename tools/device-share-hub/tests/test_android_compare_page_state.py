@@ -24,6 +24,15 @@ def main() -> None:
     end = MAIN.index("prevBtn.setOnClickListener(v -> {", start)
     render_page = MAIN[start:end]
     setup = render_page[:render_page.index("String outImg = work.images.get(idx);")]
+    title_start = MAIN.index('TextView titleView = text("对比视图",')
+    title_end = MAIN.index("boolean hasSimilarity", title_start)
+    title_module = MAIN[title_start:title_end]
+    toggle_start = MAIN.index('Button toggleLayoutBtn = new Button(this);', title_end)
+    toggle_end = MAIN.index("topBar.addView(toggleLayoutBtn, toggleParams);", toggle_start)
+    toggle_module = MAIN[toggle_start:toggle_end]
+    close_start = MAIN.index('Button closeBtn = new Button(this);', toggle_end)
+    close_end = MAIN.index("root.addView(topBar", close_start)
+    close_module = MAIN[close_start:close_end]
 
     check("images use the full centered pane without a reserved label rail", "leftImageParams.rightMargin" not in MAIN and "rightImageParams.rightMargin" not in MAIN)
     check("loading percentage stays at bottom-right in both panes", MAIN.count("new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END)") >= 2)
@@ -37,6 +46,21 @@ def main() -> None:
     check("page number and controls update in the same render", 'pageText.setText("P" + (idx + 1) + " / P" + total);' in render_page)
     check("late full-image callbacks are tied to current page generation", "pageGeneration[0] == requestGeneration" in render_page)
     check("minimal arrow labels remain accessible", 'prevBtn.setContentDescription("上一页");' in MAIN and 'nextBtn.setContentDescription("下一页");' in MAIN)
+    check("compare title is fixed text in a centered 96x32dp module",
+          'text("对比视图", 12, true)' in title_module and
+          "titleView.setGravity(Gravity.CENTER);" in title_module and
+          "new LinearLayout.LayoutParams(dp(96), dp(32))" in title_module)
+    check("compare title and layout toggle share dimensions, font size, and centered text",
+          'text("对比视图", 12, true)' in title_module and
+          "titleView.setGravity(Gravity.CENTER);" in title_module and
+          "new LinearLayout.LayoutParams(dp(96), dp(32))" in title_module and
+          "toggleLayoutBtn.setTextSize(12);" in toggle_module and
+          "toggleLayoutBtn.setGravity(Gravity.CENTER);" in toggle_module and
+          "new LinearLayout.LayoutParams(dp(96), dp(32))" in toggle_module)
+    check("close cross remains centered in its visible 36x32dp control",
+          'closeBtn.setText("×");' in close_module and
+          "closeBtn.setGravity(Gravity.CENTER);" in close_module and
+          "new LinearLayout.LayoutParams(dp(36), dp(32))" in close_module)
 
 
 if __name__ == "__main__":
