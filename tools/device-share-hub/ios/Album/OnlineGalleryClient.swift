@@ -238,6 +238,8 @@ public final class OnlineGalleryClient {
     private var cachedBaseUrl: String?
 
     private let session: URLSession
+    private let thumbnailMaxAttempts = 2
+    private let thumbnailRetryDelay: TimeInterval = 0.9
     // Cache reads and UIImage decoding must stay off the main thread during list rendering.
     private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
@@ -703,6 +705,8 @@ public final class OnlineGalleryClient {
         }
         components?.queryItems = queryItems
         guard let url = components?.url else {
+            NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d reason=invalid-url",
+                  (path as NSString).lastPathComponent, isThumbnail ? 1 : 0)
             completion(nil)
             return
         }
@@ -724,36 +728,109 @@ public final class OnlineGalleryClient {
                 return
             }
 
-            var observation: NSKeyValueObservation?
-            let task = self.session.dataTask(with: url) { [weak self] data, _, _ in
-                observation?.invalidate()
-                guard let self = self, let data = data, let image = UIImage(data: data) else {
-                    // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
-                    NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
-                          path, isThumbnail ? 1 : 0)
-                    DispatchQueue.main.async { completion(nil) }
-                    return
-                }
+            self.loadRemoteImageAttempt(
+                url: url,
+                path: path,
+                isThumbnail: isThumbnail,
+                cacheKey: cacheKey,
+                diskURL: diskURL,
+                attempt: 1,
+                maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : 1,
+                onProgress: onProgress,
+                completion: completion
+            )
+        }
+    }
+
+    private func loadRemoteImageAttempt(
+        url: URL,
+        path: String,
+        isThumbnail: Bool,
+        cacheKey: NSString,
+        diskURL: URL,
+        attempt: Int,
+        maxAttempts: Int,
+        onProgress: ((Int) -> Void)?,
+        completion: @escaping (UIImage?) -> Void
+    ) {
+        let attemptStartedAt = Date()
+        var observation: NSKeyValueObservation?
+        let task = session.dataTask(with: url) { [weak self] data, response, error in
+            observation?.invalidate()
+            guard let self = self else { return }
+
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            let statusOK = statusCode.map { (200..<300).contains($0) } ?? false
+            let image = (error == nil && statusOK) ? data.flatMap { UIImage(data: $0) } : nil
+            if let image = image, let data = data {
                 self.imageCache.setObject(image, forKey: cacheKey)
                 do {
                     try data.write(to: diskURL)
                 } catch {
                     NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
-                          path, error.localizedDescription)
+                          (path as NSString).lastPathComponent, error.localizedDescription)
                 }
                 DispatchQueue.main.async {
                     onProgress?(100)
                     completion(image)
                 }
+                return
             }
-            if let onProg = onProgress {
-                observation = task.progress.observe(\.fractionCompleted) { progress, _ in
-                    let pct = Int(progress.fractionCompleted * 100)
-                    DispatchQueue.main.async { onProg(pct) }
+
+            let networkError = error as NSError?
+            let statusText = statusCode.map { String($0) } ?? "none"
+            let errorText: String
+            if let networkError = networkError {
+                errorText = "\(networkError.domain)/\(networkError.code): \(networkError.localizedDescription)"
+            } else if statusCode == nil {
+                errorText = "missing-http-response"
+            } else if !statusOK {
+                errorText = "http-\(statusText)"
+            } else if data == nil {
+                errorText = "empty-response"
+            } else {
+                errorText = "image-decode-failed"
+            }
+            let retryableStatus = statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false)
+            let invalidImage = statusOK && data != nil && image == nil
+            let shouldRetry = attempt < maxAttempts &&
+                (networkError != nil || statusCode == nil || retryableStatus || invalidImage)
+            let elapsedMs = Int(Date().timeIntervalSince(attemptStartedAt) * 1000)
+            let message = "[OnlineGalleryClient] loadImage failed: path=\((path as NSString).lastPathComponent)"
+                + " isThumbnail=\(isThumbnail ? 1 : 0) attempt=\(attempt)/\(maxAttempts)"
+                + " httpStatus=\(statusText) bytes=\(data?.count ?? 0) durationMs=\(elapsedMs)"
+                + " retry=\(shouldRetry ? 1 : 0) error=\(errorText)"
+            NSLog("%@", message)
+
+            guard shouldRetry else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + self.thumbnailRetryDelay) { [weak self] in
+                guard let self = self else {
+                    DispatchQueue.main.async { completion(nil) }
+                    return
                 }
+                self.loadRemoteImageAttempt(
+                    url: url,
+                    path: path,
+                    isThumbnail: isThumbnail,
+                    cacheKey: cacheKey,
+                    diskURL: diskURL,
+                    attempt: attempt + 1,
+                    maxAttempts: maxAttempts,
+                    onProgress: onProgress,
+                    completion: completion
+                )
             }
-            task.resume()
         }
+        if let onProgress = onProgress {
+            observation = task.progress.observe(\.fractionCompleted) { progress, _ in
+                let percent = min(99, Int(progress.fractionCompleted * 100))
+                DispatchQueue.main.async { onProgress(percent) }
+            }
+        }
+        task.resume()
     }
 
     /// 同步快速获取缓存图片（若内存或磁盘命中直接返回，0毫秒无缝秒开）

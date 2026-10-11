@@ -2,6 +2,15 @@
 
 更新时间：2026-10-11
 
+## 2026-10-11 Android/iOS 0.8.92 手机相册体验补缺候选
+
+- Android versionCode 203：无快照连接错误卡片不显示 LAN 地址；设置页手动更新检查立即反馈、禁用重复点击并在请求结束后恢复；对齐启动快照和 works 成功后再取分类的注释。
+- iOS build 203：失败缩略图点按重试期间显示活动指示器并播报重试中。
+- Android `.92/203` Release APK 已本地构建并验签；单测 103/103、Lint 0 错误/93 警告、Android 源码守卫 6/6。ADB 覆盖安装被手机系统拒绝，设备仍锁屏且安装 `.91/202`，因此 `.92` 未做点击验收。
+- iOS build 203 的静态守卫 14/14；当前无 Windows Swift/Xcode 工具链、匹配 IPA 或 iPhone USB mux，未构建、安装或实机验收。
+- DSH-157 `.91` 在线列表首字节仍超时；服务端新增阶段计时候选并在隔离测试 63/63 通过，现场服务未重启，真实手机请求阶段仍无数据，唯一根因未知。禁止手工调用有到期清理副作用的 works/categories。
+- 本地候选，不推送、发布、运行 CI 或更新索引。
+
 ## 2026-10-11 Android/iOS 0.8.81 本地状态栏修复候选
 
 - Android 0.8.81/code 192 修复切换文件浏览、手机本地作品/回收站和电脑在线来源后，固定状态栏残留上一页计数的问题；iOS build 192 仅对齐版本号，没有 iOS 业务代码变化。
@@ -106,6 +115,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

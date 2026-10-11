@@ -1,3 +1,27 @@
+# 2026-10-11 DSH-154 / DSH-157—159：安卓界面补缺与在线列表超时诊断（源码候选 0.8.92）
+
+- 候选版本：Android `0.8.92 / versionCode 203`；iOS `0.8.92 / build 203`。Android `.92` Release APK 已本地构建并验签，SHA-256 `A14BAA0F65D7D77F7A6C0164D464BF24A1A845043426D35F96E2518C610BF984`；测试 103/103，Lint 0 错误/93 警告。覆盖安装被系统以 `User rejected permissions` 拒绝，设备仍锁屏并回读 `.91/202`，未做 `.92` 点击验收。
+- Android 修复无快照连接失败页显示 LAN 地址、手动更新检查等待时无反馈；更新按钮在请求期间持续显示“正在检查…”。修正与当前启动/串行请求逻辑不符的注释。iOS 失败缩略图点按重试时加入活动指示器，并在复用/切换图片时重置状态；iOS 静态门禁 14/14，无 Xcode、IPA 或真机验证。
+- `.91` Android Vivo 14 实测冷启动仅一次 works 请求、队列 1ms、12,158ms 读超时、status none/0 bytes；离线快照 395 套保留，显示“连接超时”。Logcat 本轮未见 `FATAL EXCEPTION`。
+- `/api/online/status` 被动读取 200 仅代表内存状态可读；服务端源码显示 works/categories 先清理到期作品，再扫描，并在 JSON/gzip 后发响应头。DSH-157 增加了隐私受限的阶段耗时候选，并在临时目录/随机 localhost 端口的服务套件 63/63 通过；`scan_ms` 仍合并锁等待和扫描，socket 写入时间不能代表手机首字节。现场服务未重启、未调用有副作用的列表/分类 GET，手机端唯一根因仍 `UNVERIFIED`。
+- Android `.92` 自动验证：`testDebugUnitTest` 103/103；`assembleRelease` 成功；`lintRelease` 0 错误/93 警告；`tests/test_android_startup_prefetch.py` 6/6；APK SHA-256 如上。iOS `tests/test_ios_online_gallery_client.py` 14/14；Windows 无 Swift/Xcode，无当前候选 IPA。当前 iPhone USB mux 无设备。
+- 不发布、不推送、不运行 CI、不更新发布索引。设备解锁/重新枚举后，继续 Android `.92` 设置按钮和错误 UI 点击验收；取得 iOS IPA 与触控链后再验缩略图重试和 spinner。
+
+---
+
+# 2026-10-11 Android 窄屏与回收站计数补缺（DSH-152 补全 / DSH-153）
+
+- 候选版本：Android 0.8.82 / versionCode 193；iOS 工程版本号对齐为 0.8.82 / build 193，iOS 业务代码未修改。
+- vivo V2327A / Android 14 / 720×1612（360dp）：在 0.8.81 上实际看到搜索提示被三个操作按钮截断；手机回收站明明显示在线作品记录，状态却为“已删除 0 套”。
+- 修复：缩短搜索提示并加尾部省略；手机回收站状态使用与实际渲染相同的合计，已删除 Tab 合并本地项和手机侧在线生命周期记录，垃圾 Tab 按当前列表计数。
+- 0.8.82 覆盖安装后：搜索提示完整显示；输入 `60` 匹配到 1 个本地作品；回收站已删除显示 15 套，已标记垃圾显示 0 套及正确空态。杭州分类、图标/列表/对比视图菜单、标签筛选、排序、本地与电脑在线来源切换、文件夹进退、设置页滚动均可操作；没有点分享、重置、恢复、删除或清空。
+- Android 验证：`testDebugUnitTest` 100/100 通过；`lintRelease` 0 错误、93 警告；`assembleRelease` 成功。APK `com.zwm.gallery` 0.8.82/193，SHA-256 `25796584803516CEC509855BB02CEA589DAC4669FB92884301C90191286F1B00`，签名与设备旧版一致；保留数据覆盖安装成功，包版本回读 193，Logcat 未见 FATAL。
+- iPhone 当前 iOS 26.6 / 0.8.77/188。截图可见首页分类、搜索、筛选排序与缩略图；其中一条作品的 5 个缩略图等待 8 秒后仍为空，原因未验证。无 0.8.82 IPA、无 Windows 触控注入链，故 iOS 仅做截图检查。
+- App 自动更新检查提示网络失败；检查字符串来自 `UpdateChecker`。电脑本机在线相册 `/api/online/status` 返回 HTTP 200，未继续请求可能触发到期清理的分类接口，也未启动/重启服务。
+- 推送/发布边界：源码与 APK 均只留本地，未运行 GitHub Actions、未推送、未创建 Release、未改发布索引。
+
+---
+
 # 2026-10-11 本地作品/回收站状态栏修复候选（DSH-152）
 
 - 源码候选：Android 0.8.81 / versionCode 192；iOS 0.8.81 / build 192（iOS 业务代码未改）。
@@ -1127,7 +1151,21 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 09:24 | Codex | record 0.8.85 Android device evidence, unresolved phone refresh timeout, and pending iOS IPA/touch acceptance |
+| 2026-10-11 08:47 | Codex | inspect Vivo UI and fix narrow-screen hint and recycle count |
 | 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |
+# 2026-10-11 移动相册来源提示、回收站与缩略图恢复（DSH-154—157）
+
+- 当前源码候选：Android 0.8.85 / versionCode 196；iOS 0.8.85 / build 196。项目源码和 APK 只保存在本机，没有推送、CI、Release 或发布索引更新。
+- Android 修复：搜索提示首次创建时根据保存的来源选择“搜索标题/地点”或“搜索标题/文件夹”；在线模式启动时不再同时静默预取列表/分类并触发 `onResume` 刷新；回收站将手机本地删除项与在线生命周期记录计入同一已删除数量；切换来源会退出回收站并显示目标作品页；清理失败时不提前清除在线生命周期记录。
+- Android 0.8.85 已在 vivo Android 14 覆盖安装。在线冷启动提示正确；切到本地后来源提示正确；作品列表与缩略图快照可见。手机本地作品 1 套、在线快照 395 套。此前 0.8.83 已验证手机回收站“已删除 15”与 Tab 标记一致，切来源后回到本地首页；未点分享、重置、恢复、删除或清空。
+- **仍待修复/核实**：0.8.85 在线页仍显示“离线快照 · 共 395 套 · 刷新失败：timeout”。电脑 `/api/online/status` 只读请求返回 200、库存 395；电脑本机 `/api/online/works` 返回 200、耗时约 5.3 秒。手机请求路径/响应状态和响应时长未能直接读取，因此根因仍为 UNVERIFIED，不能声称启动去重已解决超时。
+- 自动验证：Android `testDebugUnitTest` 100/100；`lintRelease` 0 错误、93 警告；`assembleRelease` 成功。启动预取守卫 1/1；iOS 静态回归 12/12。Android APK SHA-256 `F2BBB4167539B26461B376FB9720230CD9FE095EA3A4C260FC744ACF6989D9F5`，Release 签名核验成功，设备包版本回读 0.8.85/196；Logcat 未见 FATAL。
+- iOS DSH-154 源码增加最多两次缩略图尝试、0.9 秒延迟、错误诊断和点按重试入口；静态检查通过。iPhone 当前安装 build 188。截图显示成品图正常，部分素材位明确标注“无素材原片”，无法据此认定为加载失败。没有匹配 IPA、`xcrun` / `xcodebuild`，WDA 服务端口不可用；新 iOS 代码没有安装和触控验收。
+- 续接重点：先从 iPhone 可用的签名 IPA/触控服务补齐 DSH-154 实机验证；Android 侧用请求级状态码/耗时定位在线列表 timeout，同时避免重复列表请求。当前不要推送或发布。
+
+# 2026-10-11 Android 窄屏与回收站计数补缺（DSH-152 补全 / DSH-153）

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""iOS 在线相册客户端硬判据闸门（DSH-099 iOS 等价引入 + DSH-102 iOS URL 拼接加固）。
+"""iOS 在线相册客户端硬判据闸门（DSH-099/102/154）。
 
 背景：DSH-099 Android 修复 `downloadWorkImages` catch 块漏双写（用户铁律"debug 回传"）。
 iOS 端对应路径是 `OnlineGalleryClient.loadImage`（in-memory UIImage 给 UIActivityViewController
@@ -58,7 +58,9 @@ def main():
 
     src = IOS_CLIENT.read_text(encoding="utf-8", errors="replace")
     cv_src = CONTENT_VIEW.read_text(encoding="utf-8", errors="replace")
-    load_image = extract_func_body(src, "public func loadImage(")
+    load_image_entry = extract_func_body(src, "public func loadImage(")
+    load_image = extract_func_body(src, "public func loadImageWithProgress(")
+    load_image_attempt = extract_func_body(src, "private func loadRemoteImageAttempt(")
     fetch_categories = extract_func_body(src, "public func fetchCategories(")
     fetch_works = extract_func_body(src, "public func fetchWorks(")
 
@@ -67,13 +69,42 @@ def main():
     print()
     results = []
 
+    # ---- DSH-154: tap retry remains visibly busy while the request is pending ----
+    thumb_button = cv_src[cv_src.index("private final class ThumbnailButton: UIButton"):]
+    thumb_button = thumb_button[:thumb_button.index("/// 对比视图专用双图卡片")]
+    retry_feedback = (
+        "UIActivityIndicatorView" in thumb_button
+        and "retryIndicator.startAnimating()" in thumb_button
+        and "retryIndicator.stopAnimating()" in thumb_button
+        and "showsRetryProgress: true" in thumb_button
+    )
+    results.append(check(
+        "DSH-154 failed thumbnail retry shows progress until completion",
+        retry_feedback,
+        "retry spinner start/stop/call-site=%s" % retry_feedback))
+
+    work_cell = cv_src[cv_src.index("private final class WorkCell: UICollectionViewCell"):]
+    work_cell = work_cell[:work_cell.index("private func applyViewModeLayout")]
+    thumb_reuse_reset = (
+        "tb.prepareForReuse()" in work_cell
+        and "func prepareForReuse()" in thumb_button
+        and "retryIndicator.stopAnimating()" in thumb_button
+        and "failedOnlineLoad = false" in thumb_button
+        and "accessibilityLabel = nil" in thumb_button
+        and "imageViewWidget.contentMode = .scaleAspectFill" in thumb_button
+    )
+    results.append(check(
+        "DSH-154 thumbnail reuse clears retry indicator and failure state",
+        thumb_reuse_reset,
+        "reuse cleanup=%s" % thumb_reuse_reset))
+
     # ---- B1：loadImage 失败分支 NSLog（含 path / isThumbnail）----
-    b1_nslog = "[OnlineGalleryClient] loadImage failed" in load_image \
-        and "path=" in load_image and "isThumbnail=" in load_image
-    b1_no_silent = "DispatchQueue.main.async { completion(nil) }" in load_image
+    b1_nslog = "[OnlineGalleryClient] loadImage failed" in load_image_attempt \
+        and "path=" in load_image_attempt and "isThumbnail=" in load_image_attempt
+    b1_no_silent = "DispatchQueue.main.async { completion(nil) }" in load_image_attempt
     b1_real_nslog_count = sum(
-        1 for ln in load_image.split('\n')
-        if ln.strip().startswith("NSLog(") and "loadImage failed" in ln)
+        1 for ln in load_image_attempt.split('\n')
+        if ln.strip().startswith("NSLog("))
     results.append(check(
         "B1 loadImage 失败分支 NSLog（含 path / isThumbnail）",
         b1_nslog and b1_no_silent and b1_real_nslog_count >= 1,
@@ -81,10 +112,10 @@ def main():
         % (b1_nslog, b1_no_silent, b1_real_nslog_count)))
 
     # ---- B2：loadImage 磁盘缓存写失败 NSLog（替换 try?）----
-    b2_no_try_question = "try? data.write(to: diskURL)" not in load_image
-    b2_disk_nslog = "[OnlineGalleryClient] loadImage disk write failed" in load_image
+    b2_no_try_question = "try? data.write(to: diskURL)" not in load_image_attempt
+    b2_disk_nslog = "[OnlineGalleryClient] loadImage disk write failed" in load_image_attempt
     b2_do_catch = "do {\n                try data.write(to: diskURL)" in load_image \
-        or "try data.write(to: diskURL)" in load_image
+        or "try data.write(to: diskURL)" in load_image_attempt
     results.append(check(
         "B2 loadImage 磁盘写失败 NSLog（替换原 try? 吞错）",
         b2_no_try_question and b2_disk_nslog and b2_do_catch,
@@ -121,7 +152,7 @@ def main():
 
     # ---- B6: loadImage 函数签名带 workId 参数（DSH-102）----
     # 必须先判，否则 B5 的 URLQueryItem 也可能拼在旧 ?path= 上下文里
-    b6_sig = re.search(r"public func loadImage\(\s*path\s*:\s*String\s*,\s*workId\s*:\s*String\?\s*=\s*nil", load_image) is not None
+    b6_sig = re.search(r"public func loadImage\(\s*path\s*:\s*String\s*,\s*workId\s*:\s*String\?\s*=\s*nil", load_image_entry) is not None
     results_102.append(check(
         "B6 loadImage 签名带 workId: String? = nil",
         b6_sig,
@@ -206,6 +237,38 @@ def main():
         % (len(online_action_pattern.findall(cv_src)), b9_no_old_order)))
 
     results.extend(results_108)
+
+    print()
+    print("=== DSH-154: 缩略图有界重试、错误诊断与点按重试 ===")
+    print()
+    results_154 = []
+
+    b10_retry = "maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : 1" in load_image \
+        and "attempt: 1" in load_image and "asyncAfter" in load_image_attempt
+    results_154.append(check(
+        "B10 缩略图最多两次尝试并延迟重试",
+        b10_retry,
+        "缩略图重试=%s full-image单次=%s 异步退避=%s"
+        % ("thumbnailMaxAttempts" in load_image, "maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : 1" in load_image,
+           "asyncAfter" in load_image_attempt)))
+
+    b11_diagnostics = all(token in load_image_attempt for token in (
+        "httpStatus=", "bytes=", "durationMs=", "error=", "retry="))
+    results_154.append(check(
+        "B11 失败日志记录状态码、字节数、耗时与错误",
+        b11_diagnostics and "NSLog" in load_image_attempt,
+        "结构化字段=%s NSLog=%s" % (b11_diagnostics, "NSLog" in load_image_attempt)))
+
+    b12_ui_retry = all(token in cv_src for token in (
+        "failedOnlineLoad", "retryOnlineLoadIfNeeded", "arrow.clockwise", "缩略图加载失败，轻点重试"))
+    results_154.append(check(
+        "B12 UI 显示失败提示并允许点按重试",
+        b12_ui_retry,
+        "失败状态=%s 重试入口=%s 图标=%s 无障碍提示=%s"
+        % ("failedOnlineLoad" in cv_src, "retryOnlineLoadIfNeeded" in cv_src,
+           "arrow.clockwise" in cv_src, "缩略图加载失败，轻点重试" in cv_src)))
+
+    results.extend(results_154)
 
     print()
     bad = results.count(False)

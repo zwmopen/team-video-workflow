@@ -1,7 +1,7 @@
-# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.81 / iPhone 0.8.81）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.92 / iPhone 0.8.92）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.81 / versionCode 192**、**iPhone 0.8.81 / build 192**。Android 修复本地作品、回收站与文件浏览切换后固定状态栏残留旧页计数的问题；Redmi Android 15 真机覆盖安装与页面切换复测见 `docs/MAINTAINER_HANDOFF.md`。iPhone 当前 0.8.77/188；0.8.81 IPA 尚未构建，iOS 触屏操作尚未验证。本轮没有推送或发布。
+> 本轮源码候选：**Android 0.8.92 / versionCode 203**、**iPhone 0.8.92 / build 203**。Android `.92` Release APK 已本地构建并验签，103/103 单测、Lint 0 错误/93 警告、源码守卫 6/6；手机系统拒绝覆盖安装，设备锁屏，当前仍为 `.91/202`，尚未点击验收。iOS 静态守卫 14/14，但无 IPA、Xcode 或可用 iPhone USB mux。服务端 DSH-157 阶段计时只在隔离测试中验证，未重启现场服务；根因仍未确认。交接见 `docs/MAINTAINER_HANDOFF.md`；没有推送或发布。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
 ## 先搞清这几个东西分别是谁
@@ -664,6 +664,9 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 09:24 | Codex | advance mobile candidate to 0.8.85; record Android timeout and pending iOS acceptance |
+| 2026-10-11 08:47 | Codex | update mobile album candidate to 0.8.82 and record Vivo UI fixes |
 | 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

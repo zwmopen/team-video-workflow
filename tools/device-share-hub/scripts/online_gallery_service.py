@@ -2817,6 +2817,17 @@ def _normalize_sync_host(raw: str) -> Optional[str]:
     return "%s:%d" % (host, port or phone_sync.PHONE_ALBUM_PORT)
 
 
+def _dsh157_elapsed_ms(started: float) -> int:
+    return max(0, int(round((time.perf_counter() - started) * 1000)))
+
+
+def _dsh157_nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(round(float(value))))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
     timeout = 15.0  # 15秒 socket 读写超时，防手机息屏/脱网后 socket 挂在 CLOSE_WAIT 耗尽工作线程
     scanner: WorkScanner = None
@@ -2841,7 +2852,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         self.send_cors_headers()
         self.end_headers()
 
-    def send_json(self, status: int, data: Any):
+    def send_json(self, status: int, data: Any, timing: Optional[Dict[str, Any]] = None):
+        json_started = time.perf_counter()
         try:
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         except Exception as _je:
@@ -2855,6 +2867,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 body = json.dumps(
                     {"ok": False, "error": "响应序列化失败（详见 status.scanErrors）"},
                     ensure_ascii=False).encode("utf-8")
+        json_ms = _dsh157_elapsed_ms(json_started)
         # 【传输层瘦身】2026-09-20：/api/online/works 全量裸发实测 **2751.8 KB**，
         # 手机端「正在连接电脑在线相册…」的绝大部分时间其实是在等这 2.75 MB 过 Wi-Fi。
         # 两步治理（实测）：剥离 searchBlob/slotGuard → 1568.5 KB；再按协商开 gzip
@@ -2862,13 +2875,22 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         # Android 的 HttpURLConnection(OkHttp) 在未显式设置 Accept-Encoding 时
         # 会自动协商 gzip 并透明解压，所以这里只需按请求头决定是否压缩即可，客户端零改动。
         gz = None
+        gzip_ms = 0
         if len(body) >= GZIP_MIN_BYTES and "gzip" in (self.headers.get("Accept-Encoding") or "").lower():
+            gzip_started = time.perf_counter()
             try:
                 gz = gzip_bytes(body, 6)
             except Exception:
                 gz = None
+            gzip_ms = _dsh157_elapsed_ms(gzip_started)
         payload = gz if gz is not None else body
+        headers_ms = 0
+        write_ms = 0
+        write_ok = 0
+        headers_started = None
+        write_started = None
         try:
+            headers_started = time.perf_counter()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             if gz is not None:
@@ -2879,11 +2901,56 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.send_cors_headers()
             self.end_headers()
+            headers_ms = _dsh157_elapsed_ms(headers_started)
+            write_started = time.perf_counter()
             self.wfile.write(payload)
+            write_ms = _dsh157_elapsed_ms(write_started)
+            write_ok = 1
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
-            pass
+            if headers_started is not None and headers_ms == 0:
+                headers_ms = _dsh157_elapsed_ms(headers_started)
+            if write_started is not None:
+                write_ms = _dsh157_elapsed_ms(write_started)
         finally:
+            if timing is not None:
+                self._log_dsh157_timing(
+                    timing, status, json_ms, gzip_ms, headers_ms, write_ms,
+                    len(body), len(payload), 1 if gz is not None else 0, write_ok)
             self.close_connection = True
+
+    @staticmethod
+    def _log_dsh157_timing(
+        timing: Dict[str, Any], status: int, json_ms: int, gzip_ms: int,
+        headers_ms: int, write_ms: int, raw_bytes: int, response_bytes: int,
+        compressed: int, write_ok: int,
+    ):
+        route = timing.get("route")
+        if route not in ("categories", "works"):
+            return
+        metric_names = (
+            "cleanup_ms", "prepare_ms", "scan_ms", "aggregate_ms",
+            "source_count", "result_count",
+        )
+        metrics = {name: _dsh157_nonnegative_int(timing.get(name, 0)) for name in metric_names}
+        try:
+            print(
+                "[DSH-157 timing] route=%s status=%d cleanup_ms=%d prepare_ms=%d "
+                "scan_ms=%d aggregate_ms=%d json_ms=%d gzip_ms=%d headers_ms=%d "
+                "write_ms=%d source_count=%d result_count=%d raw_bytes=%d "
+                "response_bytes=%d gzip=%d write_ok=%d" % (
+                    route, _dsh157_nonnegative_int(status), metrics["cleanup_ms"],
+                    metrics["prepare_ms"], metrics["scan_ms"], metrics["aggregate_ms"],
+                    _dsh157_nonnegative_int(json_ms), _dsh157_nonnegative_int(gzip_ms),
+                    _dsh157_nonnegative_int(headers_ms), _dsh157_nonnegative_int(write_ms),
+                    metrics["source_count"], metrics["result_count"],
+                    _dsh157_nonnegative_int(raw_bytes), _dsh157_nonnegative_int(response_bytes),
+                    1 if compressed else 0, 1 if write_ok else 0,
+                ),
+                flush=True,
+            )
+        except Exception:
+            # Timing logs must never break a gallery request.
+            pass
 
     # ── 手机次数回读同步 / 在线探测（见 phone_sync.py）─────────────────
     def _computer_works_index(self, force: bool = False) -> Dict[str, Dict[str, Any]]:
@@ -3165,12 +3232,18 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/categories":
+            route_timing = {"route": "categories"}
             # DSH-140: 聚合分类前快速巡检到期作品，防止已到期作品污染分类计数
+            phase_started = time.perf_counter()
             try:
                 self.scanner.cleanup_expired_works()
             except Exception as _ce:
                 print(f"[DSH-140] categories 巡检异常: {_ce!r}")
+            route_timing["cleanup_ms"] = _dsh157_elapsed_ms(phase_started)
+            phase_started = time.perf_counter()
             works = self.scanner.scan_throttled()
+            route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
+            phase_started = time.perf_counter()
             counts: Dict[str, int] = {}
             count_stage0 = 0
             count_stage1 = 0
@@ -3211,7 +3284,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if "其他" in counts and counts["其他"] > 0:
                 categories.append({"name": "其他", "count": counts["其他"]})
 
-            self.send_json(200, {"ok": True, "categories": categories, "stages": [], "total": len(works)})
+            route_timing["aggregate_ms"] = _dsh157_elapsed_ms(phase_started)
+            route_timing["source_count"] = len(works)
+            route_timing["result_count"] = len(categories)
+            self.send_json(
+                200,
+                {"ok": True, "categories": categories, "stages": [], "total": len(works)},
+                timing=route_timing,
+            )
             return
 
         if path == "/api/online/filter-options":
@@ -3237,11 +3317,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/works":
+            route_timing = {"route": "works"}
             # DSH-140: 拉取作品列表前快速巡检到期作品，杜绝已到期僵尸作品滞留货架
+            phase_started = time.perf_counter()
             try:
                 self.scanner.cleanup_expired_works()
             except Exception as _we:
                 print(f"[DSH-140] works 巡检异常: {_we!r}")
+            route_timing["cleanup_ms"] = _dsh157_elapsed_ms(phase_started)
+            phase_started = time.perf_counter()
             category = query.get("category", ["全部"])[0]
             search_query = query.get("query", [""])[0].strip().strip("\"'").strip().lower()
             is_path_search = ("\\" in search_query or "/" in search_query or ":" in search_query)
@@ -3262,7 +3346,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             tags_raw = ",".join(query.get("tags", []))
             target_tags = {t.strip() for t in tags_raw.split(",") if t.strip()}
 
+            route_timing["prepare_ms"] = _dsh157_elapsed_ms(phase_started)
+            phase_started = time.perf_counter()
             works = self.scanner.scan_throttled(force=force_refresh)
+            route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
+            phase_started = time.perf_counter()
             tokens = [search_query] if is_path_search else (search_query.split() if search_query else [])
 
             # 手机打开在线相册（拉列表）也顺手回读一次本地分享次数
@@ -3360,14 +3448,18 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         ReverseStr((w.get("title") or "").lower()),
                     ))
 
-            self.send_json(200, {
+            response_data = {
                 "ok": True,
                 "category": category,
                 "total": len(filtered),
                 "viewState": get_gallery_view_state(),
                 # 剥离 searchBlob / slotGuard：两端客户端都不解析，47% 体积纯属白送
                 "works": slim_works_for_wire(filtered)
-            })
+            }
+            route_timing["aggregate_ms"] = _dsh157_elapsed_ms(phase_started)
+            route_timing["source_count"] = len(works)
+            route_timing["result_count"] = len(filtered)
+            self.send_json(200, response_data, timing=route_timing)
             return
 
         if path == "/api/online/recycle":

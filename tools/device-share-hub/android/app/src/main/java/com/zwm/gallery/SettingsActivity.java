@@ -138,7 +138,15 @@ public final class SettingsActivity extends Activity {
         version.setBackground(round(Color.WHITE, 14));
         root.addView(version);
         Button update = button("检查更新", false);
-        update.setOnClickListener(v -> UpdateChecker.check(this, false));
+        String updateLabel = update.getText().toString();
+        update.setOnClickListener(v -> {
+            update.setEnabled(false);
+            update.setText("正在检查…");
+            UpdateChecker.check(this, false, true, () -> {
+                update.setText(updateLabel);
+                update.setEnabled(true);
+            });
+        });
         root.addView(update, margins(0, dp(10), 0, dp(10)));
         Button about = button("软件说明", false);
         about.setOnClickListener(v -> showAbout());

@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -22,10 +23,13 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
 import java.net.NetworkInterface;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -758,16 +762,24 @@ public final class OnlineGalleryClient {
     }
 
     public void fetchCategories(Callback<CategoriesResult> callback) {
+        final long queuedAt = SystemClock.elapsedRealtime();
         executor.execute(() -> {
+            final long startedAt = SystemClock.elapsedRealtime();
             try {
                 String baseUrl = resolveBaseUrl();
                 URL url = new URL(baseUrl + "/api/online/categories");
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
                 CategoriesResult result = parseCategories(resp);
+                Log.i(TAG, "fetchCategories parsed queueMs=" + (startedAt - queuedAt)
+                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
+                        + " categories=" + result.categories.size());
                 // 成功即落盘快照：下次进页面/离线时可直接渲染
                 OnlineListCache.saveCategories(context, resp);
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
+                Log.w(TAG, "fetchCategories failed queueMs=" + (startedAt - queuedAt)
+                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
+                        + " reason=" + diagnosticErrorKind(e));
                 mainHandler.post(() -> callback.onError(e));
             }
         });
@@ -781,7 +793,9 @@ public final class OnlineGalleryClient {
     public void fetchWorks(String category, String query, String sortKey, Callback<List<OnlineWorkEntry>> callback) {
         final boolean fullList = (category == null || category.isEmpty())
                 && (query == null || query.isEmpty());
+        final long queuedAt = SystemClock.elapsedRealtime();
         executor.execute(() -> {
+            final long startedAt = SystemClock.elapsedRealtime();
             try {
                 String baseUrl = resolveBaseUrl();
                 StringBuilder sb = new StringBuilder(baseUrl).append("/api/online/works?");
@@ -797,11 +811,17 @@ public final class OnlineGalleryClient {
                 URL url = new URL(sb.toString());
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
                 List<OnlineWorkEntry> list = parseWorks(resp);
+                Log.i(TAG, "fetchWorks parsed queueMs=" + (startedAt - queuedAt)
+                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
+                        + " fullList=" + fullList + " works=" + list.size());
                 // 只有「全量列表」才值得做快照：带分类/关键词的响应是子集，
                 // 存下去会让下次秒开时看到一个不完整的列表。
                 if (fullList) OnlineListCache.saveWorks(context, resp);
                 mainHandler.post(() -> callback.onSuccess(list));
             } catch (Exception e) {
+                Log.w(TAG, "fetchWorks failed queueMs=" + (startedAt - queuedAt)
+                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
+                        + " fullList=" + fullList + " reason=" + diagnosticErrorKind(e));
                 mainHandler.post(() -> callback.onError(e));
             }
         });
@@ -1641,24 +1661,74 @@ public final class OnlineGalleryClient {
      * 其余调用沿用原来的 {@link #TIMEOUT_MS}，行为不变。
      */
     private static String rawHttpGet(URL url, int connectTimeoutMs, int readTimeoutMs) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        conn.setConnectTimeout(connectTimeoutMs);
-        conn.setReadTimeout(readTimeoutMs);
-        int code = conn.getResponseCode();
-        if (code < 200 || code >= 300) {
-            throw new Exception("HTTP " + code + " " + conn.getResponseMessage());
+        final String path = url.getPath();
+        final boolean listEndpoint = "/api/online/works".equals(path)
+                || "/api/online/categories".equals(path);
+        final long startedAt = SystemClock.elapsedRealtime();
+        HttpURLConnection conn = null;
+        int code = -1;
+        long responseBytes = 0L;
+        try {
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(connectTimeoutMs);
+            conn.setReadTimeout(readTimeoutMs);
+            code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new Exception("HTTP " + code + " " + conn.getResponseMessage());
+            }
+            InputStream in = new BufferedInputStream(conn.getInputStream());
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) != -1) {
+                out.write(buf, 0, len);
+                responseBytes += len;
+            }
+            in.close();
+            if (listEndpoint) {
+                Log.i(TAG, "GET " + path + " complete status=" + code
+                        + " responseBytes=" + responseBytes
+                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt));
+            }
+            return out.toString(StandardCharsets.UTF_8.name());
+        } catch (Exception e) {
+            if (listEndpoint) {
+                Log.w(TAG, "GET " + path + " failed status=" + (code < 0 ? "none" : code)
+                        + " responseBytes=" + responseBytes
+                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
+                        + " reason=" + diagnosticErrorKind(e));
+            }
+            throw e;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
-        InputStream in = new BufferedInputStream(conn.getInputStream());
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int len;
-        while ((len = in.read(buf)) != -1) {
-            out.write(buf, 0, len);
+    }
+
+    private static String diagnosticErrorKind(Exception error) {
+        String message = error.getMessage();
+        if (message != null && message.startsWith("HTTP ")) {
+            String[] parts = message.split("\\s+", 3);
+            if (parts.length > 1) return "HTTP_" + parts[1];
         }
-        in.close();
-        conn.disconnect();
-        return out.toString(StandardCharsets.UTF_8.name());
+        return error.getClass().getSimpleName();
+    }
+
+    static String userFacingErrorMessage(Exception error) {
+        if (error == null) return "网络异常";
+        if (error instanceof SocketTimeoutException) return "连接超时";
+        if (error instanceof ConnectException || error instanceof NoRouteToHostException) {
+            return "无法连接电脑";
+        }
+        if (error instanceof UnknownHostException) return "电脑地址不可用";
+        String message = error.getMessage();
+        if (message != null && message.startsWith("HTTP ")) return "电脑服务暂不可用";
+        String lower = message == null ? "" : message.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("failed to connect") || lower.contains("network is unreachable")) {
+            return "无法连接电脑";
+        }
+        if (lower.contains("timeout") || lower.contains("timed out")) return "连接超时";
+        return "网络异常";
     }
 
     private String httpPost(URL url, String jsonBody) throws Exception {

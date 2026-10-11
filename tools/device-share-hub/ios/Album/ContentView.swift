@@ -2316,6 +2316,9 @@ private final class ThumbnailButton: UIButton {
     let imageViewWidget = UIImageView()
     var currentURL: URL?
     var currentOnlinePath: String?
+    private var currentOnlineWorkId: String?
+    private(set) var failedOnlineLoad = false
+    private let retryIndicator = UIActivityIndicatorView(style: .gray)
     private var widthConstraint: NSLayoutConstraint?
     private var heightConstraint: NSLayoutConstraint?
 
@@ -2326,6 +2329,10 @@ private final class ThumbnailButton: UIButton {
         imageViewWidget.backgroundColor = AppColors.sharedBackground
         imageViewWidget.translatesAutoresizingMaskIntoConstraints = false
         addSubview(imageViewWidget)
+        retryIndicator.color = AppColors.secondaryText
+        retryIndicator.hidesWhenStopped = true
+        retryIndicator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(retryIndicator)
         translatesAutoresizingMaskIntoConstraints = false
         layer.cornerRadius = 10
         layer.borderWidth = 1
@@ -2340,6 +2347,8 @@ private final class ThumbnailButton: UIButton {
             imageViewWidget.trailingAnchor.constraint(equalTo: trailingAnchor),
             imageViewWidget.topAnchor.constraint(equalTo: topAnchor),
             imageViewWidget.bottomAnchor.constraint(equalTo: bottomAnchor),
+            retryIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
+            retryIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
             wc,
             hc
         ])
@@ -2360,21 +2369,70 @@ private final class ThumbnailButton: UIButton {
     func load(url: URL) {
         currentURL = url
         currentOnlinePath = nil
+        currentOnlineWorkId = nil
+        failedOnlineLoad = false
+        retryIndicator.stopAnimating()
+        accessibilityLabel = nil
         imageViewWidget.image = nil
+        imageViewWidget.contentMode = .scaleAspectFill
+        imageViewWidget.tintColor = nil
         ThumbnailLoader.shared.loadThumbnail(at: url, maxPixel: 200) { [weak self] image in
             guard let self = self, self.currentURL == url else { return }
             self.imageViewWidget.image = image
         }
     }
 
-    func loadOnline(path: String, workId: String? = nil) {
+    func loadOnline(path: String, workId: String? = nil, showsRetryProgress: Bool = false) {
         currentOnlinePath = path
+        currentOnlineWorkId = workId
         currentURL = nil
-        imageViewWidget.image = nil
-        OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: true, maxPixel: 200) { [weak self] image in
-            guard let self = self, self.currentOnlinePath == path else { return }
-            self.imageViewWidget.image = image
+        failedOnlineLoad = false
+        if showsRetryProgress {
+            retryIndicator.startAnimating()
+            accessibilityLabel = "缩略图正在重试"
+        } else {
+            retryIndicator.stopAnimating()
+            accessibilityLabel = "缩略图加载中"
         }
+        imageViewWidget.image = nil
+        imageViewWidget.contentMode = .scaleAspectFill
+        imageViewWidget.tintColor = nil
+        OnlineGalleryClient.shared.loadImage(path: path, workId: workId, isThumbnail: true, maxPixel: 200) { [weak self] image in
+            guard let self = self,
+                  self.currentOnlinePath == path,
+                  self.currentOnlineWorkId == workId else { return }
+            self.retryIndicator.stopAnimating()
+            self.imageViewWidget.image = image
+            self.imageViewWidget.contentMode = image == nil ? .center : .scaleAspectFill
+            self.failedOnlineLoad = image == nil
+            if image == nil {
+                if #available(iOS 13.0, *) {
+                    self.imageViewWidget.image = UIImage(systemName: "arrow.clockwise")
+                    self.imageViewWidget.tintColor = AppColors.secondaryText
+                }
+                self.accessibilityLabel = "缩略图加载失败，轻点重试"
+            } else {
+                self.accessibilityLabel = "查看图片"
+            }
+        }
+    }
+
+    func retryOnlineLoadIfNeeded() -> Bool {
+        guard failedOnlineLoad, let path = currentOnlinePath else { return false }
+        loadOnline(path: path, workId: currentOnlineWorkId, showsRetryProgress: true)
+        return true
+    }
+
+    func prepareForReuse() {
+        currentURL = nil
+        currentOnlinePath = nil
+        currentOnlineWorkId = nil
+        failedOnlineLoad = false
+        retryIndicator.stopAnimating()
+        accessibilityLabel = nil
+        imageViewWidget.image = nil
+        imageViewWidget.contentMode = .scaleAspectFill
+        imageViewWidget.tintColor = nil
     }
 }
 
@@ -3004,9 +3062,7 @@ private final class WorkCell: UICollectionViewCell {
         onOnlineReset = nil
         for view in previewStack.arrangedSubviews {
             if let tb = view as? ThumbnailButton {
-                tb.currentURL = nil
-                tb.currentOnlinePath = nil
-                tb.imageViewWidget.image = nil
+                tb.prepareForReuse()
             } else if let cp = view as? ComparePairThumbView {
                 cp.currentWorkId = nil
                 cp.currentSourcePath = nil
@@ -3261,6 +3317,7 @@ private final class WorkCell: UICollectionViewCell {
     }
 
     @objc private func onlineThumbnailTapped(_ sender: ThumbnailButton) {
+        if sender.retryOnlineLoadIfNeeded() { return }
         onOnlinePreview?(sender.tag, sender.imageViewWidget.image)
     }
 

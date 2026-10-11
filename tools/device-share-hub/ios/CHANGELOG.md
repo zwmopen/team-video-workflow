@@ -1,3 +1,22 @@
+# 2026-10-11 DSH-154：失败缩略图点按重试显示等待状态（源码候选 0.8.92 / build 203）
+
+- 点按失败缩略图重试后，在图片区域显示活动指示器并更新 VoiceOver 状态；请求完成、图片切换或 cell 复用后清理指示器、失败态、标签和图片缩放状态。
+- iOS 工程版本对齐 Android 候选为 `MARKETING_VERSION=0.8.92` / `CURRENT_PROJECT_VERSION=203`。
+- 静态门禁 14/14 通过。Windows 无 Swift/Xcode 工具链，iPhone 当前未通过 USB mux 枚举；未构建、安装或真机验收。
+- 本地候选；没有推送、CI 或发布。
+
+## 2026-10-11 DSH-154：在线缩略图失败可重试（源码候选 iOS 0.8.85 / build 196）
+
+- `OnlineGalleryClient.loadImage` 对缩略图最多尝试 2 次，失败间隔 0.9 秒；只对传输错误、非 2xx、408/429/5xx 和无效图片重试，原图仍单次请求。
+- 记录失败文件名、缩略图标记、尝试次数、HTTP 状态、字节数、耗时和错误，不记录完整 URL。最终失败显示重试图标，并支持点按重新加载及 VoiceOver 提示。
+- 静态回归 `tests/test_ios_online_gallery_client.py` 12/12 通过；没有 Xcode 工具链或匹配版本 IPA，故未编译、安装或实机验证。
+- iPhone 当前安装 build 188。实机截图的部分素材位标明“无素材原片”，成品缩略图正常；它们不是这次新增重试 UI 的设备验收证据。
+
+## 2026-10-11 DSH-153：iOS 源码版本与 Android 0.8.82 候选对齐
+
+- iOS `MARKETING_VERSION=0.8.82` / `CURRENT_PROJECT_VERSION=193`，仅对齐 Android 候选版本；本次没有修改 iOS 业务代码。
+- IPA 未生成、未安装；iPhone 当前 0.8.77/188，触屏回归未执行。没有推送、CI 或发布。
+
 ## 2026-10-11 DSH-152：版本号与 Android 0.8.81 候选对齐（源码记录）
 
 - iOS `MARKETING_VERSION=0.8.81` / `CURRENT_PROJECT_VERSION=192`，仅对齐 Android 候选版本；本次没有修改 iOS 业务代码。
@@ -242,5 +261,8 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 09:24 | Codex | add bounded iOS thumbnail retry, diagnostics, and tap-to-retry candidate |
+| 2026-10-11 08:47 | Codex | align iOS source version with Android 0.8.82; no iOS behavior change |
 | 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

@@ -243,6 +243,7 @@ public final class MainActivity extends Activity {
     private String localTrashTab = "deleted";
     private int localTrashDeletedCount = 0;
     private int localTrashGarbageCount = 0;
+    private boolean clearingTrash = false;
     private LinearLayout localTrashTabBar;
     private Button localTrashDeletedTabButton;
     private Button localTrashGarbageTabButton;
@@ -309,9 +310,7 @@ public final class MainActivity extends Activity {
         UpdateChecker.checkOnLaunch(this);
         DiagnosticLog.write(this, "app_open", "album main opened");
         submitToWorker(() -> GalleryShareBridge.cleanupPreviousDays(this, LocalDate.now()));
-        // 【体感加速】用户点进「电脑在线相册」是必然动作，所以开机就预热：
-        // 先读本地快照（本地读，几十毫秒级），再后台静默拉最新。
-        // 这样点进去大概率是瞬时渲染，而不是先看到「正在连接电脑在线相册…」。
+        // 本地读取在线列表快照；网络列表请求只在在线页面可见时发起，避免冷启动重复请求。
         primeOnlineWorksInBackground();
         getWindow().getDecorView().post(() -> {
             showInitialFolderPromptIfNeeded();
@@ -550,12 +549,13 @@ public final class MainActivity extends Activity {
         searchBar.addView(searchIcon, sIconParams);
 
         searchInput = new EditText(this);
-        searchInput.setHint("搜索作品标题或文件夹/目的地...");
+        searchInput.setHint(isOnlineMode ? "搜索标题/地点" : "搜索标题/文件夹");
         searchInput.setHintTextColor(Color.rgb(155, 160, 158));
         searchInput.setTextColor(Color.rgb(32, 34, 33));
         searchInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         searchInput.setBackground(null);
         searchInput.setSingleLine(true);
+        searchInput.setEllipsize(TextUtils.TruncateAt.END);
         searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         searchInput.setPadding(0, dp(4), 0, dp(4));
         searchInput.addTextChangedListener(new TextWatcher() {
@@ -925,6 +925,9 @@ public final class MainActivity extends Activity {
     }
 
     private void clearTrash() {
+        if (clearingTrash) return;
+        clearingTrash = true;
+        if (rightModeButton != null) rightModeButton.setEnabled(false);
         renderedWorks.clear();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
@@ -932,17 +935,15 @@ public final class MainActivity extends Activity {
         localTrashDeletedCount = 0;
         localTrashGarbageCount = 0;
         refreshLocalTrashTabStyles();
-        TextView empty = text("回收站是空的", 14, false);
-        empty.setGravity(Gravity.CENTER);
-        empty.setTextColor(Color.GRAY);
-        empty.setPadding(dp(14), dp(28), dp(14), dp(28));
-        empty.setBackground(round(Color.WHITE, 18));
-        worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
-        scannedCountText.setText("0");
-        statusText.setText("回收站已清空");
-
-        int onlineCleared = OnlineWorkLifecycle.clearAllTrash(this);
-        toast("回收站已清空" + (onlineCleared > 0 ? "（含 " + onlineCleared + " 套在线记录）" : ""));
+        TextView loading = text("正在清空回收站…", 14, false);
+        loading.setGravity(Gravity.CENTER);
+        loading.setTextColor(Color.GRAY);
+        loading.setPadding(dp(14), dp(28), dp(14), dp(28));
+        loading.setBackground(round(Color.WHITE, 18));
+        worksContainer.addView(loading, new LinearLayout.LayoutParams(-1, -2));
+        scannedCountText.setText("…");
+        statusText.setText("正在清空回收站…");
+        toast("正在清空回收站…");
 
         submitToWorker(() -> {
             try {
@@ -953,14 +954,23 @@ public final class MainActivity extends Activity {
                     throw new IOException("原文件夹未删，已保留回收站数据：" + result.firstFailure());
                 }
                 library.clearTrash();
+                int onlineCleared = OnlineWorkLifecycle.clearAllTrash(this);
                 DiagnosticLog.write(this, "trash_cleared", "user confirmed");
                 try {
                     OnlineService.publishWorkInventory(this, library.listActive());
                 } catch (Exception ignored) { }
+                runOnUiThread(() -> {
+                    clearingTrash = false;
+                    if (rightModeButton != null) rightModeButton.setEnabled(true);
+                    toast("回收站已清空" + (onlineCleared > 0 ? "（含 " + onlineCleared + " 套在线记录）" : ""));
+                    refreshWorks();
+                });
             } catch (Exception error) {
                 DiagnosticLog.write(this, "trash_clear_failed",
                         error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
                 runOnUiThread(() -> {
+                    clearingTrash = false;
+                    if (rightModeButton != null) rightModeButton.setEnabled(true);
                     toast("清空失败：" + error.getMessage());
                     refreshWorks();
                 });
@@ -981,10 +991,7 @@ public final class MainActivity extends Activity {
             cleanEntries.removeIf(entry -> pendingTrashIds.contains(entry.id));
         }
         renderedWorks = new ArrayList<>(cleanEntries);
-        if (showingTrash) {
-            String trashLabel = "garbage".equals(localTrashTab) ? "已标记垃圾" : "已删除";
-            statusText.setText("📱 手机本地回收站 · " + trashLabel + " " + cleanEntries.size() + " 套");
-        } else if (!isOnlineMode) {
+        if (!showingTrash && !isOnlineMode) {
             statusText.setText("📱 手机本地作品 · 共 " + cleanEntries.size() + " 套");
         }
         if (!showingTrash) updateCategoryCounts(cleanEntries);
@@ -1017,6 +1024,7 @@ public final class MainActivity extends Activity {
 
         // 本地回收站双 Tab 过滤（已删除 / 已标记垃圾），与在线回收站双 Tab 结构 1:1 对齐。
         // 判据即「是否写过垃圾备注」—— 与在线版 quality_tag.json 的垃圾标记语义同一套。
+        List<OnlineWorkLifecycle.Item> phoneOnlineDeletedItems = new ArrayList<>();
         List<WorkLibrary.WorkEntry> shownEntries = entries;
         if (showingTrash) {
             int deleted = 0;
@@ -1025,7 +1033,10 @@ public final class MainActivity extends Activity {
                 if (entry.isGarbage()) garbage++;
                 else deleted++;
             }
-            localTrashDeletedCount = deleted;
+            CleanupSettings.Values cleanup = CleanupSettings.read(this);
+            phoneOnlineDeletedItems = OnlineWorkLifecycle.getTrashItems(
+                    this, System.currentTimeMillis(), cleanup.deleteAfterMs());
+            localTrashDeletedCount = deleted + phoneOnlineDeletedItems.size();
             localTrashGarbageCount = garbage;
             refreshLocalTrashTabStyles();
             boolean wantGarbage = "garbage".equals(localTrashTab);
@@ -1045,19 +1056,22 @@ public final class MainActivity extends Activity {
         quickTrashButton.setVisibility(selecting ? View.VISIBLE : View.GONE);
         headingText.setText(selecting ? "已选 " + selectedWorkIds.size() + " 个" : (showingTrash ? "回收站" : ""));
 
-        List<OnlineWorkLifecycle.Item> onlineTrashItems = new ArrayList<>();
-        if (showingTrash && !"garbage".equals(localTrashTab)) {
-            CleanupSettings.Values cleanup = CleanupSettings.read(this);
-            onlineTrashItems = OnlineWorkLifecycle.getTrashItems(this, System.currentTimeMillis(), cleanup.deleteAfterMs());
-        }
+        List<OnlineWorkLifecycle.Item> onlineTrashItems = showingTrash && !"garbage".equals(localTrashTab)
+                ? phoneOnlineDeletedItems : new ArrayList<>();
 
         int totalCount = shownEntries.size() + onlineTrashItems.size();
+        if (showingTrash) {
+            String trashLabel = "garbage".equals(localTrashTab) ? "已标记垃圾" : "已删除";
+            // Deleted tab combines local folders and phone-side lifecycle records for online works.
+            // Keep the sticky count aligned with the rows rendered below, as iOS TrashView does.
+            statusText.setText("📱 手机回收站 · " + trashLabel + " " + totalCount + " 套");
+        }
         scannedCountText.setText(String.valueOf(showingTrash ? totalCount : entries.size()));
 
         // Huawei can leave real folders in the external trash after its document index
         // forgets the corresponding app record, so clearing must remain available even
         // when the private list already looks empty.
-        rightModeButton.setEnabled(true);
+        rightModeButton.setEnabled(!clearingTrash);
         rightModeButton.setAlpha(rightModeButton.isEnabled() ? 1f : 0.45f);
         if (totalCount == 0) {
             String emptyMsg;
@@ -2830,9 +2844,7 @@ public final class MainActivity extends Activity {
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
         refreshOnlineServiceSafely();
-        if (isVisible && !fileMode) refreshWorks();
-        // Let the PC refresh version and inventory information as soon as the app
-        // becomes visible; the receiver's regular beacon remains the fallback.
+        // onStart owns the single visible list refresh; onResume must not duplicate it.
         OnlineService.requestImmediateBeacon(this);
     }
 
@@ -3200,6 +3212,9 @@ public final class MainActivity extends Activity {
 
     private void updateSourceModeButtonStyle() {
         if (sourceModeButton == null) return;
+        if (searchInput != null) {
+            searchInput.setHint(isOnlineMode ? "搜索标题/地点" : "搜索标题/文件夹");
+        }
         if (!isOnlineMode) {
             sourceModeButton.setImageResource(R.drawable.ic_mode_phone);
             sourceModeButton.setImageTintList(ColorStateList.valueOf(Color.rgb(15, 135, 88)));
@@ -3215,7 +3230,11 @@ public final class MainActivity extends Activity {
 
     private void toggleSourceMode() {
         if (fileMode) leaveFileMode();
-        if (showingTrash) showingTrash = false;
+        if (showingTrash) {
+            showingTrash = false;
+            // An explicit source switch from phone recycle must not restore its previous online source.
+            enteredTrashFromOnline = false;
+        }
         if (isOnlineMode) {
             switchToLocalMode();
         } else {
@@ -3302,13 +3321,8 @@ public final class MainActivity extends Activity {
     /**
      * 【体感加速】开机预热：不做任何 UI 阻塞。
      *
-     * 两段式：
-     *   1) 读磁盘快照 → 立刻进内存（离线也能秒开，且能顶住「电脑关机 / 换网」）；
-     *   2) 后台静默拉一次最新列表 + 分类，成功即覆盖快照。
-     *
-     * 为什么值得在开机就做：在线相册的入口是用户**必然**要点的一次操作，
-     * 与其等他点完再等网络，不如在他还没点的时候就把这段时间花掉。
-     * 代价是开机后台多一次几 KB~几百 KB 的请求，失败也不打扰用户。
+     * 只读磁盘快照，让用户进入电脑在线模式时可以先看到上次内容。
+     * 网络请求等用户明确切到电脑在线模式后再发，避免本地模式冷启动也触发在线列表/分类扫描。
      */
     private void primeOnlineWorksInBackground() {
         submitToWorker(() -> {
@@ -3348,44 +3362,6 @@ public final class MainActivity extends Activity {
                     statusText.setText(onlineStatusLine("正在后台刷新…"));
                 }
             });
-        });
-        silentPrefetchOnlineWorks();
-    }
-
-    /**
-     * 后台静默预热：拉一次最新的全量列表与分类。
-     * 失败**不打扰用户**（此时用户可能还在手机本地相册里，弹错只会莫名其妙）。
-     */
-    private void silentPrefetchOnlineWorks() {
-        onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
-            @Override
-            public void onSuccess(OnlineGalleryClient.CategoriesResult result) {
-                lastCategoriesResult = result;
-                if (isOnlineMode) updateOnlineCategoryCounts(result, onlineWorks);
-            }
-
-            @Override
-            public void onError(Exception error) {
-                Log.i("MainActivity", "在线分类预热失败（静默）: " + error.getMessage());
-            }
-        });
-        onlineClient.fetchWorks(null, null, currentSortKey, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
-            @Override
-            public void onSuccess(List<OnlineWorkEntry> works) {
-                if (works == null) return;
-                // 在线模式下由 refreshOnlineWorks 统一负责，避免两条路径同时写 onlineWorks
-                if (isOnlineMode) return;
-                onlineWorks.clear();
-                onlineWorks.addAll(works);
-                sortOnlineWorks(onlineWorks, currentSortKey);
-                mergeLocalSentWorks();
-                onlineListFromSnapshot = false;
-            }
-
-            @Override
-            public void onError(Exception error) {
-                Log.i("MainActivity", "在线列表预热失败（静默）: " + error.getMessage());
-            }
         });
     }
 
@@ -3430,7 +3406,7 @@ public final class MainActivity extends Activity {
 
                         @Override
                         public void onError(Exception error) {
-                            toast("❌ 连接失败：" + error.getMessage());
+                            toast("❌ " + OnlineGalleryClient.userFacingErrorMessage(error));
                         }
                     });
                 })
@@ -3497,13 +3473,9 @@ public final class MainActivity extends Activity {
     /**
      * 刷新在线作品列表。
      *
-     * 2026-09-20 体感改造三点：
-     * 1. **两个请求并行**。原来是 `fetchCategories` 成功之后才发 `fetchWorks`，
-     *    白白多一个网络往返（手机 Wi-Fi 下每个往返都是实打实的几百毫秒）。
-     *    现在分类和列表同时发出，列表先到就先渲染。
-     * 2. **有数据就不阻塞**。已经有列表（内存或本地快照）时，状态栏只说「正在刷新…」，
-     *    而不是把「正在连接电脑在线相册…」摆在用户面前。
-     * 3. **失败不清屏**。已经有快照数据时，刷新失败只做软提示并保留列表；
+     * 当前可见刷新只请求一次 works；works 成功后才请求 categories，避免服务端同时扫描。
+     * 有列表（内存或本地快照）时，状态栏只说「正在刷新…」，而不是把
+     * 「正在连接电脑在线相册…」摆在用户面前。失败不清除已有快照：
      *    原来无论有没有数据都会 `handleOnlineError` 把容器清空换成错误卡片 ——
      *    电脑关机时用户连上次的内容都看不到。
      */
@@ -3514,22 +3486,6 @@ public final class MainActivity extends Activity {
         } else {
             statusText.setText("正在连接电脑在线相册…");
         }
-
-        onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
-            @Override
-            public void onSuccess(OnlineGalleryClient.CategoriesResult catResult) {
-                if (!isOnlineMode || showingTrash) return;
-                lastCategoriesResult = catResult;
-                updateOnlineCategoryCounts(catResult, onlineWorks);
-                if (!onlineWorks.isEmpty()) applyOnlineCategoryFilter(selectedOnlineCategory);
-            }
-
-            @Override
-            public void onError(Exception error) {
-                // 分类失败不致命：列表照样能看，只有分类数字会缺
-                Log.i("MainActivity", "在线分类刷新失败: " + error.getMessage());
-            }
-        });
 
         onlineClient.fetchWorks(null, null, currentSortKey, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
             @Override
@@ -3589,6 +3545,7 @@ public final class MainActivity extends Activity {
                 applyOnlineCategoryFilter(selectedOnlineCategory);
                 statusText.setText("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
                 finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
+                refreshOnlineCategoriesAfterWorks();
             }
 
             @Override
@@ -3596,13 +3553,32 @@ public final class MainActivity extends Activity {
                 if (!isOnlineMode) return;
                 if (!onlineWorks.isEmpty()) {
                     // 有快照/旧数据：保留用户已经看到的列表，只做软提示
-                    String msg = error != null && error.getMessage() != null ? error.getMessage() : "网络超时";
+                    String msg = OnlineGalleryClient.userFacingErrorMessage(error);
                     statusText.setText("💻 离线快照 · 共 " + onlineWorks.size() + " 套 · 刷新失败：" + msg);
                     finishVisibleRefresh("已保留本地快照（刷新失败）");
                 } else {
                     handleOnlineError("读取作品列表失败", error);
                 }
                 tryAutoDiscoverPc(userInitiated);
+            }
+        });
+    }
+
+    /** 列表成功后再拉分类，避免两个服务端全量扫描入口同时争用扫描器。 */
+    private void refreshOnlineCategoriesAfterWorks() {
+        onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
+            @Override
+            public void onSuccess(OnlineGalleryClient.CategoriesResult catResult) {
+                if (!isOnlineMode || showingTrash) return;
+                lastCategoriesResult = catResult;
+                updateOnlineCategoryCounts(catResult, onlineWorks);
+                if (!onlineWorks.isEmpty()) applyOnlineCategoryFilter(selectedOnlineCategory);
+            }
+
+            @Override
+            public void onError(Exception error) {
+                // 分类失败不致命：列表照样能看，只有分类数字会缺
+                Log.i("MainActivity", "在线分类刷新失败: " + error.getMessage());
             }
         });
     }
@@ -3671,7 +3647,7 @@ public final class MainActivity extends Activity {
 
     private void handleOnlineError(String prefix, Exception error) {
         finishVisibleRefresh("连接失败");
-        String msg = error != null && error.getMessage() != null ? error.getMessage() : "网络超时";
+        String msg = OnlineGalleryClient.userFacingErrorMessage(error);
         statusText.setText(prefix + " (" + msg + ")");
         worksContainer.removeAllViews();
         scannedCountText.setText("0");
@@ -3686,7 +3662,7 @@ public final class MainActivity extends Activity {
         title.setTextColor(Color.rgb(180, 50, 40));
         errorCard.addView(title);
 
-        TextView hint = text("当前地址：" + onlineClient.resolveBaseUrl() + "\n\n请确认：\n1. 电脑端已启动 online_gallery_service.py（端口 45835）\n2. 手机与电脑连接同一 Wi-Fi 网络\n3. 电脑防火墙已放行 45835 端口", 13, false);
+        TextView hint = text("请确认：\n1. 电脑端已启动在线相册服务（端口 45835）\n2. 手机与电脑连接同一 Wi-Fi 网络\n3. 电脑防火墙已放行 45835 端口", 13, false);
         hint.setTextColor(Color.rgb(90, 95, 92));
         hint.setLineSpacing(dp(3), 1.15f);
         LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
@@ -4061,7 +4037,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onError(Exception error) {
                 if (!isOnlineMode || !showingOnlineRecycle) return;
-                String msg = error != null && error.getMessage() != null ? error.getMessage() : "网络超时";
+                String msg = OnlineGalleryClient.userFacingErrorMessage(error);
                 statusText.setText("读取在线回收站失败 (" + msg + ")");
                 finishVisibleRefresh("读取失败");
             }

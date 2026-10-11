@@ -5,6 +5,8 @@ Unit tests for Online Gallery Service
 """
 import os
 import sys
+import io
+import contextlib
 import json
 import time
 import shutil
@@ -13,6 +15,7 @@ import unittest
 import urllib.request
 import urllib.error
 import threading
+from unittest.mock import patch
 
 # Add scripts directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -109,8 +112,46 @@ class TestOnlineGalleryService(unittest.TestCase):
         url = f"http://127.0.0.1:{self.port}/api/online/works?query={urllib.parse.quote('秋季')}"
         with urllib.request.urlopen(url) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            self.assertEqual(len(data["works"]), 1)
-            self.assertIn("安吉", data["works"][0]["title"])
+            # 搜索还会匹配推导出的 season 元数据；莫干山标题虽写“赏秋”，
+            # 但它的 season 同样是“秋季”，因此两套都应保留。
+            self.assertEqual(len(data["works"]), 2)
+            self.assertTrue(any("安吉" in work["title"] for work in data["works"]))
+            self.assertTrue(any(work.get("season") == "秋季" for work in data["works"]))
+
+    def test_dsh157_route_timing_log_contains_only_aggregate_fields(self):
+        query_canary = "dsh157-private-query-canary"
+        header_canary = "203.0.113.157"
+        url = (
+            f"http://127.0.0.1:{self.port}/api/online/works"
+            f"?query={urllib.parse.quote(query_canary)}"
+        )
+        request = urllib.request.Request(url, headers={"X-Forwarded-For": header_canary})
+        captured = io.StringIO()
+        logged = threading.Event()
+        original_logger = OnlineGalleryHandler._log_dsh157_timing
+
+        def capture_timing(*args, **kwargs):
+            original_logger(*args, **kwargs)
+            logged.set()
+
+        with patch.object(OnlineGalleryHandler, "_log_dsh157_timing", side_effect=capture_timing):
+            with contextlib.redirect_stdout(captured):
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    json.loads(response.read().decode("utf-8"))
+                self.assertTrue(logged.wait(1), "timing log should be emitted by the isolated test server")
+
+        timing_lines = [line for line in captured.getvalue().splitlines() if "[DSH-157 timing]" in line]
+        self.assertEqual(len(timing_lines), 1)
+        timing_line = timing_lines[0]
+        self.assertIn("route=works", timing_line)
+        self.assertIn("status=200", timing_line)
+        for metric in ("cleanup_ms", "prepare_ms", "scan_ms", "aggregate_ms", "json_ms", "gzip_ms",
+                       "headers_ms", "write_ms", "source_count", "result_count", "raw_bytes",
+                       "response_bytes", "gzip", "write_ok"):
+            self.assertRegex(timing_line, rf"\b{metric}=\d+\b")
+        for private_value in (query_canary, header_canary, self.temp_dir, "安吉2天1夜秋季团建大爆款"):
+            self.assertNotIn(private_value, timing_line)
 
     def test_two_uses_protection_rule(self):
         """首次使用后：计数 +1、物理移入「_已发送1次」、stage0 视角剩余次数归零。
@@ -422,6 +463,9 @@ class TestCodeFreshness(unittest.TestCase):
         with open(self.dst, "wb") as fp:
             fp.write(original)
 
+        # code_freshness caches its result for 10 seconds; expire the probe cache
+        # so this assertion measures the restored content hash, not cache age.
+        self.mod._CODE_FRESHNESS_CACHE["at"] = 0.0
         out = self.mod.code_freshness()
         self.assertFalse(
             out["staleCode"], "内容已恢复一致却仍报 stale，说明判据退化成 mtime 比较了"
