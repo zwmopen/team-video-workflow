@@ -16,7 +16,7 @@
 - DSH-158：用无快照测试态检查错误卡片不显示 `resolveBaseUrl()`/局域网地址；检查同 Wi-Fi、服务和防火墙说明。DSH-159：点“检查更新”应立即把按钮改为“正在检查…”并禁用；分别覆盖发现更新、无更新、网络失败，并确认完成后恢复原文案与按钮。
 - iOS DSH-154：冷/热缓存分别观察缩略图；网络故障后最多重试一次，失败 tile 提供点按重试与 VoiceOver 文案，等待重试时有活动指示器；复用 cell 时等待态、失败态、无障碍标签和图像缩放模式都要复位。区分“无素材原片”与真实网络失败。需 `.92` IPA 和可用 WDA/XCTest 触控链。
 - DSH-157 阶段诊断：仅用临时作品库和随机 localhost 端口验证计时日志；不连接 45835，也不手工请求有清理副作用的 works/categories。日志允许固定 route/status、耗时、字节与计数；不得包含 IP、路径、查询或作品内容。`write_ms` 是本机服务端 socket 写入耗时，不能当成手机首字节证据。
-- 当前记录：Android `.92` APK 本地构建/验签成功，SHA-256 见维护交接；`testDebugUnitTest` 103/103、`lintRelease` 0 错误/93 警告、源码守卫 6/6。覆盖安装被系统以 `User rejected permissions` 拒绝；设备仍锁屏并安装 `.91/202`，未完成点击验收。服务套件 63/63；iOS 静态守卫 14/14，无 Xcode、IPA 或 iPhone USB mux。
+- 当前记录：Android `.92` APK 本地构建/验签成功，SHA-256 见维护交接；`testDebugUnitTest` 103/103、`lintRelease` 0 错误/93 警告、源码守卫 6/6。覆盖安装被系统以 `User rejected permissions` 拒绝；设备仍锁屏并安装 `.91/202`，未完成点击验收。服务套件 63/63；iOS 静态守卫 15/15（含在线卡元信息统一前缀），无 Xcode、IPA 或 iPhone USB mux。现场服务已重启并回读 `staleCode=false`、库存 395、扫描错误 0；手机列表 timeout 根因仍需真实请求阶段数据。
 
 ## 在线相册对比视图（DSH-150）
 
@@ -202,6 +202,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 09:24 | Codex | add Android cold-start, recycle source, phone timeout, and iOS retry device regression steps |
 | 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |

@@ -1,10 +1,10 @@
-# 2026-10-11 DSH-154 / DSH-157—159：安卓界面补缺与在线列表超时诊断（源码候选 0.8.92）
+# 2026-10-11 DSH-154 / DSH-157—160：安卓界面补缺、在线列表超时诊断与三端元信息对齐（源码候选 0.8.92）
 
 - 候选版本：Android `0.8.92 / versionCode 203`；iOS `0.8.92 / build 203`。Android `.92` Release APK 已本地构建并验签，SHA-256 `A14BAA0F65D7D77F7A6C0164D464BF24A1A845043426D35F96E2518C610BF984`；测试 103/103，Lint 0 错误/93 警告。覆盖安装被系统以 `User rejected permissions` 拒绝，设备仍锁屏并回读 `.91/202`，未做 `.92` 点击验收。
-- Android 修复无快照连接失败页显示 LAN 地址、手动更新检查等待时无反馈；更新按钮在请求期间持续显示“正在检查…”。修正与当前启动/串行请求逻辑不符的注释。iOS 失败缩略图点按重试时加入活动指示器，并在复用/切换图片时重置状态；iOS 静态门禁 14/14，无 Xcode、IPA 或真机验证。
+- Android 修复无快照连接失败页显示 LAN 地址、手动更新检查等待时无反馈；更新按钮在请求期间持续显示“正在检查…”。修正与当前启动/串行请求逻辑不符的注释。iOS 失败缩略图点按重试时加入活动指示器，并在复用/切换图片时重置状态；在线卡元信息与 Android 统一为 `💻 电脑在线 · N 图 · 使用态`；iOS 静态门禁 15/15，无 Xcode、IPA 或真机验证。
 - `.91` Android Vivo 14 实测冷启动仅一次 works 请求、队列 1ms、12,158ms 读超时、status none/0 bytes；离线快照 395 套保留，显示“连接超时”。Logcat 本轮未见 `FATAL EXCEPTION`。
-- `/api/online/status` 被动读取 200 仅代表内存状态可读；服务端源码显示 works/categories 先清理到期作品，再扫描，并在 JSON/gzip 后发响应头。DSH-157 增加了隐私受限的阶段耗时候选，并在临时目录/随机 localhost 端口的服务套件 63/63 通过；`scan_ms` 仍合并锁等待和扫描，socket 写入时间不能代表手机首字节。现场服务未重启、未调用有副作用的列表/分类 GET，手机端唯一根因仍 `UNVERIFIED`。
-- Android `.92` 自动验证：`testDebugUnitTest` 103/103；`assembleRelease` 成功；`lintRelease` 0 错误/93 警告；`tests/test_android_startup_prefetch.py` 6/6；APK SHA-256 如上。iOS `tests/test_ios_online_gallery_client.py` 14/14；Windows 无 Swift/Xcode，无当前候选 IPA。当前 iPhone USB mux 无设备。
+- `/api/online/status` 被动读取 200 仅代表内存状态可读；服务端源码显示 works/categories 先清理到期作品，再扫描，并在 JSON/gzip 后发响应头。DSH-157 增加了隐私受限的阶段耗时候选，并在临时目录/随机 localhost 端口的服务套件 63/63 通过；`scan_ms` 仍合并锁等待和扫描，socket 写入时间不能代表手机首字节。现场服务已重启并回读 `staleCode=false`、库存 395、扫描错误 0；手机端唯一根因仍 `UNVERIFIED`。
+- Android `.92` 自动验证：`testDebugUnitTest` 103/103；`assembleRelease` 成功；`lintRelease` 0 错误/93 警告；`tests/test_android_startup_prefetch.py` 6/6；APK SHA-256 如上。iOS `tests/test_ios_online_gallery_client.py` 15/15；Windows 无 Swift/Xcode，无当前候选 IPA。当前 iPhone USB mux 无设备。
 - 不发布、不推送、不运行 CI、不更新发布索引。设备解锁/重新枚举后，继续 Android `.92` 设置按钮和错误 UI 点击验收；取得 iOS IPA 与触控链后再验缩略图重试和 spinner。
 
 ---
@@ -1151,6 +1151,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 09:24 | Codex | record 0.8.85 Android device evidence, unresolved phone refresh timeout, and pending iOS IPA/touch acceptance |
 | 2026-10-11 08:47 | Codex | inspect Vivo UI and fix narrow-screen hint and recycle count |

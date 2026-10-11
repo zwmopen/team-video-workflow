@@ -1,8 +1,9 @@
-# 2026-10-11 DSH-154：失败缩略图点按重试显示等待状态（源码候选 0.8.92 / build 203）
+# 2026-10-11 DSH-154 / DSH-160：失败缩略图等待状态与在线卡元信息对齐（源码候选 0.8.92 / build 203）
 
 - 点按失败缩略图重试后，在图片区域显示活动指示器并更新 VoiceOver 状态；请求完成、图片切换或 cell 复用后清理指示器、失败态、标签和图片缩放状态。
+- 在线作品卡元信息改为与 Android 相同的 `💻 电脑在线 · N 图 · 使用态` 前缀，季节/流量类型不再占用设备来源标签位置。
 - iOS 工程版本对齐 Android 候选为 `MARKETING_VERSION=0.8.92` / `CURRENT_PROJECT_VERSION=203`。
-- 静态门禁 14/14 通过。Windows 无 Swift/Xcode 工具链，iPhone 当前未通过 USB mux 枚举；未构建、安装或真机验收。
+- 静态门禁 15/15 通过。Windows 无 Swift/Xcode 工具链，iPhone 当前未通过 USB mux 枚举；未构建、安装或真机验收。
 - 本地候选；没有推送、CI 或发布。
 
 ## 2026-10-11 DSH-154：在线缩略图失败可重试（源码候选 iOS 0.8.85 / build 196）
@@ -261,6 +262,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 09:24 | Codex | add bounded iOS thumbnail retry, diagnostics, and tap-to-retry candidate |
 | 2026-10-11 08:47 | Codex | align iOS source version with Android 0.8.82; no iOS behavior change |

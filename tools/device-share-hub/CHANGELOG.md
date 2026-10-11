@@ -1,13 +1,14 @@
-## 2026-10-11 DSH-154 / DSH-157 / DSH-158 / DSH-159：重试状态、列表超时诊断与更新反馈（Android/iOS 0.8.92 候选）
+## 2026-10-11 DSH-154 / DSH-157 / DSH-158 / DSH-159 / DSH-160：重试状态、列表超时诊断、更新反馈与三端元信息对齐（Android/iOS 0.8.92 候选）
 
 - Android DSH-158：无快照连接失败页不再渲染电脑局域网地址；修正启动快照预热与串行分类加载注释。
 - Android DSH-159：手动检查更新立即把按钮改为“正在检查…”并禁用，结束后恢复原文案和按钮，避免长时间点击无反馈或重复请求。
 - iOS DSH-154 体验补齐：点按失败缩略图重试时显示活动指示器，完成、切换图片和单元复用都会清理等待/失败状态；保留有界重试与 VoiceOver 提示。
-- DSH-157：服务端候选为 categories/works 记录清理、扫描、聚合、JSON、gzip、响应头、socket 写入耗时及聚合字节/数量；不记录请求地址、查询、IP 或作品内容。`scan_ms` 仍合并锁等待与扫描，`write_ms` 只表示服务端 socket 写入，不代表手机收到首字节；根因仍 `UNVERIFIED`，未重启线上服务。
+- iOS DSH-160：在线作品卡统一显示 `💻 电脑在线 · N 图 · 使用态`，与 Android 和既定用户口径一致；季节/流量类型不再冒充设备来源标签。
+- DSH-157：服务端候选为 categories/works 记录清理、扫描、聚合、JSON、gzip、响应头、socket 写入耗时及聚合字节/数量；不记录请求地址、查询、IP 或作品内容。`scan_ms` 仍合并锁等待与扫描，`write_ms` 只表示服务端 socket 写入，不代表手机收到首字节；根因仍 `UNVERIFIED`。现场服务已重启并回读 `staleCode=false`、库存 395、扫描错误 0。
 - Android `versionCode=203` / `versionName=0.8.92`；iOS `CURRENT_PROJECT_VERSION=203` / `MARKETING_VERSION=0.8.92`。
 - `.91` Android 实机证据：在线启动仅一次 works 请求（排队约 1ms，12,158ms 后无状态/0 字节读超时），395 套快照保留，短提示为“连接超时”。
 - `.92` Release APK 本地构建、签名核验成功，SHA-256 `A14BAA0F65D7D77F7A6C0164D464BF24A1A845043426D35F96E2518C610BF984`；Android 单测 103/103、Release Lint 0 错误/93 警告、UI 源码守卫 6/6。ADB 覆盖安装被手机系统以 `User rejected permissions` 拒绝，设备仍为 `.91/202` 且锁屏，未做 `.92` 点击验收。
-- iOS 静态门禁 14/14；Windows 无 Swift/Xcode 工具链，iPhone USB mux 返回空列表，没有 `.92` IPA 或 iOS 真机验收。服务端隔离回归 63/63 通过。
+- iOS 静态门禁 15/15；Windows 无 Swift/Xcode 工具链，iPhone USB mux 返回空列表，没有 `.92` IPA 或 iOS 真机验收。服务端隔离回归 63/63 通过。
 - 服务端只读 `/api/online/status` 返回 200；不手工探测有到期清理副作用的列表/分类接口。Supervisor categories 超时不能证明是此次手机请求的唯一根因。
 - 简化与防呆：错误态统一用固定提示；更新检查持续显示进度并防连点；缩略图复用会重置等待状态；诊断日志只保留固定路由和聚合数字。
 - **影响文档**：`README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/COMPATIBILITY_AND_TEST_MATRIX.md`、`ios/README.md`、`ios/CHANGELOG.md`。只保留本地候选，不推送、不发布、不改更新索引。
@@ -3410,6 +3411,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 08:47 | Codex | shorten Android search hint and align phone recycle count in 0.8.82 |
 | 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |

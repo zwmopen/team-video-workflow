@@ -3145,8 +3145,9 @@ private final class WorkCell: UICollectionViewCell {
             expireAt = firstShared + 3600000
         }
 
-        let flowShort = entry.flowType.contains("游戏") ? "泛流量游戏" : "精准团建"
-        var onlineDetail = "💻 \(entry.season)·\(flowShort) · \(entry.imageCount) 图 · "
+        // DSH-160：在线卡元信息与 Android 统一，先标明操作对象，再显示图数与使用态。
+        // 季节/流量类型仍可通过筛选栏和标题识别，不把它们冒充成设备来源标签。
+        var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "
         if expireAt > now {
             let remainMin = max(1, Int((expireAt - now) / 60000))
             let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"

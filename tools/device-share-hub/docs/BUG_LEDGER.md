@@ -3257,7 +3257,7 @@ totalWorks = 472
 - 服务端代码审查：works/categories GET 在扫描前运行有到期作品移动副作用的清理；冷缓存扫描期间共享锁覆盖文件遍历；`send_json()` 在响应头之前完成 JSON 编码和可能的 gzip。Supervisor 本地日志有多次 categories 慢请求，但无法与手机请求逐段关联。
 - **根因仍 UNVERIFIED**：启动扫描/共享锁、到期清理、磁盘元数据读取、后台扫描竞争、JSON/gzip 或网络路径均未被区分。不得手工请求有副作用的 works/categories 路由；下一步是在服务端增加不记录 IP、路径、作品正文的阶段耗时并关联自然发生请求。
 - `.92` 服务端源码增加固定路由的隐私受限阶段计时：cleanup、prepare、scan、aggregate、JSON、gzip、headers、socket write、字节和条目数量；不输出 IP、请求路径/查询或作品内容。`scan_ms` 仍合并锁等待与扫描，`write_ms` 只测本机服务端写 socket，不能当作手机收到首字节。
-- `scripts/test_online_gallery_service.py` 在临时作品库、随机 localhost 端口执行 63/63 通过；新增测试用查询、转发 IP、目录和标题 canary 检查 timing 行不泄露。服务端源代码 `py_compile` 通过。现场服务未重启、没有调用有到期清理副作用的列表/分类 GET，尚无真实手机请求的分段数据，唯一根因仍 **UNVERIFIED**。
+- `scripts/test_online_gallery_service.py` 在临时作品库、随机 localhost 端口执行 63/63 通过；新增测试用查询、转发 IP、目录和标题 canary 检查 timing 行不泄露。服务端源代码 `py_compile` 通过。本轮现场服务已按重启脚本刷新，`/api/online/status` 回读 `staleCode=false`、库存 395、扫描错误 0；仍没有调用有到期清理副作用的列表/分类 GET，也没有真实手机请求的分段数据，唯一根因仍 **UNVERIFIED**。
 - Android `.92` Release APK 本地构建/验签成功，SHA-256 `A14BAA0F65D7D77F7A6C0164D464BF24A1A845043426D35F96E2518C610BF984`；单测 103/103，Lint 0 错误/93 警告，源码守卫 6/6。ADB 覆盖安装被锁屏手机的系统权限流程拒绝，设备仍回读 `.91/202`；没有 `.92` 点击验收。
 
 ## DSH-158 Android 无快照错误页显示局域网地址（已修复源码候选 · 2026-10-11）
@@ -3272,12 +3272,20 @@ totalWorks = 472
 - **修复**：点击立即把按钮改为“正在检查…”并禁用，避免并发请求；无论更新清单成功或失败，结束后恢复原文案和按钮；生命周期销毁后不回写界面。
 - **验证**：同一 6/6 Python 守卫检查即时进度、禁用和完成回调；Android 单测/构建结果见 DSH-157 后续证据。尚未实机点击更新按钮；网络等待上限未改变。
 
+## DSH-160 iOS 在线卡设备来源元信息与 Android 漂移（已修复源码候选 · 2026-10-11）
+
+- **现象**：iOS 在线作品卡把季节与流量类型放在元信息首段，显示为 `💻 秋季·精准团建 · N 图`；Android 与既定口径使用 `💻 电脑在线 · N 图 · 使用态`。用户无法一眼判断当前卡片操作的是电脑在线作品，且两端同一作品的首行含义不同。
+- **修复**：iOS `WorkCell.configureOnline` 统一使用 `💻 电脑在线 · N 图 · 使用态` 前缀；季节/流量类型继续由筛选栏与标题识别，不再冒充设备来源标签。未改变平台按钮、网络请求或数据字段。
+- **验证**：`tests/test_ios_online_gallery_client.py` 新增 DSH-160 静态断言，15/15 通过；权威 `tests/parity_ios_android.py` 49/49 通过。当前无 Xcode、IPA 或 iPhone USB mux，未做 iOS 实机点击验收。
+
 ---
 
 ## 📝 变更记录
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
+| 2026-10-11 | Codex | DSH-160 统一 iOS 在线卡电脑来源元信息前缀；现场服务重启后 staleCode=false、库存395、扫描错误0。 |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 | Codex | DSH-154 补齐 iOS 缩略图重试状态复用清理；DSH-157 增加仅聚合数字的服务路由计时并隔离验证；回填 Android `.92` 构建/未安装与双端静态验收事实。 |
 | 2026-10-11 | Codex | 补充 DSH-157 `.91` 手机首字节超时、服务端扫描/清理/序列化证据与未确认根因；新增 DSH-158 地址隐私和 DSH-159 手动更新检查反馈修复候选。 |

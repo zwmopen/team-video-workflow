@@ -98,6 +98,15 @@ def main():
         thumb_reuse_reset,
         "reuse cleanup=%s" % thumb_reuse_reset))
 
+    # ---- DSH-160: online card metadata starts with the shared device/source label ----
+    unified_online_meta = (
+        r'var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "' in cv_src
+    )
+    results.append(check(
+        "DSH-160 iOS online card uses the shared computer-online metadata prefix",
+        unified_online_meta,
+        "expected shared prefix literal=%s" % unified_online_meta))
+
     # ---- B1：loadImage 失败分支 NSLog（含 path / isThumbnail）----
     b1_nslog = "[OnlineGalleryClient] loadImage failed" in load_image_attempt \
         and "path=" in load_image_attempt and "isThumbnail=" in load_image_attempt
