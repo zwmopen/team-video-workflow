@@ -10,7 +10,7 @@
 
 - `OnlineGalleryClient.loadImage` 对缩略图最多尝试 2 次，失败间隔 0.9 秒；只对传输错误、非 2xx、408/429/5xx 和无效图片重试，原图仍单次请求。
 - 记录失败文件名、缩略图标记、尝试次数、HTTP 状态、字节数、耗时和错误，不记录完整 URL。最终失败显示重试图标，并支持点按重新加载及 VoiceOver 提示。
-- 静态回归 `tests/test_ios_online_gallery_client.py` 12/12 通过；没有 Xcode 工具链或匹配版本 IPA，故未编译、安装或实机验证。
+- 静态回归 `tests/test_ios_online_gallery_client.py` 15/15 通过；没有 Xcode 工具链或匹配版本 IPA，故未编译、安装或实机验证。
 - iPhone 当前安装 build 188。实机截图的部分素材位标明“无素材原片”，成品缩略图正常；它们不是这次新增重试 UI 的设备验收证据。
 
 ## 2026-10-11 DSH-153：iOS 源码版本与 Android 0.8.82 候选对齐
