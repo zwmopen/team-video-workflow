@@ -3259,6 +3259,7 @@ totalWorks = 472
 - `.92` 服务端源码增加固定路由的隐私受限阶段计时：cleanup、prepare、scan、aggregate、JSON、gzip、headers、socket write、字节和条目数量；不输出 IP、请求路径/查询或作品内容。`scan_ms` 仍合并锁等待与扫描，`write_ms` 只测本机服务端写 socket，不能当作手机收到首字节。
 - `scripts/test_online_gallery_service.py` 在临时作品库、随机 localhost 端口执行 63/63 通过；新增测试用查询、转发 IP、目录和标题 canary 检查 timing 行不泄露。服务端源代码 `py_compile` 通过。本轮现场服务已按重启脚本刷新，`/api/online/status` 回读 `staleCode=false`、库存 395、扫描错误 0；仍没有调用有到期清理副作用的列表/分类 GET，也没有真实手机请求的分段数据，唯一根因仍 **UNVERIFIED**。
 - Android `.92` Release APK 本地构建/验签成功，SHA-256 `A14BAA0F65D7D77F7A6C0164D464BF24A1A845043426D35F96E2518C610BF984`；单测 103/103，Lint 0 错误/93 警告，源码守卫 6/6。ADB 覆盖安装被锁屏手机的系统权限流程拒绝，设备仍回读 `.91/202`；没有 `.92` 点击验收。
+- 现场服务刷新后日志自然产生 12 条 `categories` 阶段计时：首次 `cleanup_ms=3850`，后续 `scan_ms=731–1850`，`json_ms/gzip_ms/write_ms` 均为 0–1 毫秒，`source_count=395`、`result_count=21`；同一日志窗口没有 `route=works`。这说明 supervisor 分类探测本轮没有持续卡死，但不等于手机作品列表请求已成功，DSH-157 根因仍 **UNVERIFIED**。
 
 ## DSH-158 Android 无快照错误页显示局域网地址（已修复源码候选 · 2026-10-11）
 
@@ -3284,6 +3285,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 12:20 | 反重力 | record live timing boundary |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 | Codex | DSH-160 统一 iOS 在线卡电脑来源元信息前缀；现场服务重启后 staleCode=false、库存395、扫描错误0。 |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
