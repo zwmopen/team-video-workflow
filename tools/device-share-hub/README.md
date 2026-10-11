@@ -1,7 +1,7 @@
 # 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.92 / iPhone 0.8.92）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.92 / versionCode 203**、**iPhone 0.8.92 / build 203**。最终 Android `.92` Release APK SHA-256 为 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`，103/103 单测、Lint 0 错误/94 警告、APK v2/v3 验签通过；Redmi 与 Vivo 两台均已覆盖安装并回读本地预览、在线 395 套和对比视图上下/左右模式。对比卡片使用 3:4 图块，素材页位保持对齐，移动端操作栏居中且统一为“重置状态 / 复制路径 / 删除”；加载状态显示“加载原图 xx%”。iOS 静态守卫 15/15、跨端契约 49/49，但无 IPA、Xcode 或可用 iPhone USB mux，未做 iOS 实机验收。没有推送或发布。
+> 本轮源码候选：**Android 0.8.92 / versionCode 203**、**iPhone 0.8.92 / build 203**。最终 Android `.92` Release APK SHA-256 为 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`，103/103 单测、Lint 0 错误/94 警告、APK v2/v3 验签通过；Redmi 与 Vivo 两台均已覆盖安装并回读本地预览、在线 395 套和对比视图上下/左右模式。对比卡片使用 3:4 图块，素材页位保持对齐，移动端操作栏居中且统一为“重置状态 / 复制路径 / 删除”；加载状态显示“加载原图 xx%”。iOS 新增固定同步状态条、可自适应 3:4 对比卡和左右并排高度约束，静态守卫 15/15、跨端契约 49/49、对比 UI 契约 10/10；无 IPA、Xcode 或可用 iPhone USB mux，未做 iOS 实机验收。没有推送或发布。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 
 ## 先搞清这几个东西分别是谁

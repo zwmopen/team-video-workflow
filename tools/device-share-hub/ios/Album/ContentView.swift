@@ -54,6 +54,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var selectedOnlineCategory: String = "全部"
     private var modeButton: UIButton!
     private var folderItem: UIBarButtonItem?
+    /// 顶部状态条的短暂过程文案。成功同步后清空，统一回到“已同步…共 N 套”。
+    private var onlineStatusOverride: String?
     private let prefOnlineModeKey = "pref_is_online_mode"
     /// 自动发现失败后按 15/30/60/120 秒退避；成功同步列表后恢复初始间隔。
     private var autoDiscovering = false
@@ -434,9 +436,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         updateModeButtonStyle()
         updateFolderItemVisibility()
         if isOnlineMode {
+            onlineStatusOverride = "正在同步电脑在线作品…"
+            updateOnlineStatusHint()
             showToast("已切换到：💻 电脑在线相册")
             loadOnlineData()
         } else {
+            onlineStatusOverride = nil
             showToast("已切换到：📱 手机本地相册")
             render()
         }
@@ -507,6 +512,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineStatusLabel.layer.cornerRadius = 6
         onlineStatusLabel.clipsToBounds = true
         onlineStatusLabel.textAlignment = .center
+        onlineStatusLabel.numberOfLines = 1
+        onlineStatusLabel.adjustsFontSizeToFitWidth = true
+        onlineStatusLabel.minimumScaleFactor = 0.78
+        onlineStatusLabel.isAccessibilityElement = true
+        onlineStatusLabel.accessibilityIdentifier = "online-status-label"
         onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
         view.addSubview(onlineStatusLabel)
 
@@ -531,12 +541,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         NSLayoutConstraint.activate([
             onlineStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             onlineStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            onlineStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
-            onlineStatusLabel.heightAnchor.constraint(equalToConstant: 24),
+            onlineStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            onlineStatusLabel.heightAnchor.constraint(equalToConstant: 28),
 
             filterScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             filterScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            filterScrollView.topAnchor.constraint(equalTo: onlineStatusLabel.bottomAnchor, constant: 5),
+            filterScrollView.topAnchor.constraint(equalTo: onlineStatusLabel.bottomAnchor, constant: 6),
             filterScrollView.heightAnchor.constraint(equalToConstant: 36),
 
             filterStackView.leadingAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.leadingAnchor),
@@ -548,10 +558,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func updateOnlineStatusHint() {
+        onlineStatusLabel.isHidden = false
         if isOnlineMode {
-            onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
-            onlineStatusLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
-            onlineStatusLabel.backgroundColor = UIColor(red: 231/255, green: 239/255, blue: 233/255, alpha: 1)
+            if let override = onlineStatusOverride, !override.isEmpty {
+                onlineStatusLabel.text = override
+                onlineStatusLabel.textColor = UIColor(red: 0.52, green: 0.32, blue: 0.05, alpha: 1)
+                onlineStatusLabel.backgroundColor = UIColor(red: 250/255, green: 243/255, blue: 224/255, alpha: 1)
+            } else {
+                onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
+                onlineStatusLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
+                onlineStatusLabel.backgroundColor = UIColor(red: 231/255, green: 239/255, blue: 233/255, alpha: 1)
+            }
         } else {
             onlineStatusLabel.text = "📱 手机本地作品 · 共 \(library.works.count) 套"
             onlineStatusLabel.textColor = UIColor(red: 0.15, green: 0.35, blue: 0.55, alpha: 1)
@@ -1076,6 +1093,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 且无数据时**先 toast + 自愈、自愈失败才弹窗**，消除电脑换网段后的假弹窗。
     /// 【0.8.24 补漏】失败即自愈，**与有没有缓存数据无关** —— 有数据只是改用软提示。
     private func loadOnlineData(silent: Bool = false) {
+        onlineStatusOverride = "正在同步电脑在线作品…"
+        updateOnlineStatusHint()
         let group = DispatchGroup()
         var catResult: Result<OnlineCategoriesResult, Error>? = nil
         var workResult: Result<[OnlineWorkEntry], Error>? = nil
@@ -1156,6 +1175,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 var finalWorks = activeUsed + remaining
                 self.sortOnlineWorksLocally(&finalWorks, sortKey: self.currentSortKey)
                 self.onlineWorks = finalWorks
+                self.onlineStatusOverride = nil
                 self.renderOnlineUI()
             case .failure(let err)?:
                 // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
@@ -1176,11 +1196,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     // 实测证据：把 customPcServerUrl 写成旧网段 192.168.0.107 后冷启动，
                     // 屏幕无弹窗、列表照旧，30 秒后缓存地址**纹丝不动**。
                     self.showToast("⚠️ 刷新失败：\(msg)（已保留上次内容）")
+                    self.onlineStatusOverride = "🟡 离线快照 · 共 \(self.onlineWorks.count) 套 · 刷新失败"
                     self.renderOnlineUI()
                     self.tryAutoDiscoverPc()
                 } else {
                     // 完全没有数据（首次冷启动或快照损坏）：先走**非阻塞**提示并立刻自愈，
                     // 只有自愈也失败才升级为阻塞弹窗 —— 电脑换网段/IP 这一常见场景从此不再弹错。
+                    self.onlineStatusOverride = "⚪ 尚未同步电脑在线作品"
                     self.renderOnlineUI()
                     if silent {
                         // 静默刷新（viewWillAppear / 定时器）：连 toast 都不发，但自愈照跑。
@@ -1261,6 +1283,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func renderOnlineUI() {
         guard isViewLoaded, isOnlineMode else { return }
+        onlineStatusLabel.isHidden = false
         updateOnlineFilterTitles()
         collectionView.reloadData()
         let items = filteredOnlineWorks
@@ -1532,7 +1555,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if isOnlineMode {
             let entry = displayedOnlineWorks[indexPath.item]
-            if currentViewMode == .compare && entry.hasSourceCompare {
+            // 对比视图即使某一页暂时没有素材，也要打开成品与空素材槽位，
+            // 不能退回普通预览让用户误以为对比功能失效。
+            if currentViewMode == .compare {
                 openOnlineComparePreview(entry: entry, initialIndex: 0)
             } else {
                 let cell = collectionView.cellForItem(at: indexPath) as? WorkCell
@@ -2438,6 +2463,15 @@ private final class ThumbnailButton: UIButton {
 
 /// 对比视图专用双图卡片（左：原素材 / 右：AI 成品）
 private final class ComparePairThumbView: UIControl {
+    /// iPhone 上每个对比卡占一页横向空间，保证两张图都按 3:4 看得清楚。
+    /// 旧版固定 190×158、84×112，实际只占安卓同类缩略图的一半。
+    static var cardWidth: CGFloat {
+        min(max(UIScreen.main.bounds.width - 32, 288), 360)
+    }
+    static var imageWidth: CGFloat { (cardWidth - 26) / 2 }
+    static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }
+    static var cardHeight: CGFloat { imageHeight + 49 }
+
     private let headerLabel = UILabel()
     private let leftImageView = UIImageView()
     private let rightImageView = UIImageView()
@@ -2505,8 +2539,8 @@ private final class ComparePairThumbView: UIControl {
         addSubview(rightBadge)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 190),
-            heightAnchor.constraint(equalToConstant: 158),
+            widthAnchor.constraint(equalToConstant: Self.cardWidth),
+            heightAnchor.constraint(equalToConstant: Self.cardHeight),
 
             headerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -2515,26 +2549,26 @@ private final class ComparePairThumbView: UIControl {
 
             leftImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
             leftImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
-            leftImageView.widthAnchor.constraint(equalToConstant: 84),
+            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+            leftImageView.widthAnchor.constraint(equalToConstant: Self.imageWidth),
 
             rightImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
             rightImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
-            rightImageView.widthAnchor.constraint(equalToConstant: 84),
+            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+            rightImageView.widthAnchor.constraint(equalToConstant: Self.imageWidth),
 
             emptySourceLabel.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor),
             emptySourceLabel.centerYAnchor.constraint(equalTo: leftImageView.centerYAnchor),
 
             leftBadge.trailingAnchor.constraint(equalTo: leftImageView.trailingAnchor),
-            leftBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            leftBadge.widthAnchor.constraint(equalToConstant: 36),
-            leftBadge.heightAnchor.constraint(equalToConstant: 15),
+            leftBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            leftBadge.widthAnchor.constraint(equalToConstant: 38),
+            leftBadge.heightAnchor.constraint(equalToConstant: 18),
 
             rightBadge.trailingAnchor.constraint(equalTo: rightImageView.trailingAnchor, constant: -3),
-            rightBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            rightBadge.widthAnchor.constraint(equalToConstant: 36),
-            rightBadge.heightAnchor.constraint(equalToConstant: 15)
+            rightBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            rightBadge.widthAnchor.constraint(equalToConstant: 38),
+            rightBadge.heightAnchor.constraint(equalToConstant: 18)
         ])
     }
 
@@ -2547,7 +2581,7 @@ private final class ComparePairThumbView: UIControl {
         leftImageView.image = nil
         rightImageView.image = nil
 
-        headerLabel.text = "P\(pageIndex + 1) 素材 ➔ 成品"
+        headerLabel.text = "P\(pageIndex + 1)"
         if sourcePath.isEmpty {
             emptySourceLabel.isHidden = false
             emptySourceLabel.text = "未关联素材"
@@ -2939,8 +2973,8 @@ private final class WorkCell: UICollectionViewCell {
     static let cardBaseHeight: CGFloat = 264
     /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
     static let listBaseHeight: CGFloat = 148
-    /// 对比视图卡片基准高度（双图并排对比区 158pt + 底部操作行）
-    static let compareBaseHeight: CGFloat = 310
+    /// 对比视图卡片基准高度（自适应 3:4 双图区 + 底部操作行）
+    static var compareBaseHeight: CGFloat { ComparePairThumbView.cardHeight + 148 }
     /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度
     static let cardDetailLineStep: CGFloat = 14
     /// 空壳作品占位按钮文案（单一真源：`makeCopyMissingButton` 与 `sizeForItemAt` 共用）
@@ -3084,7 +3118,7 @@ private final class WorkCell: UICollectionViewCell {
             previewScrollHeightConstraint?.constant = 44
             actionRow.isHidden = true
         case .compare:
-            previewScrollHeightConstraint?.constant = 162
+            previewScrollHeightConstraint?.constant = ComparePairThumbView.cardHeight
             actionRow.isHidden = false
         }
     }
@@ -3125,6 +3159,8 @@ private final class WorkCell: UICollectionViewCell {
         isOnlineCard = true
         applyViewModeLayout(viewMode, hasSourceCompare: entry.hasSourceCompare)
         contentView.backgroundColor = AppColors.secondaryBackground
+        // 对比缩略图自身负责层次和留白，外层不再加浅色矩形框。
+        contentView.layer.borderWidth = viewMode == .compare ? 0 : 1
         contentView.layer.borderColor = (viewMode == .compare)
             ? UIColor(red: 0.08, green: 0.56, blue: 0.36, alpha: 0.42).cgColor
             : UIColor(red: 0.15, green: 0.45, blue: 0.88, alpha: 0.25).cgColor
@@ -3450,6 +3486,7 @@ private final class WorkCell: UICollectionViewCell {
         isOnlineCard = false
         applyViewModeLayout(viewMode)
         contentView.backgroundColor = AppColors.secondaryBackground
+        contentView.layer.borderWidth = 1
         contentView.layer.borderColor = AppColors.separator.cgColor
 
         name.text = work.name
@@ -4392,6 +4429,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let bottomBar = UIView()
     private let prevButton = UIButton(type: .system)
     private let nextButton = UIButton(type: .system)
+    private var horizontalContainerHeightConstraints: [NSLayoutConstraint] = []
 
     /// 对比排布模式：水平左右并排 vs 垂直上下堆叠
     private var isHorizontalLayout: Bool = false
@@ -4522,6 +4560,12 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
         containerStack.addArrangedSubview(leftContainer)
         containerStack.addArrangedSubview(rightContainer)
+        // 横向模式下 UIStackView 的 arrangedSubview 没有固有高度，旧实现只改 axis，
+        // 结果两个容器会被压到顶部。给每个容器一个稳定的纵横比，切换后居中显示。
+        horizontalContainerHeightConstraints = [
+            leftContainer.heightAnchor.constraint(equalTo: leftContainer.widthAnchor, multiplier: 1.18),
+            rightContainer.heightAnchor.constraint(equalTo: rightContainer.widthAnchor, multiplier: 1.18)
+        ]
 
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -4755,7 +4799,11 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         isHorizontalLayout.toggle()
         containerStack.axis = isHorizontalLayout ? .horizontal : .vertical
         containerStack.alignment = isHorizontalLayout ? .center : .fill
+        horizontalContainerHeightConstraints.forEach { $0.isActive = isHorizontalLayout }
         layoutModeButton.setTitle(isHorizontalLayout ? "左右并排" : "上下同框", for: .normal)
+        UIView.animate(withDuration: 0.2) { [weak self] in
+            self?.view.layoutIfNeeded()
+        }
     }
 
     @objc private func prevPage() {

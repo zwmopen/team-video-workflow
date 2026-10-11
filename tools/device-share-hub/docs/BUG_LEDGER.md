@@ -3314,10 +3314,18 @@ totalWorks = 472
 - **未做破坏性操作**：未点击删除、清空回收站或分享；只做读取、切换、预览与翻页。
 - **iOS 边界**：当前 Windows 会话仍无 iPhone USB mux、Xcode 或 IPA，iOS 继续保持源码/静态门禁状态，不能冒充实体安装验收。
 
+## DSH-165 iOS 顶部同步状态与对比视图未闭环（已修复候选 · 2026-10-11）
+
+- **现象**：iOS 端顶部没有稳定显示“已同步电脑在线作品 · 共 N 套”；对比卡片固定过窄，图片比 Android 小；左右并排切换后容器缺少高度约束，存在被压到顶部的风险；老缓存只有素材名称时仍可能显示空素材槽位。
+- **根因**：状态条只有成功渲染路径更新，过程态和失败态没有单一文案源；`ComparePairThumbView` 固定 190×158 / 84×112；横向 `UIStackView` 只改变轴向，没有给 arranged subview 明确高度；iOS 旧快照未把 `sourceNames` 回填成服务端 `__src__` token。
+- **修复**：状态条固定在分类栏上方并公开可访问标识，覆盖同步中/成功/离线快照/失败；对比卡按屏幕宽度计算 3:4 图块并移除外层浅框；横向对比激活容器高度比例并做布局动画；对比模式即使缺素材也打开成品与空槽位；解析旧缓存时按成品页位补 `__src__`。
+- **验证**：`tests/test_ios_compare_ui.py` 10 项全部通过，`test_ios_online_gallery_client.py` 15/15、`parity_ios_android.py` 49/49、`test_android_startup_prefetch.py` 6/6；`git diff --check` 通过。无 Xcode/Swift/IPA/USB mux，iOS 仍未做实体安装点击验收。
+
 ## 📝 变更记录
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 13:30 | Codex | DSH-165 修复 iOS 顶部同步状态、3:4 对比卡、横向对比高度约束与旧缓存素材页位回填；保留无 Xcode/IPA/USB mux 的实机边界。 |
 | 2026-10-11 12:20 | 反重力 | record live timing boundary |
 | 2026-10-11 12:28 | Codex | DSH-157 Redmi `.92/203` 真实 works 200 与 395 套在线 UI 验收；DSH-161 修正“假双列网格”视图菜单文案。 |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |

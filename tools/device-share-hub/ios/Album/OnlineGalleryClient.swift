@@ -144,11 +144,26 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let tags = (dict["tags"] as? [String]) ?? []
         // Keep empty slots: sourceImages/sourceNames are page-aligned with images.
         // Filtering or compressing them shifts later pages onto the wrong output.
-        let sourceImages = (dict["sourceImages"] as? [Any] ?? []).map {
+        let rawSourceImages = (dict["sourceImages"] as? [Any] ?? []).map {
             ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
-        let sourceNames = (dict["sourceNames"] as? [Any] ?? []).map {
+        let rawSourceNames = (dict["sourceNames"] as? [Any] ?? []).map {
             ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        var sourceImages = images.indices.map { index in
+            index < rawSourceImages.count ? rawSourceImages[index] : ""
+        }
+        var sourceNames = images.indices.map { index in
+            index < rawSourceNames.count ? rawSourceNames[index] : ""
+        }
+        // 老快照可能只有 sourceNames，没有新字段 sourceImages。用成品页位重建
+        // __src__ token，服务端会在目标作品目录内解析对应原素材；不能把页位压缩掉。
+        if !sourceNames.allSatisfy({ $0.isEmpty }) {
+            for index in images.indices where sourceImages[index].isEmpty && !sourceNames[index].isEmpty {
+                let normalizedOutput = images[index].replacingOccurrences(of: "\\", with: "/")
+                let outputName = (normalizedOutput as NSString).lastPathComponent
+                if !outputName.isEmpty { sourceImages[index] = "__src__:\(outputName)" }
+            }
         }
         let hasSourceCompare = (dict["hasSourceCompare"] as? Bool) ?? sourceImages.contains(where: { !$0.isEmpty })
         let maxSimilarity = (dict["maxSimilarity"] as? Double) ?? Double((dict["maxSimilarity"] as? Int) ?? 0)

@@ -1,9 +1,10 @@
-﻿# 2026-10-11 DSH-162 / DSH-163 / DSH-164：对比视图与移动端操作栏统一（最终本地候选 0.8.92）
+﻿# 2026-10-11 DSH-162 / DSH-163 / DSH-164 / DSH-165：对比视图与移动端操作栏统一（最终本地候选 0.8.92）
 
 - 最终 Android 包：`0.8.92 / versionCode 203`，APK SHA-256 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`；`testDebugUnitTest` 103/103，`assembleRelease` 成功，`lintRelease` 0 错误/94 警告，apksigner v2/v3 通过。
 - Android UI 回读：Redmi 与 Vivo 两台均已覆盖安装并启动；两台在线状态均显示 395 套；本地预览显示 `×`、`‹`、`›`，对比卡片图块为 3:4，素材/成品标签在图外；全屏对比标题为“对比视图”，上下同框和左右并排按钮同高，底部只有箭头和页码。线上作品操作栏居中显示“重置状态 / 复制路径 / 删除”，原图状态文案为“加载原图 xx%”。
 - 数据修复：Android 与 iOS 都按页保留 `sourceImages`/`sourceNames` 空槽位，避免来源素材错位；iOS 对比卡片、全屏安全区、标签和按钮代码已同步 Android 口径。
-- iOS 证据：`tests/test_ios_online_gallery_client.py` 15/15、`tests/parity_ios_android.py` 49/49；没有 Xcode/Swift/IPA，`python -m pymobiledevice3 usbmux list` 为空，不能声称 iOS 真机通过。iOS 仅完成源码/静态门禁。
+- DSH-165 iOS 源码修复：顶部同步状态条覆盖同步中/成功/离线快照/失败；对比卡按屏幕宽度自适应 3:4，左右并排补容器高度约束，缺素材页仍进入对比预览，旧缓存可由 `sourceNames` 回填 `__src__`。
+- iOS 证据：`tests/test_ios_online_gallery_client.py` 15/15、`tests/parity_ios_android.py` 49/49、`tests/test_ios_compare_ui.py` 10/10；没有 Xcode/Swift/IPA，`python -m pymobiledevice3 usbmux list` 为空，不能声称 iOS 真机通过。iOS 仅完成源码/静态门禁。
 - 运行证据：现场 `/api/online/status` 被动回读库存 395、扫描错误 0；两台 Android 自然请求均回读 `route=works status=200`（Vivo 约 4.72MB / 697ms），分类请求也成功。不手工调用带清理副作用的列表接口。
 - 本轮不推送、不发布、不改发布索引；若后续要发布，先补 iOS 签名 IPA 与两台设备的实体回归。
 
