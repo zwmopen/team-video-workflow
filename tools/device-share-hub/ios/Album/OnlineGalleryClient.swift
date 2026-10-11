@@ -243,6 +243,45 @@ public struct OnlineUseResult {
     }
 }
 
+public final class ImageLoadRequest {
+    private let lock = NSLock()
+    private var task: URLSessionDataTask?
+    private var cancelled = false
+
+    public var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    public func cancel() {
+        lock.lock()
+        cancelled = true
+        let activeTask = task
+        task = nil
+        lock.unlock()
+        activeTask?.cancel()
+    }
+
+    fileprivate func attach(_ task: URLSessionDataTask) {
+        lock.lock()
+        let shouldCancel = cancelled
+        if !shouldCancel {
+            self.task = task
+        }
+        lock.unlock()
+        if shouldCancel {
+            task.cancel()
+        }
+    }
+
+    fileprivate func clearTask() {
+        lock.lock()
+        task = nil
+        lock.unlock()
+    }
+}
+
 public final class OnlineGalleryClient {
     public static let shared = OnlineGalleryClient()
     public static let defaultPort = 45835
@@ -682,19 +721,14 @@ public final class OnlineGalleryClient {
     }
 
     /// DSH-102：加 `workId` 参数（默认 nil 保留旧契约）。
-    /// 服务端 `image_name_index()` 同名文件只保留首个命中（库内 174 条作品共用 P1_封面.png），
-    /// 旧契约 `?path=裸文件名` 会让 iOS 永远拿到第一个扫到的作品的图（与当前浏览无关，
-    /// 用户 iPhone 上图错位显示阳澄湖/浙江省攻略就是这条 BUG）。修法：
-    /// - 有 workId → `?id=<workId>&file=<basename(path)>` 双键，服务端
-    ///   `OnlineGalleryHandler.handle_image()` 会用 workId 定位作品目录 + basename 拼图，
-    ///   彻底绕开 image_name_index 同名冲突索引。
-    /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
-    /// DSH-099 失败 NSLog 保留。
-    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
+    /// 同名文件通过 id+file 定位作品目录，避免跨作品共用文件名时命中错误素材。
+    @discardableResult
+    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) -> ImageLoadRequest {
         loadImageWithProgress(path: path, workId: workId, isThumbnail: isThumbnail, maxPixel: maxPixel, onProgress: nil, completion: completion)
     }
 
-    /// 支持实时下载进度回调的原图/缩略图拉取
+    /// 支持实时下载进度回调和按页面取消的原图/缩略图拉取。
+    @discardableResult
     public func loadImageWithProgress(
         path: String,
         workId: String? = nil,
@@ -702,34 +736,34 @@ public final class OnlineGalleryClient {
         maxPixel: CGFloat = 200,
         onProgress: ((Int) -> Void)? = nil,
         completion: @escaping (UIImage?) -> Void
-    ) {
+    ) -> ImageLoadRequest {
+        let request = ImageLoadRequest()
         let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
         let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
-            onProgress?(100)
-            completion(memoryCached)
-            return
+            if !request.isCancelled {
+                onProgress?(100)
+                completion(memoryCached)
+            }
+            return request
         }
 
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/image")
-        // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
         if let workId = workId, !workId.isEmpty {
-            // DSH-102 新契约：id+file 双键，支持 __src__: 原素材对比标识
             let bn = path.hasPrefix("__src__:") ? path : (path as NSString).lastPathComponent
             queryItems.append(URLQueryItem(name: "id", value: workId))
             queryItems.append(URLQueryItem(name: "file", value: bn))
         } else {
-            // 旧契约：?path=裸文件名（无 workId 的 caller 不传，保持向后兼容）
             queryItems.append(URLQueryItem(name: "path", value: path))
         }
         components?.queryItems = queryItems
         guard let url = components?.url else {
             NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d reason=invalid-url",
                   (path as NSString).lastPathComponent, isThumbnail ? 1 : 0)
-            completion(nil)
-            return
+            if !request.isCancelled { completion(nil) }
+            return request
         }
 
         let safeFileName = cacheKey
@@ -737,18 +771,19 @@ public final class OnlineGalleryClient {
             .replacingOccurrences(of: "\\", with: "_")
             .replacingOccurrences(of: ":", with: "_")
         let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
-        // 列表渲染时可能连续请求几十张缓存图；磁盘读取和 UIImage 解码放后台，避免阻塞主线程。
         imageIOQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !request.isCancelled else { return }
             if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
+                guard !request.isCancelled else { return }
                 self.imageCache.setObject(diskImage, forKey: cacheKey)
                 DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
                     onProgress?(100)
                     completion(diskImage)
                 }
                 return
             }
-
+            guard !request.isCancelled else { return }
             self.loadRemoteImageAttempt(
                 url: url,
                 path: path,
@@ -757,10 +792,12 @@ public final class OnlineGalleryClient {
                 diskURL: diskURL,
                 attempt: 1,
                 maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : 1,
+                request: request,
                 onProgress: onProgress,
                 completion: completion
             )
         }
+        return request
     }
 
     private func loadRemoteImageAttempt(
@@ -771,19 +808,23 @@ public final class OnlineGalleryClient {
         diskURL: URL,
         attempt: Int,
         maxAttempts: Int,
+        request: ImageLoadRequest,
         onProgress: ((Int) -> Void)?,
         completion: @escaping (UIImage?) -> Void
     ) {
+        guard !request.isCancelled else { return }
         let attemptStartedAt = Date()
         var observation: NSKeyValueObservation?
         let task = session.dataTask(with: url) { [weak self] data, response, error in
             observation?.invalidate()
-            guard let self = self else { return }
+            request.clearTask()
+            guard let self = self, !request.isCancelled else { return }
 
             let statusCode = (response as? HTTPURLResponse)?.statusCode
             let statusOK = statusCode.map { (200..<300).contains($0) } ?? false
             let image = (error == nil && statusOK) ? data.flatMap { UIImage(data: $0) } : nil
             if let image = image, let data = data {
+                guard !request.isCancelled else { return }
                 self.imageCache.setObject(image, forKey: cacheKey)
                 do {
                     try data.write(to: diskURL)
@@ -792,12 +833,14 @@ public final class OnlineGalleryClient {
                           (path as NSString).lastPathComponent, error.localizedDescription)
                 }
                 DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
                     onProgress?(100)
                     completion(image)
                 }
                 return
             }
 
+            guard !request.isCancelled else { return }
             let networkError = error as NSError?
             let statusText = statusCode.map { String($0) } ?? "none"
             let errorText: String
@@ -824,14 +867,14 @@ public final class OnlineGalleryClient {
             NSLog("%@", message)
 
             guard shouldRetry else {
-                DispatchQueue.main.async { completion(nil) }
+                DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
+                    completion(nil)
+                }
                 return
             }
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + self.thumbnailRetryDelay) { [weak self] in
-                guard let self = self else {
-                    DispatchQueue.main.async { completion(nil) }
-                    return
-                }
+                guard let self = self, !request.isCancelled else { return }
                 self.loadRemoteImageAttempt(
                     url: url,
                     path: path,
@@ -840,17 +883,24 @@ public final class OnlineGalleryClient {
                     diskURL: diskURL,
                     attempt: attempt + 1,
                     maxAttempts: maxAttempts,
+                    request: request,
                     onProgress: onProgress,
                     completion: completion
                 )
             }
         }
+        request.attach(task)
         if let onProgress = onProgress {
             observation = task.progress.observe(\.fractionCompleted) { progress, _ in
+                guard !request.isCancelled else { return }
                 let percent = min(99, Int(progress.fractionCompleted * 100))
-                DispatchQueue.main.async { onProgress(percent) }
+                DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
+                    onProgress(percent)
+                }
             }
         }
+        guard !request.isCancelled else { return }
         task.resume()
     }
 

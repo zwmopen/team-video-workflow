@@ -4430,6 +4430,12 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let prevButton = UIButton(type: .system)
     private let nextButton = UIButton(type: .system)
     private var horizontalContainerHeightConstraints: [NSLayoutConstraint] = []
+    private var pageLoadGeneration = 0
+    private var activePageRequests: [ImageLoadRequest] = []
+    private var pageLoadsRemaining = 0
+    private var comparePrefetchQueue: [String] = []
+    private var comparePrefetchIndex = 0
+    private var activeComparePrefetchRequest: ImageLoadRequest?
 
     /// 对比排布模式：水平左右并排 vs 垂直上下堆叠
     private var isHorizontalLayout: Bool = false
@@ -4451,6 +4457,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     }
 
     private func setupUI() {
+        let hasSimilarity = entry.maxSimilarity > 0
         // 顶部导航栏
         topBar.translatesAutoresizingMaskIntoConstraints = false
         topBar.backgroundColor = UIColor.black.withAlphaComponent(0.65)
@@ -4464,12 +4471,13 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         topBar.addSubview(titleLabel)
 
         similarityBadge.translatesAutoresizingMaskIntoConstraints = false
-        if entry.maxSimilarity > 0 {
+        if hasSimilarity {
             let pct = Int(round(entry.maxSimilarity * 100))
             similarityBadge.text = "相似度 \(pct)%"
         } else {
-            similarityBadge.text = "对比视图"
+            similarityBadge.text = nil
         }
+        similarityBadge.isHidden = !hasSimilarity
         similarityBadge.font = .systemFont(ofSize: 12, weight: .semibold)
         similarityBadge.textColor = UIColor(red: 0.35, green: 0.95, blue: 0.55, alpha: 1.0)
         similarityBadge.backgroundColor = UIColor(red: 0.06, green: 0.35, blue: 0.18, alpha: 0.8)
@@ -4585,7 +4593,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
             similarityBadge.trailingAnchor.constraint(equalTo: layoutModeButton.leadingAnchor, constant: -8),
             similarityBadge.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            similarityBadge.widthAnchor.constraint(equalToConstant: 92),
+            similarityBadge.widthAnchor.constraint(equalToConstant: hasSimilarity ? 92 : 0),
             similarityBadge.heightAnchor.constraint(equalToConstant: 32),
 
             titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 14),
@@ -4684,11 +4692,22 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         view.addGestureRecognizer(swipeRight)
     }
 
+    deinit {
+        activePageRequests.forEach { $0.cancel() }
+        activeComparePrefetchRequest?.cancel()
+    }
+
     private func loadPage(_ pageIndex: Int) {
         guard pageIndex >= 0 && pageIndex < entry.images.count else { return }
+        pageLoadGeneration += 1
+        let generation = pageLoadGeneration
+        activePageRequests.forEach { $0.cancel() }
+        activePageRequests.removeAll()
+        cancelComparePrefetch()
+        pageLoadsRemaining = 0
+
         currentIndex = pageIndex
         pageLabel.text = "P\(pageIndex + 1) / \(entry.images.count)"
-
         prevButton.isEnabled = (currentIndex > 0)
         prevButton.alpha = (currentIndex > 0) ? 1.0 : 0.35
         nextButton.isEnabled = (currentIndex < entry.images.count - 1)
@@ -4696,103 +4715,125 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
         let outputPath = entry.images[pageIndex]
         let sourcePath = pageIndex < entry.sourceImages.count ? entry.sourceImages[pageIndex] : ""
-
-        // 1. 成品图：优先缩略图秒开占位（0ms 防黑屏）
-        if let fastCachedOut = OnlineGalleryClient.shared.getFastCachedImage(path: outputPath, workId: entry.id, isThumbnail: true) {
-            rightImageView.image = fastCachedOut
-        } else {
-            OnlineGalleryClient.shared.loadImage(path: outputPath, workId: entry.id, isThumbnail: true, maxPixel: 300) { [weak self] thumb in
-                guard let self = self, self.currentIndex == pageIndex else { return }
-                if self.rightImageView.image == nil {
-                    self.rightImageView.image = thumb
-                }
-            }
-        }
-
-        // 异步加载成品 100% 高清原图（带百分比进度）
+        let client = OnlineGalleryClient.shared
+        rightImageView.image = nil
+        leftImageView.image = nil
+        emptyLeftLabel.isHidden = !sourcePath.isEmpty
         rightProgressLabel.isHidden = false
         rightProgressLabel.text = "加载原图 0%"
-        OnlineGalleryClient.shared.loadImageWithProgress(
+        leftProgressLabel.isHidden = sourcePath.isEmpty
+        leftProgressLabel.text = sourcePath.isEmpty ? nil : "加载原图 0%"
+
+        // 只读取已缓存缩略图作为占位，不发起冷缩略图网络请求，避免与当前页原图争抢连接。
+        if let fastCachedOut = client.getFastCachedImage(path: outputPath, workId: entry.id, isThumbnail: true) {
+            rightImageView.image = fastCachedOut
+        }
+
+        if !sourcePath.isEmpty,
+           let fastCachedSrc = client.getFastCachedImage(path: sourcePath, workId: entry.id, isThumbnail: true) {
+            leftImageView.image = fastCachedSrc
+        }
+
+        pageLoadsRemaining = sourcePath.isEmpty ? 1 : 2
+        let outputRequest = client.loadImageWithProgress(
             path: outputPath, workId: entry.id, isThumbnail: false,
             onProgress: { [weak self] pct in
-                guard let self = self, self.currentIndex == pageIndex else { return }
+                guard let self = self, self.pageLoadGeneration == generation else { return }
                 self.rightProgressLabel.isHidden = false
                 self.rightProgressLabel.text = "加载原图 \(pct)%"
             },
             completion: { [weak self] img in
-                guard let self = self, self.currentIndex == pageIndex else { return }
+                guard let self = self, self.pageLoadGeneration == generation else { return }
                 if let img = img {
                     self.rightImageView.image = img
                     self.rightProgressLabel.text = "原图已就绪"
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                        guard let self = self, self.currentIndex == pageIndex else { return }
+                        guard let self = self, self.pageLoadGeneration == generation else { return }
                         self.rightProgressLabel.isHidden = true
                     }
                 } else {
                     self.rightProgressLabel.text = "加载失败"
                 }
+                self.finishVisiblePageLoad(generation: generation)
             }
         )
+        activePageRequests.append(outputRequest)
 
-        // 2. 原素材图：优先缩略图秒开占位（0ms 防黑屏）
-        if sourcePath.isEmpty {
-            leftImageView.image = nil
-            emptyLeftLabel.isHidden = false
-            leftProgressLabel.isHidden = true
-        } else {
-            emptyLeftLabel.isHidden = true
-            if let fastCachedSrc = OnlineGalleryClient.shared.getFastCachedImage(path: sourcePath, workId: entry.id, isThumbnail: true) {
-                leftImageView.image = fastCachedSrc
-            } else {
-                OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: entry.id, isThumbnail: true, maxPixel: 300) { [weak self] thumb in
-                    guard let self = self, self.currentIndex == pageIndex else { return }
-                    if self.leftImageView.image == nil {
-                        self.leftImageView.image = thumb
-                    }
-                }
-            }
-
-            // 异步加载原素材 100% 高清原图（带百分比进度）
-            leftProgressLabel.isHidden = false
-            leftProgressLabel.text = "加载原图 0%"
-            OnlineGalleryClient.shared.loadImageWithProgress(
+        if !sourcePath.isEmpty {
+            let sourceRequest = client.loadImageWithProgress(
                 path: sourcePath, workId: entry.id, isThumbnail: false,
                 onProgress: { [weak self] pct in
-                    guard let self = self, self.currentIndex == pageIndex else { return }
+                    guard let self = self, self.pageLoadGeneration == generation else { return }
                     self.leftProgressLabel.isHidden = false
                     self.leftProgressLabel.text = "加载原图 \(pct)%"
                 },
                 completion: { [weak self] img in
-                    guard let self = self, self.currentIndex == pageIndex else { return }
+                    guard let self = self, self.pageLoadGeneration == generation else { return }
                     if let img = img {
                         self.leftImageView.image = img
                         self.emptyLeftLabel.isHidden = true
                         self.leftProgressLabel.text = "素材已就绪"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                            guard let self = self, self.currentIndex == pageIndex else { return }
+                            guard let self = self, self.pageLoadGeneration == generation else { return }
                             self.leftProgressLabel.isHidden = true
                         }
-                    } else if self.leftImageView.image == nil {
-                        self.emptyLeftLabel.isHidden = false
+                    } else {
                         self.leftProgressLabel.text = "加载失败"
+                        if self.leftImageView.image == nil {
+                            self.emptyLeftLabel.isHidden = false
+                        }
                     }
+                    self.finishVisiblePageLoad(generation: generation)
                 }
             )
+            activePageRequests.append(sourceRequest)
         }
+    }
 
-        // 3. 静默预加载同作品相邻前后页面（pageIndex+1, pageIndex-1, pageIndex+2）
-        let prefetchIndices = [pageIndex + 1, pageIndex - 1, pageIndex + 2]
-        for pIdx in prefetchIndices {
-            guard pIdx >= 0 && pIdx < entry.images.count else { continue }
-            let pOut = entry.images[pIdx]
-            OnlineGalleryClient.shared.loadImage(path: pOut, workId: entry.id, isThumbnail: false) { _ in }
-            if pIdx < entry.sourceImages.count {
-                let pSrc = entry.sourceImages[pIdx]
-                if !pSrc.isEmpty {
-                    OnlineGalleryClient.shared.loadImage(path: pSrc, workId: entry.id, isThumbnail: false) { _ in }
-                }
+    private func finishVisiblePageLoad(generation: Int) {
+        guard generation == pageLoadGeneration else { return }
+        pageLoadsRemaining = max(0, pageLoadsRemaining - 1)
+        guard pageLoadsRemaining == 0 else { return }
+        prepareComparePrefetch(generation: generation)
+    }
+
+    private func prepareComparePrefetch(generation: Int) {
+        guard generation == pageLoadGeneration else { return }
+        cancelComparePrefetch()
+        var paths: [String] = []
+        for pageIndex in [currentIndex + 1, currentIndex + 2] where pageIndex < entry.images.count {
+            paths.append(entry.images[pageIndex])
+            if pageIndex < entry.sourceImages.count {
+                let sourcePath = entry.sourceImages[pageIndex]
+                if !sourcePath.isEmpty { paths.append(sourcePath) }
             }
         }
+        comparePrefetchQueue = paths
+        comparePrefetchIndex = 0
+        startNextComparePrefetch(generation: generation)
+    }
+
+    private func cancelComparePrefetch() {
+        activeComparePrefetchRequest?.cancel()
+        activeComparePrefetchRequest = nil
+        comparePrefetchQueue.removeAll()
+        comparePrefetchIndex = 0
+    }
+
+    private func startNextComparePrefetch(generation: Int) {
+        guard generation == pageLoadGeneration,
+              activeComparePrefetchRequest == nil,
+              comparePrefetchIndex < comparePrefetchQueue.count else { return }
+        let path = comparePrefetchQueue[comparePrefetchIndex]
+        comparePrefetchIndex += 1
+        let request = OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id, isThumbnail: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self = self, self.pageLoadGeneration == generation else { return }
+                self.activeComparePrefetchRequest = nil
+                self.startNextComparePrefetch(generation: generation)
+            }
+        }
+        activeComparePrefetchRequest = request
     }
 
     @objc private func toggleLayoutMode() {

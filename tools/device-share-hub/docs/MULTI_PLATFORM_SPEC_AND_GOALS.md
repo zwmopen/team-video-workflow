@@ -1,7 +1,7 @@
 # 相册分发系统（Device Share Hub）多端统一产品设计手册与目标跟踪库
 
 > **版本**：v0.7.1  
-> **更新时间**：2026-09-01  
+> **更新时间**：2026-10-11
 > **多端支持**：Windows 电脑端 / Android 手机端（全面屏+三大金刚键）/ iOS 苹果端（灵动岛+刘海+AltStore）
 
 ---
@@ -41,6 +41,7 @@
 - 对比页使用纯黑全屏背景，标题固定显示「对比视图」；模式切换、关闭和上一页/下一页控件有稳定点击区域，不得被裁切。
 - 每页按相同页号配对素材与成品；切换并排布局时图片垂直居中，素材/成品标签靠右并垂直居中。
 - 拉取原图时显示素材或原图百分比；完成、失败与快速翻页期间，状态只属于当前页。
+- 当前页成品/素材原图请求优先；冷缓存只显示占位，不发起竞争连接的网络缩略图请求；两张当前图完成后，按“下一页成品、下一页素材、下下页成品、下下页素材”逐图串行预取。翻页立即取消上一页可见请求和正在执行的预取，清空旧图并忽略迟到进度/完成回调。原图失败必须结束进度态，即使保留缓存缩略图。
 - 在线作品操作栏统一显示「重置状态」。iOS 在线列表保留电脑同步状态和 84×112pt（3:4）缩略图。
 - 真机验收需覆盖冷缓存、热缓存、连续翻页、关闭页面与窄屏；源码或 CI 通过不能替代设备验收。
 
@@ -78,5 +79,6 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 | Codex | Specify current-page-first cancellable serial iOS comparison image prefetch and stale-image behavior. |
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

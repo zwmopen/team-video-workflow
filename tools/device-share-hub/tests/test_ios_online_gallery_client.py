@@ -110,15 +110,18 @@ def main():
     # ---- B1：loadImage 失败分支 NSLog（含 path / isThumbnail）----
     b1_nslog = "[OnlineGalleryClient] loadImage failed" in load_image_attempt \
         and "path=" in load_image_attempt and "isThumbnail=" in load_image_attempt
-    b1_no_silent = "DispatchQueue.main.async { completion(nil) }" in load_image_attempt
+    b1_cancellation_suppressed = (
+        "guard !request.isCancelled else { return }" in load_image_attempt
+        and "completion(nil)" in load_image_attempt
+    )
     b1_real_nslog_count = sum(
         1 for ln in load_image_attempt.split('\n')
         if ln.strip().startswith("NSLog("))
     results.append(check(
         "B1 loadImage 失败分支 NSLog（含 path / isThumbnail）",
-        b1_nslog and b1_no_silent and b1_real_nslog_count >= 1,
-        "NSLog标记=%s silent branch 保留=%s 真实NSLog行数=%d(>=1)"
-        % (b1_nslog, b1_no_silent, b1_real_nslog_count)))
+        b1_nslog and b1_cancellation_suppressed and b1_real_nslog_count >= 1,
+        "NSLog标记=%s 取消被静默抑制且失败仍回调=%s 真实NSLog行数=%d(>=1)"
+        % (b1_nslog, b1_cancellation_suppressed, b1_real_nslog_count)))
 
     # ---- B2：loadImage 磁盘缓存写失败 NSLog（替换 try?）----
     b2_no_try_question = "try? data.write(to: diskURL)" not in load_image_attempt

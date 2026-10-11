@@ -1,4 +1,16 @@
-﻿# 2026-10-11 DSH-162 / DSH-163 / DSH-164 / DSH-165：对比视图与移动端操作栏统一（最终本地候选 0.8.92）
+﻿# 2026-10-11 DSH-167：iOS 对比图当前页优先与逐图预取（源码候选 0.8.93）
+
+- **修改**：iOS `OnlineGalleryClient` 为图片请求提供取消句柄；对比视图冷缓存时只展示已缓存缩略图占位，不启动竞争连接的缩略图请求，当前页原图优先；原图完成后串行加载后两页图片；翻页取消旧页可见请求与预取并清除旧图片，页代次守卫拒绝迟到回调；素材原图失败始终结束进度态；零相似度隐藏重复视图标题徽标。
+- **版本**：iOS `0.8.93 / build 204` 源码候选；Android 保持 `0.8.92 / versionCode 203`，本轮没有 Android 代码变化。
+- **自动回归**：预取队列静态门禁 11/11、`tests/test_ios_online_gallery_client.py` 15/15、`tests/test_ios_compare_ui.py` 10/10、`tests/parity_ios_android.py` 49/49；`git -c core.whitespace=cr-at-eol diff --check` 通过。当前主机没有 `xcodebuild` 或 Swift 编译器。
+- **Android 真机**：Vivo `.92/203` 在线状态显示 395 套；P1/P2/P3 的素材与成品、上下/左右切换、箭头和左滑均有回读；横向图片居中，未点删除/重置/分享。本轮未重装 Android，因为 Android 代码未变化。
+- **iPhone 边界**：本轮 USB mux 已重新识别 iPhone，AltStore 安装的 iPhone App 版本为 `0.8.77/188`。没有 `.93` IPA；Developer screenshot 请求需要 DDI/tunneld，当前不可用。因此 iOS 候选仍未编译、安装或触控验收，不能写成两端均升级。
+- **DSH-157 当前只读证据**：categories 日志 508 条中 5 条 `write_ok=0`，最长 `scan_ms=12,308`；14 条 works 都是 `status=200/write_ok=1`。慢扫描/锁等待是旧 timeout 的强候选，但缺 request ID 且 scan 未拆锁等待与扫描，根因仍 `UNVERIFIED`；本次未请求 categories/works。
+- **发布边界**：没有推送、发布或修改更新索引。要完成 iOS 设备验收，后续需先走获授权的 macOS 构建/签名流程，再通过 USB 安装匹配的 `.93` IPA。
+
+---
+
+# 2026-10-11 DSH-162 / DSH-163 / DSH-164 / DSH-165：对比视图与移动端操作栏统一（最终本地候选 0.8.92）
 
 ## 持续迭代交接规则（2026-10-11）
 
