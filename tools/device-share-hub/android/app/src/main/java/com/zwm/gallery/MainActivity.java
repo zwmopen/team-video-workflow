@@ -5441,14 +5441,14 @@ public final class MainActivity extends Activity {
 
             // 异步加载成品 100% 高清原图（带百分比进度）
             rightProgress.setVisibility(View.VISIBLE);
-            rightProgress.setText("原图 0%");
+            rightProgress.setText("加载原图 0%");
             onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                 @Override
                 public void onProgress(int percent) {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setVisibility(View.VISIBLE);
-                        rightProgress.setText("原图 " + percent + "%");
+                        rightProgress.setText("加载原图 " + percent + "%");
                     }
                 }
                 @Override
@@ -5456,7 +5456,7 @@ public final class MainActivity extends Activity {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                         rightImage.setImageBitmap(result);
-                        rightProgress.setText("原图 100%");
+                        rightProgress.setText("加载原图 100%");
                         rightProgress.postDelayed(() -> {
                             if (dialog.isShowing() && currentIndex[0] == idx
                                     && pageGeneration[0] == requestGeneration) {
@@ -5503,14 +5503,14 @@ public final class MainActivity extends Activity {
 
                 // 异步加载原素材 100% 高清原图（带百分比进度）
                 leftProgress.setVisibility(View.VISIBLE);
-                leftProgress.setText("素材 0%");
+                leftProgress.setText("加载原图 0%");
                 onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                     @Override
                     public void onProgress(int percent) {
                         if (dialog.isShowing() && currentIndex[0] == idx
                                 && pageGeneration[0] == requestGeneration) {
                             leftProgress.setVisibility(View.VISIBLE);
-                            leftProgress.setText("素材 " + percent + "%");
+                            leftProgress.setText("加载原图 " + percent + "%");
                         }
                     }
                     @Override
@@ -5519,7 +5519,7 @@ public final class MainActivity extends Activity {
                                 && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                             leftImage.setImageBitmap(result);
                             leftEmpty.setVisibility(View.GONE);
-                            leftProgress.setText("素材 100%");
+                            leftProgress.setText("加载原图 100%");
                             leftProgress.postDelayed(() -> {
                                 if (dialog.isShowing() && currentIndex[0] == idx
                                         && pageGeneration[0] == requestGeneration) {

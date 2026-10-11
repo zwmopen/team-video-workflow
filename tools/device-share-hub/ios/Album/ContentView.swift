@@ -2475,7 +2475,9 @@ private final class ComparePairThumbView: UIControl {
             addSubview(iv)
         }
 
-        emptySourceLabel.text = "无原图"
+        // 空槽位是按页对齐的合法状态，不把它写成“无素材原片”，避免与
+        // 加载失败混淆；真正的成品页仍继续显示在右侧。
+        emptySourceLabel.text = "未关联素材"
         emptySourceLabel.font = .systemFont(ofSize: 10, weight: .medium)
         emptySourceLabel.textColor = AppColors.secondaryText
         emptySourceLabel.textAlignment = .center
@@ -2548,7 +2550,7 @@ private final class ComparePairThumbView: UIControl {
         headerLabel.text = "P\(pageIndex + 1) 素材 ➔ 成品"
         if sourcePath.isEmpty {
             emptySourceLabel.isHidden = false
-            emptySourceLabel.text = "无素材原片"
+            emptySourceLabel.text = "未关联素材"
         } else {
             emptySourceLabel.isHidden = true
             OnlineGalleryClient.shared.loadImage(path: sourcePath, workId: workId, isThumbnail: true, maxPixel: 220) { [weak self] img in
@@ -4665,13 +4667,13 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
         // 异步加载成品 100% 高清原图（带百分比进度）
         rightProgressLabel.isHidden = false
-        rightProgressLabel.text = "原图加载中…"
+        rightProgressLabel.text = "加载原图 0%"
         OnlineGalleryClient.shared.loadImageWithProgress(
             path: outputPath, workId: entry.id, isThumbnail: false,
             onProgress: { [weak self] pct in
                 guard let self = self, self.currentIndex == pageIndex else { return }
                 self.rightProgressLabel.isHidden = false
-                self.rightProgressLabel.text = "原图 \(pct)%"
+                self.rightProgressLabel.text = "加载原图 \(pct)%"
             },
             completion: { [weak self] img in
                 guard let self = self, self.currentIndex == pageIndex else { return }
@@ -4708,13 +4710,13 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
             // 异步加载原素材 100% 高清原图（带百分比进度）
             leftProgressLabel.isHidden = false
-            leftProgressLabel.text = "素材加载中…"
+            leftProgressLabel.text = "加载原图 0%"
             OnlineGalleryClient.shared.loadImageWithProgress(
                 path: sourcePath, workId: entry.id, isThumbnail: false,
                 onProgress: { [weak self] pct in
                     guard let self = self, self.currentIndex == pageIndex else { return }
                     self.leftProgressLabel.isHidden = false
-                    self.leftProgressLabel.text = "素材 \(pct)%"
+                    self.leftProgressLabel.text = "加载原图 \(pct)%"
                 },
                 completion: { [weak self] img in
                     guard let self = self, self.currentIndex == pageIndex else { return }

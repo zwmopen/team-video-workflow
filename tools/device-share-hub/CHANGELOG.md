@@ -1,11 +1,12 @@
-## 2026-10-11 DSH-162 / DSH-163：对比视图三端布局、素材页位与移动端操作栏统一（Android/iOS 0.8.92 候选）
+## 2026-10-11 DSH-162 / DSH-163 / DSH-164：对比视图三端布局、素材页位与移动端操作栏统一（Android/iOS 0.8.92 候选）
 
 - Android 对比卡片改为 3:4 图块（84×112dp），素材/成品标签移到图片外侧独立一行；全屏对比去掉浅色边框和底部提示，标题统一为“对比视图”，上下同框/左右并排模块同高同字级，关闭按钮改为居中的 `×`，翻页只保留 `‹`/`›` 与页码。
 - Android 本地和电脑在线作品的操作栏统一居中并固定顺序为“重置状态 / 复制路径 / 删除”；本地全屏预览也使用 `×`、`‹`、`›`。对比原图加载保留右下角百分比反馈，并按当前页、相邻页顺序预加载。
 - Android `OnlineWorkEntry` 保留 `sourceImages`/`sourceNames` 的空槽位，避免某页没有素材时后续页错位；iOS 在线解析器同样按页保留空槽位，修复“该页没有关联素材”的错误关联。
 - iOS 在线卡片放大为 3:4 预览高度，标签只显示“素材/成品”；对比预览去掉边框和底部提示，两个顶部模块固定同宽，操作按钮使用“重置状态”。
-- 最终 Android Release APK：`0.8.92 / versionCode 203`，SHA-256 `29236975AC57AC33AC6B7788341F71D1E793692BFD515166F88935F46B0048FC`；单测 103/103，Release Lint 0 错误/94 警告，APK v2/v3 验签通过。已安装到解锁 Redmi `e3b58850` 并完成本地预览、在线 395 套、对比上下/左右两种模式回读。
-- iOS 静态门禁 `test_ios_online_gallery_client.py` 15/15、`parity_ios_android.py` 49/49；当前 Windows 没有 Xcode、Swift、IPA 或可用 iPhone USB mux，因此没有把 iOS 静态检查冒充实机验收。Vivo `10AF3319YR002ZC` 未绕过锁屏、未安装。
+- 最终 Android Release APK：`0.8.92 / versionCode 203`，SHA-256 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`；单测 103/103，Release Lint 0 错误/94 警告，APK v2/v3 验签通过。Redmi 与 Vivo 两台均已覆盖安装并回读 `0.8.92/203`；两台都完成在线 395 套、对比上下/左右、素材/成品页位、本地全屏预览和箭头翻页回读。
+- 本轮把 Android/iOS 全屏进度文案统一为“加载原图 xx%”；iOS 空素材槽位统一显示“未关联素材”，不再把空槽位写成“无素材原片”。
+- iOS 静态门禁 `test_ios_online_gallery_client.py` 15/15、`parity_ios_android.py` 49/49；当前 Windows 没有 Xcode、Swift、IPA 或可用 iPhone USB mux，因此没有把 iOS 静态检查冒充实机验收。
 - 本轮只保留隔离工作树和本地 APK，未推送、未发布、未更新发布索引。
 
 ## 2026-10-11 DSH-154 / DSH-157 / DSH-158 / DSH-159 / DSH-160 / DSH-161：重试状态、列表超时诊断、更新反馈、三端元信息与视图文案对齐（Android/iOS 0.8.92 候选）

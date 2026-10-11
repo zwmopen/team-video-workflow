@@ -12,7 +12,7 @@
 
 | 端 | 显示名 | 包 / Bundle ID | 版本 | 出处 |
 |---|---|---|---|---|
-| Android | 相册 | `com.zwm.gallery` | **0.8.92 候选**（versionCode 203；APK 已本地构建，设备仍 `.91/202`） | `android/app/build.gradle.kts:13-14` |
+| Android | 相册 | `com.zwm.gallery` | **0.8.92 候选**（versionCode 203；Redmi 与 Vivo 均已安装，完成在线/对比/本地预览回读） | `android/app/build.gradle.kts:13-14` |
 | iOS | 相册 | `com.zwm.album` | **0.8.92 候选**（build 203；未构建 IPA） | `ios/project.yml:31-32` |
 | Windows | 窗口标题「文件收发中控 V4.3.33」；CMake 产物名「素材投送中控」 | — | **4.3.33** | `main.cpp:123`、`CMakeLists.txt:91` |
 | 服务端 | `DeviceShareHub-OnlineGallery` | — | **1.2.0** | `online_gallery_service.py:2290` |
