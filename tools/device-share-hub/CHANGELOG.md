@@ -1,3 +1,13 @@
+## 2026-10-11 DSH-168：对比预览图片居中与标签/加载态分离（本地候选 0.8.94 / 205）
+
+- 左右并排时，素材/成品短标签移到各自画面顶部；上下同框时标签放到右侧留白。Android 和 iOS 图片视图不再为标签预留横向宽度，按 FIT_CENTER/aspectFit 在完整面板中居中。
+- 原图加载期间显示“正在加载原图 N%”；原图成功后隐藏进度并显示“素材 / 成品”。原图失败时保留明确失败状态；没有关联素材时继续显示空素材说明。
+- Android 候选为 `0.8.94 / versionCode 205`。`testDebugUnitTest` 103/103、Release 构建成功、Lint 0 错误/92 警告，APK v2/v3 验签通过，SHA-256 `C9A09CF70EE8AE26131638CCC108B964B0584EB5B03E3F4035C30B3811DD399B`。Vivo 覆盖安装被设备拒绝，手机仍为 `0.8.92/203`；安装和触控回归待设备解锁并允许安装。
+- iOS 工程版本为 `0.8.94 / build 205`。Android 对比状态守卫 12/12；iOS 对比 UI 静态门禁 17/17、预取队列 11/11、客户端 15/15、跨端契约 49/49 通过；Windows 无 Xcode/Swift，iPhone USB mux 当前未枚举，没有构建 IPA 或做 iPhone 验收。
+- 没有推送、CI 构建或正式发布。
+- 手动 CI 默认使用 build-only；只有显式选择 full 才运行会写入生产 Relay/R2 的 live E2E。本轮未触发 CI。
+- 影响文档：`README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/MULTI_PLATFORM_SPEC_AND_GOALS.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`ios/CHANGELOG.md`；协议与服务端行为无变化。
+
 ## 2026-10-11 DSH-167：iOS 对比视图当前页优先与逐图预取（源码候选 iOS 0.8.93 / build 204）
 
 - iOS 图片加载器返回可取消请求句柄；翻页取消上一页可见原图/缩略图与正在执行的预取，取消后不再派发进度、完成回调或启动缩略图重试。
@@ -3440,6 +3450,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:20 | 反重力 | record live timing boundary |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |

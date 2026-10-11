@@ -1,3 +1,10 @@
+# 2026-10-11 DSH-168：对比预览图片居中与标签/加载态分离（iOS 源码候选 0.8.94 / build 205）
+
+- iOS 全屏对比预览的图片铺满面板并按 aspectFit 居中，不再受右侧标签宽度挤压；左右并排标签放顶部，上下同框标签放右侧留白。
+- 加载期间显示“正在加载原图 N%”；成功后隐藏进度并显示“素材 / 成品”；失败时保留明确失败状态，缺素材页继续显示空槽说明。
+- 对比 UI 静态门禁 17/17、预取队列 11/11、客户端 15/15、跨端契约 49/49 通过。Windows 当前无 Xcode/Swift，iPhone USB mux 未枚举；未构建、安装或做 iPhone 实机验收。
+- 本地源码候选，没有推送或发布。
+
 # 2026-10-11 DSH-167：对比视图当前页优先、逐图预取（iOS 源码候选 0.8.93 / build 204）
 
 - 图片客户端的 `loadImage` / `loadImageWithProgress` 返回可取消请求句柄；取消会停止活动 URLSession task，并阻止迟到的进度、完成回调和退避重试。
@@ -273,6 +280,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 09:24 | Codex | add bounded iOS thumbnail retry, diagnostics, and tap-to-retry candidate |

@@ -300,6 +300,9 @@ public final class OnlineGalleryClient {
     private let session: URLSession
     private let thumbnailMaxAttempts = 2
     private let thumbnailRetryDelay: TimeInterval = 0.9
+    private let listRequestLock = NSLock()
+    private var latestCategoriesRequestID: UInt64 = 0
+    private var latestWorksRequestID: UInt64 = 0
     // Cache reads and UIImage decoding must stay off the main thread during list rendering.
     private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
@@ -318,6 +321,42 @@ public final class OnlineGalleryClient {
         self.diskCacheURL = cacheDirectory
         imageCache.countLimit = 500
         imageCache.totalCostLimit = 120 * 1024 * 1024 // 120MB 内存缓存
+    }
+
+    private func beginCategoriesRequest() -> UInt64 {
+        listRequestLock.lock()
+        latestCategoriesRequestID &+= 1
+        let requestID = latestCategoriesRequestID
+        listRequestLock.unlock()
+        return requestID
+    }
+
+    private func saveCategoriesSnapshotIfLatest(_ data: Data, requestID: UInt64) {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        guard latestCategoriesRequestID == requestID else { return }
+        OnlineListCache.saveCategories(data)
+    }
+
+    private func beginWorksRequest() -> UInt64 {
+        listRequestLock.lock()
+        latestWorksRequestID &+= 1
+        let requestID = latestWorksRequestID
+        listRequestLock.unlock()
+        return requestID
+    }
+
+    private func isLatestWorksRequest(_ requestID: UInt64) -> Bool {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        return latestWorksRequestID == requestID
+    }
+
+    private func saveWorksSnapshotIfLatest(_ data: Data, requestID: UInt64) {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        guard latestWorksRequestID == requestID else { return }
+        OnlineListCache.saveWorks(data)
     }
 
     /// 回环地址：只有存在 USB / ADB 转发隧道时才可达，纯 Wi-Fi 下必然失败
@@ -615,6 +654,7 @@ public final class OnlineGalleryClient {
     }
 
     public func fetchCategories(completion: @escaping (Result<OnlineCategoriesResult, Error>) -> Void) {
+        let requestID = beginCategoriesRequest()
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/categories") else {
             completion(.failure(NSError(domain: "OnlineGallery", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的服务器地址"])))
@@ -629,8 +669,8 @@ public final class OnlineGalleryClient {
                 DispatchQueue.main.async { completion(.failure(NSError(domain: "OnlineGallery", code: -2, userInfo: [NSLocalizedDescriptionKey: "返回数据为空"]))) }
                 return
             }
-            // 成功即落盘快照：下次进页面 / 离线时可直渲染（与 Android `OnlineListCache` 同步）
-            OnlineListCache.saveCategories(data)
+            // A slow earlier response must not replace the cache from a newer refresh.
+            self.saveCategoriesSnapshotIfLatest(data, requestID: requestID)
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                 var categories: [OnlineCategoryItem] = []
@@ -662,6 +702,7 @@ public final class OnlineGalleryClient {
     public func fetchWorks(category: String? = nil, query: String? = nil,
                            sortKey: String? = nil,
                            completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
+        let requestID = beginWorksRequest()
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/works")
         var queryItems: [URLQueryItem] = []
@@ -696,13 +737,11 @@ public final class OnlineGalleryClient {
             // 存下去会让下次秒开时看到一个不完整的列表（与 Android 同步）。
             let isFullList = (category ?? "").isEmpty && (query ?? "").isEmpty
             if isFullList {
-                OnlineListCache.saveWorks(data)
+                self?.saveWorksSnapshotIfLatest(data, requestID: requestID)
             }
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-                if let vs = json["viewState"] as? [String: Any] {
-                    self?.consumeRemoteViewState(vs)
-                }
+                let viewState = json["viewState"] as? [String: Any]
                 var entries: [OnlineWorkEntry] = []
                 if let arr = json["works"] as? [[String: Any]] {
                     for w in arr {
@@ -711,7 +750,13 @@ public final class OnlineGalleryClient {
                         }
                     }
                 }
-                DispatchQueue.main.async { completion(.success(entries)) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.isLatestWorksRequest(requestID) else { return }
+                    if let viewState = viewState {
+                        self.consumeRemoteViewState(viewState)
+                    }
+                    completion(.success(entries))
+                }
             } catch {
                 NSLog("[OnlineGalleryClient] fetchWorks failed category=%@ query=%@ error=%@",
                       category ?? "<nil>", query ?? "<nil>", error.localizedDescription)

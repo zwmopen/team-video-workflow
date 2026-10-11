@@ -5252,7 +5252,6 @@ public final class MainActivity extends Activity {
         leftImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
         leftImage.setAdjustViewBounds(true);
         FrameLayout.LayoutParams leftImageParams = new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER);
-        leftImageParams.rightMargin = dp(48);
         leftFrame.addView(leftImage, leftImageParams);
 
         TextView leftBadge = text("素材", 10, true);
@@ -5260,6 +5259,7 @@ public final class MainActivity extends Activity {
         leftBadge.setGravity(Gravity.CENTER);
         leftBadge.setBackgroundColor(Color.TRANSPARENT);
         leftBadge.setPadding(0, 0, 0, 0);
+        leftBadge.setVisibility(View.GONE);
         FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(dp(44), dp(24), Gravity.CENTER_VERTICAL | Gravity.END);
         lBadgeParams.setMargins(0, 0, dp(4), 0);
         leftFrame.addView(leftBadge, lBadgeParams);
@@ -5285,7 +5285,6 @@ public final class MainActivity extends Activity {
         rightImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
         rightImage.setAdjustViewBounds(true);
         FrameLayout.LayoutParams rightImageParams = new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER);
-        rightImageParams.rightMargin = dp(48);
         rightFrame.addView(rightImage, rightImageParams);
 
         TextView rightBadge = text("成品", 10, true);
@@ -5293,6 +5292,7 @@ public final class MainActivity extends Activity {
         rightBadge.setGravity(Gravity.CENTER);
         rightBadge.setBackgroundColor(Color.TRANSPARENT);
         rightBadge.setPadding(0, 0, 0, 0);
+        rightBadge.setVisibility(View.GONE);
         FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(dp(44), dp(24), Gravity.CENTER_VERTICAL | Gravity.END);
         rBadgeParams.setMargins(0, 0, dp(4), 0);
         rightFrame.addView(rightBadge, rBadgeParams);
@@ -5314,6 +5314,7 @@ public final class MainActivity extends Activity {
 
         Button prevBtn = new Button(this);
         prevBtn.setText("‹");
+        prevBtn.setContentDescription("上一页");
         prevBtn.setTextSize(20);
         prevBtn.setTypeface(Typeface.DEFAULT_BOLD);
         prevBtn.setTextColor(Color.WHITE);
@@ -5328,6 +5329,7 @@ public final class MainActivity extends Activity {
 
         Button nextBtn = new Button(this);
         nextBtn.setText("›");
+        nextBtn.setContentDescription("下一页");
         nextBtn.setTextSize(20);
         nextBtn.setTypeface(Typeface.DEFAULT_BOLD);
         nextBtn.setTextColor(Color.WHITE);
@@ -5368,13 +5370,13 @@ public final class MainActivity extends Activity {
                 toggleLayoutBtn.setText("左右并排");
                 toggleLayoutBtn.setContentDescription("当前左右并排，点击切换上下同框");
                 if (lp != null) {
-                    lp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-                    lp.setMargins(0, 0, dp(8), 0);
+                    lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                    lp.setMargins(0, dp(8), 0, 0);
                     leftBadge.setLayoutParams(lp);
                 }
                 if (rp != null) {
-                    rp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-                    rp.setMargins(0, 0, dp(8), 0);
+                    rp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                    rp.setMargins(0, dp(8), 0, 0);
                     rightBadge.setLayoutParams(rp);
                 }
             } else {
@@ -5409,6 +5411,15 @@ public final class MainActivity extends Activity {
         Runnable renderPage = () -> {
             int idx = currentIndex[0];
             final int requestGeneration = ++pageGeneration[0];
+            // Never leave the previous page visible under the new page number while
+            // this page's thumbnail/original is still loading or has failed.
+            leftImage.setImageDrawable(null);
+            rightImage.setImageDrawable(null);
+            leftEmpty.setVisibility(View.GONE);
+            leftBadge.setVisibility(View.GONE);
+            rightBadge.setVisibility(View.GONE);
+            leftProgress.setVisibility(View.GONE);
+            rightProgress.setVisibility(View.GONE);
             pageText.setText("P" + (idx + 1) + " / P" + total);
             prevBtn.setEnabled(idx > 0);
             prevBtn.setAlpha(idx > 0 ? 1f : 0.4f);
@@ -5441,14 +5452,14 @@ public final class MainActivity extends Activity {
 
             // 异步加载成品 100% 高清原图（带百分比进度）
             rightProgress.setVisibility(View.VISIBLE);
-            rightProgress.setText("加载原图 0%");
+            rightProgress.setText("正在加载原图 0%");
             onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                 @Override
                 public void onProgress(int percent) {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setVisibility(View.VISIBLE);
-                        rightProgress.setText("加载原图 " + percent + "%");
+                        rightProgress.setText("正在加载原图 " + percent + "%");
                     }
                 }
                 @Override
@@ -5456,25 +5467,14 @@ public final class MainActivity extends Activity {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                         rightImage.setImageBitmap(result);
-                        rightProgress.setText("加载原图 100%");
-                        rightProgress.postDelayed(() -> {
-                            if (dialog.isShowing() && currentIndex[0] == idx
-                                    && pageGeneration[0] == requestGeneration) {
-                                rightProgress.setVisibility(View.GONE);
-                            }
-                        }, 1500);
+                        rightBadge.setVisibility(View.VISIBLE);
+                        rightProgress.setVisibility(View.GONE);
                     }
                 }
                 @Override public void onError(Exception e) {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setText("原图加载失败");
-                        rightProgress.postDelayed(() -> {
-                            if (dialog.isShowing() && currentIndex[0] == idx
-                                    && pageGeneration[0] == requestGeneration) {
-                                rightProgress.setVisibility(View.GONE);
-                            }
-                        }, 2000);
                     }
                 }
             });
@@ -5503,14 +5503,14 @@ public final class MainActivity extends Activity {
 
                 // 异步加载原素材 100% 高清原图（带百分比进度）
                 leftProgress.setVisibility(View.VISIBLE);
-                leftProgress.setText("加载原图 0%");
+                leftProgress.setText("正在加载原图 0%");
                 onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                     @Override
                     public void onProgress(int percent) {
                         if (dialog.isShowing() && currentIndex[0] == idx
                                 && pageGeneration[0] == requestGeneration) {
                             leftProgress.setVisibility(View.VISIBLE);
-                            leftProgress.setText("加载原图 " + percent + "%");
+                            leftProgress.setText("正在加载原图 " + percent + "%");
                         }
                     }
                     @Override
@@ -5519,25 +5519,14 @@ public final class MainActivity extends Activity {
                                 && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                             leftImage.setImageBitmap(result);
                             leftEmpty.setVisibility(View.GONE);
-                            leftProgress.setText("加载原图 100%");
-                            leftProgress.postDelayed(() -> {
-                                if (dialog.isShowing() && currentIndex[0] == idx
-                                        && pageGeneration[0] == requestGeneration) {
-                                    leftProgress.setVisibility(View.GONE);
-                                }
-                            }, 1500);
+                            leftBadge.setVisibility(View.VISIBLE);
+                            leftProgress.setVisibility(View.GONE);
                         }
                     }
                     @Override public void onError(Exception e) {
                         if (dialog.isShowing() && currentIndex[0] == idx
                                 && pageGeneration[0] == requestGeneration) {
-                            leftProgress.setText("素材加载失败");
-                            leftProgress.postDelayed(() -> {
-                                if (dialog.isShowing() && currentIndex[0] == idx
-                                        && pageGeneration[0] == requestGeneration) {
-                                    leftProgress.setVisibility(View.GONE);
-                                }
-                            }, 2000);
+                            leftProgress.setText("素材原图加载失败");
                             if (leftImage.getDrawable() == null) {
                                 leftEmpty.setVisibility(View.VISIBLE);
                             }

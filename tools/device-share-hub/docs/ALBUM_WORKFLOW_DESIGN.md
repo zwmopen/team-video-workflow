@@ -12,8 +12,8 @@
 
 | 端 | 显示名 | 包 / Bundle ID | 版本 | 出处 |
 |---|---|---|---|---|
-| Android | 相册 | `com.zwm.gallery` | **0.8.92 候选**（versionCode 203；Redmi 与 Vivo 均已安装，完成在线/对比/本地预览回读） | `android/app/build.gradle.kts:13-14` |
-| iOS | 相册 | `com.zwm.album` | **0.8.92 候选**（build 203；未构建 IPA） | `ios/project.yml:31-32` |
+| Android | 相册 | `com.zwm.gallery` | **0.8.94 候选**（versionCode 205；Release 已构建；Vivo 拒绝覆盖安装，机上仍为 0.8.92/203，未完成本候选实机验收） | `android/app/build.gradle.kts:13-14` |
+| iOS | 相册 | `com.zwm.album` | **0.8.94 候选**（build 205；源码静态检查通过；无 Xcode/Swift 和 IPA，未构建/安装） | `ios/project.yml:31-32` |
 | Windows | 窗口标题「文件收发中控 V4.3.33」；CMake 产物名「素材投送中控」 | — | **4.3.33** | `main.cpp:123`、`CMakeLists.txt:91` |
 | 服务端 | `DeviceShareHub-OnlineGallery` | — | **1.2.0** | `online_gallery_service.py:2290` |
 
@@ -22,6 +22,13 @@ Windows `4.3.33` > Android `0.8.92`，跨端比较会静默得出「已是最新
 
 iOS 的 `CFBundleShortVersionString` / `CFBundleVersion` 走 `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`，
 **禁止再写字面量**（`ios/project.yml:40-45`）。
+
+### 1.1 在线相册对比预览（当前候选）
+
+- 左右并排时，“素材/成品”标签放在各自画面顶部；上下同框时标签放在面板右侧留白。
+- 图片视图铺满面板并按 FIT_CENTER/aspectFit 居中，不为右侧标签让出固定宽度。
+- 原图加载时在右下方显示“正在加载原图 N%”；完成后改为短标签，失败时保留失败提示；没有关联素材时显示空槽说明。
+- 此处为 0.8.94/205 源码候选状态。Android 包构建通过但安装被设备拒绝；iOS 尚无构建产物与实机验收。详见 `docs/MAINTAINER_HANDOFF.md` 与 `docs/BUG_LEDGER.md`。
 
 ---
 
@@ -261,5 +268,7 @@ copy_missing = not copy_text                      # 文案.txt 没读出实质�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 | Codex | Record 0.8.94 compare preview centering, label placement, loading states, and device acceptance boundary. |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 | Codex | 更新 Android/iOS `.92/203` 源码候选，并补记在线列表首字节超时已验证路径与未确认根因。 |

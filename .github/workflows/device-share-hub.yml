@@ -2,6 +2,15 @@ name: Device Share Hub
 
 on:
   workflow_dispatch:
+    inputs:
+      validation_scope:
+        description: "Use build-only for source/device acceptance; full also writes temporary objects to the production relay."
+        required: true
+        type: choice
+        options:
+          - build-only
+          - full
+        default: build-only
   push:
     branches: [main]
     paths:
@@ -82,6 +91,10 @@ jobs:
           }
 
   remote-relay-live-e2e:
+    # Keep pull requests and the default manual build path away from production
+    # Relay/R2 state. Full live acceptance is explicit; main pushes retain the
+    # existing release-gate behavior.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'full')
     needs: remote-relay-check
     runs-on: ubuntu-latest
     defaults:

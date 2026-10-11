@@ -56,6 +56,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var folderItem: UIBarButtonItem?
     /// 顶部状态条的短暂过程文案。成功同步后清空，统一回到“已同步…共 N 套”。
     private var onlineStatusOverride: String?
+    /// Only the most recently started online refresh may update this screen.
+    private var onlineLoadGeneration = 0
     private let prefOnlineModeKey = "pref_is_online_mode"
     /// 自动发现失败后按 15/30/60/120 秒退避；成功同步列表后恢复初始间隔。
     private var autoDiscovering = false
@@ -436,11 +438,15 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         updateModeButtonStyle()
         updateFolderItemVisibility()
         if isOnlineMode {
+            primeOnlineDataFromSnapshot()
             onlineStatusOverride = "正在同步电脑在线作品…"
             updateOnlineStatusHint()
+            renderOnlineUI()
             showToast("已切换到：💻 电脑在线相册")
             loadOnlineData()
         } else {
+            onlineLoadGeneration += 1
+            collectionView.refreshControl?.endRefreshing()
             onlineStatusOverride = nil
             showToast("已切换到：📱 手机本地相册")
             render()
@@ -1093,33 +1099,26 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 且无数据时**先 toast + 自愈、自愈失败才弹窗**，消除电脑换网段后的假弹窗。
     /// 【0.8.24 补漏】失败即自愈，**与有没有缓存数据无关** —— 有数据只是改用软提示。
     private func loadOnlineData(silent: Bool = false) {
+        onlineLoadGeneration += 1
+        let requestGeneration = onlineLoadGeneration
         onlineStatusOverride = "正在同步电脑在线作品…"
         updateOnlineStatusHint()
-        let group = DispatchGroup()
-        var catResult: Result<OnlineCategoriesResult, Error>? = nil
-        var workResult: Result<[OnlineWorkEntry], Error>? = nil
-
-        group.enter()
-        OnlineGalleryClient.shared.fetchCategories { result in
-            catResult = result
-            group.leave()
-        }
-        group.enter()
-        OnlineGalleryClient.shared.fetchWorks(sortKey: currentSortKey) { result in
-            workResult = result
-            group.leave()
-        }
-
-        group.notify(queue: .main) { [weak self] in
-            guard let self = self else { return }
-            self.collectionView.refreshControl?.endRefreshing()
-
-            if case .success(let catData) = catResult {
-                self.onlineCategories = catData.categories
+        OnlineGalleryClient.shared.fetchCategories { [weak self] result in
+            guard let self = self,
+                  self.isOnlineMode,
+                  self.onlineLoadGeneration == requestGeneration else { return }
+            if case .success(let categories) = result {
+                self.onlineCategories = categories.categories
+                self.renderOnlineUI()
             }
-
-            switch workResult {
-            case .success(let works)?:
+        }
+        OnlineGalleryClient.shared.fetchWorks(sortKey: currentSortKey) { [weak self] result in
+            guard let self = self,
+                  self.isOnlineMode,
+                  self.onlineLoadGeneration == requestGeneration else { return }
+            self.collectionView.refreshControl?.endRefreshing()
+            switch result {
+            case .success(let works):
                 self.autoDiscoverRetryDelay = 15
                 // DSH-135 & DSH-137: 本地状态合并（State Merge）与生命周期未到期作品统一置顶
                 let now = Date().timeIntervalSince1970 * 1000
@@ -1177,7 +1176,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 self.onlineWorks = finalWorks
                 self.onlineStatusOverride = nil
                 self.renderOnlineUI()
-            case .failure(let err)?:
+            case .failure(let err):
                 // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
                 // 冷启动时本地快照 `loadOnlineSnapshot()` 是**异步后到**的：请求发出瞬间
                 // onlineWorks 还是空的，快照随后才填上并渲染出列表。旧写法把判定提前到了
@@ -1212,8 +1211,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         self.tryAutoDiscoverPc(alertOnFailure: "拉取在线相册失败：\(msg)")
                     }
                 }
-            case .none:
-                break
             }
         }
     }
@@ -4425,6 +4422,10 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let leftProgressLabel = UILabel()
     private let rightProgressLabel = UILabel()
     private let emptyLeftLabel = UILabel()
+    private var leftBadgeTopConstraint: NSLayoutConstraint?
+    private var leftBadgeCenterYConstraint: NSLayoutConstraint?
+    private var rightBadgeTopConstraint: NSLayoutConstraint?
+    private var rightBadgeCenterYConstraint: NSLayoutConstraint?
 
     private let bottomBar = UIView()
     private let prevButton = UIButton(type: .system)
@@ -4647,11 +4648,11 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         badge.textColor = badgeText == "成品"
             ? UIColor(red: 0.35, green: 0.95, blue: 0.55, alpha: 1)
             : UIColor(white: 0.82, alpha: 1)
-        // Keep the short label in a narrow rail on the right, outside the image.
         badge.backgroundColor = .clear
         badge.textAlignment = .center
         badge.layer.cornerRadius = 4
         badge.clipsToBounds = true
+        badge.isHidden = true
         container.addSubview(badge)
 
         progressLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -4667,11 +4668,10 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: container.topAnchor),
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
+            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
             badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            badge.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             badge.heightAnchor.constraint(equalToConstant: 22),
             badge.widthAnchor.constraint(equalToConstant: 38),
 
@@ -4680,6 +4680,17 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             progressLabel.heightAnchor.constraint(equalToConstant: 20),
             progressLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 58)
         ])
+
+        let badgeTop = badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8)
+        let badgeCenterY = badge.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+        if badgeText == "素材" {
+            leftBadgeTopConstraint = badgeTop
+            leftBadgeCenterYConstraint = badgeCenterY
+        } else {
+            rightBadgeTopConstraint = badgeTop
+            rightBadgeCenterYConstraint = badgeCenterY
+        }
+        badgeCenterY.isActive = true
     }
 
     private func setupGestures() {
@@ -4718,11 +4729,13 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         let client = OnlineGalleryClient.shared
         rightImageView.image = nil
         leftImageView.image = nil
+        leftBadge.isHidden = true
+        rightBadge.isHidden = true
         emptyLeftLabel.isHidden = !sourcePath.isEmpty
         rightProgressLabel.isHidden = false
-        rightProgressLabel.text = "加载原图 0%"
+        rightProgressLabel.text = "正在加载原图 0%"
         leftProgressLabel.isHidden = sourcePath.isEmpty
-        leftProgressLabel.text = sourcePath.isEmpty ? nil : "加载原图 0%"
+        leftProgressLabel.text = sourcePath.isEmpty ? nil : "正在加载原图 0%"
 
         // 只读取已缓存缩略图作为占位，不发起冷缩略图网络请求，避免与当前页原图争抢连接。
         if let fastCachedOut = client.getFastCachedImage(path: outputPath, workId: entry.id, isThumbnail: true) {
@@ -4740,19 +4753,16 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             onProgress: { [weak self] pct in
                 guard let self = self, self.pageLoadGeneration == generation else { return }
                 self.rightProgressLabel.isHidden = false
-                self.rightProgressLabel.text = "加载原图 \(pct)%"
+                self.rightProgressLabel.text = "正在加载原图 \(pct)%"
             },
             completion: { [weak self] img in
                 guard let self = self, self.pageLoadGeneration == generation else { return }
                 if let img = img {
                     self.rightImageView.image = img
-                    self.rightProgressLabel.text = "原图已就绪"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                        guard let self = self, self.pageLoadGeneration == generation else { return }
-                        self.rightProgressLabel.isHidden = true
-                    }
+                    self.rightBadge.isHidden = false
+                    self.rightProgressLabel.isHidden = true
                 } else {
-                    self.rightProgressLabel.text = "加载失败"
+                    self.rightProgressLabel.text = "原图加载失败"
                 }
                 self.finishVisiblePageLoad(generation: generation)
             }
@@ -4765,20 +4775,17 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                 onProgress: { [weak self] pct in
                     guard let self = self, self.pageLoadGeneration == generation else { return }
                     self.leftProgressLabel.isHidden = false
-                    self.leftProgressLabel.text = "加载原图 \(pct)%"
+                        self.leftProgressLabel.text = "正在加载原图 \(pct)%"
                 },
                 completion: { [weak self] img in
                     guard let self = self, self.pageLoadGeneration == generation else { return }
                     if let img = img {
                         self.leftImageView.image = img
                         self.emptyLeftLabel.isHidden = true
-                        self.leftProgressLabel.text = "素材已就绪"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                            guard let self = self, self.pageLoadGeneration == generation else { return }
-                            self.leftProgressLabel.isHidden = true
-                        }
+                        self.leftBadge.isHidden = false
+                        self.leftProgressLabel.isHidden = true
                     } else {
-                        self.leftProgressLabel.text = "加载失败"
+                        self.leftProgressLabel.text = "素材原图加载失败"
                         if self.leftImageView.image == nil {
                             self.emptyLeftLabel.isHidden = false
                         }
@@ -4841,6 +4848,10 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         containerStack.axis = isHorizontalLayout ? .horizontal : .vertical
         containerStack.alignment = isHorizontalLayout ? .center : .fill
         horizontalContainerHeightConstraints.forEach { $0.isActive = isHorizontalLayout }
+        leftBadgeCenterYConstraint?.isActive = !isHorizontalLayout
+        leftBadgeTopConstraint?.isActive = isHorizontalLayout
+        rightBadgeCenterYConstraint?.isActive = !isHorizontalLayout
+        rightBadgeTopConstraint?.isActive = isHorizontalLayout
         layoutModeButton.setTitle(isHorizontalLayout ? "左右并排" : "上下同框", for: .normal)
         UIView.animate(withDuration: 0.2) { [weak self] in
             self?.view.layoutIfNeeded()

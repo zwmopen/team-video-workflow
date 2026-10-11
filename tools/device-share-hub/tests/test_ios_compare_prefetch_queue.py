@@ -38,8 +38,8 @@ def main() -> None:
     check("cold visible pages request only full originals without thumbnail network competition",
           ".loadImage(" not in load_page and load_page.count(".loadImageWithProgress(") == 2)
     check("source original failure always ends its progress state while retaining a cached thumbnail",
-          'self.leftProgressLabel.text = "加载失败"' in load_page and
-          load_page.index('self.leftProgressLabel.text = "加载失败"') < load_page.index("if self.leftImageView.image == nil"))
+          'self.leftProgressLabel.text = "素材原图加载失败"' in load_page and
+          load_page.index('self.leftProgressLabel.text = "素材原图加载失败"') < load_page.index("if self.leftImageView.image == nil"))
     check("prefetch waits until all visible full images finish",
           "pageLoadsRemaining == 0" in finish_visible_load and "prepareComparePrefetch" in finish_visible_load)
     check("prefetch order contains only the next two pages",

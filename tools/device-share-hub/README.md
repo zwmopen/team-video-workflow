@@ -1,7 +1,7 @@
-# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.92 / iPhone 0.8.93）
+# 文件收发中控（本地候选：Windows V4.3.33 / Android 0.8.94 / iPhone 0.8.94）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 当前候选：**Android 0.8.92 / versionCode 203**、**iPhone 0.8.93 / build 204（源码）**。Android `.92` Release APK SHA-256 为 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`，103/103 单测、Lint 0 错误/94 警告、APK v2/v3 验签通过；Redmi 与 Vivo 已完成 `.92` 安装和在线/对比回归。当前 iOS 源码新增当前页原图优先、只用热缓存缩略图占位、取消旧页请求、逐图预取、失败状态收尾与低相似度徽标修复；iOS 静态门禁为预取队列 11/11、客户端 15/15、对比 UI 10/10、跨端 49/49。iPhone 已通过 USB mux 枚举，但机上仍为 `0.8.77/188`；Windows 无 Xcode/Swift 工具链和 `.93` IPA，故当前候选尚未编译或安装。没有推送或发布。
+> 当前本地候选：**Android 0.8.94 / versionCode 205**、**iPhone 0.8.94 / build 205（源码）**。Android Release APK 已构建，103/103 单测通过，Lint 0 错误/92 警告，APK v2/v3 验签通过，SHA-256 为 `C9A09CF70EE8AE26131638CCC108B964B0584EB5B03E3F4035C30B3811DD399B`；Vivo 覆盖安装被设备返回 `INSTALL_FAILED_ABORTED: User rejected permissions`，机上仍是 `.92/203`，因此本候选尚未实机验收。iOS 对比视图已改为图片居中、标签按布局切换到顶部/右侧留白，并在原图加载期间显示“正在加载原图”百分比；相关静态门禁通过。当前 iPhone USB mux 未枚举，本机无 Xcode/Swift 工具链和 `.94` IPA，iOS 尚未编译或实机验收。没有推送或发布。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 
@@ -665,6 +665,7 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 09:24 | Codex | advance mobile candidate to 0.8.85; record Android timeout and pending iOS acceptance |
