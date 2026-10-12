@@ -37,6 +37,9 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -74,11 +77,12 @@ public final class OnlineGalleryClient {
      * 旧实现把缩略图与列表/分类/操作请求塞进同一个 4 线程池，几百张缩略图一进来，
      * 列表请求就排在它们后面，界面长时间卡在「正在读取…」。
      */
-    private final ExecutorService thumbExecutor = Executors.newFixedThreadPool(8, r -> {
-        Thread t = new Thread(r, "online-thumb");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ThreadPoolExecutor thumbExecutor = new ThreadPoolExecutor(
+            8, 8, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), r -> {
+                Thread t = new Thread(r, "online-thumb");
+                t.setDaemon(true);
+                return t;
+            });
     /** 在途缩略图请求去重：(workId::fileName) -> 等待回调列表，同一张图只发一次网络请求 */
     private final java.util.concurrent.ConcurrentHashMap<String, List<Callback<Bitmap>>> inflightThumbs =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -868,8 +872,45 @@ public final class OnlineGalleryClient {
             List<Callback<Bitmap>> list = new ArrayList<>();
             list.add(callback);
             inflightThumbs.put(key, list);
+            thumbExecutor.execute(new ThumbnailRequestTask(key, workId, fileName));
         }
-        thumbExecutor.execute(() -> doLoadThumbnail(key, workId, fileName));
+    }
+
+    /**
+     * Discard thumbnail requests that have not started after the visible list changes.
+     * Already-running requests finish normally; their callbacks are protected by view tags.
+     */
+    public int cancelPendingThumbnails() {
+        int canceled = 0;
+        synchronized (thumbLock) {
+            for (Runnable pending : new ArrayList<>(thumbExecutor.getQueue())) {
+                if (pending instanceof ThumbnailRequestTask) {
+                    ThumbnailRequestTask task = (ThumbnailRequestTask) pending;
+                    if (thumbExecutor.getQueue().remove(pending)) {
+                        inflightThumbs.remove(task.key);
+                        canceled++;
+                    }
+                }
+            }
+        }
+        return canceled;
+    }
+
+    private final class ThumbnailRequestTask implements Runnable {
+        private final String key;
+        private final String workId;
+        private final String fileName;
+
+        private ThumbnailRequestTask(String key, String workId, String fileName) {
+            this.key = key;
+            this.workId = workId;
+            this.fileName = fileName;
+        }
+
+        @Override
+        public void run() {
+            doLoadThumbnail(key, workId, fileName);
+        }
     }
 
     private void doLoadThumbnail(String key, String workId, String fileName) {

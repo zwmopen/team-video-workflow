@@ -98,9 +98,9 @@ public final class MainActivity extends Activity {
     // 2026-09-20：在线列表一屏几百张卡片，旧实现每张卡片前 4 张图立刻发请求
     // （382 作品 → 1500+ 请求同时压进 4 线程池），手机端直接卡在「正在读取…」。
     // 现在整页只给固定「首发预算」，其余入队按节拍渐进放行，UI 先出骨架再补图。
-    private static final int ONLINE_THUMB_BURST_BUDGET = 32;
-    private static final int ONLINE_THUMB_DRAIN_STEP = 16;
-    private static final long ONLINE_THUMB_DRAIN_INTERVAL_MS = 60L;
+    private static final int ONLINE_THUMB_BURST_BUDGET = 8;
+    private static final int ONLINE_THUMB_DRAIN_STEP = 8;
+    private static final long ONLINE_THUMB_DRAIN_INTERVAL_MS = 100L;
     // DSH-111：在线相册自动刷新。服务端 watchdog 60 秒轮询一遍作品目录，
     // 客户端 30 秒问一次「变了吗」，所以最快 30 秒、最慢 90 秒手机上就能看到新作品。
     private static final long ONLINE_AUTO_REFRESH_INTERVAL_MS = 30_000L;
@@ -5858,9 +5858,19 @@ public final class MainActivity extends Activity {
         });
     }
 
-    /** 整页渲染开始时重置首发预算：只让最先出现的少量缩略图立刻加载。 */
+    /**
+     * 列表切换时清掉旧分组未启动的任务，并保留当前列表顶部图像的加载顺序。
+     * 正在传输的请求会自然结束；新页面不再排在旧页面的整批请求之后。
+     */
     private void resetOnlineThumbScheduler() {
+        onlineThumbPending.clear();
         onlineThumbBurst = ONLINE_THUMB_BURST_BUDGET;
+        if (onlineClient != null) {
+            int canceled = onlineClient.cancelPendingThumbnails();
+            if (canceled > 0) {
+                Log.i("MainActivity", "discarded stale queued online thumbnails=" + canceled);
+            }
+        }
     }
 
     /** 提交一个在线缩略图加载任务：预算内立即执行，超出则入队按节拍渐进放行。 */
@@ -5870,7 +5880,7 @@ public final class MainActivity extends Activity {
             task.run();
             return;
         }
-        onlineThumbPending.addFirst(task);
+        onlineThumbPending.addLast(task);
         if (onlineThumbPending.size() > 300) {
             onlineThumbPending.pollLast();
         }
@@ -5884,7 +5894,7 @@ public final class MainActivity extends Activity {
     private void drainOnlineThumbs() {
         int n = 0;
         while (n < ONLINE_THUMB_DRAIN_STEP && !onlineThumbPending.isEmpty()) {
-            Runnable task = onlineThumbPending.poll();
+            Runnable task = onlineThumbPending.pollFirst();
             if (task == null) break;
             task.run();
             n++;

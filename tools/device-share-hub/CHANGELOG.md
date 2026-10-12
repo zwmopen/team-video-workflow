@@ -1,3 +1,12 @@
+# 2026-10-12 DSH-176：切换分组后缩略图排队、成批出现（候选 0.8.105/216）
+
+- Android 在线列表切换分组、搜索或视图重绘时，现在清除尚未开始的旧缩略图请求；新列表首批仅提交 8 张，并按屏幕顺序渐进放行，避免前一组积压的请求长期挡住当前组。
+- 回归：Android 缩略图优先级静态检查 4/4、Android 定向静态检查 10/10、iOS/Android 契约 50/50；本机 `build-local.ps1 -AndroidOnly` 的 `testDebugUnitTest`、Release、Lint、权限与 APK v2/v3 签名检查通过。
+- APK：`0.8.105/216`，SHA-256 `C0312ECBF44F649D3189C2762762E55084B5187C0ECB34B3F98DF0F459E19647`，位于 `tools/device-share-hub/android/out/album-Android-v0.8.105.apk`。
+- 版本统一到 Android `0.8.105/216` 与 iOS `0.8.105/216`。iOS 仅对齐版本元数据，本次未改 iOS 图片行为。
+- 只读 `/api/online/status`：Pillow 12.3.0 可用、`fallbackOriginal=0`、内存缓存 500/500、磁盘缓存 1864/2000；这只能说明服务端具备缩略图缓存，不能代替新手机冷缓存计时。
+- USB-only 探针未识别本轮所说的新手机；当前只有旧 M2006C3LC 的无线 ADB 记录，故尚未安装候选或测量真机冷/热缓存耗时。iOS 新 IPA build-only CI 待运行。无正式 Release 或公开更新索引。
+
 # 2026-10-12 DSH-175：iOS 后台同步状态反复闪回（候选 0.8.104/215）
 
 - 根因：iOS 在线自动探测定时器为 6 秒，且静默自动刷新仍无条件把顶部状态改成“正在同步电脑在线作品…”。列表已可用时，后台轮询也会显示成前台加载。

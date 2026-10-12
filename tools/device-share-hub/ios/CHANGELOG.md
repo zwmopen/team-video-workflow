@@ -1,3 +1,8 @@
+# 2026-10-12 DSH-176：与 Android 候选版本对齐（0.8.105 / build 216）
+
+- 本轮修复在 Android 在线缩略图调度；iOS 仅将 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 对齐为 `0.8.105/216`，iOS 图片加载行为未改。
+- iOS 新版本需由 build-only CI 构建并核验；未安装 iPhone，未做新手机冷/热缓存实测，也未正式发布。
+
 # 2026-10-12 DSH-175：降低后台同步状态打扰（候选 0.8.104 / build 215）
 
 - iOS 在线目录的自动状态探测间隔从 6 秒调整为 30 秒，与 Android 保持一致。
