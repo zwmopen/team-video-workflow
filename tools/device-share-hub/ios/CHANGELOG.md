@@ -1,7 +1,7 @@
 # 2026-10-12 DSH-176：与 Android 候选版本对齐（0.8.105 / build 216）
 
 - 本轮修复在 Android 在线缩略图调度；iOS 仅将 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 对齐为 `0.8.105/216`，iOS 图片加载行为未改。
-- iOS 新版本需由 build-only CI 构建并核验；未安装 iPhone，未做新手机冷/热缓存实测，也未正式发布。
+- build-only CI `38264200990` 已成功构建 IPA，SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。未安装 iPhone；未做新手机冷/热缓存实测，也未正式发布。
 
 # 2026-10-12 DSH-175：降低后台同步状态打扰（候选 0.8.104 / build 215）
 

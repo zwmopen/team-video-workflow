@@ -5,7 +5,8 @@
 - APK：`0.8.105/216`，SHA-256 `C0312ECBF44F649D3189C2762762E55084B5187C0ECB34B3F98DF0F459E19647`，位于 `tools/device-share-hub/android/out/album-Android-v0.8.105.apk`。
 - 版本统一到 Android `0.8.105/216` 与 iOS `0.8.105/216`。iOS 仅对齐版本元数据，本次未改 iOS 图片行为。
 - 只读 `/api/online/status`：Pillow 12.3.0 可用、`fallbackOriginal=0`、内存缓存 500/500、磁盘缓存 1864/2000；这只能说明服务端具备缩略图缓存，不能代替新手机冷缓存计时。
-- USB-only 探针未识别本轮所说的新手机；当前只有旧 M2006C3LC 的无线 ADB 记录，故尚未安装候选或测量真机冷/热缓存耗时。iOS 新 IPA build-only CI 待运行。无正式 Release 或公开更新索引。
+- build-only CI `38264200990` 全部 build/relay-check jobs 成功；live relay E2E 与发布 job 按 build-only 范围跳过。CI Android APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`，iOS IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`，均为 `.105/216`。
+- USB-only 探针未识别本轮所说的新手机：Xiaomi 15 仅以蓝牙设备出现，唯一 USB Composite Device 是笔记本内置 RGB Camera；ADB 只有旧 M2006C3LC 无线条目，故尚未安装候选或测量真机冷/热缓存耗时。无正式 Release 或公开更新索引。
 
 # 2026-10-12 DSH-175：iOS 后台同步状态反复闪回（候选 0.8.104/215）
 
