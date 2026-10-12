@@ -2,7 +2,9 @@
 
 - iOS 在线目录的自动状态探测间隔从 6 秒调整为 30 秒，与 Android 保持一致。
 - 已有作品时，后台静默刷新保留“已同步”状态；首次加载和主动刷新继续显示同步进度。
-- iOS 状态/界面契约检查 31 项、跨端契约 50/50 通过；build-only CI、iPhone 安装和真机回读仍待完成。
+- iOS 状态/界面契约检查 31/31、跨端契约 50/50 通过；build-only CI `38260401299` 成功，XCTest 51/51。
+- IPA `com.zwm.album 0.8.104/215`，最低 iOS 12.0，SHA-256 `A1D97290C9DCFB4769B10B904432F341EC6BC1E3213D54658ABC8CB9D124934B`；unsigned AltStore IPA，无嵌入 provisioning profile。IPA 位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38260401299\`。
+- 最新 USB-only 探针未识别 Apple USB/usbmux，因此 iPhone 安装和修复后真机回读尚未完成；没有正式发布或更新索引。
 
 # 2026-10-12 DSH-174：刷新成功后重绘 iOS 在线作品状态（候选 0.8.103 / build 214）
 

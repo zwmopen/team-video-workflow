@@ -3384,7 +3384,8 @@ totalWorks = 472
 - **根因**：iOS 自动探测定时器间隔为 6 秒；探测到服务端指纹/扫描版本后会调用 `loadOnlineData(silent: true)`，但该方法无论静默与否都覆盖顶部状态。后台轮询被误显示为用户可见的同步加载。
 - **修复**：自动探测间隔改为 30 秒，与 Android 一致；已有作品时，静默刷新保留当前顶部状态。首次加载、无缓存首屏和用户主动刷新仍展示进度。
 - **自动回归**：`tests/test_ios_compare_ui.py` 31 项通过，新增定时器间隔与静默状态保持断言；`tests/parity_ios_android.py` 50/50；`git diff --check` 通过。
-- **候选/设备边界**：iOS 候选升级为 `0.8.104/build 215`，build-only CI 尚待运行。当前 USB-only 探针识别到 Redmi Note 8，另有无线 ADB Android；Apple USB PnP 与 usbmux 均未枚举，因此 iPhone 安装、重现和状态回读未完成。
+- **构建/自动回归**：候选 `0.8.104/build 215` 的 build-only CI `38260401299` 成功，XCTest 51/51；IPA SHA-256 `A1D97290C9DCFB4769B10B904432F341EC6BC1E3213D54658ABC8CB9D124934B`，证据目录 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38260401299\`。本地 iOS UI 31/31、跨端 50/50。
+- **设备边界**：当前 USB-only 探针未枚举 Apple USB PnP 或 usbmux，因此 IPA 尚未安装到 iPhone，修复后重现/状态回读未完成。Android `.102/213` 不含本次 iOS 代码改动。
 - **发布边界**：未创建正式 Release，未更新公开索引；候选构建与源码修复不代表已安装或已发布。
 
 ## DSH-174 iOS 刷新成功后顶部仍显示“正在同步”（源码已修复，设备验收待续 · 2026-10-12）

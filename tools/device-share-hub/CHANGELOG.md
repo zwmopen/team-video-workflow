@@ -2,8 +2,9 @@
 
 - 根因：iOS 在线自动探测定时器为 6 秒，且静默自动刷新仍无条件把顶部状态改成“正在同步电脑在线作品…”。列表已可用时，后台轮询也会显示成前台加载。
 - 修复：自动探测间隔调整为与 Android 一致的 30 秒；静默刷新且已有作品时保留当前同步状态，首次加载和用户主动刷新仍显示进度。
-- 回归：iOS 状态/界面契约检查 31 项通过、iOS/Android 跨端契约 50/50、`git diff --check` 通过。build-only CI 与 iPhone 安装回读待进行。
-- 设备状态：USB-only 探针识别 Redmi Note 8（Android 10）和另一台 Android 无线 ADB；未识别 Apple USB 硬件，usbmux 列表为空。没有将源码通过状态描述为已安装或已发布。
+- 回归：iOS 状态/界面契约检查 31/31、iOS/Android 跨端契约 50/50；build-only CI `38260401299` 成功，XCTest 51/51。
+- IPA：`com.zwm.album 0.8.104/build 215`，最低 iOS 12.0；SHA-256 `A1D97290C9DCFB4769B10B904432F341EC6BC1E3213D54658ABC8CB9D124934B`，产物位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38260401299\`。AltStore IPA 无嵌入 provisioning profile。
+- 设备状态：最新 USB-only 探针仍未识别 Apple USB 硬件，usbmux 列表为空；IPA 尚未安装，未做修复后 iPhone 截图或交互回归。build-only 未触发正式 Release 或更新索引。
 
 # 2026-10-12 DSH-174：iOS 刷新后顶部状态仍停在“正在同步”（候选 0.8.103/214）
 
