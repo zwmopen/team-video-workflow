@@ -1,7 +1,7 @@
 # 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.102 / iPhone 0.8.103）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 当前源码候选：**Android 0.8.102 / versionCode 213**、**iPhone 0.8.103 / build 214**。Android `.102/213` 已在 USB Redmi Note 8 与 Xiaomi M2006C3LC 回读并完成界面回归，build-only CI `38250873510` 成功；iOS DSH-174 修复顶部状态在刷新后仍显示“正在同步”的问题，CI/IPA 与 iPhone 安装回读待完成。没有正式 Release 或更新索引。
+> 当前源码候选：**Android 0.8.102 / versionCode 213**、**iPhone 0.8.103 / build 214**。build-only CI `38255905711` 在提交 `afe751a1c97736800af2b351387ea06568d18d71` 上成功；iOS XCTest 51/51、状态 UI 检查 29/29、跨端契约 50/50 通过，IPA SHA-256 为 `43E3D660ADFF5A659A63D4B22C71C8CA0B19D0AA6BFB3BAA805CFB6916BA1B12`。Android `.102/213` 已在 USB Redmi Note 8 回读并完成主页、对比模式、翻页和关闭回归。当前主机未枚举 Apple USB 设备或 usbmux iPhone，iOS IPA 尚未安装；设备验收仍待 USB 重新枚举。没有正式 Release 或更新索引。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 
@@ -665,6 +665,7 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |

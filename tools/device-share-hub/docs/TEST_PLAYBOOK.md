@@ -14,8 +14,8 @@
 
 - 刷新在线作品列表时，顶部先显示“正在同步电脑在线作品…”，刷新成功后必须切回“已同步电脑在线作品 · 共 N 套”；失败时显示离线快照或未同步状态。
 - 成功回包的数据总数、页面分类数量和只读 `/api/online/status` 的 `totalWorks` 应一致。确认状态标签随快照、成功、失败渲染更新，不残留上一次状态。
-- 自动门禁：`tests/test_ios_compare_ui.py`（状态渲染调用守卫）、`tests/parity_ios_android.py`。本轮定向检查 29/29；CI XCTest、IPA、USB 安装与界面截图待续。
-- 真机交互当前边界：iOS 26.6 不支持现有 USB remote-control tap 所需的 iOS 27+；没有 WDA。截图/启动可做，点击刷新、断网及恢复仍标记未验证。
+- 自动门禁：`tests/test_ios_compare_ui.py`（状态渲染调用守卫）、`tests/parity_ios_android.py`。定向检查 29/29、跨端契约 50/50、build-only CI `38255905711` 的 XCTest 51/51 均通过；IPA `0.8.103/214` 已验 SHA-256。安装、版本回读和修复后截图待 iPhone USB 枚举。
+- 真机交互当前边界：本轮 USB-only 探针未检测到 Apple USB 硬件，usbmux 返回空列表。iOS 26.6 不支持现有 USB remote-control tap 所需的 iOS 27+；没有 WDA。设备重新枚举后可尝试启动/截图；点击刷新、断网及恢复仍标记未验证。
 
 ## Android 单图预览关闭位置回归（DSH-173 / 0.8.102）
 
@@ -256,6 +256,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |

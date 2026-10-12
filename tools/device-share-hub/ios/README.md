@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.103 / build 214（源码候选；build-only IPA 与设备验收待完成）
+版本：0.8.103 / build 214（build-only IPA 已构建；iPhone 安装验收待 USB 重新枚举）
 
-状态：DSH-174 已修复 iOS 在线列表刷新后顶部状态仍残留“正在同步”的问题，静态回归通过。build-only CI、IPA 与设备安装回读待完成；最近 USB-only 探针未枚举 iPhone。iOS 26.6 当前无可用远程点按链，且本机无 WebDriverAgent，因此交互验收仍需可用的真机触控方式。没有修改息屏设置、正式发布或更新索引。
+状态：DSH-174 已修复 iOS 在线列表刷新后顶部状态仍残留“正在同步”的问题。build-only CI `38255905711` 成功，XCTest 51/51、状态 UI 检查 29/29 通过；IPA `com.zwm.album 0.8.103/build 214` 已核对，SHA-256 `43E3D660ADFF5A659A63D4B22C71C8CA0B19D0AA6BFB3BAA805CFB6916BA1B12`。最新 USB-only 探针没有发现 Apple USB 硬件或 usbmux iPhone，因此 IPA 未安装，修复后界面和交互仍未完成真机验收。iOS 26.6 当前无可用远程点按链，且本机无 WebDriverAgent。没有修改息屏设置、正式发布或更新索引。
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
@@ -95,6 +95,7 @@ Windows 不需要运行这些命令。
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |

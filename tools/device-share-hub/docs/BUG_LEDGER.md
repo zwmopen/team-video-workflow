@@ -3383,9 +3383,10 @@ totalWorks = 472
 - **现象**：iPhone 安装 `0.8.100/211` 后，在线作品数已更新为 367，且只读 `/api/online/status` 返回 `totalWorks=367`，但首页顶部仍显示“正在同步电脑在线作品…”。两分钟后的截图仍相同。
 - **根因**：`loadOnlineData` 成功回调更新 `onlineWorks`、清除 `onlineStatusOverride` 后会调用 `renderOnlineUI()`；该函数只刷新分类和 collection view，没有调用 `updateOnlineStatusHint()`，因此 UILabel 保留旧文本。
 - **修复**：在 `renderOnlineUI()` 更新在线状态标签，让快照、同步成功和失败状态随数据一并重绘；`tests/test_ios_compare_ui.py` 新增状态刷新守卫。
-- **自动回归**：iOS 对比/状态定向静态检查 29/29 通过，新增守卫通过；build-only CI 与 XCTest 待推送后回读。
-- **设备边界**：修复前截图及服务状态回读证据位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38249866642\`；当前 USB-only 探针只枚举 Redmi Note 8，没有枚举 iPhone。源码修复后 IPA 安装、状态截图回读尚未完成；iOS 26.6 无可用远程点按链，交互测试仍未验证。
-- **版本/发布**：iOS 源码候选 `0.8.103/build 214`；无正式 Release 或公开更新索引回读。
+- **自动回归**：iOS 对比/状态定向静态检查 29/29、iOS/Android 跨端契约 50/50、XCTest 51/51 全部通过。build-only CI `38255905711` 成功，源码提交 `afe751a1c97736800af2b351387ea06568d18d71`。
+- **构建产物**：IPA 已下载并核对 `com.zwm.album`、`0.8.103/build 214`、最低 iOS 12.0；SHA-256 `43E3D660ADFF5A659A63D4B22C71C8CA0B19D0AA6BFB3BAA805CFB6916BA1B12`。证据位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38255905711\`，CI 日志在同目录旁的 `ios-38255905711-build-log\`。
+- **设备边界**：修复前截图及服务状态回读证据位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38249866642\`；本次两次 USB-only 探针均未检测到 Apple USB 硬件，usbmux 返回空列表。IPA 尚未安装到 iPhone，也没有修复后状态截图；iOS 26.6 无可用远程点按链，真实交互仍未验证。
+- **版本/发布**：iOS 源码候选 `0.8.103/build 214` 已 build-only 构建；未触发正式 Release 或公开更新索引回读。
 
 
 ## DSH-173 Android 单图全屏预览关闭按钮位于左上角（已修复并双机回归 · 2026-10-12）
@@ -3460,6 +3461,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 | Codex | DSH-169 Android 当前页优先预取与双端全屏对比控件统一；更新 .94 真机证据并保留 .95/206 构建、冷缓存进度和 iPhone 验收边界。 |

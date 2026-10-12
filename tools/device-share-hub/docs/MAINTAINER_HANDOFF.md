@@ -2,8 +2,9 @@
 
 - 真机根因已复现：旧版 `0.8.100/211` 首页作品数更新到 367、服务 `/api/online/status` 也回读 367，但顶部仍显示“正在同步电脑在线作品…”。截图在 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38249866642\iphone-home-loaded.png`。
 - 修复：`renderOnlineUI()` 现在调用 `updateOnlineStatusHint()`；`tests/test_ios_compare_ui.py` 新增状态刷新回归守卫，定向检查 29/29 通过。
-- 新源码候选：iOS `0.8.103/build 214`。build-only CI、IPA 下载/版本核对和设备安装回读待完成。最近 USB-only 探针仅枚举 Redmi Note 8，未枚举 iPhone；不运行启用无线同步的快捷 auto 流程。
+- 新源码候选：iOS `0.8.103/build 214`。build-only CI `38255905711` 成功；IPA 已下载并核对 `com.zwm.album`、版本/build、最低系统和 SHA-256 `43E3D660ADFF5A659A63D4B22C71C8CA0B19D0AA6BFB3BAA805CFB6916BA1B12`；XCTest 51/51 通过。最新 USB-only 探针仍只枚举 Redmi Note 8，未发现 Apple USB 硬件或 usbmux 设备，IPA 尚未安装到 iPhone。继续遵守 USB-only 安装验收，不运行启用无线同步的快捷 auto 流程。
 - iOS 26.6 的远程触控接口要求 iOS 27+，没有 WebDriverAgent；可启动/截图，但真实点击与滑动仍不能标通过。未修改息屏设置、未正式发布、未更新索引。
+- USB Redmi Note 8（Android 10/API 29）上已回读 Android `.102/213`；主页计数 367 套、底部三键与文案正确。上下/左右对比、高清原图加载状态完成后消失、P1→P2 和右上角关闭返回均通过；证据 `D:\AICode\运行数据\dsh-evidence\20261012\redmi-current-closure\`。iPhone 缺席期间不把截图或 CI 当成设备验收。
 - 影响文档：README、CHANGELOG、ios/README、ios/CHANGELOG、BUG_LEDGER、TEST_PLAYBOOK、闭环清单；无架构或协议变化。
 
 # 2026-10-12 DSH-173：Android 单图大预览关闭位置（0.8.102/213 本机候选）
@@ -1236,6 +1237,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
