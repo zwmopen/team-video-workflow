@@ -1,3 +1,11 @@
+# 2026-10-12 DSH-177：正式发布等待生产 Relay 端到端门禁
+
+- 发现主分支的正式发布 job 只依赖 Windows、Android、iOS 构建，没有依赖同次推送启动的 `remote-relay-live-e2e`；若 live E2E 失败，发布仍可能继续。
+- 修复 `.github/workflows/device-share-hub.yml`：正式发布现在等待生产 Relay live E2E 与三端构建全部成功；build-only 手动运行仍不会发布。
+- 本轮候选仍为 Android/iOS `0.8.105/216`。用户明确要求先发布，手机安装与真机验收暂缓；候选不能替代发布成功回读。
+- 验证状态：工作流依赖关系已改，等待正式 main push 的 Actions 实际回读；build-only run `38264200990` 早于此工作流修改，不作为新门禁验证。
+- 影响文档：`docs/MAINTAINER_HANDOFF.md`、`docs/BUG_LEDGER.md`、`docs/闭环清单.md`；未改变客户端代码、协议或包版本。
+
 # 2026-10-12 DSH-176：切换分组后缩略图排队、成批出现（候选 0.8.105/216）
 
 - Android 在线列表切换分组、搜索或视图重绘时，现在清除尚未开始的旧缩略图请求；新列表首批仅提交 8 张，并按屏幕顺序渐进放行，避免前一组积压的请求长期挡住当前组。
@@ -7,6 +15,7 @@
 - 只读 `/api/online/status`：Pillow 12.3.0 可用、`fallbackOriginal=0`、内存缓存 500/500、磁盘缓存 1864/2000；这只能说明服务端具备缩略图缓存，不能代替新手机冷缓存计时。
 - build-only CI `38264200990` 全部 build/relay-check jobs 成功；live relay E2E 与发布 job 按 build-only 范围跳过。CI Android APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`，iOS IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`，均为 `.105/216`。
 - USB-only 探针未识别本轮所说的新手机：Xiaomi 15 仅以蓝牙设备出现，唯一 USB Composite Device 是笔记本内置 RGB Camera；ADB 只有旧 M2006C3LC 无线条目，故尚未安装候选或测量真机冷/热缓存耗时。无正式 Release 或公开更新索引。
+- 影响文档：README、ios/README、docs/MAINTAINER_HANDOFF.md、docs/BUG_LEDGER.md、docs/闭环清单.md、`.github/workflows/device-share-hub.yml`；客户端架构与协议未变化。
 
 # 2026-10-12 DSH-175：iOS 后台同步状态反复闪回（候选 0.8.104/215）
 
@@ -3557,6 +3566,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |

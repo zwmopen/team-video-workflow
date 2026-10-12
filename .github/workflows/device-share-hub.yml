@@ -487,7 +487,8 @@ jobs:
 
   publish-gallery-updates:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [windows-portable, android-build, ios-altstore-build]
+    # Do not publish if the production Relay release gate fails.
+    needs: [remote-relay-live-e2e, windows-portable, android-build, ios-altstore-build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release metadata

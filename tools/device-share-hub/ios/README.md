@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.103 / build 214（build-only IPA 已构建；iPhone 安装验收待 USB 重新枚举）
+版本：0.8.105 / build 216（build-only IPA 已构建；正式发布与 iPhone 安装验收待完成）
 
-状态：DSH-174 已修复 iOS 在线列表刷新后顶部状态仍残留“正在同步”的问题。build-only CI `38255905711` 成功，XCTest 51/51、状态 UI 检查 29/29 通过；IPA `com.zwm.album 0.8.103/build 214` 已核对，SHA-256 `43E3D660ADFF5A659A63D4B22C71C8CA0B19D0AA6BFB3BAA805CFB6916BA1B12`。最新 USB-only 探针没有发现 Apple USB 硬件或 usbmux iPhone，因此 IPA 未安装，修复后界面和交互仍未完成真机验收。iOS 26.6 当前无可用远程点按链，且本机无 WebDriverAgent。没有修改息屏设置、正式发布或更新索引。
+状态：此版本包含分支中此前完成的 iOS 同步状态与对比界面修复；DSH-176 只同步版本元数据，没有修改 iOS 图片加载逻辑。build-only CI `38264200990` 成功，IPA `com.zwm.album 0.8.105/build 216` 已核对，SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。按用户要求，手机安装与触控验收暂缓；正式 Release/更新索引正在准备发布。
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
@@ -17,7 +17,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准。是否存在正式 GitHub Release，以发布流水线结果和仓库 Releases 反读为准；Actions artifact 本身不代表已发布。本候选尚无正式 Release。
+IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准。是否存在正式 GitHub Release，以发布流水线结果和仓库 Releases 反读为准；Actions artifact 本身不代表已发布。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
@@ -95,6 +95,7 @@ Windows 不需要运行这些命令。
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
