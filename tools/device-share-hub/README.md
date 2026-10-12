@@ -1,7 +1,7 @@
-# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.101 / iPhone 0.8.100）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.102 / iPhone 0.8.100）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 当前源码候选：**Android 0.8.101 / versionCode 212**、**iPhone 0.8.100 / build 211**。候选提交 `f0a6e7b` 已推送；build-only CI `38232030731` 的 Android、iOS、Windows 与 relay 检查均通过，iOS XCTest 51/51。Android 已安装到 Vivo 并完成关键界面检查；iOS IPA 已构建且校验 SHA-256 `bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`，但最新 USB-only 探针未枚举两台手机，未安装或实测 iOS 候选。正式 Release 与更新索引未触发。
+> 当前源码候选：**Android 0.8.102 / versionCode 213**、**iPhone 0.8.100 / build 211**。Android 本机 Release 候选 SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`，单测、Release、Lint、权限及 v2/v3 签名检查通过；已安装到 USB Redmi Note 8 与无线 Xiaomi M2006C3LC，两台 PackageManager 均回读 `0.8.102/213`。单图预览右上角关闭、关闭返回、在线作品数 367、上下同框/左右并排与 P1→P2 已实机检查。该 Android 候选的 CI 尚待推送后回读；iPhone `.100/211` 仍只有既有 build-only 证据，未在本轮安装。没有正式 Release 或更新索引。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 

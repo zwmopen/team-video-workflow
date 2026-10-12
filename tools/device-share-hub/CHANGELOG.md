@@ -1,3 +1,12 @@
+# 2026-10-12 DSH-173：Android 单图大预览关闭按钮固定右上角（候选 0.8.102/213）
+
+- 现象与根因：两台小米的 Android 单图大预览中，关闭 `×` 出现在左上角。`showLargeImage()` 先加入固定宽度关闭按钮，再加入占满剩余空间的标题，因此按钮自然排在左边。
+- 修复：保留标题权重，把关闭按钮移到标题之后，让它显示在顶栏右端；关闭事件和预览图片/翻页逻辑未变。
+- 构建与安装：本机 Release `0.8.102/213`，SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`；`testDebugUnitTest`、`assembleRelease`、`lintRelease`、APK 权限及 v2/v3 签名验证通过。已保留数据覆盖安装到 Redmi Note 8 USB 与 Xiaomi M2006C3LC 无线 ADB，PackageManager 均回读 `0.8.102/213`。
+- 真机回归：两台手机单图预览截图及屏幕树均确认 `×` 在右上区域；点按后均返回列表。无线机在线列表恢复显示 367 套；全屏对比检查素材/成品、P1→P2、上下同框/左右并排及右上角关闭。日志最近 600 行未发现目标应用 FATAL。截图和脱敏屏幕树见 `D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。
+- 影响文档：无（只修正既有单图预览的标题栏排列，不改变工作流、架构或通信协议）。同步更新 README、BUG_LEDGER、MAINTAINER_HANDOFF、TEST_PLAYBOOK 与闭环清单。
+- 发布边界：这是本机候选；本提交推送后再回读 CI。未创建正式 Release，未改公开更新索引。
+
 # 2026-10-12 DSH-171 设备续验：候选推送与 build-only CI（Android 0.8.101/212；iOS 0.8.100/211）
 
 - 候选提交 `f0a6e7b` 已推送到 `codex/dsh-152-isolated-fix`。GitHub Actions run `38232030731` 全部完成成功；Android Release build/test/lint、iOS build 与 XCTest 51/51、Windows portable 和 relay 检查均通过。`remote-relay-live-e2e` 与 `publish-gallery-updates` 按 build-only/非 main 分支条件跳过，没有正式发布或更新索引。

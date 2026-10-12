@@ -1,3 +1,13 @@
+# 2026-10-12 DSH-173：Android 单图大预览关闭位置（0.8.102/213 本机候选）
+
+- 本轮修复：`WorkDetailActivity.showLargeImage()` 的标题栏先放带权重标题、再放固定尺寸 `×`，关闭按钮现在位于右上角。
+- Android Release 本机候选：`0.8.102/versionCode 213`，SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`。Gradle 单测、Release 构建、Release Lint、APK 权限检查及 v2/v3 签名验证通过。
+- 已保留数据覆盖安装到 Redmi Note 8（USB，Android 10/API 29）和 Xiaomi M2006C3LC（无线 ADB，Android 11/API 30）；两台系统回读 `0.8.102/213`。两台单图预览的关闭控件都在屏幕右上区域，点按后返回列表；日志最近 600 行未发现目标应用 FATAL。
+- 无线机线上作品页回到原在线来源并显示 367 套；实测对比视图素材/成品、P1→P2、上下同框与左右并排，图片居中、左右标签紧贴图片下方、关闭按钮在右上角。
+- 证据：`D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。单图关闭节点 Redmi `[920,182][1036,298]`、M2006 `[604,126][688,210]`；对比页关闭节点 M2006 `[628,75][700,139]`。
+- 状态：源码和本机候选通过；待提交推送后回读 CI。iOS `0.8.100/211` 未在本轮安装或实机检查；未触发正式 Release 或更新索引。
+- 影响文档：无（未改变工作流、架构或通信协议）；同步更新 README、CHANGELOG、BUG_LEDGER、TEST_PLAYBOOK 与闭环清单。`ALBUM_WORKFLOW_DESIGN.md` 正由另一路重写，本轮未改。
+
 # 2026-10-12 DSH-171：双端对比缩略图、加载文案与图片内边界（源码候选）
 
 - 当前对话逐项验收入口：[`闭环清单.md`](闭环清单.md)；各问题根因与回归历史仍以 `BUG_LEDGER.md` 中的 DSH 条目为准。

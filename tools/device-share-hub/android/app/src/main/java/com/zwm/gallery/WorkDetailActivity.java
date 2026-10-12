@@ -330,8 +330,6 @@ public final class WorkDetailActivity extends Activity {
         close.setContentDescription("关闭全屏预览");
         close.setPadding(0, 0, 0, 0);
         close.setGravity(Gravity.CENTER);
-        header.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
-
         TextView titleText = text(work.name, 13, false);
         titleText.setTextColor(Color.rgb(200, 200, 200));
         titleText.setMaxLines(1);
@@ -339,6 +337,7 @@ public final class WorkDetailActivity extends Activity {
         titleText.setPadding(dp(12), 0, dp(12), 0);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
         header.addView(titleText, titleParams);
+        header.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
         container.addView(header, headerParams);
