@@ -1293,7 +1293,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func renderOnlineUI() {
         guard isViewLoaded, isOnlineMode else { return }
-        onlineStatusLabel.isHidden = false
+        // Keep the status bar in sync with the snapshot, refresh result, and failure state.
+        // Without this call the label can remain stuck on the last "正在同步" text even
+        // after loadOnlineData clears its override and updates onlineWorks.
+        updateOnlineStatusHint()
         updateOnlineFilterTitles()
         collectionView.reloadData()
         let items = filteredOnlineWorks

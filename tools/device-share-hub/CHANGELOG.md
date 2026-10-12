@@ -1,3 +1,9 @@
+# 2026-10-12 DSH-174：iOS 刷新后顶部状态仍停在“正在同步”（候选 0.8.103/214）
+
+- 根因：`loadOnlineData` 已清除同步覆盖文案并更新作品数组，但 `renderOnlineUI()` 只刷新分类和列表，没有重新计算顶部状态标签。
+- 修复：列表每次渲染时调用 `updateOnlineStatusHint()`；新增静态回归守卫。`test_ios_compare_ui.py` 29 项通过。
+- 当前边界：源码与定向静态回归通过；build-only CI、IPA 安装和 iPhone 状态回读待完成。USB-only 探针本轮只枚举到 Redmi Note 8，未枚举 iPhone。没有正式 Release 或更新索引。
+
 # 2026-10-12 DSH-173：Android 单图大预览关闭按钮固定右上角（候选 0.8.102/213）
 
 - 现象与根因：两台小米的 Android 单图大预览中，关闭 `×` 出现在左上角。`showLargeImage()` 先加入固定宽度关闭按钮，再加入占满剩余空间的标题，因此按钮自然排在左边。
@@ -5,7 +11,7 @@
 - 构建与安装：本机 Release `0.8.102/213`，SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`；`testDebugUnitTest`、`assembleRelease`、`lintRelease`、APK 权限及 v2/v3 签名验证通过。已保留数据覆盖安装到 Redmi Note 8 USB 与 Xiaomi M2006C3LC 无线 ADB，PackageManager 均回读 `0.8.102/213`。
 - 真机回归：两台手机单图预览截图及屏幕树均确认 `×` 在右上区域；点按后均返回列表。无线机在线列表恢复显示 367 套；全屏对比检查素材/成品、P1→P2、上下同框/左右并排及右上角关闭。日志最近 600 行未发现目标应用 FATAL。截图和脱敏屏幕树见 `D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。
 - 影响文档：无（只修正既有单图预览的标题栏排列，不改变工作流、架构或通信协议）。同步更新 README、BUG_LEDGER、MAINTAINER_HANDOFF、TEST_PLAYBOOK 与闭环清单。
-- 发布边界：这是本机候选；本提交推送后再回读 CI。未创建正式 Release，未改公开更新索引。
+- CI/发布边界：build-only run `38250873510` 对提交 `0b17ead82c764500bcac7972678b6004d24f6be1` 成功；该 run 的 Android `.102/213` 与 iOS `.100/211` 构建通过。没有创建正式 Release，未改公开更新索引。
 
 # 2026-10-12 DSH-171 设备续验：候选推送与 build-only CI（Android 0.8.101/212；iOS 0.8.100/211）
 
@@ -3533,6 +3539,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:20 | 反重力 | record live timing boundary |

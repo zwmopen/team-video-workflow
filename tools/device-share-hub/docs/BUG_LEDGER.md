@@ -3378,6 +3378,15 @@ totalWorks = 472
 
 **当前未关闭优先项**：iOS IPA/真机验收、DSH-157 全设备根因与回归、正式发布三铁证。它们保持开放，不得因为 Android 或静态门禁通过而改写成“全部完成”。
 
+## DSH-174 iOS 刷新成功后顶部仍显示“正在同步”（源码已修复，设备验收待续 · 2026-10-12）
+
+- **现象**：iPhone 安装 `0.8.100/211` 后，在线作品数已更新为 367，且只读 `/api/online/status` 返回 `totalWorks=367`，但首页顶部仍显示“正在同步电脑在线作品…”。两分钟后的截图仍相同。
+- **根因**：`loadOnlineData` 成功回调更新 `onlineWorks`、清除 `onlineStatusOverride` 后会调用 `renderOnlineUI()`；该函数只刷新分类和 collection view，没有调用 `updateOnlineStatusHint()`，因此 UILabel 保留旧文本。
+- **修复**：在 `renderOnlineUI()` 更新在线状态标签，让快照、同步成功和失败状态随数据一并重绘；`tests/test_ios_compare_ui.py` 新增状态刷新守卫。
+- **自动回归**：iOS 对比/状态定向静态检查 29/29 通过，新增守卫通过；build-only CI 与 XCTest 待推送后回读。
+- **设备边界**：修复前截图及服务状态回读证据位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38249866642\`；当前 USB-only 探针只枚举 Redmi Note 8，没有枚举 iPhone。源码修复后 IPA 安装、状态截图回读尚未完成；iOS 26.6 无可用远程点按链，交互测试仍未验证。
+- **版本/发布**：iOS 源码候选 `0.8.103/build 214`；无正式 Release 或公开更新索引回读。
+
 
 ## DSH-173 Android 单图全屏预览关闭按钮位于左上角（已修复并双机回归 · 2026-10-12）
 
@@ -3386,7 +3395,7 @@ totalWorks = 472
 - **修复**：调整为“带 weight 的标题 → 关闭按钮”。保留关闭监听、图片呈现和翻页行为。
 - **版本/构建**：Android `0.8.102/213`；本机 `build-local.ps1 -AndroidOnly` 的 Gradle 单测、Release、Lint、APK 权限和 v2/v3 签名校验通过。APK SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`。
 - **设备回归**：已保留数据覆盖安装到 USB Redmi Note 8（Android 10/API 29）和无线 Xiaomi M2006C3LC（Android 11/API 30），两台 PackageManager 回读 `.102/213`。单图关闭按钮屏幕树坐标分别为 `[920,182][1036,298]`、`[604,126][688,210]`；点按均返回列表。无线设备恢复在线来源后显示 367 套，并通过对比素材/成品、P1→P2、上下/左右切换及右上角关闭。最近 600 行 logcat 未见目标包 FATAL。截图/屏幕树：`D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。
-- **发布边界**：本机候选与实机回归通过；源码推送后的 CI 尚待回读。iOS 本轮未安装或实测；没有正式 Release 或更新索引。
+- **发布边界**：本机候选与实机回归通过；build-only CI `38250873510` 对提交 `0b17ead` 成功。iOS `.100/211` 已安装截图，顶部状态问题转 DSH-174；没有正式 Release 或更新索引。
 - **影响文档**：无工作流/架构/通信设计变化；维护记录同步至 README、CHANGELOG、MAINTAINER_HANDOFF、TEST_PLAYBOOK 与闭环清单。
 
 ## DSH-171 主页对比缩略图偏小与标签位置、iOS 全屏加载提示错位（源码修复候选 · 2026-10-12）
@@ -3451,6 +3460,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 | Codex | DSH-169 Android 当前页优先预取与双端全屏对比控件统一；更新 .94 真机证据并保留 .95/206 构建、冷缓存进度和 iPhone 验收边界。 |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |

@@ -1,3 +1,11 @@
+# 2026-10-12 DSH-174：iOS 在线列表刷新后状态标签未更新（候选 0.8.103/214）
+
+- 真机根因已复现：旧版 `0.8.100/211` 首页作品数更新到 367、服务 `/api/online/status` 也回读 367，但顶部仍显示“正在同步电脑在线作品…”。截图在 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38249866642\iphone-home-loaded.png`。
+- 修复：`renderOnlineUI()` 现在调用 `updateOnlineStatusHint()`；`tests/test_ios_compare_ui.py` 新增状态刷新回归守卫，定向检查 29/29 通过。
+- 新源码候选：iOS `0.8.103/build 214`。build-only CI、IPA 下载/版本核对和设备安装回读待完成。最近 USB-only 探针仅枚举 Redmi Note 8，未枚举 iPhone；不运行启用无线同步的快捷 auto 流程。
+- iOS 26.6 的远程触控接口要求 iOS 27+，没有 WebDriverAgent；可启动/截图，但真实点击与滑动仍不能标通过。未修改息屏设置、未正式发布、未更新索引。
+- 影响文档：README、CHANGELOG、ios/README、ios/CHANGELOG、BUG_LEDGER、TEST_PLAYBOOK、闭环清单；无架构或协议变化。
+
 # 2026-10-12 DSH-173：Android 单图大预览关闭位置（0.8.102/213 本机候选）
 
 - 本轮修复：`WorkDetailActivity.showLargeImage()` 的标题栏先放带权重标题、再放固定尺寸 `×`，关闭按钮现在位于右上角。
@@ -5,7 +13,7 @@
 - 已保留数据覆盖安装到 Redmi Note 8（USB，Android 10/API 29）和 Xiaomi M2006C3LC（无线 ADB，Android 11/API 30）；两台系统回读 `0.8.102/213`。两台单图预览的关闭控件都在屏幕右上区域，点按后返回列表；日志最近 600 行未发现目标应用 FATAL。
 - 无线机线上作品页回到原在线来源并显示 367 套；实测对比视图素材/成品、P1→P2、上下同框与左右并排，图片居中、左右标签紧贴图片下方、关闭按钮在右上角。
 - 证据：`D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。单图关闭节点 Redmi `[920,182][1036,298]`、M2006 `[604,126][688,210]`；对比页关闭节点 M2006 `[628,75][700,139]`。
-- 状态：源码和本机候选通过；待提交推送后回读 CI。iOS `0.8.100/211` 未在本轮安装或实机检查；未触发正式 Release 或更新索引。
+- 状态：Android 源码和本机候选通过；build-only CI `38250873510` 已成功。iOS `0.8.100/211` 之后已安装并截图，发现的顶部状态问题由 DSH-174 跟进；当前 `.103/214` 候选待 CI/IPA 和设备回读。未触发正式 Release 或更新索引。
 - 影响文档：无（未改变工作流、架构或通信协议）；同步更新 README、CHANGELOG、BUG_LEDGER、TEST_PLAYBOOK 与闭环清单。`ALBUM_WORKFLOW_DESIGN.md` 正由另一路重写，本轮未改。
 
 # 2026-10-12 DSH-171：双端对比缩略图、加载文案与图片内边界（源码候选）
@@ -1228,6 +1236,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:20 | 反重力 | record live timing boundary |

@@ -10,6 +10,13 @@
 
 # 三端测试与证据手册
 
+## iOS 在线状态在刷新后同步更新（DSH-174 / 0.8.103）
+
+- 刷新在线作品列表时，顶部先显示“正在同步电脑在线作品…”，刷新成功后必须切回“已同步电脑在线作品 · 共 N 套”；失败时显示离线快照或未同步状态。
+- 成功回包的数据总数、页面分类数量和只读 `/api/online/status` 的 `totalWorks` 应一致。确认状态标签随快照、成功、失败渲染更新，不残留上一次状态。
+- 自动门禁：`tests/test_ios_compare_ui.py`（状态渲染调用守卫）、`tests/parity_ios_android.py`。本轮定向检查 29/29；CI XCTest、IPA、USB 安装与界面截图待续。
+- 真机交互当前边界：iOS 26.6 不支持现有 USB remote-control tap 所需的 iOS 27+；没有 WDA。截图/启动可做，点击刷新、断网及恢复仍标记未验证。
+
 ## Android 单图预览关闭位置回归（DSH-173 / 0.8.102）
 
 - 覆盖安装后分别在 USB 与无线 ADB 设备打开本地作品、点首张图片进入全屏预览；屏幕树中的“关闭全屏预览”按钮应处于标题栏右端，画面应完整显示原图。
@@ -249,6 +256,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:20 | 反重力 | record live timing boundary |

@@ -1,3 +1,9 @@
+# 2026-10-12 DSH-174：刷新成功后重绘 iOS 在线作品状态（候选 0.8.103 / build 214）
+
+- 根因：在线列表刷新成功后虽然更新 `onlineWorks` 并清除“正在同步”覆盖文案，`renderOnlineUI()` 却没有调用状态标签更新函数，界面残留旧文案。
+- 修复：在线内容渲染时统一更新顶部状态标签，并在 `tests/test_ios_compare_ui.py` 加入回归断言；定向检查 29/29 通过。
+- CI 构建、IPA 版本核对、USB 安装和设备读回待完成；没有正式发布或更新索引。
+
 # 2026-10-12 DSH-171：iOS build-only CI（源码候选 0.8.100 / build 211）
 
 - 候选源码随提交 `f0a6e7b` 推送至功能分支；GitHub Actions run `38232030731` 的 iOS 构建成功，XCTest 51/51，IPA 结构和 `Info.plist` 版本校验通过。
@@ -320,6 +326,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |

@@ -36,10 +36,14 @@ def main() -> None:
     toggle_start = preview.index("@objc private func toggleLayoutMode()")
     toggle_end = preview.index("@objc private func prevPage()", toggle_start)
     toggle = preview[toggle_start:toggle_end]
+    render_start = CONTENT.index("private func renderOnlineUI()")
+    render_end = CONTENT.index("private func updateOnlineFilterTitles()", render_start)
+    render_online = CONTENT[render_start:render_end]
 
     check("iOS status has a dedicated online-status-label identifier", 'accessibilityIdentifier = "online-status-label"' in CONTENT)
     check("iOS status exposes synced total", "已同步电脑在线作品 · 共 \\(onlineWorks.count) 套" in CONTENT)
     check("iOS status shows in-flight sync state", 'onlineStatusOverride = "正在同步电脑在线作品…"' in CONTENT)
+    check("iOS online status is refreshed whenever online content is rendered", "updateOnlineStatusHint()" in render_online)
     check("compare card width adapts to the phone", "static var cardWidth: CGFloat" in CONTENT)
     check("compare card image keeps a 3:4 ratio", "static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }" in CONTENT)
     check("home comparison thumbnails show the complete source and final", "iv.contentMode = .scaleAspectFit" in thumb and ".scaleAspectFill" not in thumb)
