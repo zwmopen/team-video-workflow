@@ -277,7 +277,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func startOnlineAutoRefresh() {
         stopOnlineAutoRefresh()
         lastServerFingerprint = nil   // 第一轮只记指纹（viewWillAppear 刚刷过列表）
-        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: true) { [weak self] _ in
+        // 与 Android 的自动探测间隔一致。这里只是后台检查，不应每几秒打扰用户。
+        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             // 无论是否正在滑动，都可以轻量同步视图状态与指纹（作品列表仅在非交互时重刷）
             self.pollForOnlineChanges()
@@ -1114,8 +1115,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func loadOnlineData(silent: Bool = false) {
         onlineLoadGeneration += 1
         let requestGeneration = onlineLoadGeneration
-        onlineStatusOverride = "正在同步电脑在线作品…"
-        updateOnlineStatusHint()
+        // 页面已有可用作品时，后台自动刷新不覆盖稳定的“已同步”状态。
+        // 首次加载仍显示进度；用户主动下拉/点刷新也仍显示“正在同步”。
+        if !silent || onlineWorks.isEmpty {
+            onlineStatusOverride = "正在同步电脑在线作品…"
+            updateOnlineStatusHint()
+        }
         OnlineGalleryClient.shared.fetchCategories { [weak self] result in
             guard let self = self,
                   self.isOnlineMode,

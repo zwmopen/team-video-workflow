@@ -43,6 +43,14 @@ def main() -> None:
     check("iOS status has a dedicated online-status-label identifier", 'accessibilityIdentifier = "online-status-label"' in CONTENT)
     check("iOS status exposes synced total", "已同步电脑在线作品 · 共 \\(onlineWorks.count) 套" in CONTENT)
     check("iOS status shows in-flight sync state", 'onlineStatusOverride = "正在同步电脑在线作品…"' in CONTENT)
+    refresh_start = CONTENT.index("private func startOnlineAutoRefresh()")
+    refresh_end = CONTENT.index("private func stopOnlineAutoRefresh()", refresh_start)
+    refresh_timer = CONTENT[refresh_start:refresh_end]
+    check("iOS automatic online polling matches Android's 30-second interval", "Timer.scheduledTimer(withTimeInterval: 30, repeats: true)" in refresh_timer)
+    load_start = CONTENT.index("private func loadOnlineData(silent: Bool = false)")
+    load_end = CONTENT.index("private func tryAutoDiscoverPc", load_start)
+    load_online = CONTENT[load_start:load_end]
+    check("silent refresh keeps the synced status while cached works remain visible", "if !silent || onlineWorks.isEmpty {" in load_online and "onlineStatusOverride = \"正在同步电脑在线作品…\"" in load_online)
     check("iOS online status is refreshed whenever online content is rendered", "updateOnlineStatusHint()" in render_online)
     check("compare card width adapts to the phone", "static var cardWidth: CGFloat" in CONTENT)
     check("compare card image keeps a 3:4 ratio", "static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }" in CONTENT)
