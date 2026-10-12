@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Communicates with the PC-side Online Gallery Service (port 45835).
@@ -65,6 +66,9 @@ public final class OnlineGalleryClient {
     private static final int LIST_READ_TIMEOUT_MS = 12000;
     private final Context context;
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final AtomicLong worksRequestSequence = new AtomicLong();
+    private volatile long lastAppliedWorksScanRevision = -1L;
+    private volatile long lastObservedServerScanRevision = -1L;
     /**
      * 缩略图专用线程池（2026-09-20 新增）：
      * 旧实现把缩略图与列表/分类/操作请求塞进同一个 4 线程池，几百张缩略图一进来，
@@ -753,7 +757,11 @@ public final class OnlineGalleryClient {
                 // watchdog 缺字段时留空，调用方见空串会保守地照常刷新（宁可多刷，不可漏刷）
                 JSONObject wd = json.optJSONObject("watchdog");
                 String changeAt = (wd != null) ? String.valueOf(wd.optDouble("lastChangeAt", 0d)) : "";
-                final String fingerprint = total + "|" + changeAt;
+                // 扫描刷新是服务端后台完成的；revision 变更后重拉列表，避免一直停留在旧快照。
+                JSONObject scan = json.optJSONObject("scan");
+                String scanRevision = (scan != null) ? String.valueOf(scan.optLong("revision", -1L)) : "";
+                lastObservedServerScanRevision = (scan != null) ? scan.optLong("revision", -1L) : -1L;
+                final String fingerprint = total + "|" + changeAt + "|" + scanRevision;
                 mainHandler.post(() -> callback.onSuccess(fingerprint));
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(e));
@@ -791,6 +799,7 @@ public final class OnlineGalleryClient {
 
     // DSH-109：sortKey 可选，与服务端 SORT_KEYS 对齐；传 null 则不发 sort 参数（服务端默认 default）
     public void fetchWorks(String category, String query, String sortKey, Callback<List<OnlineWorkEntry>> callback) {
+        final long requestSequence = worksRequestSequence.incrementAndGet();
         final boolean fullList = (category == null || category.isEmpty())
                 && (query == null || query.isEmpty());
         final long queuedAt = SystemClock.elapsedRealtime();
@@ -811,6 +820,11 @@ public final class OnlineGalleryClient {
                 URL url = new URL(sb.toString());
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
                 List<OnlineWorkEntry> list = parseWorks(resp);
+                JSONObject responseJson = new JSONObject(resp);
+                long scanRevision = responseJson.optLong("scanRevision", -1L);
+                if (requestSequence == worksRequestSequence.get()) {
+                    lastAppliedWorksScanRevision = scanRevision;
+                }
                 Log.i(TAG, "fetchWorks parsed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " fullList=" + fullList + " works=" + list.size());
@@ -825,6 +839,13 @@ public final class OnlineGalleryClient {
                 mainHandler.post(() -> callback.onError(e));
             }
         });
+    }
+
+    /** 初次指纹轮询也能识别「列表请求返回旧快照、后台扫描已完成」的竞态。 */
+    public boolean hasServerScanAdvancedSinceLastWorksFetch() {
+        long observed = lastObservedServerScanRevision;
+        long applied = lastAppliedWorksScanRevision;
+        return observed > 0 && (applied < 0 || observed > applied);
     }
 
     /**

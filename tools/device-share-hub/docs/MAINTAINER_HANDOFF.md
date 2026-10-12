@@ -1,10 +1,12 @@
-﻿# 2026-10-12 DSH-171：双端主页对比缩略图与 iOS 加载位置（源码候选）
+# 2026-10-12 DSH-171：双端对比缩略图、加载文案与图片内边界（源码候选）
 
-- 版本：Android 0.8.97/versionCode 208；iPhone 0.8.96/build 207。当前是本地源码候选，未构建新包。
-- 修复：Android 对比双图卡按可见条宽度放大并保持 3:4；双端“素材/成品”标签居中叠在各自图片底部；iOS 全屏原图加载提示贴合 scaleAspectFit 后的实际图像右下角。
-- 静态证据：test_ios_compare_ui.py、新增 test_android_compare_preview_strip.py、Android 对比页/预取、iOS 预取/客户端及 parity_ios_android.py 全部通过。
-- 设备状态：Vivo 仍为 0.8.96/207；iPhone 仍为 0.8.95/206。iPhone USB 可枚举，但 iOS 26.6 当前没有可用自动点按链。熄屏中侧载未实测，息屏设置未调整。
-- 下一步：获得候选分支推送授权后触发 build-only CI，下载并校验 APK/IPA，再分别安装、版本回读和设备截图回归；观察 iPhone 熄屏后侧载是否继续。无正式 Release 或更新索引。
+- 当前对话逐项验收入口：[`闭环清单.md`](闭环清单.md)；各问题根因与回归历史仍以 `BUG_LEDGER.md` 中的 DSH 条目为准。
+- 版本：Android 0.8.101/versionCode 212；iOS 源码候选 0.8.100/build 211。Android APK `android/out/album-Android-v0.8.101.apk`，921,520 字节，SHA-256 `D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`；本地 Release、Gradle 单测、Lint、APK 权限与 v2/v3 签名检查通过。iOS 项目内无匹配 IPA，Windows 无 Xcode/Swift。
+- 修复：主页双图卡按屏宽适配并保持完整 3:4，主页“素材/成品”在各自图内底部居中。全屏上下同框的完成标签及加载进度按实际 FIT_CENTER/aspectFit 图像矩形贴在图片内右下角；左右并排 Android 完成标签放在各自图片下方并保持紧凑间距。文字控件尺寸受图片边界约束，窄图按比例缩放/省略。
+- 自动回归：本轮 Android 页面状态守卫 18/18、iOS 对比 UI 静态检查及跨端契约 50/50 通过；Android 本地构建的 Gradle 单测、Release、Lint、权限与签名检查通过。
+- 设备状态（2026-10-12 17:32 +08）：Vivo V2327A 通过 USB/ADB 连接、Android 14/SDK34，已安装并回读 `0.8.101/212`；已检查主页、上下同框、左右并排、P1→P2、右上角关闭及返回主页。主页显示 369 套；只读 `/api/online/status` 回读 `totalWorks=369`、`scanRevision=154`、`refreshing=false`。目标包未见 FATAL。截图保存在 `D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-*.png`。iPhone iOS 26.6 已通过 Apple USB 与 usbmux 枚举；息屏时读取已安装版本仍为 `0.8.95/206`。本机无匹配 `.100/211` IPA；本轮未安装 iOS 候选或做触控验收，未修改息屏设置。
+- 下一步：动态原图百分比仍未捕获；iOS `.100/211` 源码候选需要先进入 macOS/Xcode build-only 构建环境并取得匹配 IPA，再安装、回读版本及完成可用的视觉/交互验收。当前候选未提交到远程，触发远程构建前需获准写入；此后继续逐项检查同步状态、素材映射和刷新恢复。
+- 没有推送、触发 CI、正式 Release 或更新索引；Android 已安装 `.101/212`，iOS 仍是 `.95/206`，不能笼统称两端均已升级。
 
 # 2026-10-11 DSH-170：Android 对比预览三个布局问题（候选 0.8.96/207）
 

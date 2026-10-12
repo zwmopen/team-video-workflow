@@ -47,8 +47,8 @@ def main() -> None:
           "comparePrefetchGeneration[0]++" in compare)
     check("stale page callbacks remain guarded and loading progress remains wired",
           render.count("pageGeneration[0] == requestGeneration") >= 4 and
-          "rightProgress.setText(\"正在加载原图 \" + percent + \"%\")" in render and
-          "leftProgress.setText(\"正在加载原图 \" + percent + \"%\")" in render)
+          "rightProgress.setText(\"高清原图加载中 \" + percent + \"%\")" in render and
+          "leftProgress.setText(\"高清原图加载中 \" + percent + \"%\")" in render)
     print("PASS Android comparison current-page-first prefetch contract")
 
 

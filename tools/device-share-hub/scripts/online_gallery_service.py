@@ -1550,6 +1550,14 @@ class WorkScanner:
         self._works_by_id: Dict[str, Dict[str, Any]] = {}
         self._moved_works: Dict[str, Dict[str, Any]] = {}
         self._last_scan_time = 0.0
+        # DSH-157: HTTP 列表始终从上次完整快照读取；过期扫描在单飞后台线程执行。
+        # 此锁与全盘扫描 _lock 分离，status/列表读取不等待磁盘扫描。
+        self._scan_state_lock = threading.Lock()
+        self._scan_refreshing = False
+        self._scan_revision = 0
+        self._cached_scan_revision = 0
+        self._cleanup_refreshing = False
+        self._last_cleanup_schedule_time = 0.0
         # DSH-117：HTTP 入口 refresh=1 的强制扫描限速（FORCE_SCAN_MIN_INTERVAL 秒一次）
         self._last_force_scan = 0.0
         self._force_scan_throttled = 0
@@ -2011,20 +2019,111 @@ class WorkScanner:
         return 0
 
     def scan_throttled(self, force: bool = False) -> List[Dict[str, Any]]:
-        """HTTP 入口专用：把 refresh=1 的强制全盘扫描限速到 FORCE_SCAN_MIN_INTERVAL 秒一次。
+        """兼容现有 HTTP 调用方的快照入口。"""
+        return self.scan_snapshot_throttled(force=force)[0]
 
-        只包 HTTP 入口、不包 scan() 本身，是为了让单测里连续 scan(force=True)
-        仍然是「真的重扫」—— 限速是**入口流量整形**，不是扫描语义。
+    def scan_snapshot_throttled(self, force: bool = False) -> Tuple[List[Dict[str, Any]], int]:
+        """HTTP 读路由返回现有快照，并把过期/强刷扫描合并到单个后台任务。
+
+        服务启动时会先完成一次同步预热；若无快照则保留同步冷启动兜底。正常列表
+        请求绝不等待 scanner._lock，避免 watchdog 或慢磁盘扫描把手机卡到读超时。
         """
+        requested_force = force
+        force_allowed = force
         if force:
             now = time.time()
-            with self._lock:
+            with self._scan_state_lock:
                 if self._last_force_scan and (now - self._last_force_scan < FORCE_SCAN_MIN_INTERVAL):
                     self._force_scan_throttled += 1
-                    force = False
+                    force_allowed = False
                 else:
                     self._last_force_scan = now
-        return self.scan(force=force)
+
+        with self._scan_state_lock:
+            cached = self._cached_works
+            cached_revision = self._cached_scan_revision
+        if not cached:
+            # run_service() 在开始接收请求前预热缓存；此分支仅用于测试/异常冷启动。
+            works = self.scan(force=force_allowed)
+            with self._scan_state_lock:
+                return works, self._cached_scan_revision
+
+        # refresh=1 被限速时不偷偷退化为 TTL 刷新，否则连续点击仍会反复触发全盘扫描。
+        if requested_force and not force_allowed:
+            return cached, cached_revision
+
+        stale = (time.time() - self._last_scan_time) >= SCAN_CACHE_TTL
+        with self._scan_state_lock:
+            cleanup_active = self._cleanup_refreshing
+        if (force_allowed or stale) and not cleanup_active:
+            self._schedule_background_scan(force=force_allowed)
+        return cached, cached_revision
+
+    def _schedule_background_scan(self, force: bool = False) -> bool:
+        """启动至多一个后台扫描；返回是否新启动了任务。"""
+        with self._scan_state_lock:
+            if self._scan_refreshing:
+                return False
+            self._scan_refreshing = True
+
+        def _run_scan():
+            started = time.perf_counter()
+            try:
+                works = self.scan(force=force)
+                print(f"[DSH-157] background scan complete: works={len(works)} elapsed_ms={_dsh157_elapsed_ms(started)}")
+            except Exception as exc:
+                print(f"[DSH-157] background scan failed: {type(exc).__name__}")
+            finally:
+                with self._scan_state_lock:
+                    self._scan_refreshing = False
+
+        thread = threading.Thread(target=_run_scan, name="DSH157-list-scan", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self._scan_state_lock:
+                self._scan_refreshing = False
+            raise
+        return True
+
+    def scan_status(self) -> Dict[str, Any]:
+        """轻量只读扫描状态，供设备端在后台刷新完成后更新列表。"""
+        with self._scan_state_lock:
+            return {
+                "revision": self._scan_revision,
+                "completedAt": self._last_scan_time,
+                "refreshing": self._scan_refreshing or self._cleanup_refreshing,
+            }
+
+    def schedule_expired_cleanup(self) -> bool:
+        """把列表读取前的到期巡检移出 HTTP 线程，与 watchdog 的周期巡检合并。"""
+        now = time.time()
+        with self._scan_state_lock:
+            if self._cleanup_refreshing or now - self._last_cleanup_schedule_time < 60.0:
+                return False
+            self._cleanup_refreshing = True
+            self._last_cleanup_schedule_time = now
+
+        def _run_cleanup():
+            try:
+                self.cleanup_expired_works()
+            except Exception as exc:
+                print(f"[DSH-157] background expiry cleanup failed: {type(exc).__name__}")
+            finally:
+                with self._scan_state_lock:
+                    self._cleanup_refreshing = False
+                    stale = bool(self._cached_works) and (time.time() - self._last_scan_time >= SCAN_CACHE_TTL)
+                if stale:
+                    self._schedule_background_scan(force=False)
+
+        thread = threading.Thread(target=_run_cleanup, name="DSH157-expiry-cleanup", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self._scan_state_lock:
+                self._cleanup_refreshing = False
+            raise
+        return True
 
     def scan(self, force: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
@@ -2136,9 +2235,12 @@ class WorkScanner:
 
             # 按时间倒序（标题通常带时间戳）
             results.sort(key=lambda w: w.get("title", ""), reverse=True)
-            self._cached_works = results
             self._works_by_id = {w["id"]: w for w in results}
-            self._last_scan_time = now
+            with self._scan_state_lock:
+                self._last_scan_time = time.time()
+                self._scan_revision += 1
+                self._cached_scan_revision = self._scan_revision
+                self._cached_works = results
             # DSH-128：_moved_works 只增不减，趁每轮**真的**全盘扫描顺手清一次。
             # 挂在这里而不是缓存命中的提前返回路径上：清理要 stat 每一条，
             # 没必要在「读缓存」这种高频短路径上反复跑。
@@ -2256,8 +2358,8 @@ class WorkScanner:
             if now - self._last_scan_time > 120.0:
                 self._watchdog_last_change = now
                 try:
-                    self.scan(force=True)
-                    print(f"[DSH-110 watchdog] 检测到货架结构变更 → force scan: +{len(new_paths)} / -{len(deleted_paths)}")
+                    scheduled = self._schedule_background_scan(force=True)
+                    print(f"[DSH-110 watchdog] 检测到货架结构变更 → background scan {'scheduled' if scheduled else 'already active'}: +{len(new_paths)} / -{len(deleted_paths)}")
                 except Exception as e:
                     print(f"[DSH-110 watchdog] scan 失败：{e!r}")
                 return True
@@ -2488,6 +2590,52 @@ class WorkScanner:
             except OSError:
                 return (0, 0)
 
+        # 原素材通常位于作品目录外。只用作品目录/manifest 的时间戳做缓存键，
+        # 会把“扫描时原图尚未到位”的空 sourceImages 长期缓存，即使素材后来已存在。
+        manifest_file = os.path.join(dir_path, "manifest.json")
+        manifest_data: Dict[str, Any] = {}
+        if os.path.exists(manifest_file):
+            try:
+                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    loaded_manifest = json.load(fp)
+                if isinstance(loaded_manifest, dict):
+                    manifest_data = loaded_manifest
+            except Exception:
+                pass
+
+        source_root = str(
+            manifest_data.get("sourceMaterialPath")
+            or manifest_data.get("rawMaterialPath")
+            or ""
+        ).strip()
+        page_map = manifest_data.get("pageMap")
+        source_paths = set()
+        if source_root:
+            # 目录本身的时间戳能发现素材文件新增/移除。
+            source_paths.add(source_root)
+        if isinstance(page_map, list) and page_map:
+            for item in page_map:
+                if not isinstance(item, dict):
+                    continue
+                source_path = str(item.get("sourcePath") or "").strip()
+                if source_path:
+                    source_paths.add(source_path)
+                source_image = str(item.get("sourceImage") or "").strip()
+                if source_root and source_image:
+                    # 同时追踪 fallback 路径：sourcePath 不可用时解析器会尝试它。
+                    source_paths.add(os.path.join(source_root, source_image))
+        elif source_root and os.path.isdir(source_root):
+            # 旧 manifest 没有逐页 pageMap 时，解析器按目录内排序后的图片列表配对。
+            try:
+                for name in os.listdir(source_root):
+                    if os.path.splitext(name)[1].lower() in IMAGE_EXTENSIONS:
+                        source_paths.add(os.path.join(source_root, name))
+            except OSError:
+                pass
+        source_compare_stamp = tuple(
+            (path, _f_stamp(path)) for path in sorted(source_paths)
+        )
+
         txt_candidates = [f for f in files if f.lower().endswith(".txt")]
         cache_key = (dir_path, stage_name, default_category)
         dir_stamp = (
@@ -2497,6 +2645,7 @@ class WorkScanner:
             tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in txt_candidates),
             _f_stamp(os.path.join(dir_path, "作品标签.json")),
             _f_stamp(os.path.join(dir_path, "manifest.json")),
+            source_compare_stamp,
         )
         cached_entry = self._inspect_cache.get(cache_key)
         if cached_entry is not None and cached_entry[0] == dir_stamp:
@@ -2531,12 +2680,8 @@ class WorkScanner:
                 pass
 
         # 若依然为空，尝试从 manifest.json 读取 rawMaterialPath 的文案
-        manifest_file = os.path.join(dir_path, "manifest.json")
-        manifest_data = {}
-        if os.path.exists(manifest_file):
+        if manifest_data:
             try:
-                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
-                    manifest_data = json.load(fp)
                 if not copy_text and copy_is_real(manifest_data.get("copy_content", "")):
                     copy_text = manifest_data.get("copy_content", "").strip()
                 if not copy_text and manifest_data.get("rawMaterialPath"):
@@ -2638,38 +2783,7 @@ class WorkScanner:
             dir_path, images, manifest_data
         )
 
-        def _extract_work_timestamp(fname: str, dpath: str, mdata: Dict[str, Any]) -> float:
-            """提取作品绝对真实生产时间戳（毫秒），优先文件夹名时间戳，杜绝因文件更新导致排序漂移。"""
-            if fname:
-                m = re.search(r'(\d{8})_(\d{6})', fname)
-                if m:
-                    try:
-                        dt = datetime.datetime.strptime(f"{m.group(1)}{m.group(2)}", "%Y%m%d%H%M%S")
-                        return dt.timestamp() * 1000.0
-                    except Exception:
-                        pass
-                m2 = re.search(r'(\d{8})', fname)
-                if m2:
-                    try:
-                        dt = datetime.datetime.strptime(m2.group(1), "%Y%m%d")
-                        return dt.timestamp() * 1000.0
-                    except Exception:
-                        pass
-            if isinstance(mdata, dict):
-                for k in ["producedAt", "completedAt", "completedAtUtc", "createdAt", "created_at"]:
-                    val = str(mdata.get(k) or "").strip()
-                    if val:
-                        clean_v = val.replace("T", " ")[:19]
-                        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
-                            try:
-                                dt = datetime.datetime.strptime(clean_v, fmt)
-                                return dt.timestamp() * 1000.0
-                            except Exception:
-                                pass
-            try:
-                return os.path.getmtime(dpath) * 1000.0
-            except Exception:
-                return 0.0
+        created_at_ms = int(round(_extract_work_timestamp(folder_name, dir_path, manifest_data)))
 
         work_result = {
             "id": work_id,
@@ -2714,7 +2828,8 @@ class WorkScanner:
                 "placeholderOnly": is_placeholder_copy(copy_raw),
             },
             "searchBlob": copy_search_blob,
-            "updatedAt": _extract_work_timestamp(folder_name, dir_path, manifest_data),
+            "createdAtMs": created_at_ms,
+            "updatedAt": created_at_ms,
             # DSH-109：作品目录总字节数（含子目录，用于 size_desc/size_asc 排序）
             "sizeBytes": _dir_size_bytes(dir_path),
             # 标签与时令元数据 (季节 season / 流量类型 flowType / 完整标签 tags / 生产溯源与精品标杆)
@@ -2726,7 +2841,7 @@ class WorkScanner:
             "productionMode": manifest_data.get("productionMode") or manifest_data.get("apiSubMode") or ("reuse-conversation" if manifest_data.get("conversationUrl") else "1_shuffle"),
             "productionModeName": manifest_data.get("productionModeName") or ("会话母版复刻模式" if manifest_data.get("conversationUrl") else "原图复刻打乱模式"),
             "templateId": manifest_data.get("templateId") or manifest_data.get("template") or ("会话锁定母版" if manifest_data.get("conversationUrl") else "原图自身构图"),
-            "producedAt": manifest_data.get("producedAt") or manifest_data.get("completedAt") or manifest_data.get("created_at") or manifest_data.get("createdAt") or (str(manifest_data.get("completedAtUtc") or "")[:19].replace("T", " ") if manifest_data.get("completedAtUtc") else ""),
+            "producedAt": manifest_data.get("producedAt") or manifest_data.get("completedAt") or manifest_data.get("created_at") or manifest_data.get("createdAt") or str(manifest_data.get("completedAtUtc") or ""),
             "accountName": manifest_data.get("accountName") or manifest_data.get("account") or "",
             "conversationUrl": manifest_data.get("conversationUrl") or "",
             "isStarred": bool(manifest_data.get("isStarred") or ("⭐精品标杆" in (manifest_data.get("tags") or []))),
@@ -2758,6 +2873,98 @@ class ReverseStr:
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, ReverseStr) and self.value == other.value
+
+
+def _parse_manifest_timestamp(value: Any, field_name: str = "") -> Optional[float]:
+    """Parse ISO dates without dropping an explicit UTC offset.
+
+    Naive production timestamps retain the host-local convention used by legacy
+    manifests. The explicitly UTC-named completedAtUtc field defaults to UTC
+    when its value omits an offset.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
+    try:
+        parsed = datetime.datetime.fromisoformat(normalized)
+    except (TypeError, ValueError):
+        parsed = None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed = datetime.datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None and field_name == "completedAtUtc":
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    try:
+        return parsed.timestamp() * 1000.0
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _extract_work_timestamp(folder_name: str, dir_path: str, manifest_data: Dict[str, Any]) -> float:
+    """Get stable production time: folder-local timestamp, manifest time, then folder mtime."""
+    if folder_name:
+        match = re.search(r"(\d{8})_(\d{6})", folder_name)
+        if match:
+            try:
+                parsed = datetime.datetime.strptime(
+                    f"{match.group(1)}{match.group(2)}", "%Y%m%d%H%M%S"
+                )
+                return parsed.timestamp() * 1000.0
+            except (OverflowError, OSError, ValueError):
+                pass
+        date_match = re.search(r"(\d{8})", folder_name)
+        if date_match:
+            try:
+                parsed = datetime.datetime.strptime(date_match.group(1), "%Y%m%d")
+                return parsed.timestamp() * 1000.0
+            except (OverflowError, OSError, ValueError):
+                pass
+    if isinstance(manifest_data, dict):
+        for field_name in ("producedAt", "completedAt", "completedAtUtc", "createdAt", "created_at"):
+            timestamp = _parse_manifest_timestamp(manifest_data.get(field_name), field_name)
+            if timestamp is not None:
+                return timestamp
+    try:
+        return os.path.getmtime(dir_path) * 1000.0
+    except (OSError, TypeError, ValueError):
+        return 0.0
+
+
+def sort_online_work_entries(works: List[Dict[str, Any]], sort_key: str, category: str = "") -> List[Dict[str, Any]]:
+    """Sort works while keeping explicit time sorting strictly chronological."""
+    def created_at(work: Dict[str, Any]) -> float:
+        try:
+            return float(work.get("createdAtMs") or work.get("updatedAt") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if sort_key == "time_desc":
+        works.sort(key=lambda work: (-created_at(work), str(work.get("id") or "")))
+        return works
+    if sort_key == "time_asc":
+        works.sort(key=lambda work: (created_at(work), str(work.get("id") or "")))
+        return works
+
+    # Legacy stage buckets keep their natural membership order for non-time sorts.
+    if category in ("待首发", "已发1次", "已发2次"):
+        return works
+    if sort_key == "default":
+        works.sort(key=lambda work: -int(work.get("useCount", 0) or 0))
+    elif sort_key == "size_asc":
+        works.sort(key=lambda work: (-int(work.get("useCount", 0) or 0), int(work.get("sizeBytes") or 0)))
+    elif sort_key == "size_desc":
+        works.sort(key=lambda work: (-int(work.get("useCount", 0) or 0), -int(work.get("sizeBytes") or 0)))
+    elif sort_key == "name_asc":
+        works.sort(key=lambda work: (-int(work.get("useCount", 0) or 0), (work.get("title") or "").lower()))
+    elif sort_key == "name_desc":
+        works.sort(key=lambda work: (-int(work.get("useCount", 0) or 0), ReverseStr((work.get("title") or "").lower())))
+    return works
 
 
 def _dir_size_bytes(root_path: str) -> int:
@@ -3138,6 +3345,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "slotGuard": slot_guard_health(),
                 # DSH-110：文件系统轮询监听状态（手机端 statusText badge 用）
                 "watchdog": self.scanner.watchdog_status(),
+                # DSH-157：revision 在全盘扫描完成后变化，手机据此重拉过期快照。
+                "scan": self.scanner.scan_status(),
                 # DSH-113：手机 OTA 中转健康度（手机拿不到 GitHub，只能靠电脑代取）
                 "updateRelay": update_relay_health(),
                 # DSH-117：扫描链路有没有在静默吞异常（count>0 就是响铃，不是噪音）
@@ -3236,12 +3445,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # DSH-140: 聚合分类前快速巡检到期作品，防止已到期作品污染分类计数
             phase_started = time.perf_counter()
             try:
-                self.scanner.cleanup_expired_works()
+                self.scanner.schedule_expired_cleanup()
             except Exception as _ce:
                 print(f"[DSH-140] categories 巡检异常: {_ce!r}")
             route_timing["cleanup_ms"] = _dsh157_elapsed_ms(phase_started)
             phase_started = time.perf_counter()
-            works = self.scanner.scan_throttled()
+            works, scan_revision = self.scanner.scan_snapshot_throttled()
             route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
             phase_started = time.perf_counter()
             counts: Dict[str, int] = {}
@@ -3289,13 +3498,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             route_timing["result_count"] = len(categories)
             self.send_json(
                 200,
-                {"ok": True, "categories": categories, "stages": [], "total": len(works)},
+                {"ok": True, "categories": categories, "stages": [], "total": len(works),
+                 "scanRevision": scan_revision},
                 timing=route_timing,
             )
             return
 
         if path == "/api/online/filter-options":
-            works = self.scanner.scan_throttled()
+            works, scan_revision = self.scanner.scan_snapshot_throttled()
             season_counts: Dict[str, int] = {k: 0 for k in ("春季", "夏季", "秋季", "冬季", "四季通用")}
             flow_counts: Dict[str, int] = {k: 0 for k in ("精准流量团建", "泛流量游戏攻略")}
             tag_counts: Dict[str, int] = {}
@@ -3313,6 +3523,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "flowTypes": [{"name": k, "count": flow_counts.get(k, 0)} for k in ("精准流量团建", "泛流量游戏攻略")],
                 "tags": [{"name": k, "count": v} for k, v in sorted(tag_counts.items(), key=lambda x: -x[1])[:20]],
                 "total": len(works),
+                "scanRevision": scan_revision,
             })
             return
 
@@ -3321,7 +3532,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # DSH-140: 拉取作品列表前快速巡检到期作品，杜绝已到期僵尸作品滞留货架
             phase_started = time.perf_counter()
             try:
-                self.scanner.cleanup_expired_works()
+                self.scanner.schedule_expired_cleanup()
             except Exception as _we:
                 print(f"[DSH-140] works 巡检异常: {_we!r}")
             route_timing["cleanup_ms"] = _dsh157_elapsed_ms(phase_started)
@@ -3348,7 +3559,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             route_timing["prepare_ms"] = _dsh157_elapsed_ms(phase_started)
             phase_started = time.perf_counter()
-            works = self.scanner.scan_throttled(force=force_refresh)
+            works, scan_revision = self.scanner.scan_snapshot_throttled(force=force_refresh)
             route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
             phase_started = time.perf_counter()
             tokens = [search_query] if is_path_search else (search_query.split() if search_query else [])
@@ -3405,53 +3616,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
                 filtered.append(w)
 
-            # DSH-104：在线相册分类下，已用过的作品立刻置顶。
-            # 一级排序：useCount 降序（用得越多越靠前）。
-            # 二级排序（DSH-109）：sort_key 决定同 useCount 内的相对顺序。
-            #   - default（向后兼容）：保持扫描顺序（Python sort 稳定）
-            #   - time_asc：updatedAt 升序（最新作品排在最底，用户口径）
-            #   - time_desc：updatedAt 降序
-            #   - name_asc/name_desc：按 title 字典序升降
-            #   - size_desc/size_asc：按 sizeBytes 字节数升降
-            # 「全部」分类下也生效（让用户一眼能看到最近分享过的）。
-            if category not in ("待首发", "已发1次", "已发2次"):
-                if sort_key == "default":
-                    filtered.sort(key=lambda w: -int(w.get("useCount", 0) or 0))
-                elif sort_key == "time_asc":
-                    filtered.sort(key=lambda w: (
-                        -int(w.get("useCount", 0) or 0),
-                        float(w.get("updatedAt") or 0.0),
-                    ))
-                elif sort_key == "time_desc":
-                    filtered.sort(key=lambda w: (
-                        -int(w.get("useCount", 0) or 0),
-                        -float(w.get("updatedAt") or 0.0),
-                    ))
-                elif sort_key == "size_asc":
-                    filtered.sort(key=lambda w: (
-                        -int(w.get("useCount", 0) or 0),
-                        int(w.get("sizeBytes") or 0),
-                    ))
-                elif sort_key == "size_desc":
-                    filtered.sort(key=lambda w: (
-                        -int(w.get("useCount", 0) or 0),
-                        -int(w.get("sizeBytes") or 0),
-                    ))
-                elif sort_key == "name_asc":
-                    filtered.sort(key=lambda w: (
-                        -int(w.get("useCount", 0) or 0),
-                        (w.get("title") or "").lower(),
-                    ))
-                elif sort_key == "name_desc":
-                    filtered.sort(key=lambda w: (
-                        -int(w.get("useCount", 0) or 0),
-                        ReverseStr((w.get("title") or "").lower()),
-                    ))
+            # DSH-109: an explicit time choice means newest/oldest production time
+            # across the complete filtered shelf, independent of use-count pinning.
+            sort_online_work_entries(filtered, sort_key, category)
 
             response_data = {
                 "ok": True,
                 "category": category,
                 "total": len(filtered),
+                "scanRevision": scan_revision,
                 "viewState": get_gallery_view_state(),
                 # 剥离 searchBlob / slotGuard：两端客户端都不解析，47% 体积纯属白送
                 "works": slim_works_for_wire(filtered)

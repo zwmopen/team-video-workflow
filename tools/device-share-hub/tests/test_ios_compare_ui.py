@@ -42,6 +42,7 @@ def main() -> None:
     check("iOS status shows in-flight sync state", 'onlineStatusOverride = "正在同步电脑在线作品…"' in CONTENT)
     check("compare card width adapts to the phone", "static var cardWidth: CGFloat" in CONTENT)
     check("compare card image keeps a 3:4 ratio", "static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }" in CONTENT)
+    check("home comparison thumbnails show the complete source and final", "iv.contentMode = .scaleAspectFit" in thumb and ".scaleAspectFill" not in thumb)
     check("compare card leaves only a compact header and bottom inset", "static var cardHeight: CGFloat { imageHeight + 27 }" in thumb and "leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)" in thumb)
     check("home compare labels overlay each image bottom-center", "leftImageView.addSubview(leftBadge)" in thumb and "rightImageView.addSubview(rightBadge)" in thumb and "leftBadge.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor)" in thumb and "leftBadge.bottomAnchor.constraint(equalTo: leftImageView.bottomAnchor, constant: -8)" in thumb and "rightBadge.centerXAnchor.constraint(equalTo: rightImageView.centerXAnchor)" in thumb and "rightBadge.bottomAnchor.constraint(equalTo: rightImageView.bottomAnchor, constant: -8)" in thumb)
     check("compare preview height follows the card", "previewScrollHeightConstraint?.constant = ComparePairThumbView.cardHeight" in CONTENT)
@@ -56,9 +57,25 @@ def main() -> None:
     check("comparison images fill the pane and remain aspect-fit centered", "imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor)" in container and "imageView.contentMode = .scaleAspectFit" in container and "badge.leadingAnchor" not in container)
     check("comparison panes match the black fullscreen canvas without a card edge", "container.backgroundColor = .black" in container and "container.layer.cornerRadius = 0" in container and "container.layer.borderWidth = 0" in container)
     check("original-load percentage follows the visible aspect-fit image", "override func viewDidLayoutSubviews()" in preview and "updateProgressLabelPositions()" in preview and "imageAspect > paneAspect" in preview and "visibleImageRect.offsetBy(dx: imageView.frame.minX, dy: imageView.frame.minY)" in preview and "progressLabel.translatesAutoresizingMaskIntoConstraints = true" in container and "progressLabel.trailingAnchor.constraint" not in container and "progressLabel.bottomAnchor.constraint" not in container)
-    check("stacked mode places labels in the right-side rail", "badge.centerYAnchor.constraint(equalTo: container.centerYAnchor)" in container and "leftBadgeCenterYConstraint?.isActive = !isHorizontalLayout" in toggle)
-    check("side-by-side mode moves labels to the top", "badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8)" in container and "leftBadgeTopConstraint?.isActive = isHorizontalLayout" in toggle and "rightBadgeTopConstraint?.isActive = isHorizontalLayout" in toggle)
-    check("original-load state starts with visible percentage text", 'rightProgressLabel.text = "正在加载原图 0%"' in load_page and 'leftProgressLabel.text = sourcePath.isEmpty ? nil : "正在加载原图 0%"' in load_page)
+    check("loading label shrinks to stay fully inside a narrow visible image", "progressLabel.adjustsFontSizeToFitWidth = true" in container and "progressLabel.minimumScaleFactor = 0.65" in container and "progressLabel.numberOfLines = 1" in container and "let inset: CGFloat = 4" in preview and "minimumWidth: 58, height: 20, horizontalPadding: 12" in preview and "let labelWidth = min(max(minimumWidth, fittingSize.width + horizontalPadding), availableWidth)" in preview and "x: imageRectInContainer.maxX - labelWidth - inset" in preview and "y: imageRectInContainer.maxY - labelHeight - inset" in preview)
+    check("loaded labels share the actual fitted image bottom-right with the progress state",
+          "positionBadgeLabel(leftBadge, over: leftImageView)" in preview and
+          "positionBadgeLabel(rightBadge, over: rightImageView)" in preview and
+          "private func positionBadgeLabel(" in preview and
+          "imageRectInContainer.maxX - labelWidth - inset" in preview and
+          "imageRectInContainer.maxY - labelHeight - inset" in preview and
+          "badge.translatesAutoresizingMaskIntoConstraints = true" in container and
+          "badge.trailingAnchor.constraint" not in container)
+    check("original-load state starts with the same high-resolution status on both panes", 'rightProgressLabel.text = "高清原图加载中 0%"' in load_page and 'leftProgressLabel.text = sourcePath.isEmpty ? nil : "高清原图加载中 0%"' in load_page and 'self.rightProgressLabel.text = "高清原图加载中 \\(pct)%"' in load_page and 'self.leftProgressLabel.text = "高清原图加载中 \\(pct)%"' in load_page)
+    check("standalone original preview uses the same loading status", 'badgeLabel.text = "⏳ 高清原图加载中..."' in CONTENT)
+    view_did_load_start = CONTENT.index("override func viewDidLoad()")
+    view_did_load_end = CONTENT.index("@objc private func openTransfer()", view_did_load_start)
+    view_did_load = CONTENT[view_did_load_start:view_did_load_end]
+    check("online first appearance does not duplicate the initial list request", "primeOnlineDataFromSnapshot()" in view_did_load and "loadOnlineData()" not in view_did_load and "loadOnlineData(silent: true)" in CONTENT)
+    model_parse_start = CLIENT.index("public static func from(dict: [String: Any])")
+    model_parse_end = CLIENT.index("// 在线回收站", model_parse_start)
+    model_parse = CLIENT[model_parse_start:model_parse_end]
+    check("client sorting time comes from stable createdAtMs and missing time stays deterministic", 'dict["createdAtMs"]' in model_parse and "updatedAt = 0" in model_parse and "Date().timeIntervalSince1970 * 1000" not in model_parse)
     check("successful original loads show labels and hide progress", "self.rightBadge.isHidden = false" in load_page and "self.leftBadge.isHidden = false" in load_page and load_page.count("ProgressLabel.isHidden = true") >= 2)
     check("failed original loads remain visibly distinct from ready labels", 'self.rightProgressLabel.text = "原图加载失败"' in load_page and 'self.leftProgressLabel.text = "素材原图加载失败"' in load_page)
     print("PASS iOS compare/status UI contract")

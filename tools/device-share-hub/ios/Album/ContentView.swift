@@ -258,9 +258,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         if isOnlineMode {
             // 【体感加速】先读本地快照进内存（几十毫秒级），再后台拉最新；
-            // 这样从本地相册切到在线相册是「秒开」而不是「正在连接」。
+            // 最新列表请求统一由 viewWillAppear 发起，避免首屏重复请求。
             primeOnlineDataFromSnapshot()
-            loadOnlineData()
         } else {
             render()
         }
@@ -321,7 +320,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             let first = self.lastServerFingerprint == nil
             let same = fingerprint == self.lastServerFingerprint
             self.lastServerFingerprint = fingerprint
-            if first || same { return }
+            if first {
+                // First poll may trail the background scan; reload once if the list revision is old.
+                if OnlineGalleryClient.shared.hasServerScanAdvancedSinceLastWorksFetch() {
+                    self.loadOnlineData(silent: true)
+                }
+                return
+            }
+            if same { return }
             self.loadOnlineData(silent: true)
         }
     }
@@ -932,23 +938,29 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func sortOnlineWorksLocally(_ list: inout [OnlineWorkEntry], sortKey: String) {
         let now = Date().timeIntervalSince1970 * 1000
+        let chronologicalSort = sortKey == "time_desc" || sortKey == "time_asc"
         list.sort { a, b in
-            // 一级规则（DSH-135）：已使用的作品在到期前统一置顶在货架顶部
-            let aUsed = (a.expireAtMs > now && a.useCount > 0)
-            let bUsed = (b.expireAtMs > now && b.useCount > 0)
-            if aUsed && !bUsed { return true }
-            if !aUsed && bUsed { return false }
-            if aUsed && bUsed {
-                let aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt
-                let bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt
-                if aTime != bTime { return aTime > bTime }
+            if !chronologicalSort {
+                // DSH-135 pinning remains for non-time sorts. Explicit time
+                // sorting must stay strictly chronological as requested.
+                let aUsed = (a.expireAtMs > now && a.useCount > 0)
+                let bUsed = (b.expireAtMs > now && b.useCount > 0)
+                if aUsed && !bUsed { return true }
+                if !aUsed && bUsed { return false }
+                if aUsed && bUsed {
+                    let aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt
+                    let bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt
+                    if aTime != bTime { return aTime > bTime }
+                }
             }
             // 二级规则（DSH-109）：按指定的 sortKey 排序（与 Android / 服务端 SORT_KEYS 统一）
             switch sortKey {
             case "time_desc":
-                return a.updatedAt > b.updatedAt
+                if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+                return a.id < b.id
             case "time_asc":
-                return a.updatedAt < b.updatedAt
+                if a.updatedAt != b.updatedAt { return a.updatedAt < b.updatedAt }
+                return a.id < b.id
             case "name_asc":
                 return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
             case "name_desc":
@@ -958,7 +970,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             case "size_asc":
                 return a.imageCount < b.imageCount
             default:
-                return a.updatedAt > b.updatedAt
+                if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+                return a.id < b.id
             }
         }
     }
@@ -2497,7 +2510,9 @@ private final class ComparePairThumbView: UIControl {
         addSubview(headerLabel)
 
         for iv in [leftImageView, rightImageView] {
-            iv.contentMode = .scaleAspectFill
+            // Keep the complete source/final thumbnail visible. The 3:4 pane
+            // is a preview window, not permission to crop arbitrary originals.
+            iv.contentMode = .scaleAspectFit
             iv.clipsToBounds = true
             iv.layer.cornerRadius = 6
             iv.backgroundColor = AppColors.sharedBackground
@@ -3984,7 +3999,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         switch status {
         case .loading:
             badgeSpinner.startAnimating()
-            badgeLabel.text = "⏳ 正在加载原图..."
+            badgeLabel.text = "⏳ 高清原图加载中..."
             badgeLabel.textColor = UIColor(red: 1.0, green: 0.88, blue: 0.45, alpha: 1.0)
             statusBadge.backgroundColor = UIColor(red: 0.28, green: 0.18, blue: 0.05, alpha: 0.75)
         case .cachedFull, .loadedFull:
@@ -4422,10 +4437,6 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
     private let leftProgressLabel = UILabel()
     private let rightProgressLabel = UILabel()
     private let emptyLeftLabel = UILabel()
-    private var leftBadgeTopConstraint: NSLayoutConstraint?
-    private var leftBadgeCenterYConstraint: NSLayoutConstraint?
-    private var rightBadgeTopConstraint: NSLayoutConstraint?
-    private var rightBadgeCenterYConstraint: NSLayoutConstraint?
 
     private let bottomBar = UIView()
     private let prevButton = UIButton(type: .system)
@@ -4667,7 +4678,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         imageView.clipsToBounds = true
         container.addSubview(imageView)
 
-        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.translatesAutoresizingMaskIntoConstraints = true
         badge.text = badgeText
         badge.font = .systemFont(ofSize: 10.5, weight: .bold)
         badge.textColor = badgeText == "成品"
@@ -4685,6 +4696,10 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         progressLabel.textColor = UIColor(white: 0.9, alpha: 1)
         progressLabel.backgroundColor = UIColor.black.withAlphaComponent(0.68)
         progressLabel.textAlignment = .center
+        progressLabel.numberOfLines = 1
+        progressLabel.lineBreakMode = .byTruncatingTail
+        progressLabel.adjustsFontSizeToFitWidth = true
+        progressLabel.minimumScaleFactor = 0.65
         progressLabel.layer.cornerRadius = 4
         progressLabel.clipsToBounds = true
         progressLabel.isHidden = true
@@ -4694,31 +4709,29 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             imageView.topAnchor.constraint(equalTo: container.topAnchor),
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            badge.heightAnchor.constraint(equalToConstant: 22),
-            badge.widthAnchor.constraint(equalToConstant: 38)
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
-
-        let badgeTop = badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8)
-        let badgeCenterY = badge.centerYAnchor.constraint(equalTo: container.centerYAnchor)
-        if badgeText == "素材" {
-            leftBadgeTopConstraint = badgeTop
-            leftBadgeCenterYConstraint = badgeCenterY
-        } else {
-            rightBadgeTopConstraint = badgeTop
-            rightBadgeCenterYConstraint = badgeCenterY
-        }
-        badgeCenterY.isActive = true
     }
 
     private func updateProgressLabelPositions() {
         positionProgressLabel(leftProgressLabel, over: leftImageView)
         positionProgressLabel(rightProgressLabel, over: rightImageView)
+        positionBadgeLabel(leftBadge, over: leftImageView)
+        positionBadgeLabel(rightBadge, over: rightImageView)
     }
 
     private func positionProgressLabel(_ label: UILabel, over imageView: UIImageView) {
+        positionOverlayLabel(label, over: imageView, minimumWidth: 58, height: 20, horizontalPadding: 12)
+    }
+
+    private func positionBadgeLabel(_ label: UILabel, over imageView: UIImageView) {
+        positionOverlayLabel(label, over: imageView, minimumWidth: 38, height: 22, horizontalPadding: 0)
+    }
+
+    private func positionOverlayLabel(
+        _ label: UILabel, over imageView: UIImageView,
+        minimumWidth: CGFloat, height: CGFloat, horizontalPadding: CGFloat
+    ) {
         guard !label.isHidden else { return }
         let bounds = imageView.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
@@ -4746,14 +4759,16 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             }
         }
 
-        let fittingSize = label.sizeThatFits(CGSize(width: max(0, visibleImageRect.width - 8), height: 20))
-        let labelWidth = min(max(58, fittingSize.width + 12), max(0, visibleImageRect.width - 8))
-        let labelHeight = min(20, max(0, visibleImageRect.height - 8))
+        let inset: CGFloat = 4
+        let availableWidth = max(0, visibleImageRect.width - inset * 2)
+        let fittingSize = label.sizeThatFits(CGSize(width: availableWidth, height: height))
+        let labelWidth = min(max(minimumWidth, fittingSize.width + horizontalPadding), availableWidth)
+        let labelHeight = min(height, max(0, visibleImageRect.height - inset * 2))
         guard labelWidth > 0, labelHeight > 0 else { return }
         let imageRectInContainer = visibleImageRect.offsetBy(dx: imageView.frame.minX, dy: imageView.frame.minY)
         label.frame = CGRect(
-            x: max(imageRectInContainer.minX + 4, imageRectInContainer.maxX - labelWidth - 8),
-            y: max(imageRectInContainer.minY + 4, imageRectInContainer.maxY - labelHeight - 8),
+            x: imageRectInContainer.maxX - labelWidth - inset,
+            y: imageRectInContainer.maxY - labelHeight - inset,
             width: labelWidth,
             height: labelHeight
         )
@@ -4799,9 +4814,9 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         rightBadge.isHidden = true
         emptyLeftLabel.isHidden = !sourcePath.isEmpty
         rightProgressLabel.isHidden = false
-        rightProgressLabel.text = "正在加载原图 0%"
+        rightProgressLabel.text = "高清原图加载中 0%"
         leftProgressLabel.isHidden = sourcePath.isEmpty
-        leftProgressLabel.text = sourcePath.isEmpty ? nil : "正在加载原图 0%"
+        leftProgressLabel.text = sourcePath.isEmpty ? nil : "高清原图加载中 0%"
 
         // 只读取已缓存缩略图作为占位，不发起冷缩略图网络请求，避免与当前页原图争抢连接。
         if let fastCachedOut = client.getFastCachedImage(path: outputPath, workId: entry.id, isThumbnail: true) {
@@ -4820,7 +4835,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             onProgress: { [weak self] pct in
                 guard let self = self, self.pageLoadGeneration == generation else { return }
                 self.rightProgressLabel.isHidden = false
-                self.rightProgressLabel.text = "正在加载原图 \(pct)%"
+                self.rightProgressLabel.text = "高清原图加载中 \(pct)%"
                 self.updateProgressLabelPositions()
             },
             completion: { [weak self] img in
@@ -4844,7 +4859,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                 onProgress: { [weak self] pct in
                     guard let self = self, self.pageLoadGeneration == generation else { return }
                     self.leftProgressLabel.isHidden = false
-                    self.leftProgressLabel.text = "正在加载原图 \(pct)%"
+                    self.leftProgressLabel.text = "高清原图加载中 \(pct)%"
                     self.updateProgressLabelPositions()
                 },
                 completion: { [weak self] img in
@@ -4919,10 +4934,6 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         containerStack.axis = isHorizontalLayout ? .horizontal : .vertical
         containerStack.alignment = isHorizontalLayout ? .center : .fill
         horizontalContainerHeightConstraints.forEach { $0.isActive = isHorizontalLayout }
-        leftBadgeCenterYConstraint?.isActive = !isHorizontalLayout
-        leftBadgeTopConstraint?.isActive = isHorizontalLayout
-        rightBadgeCenterYConstraint?.isActive = !isHorizontalLayout
-        rightBadgeTopConstraint?.isActive = isHorizontalLayout
         layoutModeButton.setTitle(isHorizontalLayout ? "左右并排" : "上下同框", for: .normal)
         UIView.animate(withDuration: 0.2) { [weak self] in
             self?.view.layoutIfNeeded()

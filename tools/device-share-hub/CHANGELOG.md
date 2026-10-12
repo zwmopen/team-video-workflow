@@ -1,3 +1,39 @@
+# 2026-10-12 DSH-171 设备续验（Android 0.8.101/212；iOS 源码候选 0.8.100/211）
+
+- Android 将上下同框加载完成后的“素材/成品”标签按 FIT_CENTER 实际图像矩形放到图片内右下角；左右并排标签放在各自图片下方并保持紧凑间距。主页缩略图继续保持完整 3:4，标签在图内底部居中。
+- Android Release 本地构建、Gradle 单测、Release Lint、APK 权限及 v2/v3 签名检查通过。APK SHA-256：`D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`；已安装到 USB Vivo V2327A，PackageManager 回读 `0.8.101/212`。主页、上下同框、左右并排、P1→P2 翻页与右上角关闭均完成真机检查；主页显示 369 套，与只读 `/api/online/status` 的 `totalWorks=369`、`scanRevision=154`、`refreshing=false` 一致。目标应用日志未见 `FATAL EXCEPTION`。
+- 证据截图：`D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-current.png`、`vivo-closure-compare-current.png`、`vivo-closure-side-by-side-current.png`、`vivo-closure-page2-current.png`、`vivo-closure-home-return-current.png`。Android 对比页面状态守卫 18/18、iOS 对比 UI 静态检查及跨端契约 50/50 通过。
+- iOS 源码候选 `0.8.100/211` 已修正加载状态与短标签按 aspectFit 实际图片区域定位；静态检查通过。iPhone USB/usbmux 可枚举，息屏时应用清单回读仍为 `0.8.95/206`。没有匹配 IPA，且 Windows 无 Xcode/Swift；未安装或视觉/交互验收新候选。当前 iOS 源码还未进入远程构建环境。
+- 本轮未捕获动态 `高清原图加载中 N%` 画面，不能将百分比视觉验收记为完成。未推送、未触发 CI、未发布或更新索引。
+- 影响文档：`README.md`、`ios/README.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`。
+
+# 2026-10-12 DSH-157：在线列表快照秒回与后台刷新（候选 Android 0.8.100/211；iOS 0.8.99/210）
+
+- 定位到在线列表路由同步等待全库扫描和共享锁；实测 `scan_ms` 可超过 60 秒，Android 读超时为 12 秒。序列化、压缩和服务端写出不足以解释该超时。
+- `/api/online/works`、`categories` 与 `filter-options` 先返回最近完整快照，过期刷新与到期巡检移到单飞后台任务；扫描完成递增 revision，两端根据列表快照 revision 自动补拉，覆盖后台扫描先于首次指纹轮询完成的竞态。未延长客户端超时。
+- Android `0.8.100/versionCode 211` Release 本地构建、单测、Lint、APK 权限与签名检查通过；APK SHA-256：`1CE5F3493484CAC70E5E95408402C9D77EE4D3900D3D0A23FFEDF37F697496F9`。候选服务端 70/70、主服务 64/64、iOS UI 静态检查通过、跨端契约 50/50。
+- 主服务工作树中的定点修复已通过编译和 64 项测试，并按既有脚本重启；安全 `/api/online/status` 回读 `ok=true`、`staleCode=false`、`totalWorks=380`、`scan.revision=1`、`refreshing=false`。没有手工请求有清理副作用的 works/categories 路由。
+- Android/iOS USB 当前均未枚举；Android `0.8.100/211` **未安装**，iPhone 没有匹配 IPA，未安装或触控验收。该候选未发布、未推送、未更新索引。
+- 影响文档：`docs/BUG_LEDGER.md`、`docs/闭环清单.md`；应用列表协议新增 scan revision 字段，不改变作品数据格式。
+
+# 2026-10-12 DSH-171 补充：统一高清原图加载提示并限制在图片内（Android 0.8.98/209；iPhone 0.8.97/208）
+
+- 对比视图的素材与成品加载态统一显示“高清原图加载中 N%”；iOS 单图原图预览同步使用“高清原图加载中…”。
+- Android 与 iOS 均按 FIT_CENTER/aspectFit 后的实际可见图像矩形放置右下角状态；状态框宽、高受该图像区域约束，Android 窄图缩放并省略超长文字，iOS 单行自动缩字，控件框不越出图片。
+- 复用现有进度回调与页代次，不新增网络请求或加载状态机。Android `build-local.ps1 -AndroidOnly` 已通过单测、Release、Lint、APK 权限与 v2/v3 签名检查；产物 SHA-256：`8377793ed319454ebfed01c35373f2f16245c88c4aabea635804329ef64863b8`。
+- 定向静态回归通过：Android 页面状态、对比卡、预取；iOS 对比 UI、预取、客户端；跨端契约 `50/50`。USB-only 探针本轮未枚举 Android 或 iPhone，因此两端均未安装或做本轮实机视觉验收；iOS 无 IPA，未进行 Xcode 构建。没有正式发布或更新索引。
+- 影响文档：`README.md`、`ios/README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`、`ios/CHANGELOG.md`；无架构或协议变化。
+- 简化与防呆：复用既有图片几何和进度标签，不加新状态；在测量阶段限制控件边界，避免长文案越界。
+
+# 2026-10-12 DSH-172：Android 本地构建提效与中文路径兼容（构建工具，不改应用版本）
+
+- `build-local.ps1 -AndroidOnly` 遇到非 ASCII 项目路径时，自动在 ASCII 临时目录构建，验证 APK 后只回写 APK、SHA-256 与元数据；成功清理暂存目录，失败保留诊断现场。
+- Android 项目显式启用 Gradle 任务输出缓存和 AndroidX；GitHub Actions 的 `setup-java` 启用 Gradle 依赖/用户缓存。
+- Windows 本地 Android 候选 `0.8.97/208` 首轮构建、单测、Release Lint、APK 安全检查与 v2/v3 签名校验成功，首轮耗时 66.9 秒；稳定暖缓存复跑 14.2–14.5 秒，68 个任务中 41 个命中缓存；Gradle 守护进程重启样本为 47.5 秒。APK 920,420 字节（0.88 MiB），最终保留包 SHA-256 `18b57ff089e154cdd7977dd1b388c6cd00a8b7c2e54c7c55e4a85018c4b3b22d`。签名证书指纹与本地 `.92` APK 相同。计时仅代表当前 Windows 主机，不是性能承诺。
+- 工具空间审计：Android SDK 0.54 GB、Gradle 全局缓存 0.75 GB、Gradle 9.4.1 发行版 0.14 GB（约 1.43 GB，共享工具/缓存）；项目构建目录约 3.8 MB，APK 0.88 MiB；本轮 ASCII 暂存峰值 13.33 MB，成功后已清理。共享缓存并非本应用独占。
+- 尚无本轮 CI、安装、设备回归或 Release 证据；当前 ADB 未枚举 Android 设备，iOS 仍需 macOS/Xcode。未推送源码、未触发云端流水线。
+- 影响文档：`README.md`、`docs/SOURCE_BUILD_AND_RECOVERY.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`；应用架构和通信协议无变化。
+
 # 2026-10-12 DSH-171：主页对比缩略图尺寸与标签位置、iOS 加载提示锚点（源码候选 Android 0.8.97 / iPhone 0.8.96）
 
 - Android 主页对比卡按可见条宽度放大，双图各保持 3:4，尺寸向 iOS 靠齐；双端“素材/成品”改为各自图片内底部居中标签。

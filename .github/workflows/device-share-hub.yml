@@ -198,6 +198,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            tools/device-share-hub/android/**/*.gradle*
+            tools/device-share-hub/android/gradle.properties
       - name: Install Android SDK command line tools
         shell: bash
         run: |

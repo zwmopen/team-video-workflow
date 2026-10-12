@@ -9,6 +9,7 @@ import io
 import contextlib
 import json
 import time
+import datetime
 import shutil
 import tempfile
 import unittest
@@ -65,6 +66,7 @@ class TestOnlineGalleryService(unittest.TestCase):
 
         # Start test HTTP server on random port
         cls.scanner = WorkScanner(cls.temp_dir)
+        cls.scanner.scan(force=True)
         OnlineGalleryHandler.scanner = cls.scanner
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), OnlineGalleryHandler)
         cls.port = cls.server.server_port
@@ -89,6 +91,8 @@ class TestOnlineGalleryService(unittest.TestCase):
             data = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data["ok"])
             self.assertEqual(data["totalWorks"], 2)
+            self.assertIn("scan", data)
+            self.assertIn("revision", data["scan"])
 
     def test_categories_endpoint(self):
         url = f"http://127.0.0.1:{self.port}/api/online/categories"
@@ -788,6 +792,52 @@ class TestSubdirImages(unittest.TestCase):
         )
         self.assertTrue(os.path.isfile(resolved))
         self.assertIn(moved_id, resolved)
+
+
+class TestSourceCompareCacheInvalidation(unittest.TestCase):
+    """外部原素材新增后，作品目录缓存必须重新计算逐页素材关联。"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="dsh_source_cache_")
+        self.scanner = WorkScanner(self.temp_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_external_source_appearance_invalidates_empty_compare_cache(self):
+        work_dir = os.path.join(self.temp_dir, "作品")
+        source_dir = os.path.join(self.temp_dir, "raw_material")
+        source_path = os.path.join(source_dir, "P1.jpg")
+        os.makedirs(work_dir)
+        with open(os.path.join(work_dir, "P1_封面.png"), "wb") as fp:
+            fp.write(PNG_1PX)
+        manifest = {
+            "title": "外部素材缓存回归",
+            "sourceMaterialPath": source_dir,
+            "pageMap": [{
+                "page": "P1",
+                "output": "P1_封面.png",
+                "sourcePath": source_path,
+                "sourceImage": "P1.jpg",
+            }],
+        }
+        manifest_path = os.path.join(work_dir, "manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as fp:
+            json.dump(manifest, fp, ensure_ascii=False)
+
+        before = self.scanner._inspect_work_dir(work_dir, "作品", "测试", 0, "测试")
+        self.assertEqual(before["sourceImages"], [""])
+        manifest_stamp = os.stat(manifest_path).st_mtime_ns
+
+        # 原素材稍后到达；作品目录和 manifest 都没有变化。
+        os.makedirs(source_dir)
+        with open(source_path, "wb") as fp:
+            fp.write(b"source image")
+        self.assertEqual(os.stat(manifest_path).st_mtime_ns, manifest_stamp)
+
+        after = self.scanner._inspect_work_dir(work_dir, "作品", "测试", 0, "测试")
+        self.assertEqual(after["sourceImages"], ["__src__:P1_封面.png"])
+        self.assertEqual(after["sourceNames"], ["P1.jpg"])
 
 
 class TestWorkImageIsolationAndMovedResolution(unittest.TestCase):
@@ -1544,6 +1594,109 @@ class TestDsh135LifecycleInheritance(unittest.TestCase):
         self.assertIn("<<<XHS_START>>>", final_content)
         self.assertIn(new_xhs_copy, final_content)
         self.assertNotIn("小红书旧版种草文案", final_content)
+
+
+class TestCreationTimeOrdering(unittest.TestCase):
+    def test_manifest_offsets_are_preserved_and_utc_naive_field_is_utc(self):
+        utc = _svc_mod._parse_manifest_timestamp("2026-10-12T04:00:00Z", "completedAtUtc")
+        offset = _svc_mod._parse_manifest_timestamp("2026-10-12T12:00:00+08:00", "completedAt")
+        naive_utc = _svc_mod._parse_manifest_timestamp("2026-10-12T04:00:00", "completedAtUtc")
+        expected = datetime.datetime(2026, 10, 12, 4, tzinfo=datetime.timezone.utc).timestamp() * 1000
+        self.assertAlmostEqual(utc, expected)
+        self.assertAlmostEqual(offset, expected)
+        self.assertAlmostEqual(naive_utc, expected)
+
+    def test_folder_timestamp_keeps_local_time_precedence(self):
+        expected = datetime.datetime(2026, 10, 12, 12, 30, 45).timestamp() * 1000
+        actual = _svc_mod._extract_work_timestamp(
+            "20261012_123045_work", ".", {"completedAtUtc": "2026-10-12T04:00:00Z"}
+        )
+        self.assertAlmostEqual(actual, expected)
+
+    def test_explicit_time_sort_ignores_use_pin_and_last_edit_time(self):
+        works = [
+            {"id": "old-used", "createdAtMs": 100, "updatedAt": 900, "useCount": 2},
+            {"id": "new-unused", "createdAtMs": 200, "updatedAt": 200, "useCount": 0},
+            {"id": "tie-b", "createdAtMs": 200, "updatedAt": 200, "useCount": 0},
+            {"id": "tie-a", "createdAtMs": 200, "updatedAt": 200, "useCount": 0},
+        ]
+        descending = _svc_mod.sort_online_work_entries(list(works), "time_desc", "待首发")
+        ascending = _svc_mod.sort_online_work_entries(list(works), "time_asc", "全部")
+        self.assertEqual([work["id"] for work in descending], ["new-unused", "tie-a", "tie-b", "old-used"])
+        self.assertEqual([work["id"] for work in ascending], ["old-used", "new-unused", "tie-a", "tie-b"])
+
+
+class TestBackgroundListRefresh(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="dsh_list_refresh_")
+        self.scanner = WorkScanner(self.temp_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_expired_list_returns_snapshot_without_waiting_for_scan(self):
+        cached = [{"id": "cached-work"}]
+        self.scanner._cached_works = cached
+        self.scanner._last_scan_time = time.time() - _svc_mod.SCAN_CACHE_TTL - 1
+        scan_started = threading.Event()
+        finish_scan = threading.Event()
+        scan_calls = []
+
+        def slow_scan(force=False):
+            scan_calls.append(force)
+            scan_started.set()
+            finish_scan.wait(3)
+            return [{"id": "refreshed-work"}]
+
+        self.scanner.scan = slow_scan
+        try:
+            started = time.perf_counter()
+            first = self.scanner.scan_throttled()
+            elapsed = time.perf_counter() - started
+            self.assertIs(first, cached)
+            self.assertLess(elapsed, 0.5, "HTTP 列表入口不能等待慢扫描")
+            self.assertTrue(scan_started.wait(1), "过期快照应触发后台扫描")
+
+            second = self.scanner.scan_throttled(force=True)
+            self.assertIs(second, cached)
+            self.assertEqual(scan_calls, [False], "单飞任务必须合并并发刷新请求")
+            self.assertTrue(self.scanner.scan_status()["refreshing"])
+        finally:
+            finish_scan.set()
+        deadline = time.time() + 2
+        while self.scanner.scan_status()["refreshing"] and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(self.scanner.scan_status()["refreshing"])
+
+    def test_scan_status_exposes_revision_fields(self):
+        status = self.scanner.scan_status()
+        self.assertEqual(status["revision"], 0)
+        self.assertIn("completedAt", status)
+        self.assertFalse(status["refreshing"])
+
+    def test_expiry_cleanup_is_scheduled_once_off_the_request_thread(self):
+        started_cleanup = threading.Event()
+        finish_cleanup = threading.Event()
+
+        def slow_cleanup():
+            started_cleanup.set()
+            finish_cleanup.wait(3)
+            return []
+
+        self.scanner.cleanup_expired_works = slow_cleanup
+        try:
+            started = time.perf_counter()
+            self.assertTrue(self.scanner.schedule_expired_cleanup())
+            self.assertLess(time.perf_counter() - started, 0.5)
+            self.assertTrue(started_cleanup.wait(1))
+            self.assertFalse(self.scanner.schedule_expired_cleanup())
+            self.assertTrue(self.scanner.scan_status()["refreshing"])
+        finally:
+            finish_cleanup.set()
+        deadline = time.time() + 2
+        while self.scanner.scan_status()["refreshing"] and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(self.scanner.scan_status()["refreshing"])
 
 
 if __name__ == "__main__":

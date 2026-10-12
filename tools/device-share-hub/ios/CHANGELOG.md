@@ -1,3 +1,16 @@
+# 2026-10-12 DSH-171 设备续验：原图状态锚点（源码候选 0.8.100 / build 211）
+
+- iOS 对比页加载状态和加载完成后的“素材/成品”标签按 aspectFit 后的真实图片矩形重新定位到图片右下角；原图进度与完成标签共用图片边界计算。
+- `tests/test_ios_compare_ui.py` 与 `tests/parity_ios_android.py` 静态检查通过（跨端契约 50/50）。本机没有 Xcode/Swift，未构建 IPA。当前连接的 iPhone 息屏时回读仍为 `0.8.95/206`；没有匹配 `0.8.100/211` IPA，未安装或做视觉/交互验收。
+- 本轮未修改手机息屏设置，未推送源码、触发 CI、正式发布或更新索引。动态原图百分比未在 iPhone 实机捕获。
+- 影响文档：`ios/README.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`。
+
+# 2026-10-12 DSH-171 补充：iPhone 原图加载文案与图片内边界（源码候选 0.8.97 / build 208）
+
+- 对比视图加载提示统一为“高清原图加载中 N%”，并按 aspectFit 实际显示图片的右下角定位；标签宽度受图片区域限制并自动缩字，状态框不越界。单图原图加载提示也统一为“高清原图加载中…”。
+- iOS 对比 UI、预取队列、客户端及跨端契约静态回归通过（跨端 50/50）。本机无 Xcode，未构建 IPA；USB-only 探针未发现 iPhone，本轮未安装或做真机验收。没有正式发布或更新索引。
+- 影响文档：`ios/README.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`；架构和协议无变化。
+
 # 2026-10-12 DSH-171：对比标签与原图进度定位（源码候选 0.8.96 / build 207）
 
 - 主页对比卡“素材/成品”标签叠在各自图片内底部居中；卡片只保留紧凑标题和底部间距。

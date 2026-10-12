@@ -22,7 +22,7 @@
 
 > **账本积压说明（2026-09-20 记录）**：本文件此前存在未回填的历史条目，
 > 而实际版本已推进到 0.8.40，中间多轮修复未按本文件格式补记。DSH-076 起恢复记录，
-> 中间缺口未回填（不冒充完整），不把缺口写成“已解决”。当前最新的移动端/在线相册事项见本文件末尾 DSH-154—165；
+> 中间缺口未回填（不冒充完整），不把缺口写成“已解决”。当前最新的移动端/在线相册事项见本文件末尾 DSH-154—171；
 > 新问题继续追加编号，不覆盖历史证据。
 
 ## 持续问题闭环规则（用户要求，2026-10-11）
@@ -38,9 +38,17 @@
 
 ### 当前验收口径
 
-- Android `.92/203`：两台设备已安装并完成在线、对比、本地预览的只读回归。
-- iOS `.92/203`：源码与静态门禁完成；当前主机没有 Xcode、IPA 或 USB mux，所以**不能写成 iOS 真机已解决**。
-- 发布：本轮没有推送、CI Release 或发布索引反读，不能写成已发布。
+- Android `0.8.101/212`：Release APK SHA-256 `D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`，本地构建、Gradle 单测、Lint、权限与签名检查通过；已安装到 USB Vivo V2327A 并回读版本。主页、上下/左右布局、P1→P2 翻页与关闭返回完成真机检查；369 套与只读服务状态 `totalWorks=369`、`scanRevision=154` 一致，目标包未见崩溃。
+- iOS 源码 `0.8.100/211`：静态门禁通过，但项目内无匹配 IPA，Windows 无 Xcode/Swift。iPhone USB 与 usbmux 已枚举；息屏时应用清单仍为 `0.8.95/206`，本轮未安装或做新候选真机验收。
+- 发布：本轮没有推送、触发 CI、Release 或更新索引反读，不能写成已发布。
+
+## DSH-172：本地 Android 构建拒绝非 ASCII 路径与重复构建耗时（构建工具候选 · 2026-10-12）
+
+- **现象**：在路径含中文的候选工作树直接运行 `build-local.ps1 -AndroidOnly`，Android Gradle 插件以“项目路径含非 ASCII 字符”拒绝构建；同时本机曾被旧说明误判为没有本地 Gradle/SDK。
+- **根因**：Windows 上本项目当前实际安装 Gradle 9.4.1、Android SDK 36 与 build-tools 36.0.0，但 AGP 不接受当前工作树的中文路径；旧构建说明也没有按实时工具链状态更新。
+- **修复**：构建脚本自动把 Android 源码复制到 ASCII 临时目录（排除旧 `.gradle`、`build`、`out`），运行单测/Release/Lint/包体安全检查，验证后将 APK、SHA-256 与元数据回写项目并清理临时目录；失败时保留目录。Gradle 任务输出缓存已在项目配置中显式启用，CI `setup-java` 增加 Gradle 缓存。
+- **验证**：原始中文路径失败已复现；修复后本地 Android `0.8.97/208` 全流程成功，首轮 66.9 秒，稳定暖缓存 14.2–14.5 秒（68 个任务中 41 个 `FROM-CACHE`）；Gradle 守护进程重启样本 47.5 秒。APK 920,420 字节，最终保留包 SHA-256 `18b57ff089e154cdd7977dd1b388c6cd00a8b7c2e54c7c55e4a85018c4b3b22d`；apksigner v2/v3 校验通过，证书指纹与本地 `.92` APK 相同。PowerShell 语法、工作流 YAML 解析和 `git diff --check` 通过。
+- **待闭环**：当前 ADB 未枚举手机；没有本轮 CI 复核、设备安装/界面回归或正式发布。iOS 编译仍需 macOS/Xcode；Windows 原生构建因本机无 CMake 仍走 CI。
 
 ## DSH-119 电脑端「停止在线相册服务」可能误杀别的进程 + 仓库里两个 C++ 测试是空跑的假闸门（2026-09-27）
 
@@ -3260,13 +3268,22 @@ totalWorks = 472
 - **验证**：Vivo Android 14 上 0.8.85 冷启动在线提示、切换本地提示均正确；静态启动守卫 1/1、Android 单测 100/100、Release Lint 0 错误/93 警告、APK 构建及签名通过。
 - **遗留**：0.8.85 在线列表仍显示离线快照 395 套并提示 `timeout`。电脑端 status API 返回 200、works API 本机读取约 5.3 秒；手机侧请求状态未直接读到，超时根因 UNVERIFIED，不能归因于已修复的重复预取。
 
-## DSH-157 Android 在线作品列表在手机上刷新超时（未解决 · 根因待查 · 2026-10-11）
+## DSH-157 Android 在线作品列表在手机上刷新超时（根因已定位 · 修复候选待设备验收 · 2026-10-12）
 
 - **现象**：Vivo Android 14 上 0.8.83—0.8.85 保留 395 套本地快照，但启动在线刷新最终显示 `刷新失败：timeout`。
 - **现有证据**：手机与电脑位于同一局域网；电脑本机只读 `/api/online/status` 返回 200、库存仍为 395，直接读取 `/api/online/works` 返回 200、约 5.3 秒。上述电脑侧结果不能证明手机 HTTP 请求正常。
 - **根因**：UNVERIFIED。可能涉及手机到服务端链路、Android 请求执行或响应耗时；没有直接采集到手机端 HTTP 状态、字节数与完整耗时。
 - **修复状态**：未修复。0.8.85 已移除在线冷启动的重复静默预取，但仍复现超时；没有凭猜测调大超时。
 - **下一步**：在不清空或删除用户内容的前提下，用专用可观测构建采集手机请求起止、目标、状态码、响应字节和耗时；修复后在同一设备/网络冷启动与手动刷新回归。
+
+### 2026-10-12 根因定位与异步快照修复候选
+
+- **根因已定位**：`/api/online/works`、`categories` 在 HTTP 请求线程调用同步全库扫描，并与 watchdog 共用 `WorkScanner._lock`；Android 列表读超时为 12 秒，现场 `scan_ms` 曾达 11–145 秒。gzip 响应约 0.95MB、JSON/压缩/写出在约 0.2–0.3 秒内完成，不能解释超时。状态接口返回 200 只代表读到缓存，不代表列表路由已成功。
+- **放大项仍未量化**：DSH-173 的原素材缓存戳会在缓存命中前重读 manifest、枚举源目录并 stat 路径；它很可能增加扫描成本，但现有总阶段计时没有拆出该部分，不能归因为唯一耗时来源。
+- **修复候选**：列表/分类/筛选先返回最近完整快照；过期扫描、强刷和到期巡检移至单飞后台任务；watchdog 不再同步持锁扫描；status 暴露 `scan.revision/refreshing`，works/categories/filter-options 响应带对应 `scanRevision`，Android/iOS 在扫描完成后补拉列表，并处理首次指纹轮询前扫描已完成的竞态。保留 12 秒快速失败，不以拉长超时掩盖问题。
+- **自动回归**：隔离候选服务端 70/70、主服务 64/64；包含慢扫描快照秒回、并发刷新合并、后台到期巡检合并和 revision 状态测试。跨端契约 50/50，iOS UI 静态检查通过；Android `0.8.100/211` Release、单测、Lint、APK 权限与签名检查通过，SHA-256 `1CE5F3493484CAC70E5E95408402C9D77EE4D3900D3D0A23FFEDF37F697496F9`。iOS 源码候选 `0.8.99/210`，本机无匹配 IPA/Swift 工具链，只有静态证据。
+- **运行证据**：主服务源码已定点修复并通过既有重启脚本切换；只读 `/api/online/status` 回读 `ok=true`、`staleCode=false`、库存 380、`scan.revision=1`、后台刷新空闲。未手工调用带到期移库副作用的 works/categories 接口，因此尚无该修复的真实手机请求耗时。
+- **设备与剩余闭环**：ADB 在重启后 inventory 为空；Android `.100/211` 尚未安装。iOS 当前无可用 USB mux/触控链及匹配 IPA。需设备重新枚举后安装 Android，并通过 app 自然刷新验证 12 秒内成功、快照更新与新 revision；iOS 需获授权的 build-only IPA 后再测。发布/推送/更新索引仍未执行。
 
 ### 2026-10-11 后续证据（Android 0.8.91 / 服务端只读审查）
 
@@ -3353,7 +3370,7 @@ totalWorks = 472
 | iOS 顶部显示“已同步电脑在线作品 · 共 N 套” | DSH-165 | 源码已修复，静态 10/10；未做 iOS 真机 | iOS IPA 安装后切换/刷新/失败/离线快照逐项点击回读 |
 | 对比卡片放大为 3:4、左右并排居中、去掉浅色框和底部废字 | DSH-162/163/165 | Android 两机已回归；iOS 源码与静态契约已通过 | iOS 真机上下/左右模式截图与横竖屏回读 |
 | 素材页位不能错、没有素材不能把后续页左移 | DSH-162/165 | Android 真实页面与双端静态契约已通过 | iOS 真机验证有素材、空槽位、旧缓存三种作品 |
-| 标签只显示“素材/成品”，左右并排放顶部、上下同框放右侧留白；箭头替代文字翻页 | DSH-163/164/165/168 | DSH-168 双端源码与静态回归通过；Android `.94/205` 构建通过但设备拒绝安装，iOS 未构建 | 允许 Android 覆盖安装后回归；iOS IPA/设备可用后做触控与无障碍回读 |
+| 标签只显示“素材/成品”，Android 左右并排放在图片下方、上下同框放实际图片内右下角；箭头替代文字翻页 | DSH-163/164/165/168/171 | Android `.101/212` 已实机检查并留图；iOS `.100/211` 只有源码和静态证据 | iOS 获得匹配 IPA 后核验具体布局、窄图边界与无障碍读回 |
 | Android 底部按钮居中，名称统一为“重置状态 / 复制路径 / 删除” | DSH-163/164 | 两台 Android 已安装并回归 | 保留为已解决候选；若发布再补 Release 反读 |
 | 原图加载百分比和相邻页预加载 | DSH-163/165/167 | Android Vivo `.92/203` 本轮回归；iOS 当前页优先/取消/逐图串行已实现并通过静态门禁，仍未构建安装 | iPhone `.93/204` 覆盖冷/热缓存、连续翻页、状态不串页 |
 | 苹果刷新/连接/排序与 Android 对齐 | DSH-145/157/165 | 排序与状态源码已对齐；Android `.92` 双机 works 成功；DSH-157 只剩旧 timeout 的根因解释未唯一归因 | iOS 真机刷新、断网恢复；服务端继续用隐私受限阶段计时区分旧 timeout 根因 |
@@ -3369,7 +3386,12 @@ totalWorks = 472
 - **修复候选**：Android 依据屏宽将双图卡放大到与 iOS 相近的范围；两端短标签叠于各自图块底部居中；iOS 依据 aspect-fit 实际图像矩形定位加载状态。未改变设备息屏设置。
 - **自动验证**：iOS 对比 UI、Android 新增主页对比缩略图守卫、Android 对比页/预取、iOS 预取/客户端及 49 项跨端静态门禁均通过。新版本尚未云构建。
 - **设备/发布状态**：当前 Vivo `0.8.96/207`、iPhone `0.8.95/206`；未安装本轮新版本。iPhone USB 可枚举，熄屏期间的 Sideloadly 安装结果待新 IPA 实测；iOS 26.6 暂无可用自动点按链。没有正式 Release 或更新索引。
-- **影响文档**：`README.md`、`ios/README.md`、`CHANGELOG.md`、`ios/CHANGELOG.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`；架构与通信协议未改变。
+- **加载态补修（2026-10-12）**：旧实现按面板测量 Android 进度胶囊，长文案在 aspect-fit 窄图上可能越出实际图像；iOS 标签虽按图片宽度估算，但没有强制单行自动缩字。两端现在将控件宽高限制在真实可见图像矩形，Android 按宽度缩放并省略，iOS 自动缩字；对比页素材与成品加载态统一显示“高清原图加载中 N%”，iOS 单图原图提示也统一为“高清原图加载中…”。
+- **本轮候选/证据**：Android `0.8.98/209` 本地 Release 已构建；SHA-256 `8377793ed319454ebfed01c35373f2f16245c88c4aabea635804329ef64863b8`，单测、Lint、权限与签名校验通过。Android/iOS 对比布局与预取定向静态回归通过，跨端契约 `50/50`。USB-only 探针未枚举任一手机，Android 未安装；iOS 无 IPA，未构建或安装；不代表本轮实机验收通过。
+- **2026-10-12 13:52 续验**：当前 Android 候选已推进到 `0.8.100/211`，APK SHA-256 `1CE5F3493484CAC70E5E95408402C9D77EE4D3900D3D0A23FFEDF37F697496F9`；复跑 Android 对比页状态、Android 原图预取、iOS 对比 UI 与跨端契约 `50/50` 均通过，包含统一“高清原图加载中 N%”及图片内边界判据。统一 USB-only 探针再次返回 Android `usb_not_detected`/ADB 空、iOS `apple_usb_not_detected`/usbmux `[]`，未尝试无线连接；Android 未安装/未点按，iOS `.99/210` 无 IPA。动态加载百分比、缩略图视觉与手机交互仍待实机验收。
+- **2026-10-12 13:59 设备复探**：USB-only 探针仍无 Android ADB 设备，iOS Apple USB/usbmux 均空。Windows PnP 枚举到 Port 2 的“未知 USB 设备（设备描述符请求失败）”，Problem Code 43，无法确认是否是手机；Xiaomi 15 仅以 `BTHLE` 蓝牙设备出现。该物理连接故障未定位到具体手机/线材，未尝试修改驱动或连接方式；设备安装和界面验收仍阻塞。
+- **2026-10-12 17:32 设备续验**：Android USB Vivo V2327A / Android 14 / SDK34 已安装并回读 `0.8.101/212`，APK SHA-256 `D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`。主页完整 3:4 双图及居中“素材/成品”标签、上下同框图片内右下标签、左右并排图片下标签、P1→P2、右上角关闭与返回均已点验；主页 369 套与只读 `/api/online/status` 的 369 套、revision 154 一致；目标包日志未见 FATAL。证据：`D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-current.png`、`vivo-closure-compare-current.png`、`vivo-closure-side-by-side-current.png`、`vivo-closure-page2-current.png`、`vivo-closure-home-return-current.png`。iOS USB/usbmux 已复核，息屏时应用清单仍回读 `0.8.95/206`；源码候选 `0.8.100/211` 无匹配 IPA，未安装或做新候选实机验收；未改息屏设置。Android 页状态 18/18、iOS 对比 UI 静态及跨端 50/50 通过；动态百分比未捕获。未推送、触发 CI 或发布。
+- **影响文档**：`README.md`、`ios/README.md`、`CHANGELOG.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`；架构与通信协议未改变。
 
 ## DSH-170 Android 对比预览的加载态、关闭按钮和左右标签位置（候选已安装；加载态动态显示未捕获 · 2026-10-11）
 

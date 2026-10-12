@@ -1,7 +1,7 @@
-# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.97 / iPhone 0.8.96）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.101 / iPhone 0.8.100）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 当前源码候选：**Android 0.8.97 / versionCode 208**、**iPhone 0.8.96 / build 207**。本轮扩大 Android 主页对比双图卡以靠齐 iOS，并将双端“素材/成品”标签移到各自图片内底部居中；iOS 全屏加载提示按实际 `aspectFit` 图片矩形定位。相关静态回归已通过；新版本尚未运行 CI、安装或真机回归。设备当前仍是 Android `0.8.96/207` 和 iPhone `0.8.95/206`。iPhone 熄屏期间的侧载表现待新 IPA 安装时实测。没有正式 Release 或更新索引。
+> 当前源码候选：**Android 0.8.101 / versionCode 212**、**iPhone 0.8.100 / build 211（源码候选，未构建 IPA）**。Android Release APK 已通过 Gradle 单测、Release、Lint、权限与 v2/v3 签名检查，SHA-256 `D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`，并已安装到 Vivo V2327A、从 PackageManager 回读 `0.8.101/212`。真机已检查主页、上下/左右对比、P1→P2 翻页及关闭返回；主页 369 套与只读服务状态 369 套一致，日志未见目标应用崩溃。证据位于 `D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-*.png`。iPhone USB/usbmux 已枚举，但息屏时读到的已安装版本仍为 `0.8.95/206`；本机没有 Xcode/Swift，且没有匹配的 `0.8.100/211` IPA，未安装或实测新 iOS 候选。动态加载百分比画面本轮未捕获。没有推送、CI 构建、正式 Release 或更新索引。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 

@@ -76,19 +76,59 @@ function Build-Android {
     }
     $buildTools = Join-Path $sdkRoot 'build-tools\36.0.0'
     $aapt = Join-Path $buildTools 'aapt.exe'
+    $apksigner = Join-Path $buildTools 'apksigner.bat'
     if (-not (Test-Path -LiteralPath $aapt)) {
         throw '本机缺少 Android build-tools 36.0.0；请使用 GitHub Actions 构建 APK。'
+    }
+    if (-not (Test-Path -LiteralPath $apksigner)) {
+        throw '本机缺少 apksigner；无法核验 Release APK 签名。'
     }
     $gradle = Find-Gradle941
     if (-not $gradle) {
         throw '本机缺少 Gradle 9.4.1；请使用 GitHub Actions 构建 APK。'
     }
 
+    $androidBuildRoot = $androidRoot
+    $stageRoot = $null
+    if ($androidRoot -match '[^\x00-\x7F]') {
+        $tempCandidates = @(
+            [IO.Path]::GetTempPath(),
+            (Join-Path $env:LOCALAPPDATA 'Temp')
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+        $stageBase = $tempCandidates | Where-Object {
+            (Test-Path -LiteralPath $_) -and ($_ -notmatch '[^\x00-\x7F]')
+        } | Select-Object -First 1
+        if (-not $stageBase) {
+            throw '项目路径含非 ASCII 字符，且找不到可用的 ASCII 临时目录；请设置 ASCII 的 TEMP 路径后重试。'
+        }
+
+        $stageRoot = Join-Path $stageBase ("dsh-android-build-" + [Guid]::NewGuid().ToString('N'))
+        $robocopy = Get-Command robocopy.exe -ErrorAction SilentlyContinue
+        if (-not $robocopy) { throw '本机缺少 robocopy.exe，无法为 Android 构建准备 ASCII 临时副本。' }
+        New-Item -ItemType Directory -Path $stageRoot -ErrorAction Stop | Out-Null
+        $excludedPaths = @(
+            (Join-Path $androidRoot '.gradle'),
+            (Join-Path $androidRoot 'build'),
+            (Join-Path $androidRoot 'out'),
+            (Join-Path (Join-Path $androidRoot 'app') 'build')
+        )
+        $copyArguments = @(
+            $androidRoot, $stageRoot, '/E', '/COPY:DAT', '/DCOPY:DAT',
+            '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD'
+        ) + $excludedPaths
+        & $robocopy.Source @copyArguments
+        if ($LASTEXITCODE -ge 8) {
+            throw "Android ASCII 临时副本准备失败（robocopy $LASTEXITCODE）。"
+        }
+        $androidBuildRoot = $stageRoot
+        Write-Host "Android Gradle 项目路径含非 ASCII 字符，已暂存到 ASCII 路径：$stageRoot"
+    }
+
     $oldAndroidSdkRoot = $env:ANDROID_SDK_ROOT
     $oldAndroidHome = $env:ANDROID_HOME
     $env:ANDROID_SDK_ROOT = $sdkRoot
     $env:ANDROID_HOME = $sdkRoot
-    Push-Location $androidRoot
+    Push-Location $androidBuildRoot
     try {
         Invoke-Checked $gradle @(':app:testDebugUnitTest', ':app:assembleRelease', ':app:lintRelease', '--stacktrace')
     } finally {
@@ -97,8 +137,8 @@ function Build-Android {
         $env:ANDROID_HOME = $oldAndroidHome
     }
 
-    $apk = Join-Path $androidRoot 'app\build\outputs\apk\release\app-release.apk'
-    $metadataPath = Join-Path $androidRoot 'app\build\outputs\apk\release\output-metadata.json'
+    $apk = Join-Path $androidBuildRoot 'app\build\outputs\apk\release\app-release.apk'
+    $metadataPath = Join-Path $androidBuildRoot 'app\build\outputs\apk\release\output-metadata.json'
     if (-not (Test-Path -LiteralPath $apk) -or -not (Test-Path -LiteralPath $metadataPath)) {
         throw 'Android 构建完成但没有生成 APK 或 output-metadata.json。'
     }
@@ -117,6 +157,11 @@ function Build-Android {
     if ($badging -match 'application-debuggable') {
         throw 'Release APK 不得为 debuggable。'
     }
+        $signature = (& $apksigner verify --verbose --print-certs $apk 2>&1) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'Release APK 签名校验失败。' }
+        if ($signature -notmatch '(?m)^Verified using v2 scheme.*: true$' -or $signature -notmatch '(?m)^Verified using v3 scheme.*: true$') {
+            throw 'Release APK 必须通过 APK Signature Scheme v2 和 v3 校验。'
+        }
 
     $metadata = Get-Content -Raw -Encoding UTF8 -LiteralPath $metadataPath | ConvertFrom-Json
     $versionName = [string]$metadata.elements[0].versionName
@@ -138,7 +183,27 @@ function Build-Android {
         file_name = $apkName
         sha256 = $hash
     } | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $out 'android-release-metadata.json')
-    Write-Host "Android 构建、单测、Lint 和 APK 安全检查已通过：$versionName / $versionCode。"
+    Write-Host "Android 构建、单测、Lint、APK 权限/签名安全检查已通过：$versionName / $versionCode。"
+
+    if ($stageRoot) {
+        $stageBaseFull = [IO.Path]::GetFullPath($stageBase)
+        if (-not $stageBaseFull.EndsWith([IO.Path]::DirectorySeparatorChar.ToString())) {
+            $stageBaseFull += [IO.Path]::DirectorySeparatorChar
+        }
+        $stageRootFull = [IO.Path]::GetFullPath($stageRoot)
+        $stageLeaf = Split-Path -Leaf $stageRootFull
+        if ($stageRootFull.StartsWith($stageBaseFull, [StringComparison]::OrdinalIgnoreCase) -and $stageLeaf -match '^dsh-android-build-[0-9a-f]{32}$') {
+            $stageBytes = (Get-ChildItem -LiteralPath $stageRootFull -File -Recurse -Force | Measure-Object -Property Length -Sum).Sum
+            Write-Host ('Android ASCII 临时构建目录即将清理：{0} MB' -f [math]::Round($stageBytes / 1MB, 2))
+            try {
+                Remove-Item -LiteralPath $stageRootFull -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "候选包已生成，但临时目录清理失败：$stageRootFull；$($_.Exception.Message)"
+            }
+        } else {
+            Write-Warning "未清理临时目录：路径未通过安全范围校验：$stageRootFull"
+        }
+    }
 }
 
 if (-not $AndroidOnly) { Build-Windows }

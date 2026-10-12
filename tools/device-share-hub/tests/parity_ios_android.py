@@ -176,6 +176,32 @@ def main():
     # ---- DSH-093：称呼 / 口径统一（以 Android 为基准）----
     and_main = "\n".join(t for p, t in AND_SRC if p.name == "MainActivity.java")
 
+    # DSH-171：两端加载文案一致，进度胶囊受实际 FIT_CENTER/aspectFit 图片矩形约束。
+    dsh171_android_copy = (
+        'rightProgress.setText("高清原图加载中 " + percent + "%")' in and_main and
+        'leftProgress.setText("高清原图加载中 " + percent + "%")' in and_main
+    )
+    dsh171_ios_copy = (
+        'self.rightProgressLabel.text = "高清原图加载中 \\(pct)%"' in cv and
+        'self.leftProgressLabel.text = "高清原图加载中 \\(pct)%"' in cv
+    )
+    dsh171_android_bounds = (
+        "overlay.setMaxWidth(maxOverlayWidth);" in and_main and
+        "Math.round(displayedWidth) - dp(8)" in and_main and
+        "left = Math.round(imageRight) - overlayWidth - dp(4);" in and_main
+    )
+    dsh171_ios_bounds = (
+        "progressLabel.adjustsFontSizeToFitWidth = true" in cv and
+        "minimumWidth: 58, height: 20, horizontalPadding: 12" in cv and
+        "let labelWidth = min(max(minimumWidth, fittingSize.width + horizontalPadding), availableWidth)" in cv and
+        "x: imageRectInContainer.maxX - labelWidth - inset" in cv
+    )
+    results.append(check(
+        "DSH-171 双端加载文案统一且完整落在实际图片内",
+        dsh171_android_copy and dsh171_ios_copy and dsh171_android_bounds and dsh171_ios_bounds,
+        "Android 文案/边界=%s/%s iOS 文案/边界=%s/%s" %
+        (dsh171_android_copy, dsh171_android_bounds, dsh171_ios_copy, dsh171_ios_bounds)))
+
     # C9 本地卡「已使用 N 次」的计数口径。
     # Android 用 xhsShareCount + douyinShareCount（因为下面一行明细就是这两个数，
     # 总数必须等于明细之和）；iOS 曾直接用 shareCount ⇒ 同一作品两端数字不一样。
@@ -411,14 +437,40 @@ def main():
         "id 参数=%s get_work=%s path+bn join=%s basename=%s"
         % (c25_id_param, c25_get_work, c25_path_join, c25_basename)))
 
-    # C26 DSH-104：在线相册分类下，已用过的作品（useCount > 0）必须置顶。
-    c26_sort = re.search(
-        r'filtered\.sort\(\s*key\s*=\s*lambda\s+w:\s*-int\(w\.get\("useCount"\s*,\s*0\)\s*or\s*0\)\)',
-        server_src) is not None
+    # C26：用户明确选择“时间”时，创建时间必须严格决定顺序，不能被已用置顶覆盖。
+    sort_helper_match = re.search(
+        r'def sort_online_work_entries\(.*?(?=\ndef _dir_size_bytes)',
+        server_src, re.DOTALL)
+    sort_helper = sort_helper_match.group(0) if sort_helper_match else ""
+    android_sort_match = re.search(
+        r'private void sortOnlineWorks\(.*?\n    private void applySortKeyChange',
+        and_main, re.DOTALL)
+    android_sort = android_sort_match.group(0) if android_sort_match else ""
+    ios_sort_match = re.search(
+        r'private func sortOnlineWorksLocally\(.*?\n    private func applySortKey',
+        cv, re.DOTALL)
+    ios_sort = ios_sort_match.group(0) if ios_sort_match else ""
+    c26_server = (
+        'sort_online_work_entries(filtered, sort_key, category)' in server_src
+        and 'createdAtMs' in sort_helper
+        and sort_helper.find('if sort_key == "time_desc":') < sort_helper.find('if category in')
+        and 'useCount' not in sort_helper[sort_helper.find('if sort_key == "time_desc":'):sort_helper.find('if sort_key == "time_asc":')]
+    )
+    c26_android = (
+        'chronologicalSort' in android_sort
+        and android_sort.find('if (!chronologicalSort)') < android_sort.find('if ("time_desc".equals(sortKey))')
+        and 'String.valueOf(a.id)' in android_sort
+    )
+    c26_ios = (
+        'chronologicalSort' in ios_sort
+        and ios_sort.find('if !chronologicalSort') < ios_sort.find('case "time_desc":')
+        and 'return a.id < b.id' in ios_sort
+    )
+    c26_sort = c26_server and c26_android and c26_ios
     results.append(check(
-        "C26 服务端 DSH-104 分类下 useCount>0 作品置顶（按 useCount desc 排序）",
+        "C26 用户选择时间排序时服务端与双端都严格按创建时间排序",
         c26_sort,
-        "sort by useCount desc=%s" % c26_sort))
+        "server=%s android=%s ios=%s" % (c26_server, c26_android, c26_ios)))
 
     # ---- DSH-107：Android 顶部 statusText 不显示「已连接电脑在线相册 (url)」----
     # 用户口径：「安卓顶部那个已连接电脑XXXXX就别显示了」+「机箱苹果那个」（= iOS 也确认无此条）。
@@ -979,17 +1031,30 @@ def main():
     a21_status_uses = "total_works = self.scanner.snapshot_count()" in service_src
     a21_total = '"totalWorks": total_works,' in service_src
     a21_throttle_helper = "def scan_throttled(self" in service_src
-    a21_throttle_used = "self.scanner.scan_throttled(force=force_refresh)" in service_src
+    a21_throttle_used = "self.scanner.scan_snapshot_throttled(force=force_refresh)" in service_src
+    a21_scan_singleflight = "def _schedule_background_scan(self, force: bool = False)" in service_src
+    a21_scan_revision = '"scan": self.scanner.scan_status(),' in service_src
+    a21_list_revision = '"scanRevision": scan_revision' in service_src
+    a21_cleanup_async = service_src.count("self.scanner.schedule_expired_cleanup()") >= 2
+    a21_android_revision = ("lastAppliedWorksScanRevision = scanRevision" in and_client_src
+                            and has(AND_SRC, "hasServerScanAdvancedSinceLastWorksFetch()"))
+    a21_ios_revision = ("lastAppliedWorksScanRevision = revision" in ios_client_src
+                        and has(IOS_SRC, "hasServerScanAdvancedSinceLastWorksFetch()"))
     a21_interval = "FORCE_SCAN_MIN_INTERVAL = 3.0" in service_src
 
     a21_overall = (a21_count_helper and a21_status_uses and a21_total
-                   and a21_throttle_helper and a21_throttle_used and a21_interval)
+                   and a21_throttle_helper and a21_throttle_used
+                   and a21_scan_singleflight and a21_scan_revision and a21_list_revision
+                   and a21_cleanup_async
+                   and a21_android_revision and a21_ios_revision and a21_interval)
     results.append(check(
-        "A21 心跳只读计数 + refresh=1 限速（多手机同探不得打满服务）（DSH-117）",
+        "A21 心跳只读计数 + 列表快照后台单飞刷新 + refresh=1 限速（DSH-117/157）",
         a21_overall,
-        "count=%s statusUses=%s total=%s thrHelper=%s thrUsed=%s interval=%s"
+        "count=%s statusUses=%s total=%s thrHelper=%s snapshotUsed=%s singleflight=%s statusRevision=%s listRevision=%s cleanupAsync=%s androidRevision=%s iosRevision=%s interval=%s"
         % (a21_count_helper, a21_status_uses, a21_total,
-           a21_throttle_helper, a21_throttle_used, a21_interval)))
+           a21_throttle_helper, a21_throttle_used, a21_scan_singleflight,
+           a21_scan_revision, a21_list_revision, a21_cleanup_async, a21_android_revision,
+           a21_ios_revision, a21_interval)))
 
     # ── A22 服务端：sync-phone-counts 私网白名单 + 监听队列（DSH-117） ──
     # 这个接口会让**电脑端**主动向请求里的 host 发 HTTP：不加校验时，任何能

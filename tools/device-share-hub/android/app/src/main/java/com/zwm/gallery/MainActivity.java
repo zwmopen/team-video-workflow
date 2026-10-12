@@ -1154,23 +1154,29 @@ public final class MainActivity extends Activity {
     private void sortOnlineWorks(List<OnlineWorkEntry> list, String sortKey) {
         if (list == null || list.size() <= 1) return;
         final long now = System.currentTimeMillis();
+        final boolean chronologicalSort = "time_desc".equals(sortKey) || "time_asc".equals(sortKey);
         Collections.sort(list, (a, b) -> {
-            // 一级规则（DSH-135）：已使用的作品在到期前统一置顶在货架顶部（对齐 iOS）
-            boolean aUsed = (a.useCount > 0 && a.expireAtMs > now);
-            boolean bUsed = (b.useCount > 0 && b.expireAtMs > now);
-            if (aUsed && !bUsed) return -1;
-            if (!aUsed && bUsed) return 1;
-            if (aUsed && bUsed) {
-                long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
-                long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
-                int cmp = Long.compare(bTime, aTime);
-                if (cmp != 0) return cmp;
+            if (!chronologicalSort) {
+                // DSH-135 pinning remains for non-time sorts. Explicit time
+                // sorting must stay strictly chronological as requested.
+                boolean aUsed = (a.useCount > 0 && a.expireAtMs > now);
+                boolean bUsed = (b.useCount > 0 && b.expireAtMs > now);
+                if (aUsed && !bUsed) return -1;
+                if (!aUsed && bUsed) return 1;
+                if (aUsed && bUsed) {
+                    long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
+                    long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
+                    int cmp = Long.compare(bTime, aTime);
+                    if (cmp != 0) return cmp;
+                }
             }
             // 二级规则（DSH-109）：按选定的 sortKey 排序（与 iOS / 服务端 SORT_KEYS 统一）
             if ("time_desc".equals(sortKey)) {
-                return Long.compare(b.updatedAt, a.updatedAt);
+                int cmp = Long.compare(b.updatedAt, a.updatedAt);
+                return cmp != 0 ? cmp : String.valueOf(a.id).compareTo(String.valueOf(b.id));
             } else if ("time_asc".equals(sortKey)) {
-                return Long.compare(a.updatedAt, b.updatedAt);
+                int cmp = Long.compare(a.updatedAt, b.updatedAt);
+                return cmp != 0 ? cmp : String.valueOf(a.id).compareTo(String.valueOf(b.id));
             } else if ("name_asc".equals(sortKey)) {
                 String titleA = a.title != null ? a.title : "";
                 String titleB = b.title != null ? b.title : "";
@@ -1184,7 +1190,8 @@ public final class MainActivity extends Activity {
             } else if ("size_asc".equals(sortKey)) {
                 return Integer.compare(a.imageCount, b.imageCount);
             }
-            return Long.compare(b.updatedAt, a.updatedAt); // 默认最新作品在前（倒序）
+            int cmp = Long.compare(b.updatedAt, a.updatedAt); // 默认最新作品在前（倒序）
+            return cmp != 0 ? cmp : String.valueOf(a.id).compareTo(String.valueOf(b.id));
         });
     }
 
@@ -1602,7 +1609,12 @@ public final class MainActivity extends Activity {
                 boolean first = lastServerFingerprint == null;
                 boolean same = fingerprint.equals(lastServerFingerprint);
                 lastServerFingerprint = fingerprint;
-                if (first || same) return;
+                if (first) {
+                    // 首次指纹可能晚于服务端后台扫描完成；若列表响应携带的 revision 已旧，补拉一次。
+                    if (onlineClient.hasServerScanAdvancedSinceLastWorksFetch()) refreshOnlineWorks(false);
+                    return;
+                }
+                if (same) return;
                 refreshOnlineWorks(false);
             }
 
@@ -3535,7 +3547,9 @@ public final class MainActivity extends Activity {
                                     mergedCount >= 2 ? "已发送" : "已发1次",
                                     w.images, w.imageCount, w.copyText, w.hasCopyText,
                                     mergedDisp, w.updatedAt, w.garbage, w.garbageRemark,
-                                    w.path, w.firstSharedAtMs, w.expireAtMs, w.originDevice, mergedVers
+                                    w.path, w.firstSharedAtMs, w.expireAtMs, w.originDevice, mergedVers,
+                                    w.season, w.flowType, w.tags, w.sourceImages, w.sourceNames,
+                                    w.hasSourceCompare, w.maxSimilarity, w.similarityTag
                             );
                             onlineWorks.add(mergedEntry);
                         } else {
@@ -4700,7 +4714,9 @@ public final class MainActivity extends Activity {
                                                 0, old.maxUses, false, 2, "",
                                                 old.images, old.imageCount, old.copyText, old.hasCopyText,
                                                 new ArrayList<>(), System.currentTimeMillis(), old.garbage, old.garbageRemark,
-                                                old.path, 0L, 0L, "", Collections.emptyList()
+                                                old.path, 0L, 0L, "", Collections.emptyList(),
+                                                old.season, old.flowType, old.tags, old.sourceImages, old.sourceNames,
+                                                old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                                         );
                                         onlineWorks.set(i, updated);
                                         break;
@@ -5277,8 +5293,7 @@ public final class MainActivity extends Activity {
         leftBadge.setBackgroundColor(Color.TRANSPARENT);
         leftBadge.setPadding(0, 0, 0, 0);
         leftBadge.setVisibility(View.GONE);
-        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(-2, dp(20), Gravity.CENTER_VERTICAL | Gravity.END);
-        lBadgeParams.setMargins(0, 0, dp(4), 0);
+        FrameLayout.LayoutParams lBadgeParams = new FrameLayout.LayoutParams(-2, dp(20), Gravity.TOP | Gravity.START);
         leftFrame.addView(leftBadge, lBadgeParams);
 
         TextView leftProgress = text("", 10, false);
@@ -5310,8 +5325,7 @@ public final class MainActivity extends Activity {
         rightBadge.setBackgroundColor(Color.TRANSPARENT);
         rightBadge.setPadding(0, 0, 0, 0);
         rightBadge.setVisibility(View.GONE);
-        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(-2, dp(20), Gravity.CENTER_VERTICAL | Gravity.END);
-        rBadgeParams.setMargins(0, 0, dp(4), 0);
+        FrameLayout.LayoutParams rBadgeParams = new FrameLayout.LayoutParams(-2, dp(20), Gravity.TOP | Gravity.START);
         rightFrame.addView(rightBadge, rBadgeParams);
 
         TextView rightProgress = text("", 10, false);
@@ -5430,15 +5444,31 @@ public final class MainActivity extends Activity {
                 toggleLayoutBtn.setText("上下同框");
                 toggleLayoutBtn.setContentDescription("当前上下同框，点击切换左右并排");
                 if (lp != null) {
-                    lp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-                    lp.setMargins(0, 0, dp(8), 0);
+                    lp.gravity = Gravity.TOP | Gravity.START;
+                    lp.setMargins(0, 0, 0, 0);
                     leftBadge.setLayoutParams(lp);
                 }
                 if (rp != null) {
-                    rp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-                    rp.setMargins(0, 0, dp(8), 0);
+                    rp.gravity = Gravity.TOP | Gravity.START;
+                    rp.setMargins(0, 0, 0, 0);
                     rightBadge.setLayoutParams(rp);
                 }
+                leftFrame.post(() -> {
+                    if (leftBadge.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, false);
+                    }
+                    if (leftProgress.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
+                    }
+                });
+                rightFrame.post(() -> {
+                    if (rightBadge.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, false);
+                    }
+                    if (rightProgress.getVisibility() == View.VISIBLE) {
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
+                    }
+                });
             }
         };
 
@@ -5447,8 +5477,8 @@ public final class MainActivity extends Activity {
             if (leftProgress.getVisibility() == View.VISIBLE) {
                 positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
             }
-            if (isHorizontal[0] && leftBadge.getVisibility() == View.VISIBLE) {
-                positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, true);
+            if (leftBadge.getVisibility() == View.VISIBLE) {
+                positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, isHorizontal[0]);
             }
         });
         rightImage.addOnLayoutChangeListener((view, left, top, right, bottom,
@@ -5456,8 +5486,8 @@ public final class MainActivity extends Activity {
             if (rightProgress.getVisibility() == View.VISIBLE) {
                 positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
             }
-            if (isHorizontal[0] && rightBadge.getVisibility() == View.VISIBLE) {
-                positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, true);
+            if (rightBadge.getVisibility() == View.VISIBLE) {
+                positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, isHorizontal[0]);
             }
         });
 
@@ -5569,7 +5599,7 @@ public final class MainActivity extends Activity {
 
             // 异步加载成品 100% 高清原图（带百分比进度）
             rightProgress.setVisibility(View.VISIBLE);
-            rightProgress.setText("正在加载原图 0%");
+            rightProgress.setText("高清原图加载中 0%");
             positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
             onlineClient.loadFullImage(work.id, outImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                 @Override
@@ -5577,7 +5607,7 @@ public final class MainActivity extends Activity {
                     if (dialog.isShowing() && currentIndex[0] == idx
                             && pageGeneration[0] == requestGeneration) {
                         rightProgress.setVisibility(View.VISIBLE);
-                        rightProgress.setText("正在加载原图 " + percent + "%");
+                        rightProgress.setText("高清原图加载中 " + percent + "%");
                         positionCompareOverlayOnImage(rightFrame, rightImage, rightProgress, false);
                     }
                 }
@@ -5587,9 +5617,7 @@ public final class MainActivity extends Activity {
                             && pageGeneration[0] == requestGeneration && result != null && !result.isRecycled()) {
                         rightImage.setImageBitmap(result);
                         rightBadge.setVisibility(View.VISIBLE);
-                        if (isHorizontal[0]) {
-                            positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, true);
-                        }
+                        positionCompareOverlayOnImage(rightFrame, rightImage, rightBadge, isHorizontal[0]);
                         rightProgress.setVisibility(View.GONE);
                     }
                     visibleOriginalFinished.run();
@@ -5631,7 +5659,7 @@ public final class MainActivity extends Activity {
 
                 // 异步加载原素材 100% 高清原图（带百分比进度）
                 leftProgress.setVisibility(View.VISIBLE);
-                leftProgress.setText("正在加载原图 0%");
+                leftProgress.setText("高清原图加载中 0%");
                 positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
                 onlineClient.loadFullImage(work.id, srcImg, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                     @Override
@@ -5639,7 +5667,7 @@ public final class MainActivity extends Activity {
                         if (dialog.isShowing() && currentIndex[0] == idx
                                 && pageGeneration[0] == requestGeneration) {
                             leftProgress.setVisibility(View.VISIBLE);
-                            leftProgress.setText("正在加载原图 " + percent + "%");
+                            leftProgress.setText("高清原图加载中 " + percent + "%");
                             positionCompareOverlayOnImage(leftFrame, leftImage, leftProgress, false);
                         }
                     }
@@ -5650,9 +5678,7 @@ public final class MainActivity extends Activity {
                             leftImage.setImageBitmap(result);
                             leftEmpty.setVisibility(View.GONE);
                             leftBadge.setVisibility(View.VISIBLE);
-                            if (isHorizontal[0]) {
-                                positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, true);
-                            }
+                            positionCompareOverlayOnImage(leftFrame, leftImage, leftBadge, isHorizontal[0]);
                             leftProgress.setVisibility(View.GONE);
                         }
                         visibleOriginalFinished.run();
@@ -5779,9 +5805,31 @@ public final class MainActivity extends Activity {
             float imageRight = imageLeft + displayedWidth;
             float imageBottom = imageTop + displayedHeight;
 
-            overlay.measure(
-                    View.MeasureSpec.makeMeasureSpec(frame.getWidth(), View.MeasureSpec.AT_MOST),
-                    View.MeasureSpec.makeMeasureSpec(frame.getHeight(), View.MeasureSpec.AT_MOST));
+            int maxOverlayWidth = Math.max(1, Math.round(displayedWidth) - dp(8));
+            int maxOverlayHeight = Math.max(1, Math.round(displayedHeight) - dp(8));
+            if (belowImage) {
+                overlay.measure(
+                        View.MeasureSpec.makeMeasureSpec(frame.getWidth(), View.MeasureSpec.AT_MOST),
+                        View.MeasureSpec.makeMeasureSpec(frame.getHeight(), View.MeasureSpec.AT_MOST));
+            } else {
+                overlay.setMaxWidth(maxOverlayWidth);
+                overlay.setMaxHeight(maxOverlayHeight);
+                overlay.setSingleLine(true);
+                overlay.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                overlay.setTextScaleX(1f);
+                overlay.measure(
+                        View.MeasureSpec.makeMeasureSpec(maxOverlayWidth, View.MeasureSpec.AT_MOST),
+                        View.MeasureSpec.makeMeasureSpec(maxOverlayHeight, View.MeasureSpec.AT_MOST));
+                float textWidth = overlay.getPaint().measureText(
+                        overlay.getText() == null ? "" : overlay.getText().toString());
+                float availableTextWidth = Math.max(1, maxOverlayWidth
+                        - overlay.getPaddingLeft() - overlay.getPaddingRight());
+                float textScale = textWidth <= 0f ? 1f : Math.min(1f, availableTextWidth / textWidth);
+                overlay.setTextScaleX(Math.max(0.65f, textScale));
+                overlay.measure(
+                        View.MeasureSpec.makeMeasureSpec(maxOverlayWidth, View.MeasureSpec.AT_MOST),
+                        View.MeasureSpec.makeMeasureSpec(maxOverlayHeight, View.MeasureSpec.AT_MOST));
+            }
             int overlayWidth = overlay.getMeasuredWidth();
             int overlayHeight = overlay.getMeasuredHeight();
             int left;
@@ -5791,10 +5839,10 @@ public final class MainActivity extends Activity {
                 top = Math.round(imageBottom) + dp(2);
                 top = Math.min(top, frame.getHeight() - overlayHeight);
             } else {
-                left = Math.round(imageRight) - overlayWidth - dp(8);
-                top = Math.round(imageBottom) - overlayHeight - dp(8);
-                left = Math.max(left, Math.round(imageLeft) + dp(2));
-                top = Math.max(top, Math.round(imageTop) + dp(2));
+                left = Math.round(imageRight) - overlayWidth - dp(4);
+                top = Math.round(imageBottom) - overlayHeight - dp(4);
+                left = Math.max(left, Math.round(imageLeft) + dp(4));
+                top = Math.max(top, Math.round(imageTop) + dp(4));
             }
             left = Math.max(0, Math.min(left, frame.getWidth() - overlayWidth));
             top = Math.max(0, Math.min(top, frame.getHeight() - overlayHeight));
@@ -6255,7 +6303,9 @@ public final class MainActivity extends Activity {
                         newCount >= 2 ? "已发送" : "已发1次",
                         old.images, old.imageCount, old.copyText, old.hasCopyText,
                         newDispatched, System.currentTimeMillis(), old.garbage, old.garbageRemark,
-                        old.path, firstShared, exp, getDeviceName(), newVers
+                        old.path, firstShared, exp, getDeviceName(), newVers,
+                        old.season, old.flowType, old.tags, old.sourceImages, old.sourceNames,
+                        old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                 );
                 break;
             }
@@ -6476,7 +6526,9 @@ public final class MainActivity extends Activity {
                         newCount >= 2 ? "已发送" : "已发1次",
                         old.images, old.imageCount, old.copyText, old.hasCopyText,
                         newDispatched, System.currentTimeMillis(), old.garbage, old.garbageRemark,
-                        old.path, finalFirstShared, finalExpire, finalOrigin, old.dispatchedVersions
+                        old.path, finalFirstShared, finalExpire, finalOrigin, old.dispatchedVersions,
+                        old.season, old.flowType, old.tags, old.sourceImages, old.sourceNames,
+                        old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                 );
                 onlineWorks.remove(i);
                 onlineWorks.add(0, updated);
@@ -6491,12 +6543,27 @@ public final class MainActivity extends Activity {
             OnlineWorkEntry old = onlineWorks.get(i);
             if (old.id.equals(workId)) {
                 List<String> newImgs = new ArrayList<>(remainingImages);
+                List<String> newSourceImages = new ArrayList<>();
+                List<String> newSourceNames = new ArrayList<>();
+                boolean hasRemainingSource = false;
+                for (String image : newImgs) {
+                    int oldIndex = old.images.indexOf(image);
+                    String sourceImage = oldIndex >= 0 && oldIndex < old.sourceImages.size()
+                            ? old.sourceImages.get(oldIndex) : "";
+                    String sourceName = oldIndex >= 0 && oldIndex < old.sourceNames.size()
+                            ? old.sourceNames.get(oldIndex) : "";
+                    newSourceImages.add(sourceImage);
+                    newSourceNames.add(sourceName);
+                    hasRemainingSource |= !sourceImage.isEmpty();
+                }
                 OnlineWorkEntry updated = new OnlineWorkEntry(
                         old.id, old.title, old.destination, old.stage,
                         old.useCount, old.maxUses, old.used, old.remainingUses,
                         old.statusLabel, newImgs, newImgs.size(), old.copyText, old.hasCopyText,
                         old.dispatchedTo, old.updatedAt, old.garbage, old.garbageRemark,
-                        old.path, old.firstSharedAtMs, old.expireAtMs, old.originDevice, old.dispatchedVersions
+                        old.path, old.firstSharedAtMs, old.expireAtMs, old.originDevice, old.dispatchedVersions,
+                        old.season, old.flowType, old.tags, newSourceImages, newSourceNames,
+                        hasRemainingSource, old.maxSimilarity, old.similarityTag
                 );
                 onlineWorks.set(i, updated);
                 break;

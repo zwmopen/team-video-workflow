@@ -1,7 +1,7 @@
 # 相册作品库工作流设计（现行实现）
 
 > **本文描述的是当前实现，不是设计草案。**
-> 最后核准：2026-10-11
+> 最后核准：2026-10-12
 > 旧设计稿（2026-07-18，基线 `acdf939`）已移入 `docs/_archive/`。
 > ⛔ 任何改动若影响本文所述行为，必须**同批**修订本文，并在 CHANGELOG 条目写明
 > `影响文档：ALBUM_WORKFLOW_DESIGN.md`。规则见 `AGENTS.md`「设计文档同步（强制）」。
@@ -12,8 +12,8 @@
 
 | 端 | 显示名 | 包 / Bundle ID | 版本 | 出处 |
 |---|---|---|---|---|
-| Android | 相册 | `com.zwm.gallery` | **0.8.94 候选**（versionCode 205；Release 已构建；Vivo 拒绝覆盖安装，机上仍为 0.8.92/203，未完成本候选实机验收） | `android/app/build.gradle.kts:13-14` |
-| iOS | 相册 | `com.zwm.album` | **0.8.94 候选**（build 205；源码静态检查通过；无 Xcode/Swift 和 IPA，未构建/安装） | `ios/project.yml:31-32` |
+| Android | 相册 | `com.zwm.gallery` | **0.8.101 候选**（versionCode 212；本地 Release/APK 构建通过；已安装到 Vivo 并完成关键页面真机回归） | `android/app/build.gradle.kts:13-14` |
+| iOS | 相册 | `com.zwm.album` | **0.8.100 源码候选**（build 211；静态检查通过；无匹配 IPA，iPhone 仍安装 0.8.95/206） | `ios/project.yml:31-32` |
 | Windows | 窗口标题「文件收发中控 V4.3.33」；CMake 产物名「素材投送中控」 | — | **4.3.33** | `main.cpp:123`、`CMakeLists.txt:91` |
 | 服务端 | `DeviceShareHub-OnlineGallery` | — | **1.2.0** | `online_gallery_service.py:2290` |
 
@@ -25,10 +25,11 @@ iOS 的 `CFBundleShortVersionString` / `CFBundleVersion` 走 `$(MARKETING_VERSIO
 
 ### 1.1 在线相册对比预览（当前候选）
 
-- 左右并排时，“素材/成品”标签放在各自画面顶部；上下同框时标签放在面板右侧留白。
+- Android 左右并排时，“素材/成品”标签紧贴各自图片下方；上下同框时，加载完成后的短标签放在 FIT_CENTER 实际可见图像内右下角。主页缩略图标签仍在各自图片内底部居中。
+- iOS 源码按 aspectFit 实际可见图像矩形定位原图状态与加载完成标签；当前只有源码/静态证据，没有对应的新 IPA 或设备视觉验收。
 - 图片视图铺满面板并按 FIT_CENTER/aspectFit 居中，不为右侧标签让出固定宽度。
-- 原图加载时在右下方显示“正在加载原图 N%”；完成后改为短标签，失败时保留失败提示；没有关联素材时显示空槽说明。
-- 此处为 0.8.94/205 源码候选状态。Android 包构建通过但安装被设备拒绝；iOS 尚无构建产物与实机验收。详见 `docs/MAINTAINER_HANDOFF.md` 与 `docs/BUG_LEDGER.md`。
+- 原图加载时统一显示“高清原图加载中 N%”；状态框按 FIT_CENTER/aspectFit 后实际可见图片矩形约束在右下角，不能越出图片；完成后改为短标签，失败时保留失败提示；没有关联素材时显示空槽说明。
+- 当前候选为 Android 0.8.101/212 与 iPhone 源码 0.8.100/211。Android 已安装到 Vivo 并完成主页、上下/左右布局、P1→P2 翻页及关闭返回真机检查；369 套计数与被动服务状态一致。动态加载百分比本轮未捕获。iPhone USB/usbmux 已枚举但息屏时仍回读 0.8.95/206；没有匹配 IPA，未安装或实机验收新 iOS 候选。详见 `docs/MAINTAINER_HANDOFF.md` 与 `docs/BUG_LEDGER.md`。
 
 ---
 

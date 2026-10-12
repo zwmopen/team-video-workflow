@@ -10,6 +10,12 @@
 
 # 三端测试与证据手册
 
+## USB 真机续验（2026-10-12 17:32 +08）
+
+- Android USB Vivo V2327A / Android 14 / SDK 34 已安装并回读 `0.8.101/212`。本轮重新检查主页 3:4 双图、主页状态 369 套、上下同框标签、左右并排图片下标签、P1→P2 箭头翻页和右上角关闭返回；只读 `/api/online/status` 为 `totalWorks=369`、`scanRevision=154`、`refreshing=false`。应用目标包未见 `FATAL EXCEPTION`。
+- iPhone USB 与 usbmux 均在；息屏时应用清单回读 `com.zwm.album` 为 `0.8.95/206`。没有匹配当前 iOS 源码候选 `0.8.100/211` 的 IPA，本机无 Xcode/Swift；未安装、未做新版本画面或交互验收。
+- 截图保存在 `D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-current.png`、`vivo-closure-compare-current.png`、`vivo-closure-side-by-side-current.png`、`vivo-closure-page2-current.png` 与 `vivo-closure-home-return-current.png`。Android 页面状态 18/18、iOS 对比 UI 静态检查、跨端契约 50/50 通过。动态“高清原图加载中 N%”未捕获；没有推送、CI、Release 或更新索引。
+
 ## 原则
 
 - 自动测试、云端构建、安装成功、实体功能操作是四种不同证据；
@@ -17,6 +23,14 @@
 - 不在文档保存账号、设备唯一标识、IP、用户作品正文或完整原始日志；
 - 手动 CI 默认只构建（build-only）；只有明确选择 full 时才运行会写入生产 Relay/R2 的 live E2E。
 - 修复兼容问题时使用同一个正式包验证多台设备，不为测试机制作专用包。
+
+## 本地 Android 候选构建与空间/计时记录
+
+- 在仓库根目录运行 `powershell -ExecutionPolicy Bypass -File .\tools\device-share-hub\scripts\build-local.ps1 -AndroidOnly`。命令依次运行单测、Release APK、Release Lint、APK 权限/`debuggable` 和 v2/v3 签名检查，并输出版本化 APK、SHA-256 与元数据。
+- Android 项目路径含非 ASCII 字符时，脚本暂存到 ASCII 临时目录构建；成功只回写已核验产物并清理暂存，失败保留目录。不要通过设置 `android.overridePathCheck` 绕过路径检查。
+- 项目 Gradle 配置开启任务输出缓存；相同构建图的暖缓存复跑可显著缩短时间。2026-10-12 Windows 样本：首轮 66.9 秒，稳定暖缓存 14.2–14.5 秒（68 个任务中 41 个缓存命中）；Gradle 守护进程重启时测得 47.5 秒。计时依赖本机缓存、CPU 和网络，不能当作 CI SLA。
+- 同日空间样本：Android SDK 0.54 GB、用户级 Gradle 缓存 0.75 GB、Gradle 发行版 0.14 GB；这些工具与缓存为多项目共享。候选项目构建目录约 3.8 MB，版本 APK 约 0.88 MiB；本轮 ASCII 暂存目录峰值 13.33 MB，成功后清理。
+- 本地 APK 是源码候选验证包，不代表 CI、签名分发或 Release。Windows 当前无 Xcode/Swift，iOS 使用 macOS job；当前主机无 CMake，Windows 原生包装用 `windows-2022` job。每轮需独立记录 CI、安装、真机操作和发布反读。
 
 ## 对比视图与操作栏统一回归（DSH-162/163/164/165 / 0.8.92 候选）
 
@@ -27,8 +41,8 @@
 - Android 本地和在线作品底部操作栏都应居中，顺序固定为“重置状态 / 复制路径 / 删除”；本地全屏预览同样只显示 `×`、`‹`、`›`。
 - iOS 代码必须保留 sourceImages/sourceNames 页位、使用 3:4 卡片、短标签“素材/成品”、同宽顶部模块和“重置状态”。无 Xcode/IPA/触控链时只记录静态门禁，不能用 Android 通过替代 iOS 实机验收。
 - iOS 顶部状态条必须固定显示并可读：同步中显示“正在同步电脑在线作品…”，成功显示“已同步电脑在线作品 · 共 N 套”，失败保留离线快照数量；对比卡按屏幕宽度自适应，左右并排时两张图垂直居中。
-- 全屏对比预览中，左右并排的“素材/成品”标签放各自面板顶部；上下同框的标签放面板右侧留白。图片视图占满面板、使用 FIT_CENTER/aspectFit 居中，不能为标签腾出一条固定宽度而缩小或偏移图片。
-- 原图加载期间，标签隐藏并在实际 `FIT_CENTER/aspectFit` 图像右下方显示“正在加载原图 N%”；不能相对黑色面板定位而跑到图片外。原图成功后收起加载状态，再显示对应的“素材/成品”短标签；失败则保持失败状态，缺素材仍显示空槽说明。
+- Android 全屏对比预览中，左右并排的“素材/成品”标签放各自图片下方并紧贴图片；上下同框的完成标签放在实际 FIT_CENTER 图片内右下角。图片视图使用 FIT_CENTER/aspectFit 居中，不能为标签腾出固定侧栏而缩小或偏移图片。iOS 当前源码按 aspectFit 实际图片矩形定位进度与完成标签，须等匹配 IPA 后另做真机确认。
+- 原图加载期间，标签隐藏并在实际 `FIT_CENTER/aspectFit` 图像右下方显示“高清原图加载中 N%”；状态框宽高必须受可见图像矩形约束，窄图也不得越出图片。原图成功后收起加载状态，再显示对应的“素材/成品”短标签；失败则保持失败状态，缺素材仍显示空槽说明。
 - 静态门禁 `tests/test_ios_compare_ui.py` 与 `tests/test_android_compare_preview_strip.py` 必须通过；覆盖状态条、双图 3:4、首页卡片尺寸/标签、全屏加载提示锚点、横向高度约束、缺素材和旧缓存页位回填。
 - 已安装版基线（Android 0.8.92/203）：APK SHA-256 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`，单测 103/103，Lint 0 错误/94 警告；Redmi 与 Vivo 已完成本地预览、在线 395 套及对比布局回读。
 - DSH-168 候选（Android/iOS 0.8.94/205）：Android Release 通过、单测 103/103、Lint 0 错误/92 警告、APK v2/v3 验签通过，SHA-256 `C9A09CF70EE8AE26131638CCC108B964B0584EB5B03E3F4035C30B3811DD399B`；覆盖安装被 Vivo 拒绝，设备仍为 0.8.92/203。Android 对比状态静态守卫 12/12；iOS 对比 UI 17/17、预取队列 11/11、客户端 15/15、跨端契约 49/49 静态门禁通过；Windows 无 Xcode/Swift，iPhone USB mux 未枚举，未构建 IPA、安装或实机验收。

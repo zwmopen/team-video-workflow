@@ -115,16 +115,22 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let copyText = (dict["copyText"] as? String) ?? ""
         let hasCopyText = (dict["hasCopyText"] as? Bool) ?? !copyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let dispatchedTo = (dict["dispatchedTo"] as? [String]) ?? []
+        let rawCreated = (dict["createdAtMs"] as? NSNumber)?.doubleValue
+            ?? (dict["createdAtMs"] as? Double)
+            ?? Double((dict["createdAtMs"] as? Int64) ?? Int64((dict["createdAtMs"] as? Int) ?? 0))
         let rawUpdated = (dict["updatedAt"] as? NSNumber)?.doubleValue
             ?? (dict["updatedAt"] as? Double)
             ?? Double((dict["updatedAt"] as? Int64) ?? Int64((dict["updatedAt"] as? Int) ?? 0))
+        let rawSortTime = rawCreated > 0 ? rawCreated : rawUpdated
         let updatedAt: Double
-        if rawUpdated <= 0 {
-            updatedAt = Date().timeIntervalSince1970 * 1000
-        } else if rawUpdated < 10000000000.0 {
-            updatedAt = rawUpdated * 1000.0
+        if rawSortTime <= 0 {
+            // A missing timestamp must not become each device's current time;
+            // zero is deterministic and the server normally supplies createdAtMs.
+            updatedAt = 0
+        } else if rawSortTime < 10000000000.0 {
+            updatedAt = rawSortTime * 1000.0
         } else {
-            updatedAt = rawUpdated
+            updatedAt = rawSortTime
         }
 
         // 在线回收站接口在每套作品上挂一个 garbage 对象：
@@ -303,6 +309,8 @@ public final class OnlineGalleryClient {
     private let listRequestLock = NSLock()
     private var latestCategoriesRequestID: UInt64 = 0
     private var latestWorksRequestID: UInt64 = 0
+    private var lastAppliedWorksScanRevision: Int = -1
+    private var lastObservedServerScanRevision: Int = -1
     // Cache reads and UIImage decoding must stay off the main thread during list rendering.
     private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
@@ -350,6 +358,26 @@ public final class OnlineGalleryClient {
         listRequestLock.lock()
         defer { listRequestLock.unlock() }
         return latestWorksRequestID == requestID
+    }
+
+    private func recordAppliedWorksScanRevision(_ revision: Int, requestID: UInt64) {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        guard latestWorksRequestID == requestID else { return }
+        lastAppliedWorksScanRevision = revision
+    }
+
+    private func recordObservedServerScanRevision(_ revision: Int) {
+        listRequestLock.lock()
+        lastObservedServerScanRevision = revision
+        listRequestLock.unlock()
+    }
+
+    public func hasServerScanAdvancedSinceLastWorksFetch() -> Bool {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        return lastObservedServerScanRevision > 0 &&
+            (lastAppliedWorksScanRevision < 0 || lastObservedServerScanRevision > lastAppliedWorksScanRevision)
     }
 
     private func saveWorksSnapshotIfLatest(_ data: Data, requestID: UInt64) {
@@ -649,7 +677,11 @@ public final class OnlineGalleryClient {
                let ts = wd["lastChangeAt"] as? Double {
                 changeAt = String(ts)
             }
-            DispatchQueue.main.async { completion(.success("\(total)|\(changeAt)")) }
+            let scan = json["scan"] as? [String: Any]
+            let scanRevisionValue = scan?["revision"] as? Int ?? -1
+            let scanRevision = scanRevisionValue >= 0 ? String(scanRevisionValue) : ""
+            self?.recordObservedServerScanRevision(scanRevisionValue)
+            DispatchQueue.main.async { completion(.success("\(total)|\(changeAt)|\(scanRevision)")) }
         }.resume()
     }
 
@@ -742,6 +774,7 @@ public final class OnlineGalleryClient {
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                 let viewState = json["viewState"] as? [String: Any]
+                let scanRevision = json["scanRevision"] as? Int ?? -1
                 var entries: [OnlineWorkEntry] = []
                 if let arr = json["works"] as? [[String: Any]] {
                     for w in arr {
@@ -755,6 +788,7 @@ public final class OnlineGalleryClient {
                     if let viewState = viewState {
                         self.consumeRemoteViewState(viewState)
                     }
+                    self.recordAppliedWorksScanRevision(scanRevision, requestID: requestID)
                     completion(.success(entries))
                 }
             } catch {
