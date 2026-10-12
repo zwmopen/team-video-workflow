@@ -1,3 +1,17 @@
+# 2026-10-12 DSH-171：对比标签与原图进度定位（源码候选 0.8.96 / build 207）
+
+- 主页对比卡“素材/成品”标签叠在各自图片内底部居中；卡片只保留紧凑标题和底部间距。
+- 全屏原图百分比依照 scaleAspectFit 图像实际可见区域定位，不再锚定黑色面板边缘。
+- iOS 对比 UI、原图预取、客户端和 49 项跨端静态门禁通过。本机无 Xcode；新 IPA 尚未构建或安装，设备视觉与交互回归待 CI 包。熄屏期间安装表现待侧载时观察。
+- 没有正式 Release 或更新索引。
+
+# 2026-10-12 DSH-170：iOS 候选安装与截图回读（0.8.95 / build 206）
+
+- CI run `38149511506` 的 macOS iOS 构建成功；IPA SHA-256 `D763EEEB934D020A146B6EC7E93715E26E55418822DA3A77BF14E285E9A872C5`。本机没有 Xcode，未做 Windows 本地 iOS 编译。
+- 使用项目专用 `ios-sideload-automation` 技能完成安装，并从 iPhone 回读版本 `0.8.95/206`。截图确认主页状态为同步 395 套，对比画面可见素材与成品。
+- 当前设备 iOS 26.6 不支持现有远程触控接口要求的 iOS 27+ 操作；没有 WebDriverAgent，点按交互未验收。动态原图加载百分比也未能捕获，不能记为视觉验收通过。
+- CI 的 live E2E 和发布 job 跳过；没有正式 Release 或更新索引。
+
 # 2026-10-11 DSH-169：全屏对比标题统一与黑色预览画布（iOS 源码候选 0.8.95 / build 206）
 
 - 固定标题为“对比视图”，并与布局模式按钮使用居中、同高同字号样式；根据屏宽调整两模块宽度，保持相似度徽标与关闭按钮的空间。
@@ -287,6 +301,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |

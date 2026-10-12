@@ -2467,7 +2467,7 @@ private final class ComparePairThumbView: UIControl {
     }
     static var imageWidth: CGFloat { (cardWidth - 26) / 2 }
     static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }
-    static var cardHeight: CGFloat { imageHeight + 49 }
+    static var cardHeight: CGFloat { imageHeight + 27 }
 
     private let headerLabel = UILabel()
     private let leftImageView = UIImageView()
@@ -2523,7 +2523,7 @@ private final class ComparePairThumbView: UIControl {
         leftBadge.layer.cornerRadius = 4
         leftBadge.clipsToBounds = true
         leftBadge.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(leftBadge)
+        leftImageView.addSubview(leftBadge)
 
         rightBadge.text = "成品"
         rightBadge.font = .systemFont(ofSize: 9.5, weight: .bold)
@@ -2533,7 +2533,7 @@ private final class ComparePairThumbView: UIControl {
         rightBadge.layer.cornerRadius = 4
         rightBadge.clipsToBounds = true
         rightBadge.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rightBadge)
+        rightImageView.addSubview(rightBadge)
 
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.cardWidth),
@@ -2546,24 +2546,24 @@ private final class ComparePairThumbView: UIControl {
 
             leftImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
             leftImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+            leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             leftImageView.widthAnchor.constraint(equalToConstant: Self.imageWidth),
 
             rightImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
             rightImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+            rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             rightImageView.widthAnchor.constraint(equalToConstant: Self.imageWidth),
 
             emptySourceLabel.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor),
             emptySourceLabel.centerYAnchor.constraint(equalTo: leftImageView.centerYAnchor),
 
-            leftBadge.trailingAnchor.constraint(equalTo: leftImageView.trailingAnchor),
-            leftBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            leftBadge.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor),
+            leftBadge.bottomAnchor.constraint(equalTo: leftImageView.bottomAnchor, constant: -8),
             leftBadge.widthAnchor.constraint(equalToConstant: 38),
             leftBadge.heightAnchor.constraint(equalToConstant: 18),
 
-            rightBadge.trailingAnchor.constraint(equalTo: rightImageView.trailingAnchor, constant: -3),
-            rightBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            rightBadge.centerXAnchor.constraint(equalTo: rightImageView.centerXAnchor),
+            rightBadge.bottomAnchor.constraint(equalTo: rightImageView.bottomAnchor, constant: -8),
             rightBadge.widthAnchor.constraint(equalToConstant: 38),
             rightBadge.heightAnchor.constraint(equalToConstant: 18)
         ])
@@ -4457,6 +4457,11 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         loadPage(currentIndex)
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateProgressLabelPositions()
+    }
+
     private func setupUI() {
         let hasSimilarity = entry.maxSimilarity > 0
         let moduleBackground = UIColor(white: 0.22, alpha: 0.8)
@@ -4675,7 +4680,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         badge.isHidden = true
         container.addSubview(badge)
 
-        progressLabel.translatesAutoresizingMaskIntoConstraints = false
+        progressLabel.translatesAutoresizingMaskIntoConstraints = true
         progressLabel.font = .systemFont(ofSize: 10, weight: .medium)
         progressLabel.textColor = UIColor(white: 0.9, alpha: 1)
         progressLabel.backgroundColor = UIColor.black.withAlphaComponent(0.68)
@@ -4693,12 +4698,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
             badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             badge.heightAnchor.constraint(equalToConstant: 22),
-            badge.widthAnchor.constraint(equalToConstant: 38),
-
-            progressLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            progressLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-            progressLabel.heightAnchor.constraint(equalToConstant: 20),
-            progressLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 58)
+            badge.widthAnchor.constraint(equalToConstant: 38)
         ])
 
         let badgeTop = badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8)
@@ -4711,6 +4711,52 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
             rightBadgeCenterYConstraint = badgeCenterY
         }
         badgeCenterY.isActive = true
+    }
+
+    private func updateProgressLabelPositions() {
+        positionProgressLabel(leftProgressLabel, over: leftImageView)
+        positionProgressLabel(rightProgressLabel, over: rightImageView)
+    }
+
+    private func positionProgressLabel(_ label: UILabel, over imageView: UIImageView) {
+        guard !label.isHidden else { return }
+        let bounds = imageView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        var visibleImageRect = bounds
+        if let image = imageView.image, image.size.width > 0, image.size.height > 0 {
+            let imageAspect = image.size.width / image.size.height
+            let paneAspect = bounds.width / bounds.height
+            if imageAspect > paneAspect {
+                let fittedHeight = bounds.width / imageAspect
+                visibleImageRect = CGRect(
+                    x: bounds.minX,
+                    y: bounds.midY - fittedHeight / 2,
+                    width: bounds.width,
+                    height: fittedHeight
+                )
+            } else {
+                let fittedWidth = bounds.height * imageAspect
+                visibleImageRect = CGRect(
+                    x: bounds.midX - fittedWidth / 2,
+                    y: bounds.minY,
+                    width: fittedWidth,
+                    height: bounds.height
+                )
+            }
+        }
+
+        let fittingSize = label.sizeThatFits(CGSize(width: max(0, visibleImageRect.width - 8), height: 20))
+        let labelWidth = min(max(58, fittingSize.width + 12), max(0, visibleImageRect.width - 8))
+        let labelHeight = min(20, max(0, visibleImageRect.height - 8))
+        guard labelWidth > 0, labelHeight > 0 else { return }
+        let imageRectInContainer = visibleImageRect.offsetBy(dx: imageView.frame.minX, dy: imageView.frame.minY)
+        label.frame = CGRect(
+            x: max(imageRectInContainer.minX + 4, imageRectInContainer.maxX - labelWidth - 8),
+            y: max(imageRectInContainer.minY + 4, imageRectInContainer.maxY - labelHeight - 8),
+            width: labelWidth,
+            height: labelHeight
+        )
     }
 
     private func setupGestures() {
@@ -4766,6 +4812,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
            let fastCachedSrc = client.getFastCachedImage(path: sourcePath, workId: entry.id, isThumbnail: true) {
             leftImageView.image = fastCachedSrc
         }
+        updateProgressLabelPositions()
 
         pageLoadsRemaining = sourcePath.isEmpty ? 1 : 2
         let outputRequest = client.loadImageWithProgress(
@@ -4774,6 +4821,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                 guard let self = self, self.pageLoadGeneration == generation else { return }
                 self.rightProgressLabel.isHidden = false
                 self.rightProgressLabel.text = "正在加载原图 \(pct)%"
+                self.updateProgressLabelPositions()
             },
             completion: { [weak self] img in
                 guard let self = self, self.pageLoadGeneration == generation else { return }
@@ -4784,6 +4832,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                 } else {
                     self.rightProgressLabel.text = "原图加载失败"
                 }
+                self.updateProgressLabelPositions()
                 self.finishVisiblePageLoad(generation: generation)
             }
         )
@@ -4795,7 +4844,8 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                 onProgress: { [weak self] pct in
                     guard let self = self, self.pageLoadGeneration == generation else { return }
                     self.leftProgressLabel.isHidden = false
-                        self.leftProgressLabel.text = "正在加载原图 \(pct)%"
+                    self.leftProgressLabel.text = "正在加载原图 \(pct)%"
+                    self.updateProgressLabelPositions()
                 },
                 completion: { [weak self] img in
                     guard let self = self, self.pageLoadGeneration == generation else { return }
@@ -4810,6 +4860,7 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
                             self.emptyLeftLabel.isHidden = false
                         }
                     }
+                    self.updateProgressLabelPositions()
                     self.finishVisiblePageLoad(generation: generation)
                 }
             )

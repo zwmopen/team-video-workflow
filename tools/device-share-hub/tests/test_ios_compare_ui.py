@@ -19,6 +19,9 @@ def check(name: str, condition: bool) -> None:
 
 
 def main() -> None:
+    thumb_start = CONTENT.index("private final class ComparePairThumbView")
+    thumb_end = CONTENT.index("final class OnlineComparePreviewController", thumb_start)
+    thumb = CONTENT[thumb_start:thumb_end]
     preview_start = CONTENT.index("final class OnlineComparePreviewController")
     preview = CONTENT[preview_start:]
     container_start = preview.index("private func setupImageViewContainer(")
@@ -39,6 +42,8 @@ def main() -> None:
     check("iOS status shows in-flight sync state", 'onlineStatusOverride = "正在同步电脑在线作品…"' in CONTENT)
     check("compare card width adapts to the phone", "static var cardWidth: CGFloat" in CONTENT)
     check("compare card image keeps a 3:4 ratio", "static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }" in CONTENT)
+    check("compare card leaves only a compact header and bottom inset", "static var cardHeight: CGFloat { imageHeight + 27 }" in thumb and "leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)" in thumb)
+    check("home compare labels overlay each image bottom-center", "leftImageView.addSubview(leftBadge)" in thumb and "rightImageView.addSubview(rightBadge)" in thumb and "leftBadge.centerXAnchor.constraint(equalTo: leftImageView.centerXAnchor)" in thumb and "leftBadge.bottomAnchor.constraint(equalTo: leftImageView.bottomAnchor, constant: -8)" in thumb and "rightBadge.centerXAnchor.constraint(equalTo: rightImageView.centerXAnchor)" in thumb and "rightBadge.bottomAnchor.constraint(equalTo: rightImageView.bottomAnchor, constant: -8)" in thumb)
     check("compare preview height follows the card", "previewScrollHeightConstraint?.constant = ComparePairThumbView.cardHeight" in CONTENT)
     check("horizontal compare containers get an explicit height", "horizontalContainerHeightConstraints" in CONTENT and "multiplier: 1.18" in CONTENT)
     check("compare mode opens even when a page has no source", "if currentViewMode == .compare {" in CONTENT)
@@ -50,7 +55,7 @@ def main() -> None:
     check("old cache can rebuild a source token from sourceNames", 'sourceImages[index] = "__src__:\\(outputName)"' in CLIENT)
     check("comparison images fill the pane and remain aspect-fit centered", "imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor)" in container and "imageView.contentMode = .scaleAspectFit" in container and "badge.leadingAnchor" not in container)
     check("comparison panes match the black fullscreen canvas without a card edge", "container.backgroundColor = .black" in container and "container.layer.cornerRadius = 0" in container and "container.layer.borderWidth = 0" in container)
-    check("original-load percentage stays at bottom-right", "progressLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8)" in container and "progressLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8)" in container)
+    check("original-load percentage follows the visible aspect-fit image", "override func viewDidLayoutSubviews()" in preview and "updateProgressLabelPositions()" in preview and "imageAspect > paneAspect" in preview and "visibleImageRect.offsetBy(dx: imageView.frame.minX, dy: imageView.frame.minY)" in preview and "progressLabel.translatesAutoresizingMaskIntoConstraints = true" in container and "progressLabel.trailingAnchor.constraint" not in container and "progressLabel.bottomAnchor.constraint" not in container)
     check("stacked mode places labels in the right-side rail", "badge.centerYAnchor.constraint(equalTo: container.centerYAnchor)" in container and "leftBadgeCenterYConstraint?.isActive = !isHorizontalLayout" in toggle)
     check("side-by-side mode moves labels to the top", "badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 8)" in container and "leftBadgeTopConstraint?.isActive = isHorizontalLayout" in toggle and "rightBadgeTopConstraint?.isActive = isHorizontalLayout" in toggle)
     check("original-load state starts with visible percentage text", 'rightProgressLabel.text = "正在加载原图 0%"' in load_page and 'leftProgressLabel.text = sourcePath.isEmpty ? nil : "正在加载原图 0%"' in load_page)

@@ -1,9 +1,19 @@
-﻿# 2026-10-11 DSH-170：Android 对比预览三个布局问题（候选 0.8.96/207）
+﻿# 2026-10-12 DSH-171：双端主页对比缩略图与 iOS 加载位置（源码候选）
+
+- 版本：Android 0.8.97/versionCode 208；iPhone 0.8.96/build 207。当前是本地源码候选，未构建新包。
+- 修复：Android 对比双图卡按可见条宽度放大并保持 3:4；双端“素材/成品”标签居中叠在各自图片底部；iOS 全屏原图加载提示贴合 scaleAspectFit 后的实际图像右下角。
+- 静态证据：test_ios_compare_ui.py、新增 test_android_compare_preview_strip.py、Android 对比页/预取、iOS 预取/客户端及 parity_ios_android.py 全部通过。
+- 设备状态：Vivo 仍为 0.8.96/207；iPhone 仍为 0.8.95/206。iPhone USB 可枚举，但 iOS 26.6 当前没有可用自动点按链。熄屏中侧载未实测，息屏设置未调整。
+- 下一步：获得候选分支推送授权后触发 build-only CI，下载并校验 APK/IPA，再分别安装、版本回读和设备截图回归；观察 iPhone 熄屏后侧载是否继续。无正式 Release 或更新索引。
+
+# 2026-10-11 DSH-170：Android 对比预览三个布局问题（候选 0.8.96/207）
 
 - **版本边界**：Android 0.8.96/207 已由 build-only CI `38149511506` 构建成功，并安装到 Vivo V2327A（`10AF3319YR002ZC`）；设备回读为 0.8.96/207。APK SHA-256：`400f60b5391cb8d0af191866693c16d95abfbcb1b99fe8b536836c774c04578a`。iOS 代码未改，仍为 0.8.95/206。
 - **本次修复**：加载状态按 FIT_CENTER 图片实际边界固定在右下角；左右并排的“素材/成品”放到图片下方并保留紧凑间距；关闭按钮独立固定到顶栏右上角。
 - **验证进度**：Android 对比页静态守卫 15/15、当前页优先预取守卫 8/8 通过；CI Android test/build/lint 成功，APK 哈希与 CI 清单一致。Vivo 实机已检查上下同框、左右并排 P1/P4/P5/P6、切回上下及关闭返回主页。关闭按钮在右上角；左右“素材/成品”位于各自图片下方，紧贴且不压图。快速加载导致本轮未捕获活动中的加载提示/动态百分比；源码按 FIT_CENTER 实际图片边界将提示放在图片内右下角，静态守卫通过。证据截图在 `D:\dsh_build_20261011\ci-v0.8.96-dsh170\`。
-- **发布边界**：run `38149511506` 的生产 Relay live E2E 与公开更新索引 job 均跳过；没有正式 Release 或更新索引。iOS 设备安装/交互验收仍未完成。
+- **iOS 续接（2026-10-12）**：CI run `38149511506` 已构建 iOS `0.8.95/206`，IPA SHA-256 `D763EEEB934D020A146B6EC7E93715E26E55418822DA3A77BF14E285E9A872C5`。已使用项目专用 `ios-sideload-automation` 技能安装并回读版本；截图确认主页同步 395 套和对比画面素材/成品均可见。iPhone 为 iOS 26.6，当前远程触控接口要求 iOS 27+，本机也没有 WebDriverAgent，因此点按交互未验收。Windows 无 Xcode，iOS 由 CI 构建。
+- **定向回归**：Android 对比布局 15/15、原图预取队列 8/8；iOS 对比 UI 23/23、预取队列 12/12、相册客户端 15/15、刷新机制 7/7；跨端契约 49/49 均通过。
+- **发布边界**：run `38149511506` 的生产 Relay live E2E 与公开更新索引 job 均跳过；没有正式 Release 或更新索引。Android 动态加载百分比未截屏，iOS 触控交互未完成，候选验收仍有这两项边界。
 
 # 2026-10-11 DSH-169：对比控件统一与 Android 当前页优先预取（候选 0.8.95/206）
 
@@ -1205,6 +1215,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:20 | 反重力 | record live timing boundary |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |

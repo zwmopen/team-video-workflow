@@ -3362,6 +3362,15 @@ totalWorks = 472
 **当前未关闭优先项**：iOS IPA/真机验收、DSH-157 全设备根因与回归、正式发布三铁证。它们保持开放，不得因为 Android 或静态门禁通过而改写成“全部完成”。
 
 
+## DSH-171 主页对比缩略图偏小与标签位置、iOS 全屏加载提示错位（源码修复候选 · 2026-10-12）
+
+- **用户反馈**：Android 主页对比缩略图比 iOS 小；双端“素材/成品”应在图片内底部居中；iOS 全屏“正在加载原图”要贴合实际图像右下角，不能跟面板边界错开。iPhone 安装时间长，用户还观察到安装中屏幕熄灭，需实测锁屏影响后再决定是否调息屏。
+- **根因**：Android 对比卡固定为 `190×158dp`、双图各 `84×112dp`；两端标签在图片外/右下角；iOS 全屏加载标签只按面板边沿约束，没有考虑 `scaleAspectFit` 留白。
+- **修复候选**：Android 依据屏宽将双图卡放大到与 iOS 相近的范围；两端短标签叠于各自图块底部居中；iOS 依据 aspect-fit 实际图像矩形定位加载状态。未改变设备息屏设置。
+- **自动验证**：iOS 对比 UI、Android 新增主页对比缩略图守卫、Android 对比页/预取、iOS 预取/客户端及 49 项跨端静态门禁均通过。新版本尚未云构建。
+- **设备/发布状态**：当前 Vivo `0.8.96/207`、iPhone `0.8.95/206`；未安装本轮新版本。iPhone USB 可枚举，熄屏期间的 Sideloadly 安装结果待新 IPA 实测；iOS 26.6 暂无可用自动点按链。没有正式 Release 或更新索引。
+- **影响文档**：`README.md`、`ios/README.md`、`CHANGELOG.md`、`ios/CHANGELOG.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`；架构与通信协议未改变。
+
 ## DSH-170 Android 对比预览的加载态、关闭按钮和左右标签位置（候选已安装；加载态动态显示未捕获 · 2026-10-11）
 
 - **用户反馈**：Android 大图预览的“正在加载原图”不能越出实际图像；关闭按钮应在右上角；左右并排时“素材/成品”要在各自图片下方，紧贴图片但不压图。
@@ -3369,6 +3378,12 @@ totalWorks = 472
 - **修复候选**：按 drawable 与 `FIT_CENTER` 可用区域计算实际图片矩形，把加载状态压入该矩形右下角；左右模式在图片下方保留 24dp 标签空间，并按实际显示图片底边定位短标签；关闭按钮在独立顶栏容器中固定右上角。
 - **版本**：Android `0.8.96/versionCode 207`；iOS 本轮未改，仍为 `0.8.95/build 206`。
 - **自动回归**：Android 对比页静态守卫 15/15、当前页优先预取守卫 8/8 通过；CI run `38149511506` 的 Android test/build/lint 成功。APK SHA-256 `400f60b5391cb8d0af191866693c16d95abfbcb1b99fe8b536836c774c04578a` 与 CI 清单一致；Vivo V2327A 已安装并读回 `0.8.96/207`。实机已检查上下/左右布局、翻页、左右标签位置及右上角关闭按钮。加载太快，未截到活动加载中的视觉状态；文字定位代码与静态守卫确认落在实际图片右下角，动态百分比仍未验证。生产 Relay live E2E 与更新索引 job 跳过；没有正式发布。
+
+### 2026-10-12 iOS 设备验收补记
+
+- CI run `38149511506` 的 iOS 构建成功，IPA SHA-256 `D763EEEB934D020A146B6EC7E93715E26E55418822DA3A77BF14E285E9A872C5`；通过项目专用 `ios-sideload-automation` 技能安装，设备回读 `0.8.95/206`。
+- 截图确认主页同步 395 套、对比画面素材与成品可见。此项是截图/启动验收，不代表点按交互通过：iOS 26.6 不支持当前远程触控接口要求的 iOS 27+ 操作，且无 WebDriverAgent。
+- Windows 无 Xcode，IPA 来自 CI 而非本地编译。加载百分比动态视觉状态未捕获；未正式发布，live E2E 与更新索引 job 跳过。
 
 ## DSH-169 对比标题控件统一与 Android 当前页原图优先（源码候选 · 2026-10-11）
 
@@ -3404,6 +3419,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 | Codex | DSH-169 Android 当前页优先预取与双端全屏对比控件统一；更新 .94 真机证据并保留 .95/206 构建、冷缓存进度和 iPhone 验收边界。 |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 | Codex | DSH-167: add cancellable iOS comparison prefetch queue with explicit pending iPhone build/device evidence. |

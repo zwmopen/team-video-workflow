@@ -5022,18 +5022,23 @@ public final class MainActivity extends Activity {
         strip.setPadding(0, 0, dp(2), 0);
 
         int total = work.images != null ? work.images.size() : 0;
+        // Account for the outer page/card gutters so one paired tile fills the visible strip without clipping.
+        int cardWidthDp = Math.min(Math.max(getResources().getConfiguration().screenWidthDp - 64, 256), 360);
+        int imageWidthDp = (cardWidthDp - 26) / 2;
+        int imageHeightDp = Math.round(imageWidthDp * 4f / 3f);
+        int cardHeightDp = imageHeightDp + 27;
         for (int i = 0; i < total; i++) {
             final int pageIndex = i;
             String outImg = work.images.get(i);
             String srcImg = (work.sourceImages != null && i < work.sourceImages.size())
                     ? work.sourceImages.get(i) : null;
 
-            // 对比卡片：每张图保持 3:4，避免 iOS/Android 上被压成半张图。
+            // 对比卡片与 iOS 保持相近的宽度和 3:4 双图尺寸，主页一次能看清一组素材/成品。
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setBackground(round(Color.rgb(243, 248, 245), 10));
             card.setPadding(dp(5), dp(3), dp(5), dp(5));
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(190), dp(158));
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(cardWidthDp), dp(cardHeightDp));
             cardParams.setMargins(0, 0, dp(8), 0);
 
             // 标头：P1 素材 ➔ 成品
@@ -5054,6 +5059,13 @@ public final class MainActivity extends Activity {
             ImageView leftIv = new ImageView(this);
             leftIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             leftBox.addView(leftIv, new FrameLayout.LayoutParams(-1, -1));
+            TextView leftBadge = text("素材", 9, true);
+            leftBadge.setTextColor(Color.WHITE);
+            leftBadge.setGravity(Gravity.CENTER);
+            leftBadge.setBackground(round(Color.argb(170, 0, 0, 0), 4));
+            FrameLayout.LayoutParams leftBadgeParams = new FrameLayout.LayoutParams(dp(42), dp(20), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            leftBadgeParams.bottomMargin = dp(8);
+            leftBox.addView(leftBadge, leftBadgeParams);
 
             if (srcImg != null && !srcImg.isEmpty()) {
                 String cacheKey = "online:" + work.id + ":" + srcImg;
@@ -5090,6 +5102,13 @@ public final class MainActivity extends Activity {
             ImageView rightIv = new ImageView(this);
             rightIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             rightBox.addView(rightIv, new FrameLayout.LayoutParams(-1, -1));
+            TextView rightBadge = text("成品", 9, true);
+            rightBadge.setTextColor(Color.WHITE);
+            rightBadge.setGravity(Gravity.CENTER);
+            rightBadge.setBackground(round(Color.argb(220, 20, 115, 75), 4));
+            FrameLayout.LayoutParams rightBadgeParams = new FrameLayout.LayoutParams(dp(42), dp(20), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            rightBadgeParams.bottomMargin = dp(8);
+            rightBox.addView(rightBadge, rightBadgeParams);
 
             String outCacheKey = "online:" + work.id + ":" + outImg;
             Bitmap outCached = THUMBNAIL_CACHE.get(outCacheKey);
@@ -5112,27 +5131,13 @@ public final class MainActivity extends Activity {
                 }));
             }
 
-            LinearLayout.LayoutParams halfParams = new LinearLayout.LayoutParams(dp(84), dp(112));
+            LinearLayout.LayoutParams halfParams = new LinearLayout.LayoutParams(dp(imageWidthDp), dp(imageHeightDp));
             row.addView(leftBox, halfParams);
-            LinearLayout.LayoutParams rightHalfParams = new LinearLayout.LayoutParams(dp(84), dp(112));
+            LinearLayout.LayoutParams rightHalfParams = new LinearLayout.LayoutParams(dp(imageWidthDp), dp(imageHeightDp));
             rightHalfParams.setMargins(dp(6), 0, 0, 0);
             row.addView(rightBox, rightHalfParams);
 
-            card.addView(row, new LinearLayout.LayoutParams(-1, dp(112)));
-            LinearLayout badgeRow = new LinearLayout(this);
-            badgeRow.setOrientation(LinearLayout.HORIZONTAL);
-            badgeRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-            TextView leftBadge = text("素材", 9, true);
-            leftBadge.setTextColor(Color.rgb(75, 82, 78));
-            leftBadge.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-            TextView rightBadge = text("成品", 9, true);
-            rightBadge.setTextColor(Color.rgb(20, 115, 75));
-            rightBadge.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-            badgeRow.addView(leftBadge, new LinearLayout.LayoutParams(dp(84), dp(16)));
-            LinearLayout.LayoutParams rightBadgeParams = new LinearLayout.LayoutParams(dp(84), dp(16));
-            rightBadgeParams.setMargins(dp(6), 0, 0, 0);
-            badgeRow.addView(rightBadge, rightBadgeParams);
-            card.addView(badgeRow, new LinearLayout.LayoutParams(-1, dp(16)));
+            card.addView(row, new LinearLayout.LayoutParams(-1, dp(imageHeightDp)));
             card.setOnClickListener(v -> showOnlineCompareDialog(work, pageIndex));
             strip.addView(card, cardParams);
         }

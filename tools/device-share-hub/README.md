@@ -1,7 +1,7 @@
-# 文件收发中控（本地候选：Windows V4.3.33 / Android 0.8.94 / iPhone 0.8.94）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.97 / iPhone 0.8.96）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 当前本地候选：**Android 0.8.94 / versionCode 205**、**iPhone 0.8.94 / build 205（源码）**。Android Release APK 已构建，103/103 单测通过，Lint 0 错误/92 警告，APK v2/v3 验签通过，SHA-256 为 `C9A09CF70EE8AE26131638CCC108B964B0584EB5B03E3F4035C30B3811DD399B`；Vivo 覆盖安装被设备返回 `INSTALL_FAILED_ABORTED: User rejected permissions`，机上仍是 `.92/203`，因此本候选尚未实机验收。iOS 对比视图已改为图片居中、标签按布局切换到顶部/右侧留白，并在原图加载期间显示“正在加载原图”百分比；相关静态门禁通过。当前 iPhone USB mux 未枚举，本机无 Xcode/Swift 工具链和 `.94` IPA，iOS 尚未编译或实机验收。没有推送或发布。
+> 当前源码候选：**Android 0.8.97 / versionCode 208**、**iPhone 0.8.96 / build 207**。本轮扩大 Android 主页对比双图卡以靠齐 iOS，并将双端“素材/成品”标签移到各自图片内底部居中；iOS 全屏加载提示按实际 `aspectFit` 图片矩形定位。相关静态回归已通过；新版本尚未运行 CI、安装或真机回归。设备当前仍是 Android `0.8.96/207` 和 iPhone `0.8.95/206`。iPhone 熄屏期间的侧载表现待新 IPA 安装时实测。没有正式 Release 或更新索引。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 
@@ -665,6 +665,7 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |

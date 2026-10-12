@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.92 / build 203（源码候选，IPA 未构建）
+版本：0.8.96 / build 207（源码候选，CI 待构建）
 
-状态：在线缩略图失败增加有界重试、诊断日志、点按重试入口和等待时活动指示器；图片复用时会重置等待态、失败态和图像外观；在线卡元信息统一使用 `💻 电脑在线 · N 图 · 使用态`。静态检查 15/15 通过。iPhone 当前未通过 USB mux 枚举；没有匹配 IPA 或可用触控测试服务，未构建、安装或完成设备验收。
+状态：当前源码候选 `0.8.96/207` 已通过静态门禁，尚未触发 CI、生成 IPA 或安装。iPhone 上一版 `0.8.95/206` 已按项目专用 `ios-sideload-automation` 流程安装并回读；主页同步 395 套和对比图像已截图确认。Windows 无 Xcode，本机不能编译 iOS。iPhone 为 iOS 26.6，现有远程触控接口要求 iOS 27+，本机也无 WebDriverAgent，点按交互仍待可用触控链；新 IPA 安装期间熄屏是否中断也待实测。当前未修改息屏设置，无正式 Release 或更新索引。
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
@@ -17,7 +17,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；正式 GitHub Release 已由发布流水线创建，实体覆盖安装仍需设备在线后完成。
+IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准。是否存在正式 GitHub Release，以发布流水线结果和仓库 Releases 反读为准；Actions artifact 本身不代表已发布。本候选尚无正式 Release。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
@@ -95,5 +95,6 @@ Windows 不需要运行这些命令。
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
