@@ -3385,7 +3385,7 @@ totalWorks = 472
 - **修复**：切换列表时清理 UI 待执行队列及客户端线程池中尚未启动的缩略图任务（运行中的请求不强行中断）；首批请求降至 8 张，后续每 100ms 按列表顺序放行 8 张；保留同图请求合并和磁盘缓存。
 - **服务证据**：本机只读 `/api/online/status` 返回 Pillow 12.3.0、`fallbackOriginal=0`、内存缩略图缓存 500/500、磁盘缓存 1864/2000、`inflightEntries=0`。该状态排除“服务端禁用缩略图/回退原图”，不能证明该新手机的实际网络耗时。
 - **自动回归**：新增 `test_android_thumbnail_priority.py` 4/4；Android 定向静态检查 10/10，跨端契约 50/50。本机 `testDebugUnitTest`、`assembleRelease`、`lintRelease`、权限与 v2/v3 签名检查通过。APK `0.8.105/216` 本机 SHA-256 `C0312ECBF44F649D3189C2762762E55084B5187C0ECB34B3F98DF0F459E19647`；build-only CI `38264200990` 全部 build/relay-check jobs 成功，CI APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`，IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。live relay E2E 与发布 job 按范围跳过；iOS 仅同步版本元数据，未改图片行为。
-- **设备验收边界**：2026-10-12 22:43 +08:00 物理 USB/ADB 探针未发现新手机；Xiaomi 15 仅以蓝牙设备出现，USB Composite Device 的总线描述为笔记本内置 RGB Camera，ADB 仍只见旧 M2006C3LC 无线条目。iOS USB PnP 与 usbmux 为空。本轮尚未安装候选，也未取得冷/热切组耗时、截图或设备日志。
+- **设备验收边界**：2026-10-12 22:56 +08:00 按用户要求重新检查，`adb devices -l` 仍仅列旧 M2006C3LC 无线条目；Xiaomi 15 仅在蓝牙列表出现，没有新机 USB ADB 设备。此前 USB Composite Device 的总线描述为笔记本内置 RGB Camera，Apple USB PnP 与 usbmux 未枚举 iPhone。本轮没有在旧手机上冒充新机测试；新机尚未安装，冷/热切组耗时、截图与设备日志仍待 USB ADB 枚举后获取。
 - **下一步**：新手机被 USB-only 探针识别后安装 APK，冷启动进入分组并计时到首张/首屏图，再热缓存复测、快速切换分组，核验新列表先出图且日志无异常；设备可用前不将手机体验标为通过。
 
 ## DSH-175 iOS 自动刷新反复覆盖顶部同步状态（源码与静态回归通过，设备验收待续 · 2026-10-12）
