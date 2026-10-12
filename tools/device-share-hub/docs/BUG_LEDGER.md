@@ -1,9 +1,9 @@
-# DSH-177 正式发布未等待生产 Relay live E2E（发布门禁缺口 · 2026-10-12）
+# DSH-177 正式发布未等待生产 Relay live E2E（已修复并发布 · 2026-10-12）
 
 - **现象**：主分支推送会运行 `remote-relay-live-e2e`，但 `publish-gallery-updates` 原先只依赖三端构建；live E2E 失败不会阻止同次发版。
 - **修复**：正式发布 job 的 `needs` 增加 `remote-relay-live-e2e`。发布现在必须等待生产 Relay live E2E、Windows、Android 和 iOS 全部成功；build-only 手动构建仍不触发发布。
 - **本轮决策**：用户授权先发布 `0.8.105/216`，明确暂缓手机安装和实测；后续手机端自行检查更新。没有把设备验收当成发布前置条件。
-- **验收状态**：工作流静态依赖已核对；新的正式 main push 尚未运行，需通过发布 run 回读门禁与 Release/`latest.json`/`altstore.json`。
+- **验收状态**：main run `38271093604` 中 Windows/Android/iOS 构建、生产 `remote-relay-live-e2e` 与发布 job 全部成功。Release [`v0.8.105`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.105) 已发布；APK/IPA/EXE 下载哈希与公开清单一致，GitHub Contents API、公开 `latest.json` 和 `altstore.json` 均已回读到 `0.8.105/216`。手机安装与真机验收按用户要求延期，保持独立未完成状态。
 - **影响文件**：`.github/workflows/device-share-hub.yml`、`CHANGELOG.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`。
 
 # DSH-102 — iPhone 在线相册全库串图（image_name_index 同名冲突）
@@ -3489,6 +3489,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |

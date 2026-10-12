@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.105 / build 216（build-only IPA 已构建；正式发布与 iPhone 安装验收待完成）
+版本：0.8.105 / build 216（已发布至 `v0.8.105`；iPhone 安装验收按用户要求暂缓）
 
-状态：此版本包含分支中此前完成的 iOS 同步状态与对比界面修复；DSH-176 只同步版本元数据，没有修改 iOS 图片加载逻辑。build-only CI `38264200990` 成功，IPA `com.zwm.album 0.8.105/build 216` 已核对，SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。按用户要求，手机安装与触控验收暂缓；正式 Release/更新索引正在准备发布。
+状态：此版本包含此前完成的 iOS 同步状态与对比界面修复；DSH-176 只同步版本元数据，没有修改 iOS 图片加载逻辑。正式 Release `v0.8.105` 的 IPA `com.zwm.album 0.8.105/build 216` 已下载并校验，大小 22,611,835 字节，SHA-256 `518db203b46bb6599d52831edfd3b7e79d6935d8a729787ea424db2a8eb35df3`；公开 AltStore 源的首个版本也已回读为 `0.8.105/build 216`。按用户要求，本轮没有安装或触控验收 iPhone。
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
@@ -95,6 +95,7 @@ Windows 不需要运行这些命令。
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |

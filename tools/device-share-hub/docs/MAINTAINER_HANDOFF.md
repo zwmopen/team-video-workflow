@@ -1,3 +1,12 @@
+# 2026-10-12 DSH-177：生产 Relay 门禁修复并正式发布 0.8.105/216
+
+- 用户明确要求本轮完成发布，不安装或操作手机；Android/iPhone 实机验收继续保持未完成。
+- 候选已合入 `main`，merge commit `636c47a48e211356025d0caac77ac5275d41704d`。正式 run [`38271093604`](https://github.com/zwmopen/team-video-workflow/actions/runs/38271093604) 的 Windows、Android、iOS、生产 Relay live E2E 与发布 job 全部成功；发布 job 已设置为依赖生产 E2E 和三端构建。
+- Release [`v0.8.105`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.105) 于 `2026-10-12T15:43:26Z` 发布。Android `0.8.105/216`、iOS `0.8.105/216`、Windows `V4.3.33`。
+- 下载资产 SHA-256：Android APK `24d5f794e090c49baa8c720f738f39c6acdfa4d6f309d9a2ae53f164cde7bf62`；iOS IPA `518db203b46bb6599d52831edfd3b7e79d6935d8a729787ea424db2a8eb35df3`；Windows EXE `820ef4cd1f1eafe610970bd440b45dc598515cd0cee591d6104dd4e08b6ea2ed`。哈希与公开清单一致。
+- GitHub Contents API、公开 `latest.json` 和 `altstore.json` 均已反读到 `0.8.105/216`。发布瞬间 raw CDN 曾返回旧缓存 `0.8.78`；稍后正常公开 URL 已返回新版本，传播完成。
+- 手机端按用户安排之后自行检查更新；本轮未安装、点按或宣称设备验收通过。
+
 # 2026-10-12 DSH-174：iOS 在线列表刷新后状态标签未更新（候选 0.8.103/214）
 
 - 真机根因已复现：旧版 `0.8.100/211` 首页作品数更新到 367、服务 `/api/online/status` 也回读 367，但顶部仍显示“正在同步电脑在线作品…”。截图在 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38249866642\iphone-home-loaded.png`。
@@ -1237,6 +1246,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
@@ -1262,21 +1272,13 @@
 - 续接重点：先从 iPhone 可用的签名 IPA/触控服务补齐 DSH-154 实机验证；Android 侧用请求级状态码/耗时定位在线列表 timeout，同时避免重复列表请求。当前不要推送或发布。
 
 # 2026-10-11 Android 窄屏与回收站计数补缺（DSH-152 补全 / DSH-153）
-# 2026-10-12 DSH-177：发布依赖生产 Relay live E2E，并发布 0.8.105/216
-
-- 用户明确要求本轮先完成正式发布，Android/iPhone 安装和真机验收暂缓，之后由手机端检查更新。两端手机验收状态仍是未完成，不用 build-only 结果代替。
-- 当前源码分支 `codex/dsh-152-isolated-fix`，基于 `main` 领先 33 个提交，候选 Android/iOS `0.8.105/216`；build-only run `38264200990` 成功，Android CI APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`，iOS IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。公开索引仍为 `0.8.78/189`，候选尚未正式发布。
-- 发布前发现并修复门禁缺口：`publish-gallery-updates` 现在依赖 `remote-relay-live-e2e` 及三端构建；生产 E2E 失败时默认成功条件会阻止发布。
-- 下一步：将候选变更合入 `main`，等待主分支三端构建与生产 Relay live E2E；门禁通过后回读 `zwmopen/gallery-updates` 的 `v0.8.105` 资产、SHA、`latest.json` 和 `altstore.json`。如门禁失败，先读取日志并修复阻塞，再继续发布。
-- 设备边界：本轮不安装手机。Android 的系统更新安装仍需用户确认；iPhone 通过 AltStore/AltServer 等侧载链路更新，不承诺静默自动安装。
-
 # 2026-10-12 DSH-176：Android 切组缩略图优先加载与 0.8.105/216 发布候选
 
 - 当前公开更新索引为 `0.8.78/189`；`gallery-updates` 尚无 `v0.8.105`。Android/iOS 源码候选均为 `0.8.105/216`，Windows `V4.3.33` 未改版本。
 - Android 根因与修复：切换分组未清除旧的 UI/线程池待执行缩略图任务，且队列顺序不能保证列表靠前优先；现改为清理未启动旧请求、先放行当前列表首批 8 张，再按屏幕顺序分批加载。新手机真实冷/热耗时仍未取得。
 - 验证：Android 优先级回归 4/4、定向门禁 10/10、跨端契约 50/50；本机 Release/单测/Lint/权限/签名检查通过。build-only CI `38264200990` 的 Android、iOS、Windows 与 relay-check 全部成功；live relay E2E 与发布步骤在 build-only 中跳过。
 - 安装包：本机 Android APK SHA-256 `C0312ECBF44F649D3189C2762762E55084B5187C0ECB34B3F98DF0F459E19647`；CI Android APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`；iOS IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。iOS 本轮只对齐版本元数据。
-- 用户已明确要求先发布、暂缓手机实测。发布需经 `main`：合入后触发三端正式构建、生产 relay live E2E 门禁，再由 `publish-gallery-updates` 上传三端资产并更新 `latest.json`/AltStore 源；发布后必须反读公开索引、Release 资产及 SHA。不得把 build-only artifact 当成正式发布。
+- 用户当时已明确要求先发布、暂缓手机实测。该候选随后由 DSH-177 经 `main`、三端构建与生产 relay live E2E 门禁发布；不得把 build-only artifact 当成正式发布。
 - 用户之后可在手机端检查更新；Android 的本地中转失败时会回退公开 `latest.json`，iOS 通过更新检查跳转 AltStore 更新源。当前没有在设备上安装或宣称真机验收。
 
 # 2026-10-12 DSH-174：iOS 在线列表刷新后状态标签未更新（候选 0.8.103/214）
