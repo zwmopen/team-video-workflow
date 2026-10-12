@@ -171,12 +171,11 @@ public final class OnlineWorkEntry {
                 if (!d.isEmpty()) dispatchedTo.add(d);
             }
         }
-        long updatedAt = json.optLong("updatedAt", 0L);
-        if (updatedAt <= 0) {
-            updatedAt = System.currentTimeMillis();
-        } else if (updatedAt < 10000000000L) {
-            updatedAt *= 1000L;
-        }
+        // The shelf sorts by creation/production time; updatedAt remains a
+        // backward-compatible fallback for older server responses and caches.
+        long updatedAt = json.optLong("createdAtMs", 0L);
+        if (updatedAt <= 0) updatedAt = json.optLong("updatedAt", 0L);
+        if (updatedAt > 0 && updatedAt < 10000000000L) updatedAt *= 1000L;
 
         // 在线回收站接口会在每套作品上挂一个 garbage 对象：
         // {"marked": bool, "remark": str, "markedBy": str, "markedAt": str}
@@ -216,7 +215,10 @@ public final class OnlineWorkEntry {
         if (srcImgArr != null) {
             for (int i = 0; i < srcImgArr.length(); i++) {
                 String s = srcImgArr.optString(i, "").trim();
-                if (!s.isEmpty()) sourceImages.add(s);
+                // Keep empty slots.  The server array is page-aligned with `images`;
+                // dropping a missing P1 would shift every later source onto the
+                // wrong output page and surface as "无素材原片" on another page.
+                sourceImages.add(s);
             }
         }
 
@@ -225,11 +227,19 @@ public final class OnlineWorkEntry {
         if (srcNameArr != null) {
             for (int i = 0; i < srcNameArr.length(); i++) {
                 String n = srcNameArr.optString(i, "").trim();
-                if (!n.isEmpty()) sourceNames.add(n);
+                sourceNames.add(n);
             }
         }
 
         boolean hasSourceCompare = json.optBoolean("hasSourceCompare", false);
+        if (!hasSourceCompare) {
+            for (String source : sourceImages) {
+                if (source != null && !source.isEmpty()) {
+                    hasSourceCompare = true;
+                    break;
+                }
+            }
+        }
         double maxSimilarity = json.optDouble("maxSimilarity", 0.0);
         String similarityTag = json.optString("similarityTag", "");
 

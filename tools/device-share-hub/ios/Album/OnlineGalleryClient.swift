@@ -115,16 +115,22 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let copyText = (dict["copyText"] as? String) ?? ""
         let hasCopyText = (dict["hasCopyText"] as? Bool) ?? !copyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let dispatchedTo = (dict["dispatchedTo"] as? [String]) ?? []
+        let rawCreated = (dict["createdAtMs"] as? NSNumber)?.doubleValue
+            ?? (dict["createdAtMs"] as? Double)
+            ?? Double((dict["createdAtMs"] as? Int64) ?? Int64((dict["createdAtMs"] as? Int) ?? 0))
         let rawUpdated = (dict["updatedAt"] as? NSNumber)?.doubleValue
             ?? (dict["updatedAt"] as? Double)
             ?? Double((dict["updatedAt"] as? Int64) ?? Int64((dict["updatedAt"] as? Int) ?? 0))
+        let rawSortTime = rawCreated > 0 ? rawCreated : rawUpdated
         let updatedAt: Double
-        if rawUpdated <= 0 {
-            updatedAt = Date().timeIntervalSince1970 * 1000
-        } else if rawUpdated < 10000000000.0 {
-            updatedAt = rawUpdated * 1000.0
+        if rawSortTime <= 0 {
+            // A missing timestamp must not become each device's current time;
+            // zero is deterministic and the server normally supplies createdAtMs.
+            updatedAt = 0
+        } else if rawSortTime < 10000000000.0 {
+            updatedAt = rawSortTime * 1000.0
         } else {
-            updatedAt = rawUpdated
+            updatedAt = rawSortTime
         }
 
         // 在线回收站接口在每套作品上挂一个 garbage 对象：
@@ -142,8 +148,29 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         let originDevice = (dict["originDevice"] as? String) ?? ""
         let dispatchedVersions = (dict["dispatchedVersions"] as? [String]) ?? []
         let tags = (dict["tags"] as? [String]) ?? []
-        let sourceImages = (dict["sourceImages"] as? [String]) ?? []
-        let sourceNames = (dict["sourceNames"] as? [String]) ?? []
+        // Keep empty slots: sourceImages/sourceNames are page-aligned with images.
+        // Filtering or compressing them shifts later pages onto the wrong output.
+        let rawSourceImages = (dict["sourceImages"] as? [Any] ?? []).map {
+            ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        let rawSourceNames = (dict["sourceNames"] as? [Any] ?? []).map {
+            ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        var sourceImages = images.indices.map { index in
+            index < rawSourceImages.count ? rawSourceImages[index] : ""
+        }
+        var sourceNames = images.indices.map { index in
+            index < rawSourceNames.count ? rawSourceNames[index] : ""
+        }
+        // 老快照可能只有 sourceNames，没有新字段 sourceImages。用成品页位重建
+        // __src__ token，服务端会在目标作品目录内解析对应原素材；不能把页位压缩掉。
+        if !sourceNames.allSatisfy({ $0.isEmpty }) {
+            for index in images.indices where sourceImages[index].isEmpty && !sourceNames[index].isEmpty {
+                let normalizedOutput = images[index].replacingOccurrences(of: "\\", with: "/")
+                let outputName = (normalizedOutput as NSString).lastPathComponent
+                if !outputName.isEmpty { sourceImages[index] = "__src__:\(outputName)" }
+            }
+        }
         let hasSourceCompare = (dict["hasSourceCompare"] as? Bool) ?? sourceImages.contains(where: { !$0.isEmpty })
         let maxSimilarity = (dict["maxSimilarity"] as? Double) ?? Double((dict["maxSimilarity"] as? Int) ?? 0)
         let similarityTag = (dict["similarityTag"] as? String) ?? ""
@@ -222,6 +249,45 @@ public struct OnlineUseResult {
     }
 }
 
+public final class ImageLoadRequest {
+    private let lock = NSLock()
+    private var task: URLSessionDataTask?
+    private var cancelled = false
+
+    public var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    public func cancel() {
+        lock.lock()
+        cancelled = true
+        let activeTask = task
+        task = nil
+        lock.unlock()
+        activeTask?.cancel()
+    }
+
+    fileprivate func attach(_ task: URLSessionDataTask) {
+        lock.lock()
+        let shouldCancel = cancelled
+        if !shouldCancel {
+            self.task = task
+        }
+        lock.unlock()
+        if shouldCancel {
+            task.cancel()
+        }
+    }
+
+    fileprivate func clearTask() {
+        lock.lock()
+        task = nil
+        lock.unlock()
+    }
+}
+
 public final class OnlineGalleryClient {
     public static let shared = OnlineGalleryClient()
     public static let defaultPort = 45835
@@ -238,6 +304,13 @@ public final class OnlineGalleryClient {
     private var cachedBaseUrl: String?
 
     private let session: URLSession
+    private let thumbnailMaxAttempts = 2
+    private let thumbnailRetryDelay: TimeInterval = 0.9
+    private let listRequestLock = NSLock()
+    private var latestCategoriesRequestID: UInt64 = 0
+    private var latestWorksRequestID: UInt64 = 0
+    private var lastAppliedWorksScanRevision: Int = -1
+    private var lastObservedServerScanRevision: Int = -1
     // Cache reads and UIImage decoding must stay off the main thread during list rendering.
     private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
@@ -256,6 +329,62 @@ public final class OnlineGalleryClient {
         self.diskCacheURL = cacheDirectory
         imageCache.countLimit = 500
         imageCache.totalCostLimit = 120 * 1024 * 1024 // 120MB 内存缓存
+    }
+
+    private func beginCategoriesRequest() -> UInt64 {
+        listRequestLock.lock()
+        latestCategoriesRequestID &+= 1
+        let requestID = latestCategoriesRequestID
+        listRequestLock.unlock()
+        return requestID
+    }
+
+    private func saveCategoriesSnapshotIfLatest(_ data: Data, requestID: UInt64) {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        guard latestCategoriesRequestID == requestID else { return }
+        OnlineListCache.saveCategories(data)
+    }
+
+    private func beginWorksRequest() -> UInt64 {
+        listRequestLock.lock()
+        latestWorksRequestID &+= 1
+        let requestID = latestWorksRequestID
+        listRequestLock.unlock()
+        return requestID
+    }
+
+    private func isLatestWorksRequest(_ requestID: UInt64) -> Bool {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        return latestWorksRequestID == requestID
+    }
+
+    private func recordAppliedWorksScanRevision(_ revision: Int, requestID: UInt64) {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        guard latestWorksRequestID == requestID else { return }
+        lastAppliedWorksScanRevision = revision
+    }
+
+    private func recordObservedServerScanRevision(_ revision: Int) {
+        listRequestLock.lock()
+        lastObservedServerScanRevision = revision
+        listRequestLock.unlock()
+    }
+
+    public func hasServerScanAdvancedSinceLastWorksFetch() -> Bool {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        return lastObservedServerScanRevision > 0 &&
+            (lastAppliedWorksScanRevision < 0 || lastObservedServerScanRevision > lastAppliedWorksScanRevision)
+    }
+
+    private func saveWorksSnapshotIfLatest(_ data: Data, requestID: UInt64) {
+        listRequestLock.lock()
+        defer { listRequestLock.unlock() }
+        guard latestWorksRequestID == requestID else { return }
+        OnlineListCache.saveWorks(data)
     }
 
     /// 回环地址：只有存在 USB / ADB 转发隧道时才可达，纯 Wi-Fi 下必然失败
@@ -548,11 +677,16 @@ public final class OnlineGalleryClient {
                let ts = wd["lastChangeAt"] as? Double {
                 changeAt = String(ts)
             }
-            DispatchQueue.main.async { completion(.success("\(total)|\(changeAt)")) }
+            let scan = json["scan"] as? [String: Any]
+            let scanRevisionValue = scan?["revision"] as? Int ?? -1
+            let scanRevision = scanRevisionValue >= 0 ? String(scanRevisionValue) : ""
+            self?.recordObservedServerScanRevision(scanRevisionValue)
+            DispatchQueue.main.async { completion(.success("\(total)|\(changeAt)|\(scanRevision)")) }
         }.resume()
     }
 
     public func fetchCategories(completion: @escaping (Result<OnlineCategoriesResult, Error>) -> Void) {
+        let requestID = beginCategoriesRequest()
         let baseUrl = resolveBaseUrl()
         guard let url = URL(string: "\(baseUrl)/api/online/categories") else {
             completion(.failure(NSError(domain: "OnlineGallery", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的服务器地址"])))
@@ -567,8 +701,8 @@ public final class OnlineGalleryClient {
                 DispatchQueue.main.async { completion(.failure(NSError(domain: "OnlineGallery", code: -2, userInfo: [NSLocalizedDescriptionKey: "返回数据为空"]))) }
                 return
             }
-            // 成功即落盘快照：下次进页面 / 离线时可直渲染（与 Android `OnlineListCache` 同步）
-            OnlineListCache.saveCategories(data)
+            // A slow earlier response must not replace the cache from a newer refresh.
+            self.saveCategoriesSnapshotIfLatest(data, requestID: requestID)
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                 var categories: [OnlineCategoryItem] = []
@@ -600,6 +734,7 @@ public final class OnlineGalleryClient {
     public func fetchWorks(category: String? = nil, query: String? = nil,
                            sortKey: String? = nil,
                            completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
+        let requestID = beginWorksRequest()
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/works")
         var queryItems: [URLQueryItem] = []
@@ -634,13 +769,12 @@ public final class OnlineGalleryClient {
             // 存下去会让下次秒开时看到一个不完整的列表（与 Android 同步）。
             let isFullList = (category ?? "").isEmpty && (query ?? "").isEmpty
             if isFullList {
-                OnlineListCache.saveWorks(data)
+                self?.saveWorksSnapshotIfLatest(data, requestID: requestID)
             }
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-                if let vs = json["viewState"] as? [String: Any] {
-                    self?.consumeRemoteViewState(vs)
-                }
+                let viewState = json["viewState"] as? [String: Any]
+                let scanRevision = json["scanRevision"] as? Int ?? -1
                 var entries: [OnlineWorkEntry] = []
                 if let arr = json["works"] as? [[String: Any]] {
                     for w in arr {
@@ -649,7 +783,14 @@ public final class OnlineGalleryClient {
                         }
                     }
                 }
-                DispatchQueue.main.async { completion(.success(entries)) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.isLatestWorksRequest(requestID) else { return }
+                    if let viewState = viewState {
+                        self.consumeRemoteViewState(viewState)
+                    }
+                    self.recordAppliedWorksScanRevision(scanRevision, requestID: requestID)
+                    completion(.success(entries))
+                }
             } catch {
                 NSLog("[OnlineGalleryClient] fetchWorks failed category=%@ query=%@ error=%@",
                       category ?? "<nil>", query ?? "<nil>", error.localizedDescription)
@@ -659,19 +800,14 @@ public final class OnlineGalleryClient {
     }
 
     /// DSH-102：加 `workId` 参数（默认 nil 保留旧契约）。
-    /// 服务端 `image_name_index()` 同名文件只保留首个命中（库内 174 条作品共用 P1_封面.png），
-    /// 旧契约 `?path=裸文件名` 会让 iOS 永远拿到第一个扫到的作品的图（与当前浏览无关，
-    /// 用户 iPhone 上图错位显示阳澄湖/浙江省攻略就是这条 BUG）。修法：
-    /// - 有 workId → `?id=<workId>&file=<basename(path)>` 双键，服务端
-    ///   `OnlineGalleryHandler.handle_image()` 会用 workId 定位作品目录 + basename 拼图，
-    ///   彻底绕开 image_name_index 同名冲突索引。
-    /// - 无 workId → 旧契约 `?path=` 保留（向后兼容，避免破坏 iOS 别的旧调用点）。
-    /// DSH-099 失败 NSLog 保留。
-    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) {
+    /// 同名文件通过 id+file 定位作品目录，避免跨作品共用文件名时命中错误素材。
+    @discardableResult
+    public func loadImage(path: String, workId: String? = nil, isThumbnail: Bool = true, maxPixel: CGFloat = 200, completion: @escaping (UIImage?) -> Void) -> ImageLoadRequest {
         loadImageWithProgress(path: path, workId: workId, isThumbnail: isThumbnail, maxPixel: maxPixel, onProgress: nil, completion: completion)
     }
 
-    /// 支持实时下载进度回调的原图/缩略图拉取
+    /// 支持实时下载进度回调和按页面取消的原图/缩略图拉取。
+    @discardableResult
     public func loadImageWithProgress(
         path: String,
         workId: String? = nil,
@@ -679,32 +815,34 @@ public final class OnlineGalleryClient {
         maxPixel: CGFloat = 200,
         onProgress: ((Int) -> Void)? = nil,
         completion: @escaping (UIImage?) -> Void
-    ) {
+    ) -> ImageLoadRequest {
+        let request = ImageLoadRequest()
         let prefix = (workId ?? "").isEmpty ? "" : "\(workId!)_"
         let cacheKey = "\(prefix)\(path)_\(isThumbnail ? "thumb" : "full")" as NSString
         if let memoryCached = imageCache.object(forKey: cacheKey) {
-            onProgress?(100)
-            completion(memoryCached)
-            return
+            if !request.isCancelled {
+                onProgress?(100)
+                completion(memoryCached)
+            }
+            return request
         }
 
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/image")
-        // 缓存 key 必须包含 workId，避免不同作品同名图共享同一磁盘缓存条目
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
         if let workId = workId, !workId.isEmpty {
-            // DSH-102 新契约：id+file 双键，支持 __src__: 原素材对比标识
             let bn = path.hasPrefix("__src__:") ? path : (path as NSString).lastPathComponent
             queryItems.append(URLQueryItem(name: "id", value: workId))
             queryItems.append(URLQueryItem(name: "file", value: bn))
         } else {
-            // 旧契约：?path=裸文件名（无 workId 的 caller 不传，保持向后兼容）
             queryItems.append(URLQueryItem(name: "path", value: path))
         }
         components?.queryItems = queryItems
         guard let url = components?.url else {
-            completion(nil)
-            return
+            NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d reason=invalid-url",
+                  (path as NSString).lastPathComponent, isThumbnail ? 1 : 0)
+            if !request.isCancelled { completion(nil) }
+            return request
         }
 
         let safeFileName = cacheKey
@@ -712,48 +850,137 @@ public final class OnlineGalleryClient {
             .replacingOccurrences(of: "\\", with: "_")
             .replacingOccurrences(of: ":", with: "_")
         let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
-        // 列表渲染时可能连续请求几十张缓存图；磁盘读取和 UIImage 解码放后台，避免阻塞主线程。
         imageIOQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !request.isCancelled else { return }
             if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
+                guard !request.isCancelled else { return }
                 self.imageCache.setObject(diskImage, forKey: cacheKey)
                 DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
                     onProgress?(100)
                     completion(diskImage)
                 }
                 return
             }
+            guard !request.isCancelled else { return }
+            self.loadRemoteImageAttempt(
+                url: url,
+                path: path,
+                isThumbnail: isThumbnail,
+                cacheKey: cacheKey,
+                diskURL: diskURL,
+                attempt: 1,
+                maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : 1,
+                request: request,
+                onProgress: onProgress,
+                completion: completion
+            )
+        }
+        return request
+    }
 
-            var observation: NSKeyValueObservation?
-            let task = self.session.dataTask(with: url) { [weak self] data, _, _ in
-                observation?.invalidate()
-                guard let self = self, let data = data, let image = UIImage(data: data) else {
-                    // DSH-099 iOS 等价：loadImage 失败要 NSLog（debug 回传铁律）
-                    NSLog("[OnlineGalleryClient] loadImage failed: path=%@ isThumbnail=%d",
-                          path, isThumbnail ? 1 : 0)
-                    DispatchQueue.main.async { completion(nil) }
-                    return
-                }
+    private func loadRemoteImageAttempt(
+        url: URL,
+        path: String,
+        isThumbnail: Bool,
+        cacheKey: NSString,
+        diskURL: URL,
+        attempt: Int,
+        maxAttempts: Int,
+        request: ImageLoadRequest,
+        onProgress: ((Int) -> Void)?,
+        completion: @escaping (UIImage?) -> Void
+    ) {
+        guard !request.isCancelled else { return }
+        let attemptStartedAt = Date()
+        var observation: NSKeyValueObservation?
+        let task = session.dataTask(with: url) { [weak self] data, response, error in
+            observation?.invalidate()
+            request.clearTask()
+            guard let self = self, !request.isCancelled else { return }
+
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            let statusOK = statusCode.map { (200..<300).contains($0) } ?? false
+            let image = (error == nil && statusOK) ? data.flatMap { UIImage(data: $0) } : nil
+            if let image = image, let data = data {
+                guard !request.isCancelled else { return }
                 self.imageCache.setObject(image, forKey: cacheKey)
                 do {
                     try data.write(to: diskURL)
                 } catch {
                     NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
-                          path, error.localizedDescription)
+                          (path as NSString).lastPathComponent, error.localizedDescription)
                 }
                 DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
                     onProgress?(100)
                     completion(image)
                 }
+                return
             }
-            if let onProg = onProgress {
-                observation = task.progress.observe(\.fractionCompleted) { progress, _ in
-                    let pct = Int(progress.fractionCompleted * 100)
-                    DispatchQueue.main.async { onProg(pct) }
+
+            guard !request.isCancelled else { return }
+            let networkError = error as NSError?
+            let statusText = statusCode.map { String($0) } ?? "none"
+            let errorText: String
+            if let networkError = networkError {
+                errorText = "\(networkError.domain)/\(networkError.code): \(networkError.localizedDescription)"
+            } else if statusCode == nil {
+                errorText = "missing-http-response"
+            } else if !statusOK {
+                errorText = "http-\(statusText)"
+            } else if data == nil {
+                errorText = "empty-response"
+            } else {
+                errorText = "image-decode-failed"
+            }
+            let retryableStatus = statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false)
+            let invalidImage = statusOK && data != nil && image == nil
+            let shouldRetry = attempt < maxAttempts &&
+                (networkError != nil || statusCode == nil || retryableStatus || invalidImage)
+            let elapsedMs = Int(Date().timeIntervalSince(attemptStartedAt) * 1000)
+            let message = "[OnlineGalleryClient] loadImage failed: path=\((path as NSString).lastPathComponent)"
+                + " isThumbnail=\(isThumbnail ? 1 : 0) attempt=\(attempt)/\(maxAttempts)"
+                + " httpStatus=\(statusText) bytes=\(data?.count ?? 0) durationMs=\(elapsedMs)"
+                + " retry=\(shouldRetry ? 1 : 0) error=\(errorText)"
+            NSLog("%@", message)
+
+            guard shouldRetry else {
+                DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
+                    completion(nil)
+                }
+                return
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + self.thumbnailRetryDelay) { [weak self] in
+                guard let self = self, !request.isCancelled else { return }
+                self.loadRemoteImageAttempt(
+                    url: url,
+                    path: path,
+                    isThumbnail: isThumbnail,
+                    cacheKey: cacheKey,
+                    diskURL: diskURL,
+                    attempt: attempt + 1,
+                    maxAttempts: maxAttempts,
+                    request: request,
+                    onProgress: onProgress,
+                    completion: completion
+                )
+            }
+        }
+        request.attach(task)
+        if let onProgress = onProgress {
+            observation = task.progress.observe(\.fractionCompleted) { progress, _ in
+                guard !request.isCancelled else { return }
+                let percent = min(99, Int(progress.fractionCompleted * 100))
+                DispatchQueue.main.async {
+                    guard !request.isCancelled else { return }
+                    onProgress(percent)
                 }
             }
-            task.resume()
         }
+        guard !request.isCancelled else { return }
+        task.resume()
     }
 
     /// 同步快速获取缓存图片（若内存或磁盘命中直接返回，0毫秒无缝秒开）

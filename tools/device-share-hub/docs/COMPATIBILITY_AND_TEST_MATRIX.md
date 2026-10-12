@@ -1,6 +1,35 @@
 # 三端兼容与测试矩阵
 
-更新时间：2026-08-26
+更新时间：2026-10-11
+
+## 2026-10-11 Android/iOS 0.8.92 手机相册体验补缺候选
+
+- Android versionCode 203：无快照连接错误卡片不显示 LAN 地址；设置页手动更新检查立即反馈、禁用重复点击并在请求结束后恢复；对齐启动快照和 works 成功后再取分类的注释。
+- iOS build 203：失败缩略图点按重试期间显示活动指示器并播报重试中。
+- Android `.92/203` Release APK 已本地构建并验签；单测 103/103、Lint 0 错误/93 警告、Android 源码守卫 6/6。ADB 覆盖安装被手机系统拒绝，设备仍锁屏且安装 `.91/202`，因此 `.92` 未做点击验收。
+- iOS build 203 的静态守卫 14/14；当前无 Windows Swift/Xcode 工具链、匹配 IPA 或 iPhone USB mux，未构建、安装或实机验收。
+- DSH-157 `.91` 在线列表首字节仍超时；服务端新增阶段计时候选并在隔离测试 63/63 通过，现场服务未重启，真实手机请求阶段仍无数据，唯一根因未知。禁止手工调用有到期清理副作用的 works/categories。
+- 本地候选，不推送、发布、运行 CI 或更新索引。
+
+## 2026-10-11 Android/iOS 0.8.81 本地状态栏修复候选
+
+- Android 0.8.81/code 192 修复切换文件浏览、手机本地作品/回收站和电脑在线来源后，固定状态栏残留上一页计数的问题；iOS build 192 仅对齐版本号，没有 iOS 业务代码变化。
+- Redmi Android 15/API 35 实机检查：本地文件浏览 33 项、子文件夹 10 项；返回作品列表显示 4 套；本地回收站两个 Tab 的标签/数量与空列表一致；在线/本地往返不再显示旧在线回收站计数。
+- 设置滚动、传输方式选择、系统文件/文件夹选择器打开/取消通过；未选择文件、未传送内容。自动构建、单测、候选 APK 安装结果及完整版本信息见 `docs/MAINTAINER_HANDOFF.md`。
+- iPhone 当前仍为 0.8.77/188；0.8.81 IPA 与 iOS 26.6 触屏验收待完成。没有源码推送、正式发布或发布索引更新。
+
+## 2026-10-11 Android/iOS 0.8.80 对比视图安全区候选
+
+- Android 版本 0.8.80 / code 191 在 Redmi 23013RK75C、Android 15/API 35、显示区 1080×2400 实测；对比控件底部 y=2250，系统导航栏起点 y=2276，安全间距 26px。
+- 上下同框与左右并排、按钮翻到 P2、快速前后翻页、左右滑回 P1、P6 边界、关闭回列表均通过；395 套在线作品仍在，未触发作品写操作；logcat 未发现应用 FATAL。
+- 自动结果：Android 单测 100/100 通过；Release Lint 0 错误；Release APK 已签名并安装。当前 iPhone 实装为 0.8.77/188，仅验证启动和截图；0.8.80 IPA 与 iOS 触屏操作仍待 macOS CI/可用触控链。
+
+## 2026-10-11 Android/iOS 0.8.79 对比视图修复候选
+
+- Android versionCode 190、iOS build 190；候选说明见 docs/MAINTAINER_HANDOFF.md。
+- Android 单测 100 项通过；testDebugUnitTest、lintDebug、lintRelease、assembleDebug、assembleRelease 均通过；Release 包名/版本/签名和 debuggable 状态已核对；iOS 候选构建和本轮 CI 尚未执行。
+- 当前无在线 Android ADB 设备，Android/iPhone 真机界面、缓存进度和覆盖安装均待验收；旧版本截图不作为候选版通过证据。
+- 两端验收按 docs/TEST_PLAYBOOK.md 的 DSH-150 清单执行，尤其覆盖快速翻页、全屏边缘和 iOS 素材图片映射。
 
 ## 2026-08-27 Android 0.6.62 / iPhone 0.6.45 / Windows V4.3.29 正式发布
 
@@ -79,3 +108,14 @@
 - macOS CI runner 不一定预装可启动的 iPhone 模拟器：有运行时就执行测试；没有时至少编译 App 与测试包，再执行真机 SDK 构建。
 - iPhone 6 不能依赖 SwiftUI 生命周期、NavigationStack、SF Symbols 或 iOS 13 动态系统色；兼容 UI 使用 UIKit 和版本保护。
 - 实机测试数据完成后必须清理，并再次核对用户原作品数量，避免测试素材污染作品库。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
+| 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

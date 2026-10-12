@@ -1,11 +1,102 @@
+## iOS 对比视图原图队列回归（DSH-167 / iOS 0.8.93 源码候选）
+
+- 静态检查确认图片请求可取消；取消会停止活动 URLSession 请求并抑制迟到回调/缩略图重试；冷缓存时当前页只发原图请求，热缓存缩略图可作占位，当前页原图完成后才启动预取。
+- 从任意页进入时只按顺序预取下一页和下下页，成品与素材逐图单请求；在请求途中连续点箭头/左右滑，旧页旧预取应取消，当前页原图立即获得请求优先级，屏幕不能残留上一页图片。
+- 覆盖有素材、空素材槽、低相似度徽标、快速连翻、关闭预览、内存/磁盘热缓存与冷缓存；原图失败时即使保留缩略图也必须结束进度状态；所有进度和成功/失败状态必须属于当前页。
+- 自动门禁：`tests/test_ios_compare_prefetch_queue.py`、`tests/test_ios_online_gallery_client.py`、`tests/test_ios_compare_ui.py`、`tests/parity_ios_android.py`。
+- 当前本地证据：静态门禁 11/11、15/15、10/10、49/49；iPhone 仍安装 `0.8.77/188`，本机无 Xcode/Swift 和候选 IPA，故冷/热缓存及翻页行为待 `.93` 构建安装后真机验收。
+
+---
+
 # 三端测试与证据手册
+
+## iOS 在线状态在刷新后同步更新（DSH-174 / 0.8.103）
+
+- 刷新在线作品列表时，顶部先显示“正在同步电脑在线作品…”，刷新成功后必须切回“已同步电脑在线作品 · 共 N 套”；失败时显示离线快照或未同步状态。
+- 成功回包的数据总数、页面分类数量和只读 `/api/online/status` 的 `totalWorks` 应一致。确认状态标签随快照、成功、失败渲染更新，不残留上一次状态。
+- 自动门禁：`tests/test_ios_compare_ui.py`（状态渲染调用守卫）、`tests/parity_ios_android.py`。定向检查 29/29、跨端契约 50/50、build-only CI `38255905711` 的 XCTest 51/51 均通过；IPA `0.8.103/214` 已验 SHA-256。安装、版本回读和修复后截图待 iPhone USB 枚举。
+- 真机交互当前边界：本轮 USB-only 探针未检测到 Apple USB 硬件，usbmux 返回空列表。iOS 26.6 不支持现有 USB remote-control tap 所需的 iOS 27+；没有 WDA。设备重新枚举后可尝试启动/截图；点击刷新、断网及恢复仍标记未验证。
+
+## Android 单图预览关闭位置回归（DSH-173 / 0.8.102）
+
+- 覆盖安装后分别在 USB 与无线 ADB 设备打开本地作品、点首张图片进入全屏预览；屏幕树中的“关闭全屏预览”按钮应处于标题栏右端，画面应完整显示原图。
+- 点关闭后应回到作品列表，不清除应用数据；回读包版本与候选 APK 一致。
+- 回归在线对比视图：检查素材/成品、P1→P2、上下同框/左右并排和右上角关闭；恢复原在线来源，确认同步数量仍可见。禁止触发重置或删除。
+- 2026-10-12 本机 Release `0.8.102/213` 单测、Release、Lint、APK 权限与签名校验通过；SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`。USB Redmi Note 8 与无线 Xiaomi M2006C3LC 均安装并回读 `.102/213`；两台关闭按钮坐标分别为 `[920,182][1036,298]` 与 `[604,126][688,210]`，均在右侧；关闭返回、无线机 367 套在线数、对比 P1→P2 和布局切换通过。证据在 `D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。没有正式发布或更新索引回读。
+
+## USB 真机续验（2026-10-12 17:32 +08）
+
+- Android USB Vivo V2327A / Android 14 / SDK 34 已安装并回读 `0.8.101/212`。本轮重新检查主页 3:4 双图、主页状态 369 套、上下同框标签、左右并排图片下标签、P1→P2 箭头翻页和右上角关闭返回；只读 `/api/online/status` 为 `totalWorks=369`、`scanRevision=154`、`refreshing=false`。应用目标包未见 `FATAL EXCEPTION`。
+- iPhone USB 与 usbmux 均在；息屏时应用清单回读 `com.zwm.album` 为 `0.8.95/206`。没有匹配当前 iOS 源码候选 `0.8.100/211` 的 IPA，本机无 Xcode/Swift；未安装、未做新版本画面或交互验收。
+- 截图保存在 `D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-current.png`、`vivo-closure-compare-current.png`、`vivo-closure-side-by-side-current.png`、`vivo-closure-page2-current.png` 与 `vivo-closure-home-return-current.png`。Android 页面状态 18/18、iOS 对比 UI 静态检查、跨端契约 50/50 通过。动态“高清原图加载中 N%”未捕获；没有推送、CI、Release 或更新索引。
 
 ## 原则
 
 - 自动测试、云端构建、安装成功、实体功能操作是四种不同证据；
 - 优先使用可取消、可恢复、不污染用户目录的测试；需要落盘时使用明显测试名并在完成后清理；
 - 不在文档保存账号、设备唯一标识、IP、用户作品正文或完整原始日志；
+- 手动 CI 默认只构建（build-only）；只有明确选择 full 时才运行会写入生产 Relay/R2 的 live E2E。
 - 修复兼容问题时使用同一个正式包验证多台设备，不为测试机制作专用包。
+
+## 本地 Android 候选构建与空间/计时记录
+
+- 在仓库根目录运行 `powershell -ExecutionPolicy Bypass -File .\tools\device-share-hub\scripts\build-local.ps1 -AndroidOnly`。命令依次运行单测、Release APK、Release Lint、APK 权限/`debuggable` 和 v2/v3 签名检查，并输出版本化 APK、SHA-256 与元数据。
+- Android 项目路径含非 ASCII 字符时，脚本暂存到 ASCII 临时目录构建；成功只回写已核验产物并清理暂存，失败保留目录。不要通过设置 `android.overridePathCheck` 绕过路径检查。
+- 项目 Gradle 配置开启任务输出缓存；相同构建图的暖缓存复跑可显著缩短时间。2026-10-12 Windows 样本：首轮 66.9 秒，稳定暖缓存 14.2–14.5 秒（68 个任务中 41 个缓存命中）；Gradle 守护进程重启时测得 47.5 秒。计时依赖本机缓存、CPU 和网络，不能当作 CI SLA。
+- 同日空间样本：Android SDK 0.54 GB、用户级 Gradle 缓存 0.75 GB、Gradle 发行版 0.14 GB；这些工具与缓存为多项目共享。候选项目构建目录约 3.8 MB，版本 APK 约 0.88 MiB；本轮 ASCII 暂存目录峰值 13.33 MB，成功后清理。
+- 本地 APK 是源码候选验证包，不代表 CI、签名分发或 Release。Windows 当前无 Xcode/Swift，iOS 使用 macOS job；当前主机无 CMake，Windows 原生包装用 `windows-2022` job。每轮需独立记录 CI、安装、真机操作和发布反读。
+
+## 对比视图与操作栏统一回归（DSH-162/163/164/165 / 0.8.92 候选）
+
+- Android 在线模式顶部应显示“已同步电脑在线作品 · 共 N 套”；主页对比卡按屏宽放大到接近 iOS 的双图尺寸，每张图保持 3:4；“素材/成品”标签在各自图片内底部居中，不能挤占图片下方空间。
+- iOS 主页对比卡按屏宽显示一组清晰的素材/成品双图；两端标签都叠在对应图片内底部居中，不得偏到右下角或落在图外。
+- 进入全屏对比后标题为“对比视图”；“上下同框”和“左右并排”按钮同宽同高、文字居中；关闭按钮为完整居中的 `×`；底部只显示 `‹`、页码、`›`，不显示“上一页/下一页”或底部说明行。左右滑动与箭头都应翻页，边界按钮状态正确。
+- 冷缓存进入页面时观察素材/成品原图状态从 `0%` 到 `100%`；当前页优先，随后按相邻页顺序预加载。没有关联素材的页保留空槽位，不能把后续页的素材错配到当前页。
+- Android 本地和在线作品底部操作栏都应居中，顺序固定为“重置状态 / 复制路径 / 删除”；本地全屏预览同样只显示 `×`、`‹`、`›`。
+- iOS 代码必须保留 sourceImages/sourceNames 页位、使用 3:4 卡片、短标签“素材/成品”、同宽顶部模块和“重置状态”。无 Xcode/IPA/触控链时只记录静态门禁，不能用 Android 通过替代 iOS 实机验收。
+- iOS 顶部状态条必须固定显示并可读：同步中显示“正在同步电脑在线作品…”，成功显示“已同步电脑在线作品 · 共 N 套”，失败保留离线快照数量；对比卡按屏幕宽度自适应，左右并排时两张图垂直居中。
+- Android 全屏对比预览中，左右并排的“素材/成品”标签放各自图片下方并紧贴图片；上下同框的完成标签放在实际 FIT_CENTER 图片内右下角。图片视图使用 FIT_CENTER/aspectFit 居中，不能为标签腾出固定侧栏而缩小或偏移图片。iOS 当前源码按 aspectFit 实际图片矩形定位进度与完成标签，须等匹配 IPA 后另做真机确认。
+- 原图加载期间，标签隐藏并在实际 `FIT_CENTER/aspectFit` 图像右下方显示“高清原图加载中 N%”；状态框宽高必须受可见图像矩形约束，窄图也不得越出图片。原图成功后收起加载状态，再显示对应的“素材/成品”短标签；失败则保持失败状态，缺素材仍显示空槽说明。
+- 静态门禁 `tests/test_ios_compare_ui.py` 与 `tests/test_android_compare_preview_strip.py` 必须通过；覆盖状态条、双图 3:4、首页卡片尺寸/标签、全屏加载提示锚点、横向高度约束、缺素材和旧缓存页位回填。
+- 已安装版基线（Android 0.8.92/203）：APK SHA-256 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`，单测 103/103，Lint 0 错误/94 警告；Redmi 与 Vivo 已完成本地预览、在线 395 套及对比布局回读。
+- DSH-168 候选（Android/iOS 0.8.94/205）：Android Release 通过、单测 103/103、Lint 0 错误/92 警告、APK v2/v3 验签通过，SHA-256 `C9A09CF70EE8AE26131638CCC108B964B0584EB5B03E3F4035C30B3811DD399B`；覆盖安装被 Vivo 拒绝，设备仍为 0.8.92/203。Android 对比状态静态守卫 12/12；iOS 对比 UI 17/17、预取队列 11/11、客户端 15/15、跨端契约 49/49 静态门禁通过；Windows 无 Xcode/Swift，iPhone USB mux 未枚举，未构建 IPA、安装或实机验收。
+
+## 移动相册在线启动与缩略图失败恢复（DSH-154—159 / 0.8.92 候选）
+
+- Android 在“电脑在线”保存状态下强制停止后冷启动，确认首次搜索提示为“搜索标题/地点”；切到手机本地后确认变为“搜索标题/文件夹”。检查启动日志，在线模式只能由可见刷新负责拉取列表/分类，不能再叠加静默预取。
+- 手机回收站只读检查“已删除”状态数、页签数与卡片数相符；从手机回收站切换来源后应回到目标作品页。故障注入前须使用专用测试目录，当前不点击清空、恢复或彻底删除。
+- `.91/202` Android 实测：在线冷启动只发出一次 works 请求，队列约 1ms；12,158ms 后 `SocketTimeoutException`、状态 none、0 字节；395 套快照保留并显示短提示“连接超时”。
+- 服务端审查确认 works/categories 在响应头之前会做到期清理、扫描与 JSON/gzip；清理可能移动到期作品。Supervisor 有 categories 超时记录，但手机请求根因仍未区分。只在不记录 IP/路径/作品内容的阶段日志加入后，关联自然发生的手机请求；不要手工 GET 这两个有副作用的路由。
+- DSH-158：用无快照测试态检查错误卡片不显示 `resolveBaseUrl()`/局域网地址；检查同 Wi-Fi、服务和防火墙说明。DSH-159：点“检查更新”应立即把按钮改为“正在检查…”并禁用；分别覆盖发现更新、无更新、网络失败，并确认完成后恢复原文案与按钮。
+- iOS DSH-154：冷/热缓存分别观察缩略图；网络故障后最多重试一次，失败 tile 提供点按重试与 VoiceOver 文案，等待重试时有活动指示器；复用 cell 时等待态、失败态、无障碍标签和图像缩放模式都要复位。区分“未关联素材”与真实网络失败。需 `.92` IPA 和可用 WDA/XCTest 触控链。
+- DSH-157 阶段诊断：仅用临时作品库和随机 localhost 端口验证计时日志；不连接 45835，也不手工请求有清理副作用的 works/categories。日志允许固定 route/status、耗时、字节与计数；不得包含 IP、路径、查询或作品内容。`write_ms` 是本机服务端 socket 写入耗时，不能当成手机首字节证据。
+- 历史记录：Android `.92` APK 曾以旧 SHA-256 见维护交接；最终 DSH-162/163/164 包、SHA-256、94 警告与两台 Android 实机回读见本文件上方。iOS 仍无 Xcode、IPA 或 iPhone USB mux。
+
+## 在线相册对比视图（DSH-150）
+
+- Android/iOS 冷启动进入对比视图，检查纯黑全屏边缘、标题「对比视图」、模式切换与关闭控件没有裁切或重叠。
+- 检查每页素材和成品标签垂直居中靠右；切换并排模式后两张图垂直居中，‹/› 翻页边界正确。
+- 冷缓存时观察素材/原图百分比从开始到完成；热缓存时检查完成状态仍有可见反馈。模拟网络失败时确认短暂错误提示出现。
+- 连续快速翻页，并在请求未结束时关闭页面；旧页回调不得覆盖当前页，也不得在关闭后更新视图。
+- iOS 额外核对 sourceImages 与成品页号配对、首页同步电脑状态、缩略图 84×112pt（3:4）和作品操作按钮「重置状态」。
+- Android 单测 100 项通过，Debug/Release Lint 与 Debug/Release APK 构建通过；候选 CI、iOS 构建和实体设备操作需分别记录，不可互相替代。
+
+## 对比视图安全区修复回归（DSH-151 / Android 0.8.80）
+
+- 设备：Redmi 23013RK75C，Android 15/API 35，显示区域 1080×2400，目标 SDK 36。
+- 在上下同框与左右并排模式分别确认标题、素材/成品徽标、页码和翻页按钮；最大控件底部 y=2250，导航栏起点 y=2276。
+- 点击下一页确认 P1→P2；连续 P2→P3→P2 后等待旧回调完成，页码仍为 P2；横向滑动返回 P1；末页确认 P6/P6 且下一页按钮禁用；关闭后回到在线作品列表。
+- 覆盖安装后确认 versionName 0.8.80、versionCode 191，在线作品仍为 395 套；只读浏览，不点分享、重置或删除。Logcat 以 `FATAL EXCEPTION` 与本包 `Process` 过滤，结果为空。
+- iPhone 26.6 本轮只执行 App 启动与截图；CoreDevice 没有可用触屏注入，不能据截图代替点击验收。新 IPA 需先经 macOS CI 生成并签名侧载。
+
+## Android 跨页面状态栏与窄屏搜索回归（DSH-152/153 / 0.8.82）
+
+- 在 Android 15/API 35 Redmi 上确认本地文件浏览能列目录，进入作品文件夹后出现“返回上一级”；返回本地作品列表后，状态栏显示本地作品来源和套数，不能继续显示文件项数。
+- 打开手机回收站，分别切换“已删除”和“已标记垃圾”；状态栏数量要与可见条目一致。“已删除”包括本地目录和手机侧在线作品生命周期记录；“已标记垃圾”只计当前 Tab。切换电脑在线/手机本地来源时不得残留上一来源计数。
+- 在 360dp 宽屏查看搜索提示，不得被视图/筛选/排序按钮硬截断；分别输入可命中的标题关键字，确认列表筛选并能清空。分类、视图、筛选、排序和卡片使用只读操作。
+- 系统文件与文件夹选择器打开后立即返回，不选内容，以免发送或导入用户文件。
+- 设置页上下滚动，确认最后一项与“完成”按钮能滚入可见区域；不要更改自动接收、自动整理或提醒设置。
+- iPhone 新构建和触屏尚未验收时，记录为待设备验收，不可用 Android 通过替代；截图中缩略图占位需等待后复查，并区分数据缺图与加载失败。
 
 ## 远程混合传输验收（DSH-046）
 
@@ -158,3 +249,21 @@
 日志或截图位置（不入库原始隐私）：
 需要保留的回归：
 ```
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 12:20 | 反重力 | record live timing boundary |
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 09:24 | Codex | add Android cold-start, recycle source, phone timeout, and iOS retry device regression steps |
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
+| 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

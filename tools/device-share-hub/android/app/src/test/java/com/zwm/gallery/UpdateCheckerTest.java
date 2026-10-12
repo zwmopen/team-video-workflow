@@ -32,4 +32,11 @@ public final class UpdateCheckerTest {
                 manifest, "album-Android-v0.6.12.apk"));
         assertEquals("", UpdateChecker.checksumFor(manifest, "missing.apk"));
     }
+
+    @Test
+    public void automaticChecksCanStayQuietWhileManualChecksShowTheirResult() {
+        assertFalse(UpdateChecker.shouldShowCheckResultToast(false, false));
+        assertFalse(UpdateChecker.shouldShowCheckResultToast(true, true));
+        assertTrue(UpdateChecker.shouldShowCheckResultToast(false, true));
+    }
 }

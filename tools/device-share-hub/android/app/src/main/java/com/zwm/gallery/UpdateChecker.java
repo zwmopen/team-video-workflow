@@ -55,7 +55,9 @@ final class UpdateChecker {
         if (!prefs.getBoolean(PREF_AUTO_UPDATE_ENABLED, true)) return;
         if (!readyVersion.isEmpty() && isNewer(readyVersion, current)) return;
         markCheckAttempted(activity);
-        check(activity, false);
+        // A normal startup should only interrupt the user when an update is available.
+        // The "already latest" toast can arrive late and cover the album toolbar.
+        check(activity, false, false);
     }
 
     static void checkOnResume(Activity activity) {
@@ -74,6 +76,14 @@ final class UpdateChecker {
     }
 
     static void check(Activity activity, boolean silent) {
+        check(activity, silent, true, null);
+    }
+
+    static void check(Activity activity, boolean silent, boolean showRoutineResult) {
+        check(activity, silent, showRoutineResult, null);
+    }
+
+    static void check(Activity activity, boolean silent, boolean showRoutineResult, Runnable onComplete) {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
             try {
@@ -89,14 +99,25 @@ final class UpdateChecker {
                     if (isNewer(tag, current)) {
                         if (silent) downloadUpdate(activity, tag, apkUrl, sha256);
                         else showUpdate(activity, tag, apkUrl, sha256, source);
-                    } else if (!silent) toast(activity, "当前已经是最新版本 " + current);
+                    } else if (shouldShowCheckResultToast(silent, showRoutineResult)) {
+                        toast(activity, "当前已经是最新版本 " + current);
+                    }
                 });
             } catch (Exception error) {
                 DiagnosticLog.write(activity, "update_check_failed", error.getMessage());
-                if (!silent) activity.runOnUiThread(() ->
+                if (shouldShowCheckResultToast(silent, showRoutineResult)) activity.runOnUiThread(() ->
                         toast(activity, "检查失败，请确认网络后重试"));
-            } finally { executor.shutdown(); }
+            } finally {
+                executor.shutdown();
+                if (onComplete != null) activity.runOnUiThread(() -> {
+                    if (!activity.isFinishing() && !activity.isDestroyed()) onComplete.run();
+                });
+            }
         });
+    }
+
+    static boolean shouldShowCheckResultToast(boolean silent, boolean showRoutineResult) {
+        return !silent && showRoutineResult;
     }
 
     static void reportDownloadProblem(Activity activity) {

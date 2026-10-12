@@ -1,7 +1,7 @@
 # 相册分发系统（Device Share Hub）多端统一产品设计手册与目标跟踪库
 
-> **版本**：v0.7.1  
-> **更新时间**：2026-09-01  
+> **版本**：v0.7.2
+> **更新时间**：2026-10-11
 > **多端支持**：Windows 电脑端 / Android 手机端（全面屏+三大金刚键）/ iOS 苹果端（灵动岛+刘海+AltStore）
 
 ---
@@ -36,6 +36,15 @@
    - 一键直接发布（自动将文案塞入系统剪贴板并拉起系统分享面板）；
    - 兼容 AltStore 自定义源（`altstore.json`）一键静默/在线升级。
 
+### 2.1 在线相册对比视图（Android / iOS）
+
+- 对比页使用纯黑全屏背景，标题固定显示「对比视图」；模式切换与关闭控件保持统一尺寸、居中且不裁切。翻页使用左右方向符号和滑动手势，不显示“上一页/下一页”文字按钮。
+- 每页按相同页号配对素材与成品。左右并排时，两侧标签放各自面板顶部；上下同框时，标签放在面板右侧留白。图片视图占满面板并使用 FIT_CENTER/aspectFit 居中，不为标签预留固定宽度。
+- 原图加载期间在图片右下侧显示“正在加载原图 N%”；成功后收起进度并显示“素材/成品”，失败时保留明确失败状态。无关联素材时继续显示空槽说明。页面状态只属于当前页。
+- 当前页成品/素材原图请求优先；冷缓存只显示占位，不发起竞争连接的网络缩略图请求；两张当前图完成后，按“下一页成品、下一页素材、下下页成品、下下页素材”逐图串行预取。翻页立即取消上一页可见请求和正在执行的预取，清空旧图并忽略迟到进度/完成回调。原图失败必须结束进度态，即使保留缓存缩略图。
+- 在线作品操作栏统一显示「重置状态」。iOS 在线列表保留电脑同步状态和 84×112pt（3:4）缩略图。
+- 真机验收需覆盖冷缓存、热缓存、连续翻页、关闭页面与窄屏；源码或 CI 通过不能替代设备验收。
+
 ---
 
 ### 3. 电脑端（Windows）规范
@@ -57,3 +66,21 @@
 | **#T3: 屏幕自适应与三大金刚键避让** | Android | ✅ 已完成 (v0.7.1) | 重构 `ScreenInsets.java`，全量适配 API 26~36，动态追加导航栏高度避让。 |
 | **#T4: 多设备自动接入与巡检心跳** | Windows / Hub | ✅ 已运行 | 部署 1 分钟常驻心跳 `device_fleet_heartbeat.py`，自动识别接入设备并推包。 |
 | **#T5: 每日问题库自驱巡检** | 全平台 | ✅ 已配置 | 每日早晨定时心跳比对问题库，未解决任务自动保持激活推进。 |
+
+---
+
+## 2026-10-11 DSH-151 Android 全屏对比视图安全区修复
+
+- 0.8.80 Android dialog 根布局根据系统栏/缺口 Insets 留出侧边与导航栏空间；隐藏状态栏的顶部 inset 不占布局，保留图片可用高度。
+- API 35 实机验证控件与导航栏间距、纵向/横向比较、翻页、关闭和状态保留；接口、数据协议与 iOS 业务代码无变化。
+- iPhone 当前 0.8.77 可启动/截图；新版本包与触屏操作验收留待 macOS CI 和可用的 iOS 触控链。
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 | Codex | Align comparison image centering, label placement, and original-image loading state with DSH-168. |
+| 2026-10-11 | Codex | Specify current-page-first cancellable serial iOS comparison image prefetch and stale-image behavior. |
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
+| 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |

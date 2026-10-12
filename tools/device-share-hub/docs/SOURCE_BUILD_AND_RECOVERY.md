@@ -31,9 +31,13 @@ CI 生成的 IPA 不含 Apple ID、证书、设备 UDID 或密码，安装时由
 
 ## 本地职责边界
 
-当前 Windows 机器没有 Android Gradle Wrapper，也没有可作为本项目构建依据的本地 Gradle。以后 Android、iOS、Windows 安装包一律以 GitHub Actions 云端构建为准；本机只做源码修改、Node/协议测试、包体版本与权限检查、哈希核对和真机安装诊断，不再尝试用本地 Gradle 生成 Android 安装包。
+当前 Windows 主机已具备 Java、Gradle 9.4.1、Android SDK 36 和 build-tools 36.0.0，可通过 `build-local.ps1 -AndroidOnly` 本地生成 Android **候选包**。脚本会运行 Android 单测、Release 构建、Release Lint、权限/`debuggable` 检查、APK v2/v3 签名验证并生成版本、哈希元数据。正式可分发构建仍以 GitHub Actions 同一提交的构建与发布记录为准；本地 APK 不能冒充 CI 或 Release 产物。
 
-下面的 `build-local.ps1` 和平台命令只保留作历史环境参考，不是当前交付入口。不要因为缓存目录里存在旧产物就判定本地构建可用。
+Android Gradle 插件不接受包含非 ASCII 字符的 Windows 项目路径。`build-local.ps1` 遇到这类路径时，会把 Android 源码（不复制旧的 `.gradle`、`build`、`out`）暂存到 ASCII 临时目录，在那里完成构建和检查，再把已核验 APK、SHA-256 和元数据写回项目的 `android/out/`。成功后脚本会校验路径范围并清理临时目录；构建失败则保留临时目录供诊断。项目配置启用 Gradle 任务输出缓存，GitHub Actions 的 Android job 通过 `setup-java` 缓存 Gradle 依赖和用户级缓存。
+
+**当前 Windows 主机边界**：没有 Xcode/Swift，因此 iOS 编译必须使用 macOS/Xcode 云端 job；IPA 下载后仍可在本机通过 Sideloadly/AltStore 签名并安装。主机没有 CMake，因此 Windows 原生包也走 `windows-2022` 云端 job。当前本地完整构建入口是 `-AndroidOnly`，不要用默认入口误判 Android 工具链不可用。
+
+构建空间分为共享工具和应用产物，不能把全局缓存都算成本项目：本次机器审计的 Android SDK 约 0.54 GB、Gradle 缓存约 0.75 GB、Gradle 9.4.1 发行版约 0.14 GB，合计约 1.43 GB，均可供其他项目复用。当前候选项目已有的 Gradle/构建目录约 3.8 MB，版本 APK 约 0.88 MiB；成功构建的 ASCII 暂存目录会自动删除。构建缓存可能随之后编译增长，不要为节省单个项目空间误删共享 Gradle 缓存。
 
 ```powershell
 cd D:\AICode\AI\repos\team-video-workflow
@@ -54,16 +58,16 @@ cmake -S tools/device-share-hub/windows-native -B tools/device-share-hub/windows
 cmake --build tools/device-share-hub/windows-native/build --config Release
 ```
 
-### Android（历史参考，不作为当前构建流程）
+### Android（本地候选构建）
 
-在 `tools/device-share-hub/android` 使用 JDK 17 和 Gradle 9.4.1：
+在仓库根目录执行下面的命令。当前脚本会自动找到本机 JDK、Gradle 9.4.1 和 Android SDK 36，并完成单测、Release 构建、Lint、安全检查、哈希与元数据生成：
 
 ```powershell
-gradle :app:testDebugUnitTest :app:assembleRelease :app:lintRelease
+powershell -ExecutionPolicy Bypass -File .\tools\device-share-hub\scripts\build-local.ps1 -AndroidOnly
 ```
 
 正式 APK 还必须用 Android build-tools 核对：包含
-`android.permission.REQUEST_INSTALL_PACKAGES` 和 `android.permission.FOREGROUND_SERVICE_DATA_SYNC`，但不含特权 `INSTALL_PACKAGES` 或 `application-debuggable`。更新由应用自有 HTTPS 服务断点下载并校验，用户从应用通知进入系统安装器，最终安装确认仍由 Android 完成。
+`android.permission.REQUEST_INSTALL_PACKAGES` 和 `android.permission.FOREGROUND_SERVICE_DATA_SYNC`，但不含特权 `INSTALL_PACKAGES` 或 `application-debuggable`；`apksigner verify` 的 v2/v3 检查也必须通过。更新由应用自有 HTTPS 服务断点下载并校验，用户从应用通知进入系统安装器，最终安装确认仍由 Android 完成。
 
 ### iPhone
 

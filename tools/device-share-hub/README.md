@@ -1,8 +1,9 @@
-# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.76 / iPhone 0.8.76）
+# 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.105 / iPhone 0.8.105）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 本轮源码候选：**Android 0.8.76 / versionCode 187**、**iPhone 0.8.76 / build 187**。安装包、CI 与真机回归尚未完成。
+> 当前源码候选：**Android 0.8.105 / versionCode 216**、**iPhone 0.8.105 / build 216**。build-only CI `38264200990` 的 Android、iOS、Windows 与 relay 检查均通过；Android 本地 Release、Lint、单测与签名校验通过。Android 缩略图按当前分组优先加载；iOS 本轮只对齐版本号，没有修改图片逻辑。当前公开更新索引仍为 `0.8.78/189`，`v0.8.105` 尚未发布。手机实测按用户要求暂缓，发布后再由手机端检查更新。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
+> 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 
 ## 先搞清这几个东西分别是谁
 
@@ -664,4 +665,16 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 09:24 | Codex | advance mobile candidate to 0.8.85; record Android timeout and pending iOS acceptance |
+| 2026-10-11 08:47 | Codex | update mobile album candidate to 0.8.82 and record Vivo UI fixes |
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
+| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

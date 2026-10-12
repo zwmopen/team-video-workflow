@@ -1,7 +1,7 @@
 # 相册作品库工作流设计（现行实现）
 
 > **本文描述的是当前实现，不是设计草案。**
-> 最后核准：2026-09-28
+> 最后核准：2026-10-12
 > 旧设计稿（2026-07-18，基线 `acdf939`）已移入 `docs/_archive/`。
 > ⛔ 任何改动若影响本文所述行为，必须**同批**修订本文，并在 CHANGELOG 条目写明
 > `影响文档：ALBUM_WORKFLOW_DESIGN.md`。规则见 `AGENTS.md`「设计文档同步（强制）」。
@@ -12,16 +12,24 @@
 
 | 端 | 显示名 | 包 / Bundle ID | 版本 | 出处 |
 |---|---|---|---|---|
-| Android | 相册 | `com.zwm.gallery` | **0.8.63**（versionCode 174） | `android/app/build.gradle.kts:13-14` |
-| iOS | 相册 | `com.zwm.album` | **0.8.45**（build 117） | `ios/project.yml:31-32` |
+| Android | 相册 | `com.zwm.gallery` | **0.8.101 候选**（versionCode 212；本地 Release/APK 构建通过；已安装到 Vivo 并完成关键页面真机回归） | `android/app/build.gradle.kts:13-14` |
+| iOS | 相册 | `com.zwm.album` | **0.8.100 源码候选**（build 211；静态检查通过；无匹配 IPA，iPhone 仍安装 0.8.95/206） | `ios/project.yml:31-32` |
 | Windows | 窗口标题「文件收发中控 V4.3.33」；CMake 产物名「素材投送中控」 | — | **4.3.33** | `main.cpp:123`、`CMakeLists.txt:91` |
 | 服务端 | `DeviceShareHub-OnlineGallery` | — | **1.2.0** | `online_gallery_service.py:2290` |
 
 ⚠️ **四端版本号各自独立，不存在统一版本号。** 任何「拿两个版本号比较」的逻辑必须先确认同口径 ——
-Windows `4.3.33` > Android `0.8.63`，跨端比较会静默得出「已是最新」的错误结论（DSH-121）。
+Windows `4.3.33` > Android `0.8.92`，跨端比较会静默得出「已是最新」的错误结论（DSH-121）。
 
 iOS 的 `CFBundleShortVersionString` / `CFBundleVersion` 走 `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`，
 **禁止再写字面量**（`ios/project.yml:40-45`）。
+
+### 1.1 在线相册对比预览（当前候选）
+
+- Android 左右并排时，“素材/成品”标签紧贴各自图片下方；上下同框时，加载完成后的短标签放在 FIT_CENTER 实际可见图像内右下角。主页缩略图标签仍在各自图片内底部居中。
+- iOS 源码按 aspectFit 实际可见图像矩形定位原图状态与加载完成标签；当前只有源码/静态证据，没有对应的新 IPA 或设备视觉验收。
+- 图片视图铺满面板并按 FIT_CENTER/aspectFit 居中，不为右侧标签让出固定宽度。
+- 原图加载时统一显示“高清原图加载中 N%”；状态框按 FIT_CENTER/aspectFit 后实际可见图片矩形约束在右下角，不能越出图片；完成后改为短标签，失败时保留失败提示；没有关联素材时显示空槽说明。
+- 当前候选为 Android 0.8.101/212 与 iPhone 源码 0.8.100/211。Android 已安装到 Vivo 并完成主页、上下/左右布局、P1→P2 翻页及关闭返回真机检查；369 套计数与被动服务状态一致。动态加载百分比本轮未捕获。iPhone USB/usbmux 已枚举但息屏时仍回读 0.8.95/206；没有匹配 IPA，未安装或实机验收新 iOS 候选。详见 `docs/MAINTAINER_HANDOFF.md` 与 `docs/BUG_LEDGER.md`。
 
 ---
 
@@ -115,7 +123,17 @@ DEFAULT_LIBRARY_ROOT = "D:\AICode\项目推进\projects\江湖有旅人\主项�
 
 **⇒ 新作品从落盘到手机可见：最迟约 60 秒，通常 ≤30 秒。这是「准实时」，不是真实时。**
 
-### 3.7 库存口径（2026-09-28 实测）
+### 3.7 手机在线列表首字节超时（DSH-157，根因未确认）
+
+- Android `.91/202` 实机日志：在线冷启动只发出一次 `/api/online/works`；执行队列约 1ms，12,158ms 后读超时，未收到 HTTP 状态或响应字节。已有 395 套离线快照留在界面，显示短错误“连接超时”。
+- 服务端 `/api/online/status` 只回读内存快照计数；200 不证明 works/categories 列表路由可用。
+- `/api/online/works` 与 `/api/online/categories` 在扫描之前会运行到期清理；扫描缓存冷却或过期时会遍历文件。`send_json()` 完成 JSON 编码和必要的 gzip 压缩后才发送响应头。因此清理、扫描锁等待、文件读取、响应构造、压缩或网络均可能发生在首字节前。
+- 到期清理会移动到期作品；不要为测延迟手工请求上述列表/分类路由。用自然客户端请求关联不含地址、路径、作品内容的分段耗时记录。
+- `.92` 源码候选在 `send_json()` 和两个路由加入聚合计时：cleanup、prepare、scan、aggregate、JSON、gzip、headers、socket write、字节数和条目数。只输出固定 route/status 与数字，不读写 IP、请求路径、查询或作品内容。`scan_ms` 含 scanner 锁等待；`write_ms` 是服务端写入耗时，不代表客户端首字节。
+- 候选埋点只在临时数据根和随机 localhost 端口的隔离服务测试过（63/63）；未重启现场服务，暂无真实手机请求的分段数据。
+- Supervisor 的 categories 超时证明电脑端业务路由有长期慢请求，但现有日志不能定位手机本次等待在哪一段。DSH-157 唯一根因仍为 **UNVERIFIED**；不以延长客户端超时代替诊断。
+
+### 3.8 库存口径（2026-09-28 实测）
 
 - 可发财位候选 **479 套** = `已发送0次` 467 + 根直出 12
 - 实际下发 **472 套**（`status.totalWorks` 与 `/api/online/works` 一致）
@@ -246,3 +264,12 @@ copy_missing = not copy_text                      # 文案.txt 没读出实质�
 2. **文档与代码同一次提交**，禁止「代码先上、文档后补」。
 3. **失效的历史文档移 `docs/_archive/`**，不就地删改（`_` 开头 = 不参与）。
 4. 活文档清单与待办见 `AGENTS.md`「设计文档同步（强制）」。
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 | Codex | Record 0.8.94 compare preview centering, label placement, loading states, and device acceptance boundary. |
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 | Codex | 更新 Android/iOS `.92/203` 源码候选，并补记在线列表首字节超时已验证路径与未确认根因。 |

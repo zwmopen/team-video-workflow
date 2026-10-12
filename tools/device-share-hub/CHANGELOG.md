@@ -1,3 +1,211 @@
+# 2026-10-12 DSH-177：正式发布等待生产 Relay 端到端门禁
+
+- 发现主分支的正式发布 job 只依赖 Windows、Android、iOS 构建，没有依赖同次推送启动的 `remote-relay-live-e2e`；若 live E2E 失败，发布仍可能继续。
+- 修复 `.github/workflows/device-share-hub.yml`：正式发布现在等待生产 Relay live E2E 与三端构建全部成功；build-only 手动运行仍不会发布。
+- 本轮候选仍为 Android/iOS `0.8.105/216`。用户明确要求先发布，手机安装与真机验收暂缓；候选不能替代发布成功回读。
+- 验证状态：工作流依赖关系已改，等待正式 main push 的 Actions 实际回读；build-only run `38264200990` 早于此工作流修改，不作为新门禁验证。
+- 影响文档：`docs/MAINTAINER_HANDOFF.md`、`docs/BUG_LEDGER.md`、`docs/闭环清单.md`；未改变客户端代码、协议或包版本。
+
+# 2026-10-12 DSH-176：切换分组后缩略图排队、成批出现（候选 0.8.105/216）
+
+- Android 在线列表切换分组、搜索或视图重绘时，现在清除尚未开始的旧缩略图请求；新列表首批仅提交 8 张，并按屏幕顺序渐进放行，避免前一组积压的请求长期挡住当前组。
+- 回归：Android 缩略图优先级静态检查 4/4、Android 定向静态检查 10/10、iOS/Android 契约 50/50；本机 `build-local.ps1 -AndroidOnly` 的 `testDebugUnitTest`、Release、Lint、权限与 APK v2/v3 签名检查通过。
+- APK：`0.8.105/216`，SHA-256 `C0312ECBF44F649D3189C2762762E55084B5187C0ECB34B3F98DF0F459E19647`，位于 `tools/device-share-hub/android/out/album-Android-v0.8.105.apk`。
+- 版本统一到 Android `0.8.105/216` 与 iOS `0.8.105/216`。iOS 仅对齐版本元数据，本次未改 iOS 图片行为。
+- 只读 `/api/online/status`：Pillow 12.3.0 可用、`fallbackOriginal=0`、内存缓存 500/500、磁盘缓存 1864/2000；这只能说明服务端具备缩略图缓存，不能代替新手机冷缓存计时。
+- build-only CI `38264200990` 全部 build/relay-check jobs 成功；live relay E2E 与发布 job 按 build-only 范围跳过。CI Android APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`，iOS IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`，均为 `.105/216`。
+- USB-only 探针未识别本轮所说的新手机：Xiaomi 15 仅以蓝牙设备出现，唯一 USB Composite Device 是笔记本内置 RGB Camera；ADB 只有旧 M2006C3LC 无线条目，故尚未安装候选或测量真机冷/热缓存耗时。无正式 Release 或公开更新索引。
+- 影响文档：README、ios/README、docs/MAINTAINER_HANDOFF.md、docs/BUG_LEDGER.md、docs/闭环清单.md、`.github/workflows/device-share-hub.yml`；客户端架构与协议未变化。
+
+# 2026-10-12 DSH-175：iOS 后台同步状态反复闪回（候选 0.8.104/215）
+
+- 根因：iOS 在线自动探测定时器为 6 秒，且静默自动刷新仍无条件把顶部状态改成“正在同步电脑在线作品…”。列表已可用时，后台轮询也会显示成前台加载。
+- 修复：自动探测间隔调整为与 Android 一致的 30 秒；静默刷新且已有作品时保留当前同步状态，首次加载和用户主动刷新仍显示进度。
+- 回归：iOS 状态/界面契约检查 31/31、iOS/Android 跨端契约 50/50；build-only CI `38260401299` 成功，XCTest 51/51。
+- IPA：`com.zwm.album 0.8.104/build 215`，最低 iOS 12.0；SHA-256 `A1D97290C9DCFB4769B10B904432F341EC6BC1E3213D54658ABC8CB9D124934B`，产物位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38260401299\`。AltStore IPA 无嵌入 provisioning profile。
+- 设备状态：最新 USB-only 探针仍未识别 Apple USB 硬件，usbmux 列表为空；IPA 尚未安装，未做修复后 iPhone 截图或交互回归。build-only 未触发正式 Release 或更新索引。
+
+# 2026-10-12 DSH-174：iOS 刷新后顶部状态仍停在“正在同步”（候选 0.8.103/214）
+
+- 根因：`loadOnlineData` 已清除同步覆盖文案并更新作品数组，但 `renderOnlineUI()` 只刷新分类和列表，没有重新计算顶部状态标签。
+- 修复：列表每次渲染时调用 `updateOnlineStatusHint()`；新增静态回归守卫。`test_ios_compare_ui.py` 29 项通过。
+- 当前边界：源码与定向静态回归通过；build-only CI、IPA 安装和 iPhone 状态回读待完成。USB-only 探针本轮只枚举到 Redmi Note 8，未枚举 iPhone。没有正式 Release 或更新索引。
+
+# 2026-10-12 DSH-173：Android 单图大预览关闭按钮固定右上角（候选 0.8.102/213）
+
+- 现象与根因：两台小米的 Android 单图大预览中，关闭 `×` 出现在左上角。`showLargeImage()` 先加入固定宽度关闭按钮，再加入占满剩余空间的标题，因此按钮自然排在左边。
+- 修复：保留标题权重，把关闭按钮移到标题之后，让它显示在顶栏右端；关闭事件和预览图片/翻页逻辑未变。
+- 构建与安装：本机 Release `0.8.102/213`，SHA-256 `4338D0E7A6C5EB9B087616AA5B2F6FF5EBBC7B18ED67ED811FA1010DAEF709DF`；`testDebugUnitTest`、`assembleRelease`、`lintRelease`、APK 权限及 v2/v3 签名验证通过。已保留数据覆盖安装到 Redmi Note 8 USB 与 Xiaomi M2006C3LC 无线 ADB，PackageManager 均回读 `0.8.102/213`。
+- 真机回归：两台手机单图预览截图及屏幕树均确认 `×` 在右上区域；点按后均返回列表。无线机在线列表恢复显示 367 套；全屏对比检查素材/成品、P1→P2、上下同框/左右并排及右上角关闭。日志最近 600 行未发现目标应用 FATAL。截图和脱敏屏幕树见 `D:\AICode\运行数据\dsh-evidence\20261012\xiaomi-0.8.102-full-preview\`。
+- 影响文档：无（只修正既有单图预览的标题栏排列，不改变工作流、架构或通信协议）。同步更新 README、BUG_LEDGER、MAINTAINER_HANDOFF、TEST_PLAYBOOK 与闭环清单。
+- CI/发布边界：build-only run `38250873510` 对提交 `0b17ead82c764500bcac7972678b6004d24f6be1` 成功；该 run 的 Android `.102/213` 与 iOS `.100/211` 构建通过。没有创建正式 Release，未改公开更新索引。
+
+# 2026-10-12 DSH-171 设备续验：候选推送与 build-only CI（Android 0.8.101/212；iOS 0.8.100/211）
+
+- 候选提交 `f0a6e7b` 已推送到 `codex/dsh-152-isolated-fix`。GitHub Actions run `38232030731` 全部完成成功；Android Release build/test/lint、iOS build 与 XCTest 51/51、Windows portable 和 relay 检查均通过。`remote-relay-live-e2e` 与 `publish-gallery-updates` 按 build-only/非 main 分支条件跳过，没有正式发布或更新索引。
+- CI Android APK `0.8.101/212` SHA-256：`cb3db49c725f1ca1e0e71d02c2589f6fc073b2013e9e962c70c4f115bbd6ebd7`；与本轮已在 Vivo 安装并检查的版本号一致。iOS IPA `com.zwm.album 0.8.100/211` SHA-256：`bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`；IPA 内版本与校验文件一致。
+- IPA 已生成并通过 CI XCTest，但本机最新 USB-only 探针连续未枚举 Android 或 iPhone，因此本轮没有进行 iOS 安装回读或 iPhone 视觉/交互验收。iPhone 上一次可读版本为 `0.8.95/206`；当前设备状态未取得。没有修改息屏设置。
+- 当前证据证明候选已推送、CI 构建成功；不代表 iOS 已安装或正式发布。后续需 iPhone 重新 USB 枚举并解锁/信任后安装准确 IPA，再核对版本与界面。
+
+# 2026-10-12 DSH-171 设备续验（Android 0.8.101/212；iOS 源码候选 0.8.100/211）
+
+- Android 将上下同框加载完成后的“素材/成品”标签按 FIT_CENTER 实际图像矩形放到图片内右下角；左右并排标签放在各自图片下方并保持紧凑间距。主页缩略图继续保持完整 3:4，标签在图内底部居中。
+- Android Release 本地构建、Gradle 单测、Release Lint、APK 权限及 v2/v3 签名检查通过。APK SHA-256：`D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`；已安装到 USB Vivo V2327A，PackageManager 回读 `0.8.101/212`。主页、上下同框、左右并排、P1→P2 翻页与右上角关闭均完成真机检查；主页显示 369 套，与只读 `/api/online/status` 的 `totalWorks=369`、`scanRevision=154`、`refreshing=false` 一致。目标应用日志未见 `FATAL EXCEPTION`。
+- 证据截图：`D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-current.png`、`vivo-closure-compare-current.png`、`vivo-closure-side-by-side-current.png`、`vivo-closure-page2-current.png`、`vivo-closure-home-return-current.png`。Android 对比页面状态守卫 18/18、iOS 对比 UI 静态检查及跨端契约 50/50 通过。
+- iOS 源码候选 `0.8.100/211` 已修正加载状态与短标签按 aspectFit 实际图片区域定位；静态检查通过。iPhone USB/usbmux 可枚举，息屏时应用清单回读仍为 `0.8.95/206`。没有匹配 IPA，且 Windows 无 Xcode/Swift；未安装或视觉/交互验收新候选。当前 iOS 源码还未进入远程构建环境。
+- 本轮未捕获动态 `高清原图加载中 N%` 画面，不能将百分比视觉验收记为完成。未推送、未触发 CI、未发布或更新索引。
+- 影响文档：`README.md`、`ios/README.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`。
+
+# 2026-10-12 DSH-157：在线列表快照秒回与后台刷新（候选 Android 0.8.100/211；iOS 0.8.99/210）
+
+- 定位到在线列表路由同步等待全库扫描和共享锁；实测 `scan_ms` 可超过 60 秒，Android 读超时为 12 秒。序列化、压缩和服务端写出不足以解释该超时。
+- `/api/online/works`、`categories` 与 `filter-options` 先返回最近完整快照，过期刷新与到期巡检移到单飞后台任务；扫描完成递增 revision，两端根据列表快照 revision 自动补拉，覆盖后台扫描先于首次指纹轮询完成的竞态。未延长客户端超时。
+- Android `0.8.100/versionCode 211` Release 本地构建、单测、Lint、APK 权限与签名检查通过；APK SHA-256：`1CE5F3493484CAC70E5E95408402C9D77EE4D3900D3D0A23FFEDF37F697496F9`。候选服务端 70/70、主服务 64/64、iOS UI 静态检查通过、跨端契约 50/50。
+- 主服务工作树中的定点修复已通过编译和 64 项测试，并按既有脚本重启；安全 `/api/online/status` 回读 `ok=true`、`staleCode=false`、`totalWorks=380`、`scan.revision=1`、`refreshing=false`。没有手工请求有清理副作用的 works/categories 路由。
+- Android/iOS USB 当前均未枚举；Android `0.8.100/211` **未安装**，iPhone 没有匹配 IPA，未安装或触控验收。该候选未发布、未推送、未更新索引。
+- 影响文档：`docs/BUG_LEDGER.md`、`docs/闭环清单.md`；应用列表协议新增 scan revision 字段，不改变作品数据格式。
+
+# 2026-10-12 DSH-171 补充：统一高清原图加载提示并限制在图片内（Android 0.8.98/209；iPhone 0.8.97/208）
+
+- 对比视图的素材与成品加载态统一显示“高清原图加载中 N%”；iOS 单图原图预览同步使用“高清原图加载中…”。
+- Android 与 iOS 均按 FIT_CENTER/aspectFit 后的实际可见图像矩形放置右下角状态；状态框宽、高受该图像区域约束，Android 窄图缩放并省略超长文字，iOS 单行自动缩字，控件框不越出图片。
+- 复用现有进度回调与页代次，不新增网络请求或加载状态机。Android `build-local.ps1 -AndroidOnly` 已通过单测、Release、Lint、APK 权限与 v2/v3 签名检查；产物 SHA-256：`8377793ed319454ebfed01c35373f2f16245c88c4aabea635804329ef64863b8`。
+- 定向静态回归通过：Android 页面状态、对比卡、预取；iOS 对比 UI、预取、客户端；跨端契约 `50/50`。USB-only 探针本轮未枚举 Android 或 iPhone，因此两端均未安装或做本轮实机视觉验收；iOS 无 IPA，未进行 Xcode 构建。没有正式发布或更新索引。
+- 影响文档：`README.md`、`ios/README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`、`ios/CHANGELOG.md`；无架构或协议变化。
+- 简化与防呆：复用既有图片几何和进度标签，不加新状态；在测量阶段限制控件边界，避免长文案越界。
+
+# 2026-10-12 DSH-172：Android 本地构建提效与中文路径兼容（构建工具，不改应用版本）
+
+- `build-local.ps1 -AndroidOnly` 遇到非 ASCII 项目路径时，自动在 ASCII 临时目录构建，验证 APK 后只回写 APK、SHA-256 与元数据；成功清理暂存目录，失败保留诊断现场。
+- Android 项目显式启用 Gradle 任务输出缓存和 AndroidX；GitHub Actions 的 `setup-java` 启用 Gradle 依赖/用户缓存。
+- Windows 本地 Android 候选 `0.8.97/208` 首轮构建、单测、Release Lint、APK 安全检查与 v2/v3 签名校验成功，首轮耗时 66.9 秒；稳定暖缓存复跑 14.2–14.5 秒，68 个任务中 41 个命中缓存；Gradle 守护进程重启样本为 47.5 秒。APK 920,420 字节（0.88 MiB），最终保留包 SHA-256 `18b57ff089e154cdd7977dd1b388c6cd00a8b7c2e54c7c55e4a85018c4b3b22d`。签名证书指纹与本地 `.92` APK 相同。计时仅代表当前 Windows 主机，不是性能承诺。
+- 工具空间审计：Android SDK 0.54 GB、Gradle 全局缓存 0.75 GB、Gradle 9.4.1 发行版 0.14 GB（约 1.43 GB，共享工具/缓存）；项目构建目录约 3.8 MB，APK 0.88 MiB；本轮 ASCII 暂存峰值 13.33 MB，成功后已清理。共享缓存并非本应用独占。
+- 尚无本轮 CI、安装、设备回归或 Release 证据；当前 ADB 未枚举 Android 设备，iOS 仍需 macOS/Xcode。未推送源码、未触发云端流水线。
+- 影响文档：`README.md`、`docs/SOURCE_BUILD_AND_RECOVERY.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`；应用架构和通信协议无变化。
+
+# 2026-10-12 DSH-171：主页对比缩略图尺寸与标签位置、iOS 加载提示锚点（源码候选 Android 0.8.97 / iPhone 0.8.96）
+
+- Android 主页对比卡按可见条宽度放大，双图各保持 3:4，尺寸向 iOS 靠齐；双端“素材/成品”改为各自图片内底部居中标签。
+- iOS 全屏原图进度按 scaleAspectFit 后实际可见图像矩形定位在右下角，不再固定贴在面板边缘。
+- 版本：Android 0.8.97/versionCode 208、iPhone 0.8.96/build 207。iOS 对比 UI、Android 对比预览静态守卫、两端翻页/预取门禁、iOS 客户端和 49 项跨端契约均通过；Windows 无本地 Gradle/Xcode，本轮尚无新 CI 包、安装或真机回归。
+- iPhone 熄屏期间是否影响 Sideloadly 安装待下一次 IPA 安装实测；当前没有改动手机息屏设置。没有正式 Release 或更新索引。
+- 影响文档：README.md、ios/README.md、docs/BUG_LEDGER.md、docs/MAINTAINER_HANDOFF.md、docs/TEST_PLAYBOOK.md、ios/CHANGELOG.md；三端架构与协议设计文档无变化。
+
+# 2026-10-11 DSH-170：Android 对比视图加载态、关闭位置与左右标签（候选 0.8.96 / 207）
+
+- **用户反馈**：Android 全屏对比页的“正在加载原图”状态必须完整位于实际图片右下角；关闭叉号固定右上角；左右并排时“素材/成品”放在各自图片下方并贴近图片。
+- **修复**：状态和短标签按 `FIT_CENTER` 后图片的真实显示矩形定位，不再按黑色面板边界定位；左右并排给图片底部留出紧凑标签位，标签置于图片外沿下方；顶部控件预留关闭按钮区域，关闭按钮固定到右上角。
+- **版本/验证**：Android `0.8.96 / versionCode 207`；build-only CI `38149511506` 的 Android test/build/lint 全部成功。APK SHA-256：`400f60b5391cb8d0af191866693c16d95abfbcb1b99fe8b536836c774c04578a`。已安装到 Vivo V2327A（`10AF3319YR002ZC`），设备回读版本为 `0.8.96/207`。
+- **真机界面回归**：检查上下同框、左右并排 P1/P4/P5/P6、切回上下模式及关闭返回主页；关闭按钮位于屏幕右上角，左右标签紧贴各自图片下方且不压图。截图/UI 证据保存在 `D:\dsh_build_20261011\ci-v0.8.96-dsh170\`。运行时图片加载太快，未截到“正在加载原图”状态；该状态的图片内右下角定位通过静态守卫和代码路径核验，动态百分比仍未验证。
+- **发布边界**：run `38149511506` 的 `remote-relay-live-e2e` 与 `publish-gallery-updates` 均跳过；没有正式 Release 或更新索引。iOS 代码本轮未改，仍为 `0.8.95 / build 206`。
+
+## 2026-10-12 DSH-170：iOS 专用侧载与设备回读补记
+
+- run `38149511506` 的 iOS macOS 构建成功；IPA `album-iOS-v0.8.95-altstore.ipa` SHA-256 为 `D763EEEB934D020A146B6EC7E93715E26E55418822DA3A77BF14E285E9A872C5`。本机没有 Xcode，iOS 包由 CI 构建，并非 Windows 本地编译。
+- 使用项目专用 `ios-sideload-automation` 技能安装；设备回读版本 `0.8.95`、build `206`。设备截图确认主页显示 `已同步电脑在线作品 · 共 395 套`，对比画面能显示素材原片和成品。
+- iOS 26.6 不支持当前远程触控接口要求的 iOS 27+ 操作，且本机没有 WebDriverAgent；iPhone 点按交互仍未完成自动化验收。截图可见不等于完整交互通过。
+- 本次没有正式 Release 或更新索引；run `38149511506` 的 live E2E 与发布 job 跳过。
+
+## 2026-10-11 DSH-169：全屏对比标题控件统一与 Android 当前页优先预加载（候选 0.8.95 / 206）
+
+- Android/iOS 全屏预览将“对比视图”标题与布局模式控件统一为居中、同高同字号的小模块；iOS 按屏宽自适应模块宽度，关闭按钮保持居中，预览画布去掉浅色卡片边框并与黑色背景融合。
+- Android 对比预取改为等待当前页所有可见原图成功或失败后，才顺序预取后两页的素材/成品；翻页或关闭时使旧队列回调失效，当前页请求优先。图片客户端暂无取消句柄，翻页时最多有一条已发出的预取请求继续完成，随后不会再派发旧队列请求。
+- Android `0.8.95/206` 已通过 build-only CI 并安装到 Vivo；设备上检查了上下同框、左右并排、翻页、滑动和主页状态。实测发现的加载位置、关闭位置、左右标签位置问题由 DSH-170 跟进。
+- iOS `0.8.95/206` 通过 build-only CI；iPhone 已恢复 USB mux 枚举，但本轮尚未安装或完成 iOS 交互验收。冷缓存下动态原图百分比仍未捕获。
+- 没有触发正式发布、生产 Relay E2E 或更新索引。
+
+## 2026-10-11 DSH-168：对比预览图片居中与标签/加载态分离（本地候选 0.8.94 / 205）
+
+- 左右并排时，素材/成品短标签移到各自画面顶部；上下同框时标签放到右侧留白。Android 和 iOS 图片视图不再为标签预留横向宽度，按 FIT_CENTER/aspectFit 在完整面板中居中。
+- 原图加载期间显示“正在加载原图 N%”；原图成功后隐藏进度并显示“素材 / 成品”。原图失败时保留明确失败状态；没有关联素材时继续显示空素材说明。
+- Android 候选为 `0.8.94 / versionCode 205`。`testDebugUnitTest` 103/103、Release 构建成功、Lint 0 错误/92 警告，APK v2/v3 验签通过，SHA-256 `C9A09CF70EE8AE26131638CCC108B964B0584EB5B03E3F4035C30B3811DD399B`。Vivo 覆盖安装被设备拒绝，手机仍为 `0.8.92/203`；安装和触控回归待设备解锁并允许安装。
+- iOS 工程版本为 `0.8.94 / build 205`。Android 对比状态守卫 12/12；iOS 对比 UI 静态门禁 17/17、预取队列 11/11、客户端 15/15、跨端契约 49/49 通过；Windows 无 Xcode/Swift，iPhone USB mux 当前未枚举，没有构建 IPA 或做 iPhone 验收。
+- 没有推送、CI 构建或正式发布。
+- 手动 CI 默认使用 build-only；只有显式选择 full 才运行会写入生产 Relay/R2 的 live E2E。本轮未触发 CI。
+- 影响文档：`README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/MULTI_PLATFORM_SPEC_AND_GOALS.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`ios/CHANGELOG.md`；协议与服务端行为无变化。
+
+## 2026-10-11 DSH-167：iOS 对比视图当前页优先与逐图预取（源码候选 iOS 0.8.93 / build 204）
+
+- iOS 图片加载器返回可取消请求句柄；翻页取消上一页可见原图/缩略图与正在执行的预取，取消后不再派发进度、完成回调或启动缩略图重试。
+- 对比预览先加载当前页成品与素材原图；冷缓存时只用已缓存缩略图占位，不启动缩略图网络请求，避免与原图争抢连接。两张当前页请求完成后，才逐张预取下一页和下下页的成品/素材。翻页会清空旧图片，并以页代次屏蔽迟到回调；素材原图失败时即使仍显示缓存缩略图，也会结束进度状态。零相似度时隐藏重复的“对比视图”徽标。
+- iOS 候选版本为 `0.8.93 / build 204`；Android 未改代码，仍为 `0.8.92 / versionCode 203`。新队列静态门禁 11/11、iOS 客户端 15/15、对比 UI 10/10、跨端契约 49/49 通过。
+- 当前 USB mux 已识别 iPhone，已安装 App 查询为 `0.8.77 / build 188`；本机无 `xcodebuild`、Swift 编译器或 `.93` IPA，Developer screenshot 也因缺少 DDI/tunneld 无法获取。当前修改未编译、未安装、未做 iOS 真机交互验收。
+- Vivo Android `0.8.92/203` 本轮复核了 395 套状态、对比页素材/成品、上下/左右布局、P2/P3 箭头和手势翻页；未触发删除/重置/分享。没有推送、发布或更改线上更新索引。
+- **影响文档**：`README.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/MULTI_PLATFORM_SPEC_AND_GOALS.md`、`docs/TEST_PLAYBOOK.md`、`ios/CHANGELOG.md`；Android 产品代码与服务端协议无变化。
+
+## 2026-10-11 DSH-162 / DSH-163 / DSH-164 / DSH-165：对比视图三端布局、素材页位与移动端操作栏统一（Android/iOS 0.8.92 候选）
+
+- **持续闭环**：回读原始 iOS 对齐方案、用户长消息和会话证据，补齐 `docs/BUG_LEDGER.md` 的诉求回查矩阵；新增明确规则：只有目标端真机与发布证据齐全才标“已解决/已发布”，其余按源码、自动验证、构建、安装、真机、发布分层记录。
+- **文档同步**：iOS 静态回归口径由 12/12 更正为 15/15；README、维护交接和 BUG 台账都保留当前 iOS 无 IPA/USB mux 的边界。
+- **影响文档**：`README.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`ios/CHANGELOG.md`；产品协议和 UI 行为未改变。
+
+- Android 对比卡片改为 3:4 图块（84×112dp），素材/成品标签移到图片外侧独立一行；全屏对比去掉浅色边框和底部提示，标题统一为“对比视图”，上下同框/左右并排模块同高同字级，关闭按钮改为居中的 `×`，翻页只保留 `‹`/`›` 与页码。
+- Android 本地和电脑在线作品的操作栏统一居中并固定顺序为“重置状态 / 复制路径 / 删除”；本地全屏预览也使用 `×`、`‹`、`›`。对比原图加载保留右下角百分比反馈，并按当前页、相邻页顺序预加载。
+- Android `OnlineWorkEntry` 保留 `sourceImages`/`sourceNames` 的空槽位，避免某页没有素材时后续页错位；iOS 在线解析器同样按页保留空槽位，修复“该页没有关联素材”的错误关联。
+- iOS 在线卡片放大为 3:4 预览高度，标签只显示“素材/成品”；对比预览去掉边框和底部提示，两个顶部模块固定同宽，操作按钮使用“重置状态”。
+- 最终 Android Release APK：`0.8.92 / versionCode 203`，SHA-256 `EE0A104E13CA2B404DA7893F3FB0372210BD92833BF6B53FE3B423F22EC2B8AC`；单测 103/103，Release Lint 0 错误/94 警告，APK v2/v3 验签通过。Redmi 与 Vivo 两台均已覆盖安装并回读 `0.8.92/203`；两台都完成在线 395 套、对比上下/左右、素材/成品页位、本地全屏预览和箭头翻页回读。
+- 本轮把 Android/iOS 全屏进度文案统一为“加载原图 xx%”；iOS 空素材槽位统一显示“未关联素材”，不再把空槽位写成“无素材原片”。
+- DSH-165：iOS 顶部同步状态改为固定可见的状态条，切换、同步中、成功、离线快照和失败都有明确文案；成功态显示“已同步电脑在线作品 · 共 N 套”。
+- DSH-165：iOS 对比卡片按屏幕宽度自适应，双图保持 3:4 并放大可视区域；对比模式去掉外层浅框，缺素材页仍打开对比预览；左右并排给容器补稳定高度，避免图片被压到顶部。
+- DSH-165：老缓存只有 `sourceNames` 时按成品页位重建 `__src__` 请求标识，继续保持素材/成品页位一一对应；新增 `tests/test_ios_compare_ui.py` 静态契约。
+- iOS 静态门禁 `test_ios_online_gallery_client.py` 15/15、`parity_ios_android.py` 49/49；当前 Windows 没有 Xcode、Swift、IPA 或可用 iPhone USB mux，因此没有把 iOS 静态检查冒充实机验收。
+- 本轮只保留隔离工作树和本地 APK，未推送、未发布、未更新发布索引。
+
+## 2026-10-11 DSH-154 / DSH-157 / DSH-158 / DSH-159 / DSH-160 / DSH-161：重试状态、列表超时诊断、更新反馈、三端元信息与视图文案对齐（Android/iOS 0.8.92 候选）
+
+- Android DSH-158：无快照连接失败页不再渲染电脑局域网地址；修正启动快照预热与串行分类加载注释。
+- Android DSH-159：手动检查更新立即把按钮改为“正在检查…”并禁用，结束后恢复原文案和按钮，避免长时间点击无反馈或重复请求。
+- iOS DSH-154 体验补齐：点按失败缩略图重试时显示活动指示器，完成、切换图片和单元复用都会清理等待/失败状态；保留有界重试与 VoiceOver 提示。
+- iOS DSH-160：在线作品卡统一显示 `💻 电脑在线 · N 图 · 使用态`，与 Android 和既定用户口径一致；季节/流量类型不再冒充设备来源标签。
+- DSH-157：服务端候选为 categories/works 记录清理、扫描、聚合、JSON、gzip、响应头、socket 写入耗时及聚合字节/数量；不记录请求地址、查询、IP 或作品内容。`scan_ms` 仍合并锁等待与扫描，`write_ms` 只表示服务端 socket 写入，不代表手机收到首字节；根因仍 `UNVERIFIED`。现场服务已重启并回读 `staleCode=false`、库存 395、扫描错误 0；重启后自然记录 12 条 categories 计时（首次 cleanup 3.850 秒，后续 scan 0.731–1.850 秒，写 socket 0–1 毫秒），尚无 works 请求计时。
+- DSH-157 现场复测：已解锁 Redmi `e3b58850` 安装 `.92/203` 成功，切换到“电脑在线”后 395 套作品正常渲染；服务日志自然记录 `route=works status=200`，原始响应约 4.72MB、gzip 后约 0.95MB，手机端未复现 timeout。Vivo 仍锁屏且保持 `.91/202`，因此条目保留为“部分验证、根因未完全关闭”。
+- DSH-161：修正 Android 视图菜单把实际单列作品卡误称“**双列网格大图**”的问题，改为“**大图缩略图**”，与当前渲染行为一致；不改变视图状态协议或数据。
+- Android `versionCode=203` / `versionName=0.8.92`；iOS `CURRENT_PROJECT_VERSION=203` / `MARKETING_VERSION=0.8.92`。
+- `.91` Android 实机证据：在线启动仅一次 works 请求（排队约 1ms，12,158ms 后无状态/0 字节读超时），395 套快照保留，短提示为“连接超时”。
+- 历史 `.92` Release APK 本地构建、签名核验成功，SHA-256 `A14BAA0F65D7D77F7A6C0164D464BF24A1A845043426D35F96E2518C610BF984`；Android 单测 103/103、Release Lint 0 错误/93 警告、UI 源码守卫 6/6。该包曾因设备锁屏被拒绝安装；最终候选与实机证据见上方 DSH-162/163。
+- iOS 静态门禁 15/15；Windows 无 Swift/Xcode 工具链，iPhone USB mux 返回空列表，没有 `.92` IPA 或 iOS 真机验收。服务端隔离回归 63/63 通过。
+- 服务端只读 `/api/online/status` 返回 200；不手工探测有到期清理副作用的列表/分类接口。Supervisor categories 超时不能证明是此次手机请求的唯一根因。
+- 简化与防呆：错误态统一用固定提示；更新检查持续显示进度并防连点；缩略图复用会重置等待状态；诊断日志只保留固定路由和聚合数字。
+- **影响文档**：`README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/COMPATIBILITY_AND_TEST_MATRIX.md`、`ios/README.md`、`ios/CHANGELOG.md`。只保留本地候选，不推送、不发布、不改更新索引。
+
+## 2026-10-11 DSH-153 / DSH-152 补缺：360dp 搜索提示与回收站计数（源码候选 Android/iOS 0.8.82）
+
+- Android 360dp 搜索栏提示缩短为“搜索标题/目录/地点”，并设置尾部省略，避免被视图、筛选、排序按钮硬截断。
+- 补全 DSH-152：手机回收站顶部计数改为和当前列表同一总数，包含手机本地删除项与手机侧在线作品生命周期记录；“已标记垃圾”仅统计当前显示项。
+- Android `versionCode=193` / `versionName=0.8.82`；iOS 源码版本对齐为 `CURRENT_PROJECT_VERSION=193` / `MARKETING_VERSION=0.8.82`，未改 iOS 业务代码。
+- Vivo V2327A / Android 14 / 360dp：搜索提示完整显示；本地搜索 `60` 命中 1 项；在线“已删除”显示 15 套，“已标记垃圾”显示 0 套与空态；分类、视图、筛选、排序、文件浏览往返、设置滚动通过只读点击巡检。
+- 自动验证：`testDebugUnitTest` 100/100 通过；`lintRelease` 0 错误、93 警告；`assembleRelease` 成功。Release APK SHA-256 `25796584803516CEC509855BB02CEA589DAC4669FB92884301C90191286F1B00`，与设备现有包签名一致，已保留数据覆盖安装并回读版本 0.8.82/193；Logcat 未见 AndroidRuntime FATAL。
+- iPhone 仍安装 0.8.77/188（iOS 26.6）。首页截图仅供视觉检查：有一条作品 5 张缩略图在等待后仍显示占位，成因未证实；当前没有 0.8.82 IPA 和 iOS 触控注入能力，因此不声称 iPhone 回归通过。
+- 本机相册服务 `/api/online/status` 只读返回 HTTP 200；App 自动更新检查曾提示网络失败，来源为 `UpdateChecker`，未触发更新下载。没有推送源码、运行 Actions、创建 Release 或更新发布索引。
+
+## 2026-10-11 DSH-152：Android 本地作品与回收站状态栏跟随当前页面（源码候选 Android/iOS 0.8.81）
+
+- 修复从电脑在线回收站、本地文件浏览切回手机本地作品/回收站时，固定状态栏继续显示上一页计数或在线回收站状态的问题。
+- 进入本地作品和回收站先显示当前页面读取提示；列表渲染后分别显示手机本地作品数，或当前回收站标签及数量。
+- Android `versionCode=192` / `versionName=0.8.81`；iOS `CURRENT_PROJECT_VERSION=192` / `MARKETING_VERSION=0.8.81`，iOS 业务代码未改。
+- Android Redmi Android 15/API 35 已覆盖安装候选包；作品列表、文件浏览往返、回收站两个 Tab、设置页、传输方式和系统文件/文件夹选择器完成只读点击巡检。选择器均返回，没有挑选文件或传送内容。
+- 自动验证：Android `testDebugUnitTest` 100 项通过；`lintRelease` 0 错误、93 条警告；`assembleRelease` 成功。APK 包名 `com.zwm.gallery`、版本 `0.8.81/192`、Release 签名核验通过，SHA-256 `B79C8108BD1CC4D912B27664BE130F00E91BE2CD95AF503CD904315F6FAD505F`；已保留数据覆盖安装并在 Redmi 实机回归。iPhone 新 IPA/触屏操作仍待 macOS 构建与可用触控链。
+- 未推送源码、未运行 GitHub Actions、未创建 Release 或更新发布索引。
+
+## 2026-10-11 DSH-151：Android 全屏对比视图底栏安全区修复（源码候选 Android/iOS 0.8.80）
+
+- Redmi 实机 Android 15/API 35 上确认 0.8.79 全屏弹窗把页码、翻页按钮和提示画到系统导航栏后方。
+- 0.8.80 通过系统栏/屏幕缺口 Insets 为根布局增加左右与底部安全边距；状态栏在全屏主题下隐藏，因此不再额外保留顶部 inset 空白。
+- Android 版本 0.8.80 / versionCode 191；iOS 源码版本 0.8.80 / build 191，本轮未改 iOS 业务代码。
+- 自动验证：`testDebugUnitTest` 100 项通过，0 失败/错误；`lintRelease` 0 错误（91 条警告）；`assembleRelease` 成功。APK 包名/版本/签名已核对，SHA-256：`CA6D42F67A76C472FA93407BAD138D8980D5B46F6F1423DE82FD42EB33E72244`。
+- Android 实机：同签名覆盖安装 0.8.80 成功，版本 191；页码与箭头底部 y=2197、提示底部 y=2250，系统导航栏从 y=2276 起。上下/并排切换、P1→P2 按钮、快速前后翻页、左右手势返回 P1、P6 边界与关闭回首页通过；作品列表保持 395 套，未执行分享/重置/删除。
+- iPhone 实机已启动当前 0.8.77/188 并截图；源代码 bundle 后缀由 Sideloadly 生成。iOS 26.6 当前工具可启动/截图、不能注入触屏；0.8.80 IPA 尚未由 macOS CI 构建，因此 iPhone 全屏操作和新版本安装仍待完成。
+- 影响文档：README.md、docs/BUG_LEDGER.md、docs/MAINTAINER_HANDOFF.md、docs/TEST_PLAYBOOK.md、docs/COMPATIBILITY_AND_TEST_MATRIX.md、docs/MULTI_PLATFORM_SPEC_AND_GOALS.md；协议和 `docs/ALBUM_WORKFLOW_DESIGN.md` 无本次变更点。当前没有推送或正式发布。
+
+## 2026-10-11 DSH-150：Android 在线相册对比视图全屏与进度显示修复（源码候选 Android/iOS 0.8.79）
+
+- Android 对比视图改用全屏黑底窗口，标题固定为「对比视图」，切换与关闭控件固定尺寸；相似度为零时不再重复显示标题。
+- 原图与素材加载状态显示百分比；完成状态保留 1.5 秒、失败状态短暂可见，并用页码代次隔离旧页面的异步回调。
+- iOS 0.8.78 已有的素材映射、进度、3:4 缩略图、同步状态和「重置状态」继续保留，本轮未改 iOS 业务代码。
+- Android versionCode=190 / versionName=0.8.79；iOS CURRENT_PROJECT_VERSION=190 / MARKETING_VERSION=0.8.79。
+- 影响文档：README.md、docs/BUG_LEDGER.md、docs/MAINTAINER_HANDOFF.md、docs/MULTI_PLATFORM_SPEC_AND_GOALS.md、docs/TEST_PLAYBOOK.md、docs/COMPATIBILITY_AND_TEST_MATRIX.md；协议未变化。docs/ALBUM_WORKFLOW_DESIGN.md 正在另一路重写，本次不改。
+- 验证状态：Android 单测 100 项通过；Debug/Release Lint 与 APK 构建均通过。Release APK 清单确认包名、版本 0.8.79/190，签名校验通过且 debuggable=false。候选版 CI、iOS 构建和真机回归尚未执行；当前没有可用 Android ADB 设备。
+
 ## 2026-10-10 DSH-149：在线相册小图加载提速（源码候选 Android/iOS 0.8.76）
 
 - Android 列表缩略图调度从每 260ms 放行 6 张改为每 100ms 放行 12 张，降低整页补图等待时间，同时保留分批放行和 8 线程网络池。
@@ -3358,4 +3566,16 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 12:20 | 反重力 | record live timing boundary |
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 08:47 | Codex | shorten Android search hint and align phone recycle count in 0.8.82 |
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
+| 2026-10-11 02:08 | 反重力 | report Android lint warning count precisely |
+| 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
+| 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |

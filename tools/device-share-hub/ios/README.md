@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.5 / build 76（待构建发布）
+版本：0.8.105 / build 216（build-only IPA 已构建；正式发布与 iPhone 安装验收待完成）
 
-状态：已发作品优先置顶复盘、卡片增加【重置】按钮（清空计数、回绿、取消 1 小时自动删除并移回复归原位）
+状态：此版本包含分支中此前完成的 iOS 同步状态与对比界面修复；DSH-176 只同步版本元数据，没有修改 iOS 图片加载逻辑。build-only CI `38264200990` 成功，IPA `com.zwm.album 0.8.105/build 216` 已核对，SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。按用户要求，手机安装与触控验收暂缓；正式 Release/更新索引正在准备发布。
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 
@@ -17,7 +17,7 @@
 
 CI 产物没有预置任何人的 Apple 证书、账号或设备信息。侧载工具安装时会用你自己的 Apple ID 重新签名。
 
-IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准；正式 GitHub Release 已由发布流水线创建，实体覆盖安装仍需设备在线后完成。
+IPA 的 SHA-256 以同一 artifact 内的 `.sha256` 文件为准。是否存在正式 GitHub Release，以发布流水线结果和仓库 Releases 反读为准；Actions artifact 本身不代表已发布。
 
 完整的 Windows 安装、排障和踩坑记录见 [../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md](../docs/IOS_WINDOWS_SIDELOAD_HANDOFF.md)。
 
@@ -88,3 +88,16 @@ Windows 不需要运行这些命令。
 ## 验收记录
 
 0.3.0 的递归扫描、协议解析、SHA-256 和文件夹 ZIP 安全展开用例已进入 GitHub Actions；本次 Windows、Android、iPhone 三个构建任务全部成功。实体 iPhone 已完成签名安装并确认 0.3.0 进程启动；局域网发现和传送必须在手机解锁、应用前台并允许“本地网络”后记录结果。
+
+---
+
+## 📝 变更记录
+
+| 日期 (时间) | 执行者 | 记录 |
+|---|---|---|
+| 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
+| 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |

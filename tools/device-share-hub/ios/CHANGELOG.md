@@ -1,3 +1,105 @@
+# 2026-10-12 DSH-176：与 Android 候选版本对齐（0.8.105 / build 216）
+
+- 本轮修复在 Android 在线缩略图调度；iOS 仅将 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 对齐为 `0.8.105/216`，iOS 图片加载行为未改。
+- build-only CI `38264200990` 已成功构建 IPA，SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`。未安装 iPhone；未做新手机冷/热缓存实测，也未正式发布。
+
+# 2026-10-12 DSH-175：降低后台同步状态打扰（候选 0.8.104 / build 215）
+
+- iOS 在线目录的自动状态探测间隔从 6 秒调整为 30 秒，与 Android 保持一致。
+- 已有作品时，后台静默刷新保留“已同步”状态；首次加载和主动刷新继续显示同步进度。
+- iOS 状态/界面契约检查 31/31、跨端契约 50/50 通过；build-only CI `38260401299` 成功，XCTest 51/51。
+- IPA `com.zwm.album 0.8.104/215`，最低 iOS 12.0，SHA-256 `A1D97290C9DCFB4769B10B904432F341EC6BC1E3213D54658ABC8CB9D124934B`；unsigned AltStore IPA，无嵌入 provisioning profile。IPA 位于 `D:\AICode\运行数据\dsh-evidence\20261012\ios-38260401299\`。
+- 最新 USB-only 探针未识别 Apple USB/usbmux，因此 iPhone 安装和修复后真机回读尚未完成；没有正式发布或更新索引。
+
+# 2026-10-12 DSH-174：刷新成功后重绘 iOS 在线作品状态（候选 0.8.103 / build 214）
+
+- 根因：在线列表刷新成功后虽然更新 `onlineWorks` 并清除“正在同步”覆盖文案，`renderOnlineUI()` 却没有调用状态标签更新函数，界面残留旧文案。
+- 修复：在线内容渲染时统一更新顶部状态标签，并在 `tests/test_ios_compare_ui.py` 加入回归断言；定向检查 29/29 通过。
+- CI 构建、IPA 版本核对、USB 安装和设备读回待完成；没有正式发布或更新索引。
+
+# 2026-10-12 DSH-171：iOS build-only CI（源码候选 0.8.100 / build 211）
+
+- 候选源码随提交 `f0a6e7b` 推送至功能分支；GitHub Actions run `38232030731` 的 iOS 构建成功，XCTest 51/51，IPA 结构和 `Info.plist` 版本校验通过。
+- 产物 `com.zwm.album 0.8.100/211` SHA-256：`bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`。这是 build-only IPA，不是正式发布包。
+- 最新 USB-only 探针未枚举 iPhone；未安装、未读取新版本、未做 iPhone 视觉或触控验收。此前一次可读版本为 `0.8.95/206`，当前安装状态未取得；未修改息屏设置。
+
+# 2026-10-12 DSH-171 设备续验：原图状态锚点（源码候选 0.8.100 / build 211）
+
+- iOS 对比页加载状态和加载完成后的“素材/成品”标签按 aspectFit 后的真实图片矩形重新定位到图片右下角；原图进度与完成标签共用图片边界计算。
+- `tests/test_ios_compare_ui.py` 与 `tests/parity_ios_android.py` 静态检查通过（跨端契约 50/50）。本机没有 Xcode/Swift，未构建 IPA。当前连接的 iPhone 息屏时回读仍为 `0.8.95/206`；没有匹配 `0.8.100/211` IPA，未安装或做视觉/交互验收。
+- 本轮未修改手机息屏设置，未推送源码、触发 CI、正式发布或更新索引。动态原图百分比未在 iPhone 实机捕获。
+- 影响文档：`ios/README.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`。
+
+# 2026-10-12 DSH-171 补充：iPhone 原图加载文案与图片内边界（源码候选 0.8.97 / build 208）
+
+- 对比视图加载提示统一为“高清原图加载中 N%”，并按 aspectFit 实际显示图片的右下角定位；标签宽度受图片区域限制并自动缩字，状态框不越界。单图原图加载提示也统一为“高清原图加载中…”。
+- iOS 对比 UI、预取队列、客户端及跨端契约静态回归通过（跨端 50/50）。本机无 Xcode，未构建 IPA；USB-only 探针未发现 iPhone，本轮未安装或做真机验收。没有正式发布或更新索引。
+- 影响文档：`ios/README.md`、`ios/CHANGELOG.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`；架构和协议无变化。
+
+# 2026-10-12 DSH-171：对比标签与原图进度定位（源码候选 0.8.96 / build 207）
+
+- 主页对比卡“素材/成品”标签叠在各自图片内底部居中；卡片只保留紧凑标题和底部间距。
+- 全屏原图百分比依照 scaleAspectFit 图像实际可见区域定位，不再锚定黑色面板边缘。
+- iOS 对比 UI、原图预取、客户端和 49 项跨端静态门禁通过。本机无 Xcode；新 IPA 尚未构建或安装，设备视觉与交互回归待 CI 包。熄屏期间安装表现待侧载时观察。
+- 没有正式 Release 或更新索引。
+
+# 2026-10-12 DSH-170：iOS 候选安装与截图回读（0.8.95 / build 206）
+
+- CI run `38149511506` 的 macOS iOS 构建成功；IPA SHA-256 `D763EEEB934D020A146B6EC7E93715E26E55418822DA3A77BF14E285E9A872C5`。本机没有 Xcode，未做 Windows 本地 iOS 编译。
+- 使用项目专用 `ios-sideload-automation` 技能完成安装，并从 iPhone 回读版本 `0.8.95/206`。截图确认主页状态为同步 395 套，对比画面可见素材与成品。
+- 当前设备 iOS 26.6 不支持现有远程触控接口要求的 iOS 27+ 操作；没有 WebDriverAgent，点按交互未验收。动态原图加载百分比也未能捕获，不能记为视觉验收通过。
+- CI 的 live E2E 和发布 job 跳过；没有正式 Release 或更新索引。
+
+# 2026-10-11 DSH-169：全屏对比标题统一与黑色预览画布（iOS 源码候选 0.8.95 / build 206）
+
+- 固定标题为“对比视图”，并与布局模式按钮使用居中、同高同字号样式；根据屏宽调整两模块宽度，保持相似度徽标与关闭按钮的空间。
+- 预览画布背景与全屏一致为纯黑且没有浅色边框，关闭符号水平/垂直居中。
+- iOS 对比 UI、预取队列和 OnlineGalleryClient 静态门禁通过；当前 Windows 未安装 Xcode/Swift，USB mux 未枚举 iPhone，因此没有 IPA、安装或 iPhone 实机操作证据。
+- 版本 MARKETING_VERSION=0.8.95 / CURRENT_PROJECT_VERSION=206。无正式发布。
+
+# 2026-10-11 DSH-168：对比预览图片居中与标签/加载态分离（iOS 源码候选 0.8.94 / build 205）
+
+- iOS 全屏对比预览的图片铺满面板并按 aspectFit 居中，不再受右侧标签宽度挤压；左右并排标签放顶部，上下同框标签放右侧留白。
+- 加载期间显示“正在加载原图 N%”；成功后隐藏进度并显示“素材 / 成品”；失败时保留明确失败状态，缺素材页继续显示空槽说明。
+- 对比 UI 静态门禁 17/17、预取队列 11/11、客户端 15/15、跨端契约 49/49 通过。Windows 当前无 Xcode/Swift，iPhone USB mux 未枚举；未构建、安装或做 iPhone 实机验收。
+- 本地源码候选，没有推送或发布。
+
+# 2026-10-11 DSH-167：对比视图当前页优先、逐图预取（iOS 源码候选 0.8.93 / build 204）
+
+- 图片客户端的 `loadImage` / `loadImageWithProgress` 返回可取消请求句柄；取消会停止活动 URLSession task，并阻止迟到的进度、完成回调和退避重试。
+- 对比页只用已缓存缩略图占位；冷缓存时直接请求当前页成品与素材原图，避免缩略图网络请求抢占连接。二者完成后，再顺序预取下一页和下下页的图片。翻页时取消当前页与旧预取请求，清空旧图片并拒绝迟到回调；素材原图失败时始终显示终态，即使缓存缩略图仍保留。
+- 零相似度不再重复显示“对比视图”徽标。
+- iOS 版本 `MARKETING_VERSION=0.8.93` / `CURRENT_PROJECT_VERSION=204`。新队列门禁 11/11、客户端静态检查 15/15、对比 UI 10/10、跨端契约 49/49 通过。
+- iPhone 已通过 USB mux 枚举，设备当前安装 `0.8.77/188`；当前 Windows 无 Xcode/Swift 编译器且没有 `.93` IPA。Developer screenshot 缺少 DDI/tunneld，未编译、安装或对新候选做 iOS 真机验收。
+- 这是本地源码候选，没有推送、CI 构建或发布。
+
+---
+
+# 2026-10-11 DSH-154 / DSH-160：失败缩略图等待状态与在线卡元信息对齐（源码候选 0.8.92 / build 203）
+
+- 点按失败缩略图重试后，在图片区域显示活动指示器并更新 VoiceOver 状态；请求完成、图片切换或 cell 复用后清理指示器、失败态、标签和图片缩放状态。
+- 在线作品卡元信息改为与 Android 相同的 `💻 电脑在线 · N 图 · 使用态` 前缀，季节/流量类型不再占用设备来源标签位置。
+- iOS 工程版本对齐 Android 候选为 `MARKETING_VERSION=0.8.92` / `CURRENT_PROJECT_VERSION=203`。
+- 静态门禁 15/15 通过。Windows 无 Swift/Xcode 工具链，iPhone 当前未通过 USB mux 枚举；未构建、安装或真机验收。
+- 本地候选；没有推送、CI 或发布。
+
+## 2026-10-11 DSH-154：在线缩略图失败可重试（源码候选 iOS 0.8.85 / build 196）
+
+- `OnlineGalleryClient.loadImage` 对缩略图最多尝试 2 次，失败间隔 0.9 秒；只对传输错误、非 2xx、408/429/5xx 和无效图片重试，原图仍单次请求。
+- 记录失败文件名、缩略图标记、尝试次数、HTTP 状态、字节数、耗时和错误，不记录完整 URL。最终失败显示重试图标，并支持点按重新加载及 VoiceOver 提示。
+- 静态回归 `tests/test_ios_online_gallery_client.py` 15/15 通过；没有 Xcode 工具链或匹配版本 IPA，故未编译、安装或实机验证。
+- iPhone 当前安装 build 188。实机截图的部分素材位标明“无素材原片”，成品缩略图正常；它们不是这次新增重试 UI 的设备验收证据。
+
+## 2026-10-11 DSH-153：iOS 源码版本与 Android 0.8.82 候选对齐
+
+- iOS `MARKETING_VERSION=0.8.82` / `CURRENT_PROJECT_VERSION=193`，仅对齐 Android 候选版本；本次没有修改 iOS 业务代码。
+- IPA 未生成、未安装；iPhone 当前 0.8.77/188，触屏回归未执行。没有推送、CI 或发布。
+
+## 2026-10-11 DSH-152：版本号与 Android 0.8.81 候选对齐（源码记录）
+
+- iOS `MARKETING_VERSION=0.8.81` / `CURRENT_PROJECT_VERSION=192`，仅对齐 Android 候选版本；本次没有修改 iOS 业务代码。
+- IPA 未生成、未安装；iPhone 触屏回归未执行。没有推送、CI 或发布。
+
 ## 2026-10-10 DSH-149：在线相册小图加载提速（源码候选 Android/iOS 0.8.76）
 
 - iOS 在线缩略图的磁盘缓存读取和 UIImage 解码移至后台队列，避免同步阻塞主线程；Android 列表缩略图队列放行速率提升至每 100ms 12 张。
@@ -237,4 +339,12 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
+| 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
+| 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |
+| 2026-10-11 12:17 | 反重力 | align iOS online card metadata |
+| 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
+| 2026-10-11 09:24 | Codex | add bounded iOS thumbnail retry, diagnostics, and tap-to-retry candidate |
+| 2026-10-11 08:47 | Codex | align iOS source version with Android 0.8.82; no iOS behavior change |
+| 2026-10-11 03:15 | Codex | correct stale local status on 0.8.81 |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |
