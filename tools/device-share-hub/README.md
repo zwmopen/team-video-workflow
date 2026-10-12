@@ -1,7 +1,7 @@
 # 文件收发中控（源码候选：Windows V4.3.33 / Android 0.8.101 / iPhone 0.8.100）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 当前源码候选：**Android 0.8.101 / versionCode 212**、**iPhone 0.8.100 / build 211（源码候选，未构建 IPA）**。Android Release APK 已通过 Gradle 单测、Release、Lint、权限与 v2/v3 签名检查，SHA-256 `D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`，并已安装到 Vivo V2327A、从 PackageManager 回读 `0.8.101/212`。真机已检查主页、上下/左右对比、P1→P2 翻页及关闭返回；主页 369 套与只读服务状态 369 套一致，日志未见目标应用崩溃。证据位于 `D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-*.png`。iPhone USB/usbmux 已枚举，但息屏时读到的已安装版本仍为 `0.8.95/206`；本机没有 Xcode/Swift，且没有匹配的 `0.8.100/211` IPA，未安装或实测新 iOS 候选。动态加载百分比画面本轮未捕获。没有推送、CI 构建、正式 Release 或更新索引。
+> 当前源码候选：**Android 0.8.101 / versionCode 212**、**iPhone 0.8.100 / build 211**。候选提交 `f0a6e7b` 已推送；build-only CI `38232030731` 的 Android、iOS、Windows 与 relay 检查均通过，iOS XCTest 51/51。Android 已安装到 Vivo 并完成关键界面检查；iOS IPA 已构建且校验 SHA-256 `bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`，但最新 USB-only 探针未枚举两台手机，未安装或实测 iOS 候选。正式 Release 与更新索引未触发。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 

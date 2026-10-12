@@ -1,3 +1,9 @@
+# 2026-10-12 DSH-171：iOS build-only CI（源码候选 0.8.100 / build 211）
+
+- 候选源码随提交 `f0a6e7b` 推送至功能分支；GitHub Actions run `38232030731` 的 iOS 构建成功，XCTest 51/51，IPA 结构和 `Info.plist` 版本校验通过。
+- 产物 `com.zwm.album 0.8.100/211` SHA-256：`bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`。这是 build-only IPA，不是正式发布包。
+- 最新 USB-only 探针未枚举 iPhone；未安装、未读取新版本、未做 iPhone 视觉或触控验收。此前一次可读版本为 `0.8.95/206`，当前安装状态未取得；未修改息屏设置。
+
 # 2026-10-12 DSH-171 设备续验：原图状态锚点（源码候选 0.8.100 / build 211）
 
 - iOS 对比页加载状态和加载完成后的“素材/成品”标签按 aspectFit 后的真实图片矩形重新定位到图片右下角；原图进度与完成标签共用图片边界计算。

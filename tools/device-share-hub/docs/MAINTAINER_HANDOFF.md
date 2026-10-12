@@ -1,12 +1,13 @@
 # 2026-10-12 DSH-171：双端对比缩略图、加载文案与图片内边界（源码候选）
 
 - 当前对话逐项验收入口：[`闭环清单.md`](闭环清单.md)；各问题根因与回归历史仍以 `BUG_LEDGER.md` 中的 DSH 条目为准。
-- 版本：Android 0.8.101/versionCode 212；iOS 源码候选 0.8.100/build 211。Android APK `android/out/album-Android-v0.8.101.apk`，921,520 字节，SHA-256 `D5F4827BE2F4E9A26BB6D317E849C0BC25C68D1B53FD9C509F2A392DEA9D620C`；本地 Release、Gradle 单测、Lint、APK 权限与 v2/v3 签名检查通过。iOS 项目内无匹配 IPA，Windows 无 Xcode/Swift。
-- 修复：主页双图卡按屏宽适配并保持完整 3:4，主页“素材/成品”在各自图内底部居中。全屏上下同框的完成标签及加载进度按实际 FIT_CENTER/aspectFit 图像矩形贴在图片内右下角；左右并排 Android 完成标签放在各自图片下方并保持紧凑间距。文字控件尺寸受图片边界约束，窄图按比例缩放/省略。
-- 自动回归：本轮 Android 页面状态守卫 18/18、iOS 对比 UI 静态检查及跨端契约 50/50 通过；Android 本地构建的 Gradle 单测、Release、Lint、权限与签名检查通过。
-- 设备状态（2026-10-12 17:32 +08）：Vivo V2327A 通过 USB/ADB 连接、Android 14/SDK34，已安装并回读 `0.8.101/212`；已检查主页、上下同框、左右并排、P1→P2、右上角关闭及返回主页。主页显示 369 套；只读 `/api/online/status` 回读 `totalWorks=369`、`scanRevision=154`、`refreshing=false`。目标包未见 FATAL。截图保存在 `D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-*.png`。iPhone iOS 26.6 已通过 Apple USB 与 usbmux 枚举；息屏时读取已安装版本仍为 `0.8.95/206`。本机无匹配 `.100/211` IPA；本轮未安装 iOS 候选或做触控验收，未修改息屏设置。
-- 下一步：动态原图百分比仍未捕获；iOS `.100/211` 源码候选需要先进入 macOS/Xcode build-only 构建环境并取得匹配 IPA，再安装、回读版本及完成可用的视觉/交互验收。当前候选未提交到远程，触发远程构建前需获准写入；此后继续逐项检查同步状态、素材映射和刷新恢复。
-- 没有推送、触发 CI、正式 Release 或更新索引；Android 已安装 `.101/212`，iOS 仍是 `.95/206`，不能笼统称两端均已升级。
+- 版本：Android 0.8.101/versionCode 212；iOS 0.8.100/build 211。候选提交 `f0a6e7b` 已推送到 `codex/dsh-152-isolated-fix`。build-only CI run `38232030731` 全部完成成功：Android Release build/test/lint、iOS build 与 XCTest 51/51、Windows portable、relay 检查均通过；live E2E 与公开更新索引 job 跳过。
+- 本轮修复：主页双图卡按屏宽适配并保持完整 3:4，主页“素材/成品”在各自图内底部居中。上下同框标签/加载进度按 FIT_CENTER/aspectFit 实际图像矩形定位到图片内右下角；Android 左右并排标签放在各自图片下方并紧凑排列。
+- CI 产物：Android `0.8.101/212` APK SHA-256 `cb3db49c725f1ca1e0e71d02c2589f6fc073b2013e9e962c70c4f115bbd6ebd7`；iOS `com.zwm.album 0.8.100/211` IPA SHA-256 `bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`。iOS IPA 通过结构与版本核验。
+- 自动回归：Android 页面状态守卫 18/18、iOS UI 静态检查与跨端契约 50/50 通过；build-only CI 中 iOS XCTest 51/51，Android Release build/test/lint 通过。
+- 设备状态（最近一次 USB-only 探针，2026-10-12 17:57 +08）：Android 与 iPhone 均未枚举。此前 Vivo V2327A / Android 14 / SDK34 已安装并回读 `0.8.101/212`，并检查主页、上下同框、左右并排、P1→P2、右上角关闭及返回主页；主页 369 套与只读 `/api/online/status` 的 `totalWorks=369`、`scanRevision=154`、`refreshing=false` 一致。截图：`D:\AICode\运行数据\dsh-evidence\20261012\vivo-closure-*.png`。iPhone 上一次可读版本为 `0.8.95/206`，本轮无法重新读取。
+- 下一步：iPhone 需要重新通过 USB 枚举；唤醒并解锁，若出现信任提示则选择信任，之后使用准确的 build-only IPA 安装并回读版本，再完成可用的视觉/交互验收。继续检查同步状态、素材映射、排序与刷新恢复；动态原图百分比仍未捕获。
+- 边界：功能分支已推送，build-only CI 成功；没有正式 Release 或更新索引。Android 真机 `.101/212` 已验收，iOS 仅完成 CI 构建与 XCTest，未安装或做 iPhone 实机验收。
 
 # 2026-10-11 DSH-170：Android 对比预览三个布局问题（候选 0.8.96/207）
 

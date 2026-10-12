@@ -1,3 +1,10 @@
+# 2026-10-12 DSH-171 设备续验：候选推送与 build-only CI（Android 0.8.101/212；iOS 0.8.100/211）
+
+- 候选提交 `f0a6e7b` 已推送到 `codex/dsh-152-isolated-fix`。GitHub Actions run `38232030731` 全部完成成功；Android Release build/test/lint、iOS build 与 XCTest 51/51、Windows portable 和 relay 检查均通过。`remote-relay-live-e2e` 与 `publish-gallery-updates` 按 build-only/非 main 分支条件跳过，没有正式发布或更新索引。
+- CI Android APK `0.8.101/212` SHA-256：`cb3db49c725f1ca1e0e71d02c2589f6fc073b2013e9e962c70c4f115bbd6ebd7`；与本轮已在 Vivo 安装并检查的版本号一致。iOS IPA `com.zwm.album 0.8.100/211` SHA-256：`bed6f64436fb1a22c8899cdf369c0cfeab9f8df3a3e1a46d1fb5bb689f8faf92`；IPA 内版本与校验文件一致。
+- IPA 已生成并通过 CI XCTest，但本机最新 USB-only 探针连续未枚举 Android 或 iPhone，因此本轮没有进行 iOS 安装回读或 iPhone 视觉/交互验收。iPhone 上一次可读版本为 `0.8.95/206`；当前设备状态未取得。没有修改息屏设置。
+- 当前证据证明候选已推送、CI 构建成功；不代表 iOS 已安装或正式发布。后续需 iPhone 重新 USB 枚举并解锁/信任后安装准确 IPA，再核对版本与界面。
+
 # 2026-10-12 DSH-171 设备续验（Android 0.8.101/212；iOS 源码候选 0.8.100/211）
 
 - Android 将上下同框加载完成后的“素材/成品”标签按 FIT_CENTER 实际图像矩形放到图片内右下角；左右并排标签放在各自图片下方并保持紧凑间距。主页缩略图继续保持完整 3:4，标签在图内底部居中。
