@@ -1,10 +1,12 @@
-# 2026-10-12 DSH-177：正式发布等待生产 Relay 端到端门禁
+# 2026-10-12 DSH-177：生产 Relay 发布门禁修复并正式发布 0.8.105/216
 
 - 发现主分支的正式发布 job 只依赖 Windows、Android、iOS 构建，没有依赖同次推送启动的 `remote-relay-live-e2e`；若 live E2E 失败，发布仍可能继续。
 - 修复 `.github/workflows/device-share-hub.yml`：正式发布现在等待生产 Relay live E2E 与三端构建全部成功；build-only 手动运行仍不会发布。
-- 本轮候选仍为 Android/iOS `0.8.105/216`。用户明确要求先发布，手机安装与真机验收暂缓；候选不能替代发布成功回读。
-- 验证状态：工作流依赖关系已改，等待正式 main push 的 Actions 实际回读；build-only run `38264200990` 早于此工作流修改，不作为新门禁验证。
-- 影响文档：`docs/MAINTAINER_HANDOFF.md`、`docs/BUG_LEDGER.md`、`docs/闭环清单.md`；未改变客户端代码、协议或包版本。
+- main 合并提交 `636c47a48e211356025d0caac77ac5275d41704d` 的 CI run [`38271093604`](https://github.com/zwmopen/team-video-workflow/actions/runs/38271093604) 全部成功：Windows、Android、iOS、生产 `remote-relay-live-e2e` 和 `publish-gallery-updates`。
+- 正式 Release [`v0.8.105`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.105) 于 `2026-10-12T15:43:26Z` 发布。APK 921,845 字节，SHA-256 `24d5f794e090c49baa8c720f738f39c6acdfa4d6f309d9a2ae53f164cde7bf62`；AltStore IPA 22,611,835 字节，SHA-256 `518db203b46bb6599d52831edfd3b7e79d6935d8a729787ea424db2a8eb35df3`；Windows EXE 7,576,576 字节，SHA-256 `820ef4cd1f1eafe610970bd440b45dc598515cd0cee591d6104dd4e08b6ea2ed`。下载文件哈希与公开清单一致。
+- 更新索引反读：GitHub Contents API 和公开 `latest.json` 均为 Android/iOS `0.8.105/216`、Windows `V4.3.33`；`altstore.json` 首个版本为 `0.8.105/build 216`。发布 job 当时记录 raw CDN 仍返回旧缓存 `0.8.78`；之后按正常 URL 重新 GET 已返回 `0.8.105`，缓存传播完成。
+- 用户明确要求本轮只发布、不操作手机；Android/iPhone 安装和真机验收仍未执行，不以 CI 或 Release 资产替代设备验收。
+- 影响文件：`.github/workflows/device-share-hub.yml`、`README.md`、`ios/README.md`、`CHANGELOG.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/BUG_LEDGER.md`、`docs/闭环清单.md`；未改变客户端代码或协议。
 
 # 2026-10-12 DSH-176：切换分组后缩略图排队、成批出现（候选 0.8.105/216）
 
@@ -14,7 +16,7 @@
 - 版本统一到 Android `0.8.105/216` 与 iOS `0.8.105/216`。iOS 仅对齐版本元数据，本次未改 iOS 图片行为。
 - 只读 `/api/online/status`：Pillow 12.3.0 可用、`fallbackOriginal=0`、内存缓存 500/500、磁盘缓存 1864/2000；这只能说明服务端具备缩略图缓存，不能代替新手机冷缓存计时。
 - build-only CI `38264200990` 全部 build/relay-check jobs 成功；live relay E2E 与发布 job 按 build-only 范围跳过。CI Android APK SHA-256 `2aaa1c149ca2c86937139e63a9cd8884b92b14006aebcf01f249d9dc352934f9`，iOS IPA SHA-256 `F5A43B5226834D713C5A545AED16C7A612A64F051FD9091481E5A93C7A6CFC30`，均为 `.105/216`。
-- USB-only 探针未识别本轮所说的新手机：Xiaomi 15 仅以蓝牙设备出现，唯一 USB Composite Device 是笔记本内置 RGB Camera；ADB 只有旧 M2006C3LC 无线条目，故尚未安装候选或测量真机冷/热缓存耗时。无正式 Release 或公开更新索引。
+- USB-only 探针未识别本轮所说的新手机：Xiaomi 15 仅以蓝牙设备出现，唯一 USB Composite Device 是笔记本内置 RGB Camera；ADB 只有旧 M2006C3LC 无线条目，故尚未安装或测量真机冷/热缓存耗时。当时尚无正式 Release；随后由 DSH-177 发布 `v0.8.105` 并更新公开索引。
 - 影响文档：README、ios/README、docs/MAINTAINER_HANDOFF.md、docs/BUG_LEDGER.md、docs/闭环清单.md、`.github/workflows/device-share-hub.yml`；客户端架构与协议未变化。
 
 # 2026-10-12 DSH-175：iOS 后台同步状态反复闪回（候选 0.8.104/215）
@@ -3566,6 +3568,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
