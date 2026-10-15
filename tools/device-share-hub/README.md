@@ -2,6 +2,7 @@
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
 > 最新正式发布：**Android 0.8.105 / versionCode 216**、**iPhone 0.8.105 / build 216**、**Windows V4.3.33**。Release `v0.8.105` 于 2026-10-12 发布；main CI `38271093604` 的三端构建、生产 Relay live E2E 与发布 job 全部通过。公开 `latest.json` 和 AltStore 源现已回读到 `0.8.105/216`。Android 缩略图按当前分组优先加载；iOS 本轮只对齐版本号，没有修改图片逻辑。按用户要求，本轮没有安装或测试手机。
+> DSH-178 修复候选：Android/iOS `0.8.106/217` 已恢复活跃已使用作品置顶；服务端 71/71、平台脚本 13/13、跨端契约 50/50 通过，Android 本机 Release 与签名检查通过。三端 CI 与正式发布待核验；手机按用户此前安排暂不安装。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 
@@ -665,6 +666,8 @@ GitHub Actions 负责：
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
+| 2026-10-15 17:58 +08:00 | Codex | fix used-work pinning under time sort; Android `.106/217` local Release passed; CI/release pending |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |

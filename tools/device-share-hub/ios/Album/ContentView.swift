@@ -939,20 +939,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func sortOnlineWorksLocally(_ list: inout [OnlineWorkEntry], sortKey: String) {
         let now = Date().timeIntervalSince1970 * 1000
-        let chronologicalSort = sortKey == "time_desc" || sortKey == "time_asc"
         list.sort { a, b in
-            if !chronologicalSort {
-                // DSH-135 pinning remains for non-time sorts. Explicit time
-                // sorting must stay strictly chronological as requested.
-                let aUsed = (a.expireAtMs > now && a.useCount > 0)
-                let bUsed = (b.expireAtMs > now && b.useCount > 0)
-                if aUsed && !bUsed { return true }
-                if !aUsed && bUsed { return false }
-                if aUsed && bUsed {
-                    let aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt
-                    let bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt
-                    if aTime != bTime { return aTime > bTime }
-                }
+            // DSH-178: keep active used works pinned in every sort mode.
+            // The chosen sort key orders active ties and all remaining works.
+            let aUsed = (a.expireAtMs > now && a.useCount > 0)
+            let bUsed = (b.expireAtMs > now && b.useCount > 0)
+            if aUsed != bUsed { return aUsed }
+            if aUsed {
+                let aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt
+                let bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt
+                if aTime != bTime { return aTime > bTime }
+                if a.id != b.id { return a.id < b.id }
             }
             // 二级规则（DSH-109）：按指定的 sortKey 排序（与 Android / 服务端 SORT_KEYS 统一）
             switch sortKey {

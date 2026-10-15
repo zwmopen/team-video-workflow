@@ -1,3 +1,12 @@
+## 活跃已使用作品在时间排序中保持置顶（DSH-178）
+
+- 用“活跃已使用、未使用新作品、已过期使用作品”分别验证 `time_desc` 与 `time_asc`：活跃已使用作品必须在最前并按首用时间倒序；其他作品继续按创建时间升序/降序。
+- 自动门禁：`python -m unittest test_online_gallery_service.TestOnlineGalleryService.test_active_used_works_stay_pinned_ahead_of_selected_time_sort` 与 `python tests/parity_ios_android.py`。修复前新增行为用例失败；修复后通过，服务端全套 `71/71`、平台脚本 `13/13`、跨端契约 `50/50`。
+- 全套平台脚本发现 Android 预取检查所用的注释边界已从源码消失；改为使用下一个稳定方法边界后，脚本恢复运行并通过，不改动预取产品逻辑。
+- 候选版本 Android/iOS `0.8.106/217`。Android 本机 Release、Gradle 单测、Lint、APK 权限与签名检查已通过，APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`；三端 build-only CI、正式 Release/更新索引反读待验。手机端按用户此前安排不安装、不点按。
+
+---
+
 ## iOS 对比视图原图队列回归（DSH-167 / iOS 0.8.93 源码候选）
 
 - 静态检查确认图片请求可取消；取消会停止活动 URLSession 请求并抑制迟到回调/缩略图重试；冷缓存时当前页只发原图请求，热缓存缩略图可作占位，当前页原图完成后才启动预取。
@@ -256,6 +265,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |

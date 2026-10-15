@@ -1,3 +1,11 @@
+# 2026-10-15 DSH-178：修复时间排序下已使用作品不置顶（候选 0.8.106/217）
+
+- 还在保留倒计时内的已使用作品现在始终显示在在线相册列表顶部；活跃组按首用时间排序，其他作品仍按“时间”设置升序/降序。
+- 修复服务端、Android、iOS 三处排序实现，并新增行为回归与跨端契约，锁定“活跃已用置顶、其余按时间排序”的规则。
+- 自动回归：旧服务端排序先复现失败；修复后服务端全套 `71/71`、平台 `test_*.py` 脚本 `13/13`、跨端契约 `50/50` 通过。Android `0.8.106/217` 本机 Release、Gradle 单测、Lint、APK 权限和签名检查成功；APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。三端 CI、正式发布状态按实际执行结果补充。
+- 简化/防呆：复用现有 `useCount` 与生命周期到期字段，不引入新状态或网络步骤；过期使用记录仍进入普通时间排序。
+- 影响文档：`README.md`、`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/TEST_PLAYBOOK.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`、`ios/CHANGELOG.md`；设计、架构或协议无变化。
+
 # 2026-10-12 DSH-177：生产 Relay 发布门禁修复并正式发布 0.8.105/216
 
 - 发现主分支的正式发布 job 只依赖 Windows、Android、iOS 构建，没有依赖同次推送启动的 `remote-relay-live-e2e`；若 live E2E 失败，发布仍可能继续。
@@ -3568,6 +3576,8 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
+| 2026-10-15 17:58 +08:00 | Codex | fix used-work pinning under time sort; repair stale Android prefetch guard; server 71/71, scripts 13/13, parity 50/50 |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |

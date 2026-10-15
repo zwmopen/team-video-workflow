@@ -1,3 +1,11 @@
+# 2026-10-15 DSH-178：活跃已使用作品置顶修复候选 0.8.106/217
+
+- **问题与根因**：时间排序分支提前返回/跳过活跃使用判断，覆盖了 DSH-135 的“未到期已使用作品置顶”规则。已用旧作品在刷新后被新作品压下。
+- **修复**：服务端、Android、iOS 统一先排活跃已用作品；活跃组按首用时间倒序，其他作品仍依用户所选时间升降序。未新增字段或改变协议。
+- **回归**：新增服务端行为用例在旧源码上先失败、修复后通过；服务端全套 `71/71`、平台 `test_*.py` 脚本 `13/13`、跨端契约 `50/50` 通过。Android `0.8.106/217` 本机 Release/Gradle 单测/Lint/权限/签名检查通过，APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。待三端 CI、发布资产及索引反读。
+- **版本**：Android/iOS 源码版本 `0.8.106/217`。手机安装与实机点击按此前用户要求暂缓。
+- **下一步**：提交后检查三端 CI/live Relay 门禁，通过后核对 Release 与 `latest.json` / `altstore.json`。自动测试或 CI 不代表真机验收。
+
 # 2026-10-12 DSH-177：生产 Relay 门禁修复并正式发布 0.8.105/216
 
 - 用户明确要求本轮完成发布，不安装或操作手机；Android/iPhone 实机验收继续保持未完成。
@@ -1246,6 +1254,8 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
+| 2026-10-15 17:58 +08:00 | Codex | record DSH-178 regression and successful Android 0.8.106/217 local build |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
