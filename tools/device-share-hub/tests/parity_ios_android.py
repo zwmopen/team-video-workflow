@@ -437,7 +437,7 @@ def main():
         "id 参数=%s get_work=%s path+bn join=%s basename=%s"
         % (c25_id_param, c25_get_work, c25_path_join, c25_basename)))
 
-    # C26：用户明确选择“时间”时，创建时间必须严格决定顺序，不能被已用置顶覆盖。
+    # C26：未过期的已使用作品始终置顶；其余作品遵循用户选择的时间顺序。
     sort_helper_match = re.search(
         r'def sort_online_work_entries\(.*?(?=\ndef _dir_size_bytes)',
         server_src, re.DOTALL)
@@ -453,22 +453,29 @@ def main():
     c26_server = (
         'sort_online_work_entries(filtered, sort_key, category)' in server_src
         and 'createdAtMs' in sort_helper
-        and sort_helper.find('if sort_key == "time_desc":') < sort_helper.find('if category in')
-        and 'useCount' not in sort_helper[sort_helper.find('if sort_key == "time_desc":'):sort_helper.find('if sort_key == "time_asc":')]
+        and 'def is_active_used(work:' in sort_helper
+        and 'work.get("useCount", 0)' in sort_helper
+        and 'work.get("expireAtMs", 0)' in sort_helper
+        and 'active_used.sort' in sort_helper
+        and 'works[:] = active_used + remaining' in sort_helper
     )
     c26_android = (
-        'chronologicalSort' in android_sort
-        and android_sort.find('if (!chronologicalSort)') < android_sort.find('if ("time_desc".equals(sortKey))')
+        'a.useCount > 0 && a.expireAtMs > now' in android_sort
+        and 'if (aUsed != bUsed)' in android_sort
+        and android_sort.find('if (aUsed != bUsed)') < android_sort.find('if ("time_desc".equals(sortKey))')
         and 'String.valueOf(a.id)' in android_sort
+        and 'if (!chronologicalSort)' not in android_sort
     )
     c26_ios = (
-        'chronologicalSort' in ios_sort
-        and ios_sort.find('if !chronologicalSort') < ios_sort.find('case "time_desc":')
+        'a.expireAtMs > now && a.useCount > 0' in ios_sort
+        and 'if aUsed != bUsed' in ios_sort
+        and ios_sort.find('if aUsed != bUsed') < ios_sort.find('case "time_desc":')
         and 'return a.id < b.id' in ios_sort
+        and 'if !chronologicalSort' not in ios_sort
     )
     c26_sort = c26_server and c26_android and c26_ios
     results.append(check(
-        "C26 用户选择时间排序时服务端与双端都严格按创建时间排序",
+        "C26 活跃已使用作品置顶，其余按选定时间顺序排序",
         c26_sort,
         "server=%s android=%s ios=%s" % (c26_server, c26_android, c26_ios)))
 

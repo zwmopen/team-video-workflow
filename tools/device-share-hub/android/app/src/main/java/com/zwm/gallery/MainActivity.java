@@ -1154,21 +1154,19 @@ public final class MainActivity extends Activity {
     private void sortOnlineWorks(List<OnlineWorkEntry> list, String sortKey) {
         if (list == null || list.size() <= 1) return;
         final long now = System.currentTimeMillis();
-        final boolean chronologicalSort = "time_desc".equals(sortKey) || "time_asc".equals(sortKey);
         Collections.sort(list, (a, b) -> {
-            if (!chronologicalSort) {
-                // DSH-135 pinning remains for non-time sorts. Explicit time
-                // sorting must stay strictly chronological as requested.
-                boolean aUsed = (a.useCount > 0 && a.expireAtMs > now);
-                boolean bUsed = (b.useCount > 0 && b.expireAtMs > now);
-                if (aUsed && !bUsed) return -1;
-                if (!aUsed && bUsed) return 1;
-                if (aUsed && bUsed) {
-                    long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
-                    long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
-                    int cmp = Long.compare(bTime, aTime);
-                    if (cmp != 0) return cmp;
-                }
+            // DSH-178: active used works stay at the top for every sort mode;
+            // the selected sort key orders active ties and all remaining works.
+            boolean aUsed = (a.useCount > 0 && a.expireAtMs > now);
+            boolean bUsed = (b.useCount > 0 && b.expireAtMs > now);
+            if (aUsed != bUsed) return aUsed ? -1 : 1;
+            if (aUsed) {
+                long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
+                long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
+                int cmp = Long.compare(bTime, aTime);
+                if (cmp != 0) return cmp;
+                cmp = String.valueOf(a.id).compareTo(String.valueOf(b.id));
+                if (cmp != 0) return cmp;
             }
             // 二级规则（DSH-109）：按选定的 sortKey 排序（与 iOS / 服务端 SORT_KEYS 统一）
             if ("time_desc".equals(sortKey)) {

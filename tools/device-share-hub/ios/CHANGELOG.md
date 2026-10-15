@@ -1,3 +1,9 @@
+# 2026-10-15 DSH-178：恢复活跃已使用作品置顶（候选 0.8.106 / build 217）
+
+- iOS 时间排序现在先展示尚未到期的已使用作品，活跃作品之后再按选定时间顺序排列；与 Android 和服务端一致。
+- `tests/parity_ios_android.py` C26 锁定三端排序优先级；定向排序契约 `50/50` 通过。iOS 云端构建待 CI；真机验收按用户此前安排暂缓。
+- 影响文档：`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/TEST_PLAYBOOK.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`；未改变架构或通信协议。
+
 # 2026-10-12 DSH-176：与 Android 候选版本对齐（0.8.105 / build 216）
 
 - 本轮修复在 Android 在线缩略图调度；iOS 仅将 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 对齐为 `0.8.105/216`，iOS 图片加载行为未改。
@@ -339,6 +345,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |
 | 2026-10-11 18:13 | 反重力 | center compare previews and separate load states while retaining page guards |

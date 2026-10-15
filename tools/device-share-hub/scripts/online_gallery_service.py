@@ -2853,8 +2853,7 @@ class WorkScanner:
 
 # DSH-109：在线相册列表排序键（服务端 /api/online/works?sort=）
 # - default（向后兼容）：保持 DSH-104 行为，useCount desc 已用置顶，其余保持扫描顺序
-# - time_asc：updatedAt 升序，最新作品排在最底（用户口径）
-# - time_desc：updatedAt 降序，最新作品排在最顶
+# - time_asc / time_desc：活跃已使用作品优先置顶，其余作品按创建时间升序/降序
 # - name_asc / name_desc：按 title 字典序升降
 # - size_desc / size_asc：按作品目录总字节数升降
 SORT_KEYS = ("default", "time_asc", "time_desc", "name_asc", "name_desc", "size_desc", "size_asc")
@@ -2937,18 +2936,38 @@ def _extract_work_timestamp(folder_name: str, dir_path: str, manifest_data: Dict
 
 
 def sort_online_work_entries(works: List[Dict[str, Any]], sort_key: str, category: str = "") -> List[Dict[str, Any]]:
-    """Sort works while keeping explicit time sorting strictly chronological."""
+    """Keep active used works pinned, then apply the selected ordering."""
     def created_at(work: Dict[str, Any]) -> float:
         try:
             return float(work.get("createdAtMs") or work.get("updatedAt") or 0.0)
         except (TypeError, ValueError):
             return 0.0
 
-    if sort_key == "time_desc":
-        works.sort(key=lambda work: (-created_at(work), str(work.get("id") or "")))
-        return works
-    if sort_key == "time_asc":
-        works.sort(key=lambda work: (created_at(work), str(work.get("id") or "")))
+    if sort_key in ("time_desc", "time_asc"):
+        now_ms = time.time() * 1000.0
+
+        def is_active_used(work: Dict[str, Any]) -> bool:
+            try:
+                return (int(work.get("useCount", 0) or 0) > 0
+                        and float(work.get("expireAtMs", 0) or 0) > now_ms)
+            except (TypeError, ValueError):
+                return False
+
+        def used_at(work: Dict[str, Any]) -> float:
+            try:
+                return float(work.get("firstSharedAtMs") or work.get("updatedAt") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        active_used = [work for work in works if is_active_used(work)]
+        remaining = [work for work in works if not is_active_used(work)]
+        active_used.sort(key=lambda work: (-used_at(work), str(work.get("id") or "")))
+        if sort_key == "time_desc":
+            remaining.sort(key=lambda work: (-created_at(work), str(work.get("id") or "")))
+        else:
+            remaining.sort(key=lambda work: (created_at(work), str(work.get("id") or "")))
+        # Keep in-place behavior: the /works handler intentionally ignores the return value.
+        works[:] = active_used + remaining
         return works
 
     # Legacy stage buckets keep their natural membership order for non-time sorts.
@@ -3616,8 +3635,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
                 filtered.append(w)
 
-            # DSH-109: an explicit time choice means newest/oldest production time
-            # across the complete filtered shelf, independent of use-count pinning.
+            # DSH-109 / DSH-178: keep active used works pinned, then order the
+            # remaining filtered shelf by production time in the selected direction.
             sort_online_work_entries(filtered, sort_key, category)
 
             response_data = {

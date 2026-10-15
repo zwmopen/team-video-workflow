@@ -20,7 +20,7 @@ def check(name: str, condition: bool) -> None:
 
 
 def main() -> None:
-    compare = section(MAIN, "private void showOnlineCompareDialog(", "    /** 整页渲染开始时重置首发预算")
+    compare = section(MAIN, "private void showOnlineCompareDialog(", "    private void positionCompareOverlayOnImage(")
     render = section(compare, "Runnable renderPage = () -> {", "prevBtn.setOnClickListener(v -> {")
     prefetch_list = section(render, "final List<String> comparePrefetchImages", "final Runnable[] startNextComparePrefetch")
     next_prefetch = section(render, "startNextComparePrefetch[0] = () -> {", "final Runnable maybeStartComparePrefetch")

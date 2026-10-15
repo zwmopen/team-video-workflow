@@ -85,6 +85,33 @@ class TestOnlineGalleryService(unittest.TestCase):
         self.assertEqual(detect_destination("千岛湖骑行"), "千岛湖")
         self.assertEqual(detect_destination("没有明确目的地的标题"), "其他")
 
+    def test_active_used_works_stay_pinned_ahead_of_selected_time_sort(self):
+        now_ms = int(time.time() * 1000)
+        works = [
+            {"id": "used-older", "createdAtMs": 100, "useCount": 1,
+             "firstSharedAtMs": now_ms - 2000, "expireAtMs": now_ms + 3600000},
+            {"id": "newer-unused", "createdAtMs": 400, "useCount": 0,
+             "firstSharedAtMs": 0, "expireAtMs": 0},
+            {"id": "used-newer", "createdAtMs": 50, "useCount": 2,
+             "firstSharedAtMs": now_ms - 1000, "expireAtMs": now_ms + 3600000},
+            {"id": "expired-used", "createdAtMs": 300, "useCount": 1,
+             "firstSharedAtMs": now_ms - 7200000, "expireAtMs": now_ms - 1},
+        ]
+
+        descending = _svc_mod.sort_online_work_entries(
+            [dict(work) for work in works], "time_desc")
+        ascending = _svc_mod.sort_online_work_entries(
+            [dict(work) for work in works], "time_asc")
+
+        self.assertEqual(
+            [work["id"] for work in descending],
+            ["used-newer", "used-older", "newer-unused", "expired-used"],
+        )
+        self.assertEqual(
+            [work["id"] for work in ascending],
+            ["used-newer", "used-older", "expired-used", "newer-unused"],
+        )
+
     def test_status_endpoint(self):
         url = f"http://127.0.0.1:{self.port}/api/online/status"
         with urllib.request.urlopen(url) as resp:
