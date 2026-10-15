@@ -1,10 +1,10 @@
-# 2026-10-15 DSH-178：修复时间排序下已使用作品不置顶（候选 0.8.106/217）
+# 2026-10-15 DSH-178：修复时间排序下已使用作品不置顶（已发布 0.8.106/217）
 
 - 还在保留倒计时内的已使用作品现在始终显示在在线相册列表顶部；活跃组按首用时间排序，其他作品仍按“时间”设置升序/降序。
 - 修复服务端、Android、iOS 三处排序实现，并新增行为回归与跨端契约，锁定“活跃已用置顶、其余按时间排序”的规则。
-- 自动回归：旧服务端排序先复现失败；修复后服务端全套 `71/71`、平台 `test_*.py` 脚本 `13/13`、跨端契约 `50/50` 通过。Android `0.8.106/217` 本机 Release、Gradle 单测、Lint、APK 权限和签名检查成功；APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。三端 CI、正式发布状态按实际执行结果补充。
+- 自动回归：旧服务端排序先复现失败；修复后服务端全套 `71/71`、平台 `test_*.py` 脚本 `13/13`、跨端契约 `50/50` 通过。Android `0.8.106/217` 本机 Release、Gradle 单测、Lint、APK 权限和签名检查成功；本机 APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。main CI [`38727831238`](https://github.com/zwmopen/team-video-workflow/actions/runs/38727831238) 中 Android、Windows、iOS、Relay、生产 Relay live E2E 与发布全部成功；iOS XCTest `51/51`。正式 Release [`v0.8.106`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.106) 的 APK/IPA/EXE 分别为 `0c550beaf9bb3fd79826804b6132f683c52bebc81b2a3582b2b877d66c84f36b`、`cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`、`7ed80e6a73fdcb6339ca1d9344554947df227c2466ffceec36f3cb7365dca298`，下载后哈希与 Release 清单一致；`latest.json` 和 `altstore.json` 均回读 `0.8.106/217`。手机按用户安排未安装、未操作，真机版本与交互验收未声称通过。
 - 简化/防呆：复用现有 `useCount` 与生命周期到期字段，不引入新状态或网络步骤；过期使用记录仍进入普通时间排序。
-- 影响文档：`README.md`、`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/TEST_PLAYBOOK.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`、`ios/CHANGELOG.md`；设计、架构或协议无变化。
+- 发布证据：Release 资产与索引于 2026-10-15 19:42（+08:00）发布；回读记录见 `D:\AICode\运行数据\dsh-evidence\20261015\dsh-178-release-38727831238\release-readback.json`。影响文档：`README.md`、`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/TEST_PLAYBOOK.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`、`ios/CHANGELOG.md`；设计、架构或协议无变化。
 
 # 2026-10-12 DSH-177：生产 Relay 发布门禁修复并正式发布 0.8.105/216
 
@@ -3576,6 +3576,7 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 19:52 | 反重力 | record v0.8.106 used-work pin release evidence |
 | 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-15 17:58 +08:00 | Codex | fix used-work pinning under time sort; repair stale Android prefetch guard; server 71/71, scripts 13/13, parity 50/50 |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |

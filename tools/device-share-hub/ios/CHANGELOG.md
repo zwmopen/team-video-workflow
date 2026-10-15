@@ -1,7 +1,7 @@
-# 2026-10-15 DSH-178：恢复活跃已使用作品置顶（候选 0.8.106 / build 217）
+# 2026-10-15 DSH-178：恢复活跃已使用作品置顶（已发布 0.8.106 / build 217）
 
 - iOS 时间排序现在先展示尚未到期的已使用作品，活跃作品之后再按选定时间顺序排列；与 Android 和服务端一致。
-- `tests/parity_ios_android.py` C26 锁定三端排序优先级；定向排序契约 `50/50` 通过。iOS 云端构建待 CI；真机验收按用户此前安排暂缓。
+- `tests/parity_ios_android.py` C26 锁定三端排序优先级；定向排序契约 `50/50` 通过。main CI `38727831238` 的 iOS XCTest `51/51`、Release 构建通过；IPA 已正式发布并校验 SHA-256 `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`。按用户安排未安装或操作 iPhone。
 - 影响文档：`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/TEST_PLAYBOOK.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`；未改变架构或通信协议。
 
 # 2026-10-12 DSH-176：与 Android 候选版本对齐（0.8.105 / build 216）
@@ -345,6 +345,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 19:52 | 反重力 | record v0.8.106 used-work pin release evidence |
 | 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
 | 2026-10-12 08:11 | 反重力 | align comparison thumbnails across platforms |

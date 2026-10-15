@@ -1,10 +1,10 @@
-# DSH-178：时间排序覆盖活跃已使用作品置顶（修复候选 · 0.8.106/217 · 2026-10-15）
+# DSH-178：时间排序覆盖活跃已使用作品置顶（已修复并发布 · 0.8.106/217 · 2026-10-15）
 
 - **现象**：在线相册默认按时间倒序刷新后，刚使用且仍在保留倒计时内的旧作品会落到新作品下面；点击使用时短暂置顶，刷新后又被压回去。
 - **根因**：DSH-135 要求未到期的已使用作品跨端置顶；后续 C26 契约把“时间排序必须严格按作品创建时间”设为最高优先级，导致服务端在时间排序分支提前返回，Android/iOS 则在时间排序时跳过活跃使用判断。
 - **修复**：服务端和双端都先把 `useCount > 0 && expireAtMs > now` 的作品排前，并在活跃组内按首用时间稳定排序；剩余作品继续严格按所选时间升序/降序，过期作品不再置顶。没有新增字段或改变协议。
-- **回归证据**：新增服务端排序行为用例，旧实现先复现失败（倒序把 `newer-unused` 放在活跃已用作品之前），修复后通过；服务端全套 `71/71`，平台 `test_*.py` 脚本 `13/13`，跨端 C26 契约 `50/50`。全套回归中顺手修正 Android 预取守卫引用失效注释作为代码边界的问题。Android `0.8.106/217` 本机 Release、Gradle 单测、Lint、权限与签名检查成功；APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。三端 CI、iOS 云构建和正式 Release 尚待后续反读。
-- **状态**：源码、定向自动回归和 Android 本机候选构建通过；手机验收按用户此前安排暂缓，不能仅凭自动回归宣称实机已验证。
+- **回归与发布证据**：新增服务端排序行为用例，旧实现先复现失败（倒序把 `newer-unused` 放在活跃已用作品之前），修复后通过；服务端全套 `71/71`、平台 `test_*.py` 脚本 `13/13`、跨端 C26 契约 `50/50`。Android `0.8.106/217` 本机 Release、Gradle 单测、Lint、权限与签名检查成功；本机 APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。main CI [`38727831238`](https://github.com/zwmopen/team-video-workflow/actions/runs/38727831238) 的 Android、Windows、iOS、Relay、生产 Relay live E2E 和发布 job 全部通过；iOS XCTest `51/51`。Release [`v0.8.106`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.106) 三端资产 APK/IPA/EXE 哈希分别为 `0c550beaf9bb3fd79826804b6132f683c52bebc81b2a3582b2b877d66c84f36b`、`cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`、`7ed80e6a73fdcb6339ca1d9344554947df227c2466ffceec36f3cb7365dca298`，下载后的哈希均与清单一致；公开 `latest.json` 与 `altstore.json` 均回读到 `0.8.106/217`。证据文件：`D:\AICode\运行数据\dsh-evidence\20261015\dsh-178-release-38727831238\release-readback.json`。
+- **状态**：代码修复、回归、三端构建、Release 和更新索引闭环完成。手机安装与实机交互验收按用户安排暂缓，因此不记作实机通过。
 - **影响文档**：`README.md`、`CHANGELOG.md`、`ios/README.md`、`ios/CHANGELOG.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`；未改变设计、架构或通信协议。
 
 # DSH-177 正式发布未等待生产 Relay live E2E（已修复并发布 · 2026-10-12）
@@ -3498,6 +3498,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 19:52 | 反重力 | record v0.8.106 used-work pin release evidence |
 | 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |
 | 2026-10-12 23:20 | 反重力 | gate gallery release on live relay |
