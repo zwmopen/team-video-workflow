@@ -1,10 +1,10 @@
-# 2026-10-15 DSH-178：活跃已使用作品置顶修复候选 0.8.106/217
+# 2026-10-15 DSH-178：活跃已使用作品置顶修复已发布 0.8.106/217
 
 - **问题与根因**：时间排序分支提前返回/跳过活跃使用判断，覆盖了 DSH-135 的“未到期已使用作品置顶”规则。已用旧作品在刷新后被新作品压下。
 - **修复**：服务端、Android、iOS 统一先排活跃已用作品；活跃组按首用时间倒序，其他作品仍依用户所选时间升降序。未新增字段或改变协议。
-- **回归**：新增服务端行为用例在旧源码上先失败、修复后通过；服务端全套 `71/71`、平台 `test_*.py` 脚本 `13/13`、跨端契约 `50/50` 通过。Android `0.8.106/217` 本机 Release/Gradle 单测/Lint/权限/签名检查通过，APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`。待三端 CI、发布资产及索引反读。
-- **版本**：Android/iOS 源码版本 `0.8.106/217`。手机安装与实机点击按此前用户要求暂缓。
-- **下一步**：提交后检查三端 CI/live Relay 门禁，通过后核对 Release 与 `latest.json` / `altstore.json`。自动测试或 CI 不代表真机验收。
+- **回归与发布**：新增服务端行为用例在旧源码上先失败、修复后通过；服务端 `71/71`、平台脚本 `13/13`、跨端契约 `50/50` 通过。main CI [`38727831238`](https://github.com/zwmopen/team-video-workflow/actions/runs/38727831238) 的 Android、iOS、Windows、Relay、生产 Relay live E2E、正式发布全部成功；iOS XCTest `51/51`。Release [`v0.8.106`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.106) 已发布；下载包哈希与 Release 清单一致，`latest.json` 和 `altstore.json` 已回读到 Android/iOS `0.8.106/217`、Windows `V4.3.33`。
+- **资产**：APK SHA-256 `0c550beaf9bb3fd79826804b6132f683c52bebc81b2a3582b2b877d66c84f36b`；IPA `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`；Windows EXE `7ed80e6a73fdcb6339ca1d9344554947df227c2466ffceec36f3cb7365dca298`。回读记录：`D:\AICode\运行数据\dsh-evidence\20261015\dsh-178-release-38727831238\release-readback.json`。
+- **设备边界与下一步**：按用户安排，本轮未安装或操作手机；不声称实机验收通过。版本发布与分发索引已经完成，实机回读仍待设备自行更新后再验证。
 
 # 2026-10-12 DSH-177：生产 Relay 门禁修复并正式发布 0.8.105/216
 
@@ -1254,6 +1254,8 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 19:52 | 反重力 | record v0.8.106 used-work pin release evidence |
+| 2026-10-15 19:48 +08:00 | Codex | DSH-178 `0.8.106/217` 正式发布，三端构建、生产 Relay live E2E、资产哈希和更新索引回读全部完成；手机验收按用户安排暂缓。 |
 | 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-15 17:58 +08:00 | Codex | record DSH-178 regression and successful Android 0.8.106/217 local build |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |

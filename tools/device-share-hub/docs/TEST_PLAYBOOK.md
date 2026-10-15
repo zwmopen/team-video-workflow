@@ -1,9 +1,9 @@
-## 活跃已使用作品在时间排序中保持置顶（DSH-178）
+## 活跃已使用作品在时间排序中保持置顶（DSH-178，已发布）
 
 - 用“活跃已使用、未使用新作品、已过期使用作品”分别验证 `time_desc` 与 `time_asc`：活跃已使用作品必须在最前并按首用时间倒序；其他作品继续按创建时间升序/降序。
 - 自动门禁：`python -m unittest test_online_gallery_service.TestOnlineGalleryService.test_active_used_works_stay_pinned_ahead_of_selected_time_sort` 与 `python tests/parity_ios_android.py`。修复前新增行为用例失败；修复后通过，服务端全套 `71/71`、平台脚本 `13/13`、跨端契约 `50/50`。
 - 全套平台脚本发现 Android 预取检查所用的注释边界已从源码消失；改为使用下一个稳定方法边界后，脚本恢复运行并通过，不改动预取产品逻辑。
-- 候选版本 Android/iOS `0.8.106/217`。Android 本机 Release、Gradle 单测、Lint、APK 权限与签名检查已通过，APK SHA-256 `e546f79dd17e900ce9bce101c52cfdbfbd91cf29c0b6c47fb874b5fab57cb037`；三端 build-only CI、正式 Release/更新索引反读待验。手机端按用户此前安排不安装、不点按。
+- 正式版本 Android/iOS `0.8.106/217`、Windows `V4.3.33` 已发布。main CI `38727831238` 三端构建、生产 Relay live E2E 与发布通过；iOS XCTest `51/51`；Release APK/IPA/EXE 哈希与资产清单一致；`latest.json` 与 `altstore.json` 已回读最新版本。手机安装、真机点击按用户安排暂缓。
 
 ---
 
@@ -265,6 +265,7 @@
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-15 19:52 | 反重力 | record v0.8.106 used-work pin release evidence |
 | 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-12 21:48 | 反重力 | record CI and USB acceptance evidence |
 | 2026-10-12 21:27 | 客户端GPT | update iOS sync status after online data renders (Codex) |
