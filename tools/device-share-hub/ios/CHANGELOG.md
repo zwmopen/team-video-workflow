@@ -1,3 +1,8 @@
+# 2026-10-16 DSH-179：版本号对齐与跨设备剪贴板同步（0.8.107 / build 218）
+
+- 与 Android 和服务端版本对齐为 `0.8.107 / build 218`。服务端支持跨设备剪贴板双向同步接口。
+- 影响文档：`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/TEST_PLAYBOOK.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`。
+
 # 2026-10-15 DSH-178：恢复活跃已使用作品置顶（已发布 0.8.106 / build 217）
 
 - iOS 时间排序现在先展示尚未到期的已使用作品，活跃作品之后再按选定时间顺序排列；与 Android 和服务端一致。

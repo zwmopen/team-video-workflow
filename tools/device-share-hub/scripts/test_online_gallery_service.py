@@ -427,6 +427,38 @@ class TestOnlineGalleryService(unittest.TestCase):
         for k in ("hit", "miss", "hitRate", "entries", "maxEntries"):
             self.assertIn(k, wire["gzipCache"], f"gzipCache.{k} 缺失")
 
+    # ---- 13. 剪贴板同步端点契约测试（DSH-179） ----
+    def test_clipboard_endpoints(self):
+        url = f"http://127.0.0.1:{self.port}/api/online/clipboard"
+        # Test GET
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data.get("ok"))
+            self.assertIn("bytes", data)
+
+        # Test POST empty
+        req = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as resp:
+                pass
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 400)
+
+        # Test POST with text
+        test_payload = json.dumps({"text": "Hello From Test"}).encode("utf-8")
+        req = urllib.request.Request(url, data=test_payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(data.get("bytes"), len("Hello From Test"))
+
+        # Test send-clipboard
+        send_url = f"http://127.0.0.1:{self.port}/api/online/send-clipboard"
+        req = urllib.request.Request(send_url, data=json.dumps({"text": "Test Send"}).encode("utf-8"), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertIn("ok", data)
+
 
 class TestCodeFreshness(unittest.TestCase):
     """代码新鲜度自检的真实场景测试。

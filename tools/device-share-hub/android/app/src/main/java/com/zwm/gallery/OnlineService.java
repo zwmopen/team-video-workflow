@@ -5,17 +5,22 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.Context;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.util.Log;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -86,6 +91,7 @@ public final class OnlineService extends Service {
     private static final String PREF_REGISTERED_PEERS = "registeredPeers";
     private static final String PREF_COMMITTED_TASKS = "committedIncomingTasks";
     private static final String PREF_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
+    public static final String PREF_CLIPBOARD_SYNC_ENABLED = "clipboardSyncEnabled";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
@@ -122,6 +128,8 @@ public final class OnlineService extends Service {
     private PowerManager.WakeLock transferWakeLock;
     private WifiManager.WifiLock transferWifiLock;
     private volatile String lastNotifiedStatus = "";
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private static volatile long lastClipboardSyncId = 0L;
 
     private synchronized void acquireTransferWakeLock() {
         try {
@@ -246,6 +254,24 @@ public final class OnlineService extends Service {
         return context != null && shouldAcceptIncoming(context
                 .getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getBoolean(PREF_AUTO_RECEIVE_ENABLED, true));
+    }
+
+    public static boolean isClipboardSyncEnabled(Context context) {
+        return context != null && context
+                .getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_CLIPBOARD_SYNC_ENABLED, true);
+    }
+
+    public static void setClipboardSyncEnabled(Context context, boolean enabled) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_CLIPBOARD_SYNC_ENABLED, enabled)
+                .apply();
+    }
+
+    private boolean isClipboardSyncEnabled() {
+        return isClipboardSyncEnabled(this);
     }
 
     static String currentNetworkType(Context context) {
@@ -601,6 +627,14 @@ public final class OnlineService extends Service {
                 if (parts.length == 4 && "DELETE".equals(request.method)
                         && "v2".equals(parts[1]) && "works".equals(parts[2])) {
                     deleteWork(parts[3], output);
+                    return;
+                }
+                if ("POST".equals(request.method) && "/v2/clipboard".equals(request.path)) {
+                    receiveClipboard(request, input, output);
+                    return;
+                }
+                if ("GET".equals(request.method) && "/v2/clipboard".equals(request.path)) {
+                    clipboardStatus(output);
                     return;
                 }
                 writeText(output, 404, "Not Found");
@@ -1316,6 +1350,68 @@ public final class OnlineService extends Service {
         writeJson(output, 200, response);
     }
 
+    private void clipboardStatus(OutputStream output) throws Exception {
+        JSONObject res = new JSONObject()
+                .put("ok", true)
+                .put("enabled", isClipboardSyncEnabled())
+                .put("serverTime", System.currentTimeMillis());
+        writeJson(output, 200, res);
+    }
+
+    private void receiveClipboard(HttpRequest request, InputStream input, OutputStream output) throws Exception {
+        if (!isClipboardSyncEnabled()) {
+            throw new HttpError(403, "手机已关闭剪贴板同步");
+        }
+        if (request.contentLength < 0 || request.contentLength > 100_000) {
+            throw new HttpError(413, "剪贴板内容过长");
+        }
+        byte[] raw = readExact(input, request.contentLength);
+        JSONObject body = new JSONObject(new String(raw, StandardCharsets.UTF_8));
+        String text = body.optString("text", "");
+        if (text.isEmpty()) {
+            throw new HttpError(400, "剪贴板内容不能为空");
+        }
+        String label = body.optString("label", "PC-Sync").trim();
+        int autoClearSec = body.optInt("autoClearSec", 180);
+
+        final String clipLabel = label.isEmpty() ? "PC-Sync" : label;
+        final String clipText = text;
+        final int ttlSec = autoClearSec;
+
+        mainHandler.post(() -> {
+            try {
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    ClipData clip = ClipData.newPlainText(clipLabel, clipText);
+                    clipboard.setPrimaryClip(clip);
+                    Toast.makeText(this, "📋 已同步电脑文案，长按即可粘贴", Toast.LENGTH_SHORT).show();
+                    if (ttlSec > 0) {
+                        final long syncId = ++lastClipboardSyncId;
+                        mainHandler.postDelayed(() -> {
+                            try {
+                                if (syncId == lastClipboardSyncId) {
+                                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                                    if (cm != null) {
+                                        cm.setPrimaryClip(ClipData.newPlainText("", ""));
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }, ttlSec * 1000L);
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "failed to set clipboard", e);
+            }
+        });
+
+        DiagnosticLog.write(this, "clipboard_synced", "bytes=" + text.length());
+        JSONObject response = new JSONObject()
+                .put("ok", true)
+                .put("bytes", text.length())
+                .put("autoClearSec", autoClearSec);
+        writeJson(output, 200, response);
+    }
+
     private void onTaskReady(String taskId, int deliveredFiles, int imported,
                              String autoShareWorkId, long elapsedMs) {
         String summary = imported > 0
@@ -1386,6 +1482,7 @@ public final class OnlineService extends Service {
                 .put("port", HTTP_PORT)
                 .put("state", state)
                 .put("autoReceiveEnabled", isAutoReceiveEnabled())
+                .put("clipboardSyncEnabled", isClipboardSyncEnabled())
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("network", currentNetworkType(this))
                 .put("taskId", currentTaskId);

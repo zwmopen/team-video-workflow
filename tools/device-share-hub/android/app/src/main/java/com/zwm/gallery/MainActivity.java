@@ -6751,6 +6751,9 @@ public final class MainActivity extends Activity {
             ClipData clip = ClipData.newPlainText(label, text);
             clipboard.setPrimaryClip(clip);
         }
+        if (text != null && !text.isEmpty() && OnlineService.isClipboardSyncEnabled(this)) {
+            onlineClient.syncClipboard(text);
+        }
     }
 
     /**

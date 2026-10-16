@@ -1897,4 +1897,33 @@ public final class OnlineGalleryClient {
             }
         });
     }
+
+    public void syncClipboard(String text) {
+        syncClipboard(text, null);
+    }
+
+    public void syncClipboard(String text, Callback<Boolean> callback) {
+        if (text == null || text.trim().isEmpty()) {
+            if (callback != null) callback.onSuccess(false);
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                JSONObject body = new JSONObject();
+                body.put("text", text);
+                String devName = android.os.Build.MODEL != null && !android.os.Build.MODEL.isEmpty() ? android.os.Build.MODEL : "Android";
+                body.put("deviceName", devName);
+                body.put("timestamp", System.currentTimeMillis());
+                httpPost(new URL(baseUrl + "/api/online/clipboard"), body.toString());
+                if (callback != null) {
+                    mainHandler.post(() -> callback.onSuccess(true));
+                }
+            } catch (Exception e) {
+                if (callback != null) {
+                    mainHandler.post(() -> callback.onError(e));
+                }
+            }
+        });
+    }
 }

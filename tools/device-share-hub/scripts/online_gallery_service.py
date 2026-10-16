@@ -3321,6 +3321,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "lockOk": lock_ok,
                 "ts": int(time.time())
             })
+        if path == "/api/online/clipboard":
+            text = ""
+            try:
+                import win32clipboard
+                win32clipboard.OpenClipboard()
+                text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+            self.send_json(200, {"ok": True, "text": text, "bytes": len(text)})
             return
 
         if path == "/" or path == "/api/online/status":
@@ -4442,6 +4452,92 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/online/clipboard":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body.strip() else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return
+            text = req.get("text", "")
+            if text:
+                try:
+                    import win32clipboard
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+                    win32clipboard.CloseClipboard()
+                    self.send_json(200, {"ok": True, "bytes": len(text)})
+                except Exception as e:
+                    self.send_json(500, {"ok": False, "error": str(e)})
+            else:
+                self.send_json(400, {"ok": False, "error": "text is empty"})
+            return
+
+        if path == "/api/online/send-clipboard":
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body.strip() else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON body")
+                return
+            text = req.get("text", "")
+            if not text:
+                try:
+                    import win32clipboard
+                    win32clipboard.OpenClipboard()
+                    text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                    win32clipboard.CloseClipboard()
+                except Exception:
+                    text = ""
+            if not text:
+                self.send_json(400, {"ok": False, "error": "剪贴板无文本内容"})
+                return
+
+            label = str(req.get("label", "PC-Sync") or "PC-Sync")
+            auto_clear_sec = int(req.get("autoClearSec", 180) or 180)
+            target_host = str(req.get("host", "") or "").strip()
+
+            target_urls = []
+            if target_host:
+                norm = _normalize_sync_host(target_host)
+                if norm:
+                    target_urls.append(f"http://{norm}/v2/clipboard")
+            else:
+                try:
+                    devices = self.phone_cache.get(force=False)
+                except Exception:
+                    devices = []
+                for d in devices:
+                    if d.get("ip"):
+                        port = d.get("port", phone_sync.PHONE_ALBUM_PORT)
+                        target_urls.append(f"http://{d['ip']}:{port}/v2/clipboard")
+
+            if not target_urls:
+                self.send_json(200, {"ok": False, "error": "未发现在线手机", "synced": 0})
+                return
+
+            synced_count = 0
+            payload = json.dumps({"text": text, "label": label, "autoClearSec": auto_clear_sec}).encode("utf-8")
+            for url in target_urls:
+                try:
+                    req_obj = urllib.request.Request(
+                        url,
+                        data=payload,
+                        headers={"Content-Type": "application/json; charset=utf-8"},
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req_obj, timeout=2.0) as resp:
+                        if resp.status == 200:
+                            synced_count += 1
+                except Exception:
+                    pass
+
+            self.send_json(200, {"ok": True, "synced": synced_count, "bytes": len(text)})
+            return
 
         if path == "/api/online/sync-phone-counts":
             # 手动/预演入口：手机在本地相册分享过的次数回写到电脑元数据。

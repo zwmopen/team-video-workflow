@@ -1,8 +1,8 @@
 # 相册 iPhone 客户端（AltStore 自用版）
 
-版本：0.8.106 / build 217（已发布至 `v0.8.106`；iPhone 安装验收按用户要求暂缓）
+版本：0.8.107 / build 218（源码版本已对齐）
 
-状态：正式 Release `v0.8.106` 的 IPA `com.zwm.album 0.8.106/build 217` 已下载并核对，大小 22,610,646 字节，SHA-256 `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`；公开 AltStore 源的首个版本已回读为 `0.8.106/build 217`，与 `latest.json` 一致。DSH-178 修复 iOS 时间排序中活跃已使用作品刷新后不置顶；云端 iOS XCTest 51/51 通过。按用户安排，本轮没有安装或触控验收 iPhone。
+状态：版本已对齐至 `0.8.107 / build 218`。上一正式 Release `v0.8.106` 的 IPA `com.zwm.album 0.8.106/build 217` SHA-256 `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`。局域网剪贴板双向同步由服务端挂载支持。
 
 0.7.0 带来 Android 对齐的【一键直接发布】与独立置顶文案卡片体验，继续用同一个安装包覆盖 iOS 12 及以上，并在 `/v2/info` 上报与 Android/Windows 一致的分类库存。iPhone 6 使用应用自己的固定作品库；iOS 13 及以上继续支持系统文件夹选择与完整文件夹传送。应用离开前台后不承诺持续在线。
 

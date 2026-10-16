@@ -1,8 +1,8 @@
-# 文件收发中控（已发布：Windows V4.3.33 / Android 0.8.106 / iPhone 0.8.106）
+# 文件收发中控（最新：Windows V4.3.33 / Android 0.8.107 / iPhone 0.8.107）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 最新正式发布：**Android 0.8.106 / versionCode 217**、**iPhone 0.8.106 / build 217**、**Windows V4.3.33**。Release [`v0.8.106`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.106) 于 2026-10-15 发布；main CI [`38727831238`](https://github.com/zwmopen/team-video-workflow/actions/runs/38727831238) 的 Android、iOS、Windows、Relay 检查与正式发布全部成功，iOS XCTest 51/51。公开 `latest.json` 与 AltStore 源均已回读到 `0.8.106/217`。本版修复活跃已使用作品在时间排序中刷新后不置顶；按用户安排，本轮没有安装或操作手机，未声称完成真机验收。
-> Release 资产 SHA-256：APK `0c550beaf9bb3fd79826804b6132f683c52bebc81b2a3582b2b877d66c84f36b`；IPA `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`；Windows `7ed80e6a73fdcb6339ca1d9344554947df227c2466ffceec36f3cb7365dca298`。三个文件均已从 Release 下载并与公开 SHA-256 清单核对。
+> 最新构建：**Android 0.8.107 / versionCode 218**、**iPhone 0.8.107 / build 218**、**Windows V4.3.33**。DSH-179 带来局域网跨设备剪贴板双向同步（电脑复制、手机长按粘贴；手机复制同步回电脑）与设置页开关，阅后即焚防残留。局域网更新中转已就绪，本机 APK SHA-256 `ab74890eabf0d0894f1ba8ef93b5706499130dc7d7c08dbf188794338c7b910a`。
+> 上一正式发布：Release [`v0.8.106`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.106)；Release 资产 SHA-256：APK `0c550beaf9bb3fd79826804b6132f683c52bebc81b2a3582b2b877d66c84f36b`；IPA `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`；Windows `7ed80e6a73fdcb6339ca1d9344554947df227c2466ffceec36f3cb7365dca298`。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 

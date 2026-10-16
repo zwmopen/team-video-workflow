@@ -91,7 +91,17 @@ public final class SettingsActivity extends Activity {
             OnlineService.setAutoReceiveEnabled(this, enabled);
             toast(enabled ? "自动接收已打开" : "自动接收已关闭");
         });
-        root.addView(autoReceiveSwitch, settingMargins(dp(20)));
+        root.addView(autoReceiveSwitch, settingMargins(dp(10)));
+
+        SettingSwitchRow clipboardSyncSwitch = settingSwitch(
+                "跨设备剪贴板同步",
+                "电脑复制后自动同步至手机系统剪贴板，长按直接粘贴；阅后即焚防残留",
+                OnlineService.isClipboardSyncEnabled(this));
+        clipboardSyncSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            OnlineService.setClipboardSyncEnabled(this, enabled);
+            toast(enabled ? "剪贴板同步已打开" : "剪贴板同步已关闭");
+        });
+        root.addView(clipboardSyncSwitch, settingMargins(dp(20)));
 
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
