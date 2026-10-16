@@ -266,6 +266,7 @@ def discover_phones(port=PHONE_ALBUM_PORT, timeout=SCAN_TIMEOUT,
             "state": info.get("state", ""),
             "protocol": info.get("protocol", 0) or 0,
             "autoReceiveEnabled": bool(info.get("autoReceiveEnabled", False)),
+            "clipboardSyncEnabled": bool(info.get("clipboardSyncEnabled", False)),
             "workCounts": info.get("workCounts") or {},
             # 只认自家相册包名；不是则标出来但仍展示（面板要能看见「非本产品占用」）
             "verified": pkg == "com.zwm.gallery",

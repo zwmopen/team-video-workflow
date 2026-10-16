@@ -5631,6 +5631,8 @@ def start_clipboard_watcher(port: int = DEFAULT_PORT):
                     ip = d.get("ip")
                     if not ip:
                         continue
+                    if not d.get("clipboardSyncEnabled", False):
+                        continue
                     phone_port = d.get("port", phone_sync.PHONE_ALBUM_PORT)
                     url = f"http://{ip}:{phone_port}/v2/clipboard"
                     try:

@@ -1,16 +1,17 @@
-## 跨设备剪贴板双向同步与防残留设置（DSH-179，0.8.107/218）
+## 跨设备剪贴板双向同步与防残留设置（DSH-179，0.8.108/219）
 
 - **测试步骤**：
-  1. 电脑端向服务发送 `POST /api/online/send-clipboard`（或剪贴板有内容），局域网下发至在线手机（`POST /v2/clipboard`）。
-  2. 手机端通过前台服务 `OnlineService` 接收并在主线程调用 `setPrimaryClip()` 注入系统剪贴板，弹出 Toast 提醒。
-  3. 用户在小红书、微信等任意 APP 输入框长按，可直接调用原生“粘贴”粘出文案。
-  4. 手机相册复制作品文案，若开启设置开关，自动异步 POST 同步至 PC `/api/online/clipboard`。
-  5. 隐私与安全验证：不调用 `getPrimaryClip()`，无违规剪贴板监听器，`verify-removed-surfaces.mjs` 0 违规；180 秒默认 TTL 延时任务清除内存引用。
+  1. 手机端打开设置页，确认【跨设备剪贴板同步】开关默认处于关闭状态（`false`）；未开启时拒绝外部剪贴板写入并返回 403。
+  2. 针对需要同步的设备（如 32 位机器），手动开启开关，前台服务激活 `/v2/clipboard` 端点并在 `/v2/info` 广播 `clipboardSyncEnabled: true`。
+  3. 电脑端常驻监视线程（`start_clipboard_watcher`）自动识别该手机，复制文字后秒级广播至该手机，弹出 Toast 提醒。
+  4. 用户在小红书、微信等任意 APP 输入框长按，可直接调用原生“粘贴”粘出文案。
+  5. 手机相册复制作品文案，自动异步 POST 同步至 PC `/api/online/clipboard`；电脑端回环抑制锁防止二次反弹。
+  6. 隐私与安全验证：不调用 `getPrimaryClip()`，无违规剪贴板监听器，`verify-removed-surfaces.mjs` 0 违规；180 秒默认 TTL 延时任务清除内存引用。
 - **自动门禁**：
   - AST 隐私检查：`node scripts/verify-removed-surfaces.mjs` PASSED。
   - Android 单元测试：`./gradlew testDebugUnitTest` 103/103 PASSED。
-  - 服务端契约测试：`pytest scripts/test_online_gallery_service.py` 72/72 PASSED（含 `test_clipboard_endpoints`）。
-  - 跨端对等契约：`python tests/parity_ios_android.py` 50/50 PASSED。
+  - 服务端契约测试：`python scripts/test_online_gallery_service.py` 72/72 PASSED（含 `test_clipboard_endpoints`）。
+  - 跨端对等契约：`python tests/parity_ios_android.py` 51/51 PASSED（含 C27）。
 
 ---
 

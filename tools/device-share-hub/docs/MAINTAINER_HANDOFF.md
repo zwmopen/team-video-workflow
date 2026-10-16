@@ -1,13 +1,12 @@
-# 2026-10-16 DSH-179：跨设备剪贴板双向同步与防残留设置（版本 0.8.107/218）
+# 2026-10-17 DSH-179：跨设备剪贴板双向同步与防残留设置（版本 0.8.108/219）
 
-- **问题与诉求**：用户发布小红书等文案时，需在 PC 与手机之间快速同步文案，且要求长按原生粘贴（不自动输入）、不留永久历史记录（防第三方输入法如微信输入法留痕，阅后即焚）、支持应用内开关控制。
+- **问题与诉求**：主要为针对 32 位等特定机型缺少统一输入法生态时提供剪贴板同步；其他自带微信输入法等成熟生态的设备默认关闭开关以避免打扰。真要使用时，在目标手机设置页手动开启即可。
 - **方案与实现**：
-  - Android `OnlineService`：新增 `clipboardSyncEnabled` 偏好设置及 `/v2/clipboard` 端点；收到文案后通过原生 `ClipboardManager.setPrimaryClip()` 注入剪贴板并轻量 Toast 提示；启用延时 180s 阅后即焚清理逻辑，绕开 `getPrimaryClip()` 保证隐私防残留。
-  - Android `SettingsActivity`：“接收”分组新增“跨设备剪贴板同步”开关。
-  - Android `MainActivity` & `OnlineGalleryClient`：复制作品文案时若开启同步，则自动同步回传 PC 端 `/api/online/clipboard`。
-  - PC 服务 `online_gallery_service.py`：新增 `/api/online/clipboard`（读/写系统剪贴板）与 `/api/online/send-clipboard`（广播下发至在线手机）。
-  - 局域网更新中转：`android/out/local_latest.json` 挂载本地构建的 v0.8.107 APK，手机设置页点击“检查更新”即可内网秒级升级。
-- **验证与资产**：Gradle 单测 103/103、Lint 0 错误、`verify-removed-surfaces.mjs` 0 违规、Python 服务测试 72/72、跨端契约 50/50；APK SHA-256 `ab74890eabf0d0894f1ba8ef93b5706499130dc7d7c08dbf188794338c7b910a`。
+  - Android `OnlineService`：`isClipboardSyncEnabled` 默认值设为 `false`；收到文案后通过原生 `ClipboardManager.setPrimaryClip()` 注入剪贴板并轻量 Toast 提示；启用延时 180s 阅后即焚清理逻辑，绕开 `getPrimaryClip()` 保证隐私防残留。
+  - iOS `ClipboardSyncPreferences`：默认值设为 `false`，设置页开关默认关闭，两端策略对齐。
+  - PC 服务 `online_gallery_service.py`：常驻 `start_clipboard_watcher` 监视线程仅针对已开启 `clipboardSyncEnabled` 的手机广播同步，其余跳过。
+  - 局域网更新中转：`android/out/local_latest.json` 挂载本地构建的 v0.8.108 APK，手机设置页点击“检查更新”即可内网秒级升级。
+- **验证与资产**：Gradle 单测 103/103、Lint 0 错误、`verify-removed-surfaces.mjs` 0 违规、Python 服务测试 72/72、跨端契约 51/51。
 
 # 2026-10-15 DSH-178：活跃已使用作品置顶修复已发布 0.8.106/217
 

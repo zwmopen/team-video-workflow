@@ -1,19 +1,15 @@
-# DSH-179：跨设备剪贴板双向同步与防残留设置（已实现 · 0.8.107/218 · 2026-10-16）
+# DSH-179：跨设备剪贴板双向同步与防残留设置（已实现 · 0.8.108/219 · 2026-10-17）
 
-- **现象与诉求**：用户在电脑与手机（Redmi 9A，Android 11）之间分发小红书/抖音等文案时，希望电脑复制文案后手机自动同步到剪切板，长按直接粘贴，不在微信输入法等残留永久记录（阅后即焚防泄漏），且支持在设置页开关该功能，手机在相册复制文案时亦可回传电脑 Windows 剪贴板。
-- **根因分析与权限考量**：Android 10/11 严格限制后台非 IME 读取剪贴板（`getPrimaryClip` 会抛异常或返回空），但允许运行中的前台服务（`OnlineService`）调用 `setPrimaryClip` 写入原生系统剪贴板。同时，系统级防残留要求不得调用违规监听器，必须使用内存延时任务自清除引用。
+- **现象与诉求**：用户在电脑与手机（Redmi 9A，Android 11）之间分发小红书/抖音等文案时，针对个别 32 位老机型缺少统一输入法生态的需求提供跨设备剪贴板同步能力；对于其他已有微信输入法同步的设备，开关默认应保持关闭状态避免被打扰。真要使用时，在目标手机设置页手动开启即可。
+- **根因分析与权限考量**：Android 10/11 严格限制后台非 IME 读取剪贴板，但允许前台服务（`OnlineService`）调用 `setPrimaryClip` 写入原生系统剪贴板。为确保隐私与免扰，开关必须默认置为 `false`，仅当用户显式开启时才激活双向中继与 180s 阅后即焚防残留。
 - **修复与实现**：
-  1. Android `OnlineService`：增加 `POST /v2/clipboard` 端点，解析下发的文案后在主线程通过 `ClipboardManager.setPrimaryClip` 注入，提示“📋 已同步电脑文案，长按即可粘贴”；设置 180s 阅后即焚 Runnable 自动清理内存及剪贴板。
-  2. Android `SettingsActivity`：在“接收”分组增加“跨设备剪贴板同步”开关（默认开启），支持用户按需关闭。
-  3. Android `MainActivity` & `OnlineGalleryClient`：在相册内点击复制文案时，若开启同步，则通过 HTTP POST 回写至 PC `/api/online/clipboard`。
-  4. PC 服务 `online_gallery_service.py`：新增 `/api/online/clipboard` 与 `/api/online/send-clipboard`，支持 Windows 剪贴板读写与局域网在线设备广播。
-  5. 局域网更新中转（LAN Update Relay）：通过 `android/out/local_latest.json` 挂载 v0.8.107 APK，手机设置页点击“检查更新”即可内网快速升级。
+  1. Android `OnlineService`：默认 `isClipboardSyncEnabled` 返回 `false`，仅在用户于设置页开启后生效；`POST /v2/clipboard` 在未开启时返回 403 明确拒绝。
+  2. iOS `ClipboardSyncPreferences`：默认值设为 `false`，设置页开关默认关闭，两端策略完全对齐。
+  3. PC 服务 `online_gallery_service.py`：`start_clipboard_watcher` 监视线程在广播前检查设备的 `clipboardSyncEnabled`，未开启的设备直接跳过下发。
+  4. 局域网更新中转（LAN Update Relay）：通过 `android/out/local_latest.json` 挂载 v0.8.108 APK，手机设置页点击“检查更新”即可内网快速升级。
 - **回归与证据**：
   - AST 违规门禁检查：`verify-removed-surfaces.mjs` 0 违规通过（无 `getPrimaryClip`、无浮窗权限违规）。
-  - Gradle 测试：103/103 单元测试全部通过，Release Lint 0 错误，权限与 v2/v3 签名校验通过。
-  - Python 服务测试：`test_online_gallery_service.py` 72/72 全部通过（含新增 `test_clipboard_endpoints`）。
-  - 跨端对等契约：`parity_ios_android.py` 50/50 全部通过。
-  - 本机构建 APK SHA-256：`ab74890eabf0d0894f1ba8ef93b5706499130dc7d7c08dbf188794338c7b910a`。
+  - 跨端对等契约：`parity_ios_android.py` 51/51 全部通过（包含 C27）。
 - **状态**：双端代码、服务端路由、本地更新挂载与测试门禁全部闭环通过；待用户在真机点击“检查更新”升级并验证。
 - **影响文档**：`README.md`、`CHANGELOG.md`、`ios/README.md`、`ios/CHANGELOG.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`。
 

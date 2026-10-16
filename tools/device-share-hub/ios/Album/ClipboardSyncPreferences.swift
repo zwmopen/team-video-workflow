@@ -6,7 +6,7 @@ enum ClipboardSyncPreferences {
     static var isEnabled: Bool {
         get {
             if UserDefaults.standard.object(forKey: clipboardSyncKey) == nil {
-                return true
+                return false
             }
             return UserDefaults.standard.bool(forKey: clipboardSyncKey)
         }

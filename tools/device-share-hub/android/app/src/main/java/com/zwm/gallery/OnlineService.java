@@ -259,7 +259,7 @@ public final class OnlineService extends Service {
     public static boolean isClipboardSyncEnabled(Context context) {
         return context != null && context
                 .getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_CLIPBOARD_SYNC_ENABLED, true);
+                .getBoolean(PREF_CLIPBOARD_SYNC_ENABLED, false);
     }
 
     public static void setClipboardSyncEnabled(Context context, boolean enabled) {
