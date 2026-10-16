@@ -479,6 +479,24 @@ def main():
         c26_sort,
         "server=%s android=%s ios=%s" % (c26_server, c26_android, c26_ios)))
 
+    # C27 跨设备剪贴板双向同步双端对齐（DSH-179）
+    c27_android = (
+        has(AND_SRC, "/v2/clipboard")
+        and has(AND_SRC, "isClipboardSyncEnabled")
+        and has(AND_SRC, "syncClipboard")
+    )
+    c27_ios = (
+        has(IOS_SRC, "/v2/clipboard")
+        and (has(IOS_SRC, "ClipboardSyncPreferences") or has(IOS_SRC, "isClipboardSyncEnabled"))
+        and has(IOS_SRC, "syncClipboard")
+    )
+    c27_server = "/api/online/clipboard" in server_src and "/api/online/send-clipboard" in server_src
+    results.append(check(
+        "C27 跨设备剪贴板双向同步双端对齐（DSH-179）",
+        c27_android and c27_ios and c27_server,
+        "android=%s ios=%s server=%s" % (c27_android, c27_ios, c27_server)))
+
+
     # ---- DSH-107：Android 顶部 statusText 不显示「已连接电脑在线相册 (url)」----
     # 用户口径：「安卓顶部那个已连接电脑XXXXX就别显示了」+「机箱苹果那个」（= iOS 也确认无此条）。
     # 改前实测：MainActivity.java:2906 statusText.setText("💻 已连接电脑在线相册 (" + ... + ") · 共 N 套")

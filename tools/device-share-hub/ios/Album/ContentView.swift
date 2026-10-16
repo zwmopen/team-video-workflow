@@ -1653,6 +1653,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
         UIPasteboard.general.string = textToCopy
         showToast("已复制：\(item.buttonLabel)")
+        if ClipboardSyncPreferences.isEnabled {
+            OnlineGalleryClient.shared.syncClipboard(textToCopy)
+        }
 
         // ==================== DSH-130 & DSH-137: 本地持久化与 0ms 乐观 UI 更新与就地置顶 ====================
         LocalDispatchedStore.save(workId: entry.id, version: item.buttonLabel)
@@ -2787,6 +2790,9 @@ private final class CopyPreviewViewController: UIViewController, UITextViewDeleg
         let textToCopy = textView.text ?? bodyText
         UIPasteboard.general.string = textToCopy
         showToast("已复制 \(versionLabel) 全文 (\(textToCopy.utf16.count)字)")
+        if ClipboardSyncPreferences.isEnabled {
+            OnlineGalleryClient.shared.syncClipboard(textToCopy)
+        }
     }
 
     private func showToast(_ message: String) {
@@ -2816,7 +2822,11 @@ private final class CopyPreviewViewController: UIViewController, UITextViewDeleg
 
     /// 前往使用：复制 + 关闭 + 交回外层唤起分享（有副作用，与长按预览的只读语义严格分开）。
     @objc private func useTapped() {
-        UIPasteboard.general.string = textView.text ?? bodyText
+        let textToCopy = textView.text ?? bodyText
+        UIPasteboard.general.string = textToCopy
+        if ClipboardSyncPreferences.isEnabled {
+            OnlineGalleryClient.shared.syncClipboard(textToCopy)
+        }
         let handler = onUse
         dismiss(animated: true) { handler?() }
     }

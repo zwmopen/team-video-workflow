@@ -1070,6 +1070,35 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    /// DSH-179: 跨设备剪贴板同步至电脑 Windows 剪贴板
+    public func syncClipboard(_ text: String, completion: ((Bool) -> Void)? = nil) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            completion?(false)
+            return
+        }
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/clipboard") else {
+            completion?(false)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = ["text": trimmed]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        session.dataTask(with: request) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ok = json["ok"] as? Bool, ok else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+            DispatchQueue.main.async { completion?(true) }
+        }.resume()
+    }
+
     /// DSH-138: 手机端在线修改文案同步写回电脑真源文案.txt
     public func updateCopy(workId: String, updatedCopy: String, device: String? = nil, versionTag: String? = nil, completion: ((Bool, String) -> Void)? = nil) {
         let baseUrl = resolveBaseUrl()

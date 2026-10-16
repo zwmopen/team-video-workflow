@@ -19,7 +19,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 5 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [3, 2, 2, 2, 5][section]
+        return [4, 2, 2, 2, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -27,13 +27,14 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        if section == 0 { return "电脑复制文案时自动同步至手机剪贴板；默认180秒自动清空，不留输入法永久记录。" }
         if section == 1 { return "当前文件夹就是作品与普通文件的唯一真实来源。" }
         if section == 4 { return "素材与记录只保存在所选文件夹，不上传服务器，也不自动读取截图或系统剪切板。" }
         return nil
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let usesSubtitle = indexPath.section == 3 || indexPath.section == 4
+        let usesSubtitle = indexPath.section == 3 || indexPath.section == 4 || (indexPath.section == 0 && indexPath.row == 3)
         let cell = UITableViewCell(style: usesSubtitle ? .subtitle : .value1, reuseIdentifier: nil)
         cell.textLabel?.numberOfLines = 0
         cell.detailTextLabel?.numberOfLines = 0
@@ -51,6 +52,13 @@ final class SettingsViewController: UITableViewController {
         case (0, 2):
             cell.textLabel?.text = "局域网接收"
             cell.detailTextLabel?.text = library.networkStatus
+        case (0, 3):
+            cell.textLabel?.text = "跨设备剪贴板同步"
+            cell.detailTextLabel?.text = "电脑复制文案自动同步至手机剪切板，长按粘贴；阅后即焚防残留"
+            let toggle = UISwitch()
+            toggle.isOn = ClipboardSyncPreferences.isEnabled
+            toggle.addTarget(self, action: #selector(clipboardSyncSwitchChanged(_:)), for: .valueChanged)
+            cell.accessoryView = toggle
         case (1, 0):
             cell.textLabel?.text = "当前文件夹"
             cell.detailTextLabel?.text = library.rootDescription
@@ -134,6 +142,10 @@ final class SettingsViewController: UITableViewController {
             present(alert, animated: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { alert.dismiss(animated: true) }
         }
+    }
+
+    @objc private func clipboardSyncSwitchChanged(_ sender: UISwitch) {
+        ClipboardSyncPreferences.isEnabled = sender.isOn
     }
 
     @objc private func notificationSwitchChanged(_ sender: UISwitch) {

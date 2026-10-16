@@ -3054,6 +3054,18 @@ def _dsh157_nonnegative_int(value: Any) -> int:
         return 0
 
 
+_LAST_SYNCED_CLIPBOARD_TEXT = ""
+_LAST_SYNCED_CLIPBOARD_LOCK = threading.Lock()
+
+def set_last_synced_clipboard(text: str):
+    global _LAST_SYNCED_CLIPBOARD_TEXT
+    with _LAST_SYNCED_CLIPBOARD_LOCK:
+        _LAST_SYNCED_CLIPBOARD_TEXT = text
+
+def get_last_synced_clipboard() -> str:
+    with _LAST_SYNCED_CLIPBOARD_LOCK:
+        return _LAST_SYNCED_CLIPBOARD_TEXT
+
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
     timeout = 15.0  # 15秒 socket 读写超时，防手机息屏/脱网后 socket 挂在 CLOSE_WAIT 耗尽工作线程
     scanner: WorkScanner = None
@@ -3326,11 +3338,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             try:
                 import win32clipboard
                 win32clipboard.OpenClipboard()
-                text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+                    text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
                 win32clipboard.CloseClipboard()
             except Exception:
                 pass
-            self.send_json(200, {"ok": True, "text": text, "bytes": len(text)})
+            self.send_json(200, {"ok": True, "text": text, "bytes": len(text), "lastSynced": get_last_synced_clipboard()})
             return
 
         if path == "/" or path == "/api/online/status":
@@ -4469,6 +4482,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     win32clipboard.EmptyClipboard()
                     win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
                     win32clipboard.CloseClipboard()
+                    set_last_synced_clipboard(text.strip())
+                    print(f"[ClipboardSync] 📥 电脑已收到来自手机的剪贴板文案 ({len(text)} 字符)")
                     self.send_json(200, {"ok": True, "bytes": len(text)})
                 except Exception as e:
                     self.send_json(500, {"ok": False, "error": str(e)})
@@ -4497,6 +4512,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"ok": False, "error": "剪贴板无文本内容"})
                 return
 
+            set_last_synced_clipboard(text.strip())
             label = str(req.get("label", "PC-Sync") or "PC-Sync")
             auto_clear_sec = int(req.get("autoClearSec", 180) or 180)
             target_host = str(req.get("host", "") or "").strip()
@@ -5567,6 +5583,75 @@ def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
     t = threading.Thread(target=_loop, daemon=True, name="LanBeacon")
     t.start()
 
+def start_clipboard_watcher(port: int = DEFAULT_PORT):
+    """电脑端 Windows 剪贴板自动监视守护线程：
+    用户在电脑端 Ctrl+C 复制新文案时，自动下发给局域网中所有在线手机。
+    若该文案正是从手机端刚刚同步过来的，则跳过避免回路反弹。
+    """
+    if os.name != "nt":
+        return
+
+    def _watcher_loop():
+        time.sleep(2.0)
+        while True:
+            try:
+                time.sleep(1.0)
+                import win32clipboard
+                text = ""
+                try:
+                    win32clipboard.OpenClipboard()
+                    if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+                        text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                    win32clipboard.CloseClipboard()
+                except Exception:
+                    pass
+
+                text = (text or "").strip()
+                if not text:
+                    continue
+
+                with _LAST_SYNCED_CLIPBOARD_LOCK:
+                    if text == _LAST_SYNCED_CLIPBOARD_TEXT:
+                        continue
+                    _LAST_SYNCED_CLIPBOARD_TEXT = text
+
+                phone_cache = getattr(OnlineGalleryHandler, "phone_cache", None)
+                if not phone_cache:
+                    continue
+                try:
+                    devices = phone_cache.get(force=False)
+                except Exception:
+                    devices = []
+
+                if not devices:
+                    continue
+
+                payload = json.dumps({"text": text, "label": "PC-AutoSync", "autoClearSec": 180}).encode("utf-8")
+                for d in devices:
+                    ip = d.get("ip")
+                    if not ip:
+                        continue
+                    phone_port = d.get("port", phone_sync.PHONE_ALBUM_PORT)
+                    url = f"http://{ip}:{phone_port}/v2/clipboard"
+                    try:
+                        req_obj = urllib.request.Request(
+                            url,
+                            data=payload,
+                            headers={"Content-Type": "application/json; charset=utf-8"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(req_obj, timeout=2.0) as resp:
+                            if resp.status == 200:
+                                print(f"[ClipboardSync] 📋 电脑剪贴板已自动同步至 {ip}:{phone_port} ({len(text)} 字符)")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_watcher_loop, daemon=True, name="ClipboardWatcher")
+    t.start()
+
+
 
 _service_mutex = None
 
@@ -5646,6 +5731,9 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
 
     # 启动局域网信标广播：手机端零扫描、秒级发现，IP 变化自动跟随
     start_lan_beacon(port)
+
+    # 启动电脑 Windows 剪贴板自动监视守护：电脑 Ctrl+C 自动秒同步至在线手机
+    start_clipboard_watcher(port)
 
     # 首次预热扫描
     works = scanner.scan(force=True)

@@ -463,6 +463,8 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             if request.method == "DELETE", pieces.count == 3, pieces[0] == "v2", pieces[1] == "works" {
                 return try deleteWork(workId: pieces[2])
             }
+            if request.method == "POST" && request.path == "/v2/clipboard" { return try receiveClipboard(request) }
+            if request.method == "GET" && request.path == "/v2/clipboard" { return clipboardStatus() }
             return HTTPResponse(status: 404, message: "请求路径不存在")
         } catch let error as TransferServiceError {
             TransferNotifications.shared.show("接收失败", body: error.localizedDescription,
@@ -492,7 +494,8 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             "state": "online",
             "workCount": library.advertisedWorkCount,
             "network": currentNetworkType,
-            "taskId": ""
+            "taskId": "",
+            "clipboardSyncEnabled": ClipboardSyncPreferences.isEnabled
         ]
         if let keys = try? RemoteIdentity.publicKeys(),
            let signing = keys["signingPublicKey"] as? [String: Any],
@@ -753,6 +756,49 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             "id": workId,
             "action": "trashed",
             "remainingWorks": library.works.count
+        ])
+    }
+
+    private func receiveClipboard(_ request: HTTPRequest) throws -> HTTPResponse {
+        guard ClipboardSyncPreferences.isEnabled else {
+            return HTTPResponse(status: 403, message: "iPhone 已关闭跨设备剪贴板同步")
+        }
+        let data: Data
+        if let bodyData = request.bodyData, !bodyData.isEmpty {
+            data = bodyData
+        } else if let fileURL = request.bodyFileURL, let fileData = try? Data(contentsOf: fileURL), !fileData.isEmpty {
+            data = fileData
+        } else {
+            return HTTPResponse(status: 400, message: "请求体为空")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return HTTPResponse(status: 400, message: "无效的剪贴板 JSON 数据")
+        }
+        let text = (json["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty {
+            return HTTPResponse(status: 400, message: "文案内容为空")
+        }
+        let autoClearSec = json["autoClearSec"] as? Int ?? 180
+        DispatchQueue.main.async {
+            UIPasteboard.general.string = text
+            TransferNotifications.shared.show("剪贴板已同步", body: "📋 已同步电脑文案，长按即可粘贴",
+                                              id: "clipboard-synced-\(UUID().uuidString)")
+        }
+        if autoClearSec > 0 {
+            let capturedText = text
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(autoClearSec)) {
+                if UIPasteboard.general.string == capturedText {
+                    UIPasteboard.general.string = ""
+                }
+            }
+        }
+        return HTTPResponse(status: 200, object: ["ok": true, "bytes": text.utf8.count])
+    }
+
+    private func clipboardStatus() -> HTTPResponse {
+        return HTTPResponse(status: 200, object: [
+            "ok": true,
+            "enabled": ClipboardSyncPreferences.isEnabled
         ])
     }
 
