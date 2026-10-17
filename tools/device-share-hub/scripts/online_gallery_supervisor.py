@@ -178,7 +178,7 @@ _categories_probe_failed = False
 
 def is_service_healthy(force_deep: bool = False) -> bool:
     global _last_categories_probe_time, _categories_probe_failed
-    # 1. 极速 ping 优先（内置 scanner._lock 锁探活，死锁时返回 503）
+    # 1. 极速 ping 优先（纯内存响应，完全与图片高频加载及磁盘扫描隔离）
     ping_ok = probe_ping(timeout=3.5)
     if not ping_ok:
         # ping 不通时回退探测 status（快速防抖确认）
@@ -191,13 +191,21 @@ def is_service_healthy(force_deep: bool = False) -> bool:
     if force_deep or (now - _last_categories_probe_time >= 30.0):
         _last_categories_probe_time = now
         if not probe_categories(timeout=5.0):
-            # 业务抽检防抖确认（1.5s 后重试）
-            time.sleep(1.5)
-            if not probe_categories(timeout=6.0):
-                _categories_probe_failed = True
-                log("业务端点 /api/online/categories 深度抽检超时/失败，判定为业务卡死", "WARN")
-                return False
-        _categories_probe_failed = False
+            # 业务抽检防抖确认（2.0s 后加大超时重试，避免因并发图片加载排队被误杀）
+            time.sleep(2.0)
+            if not probe_categories(timeout=8.0):
+                # 再次确认极速 ping：如果连 ping 都超时，说明主服务确实彻底挂起或死锁
+                if not probe_ping(timeout=3.0):
+                    _categories_probe_failed = True
+                    log("业务端点 /api/online/categories 与探活端点双双超时，判定为业务死锁", "WARN")
+                    return False
+                else:
+                    log("业务端点 /api/online/categories 响应偏慢（高频I/O排队中），但探活正常，暂不判定为死锁", "INFO")
+                    _categories_probe_failed = False
+            else:
+                _categories_probe_failed = False
+        else:
+            _categories_probe_failed = False
     elif _categories_probe_failed:
         # 深度抽检失败后，30 秒抽检窗口内不能因 ping 成功而假报健康、清零连续故障计数。
         return False

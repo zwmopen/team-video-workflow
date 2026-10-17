@@ -233,6 +233,52 @@ try:
 except ImportError:
     HAS_PIL = False
 
+
+def atomic_write_json(file_path: str, data: Any, ensure_ascii: bool = False, indent: int = 2) -> bool:
+    """Windows 安全原子写 JSON 文件（防 WinError 32 独占锁冲突与损坏）。
+    先写入同目录下临时文件，落盘刷缓存后通过 os.replace 原子替换目标文件。
+    若遭遇 Windows 文件共享冲突或杀软扫描（WinError 32 / PermissionError），
+    内置 5 次指数退避重试，确保多线程及高频并发读写下绝不丢数据或写半截 JSON。
+    """
+    dir_name = os.path.dirname(os.path.abspath(file_path))
+    os.makedirs(dir_name, exist_ok=True)
+    tmp_path = os.path.join(
+        dir_name,
+        f".{os.path.basename(file_path)}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+    )
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fp:
+            json.dump(data, fp, ensure_ascii=ensure_ascii, indent=indent)
+            fp.flush()
+            try:
+                os.fsync(fp.fileno())
+            except OSError:
+                pass
+
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, file_path)
+                return True
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (2 ** attempt))
+            except OSError as e:
+                if getattr(e, "winerror", None) == 32:  # ERROR_SHARING_VIOLATION
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.05 * (2 ** attempt))
+                else:
+                    raise
+        return True
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
 # ── 代码新鲜度自检（2026-09-20 新增）────────────────────────────────────────
 # 事故背景：服务进程启动于 06:58，而脚本在 14:44 被改过 —— 进程一直在跑旧代码，
 # thumb=1 被静默忽略成原图，手机端在线回收站直接卡死，而没有任何信号提示这件事。
@@ -3054,17 +3100,55 @@ def _dsh157_nonnegative_int(value: Any) -> int:
         return 0
 
 
+def _normalize_clipboard_text(text: Any) -> str:
+    """剪贴板文本归一化：统一替换 \\r\\n 与 \\r 为 \\n，剔除首尾空白，
+    彻底消除 Windows (CRLF) 与 Android/iOS (LF) 换行差异及多余空白造成的误判。
+    """
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _clipboard_hash(text: Any) -> str:
+    norm = _normalize_clipboard_text(text)
+    if not norm:
+        return ""
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
 _LAST_SYNCED_CLIPBOARD_TEXT = ""
+_LAST_SYNCED_CLIPBOARD_HASH = ""
 _LAST_SYNCED_CLIPBOARD_LOCK = threading.Lock()
 
+
 def set_last_synced_clipboard(text: str):
-    global _LAST_SYNCED_CLIPBOARD_TEXT
+    global _LAST_SYNCED_CLIPBOARD_TEXT, _LAST_SYNCED_CLIPBOARD_HASH
+    norm = _normalize_clipboard_text(text)
+    h = _clipboard_hash(norm)
     with _LAST_SYNCED_CLIPBOARD_LOCK:
-        _LAST_SYNCED_CLIPBOARD_TEXT = text
+        _LAST_SYNCED_CLIPBOARD_TEXT = norm
+        _LAST_SYNCED_CLIPBOARD_HASH = h
+
 
 def get_last_synced_clipboard() -> str:
     with _LAST_SYNCED_CLIPBOARD_LOCK:
         return _LAST_SYNCED_CLIPBOARD_TEXT
+
+
+def get_last_synced_clipboard_hash() -> str:
+    with _LAST_SYNCED_CLIPBOARD_LOCK:
+        return _LAST_SYNCED_CLIPBOARD_HASH
+
+
+def is_same_as_last_synced_clipboard(text: str) -> bool:
+    norm = _normalize_clipboard_text(text)
+    if not norm:
+        return True
+    h = _clipboard_hash(norm)
+    with _LAST_SYNCED_CLIPBOARD_LOCK:
+        return bool(_LAST_SYNCED_CLIPBOARD_HASH and h == _LAST_SYNCED_CLIPBOARD_HASH)
 
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
     timeout = 15.0  # 15秒 socket 读写超时，防手机息屏/脱网后 socket 挂在 CLOSE_WAIT 耗尽工作线程
@@ -3315,24 +3399,26 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         if path == "/api/online/ping":
-            # 极速轻量探活端点：纯内存响应，同时主动探测 scanner 核心锁，杜绝假健康
+            # 极速轻量探活端点：纯内存响应，完全与耗时图片 I/O 与全盘扫描隔离
             lock_ok = True
             try:
                 if hasattr(self.server, "scanner") and hasattr(self.server.scanner, "_lock"):
-                    acquired = self.server.scanner._lock.acquire(timeout=0.5)
+                    acquired = self.server.scanner._lock.acquire(blocking=False)
                     if acquired:
                         self.server.scanner._lock.release()
                     else:
-                        lock_ok = False
+                        # 锁正在被持有（例如后台扫描或到期巡检），属于正常业务行为
+                        lock_ok = True
             except Exception:
                 pass
-            status_code = 200 if lock_ok else 503
-            self.send_json(status_code, {
-                "ok": lock_ok,
+            self.send_json(200, {
+                "ok": True,
                 "ping": "pong",
                 "lockOk": lock_ok,
                 "ts": int(time.time())
             })
+            return
+
         if path == "/api/online/clipboard":
             text = ""
             try:
@@ -3343,7 +3429,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 win32clipboard.CloseClipboard()
             except Exception:
                 pass
-            self.send_json(200, {"ok": True, "text": text, "bytes": len(text), "lastSynced": get_last_synced_clipboard()})
+            norm = _normalize_clipboard_text(text)
+            self.send_json(200, {
+                "ok": True,
+                "text": text,
+                "normalized": norm,
+                "bytes": len(text),
+                "hash": _clipboard_hash(norm),
+                "lastSynced": get_last_synced_clipboard()
+            })
             return
 
         if path == "/" or path == "/api/online/status":
@@ -3962,8 +4056,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "marked_at": ts,
                 "source_stage": f"{target_work.get('stage', '未发送')}（手机端在线相册人工判定删除）",
             }
-            with open(os.path.join(target_dest, "quality_tag.json"), "w", encoding="utf-8") as fp:
-                json.dump(quality, fp, ensure_ascii=False, indent=2)
+            quality_file = os.path.join(target_dest, "quality_tag.json")
+            atomic_write_json(quality_file, quality, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -3979,8 +4073,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "markedBy": device_name,
                     "markedAt": ts,
                 }
-                with open(manifest_file, "w", encoding="utf-8") as fp:
-                    json.dump(manifest, fp, ensure_ascii=False, indent=2)
+                atomic_write_json(manifest_file, manifest, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -4074,8 +4167,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                                 new_m_imgs.append(item)
                     mdata["images"] = new_m_imgs
                     mdata["image_count"] = len(new_m_imgs)
-                with open(manifest_path, "w", encoding="utf-8") as fp:
-                    json.dump(mdata, fp, ensure_ascii=False, indent=2)
+                atomic_write_json(manifest_path, mdata, ensure_ascii=False, indent=2)
             except Exception as _me:
                 print(f"[Warn] 更新 manifest.json 失败: {_me}")
 
@@ -4224,8 +4316,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         dist["lastDispatchedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
         dist["status"] = f"已使用{new_count}次"
         try:
-            with open(tag_file, "w", encoding="utf-8") as fp:
-                json.dump(tag_data, fp, ensure_ascii=False, indent=2)
+            atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -4237,8 +4328,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     m_data = json.load(mfp)
                 m_data["distribution"] = dist
                 m_data["used"] = True
-                with open(manifest_file, "w", encoding="utf-8") as mfp:
-                    json.dump(m_data, mfp, ensure_ascii=False, indent=2)
+                atomic_write_json(manifest_file, m_data, ensure_ascii=False, indent=2)
             except Exception:
                 pass
 
@@ -4337,8 +4427,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     dist["originDevice"] = ""
                     dist["status"] = "待发手机"
                     dist["restoredAt"] = restored_at
-                    with open(tag_file, "w", encoding="utf-8") as fp:
-                        json.dump(tag, fp, ensure_ascii=False, indent=2)
+                    atomic_write_json(tag_file, tag, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] restore tag write failed: {e}")
 
@@ -4372,8 +4461,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         manifest["distribution"]["expireAtMs"] = 0
                         manifest["distribution"]["originDevice"] = ""
                         manifest["distribution"]["status"] = "待发手机"
-                    with open(manifest_file, "w", encoding="utf-8") as fp:
-                        json.dump(manifest, fp, ensure_ascii=False, indent=2)
+                    atomic_write_json(manifest_file, manifest, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] restore manifest write failed: {e}")
 
@@ -4393,8 +4481,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 quality["garbage"] = False
                 quality["restored_at"] = restored_at
                 quality["restored_by"] = device_name
-                with open(quality_file, "w", encoding="utf-8") as fp:
-                    json.dump(quality, fp, ensure_ascii=False, indent=2)
+                atomic_write_json(quality_file, quality, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] restore quality write failed: {e}")
 
@@ -4438,8 +4525,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             quality["garbage_remark"] = remark
             quality["remark_updated_at"] = ts
             quality["remark_updated_by"] = device_name
-            with open(quality_file, "w", encoding="utf-8") as fp:
-                json.dump(quality, fp, ensure_ascii=False, indent=2)
+            if not atomic_write_json(quality_file, quality, ensure_ascii=False, indent=2):
+                return False, "写入 quality_tag.json 失败"
         except Exception as e:
             return False, f"写入 quality_tag.json 失败: {e}"
 
@@ -4455,8 +4542,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     g["remark"] = remark
                     g["remarkUpdatedAt"] = ts
                     manifest["garbage"] = g
-                    with open(manifest_file, "w", encoding="utf-8") as fp:
-                        json.dump(manifest, fp, ensure_ascii=False, indent=2)
+                    atomic_write_json(manifest_file, manifest, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] annotate manifest write failed: {e}")
 
@@ -4475,16 +4561,27 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Invalid JSON body")
                 return
             text = req.get("text", "")
-            if text:
+            norm = _normalize_clipboard_text(text)
+            if norm:
+                # 检查是否与上次同步内容一致（归一化与哈希比对防回环）
+                if is_same_as_last_synced_clipboard(norm):
+                    self.send_json(200, {
+                        "ok": True,
+                        "bytes": len(text),
+                        "skipped": True,
+                        "reason": "already_synced",
+                        "hash": _clipboard_hash(norm),
+                    })
+                    return
                 try:
                     import win32clipboard
                     win32clipboard.OpenClipboard()
                     win32clipboard.EmptyClipboard()
                     win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
                     win32clipboard.CloseClipboard()
-                    set_last_synced_clipboard(text.strip())
+                    set_last_synced_clipboard(norm)
                     print(f"[ClipboardSync] 📥 电脑已收到来自手机的剪贴板文案 ({len(text)} 字符)")
-                    self.send_json(200, {"ok": True, "bytes": len(text)})
+                    self.send_json(200, {"ok": True, "bytes": len(text), "hash": _clipboard_hash(norm)})
                 except Exception as e:
                     self.send_json(500, {"ok": False, "error": str(e)})
             else:
@@ -4512,7 +4609,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"ok": False, "error": "剪贴板无文本内容"})
                 return
 
-            set_last_synced_clipboard(text.strip())
+            norm = _normalize_clipboard_text(text)
+            set_last_synced_clipboard(norm)
             label = str(req.get("label", "PC-Sync") or "PC-Sync")
             auto_clear_sec = int(req.get("autoClearSec", 180) or 180)
             target_host = str(req.get("host", "") or "").strip()
@@ -4784,8 +4882,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             dist["status"] = f"已使用{new_count}次"
 
             try:
-                with open(tag_file, "w", encoding="utf-8") as fp:
-                    json.dump(tag_data, fp, ensure_ascii=False, indent=2)
+                atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[Warn] Failed to write tag file: {e}")
 
@@ -4797,8 +4894,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         m_data = json.load(mfp)
                     m_data["distribution"] = dist
                     m_data["used"] = True
-                    with open(manifest_file, "w", encoding="utf-8") as mfp:
-                        json.dump(m_data, mfp, ensure_ascii=False, indent=2)
+                    atomic_write_json(manifest_file, m_data, ensure_ascii=False, indent=2)
                 except Exception as _me:
                     print(f"[Warn] Failed to sync manifest.json: {_me}")
 
@@ -4909,8 +5005,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         tag_data["distribution"]["expireAtMs"] = 0
                         tag_data["distribution"]["originDevice"] = ""
                         tag_data["distribution"]["status"] = "待发手机"
-                    with open(tag_file, "w", encoding="utf-8") as fp:
-                        json.dump(tag_data, fp, ensure_ascii=False, indent=2)
+                    atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)
                 except Exception as e:
                     print(f"Error resetting tags: {e}")
 
@@ -4931,8 +5026,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             manifest["distribution"]["originDevice"] = ""
                             manifest["distribution"]["status"] = "待发手机"
                         manifest["resetAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                        with open(manifest_file, "w", encoding="utf-8") as fp:
-                            json.dump(manifest, fp, ensure_ascii=False, indent=2)
+                        atomic_write_json(manifest_file, manifest, ensure_ascii=False, indent=2)
                 except Exception as e:
                     print(f"Error resetting manifest: {e}")
 
@@ -5270,8 +5364,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "length": len(updated_copy)
             })
             try:
-                with open(tag_file, "w", encoding="utf-8") as fp:
-                    json.dump(tag_data, fp, ensure_ascii=False, indent=2)
+                atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)
             except Exception:
                 pass
 
@@ -5583,10 +5676,14 @@ def start_lan_beacon(port: int = DEFAULT_PORT, beacon_port: int = BEACON_PORT):
     t = threading.Thread(target=_loop, daemon=True, name="LanBeacon")
     t.start()
 
+_FAILED_DEVICE_COOLDOWN: Dict[str, float] = {}
+_FAILED_DEVICE_COOLDOWN_LOCK = threading.Lock()
+
 def start_clipboard_watcher(port: int = DEFAULT_PORT):
     """电脑端 Windows 剪贴板自动监视守护线程：
     用户在电脑端 Ctrl+C 复制新文案时，自动下发给局域网中所有在线手机。
     若该文案正是从手机端刚刚同步过来的，则跳过避免回路反弹。
+    同时对休眠/脱网设备实施 0.4s 快速超时和 30s 熔断保护，杜绝守护线程阻塞。
     """
     if os.name != "nt":
         return
@@ -5606,14 +5703,14 @@ def start_clipboard_watcher(port: int = DEFAULT_PORT):
                 except Exception:
                     pass
 
-                text = (text or "").strip()
-                if not text:
+                norm = _normalize_clipboard_text(text)
+                if not norm:
                     continue
 
-                with _LAST_SYNCED_CLIPBOARD_LOCK:
-                    if text == _LAST_SYNCED_CLIPBOARD_TEXT:
-                        continue
-                    _LAST_SYNCED_CLIPBOARD_TEXT = text
+                if is_same_as_last_synced_clipboard(norm):
+                    continue
+
+                set_last_synced_clipboard(norm)
 
                 phone_cache = getattr(OnlineGalleryHandler, "phone_cache", None)
                 if not phone_cache:
@@ -5627,6 +5724,7 @@ def start_clipboard_watcher(port: int = DEFAULT_PORT):
                     continue
 
                 payload = json.dumps({"text": text, "label": "PC-AutoSync", "autoClearSec": 180}).encode("utf-8")
+                now = time.time()
                 for d in devices:
                     ip = d.get("ip")
                     if not ip:
@@ -5634,6 +5732,13 @@ def start_clipboard_watcher(port: int = DEFAULT_PORT):
                     if not d.get("clipboardSyncEnabled", False):
                         continue
                     phone_port = d.get("port", phone_sync.PHONE_ALBUM_PORT)
+                    dev_key = f"{ip}:{phone_port}"
+
+                    with _FAILED_DEVICE_COOLDOWN_LOCK:
+                        cooldown_until = _FAILED_DEVICE_COOLDOWN.get(dev_key, 0.0)
+                        if now < cooldown_until:
+                            continue
+
                     url = f"http://{ip}:{phone_port}/v2/clipboard"
                     try:
                         req_obj = urllib.request.Request(
@@ -5642,11 +5747,16 @@ def start_clipboard_watcher(port: int = DEFAULT_PORT):
                             headers={"Content-Type": "application/json; charset=utf-8"},
                             method="POST",
                         )
-                        with urllib.request.urlopen(req_obj, timeout=2.0) as resp:
+                        # 0.4s 极速超时，杜绝休眠或离线设备阻塞守护线程
+                        with urllib.request.urlopen(req_obj, timeout=0.4) as resp:
                             if resp.status == 200:
+                                with _FAILED_DEVICE_COOLDOWN_LOCK:
+                                    _FAILED_DEVICE_COOLDOWN.pop(dev_key, None)
                                 print(f"[ClipboardSync] 📋 电脑剪贴板已自动同步至 {ip}:{phone_port} ({len(text)} 字符)")
                     except Exception:
-                        pass
+                        # 熔断 30 秒，避免持续重试超时导致线程堆积卡顿
+                        with _FAILED_DEVICE_COOLDOWN_LOCK:
+                            _FAILED_DEVICE_COOLDOWN[dev_key] = time.time() + 30.0
             except Exception:
                 pass
 

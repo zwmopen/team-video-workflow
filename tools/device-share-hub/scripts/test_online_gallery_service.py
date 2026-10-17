@@ -459,6 +459,40 @@ class TestOnlineGalleryService(unittest.TestCase):
             data = json.loads(resp.read().decode("utf-8"))
             self.assertIn("ok", data)
 
+        # Test duplicate POST with different CRLF/whitespace (loop prevention)
+        dup_payload = json.dumps({"text": "  Test Send\r\n"}).encode("utf-8")
+        req_dup = urllib.request.Request(url, data=dup_payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req_dup) as resp:
+            dup_data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(dup_data.get("ok"))
+            self.assertTrue(dup_data.get("skipped"))
+            self.assertEqual(dup_data.get("reason"), "already_synced")
+
+    def test_clipboard_normalization_and_hash(self):
+        norm1 = _svc_mod._normalize_clipboard_text("  hello \r\n world \r\n")
+        norm2 = _svc_mod._normalize_clipboard_text("hello \n world")
+        self.assertEqual(norm1, norm2)
+        self.assertEqual(_svc_mod._clipboard_hash("  test \r\n"), _svc_mod._clipboard_hash("test\n"))
+        _svc_mod.set_last_synced_clipboard("sync test\r\n")
+        self.assertTrue(_svc_mod.is_same_as_last_synced_clipboard("  sync test\n  "))
+
+    def test_atomic_write_json(self):
+        tmp = os.path.join(self.temp_dir, "test_atomic.json")
+        data = {"hello": "world", "num": 42}
+        ok = _svc_mod.atomic_write_json(tmp, data)
+        self.assertTrue(ok)
+        self.assertTrue(os.path.exists(tmp))
+        with open(tmp, "r", encoding="utf-8") as fp:
+            loaded = json.load(fp)
+        self.assertEqual(loaded, data)
+        # Overwrite test
+        data2 = {"hello": "universe", "active": True}
+        ok2 = _svc_mod.atomic_write_json(tmp, data2)
+        self.assertTrue(ok2)
+        with open(tmp, "r", encoding="utf-8") as fp:
+            loaded2 = json.load(fp)
+        self.assertEqual(loaded2, data2)
+
 
 class TestCodeFreshness(unittest.TestCase):
     """代码新鲜度自检的真实场景测试。
