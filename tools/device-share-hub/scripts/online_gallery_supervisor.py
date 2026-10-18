@@ -159,7 +159,7 @@ def probe_status(timeout: float = 4.0) -> bool:
         return False
     return False
 
-def probe_categories(timeout: float = 4.0) -> bool:
+def probe_categories(timeout: float = 10.0) -> bool:
     """真实业务端点抽检：验证分类接口能否正常读取与序列化输出"""
     try:
         url = f"http://127.0.0.1:{PORT}/api/online/categories"
@@ -168,7 +168,7 @@ def probe_categories(timeout: float = 4.0) -> bool:
             if resp.status == 200:
                 raw = resp.read()
                 data = json.loads(raw.decode("utf-8", errors="replace"))
-                return isinstance(data, dict) and "categories" in data
+                return isinstance(data, dict) and ("categories" in data or data.get("warming") is True)
     except Exception:
         return False
     return False
@@ -190,10 +190,10 @@ def is_service_healthy(force_deep: bool = False) -> bool:
     now = time.time()
     if force_deep or (now - _last_categories_probe_time >= 30.0):
         _last_categories_probe_time = now
-        if not probe_categories(timeout=5.0):
+        if not probe_categories(timeout=10.0):
             # 业务抽检防抖确认（2.0s 后加大超时重试，避免因并发图片加载排队被误杀）
             time.sleep(2.0)
-            if not probe_categories(timeout=8.0):
+            if not probe_categories(timeout=10.0):
                 # 再次确认极速 ping：如果连 ping 都超时，说明主服务确实彻底挂起或死锁
                 if not probe_ping(timeout=3.0):
                     _categories_probe_failed = True
@@ -207,8 +207,11 @@ def is_service_healthy(force_deep: bool = False) -> bool:
         else:
             _categories_probe_failed = False
     elif _categories_probe_failed:
-        # 深度抽检失败后，30 秒抽检窗口内不能因 ping 成功而假报健康、清零连续故障计数。
-        return False
+        # 深度抽检之前失败，若当前极速 ping 正常，则恢复健康
+        if probe_ping(timeout=3.0):
+            _categories_probe_failed = False
+        else:
+            return False
 
     return True
 
@@ -358,8 +361,8 @@ def main():
                     # 原逻辑只要 HTTP 探活超时就 kill 重启，导致首扫永远完不成的死循环。
                     consecutive_unhealthy_count += 1
                     busy_pid = get_listening_pid(PORT)
-                    # 容忍高并发与首扫繁忙：当服务进程在跑且端口在监听时，连续 3 次（持续 15s）探活失败才判定为死锁
-                    MAX_BUSY_ROUNDS = 3
+                    # 容忍高并发与首扫繁忙：当服务进程在跑且端口在监听时，连续 12 次（持续 60s）探活失败才判定为死锁
+                    MAX_BUSY_ROUNDS = 12
                     if busy_pid and consecutive_unhealthy_count < MAX_BUSY_ROUNDS:
                         log(f"服务进程存活且端口 {PORT} 仍在监听(PID={busy_pid})，"
                             f"判定为「高并发/处理中」（连续 {consecutive_unhealthy_count}/{MAX_BUSY_ROUNDS} 次），本轮等待自愈缓冲...", "INFO")

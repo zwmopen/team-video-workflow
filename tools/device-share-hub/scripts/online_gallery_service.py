@@ -534,7 +534,7 @@ GZIP_MIN_BYTES = 1024
 # 改成 30 秒后：命中即毫秒级返回。
 # 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 30 秒轮询一次，发现增删改就
 # scan(force=True) 主动作废缓存，所以放宽 TTL 至 300s 彻底消除浏览时的 6s 磁盘重扫锁死。
-SCAN_CACHE_TTL = 30.0
+SCAN_CACHE_TTL = 300.0
 # DSH-117：refresh=1（强制全盘扫描）的最小间隔。
 # 手机端下拉刷新连点、或多部手机同一秒一起下拉，会在几秒内叠 N 次 5~10 秒的全盘
 # 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
@@ -1614,6 +1614,12 @@ class WorkScanner:
         self._inspect_cache: Dict[Tuple[str, str, str], Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
         # 「文件名 -> 绝对路径」索引：兼容 iOS 旧契约 /api/online/image?path=<文件名>
         self._image_name_index: Optional[Dict[str, str]] = None
+        # DSH-WireCache: 预压缩内存快照（秒开级响应保障，0ms序列化）
+        self._wire_cat_raw: Optional[bytes] = None
+        self._wire_cat_gz: Optional[bytes] = None
+        self._wire_works_raw: Optional[bytes] = None
+        self._wire_works_gz: Optional[bytes] = None
+        self._wire_revision: int = -1
         # DSH-110：文件系统监听（轮询版，无第三方依赖）
         # - _watchdog_paths：上次轮询记录到的 (路径, mtime) 集合
         # - _watchdog_thread：daemon 线程，每 60 秒跑一次 _poll_diff()
@@ -1694,6 +1700,7 @@ class WorkScanner:
         """
         with self._lock:
             self._stage_cache.clear()
+        self.invalidate_wire_cache()
 
     def resolve_stage_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         """在三个阶段库（已发送0次 / _已发送1次 / _垃圾作品）里按 id 定位作品。"""
@@ -2064,6 +2071,71 @@ class WorkScanner:
             return len(cached)
         return 0
 
+    def invalidate_wire_cache(self) -> None:
+        """作废预压缩线缆快照，强制下次重新序列化"""
+        with self._scan_state_lock:
+            self._wire_revision = -1
+
+    def update_wire_cache(self, works: List[Dict[str, Any]], scan_revision: int) -> None:
+        """后台预压缩 categories 与全量 works 快照（0ms 极速下发）"""
+        try:
+            # 1. 纯净分类预压缩缓存
+            counts: Dict[str, int] = {}
+            for w in works:
+                dest = w.get("destination", "其他")
+                counts[dest] = counts.get(dest, 0) + 1
+            priority_topics = ["中秋", "国庆", "中秋国庆", "团建游戏"]
+            categories = []
+            seen_cats = set()
+            for topic in priority_topics:
+                if topic in counts and counts[topic] > 0:
+                    categories.append({"name": topic, "count": counts[topic]})
+                    seen_cats.add(topic)
+            dest_categories = []
+            for d, cnt in counts.items():
+                if d in seen_cats or d in ("其他", ""):
+                    continue
+                if cnt > 0:
+                    dest_categories.append({"name": d, "count": cnt})
+                    seen_cats.add(d)
+            dest_categories.sort(key=lambda c: -c["count"])
+            categories.extend(dest_categories)
+            if "其他" in counts and counts["其他"] > 0:
+                categories.append({"name": "其他", "count": counts["其他"]})
+
+            cat_resp = {
+                "ok": True,
+                "categories": categories,
+                "stages": [],
+                "total": len(works),
+                "scanRevision": scan_revision,
+            }
+            cat_raw = json.dumps(cat_resp, ensure_ascii=False).encode("utf-8")
+            cat_gz = gzip_bytes(cat_raw, 6)
+
+            # 2. 默认主列表预压缩缓存 (category=全部, sort=default)
+            filtered_all = list(works)
+            sort_online_work_entries(filtered_all, "default", "全部")
+            works_resp = {
+                "ok": True,
+                "category": "全部",
+                "total": len(filtered_all),
+                "scanRevision": scan_revision,
+                "viewState": get_gallery_view_state(),
+                "works": slim_works_for_wire(filtered_all)
+            }
+            works_raw = json.dumps(works_resp, ensure_ascii=False).encode("utf-8")
+            works_gz = gzip_bytes(works_raw, 6)
+
+            with self._scan_state_lock:
+                self._wire_cat_raw = cat_raw
+                self._wire_cat_gz = cat_gz
+                self._wire_works_raw = works_raw
+                self._wire_works_gz = works_gz
+                self._wire_revision = scan_revision
+        except Exception as e:
+            print(f"[DSH-WireCache] 预压缩缓存生成异常：{e!r}")
+
     def scan_throttled(self, force: bool = False) -> List[Dict[str, Any]]:
         """兼容现有 HTTP 调用方的快照入口。"""
         return self.scan_snapshot_throttled(force=force)[0]
@@ -2088,7 +2160,11 @@ class WorkScanner:
         with self._scan_state_lock:
             cached = self._cached_works
             cached_revision = self._cached_scan_revision
+            is_refreshing = self._scan_refreshing
         if not cached:
+            # 如果已有启动线程或后台线程正在扫描，绝不阻塞当前 HTTP 线程！
+            if is_refreshing:
+                return [], cached_revision
             # run_service() 在开始接收请求前预热缓存；此分支仅用于测试/异常冷启动。
             works = self.scan(force=force_allowed)
             with self._scan_state_lock:
@@ -2291,6 +2367,7 @@ class WorkScanner:
             # 挂在这里而不是缓存命中的提前返回路径上：清理要 stat 每一条，
             # 没必要在「读缓存」这种高频短路径上反复跑。
             self.prune_moved_works()
+            self.update_wire_cache(results, self._cached_scan_revision)
             return results
 
     # ==================== DSH-110：文件系统轮询监听 ====================
@@ -2629,12 +2706,36 @@ class WorkScanner:
 
         images.sort()
 
+        cache_key = (dir_path, stage_name, default_category)
+        cached_entry = self._inspect_cache.get(cache_key)
+
         def _f_stamp(p: str) -> Tuple[int, int]:
             try:
                 st = os.stat(p)
                 return (st.st_mtime_ns, st.st_size)
             except OSError:
                 return (0, 0)
+
+        # ⚡ 极速缓存短路径 (Fast Path)：
+        # 若已有检查缓存，且作品目录 mtime、manifest.json、作品标签.json 均未变动：
+        if cached_entry is not None:
+            cached_dir_stamp, cached_work, cached_slot_diag = cached_entry
+            dir_st_mtime = _f_stamp(dir_path)[0]
+            if (
+                default_count == cached_dir_stamp[0]
+                and dir_st_mtime == cached_dir_stamp[1]
+                and _f_stamp(os.path.join(dir_path, "manifest.json")) == cached_dir_stamp[5]
+                and _f_stamp(os.path.join(dir_path, "作品标签.json")) == cached_dir_stamp[4]
+            ):
+                txt_candidates = [f for f in files if f.lower().endswith(".txt")]
+                txt_stamps = tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in txt_candidates)
+                if txt_stamps == cached_dir_stamp[3] and tuple(images) == cached_dir_stamp[2]:
+                    # 若已有关联素材或无外部素材依赖，直接命中缓存，避免遍历外部上万个源素材文件
+                    if bool(cached_work.get("sourceImages")) or not cached_dir_stamp[6]:
+                        if cached_slot_diag.get("droppedCount"):
+                            _slot_guard_stat("worksAffected")
+                            _slot_guard_stat("slotsDropped", cached_slot_diag["droppedCount"])
+                        return dict(cached_work)
 
         # 原素材通常位于作品目录外。只用作品目录/manifest 的时间戳做缓存键，
         # 会把“扫描时原图尚未到位”的空 sourceImages 长期缓存，即使素材后来已存在。
@@ -3160,6 +3261,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     _phone_sync_last: Dict[str, float] = {}
     PHONE_SYNC_COOLDOWN = 300.0
 
+    def address_string(self):
+        # 彻底消除内网 DNS 反解造成的 9.5 秒网络雪崩与假死！
+        # BaseHTTPRequestHandler 默认会调用 socket.getfqdn(host)，在 Windows 局域网
+        # 且无内网 DNS 反解服务时，每次客户端请求都会阻塞 9.5 秒导致连接队列雪崩。
+        return str(self.client_address[0]) if self.client_address else "127.0.0.1"
+
     def log_message(self, format, *args):
         # 彻底静默 HTTP 高频请求日志（如大量缩略图拉取），杜绝控制台刷屏与I/O开销
         pass
@@ -3173,6 +3280,26 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_cors_headers()
         self.end_headers()
+
+    def send_precompressed(self, raw_bytes: bytes, gz_bytes: Optional[bytes] = None, status: int = 200):
+        """0ms 极速下发预压缩线缆快照（跳过 JSON 序列化与 Gzip 压缩）"""
+        use_gz = bool(gz_bytes and "gzip" in (self.headers.get("Accept-Encoding") or "").lower())
+        payload = gz_bytes if use_gz else raw_bytes
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            if use_gz:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(payload)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
+            pass
+        finally:
+            self.close_connection = True
 
     def send_json(self, status: int, data: Any, timing: Optional[Dict[str, Any]] = None):
         json_started = time.perf_counter()
@@ -3588,6 +3715,30 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             phase_started = time.perf_counter()
             works, scan_revision = self.scanner.scan_snapshot_throttled()
             route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
+
+            # ⚡ 预热中放行（防止手机或看门狗抽检超时）
+            with self.scanner._scan_state_lock:
+                is_warming = self.scanner._scan_refreshing and not works
+            if is_warming:
+                self.send_json(200, {
+                    "ok": True,
+                    "categories": [],
+                    "stages": [],
+                    "total": 0,
+                    "warming": True,
+                    "scanRevision": scan_revision,
+                }, timing=route_timing)
+                return
+
+            # ⚡ 预压缩线缆快照命中（0ms 极速下发）
+            with self.scanner._scan_state_lock:
+                wire_raw = self.scanner._wire_cat_raw
+                wire_gz = self.scanner._wire_cat_gz
+                wire_rev = self.scanner._wire_revision
+            if wire_rev == scan_revision and wire_raw is not None:
+                self.send_precompressed(wire_raw, wire_gz)
+                return
+
             phase_started = time.perf_counter()
             counts: Dict[str, int] = {}
             count_stage0 = 0
@@ -3698,10 +3849,45 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             works, scan_revision = self.scanner.scan_snapshot_throttled(force=force_refresh)
             route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
             phase_started = time.perf_counter()
+
+            # ⚡ 预热中保护（冷启动时非阻塞返回，避免卡死客户端）
+            with self.scanner._scan_state_lock:
+                is_warming = self.scanner._scan_refreshing and not works
+            if is_warming:
+                self.send_json(200, {
+                    "ok": True,
+                    "category": category,
+                    "total": 0,
+                    "warming": True,
+                    "scanRevision": scan_revision,
+                    "works": [],
+                }, timing=route_timing)
+                return
+
             tokens = [search_query] if is_path_search else (search_query.split() if search_query else [])
 
             # 手机打开在线相册（拉列表）也顺手回读一次本地分享次数
             self._maybe_background_phone_sync(self.client_address[0] if self.client_address else "")
+
+            # ⚡ 默认全量列表预压缩线缆快照命中（0ms 极速下发，跳过耗时的 JSON 序列化与 Gzip）
+            is_default_all_req = (
+                category in ("全部", "")
+                and not tokens
+                and not target_seasons
+                and not target_flows
+                and not target_tags
+                and sort_key == "default"
+                and not is_path_search
+                and not force_refresh
+            )
+            if is_default_all_req:
+                with self.scanner._scan_state_lock:
+                    wire_raw = self.scanner._wire_works_raw
+                    wire_gz = self.scanner._wire_works_gz
+                    wire_rev = self.scanner._wire_revision
+                if wire_rev == scan_revision and wire_raw is not None:
+                    self.send_precompressed(wire_raw, wire_gz)
+                    return
 
             filtered = []
             for w in works:
