@@ -15,6 +15,7 @@ _tmp*/
 # Logs
 *.log
 *.err
+*.lock
 
 # Video/audio/image assets are intentionally not stored in GitHub.
 *.mp4

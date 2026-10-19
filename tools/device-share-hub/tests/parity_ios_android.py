@@ -939,9 +939,9 @@ def main():
     # 每次 /api/online/status 都在全库重扫 —— 实测三次间隔 7 秒的请求分别耗时
     # 11.4 / 10.6 / 8.0 秒，手机端「正在连接电脑在线相册…」就是在这儿干等。
     # 实测证据（最直白）：改之前 `scan()` 紧接着 `scan()` 也要 5.24 秒；改之后 0.0000 秒。
-    # 修法：TTL 5.0 → SCAN_CACHE_TTL = 30.0；新鲜度交给 DSH-110 的 watchdog
+    # 修法：TTL 5.0 → SCAN_CACHE_TTL = 300.0；新鲜度交给 DSH-110 的 watchdog
     # （每 60 秒轮询，发现增删改就 scan(force=True) 主动作废），所以放宽 TTL 不会变旧。
-    a17_ttl_const = "SCAN_CACHE_TTL = 30.0" in service_src
+    a17_ttl_const = "SCAN_CACHE_TTL = 300.0" in service_src
     a17_ttl_used = ("now - self._last_scan_time < SCAN_CACHE_TTL" in service_src)
     # 老写法（写死 5.0）不许再出现在 scan 的缓存判据里
     a17_no_hardcoded = ("now - self._last_scan_time < 5.0" not in service_src)
@@ -1221,6 +1221,18 @@ def main():
         a25_overall,
         "norm=%s helper=%s logged=%s ios=%s both=%s"
         % (a25_norm, a25_helper, a25_logged, a25_ios, a25_both)))
+
+    # ── A26 两端剪贴板文案排版终极净化对等（防小红书/微信吞空行与粘连）（DSH-150） ──
+    a26_and_parser = "normalizeCopyTextForClipboard(" in and_code_all
+    a26_and_hook = "normalizeCopyTextForClipboard(text)" in and_code_all
+    a26_ios_parser = "normalizeCopyTextForClipboard(" in ios_code_all
+    a26_ios_content = "PlatformCopyParser.normalizeCopyTextForClipboard(" in ios_code_all
+    a26_overall = a26_and_parser and a26_and_hook and a26_ios_parser and a26_ios_content
+    results.append(check(
+        "A26 剪贴板文案终极净化两端对等（剔除协议标记/防吞空行/粘连）",
+        a26_overall,
+        "andParser=%s andHook=%s iosParser=%s iosContent=%s"
+        % (a26_and_parser, a26_and_hook, a26_ios_parser, a26_ios_content)))
 
     print()
     bad = results.count(False)

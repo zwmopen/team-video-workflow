@@ -260,12 +260,13 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
 
     @objc private func copyText() {
         let content = (try? String(contentsOf: work.textURL, encoding: .utf8)) ?? ""
-        UIPasteboard.general.string = content
+        let cleanedContent = PlatformCopyParser.normalizeCopyTextForClipboard(content)
+        UIPasteboard.general.string = cleanedContent
         if #available(iOS 10.0, *) {
             let feedback = UIImpactFeedbackGenerator(style: .medium)
             feedback.impactOccurred()
         }
-        showToast("✅ 文案已复制 (共 \(content.utf16.count) 字)")
+        showToast("✅ 文案已复制 (共 \(cleanedContent.utf16.count) 字)")
     }
 
 

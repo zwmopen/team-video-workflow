@@ -376,7 +376,7 @@ AUTHORIZED_DEVICES_LOCK = threading.Lock()
 def load_authorized_devices() -> Dict[str, Dict[str, Any]]:
     """从磁盘读取已授权设备列表。文件不存在或损坏返回空 dict，不抛。"""
     try:
-        with open(AUTHORIZED_DEVICES_FILE, "r", encoding="utf-8") as fp:
+        with open(AUTHORIZED_DEVICES_FILE, "r", encoding="utf-8-sig") as fp:
             data = json.load(fp)
         if isinstance(data, dict):
             return data
@@ -564,7 +564,7 @@ def get_gallery_view_state() -> Dict[str, Any]:
         state: Dict[str, Any] = {"viewMode": "grid", "updatedAt": 0, "updatedBy": "default"}
         try:
             if os.path.exists(_VIEW_STATE_FILE):
-                with open(_VIEW_STATE_FILE, "r", encoding="utf-8") as fp:
+                with open(_VIEW_STATE_FILE, "r", encoding="utf-8-sig") as fp:
                     loaded = json.load(fp)
                 if isinstance(loaded, dict) and loaded.get("viewMode") in VALID_VIEW_MODES:
                     state["viewMode"] = loaded["viewMode"]
@@ -1223,7 +1223,7 @@ def _read_local_update_manifest() -> Optional[Dict[str, Any]]:
     try:
         if not os.path.isfile(LOCAL_LATEST_JSON):
             return None
-        with open(LOCAL_LATEST_JSON, "r", encoding="utf-8") as fp:
+        with open(LOCAL_LATEST_JSON, "r", encoding="utf-8-sig") as fp:
             data = json.load(fp)
         if not isinstance(data, dict):
             return None
@@ -1483,6 +1483,20 @@ def extract_category_from_folder_name(folder_name: str) -> str:
     return cat
 
 
+def is_shelf_folder(name: str) -> bool:
+    """判定是否为标准成品货架目录，防止工作区/产线等非货架目录伪装成分类按钮或产出假作品。"""
+    if not name or name.startswith(".") or name.startswith("_"):
+        return False
+    for kw in ("产线", "制作", "暂存", "样本", "台账", "排产", "草稿", "工作区", "workspace", "pipeline", "draft", "backup", "cache"):
+        if kw in name:
+            return False
+    if name.endswith(("成品", "作品", "合集")):
+        return True
+    if name in ("综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
+        return True
+    return False
+
+
 
 DISK_THUMB_DIR = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "gallery_thumb_cache")
 try:
@@ -1500,7 +1514,7 @@ def read_garbage_meta(dir_path: str) -> Dict[str, Any]:
     qt = os.path.join(dir_path, "quality_tag.json")
     if os.path.exists(qt):
         try:
-            with open(qt, "r", encoding="utf-8", errors="ignore") as fp:
+            with open(qt, "r", encoding="utf-8-sig", errors="ignore") as fp:
                 data = json.load(fp)
             if isinstance(data, dict):
                 info["marked"] = bool(data.get("garbage"))
@@ -1513,7 +1527,7 @@ def read_garbage_meta(dir_path: str) -> Dict[str, Any]:
     mf = os.path.join(dir_path, "manifest.json")
     if os.path.exists(mf) and (not info["remark"] or not info["marked"]):
         try:
-            with open(mf, "r", encoding="utf-8", errors="ignore") as fp:
+            with open(mf, "r", encoding="utf-8-sig", errors="ignore") as fp:
                 data = json.load(fp)
             g = data.get("garbage") if isinstance(data, dict) else None
             if isinstance(g, dict):
@@ -1851,16 +1865,16 @@ class WorkScanner:
             src_phys = ""
             if pm:
                 sp = str(pm.get("sourcePath") or "").strip()
-                if sp and os.path.isfile(sp):
+                if sp and os.path.isfile(sp) and os.path.splitext(sp.lower())[1] in IMAGE_EXTENSIONS:
                     src_phys = sp
                 elif src_root and pm.get("sourceImage"):
                     cand = os.path.join(src_root, str(pm.get("sourceImage")).strip())
-                    if os.path.isfile(cand):
+                    if os.path.isfile(cand) and os.path.splitext(cand.lower())[1] in IMAGE_EXTENSIONS:
                         src_phys = cand
             elif idx < len(src_dir_imgs):
                 src_phys = src_dir_imgs[idx]
 
-            if src_phys:
+            if src_phys and os.path.splitext(src_phys.lower())[1] in IMAGE_EXTENSIONS:
                 token = f"__src__:{out_bn}"
                 source_images.append(token)
                 source_names.append(os.path.basename(src_phys))
@@ -1901,7 +1915,7 @@ class WorkScanner:
             mf = os.path.join(work_path, "manifest.json")
             if os.path.isfile(mf):
                 try:
-                    with open(mf, "r", encoding="utf-8", errors="ignore") as fp:
+                    with open(mf, "r", encoding="utf-8-sig", errors="ignore") as fp:
                         mdata = json.load(fp)
                     _, _, dyn_lookup, _, _ = self._resolve_source_compare_info(
                         work_path, work.get("images") or [], mdata
@@ -2342,8 +2356,8 @@ class WorkScanner:
             if not force and self._cached_works and (now - self._last_scan_time < SCAN_CACHE_TTL):
                 return self._cached_works
 
-            # 自愈扫描：自动清理失效死链软链接 (DSH Junction Healer)，每 300s 触发一次
-            if (now - getattr(self, "_last_healer_time", 0) > 300):
+            # 自愈扫描：自动清理失效死链软链接 (DSH Junction Healer)，仅 force 或间隔 >300s 触发
+            if force or (now - getattr(self, "_last_healer_time", 0) > 300):
                 self._last_healer_time = now
                 try:
                     prune_dangling_junctions(self.root)
@@ -2387,6 +2401,10 @@ class WorkScanner:
                     if direct_work["id"] not in seen_ids:
                         seen_ids.add(direct_work["id"])
                         results.append(direct_work)
+                    continue
+
+                # 货架目录安全守卫：确保非货架/工作区目录（如未以_命名的产线/草稿/临时目录）绝对不进入货架扫描
+                if not is_shelf_folder(entry):
                     continue
 
                 # 扫描各分类目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
@@ -2790,7 +2808,7 @@ class WorkScanner:
         manifest_data: Dict[str, Any] = {}
         if os.path.exists(manifest_file):
             try:
-                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                with open(manifest_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                     loaded_manifest = json.load(fp)
                 if isinstance(loaded_manifest, dict):
                     manifest_data = loaded_manifest
@@ -2824,7 +2842,7 @@ class WorkScanner:
                 txt_stamps = tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in txt_candidates)
                 if txt_stamps == cached_dir_stamp[3] and tuple(images) == cached_dir_stamp[2]:
                     # 若已有关联素材或无外部素材依赖，直接命中缓存，避免遍历外部上万个源素材文件
-                    if bool(cached_work.get("sourceImages")) or not cached_dir_stamp[6]:
+                    if cached_work.get("hasSourceCompare") or not cached_dir_stamp[6]:
                         if cached_slot_diag.get("droppedCount"):
                             _slot_guard_stat("worksAffected")
                             _slot_guard_stat("slotsDropped", cached_slot_diag["droppedCount"])
@@ -2956,7 +2974,7 @@ class WorkScanner:
         tag_data = {}
         if os.path.exists(tag_file):
             try:
-                with open(tag_file, "r", encoding="utf-8", errors="ignore") as fp:
+                with open(tag_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                     tag_data = json.load(fp)
             except Exception:
                 pass
@@ -3138,12 +3156,6 @@ def _parse_manifest_timestamp(value: Any, field_name: str = "") -> Optional[floa
 
 def _extract_work_timestamp(folder_name: str, dir_path: str, manifest_data: Dict[str, Any]) -> float:
     """Get stable production time: folder-local timestamp, manifest time, then folder mtime."""
-    # A finished suite is ordered by physical archive completion, not job creation.
-    if isinstance(manifest_data, dict):
-        for field_name in ("archivedAt", "producedAt", "completedAt", "completedAtUtc"):
-            timestamp = _parse_manifest_timestamp(manifest_data.get(field_name), field_name)
-            if timestamp is not None:
-                return timestamp
     if folder_name:
         match = re.search(r"(\d{8})[_-](\d{6}|\d{4})(?!\d)", folder_name)
         if match:
@@ -3162,7 +3174,7 @@ def _extract_work_timestamp(folder_name: str, dir_path: str, manifest_data: Dict
             except (OverflowError, OSError, ValueError):
                 pass
     if isinstance(manifest_data, dict):
-        for field_name in ("producedAt", "completedAt", "completedAtUtc", "createdAt", "created_at"):
+        for field_name in ("archivedAt", "producedAt", "completedAt", "completedAtUtc", "createdAt", "created_at"):
             timestamp = _parse_manifest_timestamp(manifest_data.get(field_name), field_name)
             if timestamp is not None:
                 return timestamp
@@ -4341,7 +4353,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         try:
             manifest_file = os.path.join(target_dest, "manifest.json")
             if os.path.exists(manifest_file):
-                with open(manifest_file, "r", encoding="utf-8") as fp:
+                with open(manifest_file, "r", encoding="utf-8-sig") as fp:
                     manifest = json.load(fp)
                 manifest["garbage"] = {
                     "marked": True,
@@ -4429,7 +4441,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         manifest_path = os.path.join(real_dir, "manifest.json")
         if os.path.exists(manifest_path):
             try:
-                with open(manifest_path, "r", encoding="utf-8") as fp:
+                with open(manifest_path, "r", encoding="utf-8-sig") as fp:
                     mdata = json.load(fp)
                 if "images" in mdata and isinstance(mdata["images"], list):
                     new_m_imgs = []
@@ -4566,7 +4578,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         tag_data = {}
         if os.path.exists(tag_file):
             try:
-                with open(tag_file, "r", encoding="utf-8") as fp:
+                with open(tag_file, "r", encoding="utf-8-sig") as fp:
                     tag_data = json.load(fp)
             except Exception:
                 pass
@@ -4600,7 +4612,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         manifest_file = os.path.join(dir_path, "manifest.json")
         if os.path.exists(manifest_file):
             try:
-                with open(manifest_file, "r", encoding="utf-8") as mfp:
+                with open(manifest_file, "r", encoding="utf-8-sig") as mfp:
                     m_data = json.load(mfp)
                 m_data["distribution"] = dist
                 m_data["used"] = True
@@ -4626,12 +4638,21 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         try:
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-            header_needed = not os.path.exists(log_file)
-            with open(log_file, "a", encoding="utf-8-sig") as fp:
+            clean_device = str(device_name or "").replace('\r', ' ').replace('\n', ' ').strip()
+            with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
+                writer = csv.writer(fp)
                 if header_needed:
-                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注\n")
-                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},"
-                         f"{src_path},{dest_path},{use_count},{action_type},{remark}\n")
+                    writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型", "备注"])
+                writer.writerow([
+                    time.strftime("%Y-%m-%d %H:%M:%S"),
+                    clean_device,
+                    work_id,
+                    src_path,
+                    dest_path,
+                    use_count,
+                    action_type,
+                    remark,
+                ])
         except Exception:
             pass
 
@@ -4688,7 +4709,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         tag_file = os.path.join(target_dest, "作品标签.json")
         if os.path.exists(tag_file):
             try:
-                with open(tag_file, "r", encoding="utf-8", errors="ignore") as fp:
+                with open(tag_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                     tag = json.load(fp)
                 if isinstance(tag, dict):
                     dist = tag.get("distribution")
@@ -4715,7 +4736,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             try:
                 manifest = {}
                 if os.path.exists(manifest_file):
-                    with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    with open(manifest_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                         manifest = json.load(fp)
                 if isinstance(manifest, dict):
                     old = manifest.pop("garbage", None)
@@ -4748,7 +4769,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             try:
                 quality: Dict[str, Any] = {}
                 if os.path.exists(quality_file):
-                    with open(quality_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    with open(quality_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                         loaded = json.load(fp)
                     if isinstance(loaded, dict):
                         quality = loaded
@@ -4790,7 +4811,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         try:
             quality: Dict[str, Any] = {}
             if os.path.exists(quality_file):
-                with open(quality_file, "r", encoding="utf-8", errors="ignore") as fp:
+                with open(quality_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                     loaded = json.load(fp)
                 if isinstance(loaded, dict):
                     quality = loaded
@@ -4809,7 +4830,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         manifest_file = os.path.join(dir_path, "manifest.json")
         if os.path.exists(manifest_file):
             try:
-                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                with open(manifest_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
                     manifest = json.load(fp)
                 if isinstance(manifest, dict):
                     g = manifest.get("garbage")
@@ -5009,7 +5030,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 fpath = os.path.join(w_dir, fname)
                 if os.path.isfile(fpath):
                     try:
-                        with open(fpath, "r", encoding="utf-8", errors="ignore") as fp:
+                        with open(fpath, "r", encoding="utf-8-sig", errors="ignore") as fp:
                             mdata = json.load(fp)
                         if isinstance(mdata, dict):
                             mdata["isStarred"] = starred
@@ -5108,7 +5129,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             tag_data = {}
             if os.path.exists(tag_file):
                 try:
-                    with open(tag_file, "r", encoding="utf-8") as fp:
+                    with open(tag_file, "r", encoding="utf-8-sig") as fp:
                         tag_data = json.load(fp)
                 except Exception:
                     pass
@@ -5166,7 +5187,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             manifest_file = os.path.join(dir_path, "manifest.json")
             if os.path.exists(manifest_file):
                 try:
-                    with open(manifest_file, "r", encoding="utf-8") as mfp:
+                    with open(manifest_file, "r", encoding="utf-8-sig") as mfp:
                         m_data = json.load(mfp)
                     m_data["distribution"] = dist
                     m_data["used"] = True
@@ -5271,7 +5292,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             tag_file = os.path.join(dir_path, "作品标签.json")
             if os.path.exists(tag_file):
                 try:
-                    with open(tag_file, "r", encoding="utf-8") as fp:
+                    with open(tag_file, "r", encoding="utf-8-sig") as fp:
                         tag_data = json.load(fp)
                     if "distribution" in tag_data and isinstance(tag_data["distribution"], dict):
                         tag_data["distribution"]["useCount"] = 0
@@ -5288,7 +5309,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             manifest_file = os.path.join(dir_path, "manifest.json")
             if os.path.exists(manifest_file):
                 try:
-                    with open(manifest_file, "r", encoding="utf-8") as fp:
+                    with open(manifest_file, "r", encoding="utf-8-sig") as fp:
                         manifest = json.load(fp)
                     if isinstance(manifest, dict):
                         manifest["useCount"] = 0
@@ -5599,7 +5620,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             try:
                 if os.path.exists(copy_file):
                     shutil.copy2(copy_file, copy_file + ".bak")
-                    with open(copy_file, "r", encoding="utf-8") as fp:
+                    with open(copy_file, "r", encoding="utf-8-sig") as fp:
                         orig_text = fp.read()
                     final_text_to_write = splice_platform_copy(orig_text, version_key, updated_copy)
             except Exception as e:
@@ -5627,7 +5648,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             tag_data = {}
             if os.path.exists(tag_file):
                 try:
-                    with open(tag_file, "r", encoding="utf-8") as fp:
+                    with open(tag_file, "r", encoding="utf-8-sig") as fp:
                         tag_data = json.load(fp)
                 except Exception:
                     tag_data = {}
@@ -5777,7 +5798,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_error(503, "share.html not deployed")
             return
         try:
-            with open(share_path, "r", encoding="utf-8") as fp:
+            with open(share_path, "r", encoding="utf-8-sig") as fp:
                 html = fp.read()
         except OSError:
             self.send_error(500, "share.html read failed")

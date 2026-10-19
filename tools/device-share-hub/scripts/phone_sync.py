@@ -512,7 +512,7 @@ def write_count_back(work_path, new_count, meta=None):
     tag_file = os.path.join(work_path, "作品标签.json")
     if os.path.exists(tag_file):
         try:
-            with open(tag_file, "r", encoding="utf-8") as fp:
+            with open(tag_file, "r", encoding="utf-8-sig") as fp:
                 tag_data = json.load(fp)
         except Exception as e:
             return False, None, f"作品标签.json 解析失败，已跳过（绝不覆盖）：{e}"
@@ -541,7 +541,7 @@ def write_count_back(work_path, new_count, meta=None):
     manifest_file = os.path.join(work_path, "manifest.json")
     if os.path.exists(manifest_file):
         try:
-            with open(manifest_file, "r", encoding="utf-8") as fp:
+            with open(manifest_file, "r", encoding="utf-8-sig") as fp:
                 manifest = json.load(fp)
         except Exception as e:
             # 标签已写成功的话也算成功，只是 manifest 跳过

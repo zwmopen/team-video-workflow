@@ -6745,14 +6745,19 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
+    public static String normalizeCopyTextForClipboard(String text) {
+        return PlatformCopyParser.normalizeCopyTextForClipboard(text);
+    }
+
     private void copyToClipboard(String label, String text) {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        if (clipboard != null && text != null) {
-            ClipData clip = ClipData.newPlainText(label, text);
+        String cleaned = normalizeCopyTextForClipboard(text);
+        if (clipboard != null && cleaned != null) {
+            ClipData clip = ClipData.newPlainText(label, cleaned);
             clipboard.setPrimaryClip(clip);
         }
-        if (text != null && !text.isEmpty() && OnlineService.isClipboardSyncEnabled(this)) {
-            onlineClient.syncClipboard(text);
+        if (cleaned != null && !cleaned.isEmpty() && OnlineService.isClipboardSyncEnabled(this)) {
+            onlineClient.syncClipboard(cleaned);
         }
     }
 

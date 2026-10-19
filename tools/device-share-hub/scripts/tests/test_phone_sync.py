@@ -142,7 +142,8 @@ class FakePhone:
 # ────────────────────────────────────────────────────────────────────────
 # 单元用例
 # ────────────────────────────────────────────────────────────────────────
-def test_only_increase_never_decrease(tmp):
+def test_only_increase_never_decrease(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T1] 只增不减：手机 0 / 电脑 1 → 必须不写")
     d = make_work(tmp, "W_onlyincrease", use_count=1)
     before = snapshot(d)
@@ -159,7 +160,8 @@ def test_only_increase_never_decrease(tmp):
     check(snapshot(d) == before, "目录快照未变（没碰任何文件）")
 
 
-def test_normal_bump(tmp):
+def test_normal_bump(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T2] 正常补记：手机 2 / 电脑 0 → 两个元数据文件都写 2")
     d = make_work(tmp, "W_bump", use_count=0)
     rep = ps.sync_phone_counts(
@@ -176,7 +178,8 @@ def test_normal_bump(tmp):
     check(man["distribution"]["useCount"] == 2, "manifest.distribution.useCount == 2")
 
 
-def test_dry_run(tmp):
+def test_dry_run(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T3] dryRun：报告要算出来，磁盘不能动")
     d = make_work(tmp, "W_dry", use_count=0)
     before = snapshot(d)
@@ -191,7 +194,8 @@ def test_dry_run(tmp):
     check(snapshot(d) == before, "目录快照未变")
 
 
-def test_bad_json_not_overwritten(tmp):
+def test_bad_json_not_overwritten(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T4] 坏 JSON：必须跳过，且原文件原样保留")
     d = make_work(tmp, "W_badjson", use_count=0, bad_tag=True)
     raw_before = read_text(os.path.join(d, "作品标签.json"))
@@ -206,7 +210,8 @@ def test_bad_json_not_overwritten(tmp):
           "坏文件内容一字未改（没被覆盖成半截）")
 
 
-def test_missing_dir(tmp):
+def test_missing_dir(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T5] 目录不存在：跳过并报告，不抛异常")
     rep = ps.sync_phone_counts(
         {"W_gone": {"id": "W_gone", "path": os.path.join(tmp, "不存在的目录"), "useCount": 0}},
@@ -217,7 +222,8 @@ def test_missing_dir(tmp):
     check("不存在" in rep["skipped"][0]["reason"], "原因说明目录不存在")
 
 
-def test_no_file_move(tmp):
+def test_no_file_move(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T6] 只动数字不动文件：图片与文案文件的 mtime 必须原封不动")
     d = make_work(tmp, "W_nomove", use_count=0)
     before = snapshot(d)
@@ -233,7 +239,8 @@ def test_no_file_move(tmp):
     check(before["文案.txt"] == after["文案.txt"], "文案.txt 的 size/mtime 未变")
 
 
-def test_normalized_match(tmp):
+def test_normalized_match(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T7] 归一化配对：[转] 后缀差异要能认出来")
     d = make_work(tmp, "20260903_083549_桐庐夏日团建方案_7张图[转]", use_count=0)
     rep = ps.sync_phone_counts(
@@ -246,7 +253,8 @@ def test_normalized_match(tmp):
     check(rep["matchedCount"] == 1 and rep["appliedCount"] == 1, "跨端叫法差异配对成功并回写")
 
 
-def test_ambiguous_dropped(tmp):
+def test_ambiguous_dropped(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T8] 配对歧义：归一化后电脑端有两个候选 → 放弃，不串号")
     a = make_work(tmp, "同名作品", use_count=0)
     b = make_work(tmp, "同名作品[转]", use_count=0)
@@ -262,7 +270,8 @@ def test_ambiguous_dropped(tmp):
     check(rep["unmatchedPhoneCount"] == 1, "歧义作品计入未配对")
 
 
-def test_unmatched_reported(tmp):
+def test_unmatched_reported(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T9] 手机端独有作品（飞书直收）要被完整报告出来")
     d = make_work(tmp, "W_have", use_count=0)
     rep = ps.sync_phone_counts(
@@ -278,7 +287,8 @@ def test_unmatched_reported(tmp):
     check(u["id"] == "lark-1" and u["shareCount"] == 4, "未配对条目带 id 与次数，可人工核对")
 
 
-def test_audit_log(tmp):
+def test_audit_log(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T10] 审计日志：每次回写都要留下 谁/哪个作品/从几次到几次")
     logdir = os.path.join(tmp, "logs")
     d = make_work(tmp, "W_log", use_count=0)
@@ -294,7 +304,8 @@ def test_audit_log(tmp):
           "日志含 作品ID / 手机 / 原次数 0 → 回读次数 2")
 
 
-def test_end_to_end_with_fake_phone(tmp):
+def test_end_to_end_with_fake_phone(tmp_path):
+    tmp = str(tmp_path)
     print("\n[T11] 端到端：假手机 HTTP → 拉 /v2/works → 回写")
     phone = FakePhone()
     try:

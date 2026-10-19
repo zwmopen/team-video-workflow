@@ -1651,10 +1651,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             showError("⚠️ 该作品文案缺失（空壳作品），已阻止分发")
             return
         }
-        UIPasteboard.general.string = textToCopy
+        let cleanedText = PlatformCopyParser.normalizeCopyTextForClipboard(textToCopy)
+        UIPasteboard.general.string = cleanedText
         showToast("已复制：\(item.buttonLabel)")
         if ClipboardSyncPreferences.isEnabled {
-            OnlineGalleryClient.shared.syncClipboard(textToCopy)
+            OnlineGalleryClient.shared.syncClipboard(cleanedText)
         }
 
         // ==================== DSH-130 & DSH-137: 本地持久化与 0ms 乐观 UI 更新与就地置顶 ====================
@@ -2787,7 +2788,8 @@ private final class CopyPreviewViewController: UIViewController, UITextViewDeleg
 
     /// 复制全文：**不分享、不计使用次数**（Android `setNeutralButton` 同语义）。
     @objc private func copyAllTapped() {
-        let textToCopy = textView.text ?? bodyText
+        let rawText = textView.text ?? bodyText
+        let textToCopy = PlatformCopyParser.normalizeCopyTextForClipboard(rawText)
         UIPasteboard.general.string = textToCopy
         showToast("已复制 \(versionLabel) 全文 (\(textToCopy.utf16.count)字)")
         if ClipboardSyncPreferences.isEnabled {
@@ -2822,7 +2824,8 @@ private final class CopyPreviewViewController: UIViewController, UITextViewDeleg
 
     /// 前往使用：复制 + 关闭 + 交回外层唤起分享（有副作用，与长按预览的只读语义严格分开）。
     @objc private func useTapped() {
-        let textToCopy = textView.text ?? bodyText
+        let rawText = textView.text ?? bodyText
+        let textToCopy = PlatformCopyParser.normalizeCopyTextForClipboard(rawText)
         UIPasteboard.general.string = textToCopy
         if ClipboardSyncPreferences.isEnabled {
             OnlineGalleryClient.shared.syncClipboard(textToCopy)

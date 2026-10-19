@@ -352,4 +352,19 @@ public final class PlatformCopyParserTest {
         assertTrue(PlatformCopyParser.isPlatformOrVersionDispatched("红书大纲", "xhs2", emptyLocal, outlineUsed, java.util.Collections.emptyList()));
         assertFalse(PlatformCopyParser.isPlatformOrVersionDispatched("HR决策版", "hr", emptyLocal, outlineUsed, java.util.Collections.emptyList()));
     }
+
+    @Test
+    public void testNormalizeCopyTextForClipboard() {
+        String glued = "第一行\u2800第二行";
+        String normGlued = PlatformCopyParser.normalizeCopyTextForClipboard(glued);
+        assertEquals("第一行\n\u2800\n第二行", normGlued);
+
+        String multiNewlines = "标题\n\n\n正文";
+        String normNewlines = PlatformCopyParser.normalizeCopyTextForClipboard(multiNewlines);
+        assertEquals("标题\n\u2800\n正文", normNewlines);
+
+        String standard = "标准段落1\n\u2800\n标准段落2";
+        String normStandard = PlatformCopyParser.normalizeCopyTextForClipboard(standard);
+        assertEquals(standard, normStandard);
+    }
 }

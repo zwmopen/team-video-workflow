@@ -421,4 +421,23 @@ final class PlatformCopyParser {
         }
         return false;
     }
+
+    /**
+     * 统一文案剪贴板排版清洗：防止移动端复制粘贴到小红书/微信后吞空行或单行粘连。
+     */
+    public static String normalizeCopyTextForClipboard(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        String formatted = text.replace("\r\n", "\n").replace("\r", "\n");
+
+        // 1. 如果包含内联盲文空格 \u2800 却缺少物理换行（单行粘连病灶），展开为真实换行
+        formatted = formatted.replaceAll("(?<!\n)\u2800", "\n\u2800");
+        formatted = formatted.replaceAll("\u2800(?!\n)", "\u2800\n");
+
+        // 2. 将连续纯回车（如 \n\n+）转换为小红书防吞空行 \n⠀\n
+        formatted = formatted.replaceAll("\n([ \t\u2800]*\n)+", "\n\u2800\n");
+
+        return formatted.trim();
+    }
 }

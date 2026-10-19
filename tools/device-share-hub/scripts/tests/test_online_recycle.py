@@ -24,7 +24,8 @@ DEFAULT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成�
 
 STAGE0 = "已发送0次（抖音小红书可发）"
 STAGE1 = "_已发送1次（微信公众号可发）"
-GARBAGE = "_垃圾作品（后续参考分析）"
+GARBAGE = "_垃圾作品样本"
+RESTORE_SHELF = "综合与其它城市"
 
 FIX_PREFIX = "ZZ_回收站回归测试"
 FIX_GARBAGE = FIX_PREFIX + "_垃圾"
@@ -120,9 +121,9 @@ def make_album_fixture(root, work_name, use_count=0):
 
 
 def cleanup(root):
-    """删掉所有回归测试夹具（含恢复后落到「已发送0次」的副本）。"""
+    """删掉所有回归测试夹具（含恢复后落到「已发送0次」或「综合与其它城市」的副本）。"""
     removed = []
-    for stage_folder in (STAGE0, STAGE1, GARBAGE):
+    for stage_folder in (STAGE0, STAGE1, GARBAGE, "_垃圾作品（后续参考分析）", RESTORE_SHELF):
         base = os.path.join(root, stage_folder)
         if not os.path.isdir(base):
             continue
@@ -215,8 +216,8 @@ def run(base=DEFAULT_BASE, root=DEFAULT_ROOT, verbose=True):
         log("[3] 垃圾 Tab「恢复」")
         status, data = api.call("/api/online/restore", {"workId": FIX_GARBAGE, "device": "regression-test"})
         check(status == 200 and data.get("ok"), "恢复接口返回 ok")
-        restored = os.path.join(root, STAGE0, FIX_GARBAGE)
-        check(os.path.isdir(restored), "作品已物理移入「已发送0次」")
+        restored = os.path.join(root, RESTORE_SHELF, FIX_GARBAGE)
+        check(os.path.isdir(restored), "作品已物理移入「%s」" % RESTORE_SHELF)
         check(not os.path.isdir(os.path.join(root, GARBAGE, FIX_GARBAGE)), "已从垃圾库移出")
         quality = os.path.join(restored, "quality_tag.json")
         if os.path.exists(quality):
@@ -247,8 +248,8 @@ def run(base=DEFAULT_BASE, root=DEFAULT_ROOT, verbose=True):
         log("[5] 已使用 Tab「恢复」")
         status, data = api.call("/api/online/restore", {"workId": FIX_SENT, "device": "regression-test"})
         check(status == 200 and data.get("ok"), "恢复接口返回 ok")
-        moved = os.path.join(root, STAGE0, FIX_SENT)
-        check(os.path.isdir(moved), "作品已物理移入「已发送0次」")
+        moved = os.path.join(root, RESTORE_SHELF, FIX_SENT)
+        check(os.path.isdir(moved), "作品已物理移入「%s」" % RESTORE_SHELF)
         with open(os.path.join(moved, "作品标签.json"), encoding="utf-8") as fp:
             dist = json.load(fp).get("distribution", {})
         check(int(dist.get("useCount", -1)) == 0, "使用次数归零")
