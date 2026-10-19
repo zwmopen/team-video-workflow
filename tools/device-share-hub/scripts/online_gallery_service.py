@@ -1570,6 +1570,87 @@ def scan_errors() -> Dict[str, Any]:
     return {"count": len(items), "recent": items[-10:]}
 
 
+def sort_work_images(images: List[str], manifest_data: Optional[Dict[str, Any]] = None) -> List[str]:
+    """智能对作品图片进行语义排序：
+    1. 优先对齐 manifest.json 中显式声明的 pageMap / pages 顺序；
+    2. 语义与自然数字排序：封面/cover 永远置顶为第 1 张（P1），
+       数字（P1..P10、内页1..内页10、01..10）按真实自然数大小排序，
+       彻底根除 Unicode '内' < '封' 导致封面被甩到末尾的缺陷。
+    """
+    if not images or len(images) <= 1:
+        return images
+
+    if isinstance(manifest_data, dict):
+        # 1. 尝试 pageMap
+        page_map = manifest_data.get("pageMap")
+        if isinstance(page_map, list) and page_map:
+            pm_order: Dict[str, int] = {}
+            for idx, item in enumerate(page_map):
+                if isinstance(item, dict):
+                    out_name = os.path.basename(
+                        str(item.get("output") or item.get("outputName") or item.get("path") or "").strip().replace("\\", "/")
+                    )
+                    if out_name and out_name not in pm_order:
+                        pm_order[out_name] = idx
+            if pm_order:
+                def _pm_key(path: str) -> Tuple[int, int, str]:
+                    bn = os.path.basename(path.replace("\\", "/"))
+                    return (0 if bn in pm_order else 1, pm_order.get(bn, 9999), bn)
+                return sorted(images, key=_pm_key)
+
+        # 2. 尝试 pages
+        pages = manifest_data.get("pages")
+        if isinstance(pages, list) and pages:
+            pg_order: Dict[str, int] = {}
+            for idx, item in enumerate(pages):
+                if isinstance(item, dict):
+                    out_name = os.path.basename(
+                        str(item.get("path") or item.get("file") or item.get("output") or "").strip().replace("\\", "/")
+                    )
+                    if out_name and out_name not in pg_order:
+                        pg_order[out_name] = idx
+            if pg_order:
+                def _pg_key(path: str) -> Tuple[int, int, str]:
+                    bn = os.path.basename(path.replace("\\", "/"))
+                    return (0 if bn in pg_order else 1, pg_order.get(bn, 9999), bn)
+                return sorted(images, key=_pg_key)
+
+    # 3. 语义与自然数字智能排序
+    def _smart_key(path: str) -> Tuple[int, int, str]:
+        bn = os.path.basename(path.replace("\\", "/"))
+        name, _ = os.path.splitext(bn)
+        lower_name = name.lower()
+
+        # 封面无条件置顶
+        if "封面" in name or "cover" in lower_name:
+            m = re.search(r'[pP](\d+)', name)
+            p_num = int(m.group(1)) if m else 0
+            return (0, p_num, bn)
+
+        # P1, P2 ... P10 ...
+        m = re.match(r'^[pP](\d+)', name)
+        if m:
+            return (1, int(m.group(1)), bn)
+
+        # 内页1, 内页2 ...
+        m = re.search(r'内页(\d+)', name)
+        if m:
+            return (2, int(m.group(1)), bn)
+
+        # 纯数字序号 1, 2, 01 ...
+        m = re.match(r'^(\d+)', name)
+        if m:
+            return (3, int(m.group(1)), bn)
+
+        # 封底放最后
+        if "封底" in name or "backcover" in lower_name:
+            return (5, 0, bn)
+
+        return (4, 0, bn)
+
+    return sorted(images, key=_smart_key)
+
+
 class WorkScanner:
     """负责扫描成品库「可发布」作品与元数据。
 
@@ -2704,7 +2785,19 @@ class WorkScanner:
         if not images:
             return None
 
-        images.sort()
+        # 提前载入 manifest.json，用于精准对齐 pageMap 声明顺序与智能排序
+        manifest_file = os.path.join(dir_path, "manifest.json")
+        manifest_data: Dict[str, Any] = {}
+        if os.path.exists(manifest_file):
+            try:
+                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    loaded_manifest = json.load(fp)
+                if isinstance(loaded_manifest, dict):
+                    manifest_data = loaded_manifest
+            except Exception:
+                pass
+
+        images = sort_work_images(images, manifest_data)
 
         cache_key = (dir_path, stage_name, default_category)
         cached_entry = self._inspect_cache.get(cache_key)
@@ -2739,17 +2832,6 @@ class WorkScanner:
 
         # 原素材通常位于作品目录外。只用作品目录/manifest 的时间戳做缓存键，
         # 会把“扫描时原图尚未到位”的空 sourceImages 长期缓存，即使素材后来已存在。
-        manifest_file = os.path.join(dir_path, "manifest.json")
-        manifest_data: Dict[str, Any] = {}
-        if os.path.exists(manifest_file):
-            try:
-                with open(manifest_file, "r", encoding="utf-8", errors="ignore") as fp:
-                    loaded_manifest = json.load(fp)
-                if isinstance(loaded_manifest, dict):
-                    manifest_data = loaded_manifest
-            except Exception:
-                pass
-
         source_root = str(
             manifest_data.get("sourceMaterialPath")
             or manifest_data.get("rawMaterialPath")
@@ -2909,16 +2991,18 @@ class WorkScanner:
         else:
             destination = detect_destination(folder_name, dir_path)
 
-        # 优雅标题清洗：剥离时间戳与机器流水线前缀，让手机端直显方案名
-        clean_title = folder_name
-        clean_title = re.sub(r'^\d{8}[_\-]\d{6}[_\-]?', '', clean_title)
-        clean_title = re.sub(r'^\d{8}[_\-]?', '', clean_title)
-        clean_title = re.sub(r'^(网页CDP|CodexAPI|Codex|CDP)[_\-]?', '', clean_title)
-        clean_title = re.sub(r'^[（\(\[【_\-\s]+', '', clean_title)
-        clean_title = re.sub(r'[\)\]】_\-\s]+$', '', clean_title)
-        clean_title = re.sub(r'[\(（]?_{0,3}COPY_FORMAT_\d+_{0,3}[\)）]?', '', clean_title)
-        clean_title = re.sub(r'<{1,3}COPY_FORMAT:\d+>{1,3}', '', clean_title)
-        clean_title = clean_title.replace("[转]", "").strip()
+        # 优雅标题清洗：优先读取 manifest 中显式声明的 displayTitle，若无则剥离时间戳与机器流水线前缀
+        clean_title = str(manifest_data.get("displayTitle") or manifest_data.get("title") or "").strip()
+        if not clean_title or clean_title == folder_name:
+            clean_title = folder_name
+            clean_title = re.sub(r'^\d{8}[_\-]\d{6}[_\-]?', '', clean_title)
+            clean_title = re.sub(r'^\d{8}[_\-]?', '', clean_title)
+            clean_title = re.sub(r'^(网页CDP|CodexAPI|Codex|CDP|GPT\s*[a-zA-Z0-9]*)[_\-\s]?', '', clean_title, flags=re.I)
+            clean_title = re.sub(r'^[（\(\[【_\-\s]+', '', clean_title)
+            clean_title = re.sub(r'[\)\]】_\-\s]+$', '', clean_title)
+            clean_title = re.sub(r'[\(（]?_{0,3}COPY_FORMAT_\d+_{0,3}[\)）]?', '', clean_title)
+            clean_title = re.sub(r'<{1,3}COPY_FORMAT:\d+>{1,3}', '', clean_title)
+            clean_title = clean_title.replace("[转]", "").strip()
         if not clean_title:
             clean_title = folder_name
 
@@ -3054,12 +3138,18 @@ def _parse_manifest_timestamp(value: Any, field_name: str = "") -> Optional[floa
 
 def _extract_work_timestamp(folder_name: str, dir_path: str, manifest_data: Dict[str, Any]) -> float:
     """Get stable production time: folder-local timestamp, manifest time, then folder mtime."""
+    # A finished suite is ordered by physical archive completion, not job creation.
+    if isinstance(manifest_data, dict):
+        for field_name in ("archivedAt", "producedAt", "completedAt", "completedAtUtc"):
+            timestamp = _parse_manifest_timestamp(manifest_data.get(field_name), field_name)
+            if timestamp is not None:
+                return timestamp
     if folder_name:
-        match = re.search(r"(\d{8})_(\d{6})", folder_name)
+        match = re.search(r"(\d{8})[_-](\d{6}|\d{4})(?!\d)", folder_name)
         if match:
             try:
                 parsed = datetime.datetime.strptime(
-                    f"{match.group(1)}{match.group(2)}", "%Y%m%d%H%M%S"
+                    f"{match.group(1)}{match.group(2)}", "%Y%m%d%H%M%S" if len(match.group(2)) == 6 else "%Y%m%d%H%M"
                 )
                 return parsed.timestamp() * 1000.0
             except (OverflowError, OSError, ValueError):
