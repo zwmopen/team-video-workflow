@@ -1548,9 +1548,51 @@ _SCAN_ERRORS: "deque" = None  # 延迟到下方 import 完成后初始化
 
 def _get_portfolio_move_logs_dir(root_dir: str) -> str:
     # 严格遵守规范：所有操作与移动流水日志一律归集到全局运行数据目录，严禁污染成品库！
+    # 如果是临时测试目录，则落入测试目录下的 _portfolio_move_logs，避免污染生产环境数据
+    if root_dir and not any(p in str(root_dir) for p in ("江湖有旅人", "成品库")):
+        local_dir = os.path.join(root_dir, "_portfolio_move_logs")
+        os.makedirs(local_dir, exist_ok=True)
+        return local_dir
     runtime_dir = r"D:\AICode\运行数据\江湖有旅人\portfolio_move_logs"
     os.makedirs(runtime_dir, exist_ok=True)
     return runtime_dir
+
+
+def log_portfolio_move(root_dir: str, device_name: str, work_id: str,
+                       src_path: str, dest_path: str, use_count: int,
+                       action_type: str, remark: str = "") -> bool:
+    """
+    DSH-145: 移动与状态流转审计日志统一写入函数。
+    1. 标准 8 列表头：时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注
+    2. UTF-8 BOM 兼容检测：若文件不存在或大小 <= 3 字节（空文件/仅含BOM），补写标准表头
+    3. 清洗设备名与备注中的换行符（\\r, \\n），避免 CSV 格式破坏
+    4. 异常保护并保留关键错误输出
+    """
+    log_dir = _get_portfolio_move_logs_dir(root_dir)
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+        header_needed = not os.path.exists(log_file) or os.path.getsize(log_file) <= 3
+        safe_device = str(device_name or "").replace('\r', ' ').replace('\n', ' ').strip()
+        safe_remark = str(remark or "").replace('\r', ' ').replace('\n', ' ').strip()
+        with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
+            writer = csv.writer(fp)
+            if header_needed:
+                writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型", "备注"])
+            writer.writerow([
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+                safe_device,
+                work_id,
+                src_path,
+                dest_path,
+                use_count,
+                action_type,
+                safe_remark,
+            ])
+        return True
+    except Exception as e:
+        print(f"[log_portfolio_move] 写入移动日志失败: {e!r}")
+        return False
 
 def _get_device_usage_log_file(root_dir: str) -> str:
     runtime_dir = r"D:\AICode\运行数据\江湖有旅人"
@@ -2405,6 +2447,8 @@ class WorkScanner:
 
                 # 货架目录安全守卫：确保非货架/工作区目录（如未以_命名的产线/草稿/临时目录）绝对不进入货架扫描
                 if not is_shelf_folder(entry):
+                    print(f"[ShelfScan] 跳过非标准分类目录: {full_path}")
+                    _scan_error("skipped-shelf-dir", full_path, Exception("Directory skipped: not a recognized shelf"))
                     continue
 
                 # 扫描各分类目录（如 安吉成品、莫干山成品、杭州成品、中秋国庆成品、团建游戏成品、综合与其它城市 等）
@@ -2677,17 +2721,7 @@ class WorkScanner:
         target_work["path"] = target_dest
         self._moved_works[work_id] = target_work
 
-        log_dir = _get_portfolio_move_logs_dir(root_dir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-        try:
-            header_needed = not os.path.exists(log_file)
-            with open(log_file, "a", encoding="utf-8-sig") as fp:
-                if header_needed:
-                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
-                fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{src_path},{target_dest},{use_count},{action_type}\n")
-        except Exception:
-            pass
+        log_portfolio_move(root_dir, device_name, work_id, src_path, target_dest, use_count, action_type)
 
         return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
 
@@ -4272,19 +4306,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["path"] = target_dest
         self.scanner._moved_works[work_id] = target_work
 
-        log_dir = _get_portfolio_move_logs_dir(root_dir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-        try:
-            header_needed = not os.path.exists(log_file)
-            row_ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            row = f"{row_ts},(重置按钮),{work_id},{src_path},{target_dest},0,reset_to_stage0"
-            with open(log_file, "a", encoding="utf-8-sig") as fp:
-                if header_needed:
-                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型\n")
-                fp.write(row + "\n")
-        except Exception:
-            pass
+        log_portfolio_move(root_dir, "(重置按钮)", work_id, src_path, target_dest, 0, "reset_to_stage0")
 
         shelf_name = os.path.basename(dest_base)
         return True, target_dest, f"已移回待发货架「{shelf_name}」"
@@ -4368,17 +4390,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         target_work["path"] = target_dest
         self.scanner._moved_works[work_id] = target_work
 
-        log_dir = _get_portfolio_move_logs_dir(root_dir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-        try:
-            header_needed = not os.path.exists(log_file)
-            with open(log_file, "a", encoding="utf-8-sig") as fp:
-                if header_needed:
-                    fp.write("时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注\n")
-                fp.write(f"{ts},{device_name},{work_id},{src_path},{target_dest},0,garbage_delete,{remark}\n")
-        except Exception:
-            pass
+        log_portfolio_move(root_dir, device_name, work_id, src_path, target_dest, 0, "garbage_delete", remark)
 
         msg = "已移入垃圾样本库「_垃圾作品样本」并在元数据标记为垃圾"
         if remark:
@@ -4524,31 +4536,39 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         """
         if not work_id:
             return None
-        log_dir = _get_portfolio_move_logs_dir(self.scanner.root)
-        if not os.path.isdir(log_dir):
+        candidate_dirs = []
+        p_dir = _get_portfolio_move_logs_dir(self.scanner.root)
+        if p_dir and os.path.isdir(p_dir):
+            candidate_dirs.append(p_dir)
+        local_dir = os.path.join(self.scanner.root, "_portfolio_move_logs")
+        if os.path.isdir(local_dir) and local_dir not in candidate_dirs:
+            candidate_dirs.append(local_dir)
+        if not candidate_dirs:
             return None
-        try:
-            files = [f for f in os.listdir(log_dir)
-                     if f.startswith("delete_move_log_") and f.lower().endswith(".csv")]
-        except Exception:
-            return None
-        files.sort(reverse=True)   # 文件名带年月，倒序即最新优先
-        for name in files:
+
+        for log_dir in candidate_dirs:
             try:
-                with open(os.path.join(log_dir, name), "r", encoding="utf-8-sig",
-                          errors="ignore", newline="") as fp:
-                    rows = list(csv.DictReader(fp))
+                files = [f for f in os.listdir(log_dir)
+                         if f.startswith("delete_move_log_") and f.lower().endswith(".csv")]
             except Exception:
                 continue
-            for row in reversed(rows):
-                if (row.get("作品ID") or "").strip() != work_id:
+            files.sort(reverse=True)   # 文件名带年月，倒序即最新优先
+            for name in files:
+                try:
+                    with open(os.path.join(log_dir, name), "r", encoding="utf-8-sig",
+                              errors="ignore", newline="") as fp:
+                        rows = list(csv.DictReader(fp))
+                except Exception:
                     continue
-                if (row.get("动作类型") or "").strip() not in ("use_auto_dispatched", "dispatched"):
-                    continue
-                src = (row.get("原路径") or "").strip()
-                parent = os.path.dirname(src) if src else ""
-                if parent:
-                    return parent
+                for row in reversed(rows):
+                    if (row.get("作品ID") or "").strip() != work_id:
+                        continue
+                    if (row.get("动作类型") or "").strip() not in ("use_auto_dispatched", "dispatched"):
+                        continue
+                    src = (row.get("原路径") or "").strip()
+                    parent = os.path.dirname(src) if src else ""
+                    if parent:
+                        return parent
         return None
 
     def _is_valid_restore_parent(self, path: str) -> bool:
@@ -4634,27 +4654,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def _log_stage_move(self, root_dir: str, device_name: str, work_id: str,
                         src_path: str, dest_path: str, use_count: int,
                         action_type: str, remark: str = "") -> None:
-        log_dir = _get_portfolio_move_logs_dir(root_dir)
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-            log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-            clean_device = str(device_name or "").replace('\r', ' ').replace('\n', ' ').strip()
-            with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
-                writer = csv.writer(fp)
-                if header_needed:
-                    writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型", "备注"])
-                writer.writerow([
-                    time.strftime("%Y-%m-%d %H:%M:%S"),
-                    clean_device,
-                    work_id,
-                    src_path,
-                    dest_path,
-                    use_count,
-                    action_type,
-                    remark,
-                ])
-        except Exception:
-            pass
+        log_portfolio_move(root_dir, device_name, work_id, src_path, dest_path, use_count, action_type, remark)
 
     def _restore_work_to_stage0(self, target_work: Dict[str, Any], device_name: str) -> Tuple[bool, str, str]:
         """在线回收站「恢复」：移回原归属分类目录、使用次数归零、撤销垃圾标记。

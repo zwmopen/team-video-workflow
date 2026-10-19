@@ -21,7 +21,7 @@ from unittest.mock import patch
 # Add scripts directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import online_gallery_service as _svc_mod
-from online_gallery_service import WorkScanner, ThreadingHTTPServer, OnlineGalleryHandler, detect_destination
+from online_gallery_service import WorkScanner, ThreadingHTTPServer, OnlineGalleryHandler, detect_destination, log_portfolio_move
 
 # ⚠️ 本脚本会打印中文。Windows 上 Python 默认按 locale 编码输出（cp1252），
 #    一打印中文就 UnicodeEncodeError 崩掉，而且崩在「打印」而不是「判定」上，
@@ -1790,6 +1790,77 @@ class TestBackgroundListRefresh(unittest.TestCase):
         while self.scanner.scan_status()["refreshing"] and time.time() < deadline:
             time.sleep(0.01)
         self.assertFalse(self.scanner.scan_status()["refreshing"])
+
+    def test_dsh145_move_log_robustness_and_readback(self):
+        """DSH-145: 测试移动日志写入健壮性（表头存在性判断、空文件自愈、换行符过滤、反查回读）"""
+        test_root = tempfile.mkdtemp(prefix="test_dsh145_root_")
+        try:
+            work_id = "test_work_dsh145"
+            src_path = os.path.join(test_root, "已发送0次（抖音小红书可发）", "合集A", work_id)
+            dest_path = os.path.join(test_root, "_已发送1次（微信公众号可发）", work_id)
+            os.makedirs(os.path.dirname(src_path), exist_ok=True)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+            # 1. 首次写入，必须生成完整8列表头且不抛异常
+            ok = log_portfolio_move(test_root, "Device\nWith\r\nNewline", work_id,
+                                    src_path, dest_path, 1, "use_auto_dispatched", "测试\n备注")
+            self.assertTrue(ok)
+
+            log_dir = os.path.join(test_root, "_portfolio_move_logs")
+            log_files = [f for f in os.listdir(log_dir) if f.startswith("delete_move_log_")]
+            self.assertEqual(len(log_files), 1)
+            csv_path = os.path.join(log_dir, log_files[0])
+
+            with open(csv_path, "r", encoding="utf-8-sig") as fp:
+                lines = [line.strip() for line in fp.readlines() if line.strip()]
+            self.assertEqual(len(lines), 2)
+            self.assertEqual(lines[0], "时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注")
+            self.assertIn("Device With  Newline", lines[1])
+            self.assertIn(work_id, lines[1])
+
+            # 2. 模拟 0 字节空文件，再次写入必须自动补齐表头
+            with open(csv_path, "wb") as fp:
+                pass  # 清空为 0 字节
+            self.assertEqual(os.path.getsize(csv_path), 0)
+
+            ok2 = log_portfolio_move(test_root, "DeviceB", work_id,
+                                     src_path, dest_path, 2, "dispatched", "第二条")
+            self.assertTrue(ok2)
+            with open(csv_path, "r", encoding="utf-8-sig") as fp:
+                lines2 = [line.strip() for line in fp.readlines() if line.strip()]
+            self.assertEqual(len(lines2), 2)
+            self.assertEqual(lines2[0], "时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注")
+            self.assertIn("DeviceB", lines2[1])
+
+            # 3. 验证 _original_parent_dir 能够跨目录成功反查出原父目录
+            scanner = WorkScanner(test_root)
+            handler = OnlineGalleryHandler.__new__(OnlineGalleryHandler)
+            handler.scanner = scanner
+            found_parent = handler._original_parent_dir(work_id)
+            self.assertEqual(found_parent, os.path.dirname(src_path))
+        finally:
+            shutil.rmtree(test_root, ignore_errors=True)
+
+    def test_dsh146_shelf_scan_skipped_dir_logging(self):
+        """DSH-146: 测试货架扫描时跳过非标准分类目录并记录诊断日志"""
+        test_root = tempfile.mkdtemp(prefix="test_dsh146_shelf_")
+        try:
+            # 建立一个既不是货架名也不是单个作品的普通目录
+            weird_dir = os.path.join(test_root, "测试未知文件夹_无后缀")
+            os.makedirs(weird_dir, exist_ok=True)
+            # 在内部放入空文件，不构成有效作品
+            with open(os.path.join(weird_dir, "readme.txt"), "w") as fp:
+                fp.write("hello")
+
+            scanner = WorkScanner(test_root)
+            scanner.scan(force=True)
+
+            # 验证诊断错误队列中记录了跳过信息
+            from online_gallery_service import _SCAN_ERRORS
+            logged_tags = [item.get("tag") for item in list(_SCAN_ERRORS or []) if isinstance(item, dict)]
+            self.assertIn("skipped-shelf-dir", logged_tags)
+        finally:
+            shutil.rmtree(test_root, ignore_errors=True)
 
 
 if __name__ == "__main__":
