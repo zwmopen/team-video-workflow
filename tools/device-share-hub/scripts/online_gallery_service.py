@@ -1365,8 +1365,8 @@ def fetch_altstore_manifest(force: bool = False) -> Dict[str, Any]:
                     "category": "photo-video",
                     "versions": [
                         {
-                            "version": ios_info.get("version_name", "0.8.109"),
-                            "buildVersion": str(ios_info.get("build", 220)),
+                            "version": ios_info.get("version_name", "0.8.110"),
+                            "buildVersion": str(ios_info.get("build", 221)),
                             "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "localizedDescription": "局域网高速版本更新",
                             "downloadURL": f"http://{local_ip}:{port}/download/ipa",

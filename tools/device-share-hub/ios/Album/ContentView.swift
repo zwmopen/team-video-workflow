@@ -1944,8 +1944,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
         let width = floor(collectionView.bounds.width - 32)
-        // DSH-091 C3：卡片高度随「平台按钮换行后的行数」及「当前视图模式(grid/list/compare)」自适应。
-        let inner = width - 25
+        // stack 内部实际可用宽度 = 卡片宽 - 左右外边距 24
+        let inner = max(width - 24, 100)
         var extraDetailLines = 0
         let labels: [String]
         if isOnlineMode {
@@ -1953,9 +1953,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 return CGSize(width: width, height: WorkCell.cardBaseHeight)
             }
             let entry = displayedOnlineWorks[indexPath.item]
-            labels = PlatformCopyParser.isCopySubstanceMissing(entry.copyText)
-                ? [WorkCell.copyMissingTitle]
-                : PlatformCopyParser.parseAvailablePlatforms(entry.copyText).map { $0.buttonLabel }
+            if PlatformCopyParser.isCopySubstanceMissing(entry.copyText) {
+                labels = [WorkCell.copyMissingTitle]
+            } else {
+                let localDispatched = LocalDispatchedStore.get(workId: entry.id)
+                labels = PlatformCopyParser.parseAvailablePlatforms(entry.copyText).map { item in
+                    let isDispatched = PlatformCopyParser.isPlatformOrVersionDispatched(
+                        buttonLabel: item.buttonLabel,
+                        platformCode: item.platform.code,
+                        localDispatched: localDispatched,
+                        dispatchedVersions: entry.dispatchedVersions,
+                        dispatchedTo: entry.dispatchedTo
+                    )
+                    return isDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel
+                }
+            }
             if currentViewMode != .list {
                 if !entry.dispatchedTo.isEmpty {
                     extraDetailLines += 1
@@ -1975,8 +1987,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 return CGSize(width: width, height: WorkCell.cardBaseHeight)
             }
             let work = filteredWorks[indexPath.item]
-            labels = CopyParserCache.platforms(for: work.textURL).map { $0.buttonLabel }
-            if currentViewMode != .list && work.shareCount > 0 { extraDetailLines = 1 }
+            let allPlatforms = CopyParserCache.platforms(for: work.textURL)
+            let count = allPlatforms.count
+            labels = allPlatforms.enumerated().map { index, item in
+                let isDispatched: Bool
+                switch index {
+                case 0: isDispatched = (count <= 1 ? work.shareCount > 0 : work.xhsShareCount > 0)
+                case 1: isDispatched = (count == 2 ? (work.shareCount > 0 && work.xhsShareCount == 0) : false)
+                case 2: isDispatched = (count >= 3 ? work.douyinShareCount > 0 : false)
+                default: isDispatched = false
+                }
+                return isDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel
+            }
+            if currentViewMode != .list && work.shareCount > 0 { extraDetailLines += 1 }
         }
         let rows = platformRowCount(labels: labels, width: inner)
         let baseH: CGFloat
@@ -2002,12 +2025,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 保证「预估的卡片高度」与「实际渲染出来的行数」一致（不一致就会裁切或大片留白）。
     private func platformRowCount(labels: [String], width: CGFloat) -> Int {
         guard !labels.isEmpty, width > 0 else { return 1 }
-        let font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        let font = UIFont.systemFont(ofSize: 13, weight: .bold)
         var x: CGFloat = 0
         var rows = 1
         for label in labels {
-            let w = max(min((label as NSString).size(withAttributes: [.font: font]).width
-                            + WorkCell.platformButtonPadding, width), 1)
+            let textW = (label as NSString).size(withAttributes: [.font: font]).width + WorkCell.platformButtonPadding
+            let w = max(min(textW, width), 44)
             if x > 0, x + WorkCell.platformSpacing + w > width {
                 rows += 1
                 x = w
@@ -2894,6 +2917,7 @@ private final class PlatformFlowView: UIView {
     var arrangedSubviews: [UIView] { subviews }
 
     func addArrangedSubview(_ view: UIView) {
+        view.translatesAutoresizingMaskIntoConstraints = true
         addSubview(view)
         setNeedsLayout()
         invalidateIntrinsicContentSize()
@@ -2912,7 +2936,13 @@ private final class PlatformFlowView: UIView {
         var lineRow: [(view: UIView, xInLine: CGFloat, width: CGFloat)] = []  // 待居中的本行视图
         var totalHeight: CGFloat = 0
         for view in subviews where !view.isHidden {
-            let w = max(min(view.intrinsicContentSize.width, width), 1)
+            var w: CGFloat = view.intrinsicContentSize.width
+            if let btn = view as? UIButton, let title = btn.currentTitle, !title.isEmpty {
+                let font = btn.titleLabel?.font ?? UIFont.systemFont(ofSize: 13, weight: .semibold)
+                let textW = (title as NSString).size(withAttributes: [.font: font]).width + WorkCell.platformButtonPadding
+                w = max(w, textW)
+            }
+            w = max(min(w, width), 44)
             // 换行：先结算上一行 lineXOffset，再开新行
             if x > 0, x + horizontalSpacing + w > width {
                 if apply {
@@ -3010,14 +3040,14 @@ private final class WorkCell: UICollectionViewCell {
     static let platformSpacing: CGFloat = 8
     /// 平台按钮行高（对齐 Android `compactButton` 的 dp(36)）
     static let platformRowHeight: CGFloat = 36
-    /// 卡片基准高度（平台按钮 1 行时）。多行时按 `platformRowHeight + platformSpacing` 递增。
-    static let cardBaseHeight: CGFloat = 264
+    /// 卡片基准高度（平台按钮 1 行时）。
+    static let cardBaseHeight: CGFloat = 276
     /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
-    static let listBaseHeight: CGFloat = 148
+    static let listBaseHeight: CGFloat = 152
     /// 对比视图卡片基准高度（自适应 3:4 双图区 + 底部操作行）
-    static var compareBaseHeight: CGFloat { ComparePairThumbView.cardHeight + 148 }
-    /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度
-    static let cardDetailLineStep: CGFloat = 14
+    static var compareBaseHeight: CGFloat { ComparePairThumbView.cardHeight + 158 }
+    /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度（单行约 18pt）
+    static let cardDetailLineStep: CGFloat = 18
     /// 空壳作品占位按钮文案（单一真源：`makeCopyMissingButton` 与 `sizeForItemAt` 共用）
     static let copyMissingTitle = "⚠️ 文案缺失（空壳作品，不可分发）"
     /// 本卡片当前渲染的是「在线作品」还是「手机本地作品」——决定平台按钮走哪个回调。
@@ -3059,6 +3089,8 @@ private final class WorkCell: UICollectionViewCell {
         name.font = .boldSystemFont(ofSize: 14.5)
         name.numberOfLines = 1
         name.isUserInteractionEnabled = true
+        name.setContentCompressionResistancePriority(.required, for: .vertical)
+        name.setContentHuggingPriority(.required, for: .vertical)
         let nameTap = UITapGestureRecognizer(target: self, action: #selector(cardHeaderTapped))
         name.addGestureRecognizer(nameTap)
 
@@ -3066,6 +3098,7 @@ private final class WorkCell: UICollectionViewCell {
         detail.textColor = AppColors.secondaryText
         detail.numberOfLines = 0
         detail.isUserInteractionEnabled = true
+        detail.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
         let detailTap = UITapGestureRecognizer(target: self, action: #selector(cardHeaderTapped))
         detail.addGestureRecognizer(detailTap)
         previewScroll.showsHorizontalScrollIndicator = false
@@ -3121,8 +3154,10 @@ private final class WorkCell: UICollectionViewCell {
             pshc,
             // 平台区高度由 `PlatformFlowView.intrinsicContentSize` 决定（换行后自动增高），
             // 不再写死 36 —— 卡片高度在 `sizeForItemAt` 里按行数同步补偿。
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
         ])
+        let bottomConstraint = stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
+        bottomConstraint.priority = UILayoutPriority(999)
+        bottomConstraint.isActive = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -3441,8 +3476,6 @@ private final class WorkCell: UICollectionViewCell {
         missing.backgroundColor = AppColors.secondaryBackground
         missing.layer.cornerRadius = 8
         missing.contentEdgeInsets = UIEdgeInsets(top: 5, left: 15, bottom: 5, right: 15)
-        missing.translatesAutoresizingMaskIntoConstraints = false
-        missing.heightAnchor.constraint(equalToConstant: 36).isActive = true
         missing.accessibilityLabel = "该在线作品文案缺失，已禁止分发"
         return missing
     }
@@ -3464,8 +3497,6 @@ private final class WorkCell: UICollectionViewCell {
             button.titleLabel?.font = .systemFont(ofSize: 13, weight: isDispatched ? .bold : .semibold)
             button.layer.cornerRadius = 8
             button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 15, bottom: 5, right: 15)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
             button.tag = index
             button.accessibilityLabel = item.buttonLabel
             applyPlatformStyle(button, isOptimistic: isDispatched)
