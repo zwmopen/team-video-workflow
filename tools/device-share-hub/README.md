@@ -1,8 +1,8 @@
-# 文件收发中控（最新：Windows V4.3.33 / Android 0.8.108 / iPhone 0.8.108）
+# 文件收发中控（最新：Windows V4.3.33 / Android 0.8.109 / iPhone 0.8.109）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
-> 最新构建：**Android 0.8.108 / versionCode 219**、**iPhone 0.8.108 / build 219**、**Windows V4.3.33**。DSH-179 带来局域网跨设备剪贴板双向同步与设置页开关（默认关闭，按需开启），阅后即焚防残留。局域网更新中转已就绪。
-> 上一正式发布：Release [`v0.8.106`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.106)；Release 资产 SHA-256：APK `0c550beaf9bb3fd79826804b6132f683c52bebc81b2a3582b2b877d66c84f36b`；IPA `cffeee2f49af7a75630a498a9788f05f0e45feb1b2204d9013de85f04699d7dc`；Windows `7ed80e6a73fdcb6339ca1d9344554947df227c2466ffceec36f3cb7365dca298`。
+> 最新构建：**Android 0.8.109 / versionCode 220**、**iPhone 0.8.109 / build 220**、**Windows V4.3.33**。DSH-145 带来移动日志健壮性加固（BOM/空文件检测、并发互斥与换行清洗）、DSH-146 货架未纳管目录诊断与环境变量配置，以及产线目录迁移改址。
+> 正式发布：Release [`v0.8.109`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.109)；Release 资产 SHA-256：APK `ac388dc3721b9a19de1020d6800a8b59ea6cd5f28dc82daed65ea65e8797e4ac`；IPA `6031a7e2c4074bb0ee89b8f3b16fe427c237b51d6a3079551b6b52d610e92c4c`；Windows `b4c3d8343f535f36dd0d0e54b760a2da0551016264802606f9b307c9d43d8fb3`。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。
 > 所有用户反馈按“诉求 → 根因 → 修复 → 分层证据 → 回归”持续登记在 **[`docs/BUG_LEDGER.md`](docs/BUG_LEDGER.md)**；没有目标端真机或发布反读证据的项目会保留为候选，不提前写成已解决。
 

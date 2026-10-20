@@ -1,3 +1,9 @@
+# 2026-10-20 DSH-145/DSH-146：移动日志健壮性加固与货架未纳管目录诊断（0.8.109 / build 220）
+
+- iOS 与 Android 版本同步对齐至 `0.8.109 / build 220`。
+- 服务端实装 `log_portfolio_move` 与 `_original_parent_dir` 深度反查，货架扫描未纳管目录诊断。
+- Release `v0.8.109` AltStore IPA 构建完成并发布，SHA-256 `6031a7e2c4074bb0ee89b8f3b16fe427c237b51d6a3079551b6b52d610e92c4c`。
+
 # 2026-10-17 DSH-179：跨设备剪贴板同步开关默认关闭与双端按需开启（0.8.108 / build 219）
 
 - iOS 与 Android 版本同步对齐至 `0.8.108 / build 219`。

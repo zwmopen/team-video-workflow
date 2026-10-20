@@ -8,6 +8,7 @@ import sys
 import io
 import contextlib
 import json
+import csv
 import time
 import datetime
 import shutil
@@ -1859,6 +1860,72 @@ class TestBackgroundListRefresh(unittest.TestCase):
             from online_gallery_service import _SCAN_ERRORS
             logged_tags = [item.get("tag") for item in list(_SCAN_ERRORS or []) if isinstance(item, dict)]
             self.assertIn("skipped-shelf-dir", logged_tags)
+        finally:
+            shutil.rmtree(test_root, ignore_errors=True)
+
+    def test_dsh147_move_log_concurrency_and_garbage_restore(self):
+        """DSH-147: 测试垃圾删除反查原目录、跨步回溯有效目录、DSH_EXTRA_SHELVES配置与多线程并发写入"""
+        import concurrent.futures
+        test_root = tempfile.mkdtemp(prefix="test_dsh147_root_")
+        try:
+            # 1. 验证直接从 Stage 0 货架删除到垃圾库时，反查能找回原归属目录
+            work_a = "work_direct_garbage"
+            shelf_dir = os.path.join(test_root, "安吉成品", "秋季合集A")
+            garbage_dir = os.path.join(test_root, "_垃圾作品样本")
+            os.makedirs(shelf_dir, exist_ok=True)
+            os.makedirs(garbage_dir, exist_ok=True)
+            src_a = os.path.join(shelf_dir, work_a)
+            dest_a = os.path.join(garbage_dir, work_a)
+
+            ok = log_portfolio_move(test_root, "Tester", work_a, src_a, dest_a, 0, "garbage_delete", "不合格")
+            self.assertTrue(ok)
+
+            scanner = WorkScanner(test_root)
+            handler = OnlineGalleryHandler.__new__(OnlineGalleryHandler)
+            handler.scanner = scanner
+            found_a = handler._original_parent_dir(work_a)
+            self.assertEqual(found_a, shelf_dir)
+
+            # 2. 验证多步流转：Stage 0 -> Stage 1 -> 垃圾库，反查跳过非法的 Stage 1 父目录，定位最初的 Stage 0
+            work_b = "work_multi_step"
+            stage1_dir = os.path.join(test_root, "_已发送1次（微信公众号可发）")
+            os.makedirs(stage1_dir, exist_ok=True)
+            src_b_step1 = os.path.join(test_root, "莫干山成品", work_b)
+            dest_b_step1 = os.path.join(stage1_dir, work_b)
+            src_b_step2 = dest_b_step1
+            dest_b_step2 = os.path.join(garbage_dir, work_b)
+
+            log_portfolio_move(test_root, "Tester", work_b, src_b_step1, dest_b_step1, 1, "use_auto_dispatched")
+            log_portfolio_move(test_root, "Tester", work_b, src_b_step2, dest_b_step2, 1, "garbage_delete")
+            found_b = handler._original_parent_dir(work_b)
+            self.assertEqual(found_b, os.path.join(test_root, "莫干山成品"))
+
+            # 3. 验证 DSH_EXTRA_SHELVES 环境变量支持自定义货架
+            from online_gallery_service import is_shelf_folder
+            self.assertFalse(is_shelf_folder("北京精选团建"))
+            os.environ["DSH_EXTRA_SHELVES"] = "北京精选团建, 西北环线"
+            try:
+                self.assertTrue(is_shelf_folder("北京精选团建"))
+                self.assertTrue(is_shelf_folder("西北环线"))
+            finally:
+                os.environ.pop("DSH_EXTRA_SHELVES", None)
+
+            # 4. 验证 10 线程并发写入移动日志（互斥锁防损坏）
+            def _worker(idx):
+                w_id = f"concurrent_work_{idx}"
+                return log_portfolio_move(test_root, f"Dev_{idx}", w_id, f"/src/{w_id}", f"/dest/{w_id}", idx, "dispatched")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                results = list(executor.map(_worker, range(10)))
+            self.assertTrue(all(results))
+
+            log_dir = os.path.join(test_root, "_portfolio_move_logs")
+            log_files = [f for f in os.listdir(log_dir) if f.startswith("delete_move_log_")]
+            csv_path = os.path.join(log_dir, log_files[0])
+            with open(csv_path, "r", encoding="utf-8-sig") as fp:
+                rows = list(csv.DictReader(fp))
+            # 1条 work_a + 2条 work_b + 10条并发 = 13条记录
+            self.assertEqual(len(rows), 13)
         finally:
             shutil.rmtree(test_root, ignore_errors=True)
 

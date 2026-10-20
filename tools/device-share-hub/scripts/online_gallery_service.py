@@ -1494,6 +1494,12 @@ def is_shelf_folder(name: str) -> bool:
         return True
     if name in ("综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
         return True
+    extra = os.environ.get("DSH_EXTRA_SHELVES", "")
+    if extra:
+        for item in extra.split(","):
+            s = item.strip()
+            if s and s == name:
+                return True
     return False
 
 
@@ -1558,6 +1564,9 @@ def _get_portfolio_move_logs_dir(root_dir: str) -> str:
     return runtime_dir
 
 
+_MOVE_LOG_LOCK = threading.Lock()
+
+
 def log_portfolio_move(root_dir: str, device_name: str, work_id: str,
                        src_path: str, dest_path: str, use_count: int,
                        action_type: str, remark: str = "") -> bool:
@@ -1565,33 +1574,44 @@ def log_portfolio_move(root_dir: str, device_name: str, work_id: str,
     DSH-145: 移动与状态流转审计日志统一写入函数。
     1. 标准 8 列表头：时间,设备,作品ID,原路径,目标路径,原使用次数,动作类型,备注
     2. UTF-8 BOM 兼容检测：若文件不存在或大小 <= 3 字节（空文件/仅含BOM），补写标准表头
-    3. 清洗设备名与备注中的换行符（\\r, \\n），避免 CSV 格式破坏
-    4. 异常保护并保留关键错误输出
+    3. 全字段换行清洗（\\r, \\n）与首尾空白剔除，避免破坏 CSV 行结构
+    4. 线程安全互斥锁与 Windows 瞬时文件锁重试保护
     """
     log_dir = _get_portfolio_move_logs_dir(root_dir)
-    try:
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
-        header_needed = not os.path.exists(log_file) or os.path.getsize(log_file) <= 3
-        safe_device = str(device_name or "").replace('\r', ' ').replace('\n', ' ').strip()
-        safe_remark = str(remark or "").replace('\r', ' ').replace('\n', ' ').strip()
-        with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
-            writer = csv.writer(fp)
-            if header_needed:
-                writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型", "备注"])
-            writer.writerow([
-                time.strftime("%Y-%m-%d %H:%M:%S"),
-                safe_device,
-                work_id,
-                src_path,
-                dest_path,
-                use_count,
-                action_type,
-                safe_remark,
-            ])
-        return True
-    except Exception as e:
-        print(f"[log_portfolio_move] 写入移动日志失败: {e!r}")
+    safe_device = str(device_name or "").replace('\r', ' ').replace('\n', ' ').strip()
+    safe_work_id = str(work_id or "").replace('\r', ' ').replace('\n', ' ').strip()
+    safe_src = str(src_path or "").replace('\r', ' ').replace('\n', ' ').strip()
+    safe_dest = str(dest_path or "").replace('\r', ' ').replace('\n', ' ').strip()
+    safe_action = str(action_type or "").replace('\r', ' ').replace('\n', ' ').strip()
+    safe_remark = str(remark or "").replace('\r', ' ').replace('\n', ' ').strip()
+
+    with _MOVE_LOG_LOCK:
+        for attempt in range(3):
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+                log_file = os.path.join(log_dir, f"delete_move_log_{time.strftime('%Y%m')}.csv")
+                header_needed = not os.path.exists(log_file) or os.path.getsize(log_file) <= 3
+                with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
+                    writer = csv.writer(fp)
+                    if header_needed:
+                        writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型", "备注"])
+                    writer.writerow([
+                        time.strftime("%Y-%m-%d %H:%M:%S"),
+                        safe_device,
+                        safe_work_id,
+                        safe_src,
+                        safe_dest,
+                        use_count,
+                        safe_action,
+                        safe_remark,
+                    ])
+                return True
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                print(f"[log_portfolio_move] 写入移动日志失败: {e!r}")
+                return False
         return False
 
 def _get_device_usage_log_file(root_dir: str) -> str:
@@ -2447,7 +2467,6 @@ class WorkScanner:
 
                 # 货架目录安全守卫：确保非货架/工作区目录（如未以_命名的产线/草稿/临时目录）绝对不进入货架扫描
                 if not is_shelf_folder(entry):
-                    print(f"[ShelfScan] 跳过非标准分类目录: {full_path}")
                     _scan_error("skipped-shelf-dir", full_path, Exception("Directory skipped: not a recognized shelf"))
                     continue
 
@@ -4534,7 +4553,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         _move_work_to_stage1() 会把原路径写进 _portfolio_move_logs/delete_move_log_*.csv，
         这里反查最近一次「移出发布池」记录的原路径，取它的父目录。
         """
-        if not work_id:
+        clean_work_id = (work_id or "").strip()
+        if not clean_work_id:
             return None
         candidate_dirs = []
         p_dir = _get_portfolio_move_logs_dir(self.scanner.root)
@@ -4546,29 +4566,34 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if not candidate_dirs:
             return None
 
+        # 收集所有候选日志文件并全局按文件名（含年月）与修改时间倒序排序
+        all_csv_files = []
         for log_dir in candidate_dirs:
             try:
-                files = [f for f in os.listdir(log_dir)
-                         if f.startswith("delete_move_log_") and f.lower().endswith(".csv")]
+                for f in os.listdir(log_dir):
+                    if f.startswith("delete_move_log_") and f.lower().endswith(".csv"):
+                        all_csv_files.append((f, os.path.join(log_dir, f)))
             except Exception:
                 continue
-            files.sort(reverse=True)   # 文件名带年月，倒序即最新优先
-            for name in files:
-                try:
-                    with open(os.path.join(log_dir, name), "r", encoding="utf-8-sig",
-                              errors="ignore", newline="") as fp:
-                        rows = list(csv.DictReader(fp))
-                except Exception:
+        all_csv_files.sort(key=lambda item: (item[0], os.path.getmtime(item[1])), reverse=True)
+
+        for _name, log_path in all_csv_files:
+            try:
+                with open(log_path, "r", encoding="utf-8-sig",
+                          errors="ignore", newline="") as fp:
+                    rows = list(csv.DictReader(fp))
+            except Exception:
+                continue
+            for row in reversed(rows):
+                if (row.get("作品ID") or "").strip() != clean_work_id:
                     continue
-                for row in reversed(rows):
-                    if (row.get("作品ID") or "").strip() != work_id:
-                        continue
-                    if (row.get("动作类型") or "").strip() not in ("use_auto_dispatched", "dispatched"):
-                        continue
-                    src = (row.get("原路径") or "").strip()
-                    parent = os.path.dirname(src) if src else ""
-                    if parent:
-                        return parent
+                action = (row.get("动作类型") or "").strip()
+                if action not in ("use_auto_dispatched", "dispatched", "garbage_delete"):
+                    continue
+                src = (row.get("原路径") or "").strip()
+                parent = os.path.dirname(src) if src else ""
+                if parent and self._is_valid_restore_parent(parent):
+                    return parent
         return None
 
     def _is_valid_restore_parent(self, path: str) -> bool:

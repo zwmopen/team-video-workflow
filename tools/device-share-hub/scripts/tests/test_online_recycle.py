@@ -115,13 +115,13 @@ def make_album_fixture(root, work_name, use_count=0):
     log_dir = os.path.join(root, "_portfolio_move_logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "delete_move_log_%s.csv" % time.strftime("%Y%m"))
-    header_needed = not os.path.exists(log_file)
+    header_needed = not os.path.exists(log_file) or os.path.getsize(log_file) <= 3
     with open(log_file, "a", encoding="utf-8-sig", newline="") as fp:
         writer = csv.writer(fp)
         if header_needed:
-            writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型"])
+            writer.writerow(["时间", "设备", "作品ID", "原路径", "目标路径", "原使用次数", "动作类型", "备注"])
         writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), "regression-test", work_name,
-                         work_path, sent_path, use_count, "use_auto_dispatched"])
+                         work_path, sent_path, use_count, "use_auto_dispatched", ""])
     return work_path, sent_path
 
 
