@@ -1648,7 +1648,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         // 【深度防御】与 Android `handleOnlineWorkUse` 1:1 对齐：判据是「实质字数 < 30」，
         // 不是 `isEmpty` —— 骨架文案（标记齐全但正文全是填写说明）也拦得住。
         guard !PlatformCopyParser.isCopySubstanceMissing(item.copyText) else {
-            showError("⚠️ 该作品文案缺失（空壳作品），已阻止分发")
+            showToast("⚠️ 该作品文案缺失（空壳作品），已阻止分发")
             return
         }
         let cleanedText = PlatformCopyParser.normalizeCopyTextForClipboard(textToCopy)
@@ -1713,7 +1713,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             guard let self = self else { return }
             let launchShare: ([URL]) -> Void = { urls in
                 guard !urls.isEmpty else {
-                    self.showError("图片加载失败，无法拉起分享；文案已在剪贴板")
+                    self.showToast("图片加载失败，无法拉起分享；文案已在剪贴板")
                     return
                 }
                 self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
@@ -1734,7 +1734,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     case .success(let urls):
                         launchShare(urls)
                     case .failure(let error):
-                        self.showError("下载图片失败：\(error.localizedDescription)；文案已在剪贴板")
+                        self.showToast("下载图片失败：\(error.localizedDescription)；文案已在剪贴板")
                     }
                 }
             } else {
@@ -1879,7 +1879,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         self?.showToast("已重置为待首发状态")
                         self?.loadOnlineData(silent: true)
                     } else {
-                        self?.showError("重置失败，请稍后重试")
+                        self?.showToast("重置失败，请稍后重试")
                     }
                 }
             }
@@ -2009,11 +2009,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         case .list:
             baseH = WorkCell.listBaseHeight
         case .compare:
-            if isOnlineMode, indexPath.item < displayedOnlineWorks.count, !displayedOnlineWorks[indexPath.item].hasSourceCompare {
-                baseH = WorkCell.cardBaseHeight
-            } else {
-                baseH = WorkCell.compareBaseHeight
-            }
+            baseH = WorkCell.compareBaseHeight
         }
         let height = baseH
             + CGFloat(max(rows, 1) - 1) * (WorkCell.platformRowHeight + WorkCell.platformSpacing)
@@ -2223,7 +2219,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func showError(_ text: String) {
         guard presentedViewController == nil else { return }
         library.consumeError()
-        let alert = UIAlertController(title: "操作没有完成", message: text, preferredStyle: .alert)
+        let alert = UIAlertController(title: "提示", message: text, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
         present(alert, animated: true)
     }
@@ -2525,6 +2521,10 @@ private final class ComparePairThumbView: UIControl {
     static var imageHeight: CGFloat { imageWidth * 4.0 / 3.0 }
     static var cardHeight: CGFloat { imageHeight + 27 }
 
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: Self.cardWidth, height: Self.cardHeight)
+    }
+
     private let headerLabel = UILabel()
     private let leftImageView = UIImageView()
     private let rightImageView = UIImageView()
@@ -2603,12 +2603,13 @@ private final class ComparePairThumbView: UIControl {
             headerLabel.heightAnchor.constraint(equalToConstant: 16),
 
             leftImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
-            leftImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            leftImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             leftImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             leftImageView.widthAnchor.constraint(equalToConstant: Self.imageWidth),
 
             rightImageView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
-            rightImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            rightImageView.leadingAnchor.constraint(equalTo: leftImageView.trailingAnchor, constant: 10),
+            rightImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             rightImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             rightImageView.widthAnchor.constraint(equalToConstant: Self.imageWidth),
 
@@ -3045,7 +3046,7 @@ private final class WorkCell: UICollectionViewCell {
     /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
     static let listBaseHeight: CGFloat = 152
     /// 对比视图卡片基准高度（自适应 3:4 双图区 + 底部操作行）
-    static var compareBaseHeight: CGFloat { ComparePairThumbView.cardHeight + 158 }
+    static var compareBaseHeight: CGFloat { ComparePairThumbView.cardHeight + 172 }
     /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度（单行约 18pt）
     static let cardDetailLineStep: CGFloat = 18
     /// 空壳作品占位按钮文案（单一真源：`makeCopyMissingButton` 与 `sizeForItemAt` 共用）

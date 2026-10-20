@@ -307,7 +307,7 @@ final class TrashViewController: UITableViewController {
     // MARK: - 反馈
 
     private func showError(_ text: String) {
-        let alert = UIAlertController(title: "操作失败", message: text, preferredStyle: .alert)
+        let alert = UIAlertController(title: "提示", message: text, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
         present(alert, animated: true)
     }
