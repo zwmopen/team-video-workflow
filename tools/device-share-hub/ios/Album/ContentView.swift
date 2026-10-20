@@ -1682,54 +1682,65 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             return
         }
 
-        // DSH-136: 极速检测本地是否已 100% 缓存所有图片，若是则 0 弹窗秒呼系统分享
-        let allCached = OnlineGalleryClient.shared.areAllWorkImagesCachedLocally(entry)
-        var progress: UIAlertController? = nil
-        if !allCached {
-            let total = entry.images.count
-            let alert = UIAlertController(title: "正在从电脑同步原图到手机…",
-                                          message: "准备连接电脑拉取 \(total) 张原图…",
-                                          preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-            progress = alert
-            present(alert, animated: true)
+        // DSH-170: 极速检测本地是否已 100% 缓存所有图片，若是则 0 弹窗秒呼系统分享（0毫秒）
+        if OnlineGalleryClient.shared.areAllWorkImagesCachedLocally(entry) {
+            let cachedURLs = OnlineGalleryClient.shared.getCachedLocalWorkImages(entry)
+            if !cachedURLs.isEmpty {
+                showToast("✅ 已准备 \(cachedURLs.count) 张原图，正在唤起分享…")
+                let activity = UIActivityViewController(activityItems: cachedURLs.map { $0 as NSURL },
+                                                        applicationActivities: nil)
+                activity.popoverPresentationController?.sourceView = source
+                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                    guard let self = self else { return }
+                    if completed { self.showToast("🚀 分享完成") }
+                    self.loadOnlineData(silent: true)
+                }
+                present(activity, animated: true)
+                return
+            }
         }
 
-        // DSH-102：传 workId 给服务端，避免 image_name_index 同名冲突导致图错位
-        downloadAllImages(paths: entry.images, workId: entry.id, onProgress: { [weak progress] done, count, name in
-            progress?.message = "正在下载：\(name)（\(done)/\(count) 张）"
-        }, completion: { [weak self] urls in
+        let total = entry.images.count
+        let alert = UIAlertController(title: "正在从电脑同步原图到手机…",
+                                      message: "准备连接电脑拉取 \(total) 张原图…",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(alert, animated: true)
+
+        OnlineGalleryClient.shared.downloadWorkImages(entry: entry, onProgress: { [weak alert] done, count, name in
+            alert?.message = "正在下载：\(name)（\(done)/\(count) 张）"
+        }, completion: { [weak self, weak alert] result in
             guard let self = self else { return }
-            let launchShare = {
+            let launchShare: ([URL]) -> Void = { urls in
                 guard !urls.isEmpty else {
                     self.showError("图片加载失败，无法拉起分享；文案已在剪贴板")
                     return
                 }
-                if !allCached {
-                    self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
-                }
-                // DSH-090：与本地相册 prepareShare 同机制 —— 传文件 URL（as NSURL）
+                self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
                 let activity = UIActivityViewController(activityItems: urls.map { $0 as NSURL },
                                                         applicationActivities: nil)
                 activity.popoverPresentationController?.sourceView = source
                 activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                    // 分享面板关闭后清理临时文件
-                    if let dir = urls.first?.deletingLastPathComponent() {
-                        try? FileManager.default.removeItem(at: dir)
-                    }
                     guard let self = self else { return }
-                    if completed {
-                        self.showToast("🚀 分享完成")
-                    }
+                    if completed { self.showToast("🚀 分享完成") }
                     self.loadOnlineData(silent: true)
                 }
                 self.present(activity, animated: true)
             }
 
-            if let prg = progress {
-                prg.dismiss(animated: true, completion: launchShare)
+            if let prg = alert {
+                prg.dismiss(animated: true) {
+                    switch result {
+                    case .success(let urls):
+                        launchShare(urls)
+                    case .failure(let error):
+                        self.showError("下载图片失败：\(error.localizedDescription)；文案已在剪贴板")
+                    }
+                }
             } else {
-                launchShare()
+                if case .success(let urls) = result {
+                    launchShare(urls)
+                }
             }
         })
     }
@@ -3214,27 +3225,16 @@ private final class WorkCell: UICollectionViewCell {
             expireAt = firstShared + 3600000
         }
 
-        // DSH-160：在线卡元信息与 Android 统一，先标明操作对象，再显示图数与使用态。
-        // 季节/流量类型仍可通过筛选栏和标题识别，不把它们冒充成设备来源标签。
-        var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "
-        if expireAt > now {
-            let remainMin = max(1, Int((expireAt - now) / 60000))
-            let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
-            onlineDetail += "已使用\(usedCount)次\(dev) · 剩\(remainMin)分钟入回收站" + onlineDatePart
-        } else if expireAt > 0 && usedCount > 0 {
-            let dev = entry.originDevice.isEmpty ? "" : " (\(entry.originDevice))"
-            onlineDetail += "已到期\(dev) · 正在移入回收站…" + onlineDatePart
-        } else {
-            onlineDetail += (usedCount > 0 ? "已使用 \(usedCount) 次" : "未使用") + onlineDatePart
-        }
+        // DSH-170: 纯文字 3 标签（产线 · 图数 · 时间），绝对无 Emoji，单行排布不折行
+        var onlineDetail = "\(entry.pipelineBadge) · \(entry.imageCountText) · \(entry.formattedDate)"
 
         if viewMode == .compare {
             if entry.maxSimilarity > 0 {
                 let pct = Int(round(entry.maxSimilarity * 100))
                 let simBadge = entry.similarityTag.isEmpty ? "原图相似度 \(pct)%" : "\(entry.similarityTag)(\(pct)%)"
-                onlineDetail += " · 🆚 \(simBadge)"
+                onlineDetail += " · \(simBadge.replacingOccurrences(of: "🛡️", with: "").replacingOccurrences(of: "🆚", with: "").trimmingCharacters(in: .whitespaces))"
             } else if entry.hasSourceCompare {
-                onlineDetail += " · 🆚 点击卡片同框对比"
+                onlineDetail += " · 点击卡片同框对比"
             } else {
                 onlineDetail += " · 纯AI直出作品"
             }

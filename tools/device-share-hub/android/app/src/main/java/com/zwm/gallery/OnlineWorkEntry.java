@@ -49,6 +49,10 @@ public final class OnlineWorkEntry {
     public final double maxSimilarity;
     public final String similarityTag;
 
+    public final String pipelineBadge;
+    public final String formattedDate;
+    public final String imageCountText;
+
     public OnlineWorkEntry(String id, String title, String destination, String stage,
                            int useCount, int maxUses, boolean used, int remainingUses,
                            String statusLabel, List<String> images, int imageCount,
@@ -106,7 +110,8 @@ public final class OnlineWorkEntry {
                            long firstSharedAtMs, long expireAtMs, String originDevice, List<String> dispatchedVersions,
                            String season, String flowType, List<String> tags,
                            List<String> sourceImages, List<String> sourceNames,
-                           boolean hasSourceCompare, double maxSimilarity, String similarityTag) {
+                           boolean hasSourceCompare, double maxSimilarity, String similarityTag,
+                           String pipelineBadge, String formattedDate, String imageCountText) {
         this.id = id;
         this.title = title == null ? "" : title;
         this.destination = destination == null ? "其他" : destination;
@@ -137,6 +142,25 @@ public final class OnlineWorkEntry {
         this.hasSourceCompare = hasSourceCompare;
         this.maxSimilarity = maxSimilarity;
         this.similarityTag = similarityTag == null ? "" : similarityTag;
+        this.pipelineBadge = pipelineBadge == null || pipelineBadge.trim().isEmpty() ? "网页GPT" : pipelineBadge.trim();
+        this.formattedDate = formattedDate == null || formattedDate.trim().isEmpty() ? "2026-10-20-10:20" : formattedDate.trim();
+        this.imageCountText = imageCountText == null || imageCountText.trim().isEmpty() ? (this.imageCount + "图") : imageCountText.trim();
+    }
+
+    public OnlineWorkEntry(String id, String title, String destination, String stage,
+                           int useCount, int maxUses, boolean used, int remainingUses,
+                           String statusLabel, List<String> images, int imageCount,
+                           String copyText, boolean hasCopyText, List<String> dispatchedTo,
+                           long updatedAt, boolean garbage, String garbageRemark, String path,
+                           long firstSharedAtMs, long expireAtMs, String originDevice, List<String> dispatchedVersions,
+                           String season, String flowType, List<String> tags,
+                           List<String> sourceImages, List<String> sourceNames,
+                           boolean hasSourceCompare, double maxSimilarity, String similarityTag) {
+        this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
+                statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
+                updatedAt, garbage, garbageRemark, path, firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions,
+                season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
+                "网页GPT", "2026-10-20-10:20", imageCount + "图");
     }
 
     public static OnlineWorkEntry fromJson(JSONObject json) {
@@ -243,10 +267,44 @@ public final class OnlineWorkEntry {
         double maxSimilarity = json.optDouble("maxSimilarity", 0.0);
         String similarityTag = json.optString("similarityTag", "");
 
+        String pipelineBadge = json.optString("pipelineBadge", "").trim();
+        if (pipelineBadge.isEmpty()) {
+            String pl = json.optString("pipeline", "");
+            String f = (title + " " + id).toUpperCase();
+            if (f.contains("CDP-A") || f.contains("网页GPT-A") || f.contains("ORLANDOCARDOZO706") || f.contains("账号1")) {
+                pipelineBadge = "网页GPT-A";
+            } else if (f.contains("CDP-B") || f.contains("网页GPT-B") || f.contains("账号2") || f.contains("账号3")) {
+                pipelineBadge = "网页GPT-B";
+            } else if (f.contains("CDP")) {
+                pipelineBadge = f.contains("A") ? "网页GPT-A" : "网页GPT-B";
+            } else if (f.contains("CODEX") || pl.contains("Codex")) {
+                pipelineBadge = "Codex-API";
+            } else if (f.contains("GPT-A")) {
+                pipelineBadge = "网页GPT-A";
+            } else if (f.contains("GPT-B")) {
+                pipelineBadge = "网页GPT-B";
+            } else {
+                pipelineBadge = "网页GPT";
+            }
+        }
+
+        String formattedDate = json.optString("formattedDate", "").trim();
+        if (formattedDate.isEmpty() && updatedAt > 0) {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd-HH:mm", java.util.Locale.CHINA);
+            formattedDate = sdf.format(new java.util.Date(updatedAt));
+        }
+        if (formattedDate.isEmpty()) formattedDate = "2026-10-20-10:20";
+
+        String imageCountText = json.optString("imageCountText", "").trim();
+        if (imageCountText.isEmpty()) {
+            imageCountText = imageCount + "图";
+        }
+
         return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
                 hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark,
                 json.optString("path", ""), firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions,
-                season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag);
+                season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
+                pipelineBadge, formattedDate, imageCountText);
     }
 }

@@ -3139,6 +3139,9 @@ class WorkScanner:
             "flowType": manifest_data.get("flowType") or ("泛流量游戏攻略" if any(k in folder_name for k in ["游戏", "桌游", "破冰", "冷场"]) else "精准流量团建"),
             "tags": manifest_data.get("tags") or [],
             "pipeline": manifest_data.get("pipeline") or ("CDP双浏览器产线" if "CDP" in folder_name else ("Codex-API产线" if "Codex" in folder_name else "GPT扩展+本地脚本产线")),
+            "pipelineBadge": _format_pipeline_badge(folder_name, manifest_data),
+            "formattedDate": _format_work_date(created_at_ms),
+            "imageCountText": f"{len(images)}图",
             "workflowVersion": manifest_data.get("workflowVersion") or manifest_data.get("packagerVersion") or ("gpt-ext-v2.0" if manifest_data.get("recordType") == "gpt_work_package" else "v2.0"),
             "productionMode": manifest_data.get("productionMode") or manifest_data.get("apiSubMode") or ("reuse-conversation" if manifest_data.get("conversationUrl") else "1_shuffle"),
             "productionModeName": manifest_data.get("productionModeName") or ("会话母版复刻模式" if manifest_data.get("conversationUrl") else "原图复刻打乱模式"),
@@ -3205,6 +3208,41 @@ def _parse_manifest_timestamp(value: Any, field_name: str = "") -> Optional[floa
         return parsed.timestamp() * 1000.0
     except (OverflowError, OSError, ValueError):
         return None
+
+
+def _format_pipeline_badge(folder_name: str, manifest_data: Dict[str, Any]) -> str:
+    """标准产线来源展示标签（纯文字）：网页GPT-A、网页GPT-B、Codex-API、网页GPT"""
+    f_upper = folder_name.upper()
+    acc = str(manifest_data.get("accountName") or manifest_data.get("account") or "")
+    pl = str(manifest_data.get("pipeline") or "")
+
+    if "CDP-A" in folder_name or "网页GPT-A" in folder_name or "账号1" in acc or "orlandocardozo706" in folder_name:
+        return "网页GPT-A"
+    if "CDP-B" in folder_name or "网页GPT-B" in folder_name or "账号2" in acc or "账号3" in acc:
+        return "网页GPT-B"
+    if "CDP" in folder_name:
+        return "网页GPT-A" if "A" in folder_name else "网页GPT-B"
+    if "CODEX" in f_upper or "Codex" in pl:
+        return "Codex-API"
+    if "GPT-A" in folder_name:
+        return "网页GPT-A"
+    if "GPT-B" in folder_name:
+        return "网页GPT-B"
+    if "账号1" in acc or "zwmrpg" in acc:
+        return "网页GPT-A"
+    if "账号2" in acc or "账号3" in acc:
+        return "网页GPT-B"
+    return "网页GPT"
+
+
+def _format_work_date(created_at_ms: float) -> str:
+    """标准生产日期时间格式（精确到分）：YYYY-MM-DD-HH:mm"""
+    if created_at_ms > 0:
+        try:
+            return datetime.datetime.fromtimestamp(created_at_ms / 1000.0).strftime("%Y-%m-%d-%H:%M")
+        except (OverflowError, OSError, ValueError):
+            pass
+    return "2026-10-20-10:20"
 
 
 def _extract_work_timestamp(folder_name: str, dir_path: str, manifest_data: Dict[str, Any]) -> float:

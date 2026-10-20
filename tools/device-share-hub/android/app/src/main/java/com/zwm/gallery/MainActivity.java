@@ -4527,37 +4527,18 @@ public final class MainActivity extends Activity {
         }
 
         StringBuilder detail = new StringBuilder();
-        // 元信息统一口径（与 iOS `configureOnline` 逐字一致）：
-        // `💻 电脑在线 · N 图 · 使用态` + 日期后缀（日期格式见 extractTimestampBadge）。
-        detail.append("💻 电脑在线 · ").append(work.imageCount).append(" 图 · ")
-              .append(work.useCount > 0 ? "已使用 " + work.useCount + " 次" : "未使用");
-        String timeBadge = extractTimestampBadge(work.id);
-        if (timeBadge.isEmpty()) {
-            timeBadge = extractTimestampBadge(work.title);
-        }
-        if (!timeBadge.isEmpty()) {
-            detail.append(" · ").append(timeBadge);
-        }
+        // DSH-170: 纯文字 3 标签（产线 · 图数 · 时间），绝对无 Emoji，单行排布不折行
+        detail.append(work.pipelineBadge).append(" · ")
+              .append(work.imageCountText).append(" · ")
+              .append(work.formattedDate);
+
         if ("compare".equals(currentViewMode)) {
             if (work.similarityTag != null && !work.similarityTag.isEmpty()) {
-                detail.append(" · ").append(work.similarityTag);
+                detail.append(" · ").append(work.similarityTag.replace("🛡️", "").replace("🆚", "").trim());
             } else if (work.maxSimilarity > 0) {
-                detail.append(" · 🛡️ 原图相似度 ").append((int) Math.round(work.maxSimilarity * 100)).append("%");
+                detail.append(" · 原图相似度 ").append((int) Math.round(work.maxSimilarity * 100)).append("%");
             } else if (work.hasSourceCompare) {
-                detail.append(" · 🆚 支持原图对比");
-            }
-        }
-        // DSH-135: 统一倒计时药丸展示（继承首发设备生命周期）
-        if (work.useCount > 0) {
-            CleanupSettings.Values cValues = CleanupSettings.read(this);
-            long expireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? work.firstSharedAtMs + cValues.moveAfterMs() : 0);
-            long nowMsTime = System.currentTimeMillis();
-            if (expireMs > 0 && expireMs > nowMsTime) {
-                long remainingMin = Math.max(1, (expireMs - nowMsTime) / 60000L);
-                detail.append(" · 剩 ").append(remainingMin).append(" 分钟入回收站");
-                if (work.originDevice != null && !work.originDevice.isEmpty()) {
-                    detail.append(" (来自 ").append(work.originDevice).append(")");
-                }
+                detail.append(" · 支持原图对比");
             }
         }
         if (work.useCount > 0 && work.dispatchedTo != null && !work.dispatchedTo.isEmpty()) {
