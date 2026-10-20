@@ -1223,7 +1223,7 @@ LOCAL_LATEST_JSON = os.path.join(LOCAL_OUT_DIR, "local_latest.json")
 def _read_local_ipa_path() -> Optional[str]:
     """检查本地是否已有最新构建的 iOS IPA 产物，优先秒级直供"""
     candidates = [
-        r"C:\Users\z\Desktop\album-iOS-v0.8.111.ipa",
+        r"C:\Users\z\Desktop\album-iOS-v0.8.112.ipa",
         r"D:\AICode\_ipa_downloads_v111\album-iOS-v0.8.111-altstore.ipa",
         r"D:\AICode\_ipa_downloads\album-iOS-v0.8.111-altstore.ipa",
     ]
@@ -3970,11 +3970,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Connection", "close")
                 self.send_cors_headers()
                 self.end_headers()
-                self.wfile.write(payload)
-            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                chunk_sz = 64 * 1024
+                for off in range(0, len(payload), chunk_sz):
+                    self.wfile.write(payload[off:off + chunk_sz])
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
                 pass
+            finally:
+                self.close_connection = True
             return
 
         if path == "/api/online/phones":
