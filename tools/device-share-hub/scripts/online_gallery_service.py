@@ -1133,6 +1133,8 @@ def slot_guard_health() -> Dict[str, Any]:
 # 不是没发布，是**发布根本没送到手机上**。
 # 修法：电脑有代理，让电脑把 GitHub 的发布清单和安装包代取回来，从局域网发给手机。
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/latest.json"
+ALTSTORE_SOURCE_URL = "https://raw.githubusercontent.com/zwmopen/gallery-updates/main/altstore.json"
+_ALTSTORE_SOURCE_CACHE: Dict[str, Any] = {"at": 0.0, "data": None}
 # 出网代理：环境变量显式指定时只用它。
 # 【DSH-115】不再写死 7897 —— Clash 混合端口会在 7890/7897 之间回跳
 # （2026-09-25 CDP 产线就因此停产过一次），节点还偶发掉线（实测 WinError 10054）。
@@ -1301,6 +1303,80 @@ def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
             _UPDATE_RELAY_STATS["lastError"] = str(e)
         print("[UpdateRelay] 取发布清单失败：%s" % e)
         return {}
+
+
+def fetch_altstore_manifest(force: bool = False) -> Dict[str, Any]:
+    """获取真正的 AltStore 更新源 JSON（供 iOS AltStore 客户端解析）"""
+    with _UPDATE_LOCK:
+        now = time.time()
+        cached = _ALTSTORE_SOURCE_CACHE.get("data")
+        if (not force) and cached and (now - float(_ALTSTORE_SOURCE_CACHE.get("at", 0.0)) < 300.0):
+            return cached
+
+    req = urllib.request.Request(
+        ALTSTORE_SOURCE_URL,
+        headers={"User-Agent": "dsh-online-gallery-altstore", "Accept": "application/json"}
+    )
+    try:
+        with _update_fetch(req, 12) as resp:
+            raw = resp.read()
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict) or not data.get("apps"):
+            raise ValueError("AltStore 源格式无效，缺失 apps 列表")
+
+        local_ip = get_local_ip()
+        port = DEFAULT_PORT
+        lan_download_url = f"http://{local_ip}:{port}/download/ipa"
+
+        for app in data.get("apps", []):
+            if app.get("bundleIdentifier") == "com.zwm.album":
+                versions = app.get("versions", [])
+                if versions and isinstance(versions, list):
+                    versions[0]["lanDownloadURL"] = lan_download_url
+
+        with _UPDATE_LOCK:
+            _ALTSTORE_SOURCE_CACHE["at"] = time.time()
+            _ALTSTORE_SOURCE_CACHE["data"] = data
+        return data
+    except Exception as e:
+        print("[AltStoreRelay] 拉取 AltStore 源失败: %s" % e)
+        with _UPDATE_LOCK:
+            if _ALTSTORE_SOURCE_CACHE.get("data"):
+                return _ALTSTORE_SOURCE_CACHE["data"]
+
+        manifest = fetch_update_manifest()
+        ios_info = manifest.get("ios") or {}
+        local_ip = get_local_ip()
+        port = DEFAULT_PORT
+        return {
+            "name": "相册更新源",
+            "subtitle": "相册 iPhone 局域网更新",
+            "description": "相册 iPhone 客户端的局域网更新源。",
+            "iconURL": "https://github.com/zwmopen.png?size=512",
+            "apps": [
+                {
+                    "name": "相册",
+                    "bundleIdentifier": "com.zwm.album",
+                    "developerName": "zwmopen",
+                    "subtitle": "局域网作品与文件传送",
+                    "localizedDescription": "用于接收作品、查看内容和向电脑传送文件的自用 iPhone 客户端。",
+                    "iconURL": "https://github.com/zwmopen.png?size=512",
+                    "tintColor": "#4F9D69",
+                    "category": "photo-video",
+                    "versions": [
+                        {
+                            "version": ios_info.get("version_name", "0.8.109"),
+                            "buildVersion": str(ios_info.get("build", 220)),
+                            "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "localizedDescription": "局域网高速版本更新",
+                            "downloadURL": f"http://{local_ip}:{port}/download/ipa",
+                            "size": 22628300,
+                            "sha256": ios_info.get("sha256", "")
+                        }
+                    ]
+                }
+            ]
+        }
 
 
 def _update_expected_sha(manifest: Dict[str, Any], kind: str) -> str:
@@ -3827,7 +3903,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         # -- DSH-113：局域网更新中转路由（必须在 /api 兜底之前） --
         if path in ("/latest.json", "/altstore.json"):
-            data = fetch_update_manifest()
+            if path == "/altstore.json":
+                data = fetch_altstore_manifest()
+            else:
+                data = fetch_update_manifest()
             if not data:
                 self.send_json(503, {"ok": False,
                                      "error": "电脑端代取发布清单失败（检查 7897 代理）"})
