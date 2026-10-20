@@ -1220,6 +1220,29 @@ LOCAL_OUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 LOCAL_LATEST_JSON = os.path.join(LOCAL_OUT_DIR, "local_latest.json")
 
 
+def _read_local_ipa_path() -> Optional[str]:
+    """检查本地是否已有最新构建的 iOS IPA 产物，优先秒级直供"""
+    candidates = [
+        r"C:\Users\z\Desktop\album-iOS-v0.8.111.ipa",
+        r"D:\AICode\_ipa_downloads_v111\album-iOS-v0.8.111-altstore.ipa",
+        r"D:\AICode\_ipa_downloads\album-iOS-v0.8.111-altstore.ipa",
+    ]
+    desktop_dir = r"C:\Users\z\Desktop"
+    if os.path.isdir(desktop_dir):
+        try:
+            for f in os.listdir(desktop_dir):
+                if f.lower().startswith("album-ios") and f.lower().endswith(".ipa"):
+                    p = os.path.join(desktop_dir, f)
+                    if p not in candidates:
+                        candidates.append(p)
+        except Exception:
+            pass
+    for c in candidates:
+        if os.path.isfile(c) and os.path.getsize(c) > 1024 * 1024:
+            return c
+    return None
+
+
 def _read_local_update_manifest() -> Optional[Dict[str, Any]]:
     """优先读取本机刚编译落盘的 local_latest.json（若存在且对应的本地 APK 文件真实有效）。"""
     try:
@@ -1365,9 +1388,9 @@ def fetch_altstore_manifest(force: bool = False) -> Dict[str, Any]:
                     "category": "photo-video",
                     "versions": [
                         {
-                            "version": ios_info.get("version_name", "0.8.111"),
-                            "buildVersion": str(ios_info.get("build", 222)),
-                            "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "version": ios_info.get("version_name", "0.8.112"),
+                            "buildVersion": str(ios_info.get("build", 223)),
+                            "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "localizedDescription": "局域网高速版本更新",
                             "downloadURL": f"http://{local_ip}:{port}/download/ipa",
                             "size": 22628300,
@@ -1423,6 +1446,19 @@ def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
                         return lpayload, ""
                 except Exception:
                     pass
+    if kind == "ipa":
+        local_ipa = _read_local_ipa_path()
+        if local_ipa and os.path.isfile(local_ipa):
+            try:
+                with open(local_ipa, "rb") as ifh:
+                    ipayload = ifh.read()
+                if len(ipayload) > 1024 * 1024:
+                    with _UPDATE_LOCK:
+                        _UPDATE_RELAY_STATS["downloads"] = int(
+                            _UPDATE_RELAY_STATS.get("downloads", 0)) + 1
+                    return ipayload, ""
+            except Exception:
+                pass
     with _UPDATE_LOCK:
         url = _UPDATE_ORIGIN_URLS.get(kind, "")
     if not url:
@@ -3108,9 +3144,14 @@ class WorkScanner:
             except Exception:
                 pass
 
-        manifest_dist = manifest_data.get("distribution", {}) if isinstance(manifest_data, dict) else {}
+        manifest_dist = manifest_data.get("distribution") if isinstance(manifest_data, dict) else None
+        if not isinstance(manifest_dist, dict):
+            manifest_dist = {}
 
-        distribution = tag_data.get("distribution", {})
+        distribution = tag_data.get("distribution") if isinstance(tag_data, dict) else None
+        if not isinstance(distribution, dict):
+            distribution = {}
+
         if not distribution and manifest_dist:
             distribution = dict(manifest_dist)
         elif distribution and manifest_dist:

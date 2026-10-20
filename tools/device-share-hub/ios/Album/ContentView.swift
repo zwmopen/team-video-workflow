@@ -260,6 +260,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             // 【体感加速】先读本地快照进内存（几十毫秒级），再后台拉最新；
             // 最新列表请求统一由 viewWillAppear 发起，避免首屏重复请求。
             primeOnlineDataFromSnapshot()
+            LanDiscovery.shared.probeBeacon { _ in }
         } else {
             render()
         }
@@ -336,6 +337,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         if isOnlineMode {
+            LanDiscovery.shared.probeBeacon { _ in }
             loadOnlineData(silent: true)
             startOnlineAutoRefresh()   // DSH-111：前台期间周期探测，有新作品自动出现
         } else {

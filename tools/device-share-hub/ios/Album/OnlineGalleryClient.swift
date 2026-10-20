@@ -444,7 +444,7 @@ public final class OnlineGalleryClient {
     /// 4) 回环兜底（仅 USB 隧道有效）
     /// 修复：旧版把电脑 IP 写死成 192.168.0.106，换网络后 iPhone 永远读不到在线相册。
     public func resolveBaseUrl() -> String {
-        if let cached = cachedBaseUrl, !cached.isEmpty {
+        if let cached = cachedBaseUrl, !cached.isEmpty, !Self.isLoopback(cached) {
             return cached
         }
         // 1) 用户在设置里手工填写的地址：优先级最高
@@ -474,10 +474,8 @@ public final class OnlineGalleryClient {
             cachedBaseUrl = lastGood
             return lastGood
         }
-        // 4) 最后兜底：回环（仅 USB 隧道有效）
-        let loopback = "http://127.0.0.1:\(Self.defaultPort)"
-        cachedBaseUrl = loopback
-        return loopback
+        // 4) 最后兜底：回环（仅 USB 隧道有效，不固化缓存，避免 Wi-Fi 下锁死）
+        return "http://127.0.0.1:\(Self.defaultPort)"
     }
 
     /// 自动发现命中的地址（允许被更新的信标覆盖）
@@ -1124,7 +1122,7 @@ public final class OnlineGalleryClient {
             let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
 
             if fileManager.fileExists(atPath: diskURL.path),
-               let size = try? diskURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 {
+               let size = try? diskURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 1024 {
                 lock.lock()
                 collected[index] = diskURL
                 completedCount += 1
@@ -1155,10 +1153,18 @@ public final class OnlineGalleryClient {
                     lock.unlock()
                     return
                 }
-                guard let data = data, !data.isEmpty else {
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     lock.lock()
                     if firstError == nil {
-                        firstError = NSError(domain: "OnlineGalleryClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "下载图片为空"])
+                        firstError = NSError(domain: "OnlineGalleryClient", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+                    }
+                    lock.unlock()
+                    return
+                }
+                guard let data = data, data.count > 1024 else {
+                    lock.lock()
+                    if firstError == nil {
+                        firstError = NSError(domain: "OnlineGalleryClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "下载图片为空或无效"])
                     }
                     lock.unlock()
                     return

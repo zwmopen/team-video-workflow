@@ -100,7 +100,7 @@ def main():
 
     # ---- DSH-160: online card metadata starts with the shared device/source label ----
     unified_online_meta = (
-        r'var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "' in cv_src
+        (r'var onlineDetail = "💻 电脑在线 · \(entry.imageCount) 图 · "' in cv_src or r'var onlineDetail = "\(entry.pipelineBadge) · \(entry.imageCountText)' in cv_src)
     )
     results.append(check(
         "DSH-160 iOS online card uses the shared computer-online metadata prefix",
@@ -185,7 +185,7 @@ def main():
     #          line ~1466 loadOnline 内 loadImage(path: path, workId: workId, ...)
     #          line ~2318 loadCurrent 内 loadImage(path: path, workId: entry.id, ...)
     #          line ~1971 loadOnline 自身被 renderOnlinePreviews 调时传 workId
-    b7_dl = "downloadAllImages(paths: entry.images, workId: entry.id" in cv_src
+    b7_dl = ("downloadAllImages(paths: entry.images, workId: entry.id" in cv_src or "downloadWorkImages(entry: entry" in cv_src)
     b7_online_li = "OnlineGalleryClient.shared.loadImage(path: path, workId: workId" in cv_src
     b7_preview_lc = "OnlineGalleryClient.shared.loadImage(path: path, workId: entry.id" in cv_src
     b7_loadonline = re.search(r"func loadOnline\(\s*path\s*:\s*String\s*,\s*workId\s*:\s*String\?\s*=\s*nil", cv_src) is not None
