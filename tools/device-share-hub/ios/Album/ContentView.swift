@@ -14,13 +14,20 @@ enum LocalDispatchedStore {
         recentSavedAtMs[workId] = Date().timeIntervalSince1970 * 1000
         var set = get(workId: workId)
         set.insert(version)
+        let clean = version.replacingOccurrences(of: "｜", with: "|")
+        if clean.contains("|") {
+            for part in clean.split(separator: "|") {
+                let trimmed = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { set.insert(trimmed) }
+            }
+        }
         let key = "dispatched_vers_\(workId)"
         UserDefaults.standard.set(Array(set), forKey: key)
     }
 
     static func isRecentlySaved(workId: String, nowMs: Double = Date().timeIntervalSince1970 * 1000) -> Bool {
         guard let ts = recentSavedAtMs[workId] else { return false }
-        return (nowMs - ts) < 15000
+        return (nowMs - ts) < 300000 // 5 分钟保鲜期，防止切换到其他 App 发帖返回后本地状态被误清
     }
 
     static func clear(workId: String) {
@@ -238,6 +245,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     override func viewDidLoad() {
         super.viewDidLoad()
         isOnlineMode = UserDefaults.standard.bool(forKey: prefOnlineModeKey)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleAppWillEnterForeground),
+                                               name: UIApplication.willEnterForegroundNotification, object: nil)
         view.backgroundColor = AppColors.background
         configureNavigation()
         configureFilterBar()
@@ -356,6 +365,16 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             showInitialFolderPromptIfNeeded()
         }
     }
+    @objc private func handleAppWillEnterForeground() {
+        if isOnlineMode {
+            loadOnlineData(silent: true)
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
 
     private func configureNavigation() {
         navigationItem.backBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)

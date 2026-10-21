@@ -349,8 +349,10 @@ public final class OnlineGalleryClient {
     private var cachedBaseUrl: String?
 
     private let session: URLSession
-    private let thumbnailMaxAttempts = 2
-    private let thumbnailRetryDelay: TimeInterval = 0.9
+    private let thumbnailMaxAttempts = 3
+    private let thumbnailRetryDelay: TimeInterval = 0.5
+    private let originalMaxAttempts = 3
+    private let originalRetryDelay: TimeInterval = 0.5
     private let listRequestLock = NSLock()
     private var latestCategoriesRequestID: UInt64 = 0
     private var latestWorksRequestID: UInt64 = 0
@@ -913,7 +915,7 @@ public final class OnlineGalleryClient {
                 cacheKey: cacheKey,
                 diskURL: diskURL,
                 attempt: 1,
-                maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : 1,
+                maxAttempts: isThumbnail ? self.thumbnailMaxAttempts : self.originalMaxAttempts,
                 request: request,
                 onProgress: onProgress,
                 completion: completion
@@ -995,7 +997,8 @@ public final class OnlineGalleryClient {
                 }
                 return
             }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + self.thumbnailRetryDelay) { [weak self] in
+            let delay = isThumbnail ? self.thumbnailRetryDelay : (self.originalRetryDelay * Double(attempt))
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self = self, !request.isCancelled else { return }
                 self.loadRemoteImageAttempt(
                     url: url,
@@ -1093,6 +1096,60 @@ public final class OnlineGalleryClient {
     }
 
     /// DSH-170: 并发流式下载原图直接落盘，跳过 UIImage decode 与 jpegData 重编码（速度提升 10 倍）
+    private func downloadSingleImageAttempt(
+        url: URL,
+        diskURL: URL,
+        attempt: Int,
+        maxAttempts: Int,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let task = session.dataTask(with: url) { [weak self] data, response, error in
+            guard let self = self else { return }
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            let isRetryable = error != nil || statusCode == nil || statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false) || (data != nil && (data?.count ?? 0) <= 1024)
+            if let error = error {
+                if attempt < maxAttempts && isRetryable {
+                    let delay = 0.5 * Double(attempt)
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
+                    }
+                    return
+                }
+                completion(.failure(error))
+                return
+            }
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                if attempt < maxAttempts && isRetryable {
+                    let delay = 0.5 * Double(attempt)
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
+                    }
+                    return
+                }
+                completion(.failure(NSError(domain: "OnlineGalleryClient", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])))
+                return
+            }
+            guard let data = data, data.count > 1024 else {
+                if attempt < maxAttempts {
+                    let delay = 0.5 * Double(attempt)
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
+                    }
+                    return
+                }
+                completion(.failure(NSError(domain: "OnlineGalleryClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "下载图片为空或无效"])))
+                return
+            }
+            do {
+                try data.write(to: diskURL)
+                completion(.success(()))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        task.resume()
+    }
+
     public func downloadWorkImages(
         entry: OnlineWorkEntry,
         onProgress: @escaping (Int, Int, String) -> Void,
@@ -1144,33 +1201,10 @@ public final class OnlineGalleryClient {
             guard let url = components?.url else { continue }
 
             group.enter()
-            let task = session.dataTask(with: url) { [weak self] data, response, error in
+            self.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: 1, maxAttempts: 3) { res in
                 defer { group.leave() }
-                guard let self = self else { return }
-                if let error = error {
-                    lock.lock()
-                    if firstError == nil { firstError = error }
-                    lock.unlock()
-                    return
-                }
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    lock.lock()
-                    if firstError == nil {
-                        firstError = NSError(domain: "OnlineGalleryClient", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
-                    }
-                    lock.unlock()
-                    return
-                }
-                guard let data = data, data.count > 1024 else {
-                    lock.lock()
-                    if firstError == nil {
-                        firstError = NSError(domain: "OnlineGalleryClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "下载图片为空或无效"])
-                    }
-                    lock.unlock()
-                    return
-                }
-                do {
-                    try data.write(to: diskURL)
+                switch res {
+                case .success:
                     lock.lock()
                     collected[index] = diskURL
                     completedCount += 1
@@ -1179,13 +1213,12 @@ public final class OnlineGalleryClient {
                     DispatchQueue.main.async {
                         onProgress(c, total, (imgPath as NSString).lastPathComponent)
                     }
-                } catch {
+                case .failure(let err):
                     lock.lock()
-                    if firstError == nil { firstError = error }
+                    if firstError == nil { firstError = err }
                     lock.unlock()
                 }
             }
-            task.resume()
         }
 
         group.notify(queue: .main) {
@@ -1220,7 +1253,21 @@ public final class OnlineGalleryClient {
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
-        session.dataTask(with: request) { data, _, _ in
+        sendRecordUseAttempt(request: request, workId: workId, attempt: 1, maxAttempts: 3, completion: completion)
+    }
+
+    private func sendRecordUseAttempt(request: URLRequest, workId: String, attempt: Int, maxAttempts: Int, completion: ((OnlineUseResult) -> Void)?) {
+        session.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            let isRetryable = error != nil || statusCode == nil || statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false)
+            if isRetryable && attempt < maxAttempts {
+                let delay = 0.5 * Double(attempt)
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.sendRecordUseAttempt(request: request, workId: workId, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
+                }
+                return
+            }
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 DispatchQueue.main.async {

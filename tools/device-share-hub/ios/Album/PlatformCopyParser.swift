@@ -365,21 +365,21 @@ enum PlatformCopyParser {
         // HR / 备用 / 方案决策族
         ["hr", "hr决策版", "决策版", "hr方案决策版", "备用", "备用岗", "备用文案", "备用方案", "方案版", "决策矩阵", "hr决策讨论"],
         // 小红书种草族
-        ["xhs", "种草版", "种草", "小红书", "红书种草", "原生种草", "自然种草版", "小红书自然种草版", "小红书种草版", "发布"],
+        ["xhs", "种草版", "种草", "小红书", "红书种草", "原生种草", "小红书种草版", "发布"],
         // 小红书大纲方案族
-        ["xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"],
+        ["xhs2", "xhs_2", "小红书2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"],
         // 小红书自然族
-        ["红书自然", "小红书自然", "小红书自然版"],
+        ["红书自然", "小红书自然", "小红书自然版", "小红书1", "xhs1", "自然攻略版", "自然版", "自然种草版", "小红书自然种草版"],
         // 抖音无营销族
         ["douyin", "规避营销版", "抖音", "抖音无营销", "无营销版", "抖音规避营销版"],
         // 抖音攻略族
-        ["抖音攻略", "抖音攻略版"],
+        ["抖音攻略", "抖音攻略版", "攻略版"],
         // 抖音避坑族
         ["抖音避坑", "避坑版", "抖音避坑版", "抖音玩法避坑版"],
         // 微信公众号族
         ["wechat", "公众号版", "公众号", "微信", "微信公众号", "微信公众号版"],
         // 短文精选族
-        ["xhs3", "xhs_3", "短文精选版", "短文版", "精选版"]
+        ["xhs3", "xhs_3", "小红书3", "短文精选版", "短文版", "精选版"]
     ]
 
     private static func normalizeVersionTag(_ s: String) -> String {
@@ -387,10 +387,17 @@ enum PlatformCopyParser {
         while t.hasPrefix("✓") || t.hasPrefix("✔") {
             t = String(t.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        t = t.replacingOccurrences(of: "｜", with: "|")
+            .replacingOccurrences(of: "：", with: ":")
+            .replacingOccurrences(of: "（", with: "(")
+            .replacingOccurrences(of: "）", with: ")")
+            .replacingOccurrences(of: "\u{2800}", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\t", with: "")
         return t.lowercased()
     }
 
-    /// 判断两个版本标签或别名是否等价（严格精确相等或同属唯一精确同义词集合，严禁子串模糊包含误伤）
+    /// 判断两个版本标签或别名是否等价（支持复合版本号如「小红书2|大纲方案版」子项解析与全角标点归一化）
     static func isVersionTagMatched(_ a: String, _ b: String) -> Bool {
         let cleanA = normalizeVersionTag(a)
         let cleanB = normalizeVersionTag(b)
@@ -399,6 +406,19 @@ enum PlatformCopyParser {
         for family in aliasFamilies {
             if family.contains(cleanA) && family.contains(cleanB) {
                 return true
+            }
+        }
+        // 复合标签拆解匹配（如「小红书2|大纲方案版」拆为「小红书2」和「大纲方案版」）
+        let partsA = cleanA.split(separator: "|").map { String($0) }
+        let partsB = cleanB.split(separator: "|").map { String($0) }
+        for pa in partsA {
+            for pb in partsB {
+                if pa == pb { return true }
+                for family in aliasFamilies {
+                    if family.contains(pa) && family.contains(pb) {
+                        return true
+                    }
+                }
             }
         }
         return false

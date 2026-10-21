@@ -292,6 +292,11 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             let items = try library.prepareShare(work, images: images)
             let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
             controller.popoverPresentationController?.sourceView = actions
+            controller.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                guard let self = self else { return }
+                if completed { self.showToast("🚀 分享完成") }
+                self.setupData()
+            }
             present(controller, animated: true)
         } catch {
             showToast(error.localizedDescription)

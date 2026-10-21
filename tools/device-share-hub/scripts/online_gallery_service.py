@@ -1223,7 +1223,7 @@ LOCAL_LATEST_JSON = os.path.join(LOCAL_OUT_DIR, "local_latest.json")
 def _read_local_ipa_path() -> Optional[str]:
     """检查本地是否已有最新构建的 iOS IPA 产物，优先秒级直供"""
     candidates = [
-        r"C:\Users\z\Desktop\album-iOS-v0.8.112.ipa",
+        r"C:\Users\z\Desktop\album-iOS-v0.8.113.ipa",
         r"D:\AICode\_ipa_downloads_v111\album-iOS-v0.8.111-altstore.ipa",
         r"D:\AICode\_ipa_downloads\album-iOS-v0.8.111-altstore.ipa",
     ]
@@ -1388,8 +1388,8 @@ def fetch_altstore_manifest(force: bool = False) -> Dict[str, Any]:
                     "category": "photo-video",
                     "versions": [
                         {
-                            "version": ios_info.get("version_name", "0.8.112"),
-                            "buildVersion": str(ios_info.get("build", 223)),
+                            "version": ios_info.get("version_name", "0.8.113"),
+                            "buildVersion": str(ios_info.get("build", 224)),
                             "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "localizedDescription": "局域网高速版本更新",
                             "downloadURL": f"http://{local_ip}:{port}/download/ipa",
@@ -1942,7 +1942,7 @@ class WorkScanner:
         now = time.time()
         with self._lock:
             cached = self._stage_cache.get(folder_name)
-            if cached and not force and (now - cached[0] < 5.0):
+            if cached and not force and (now - cached[0] < 300.0):
                 return cached[1]
 
         base = os.path.join(self.root, folder_name)
@@ -1952,6 +1952,7 @@ class WorkScanner:
             if not w:
                 continue
             w["folder"] = folder_name
+            w["garbage"] = read_garbage_meta(full)
             # 登记到 _moved_works，保证 /api/online/image 能按 id 找回嵌套作品的原图
             self._moved_works[w["id"]] = w
             out.append(w)
@@ -1960,6 +1961,14 @@ class WorkScanner:
         with self._lock:
             self._stage_cache[folder_name] = (now, out)
         return out
+
+    def get_stage_works_count(self, folder_name: str) -> int:
+        with self._lock:
+            cached = self._stage_cache.get(folder_name)
+            if cached:
+                return len(cached[1])
+        base = os.path.join(self.root, folder_name)
+        return len(list(self._iter_work_dirs(base)))
 
     def invalidate_stage_cache(self) -> None:
         """作废回收站两个 Tab 的 5 秒缓存。
@@ -4295,13 +4304,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # 另一个 Tab 也列一遍（垃圾库很小，代价可忽略），
             # 让两个 Tab 的角标数字与各自列表的 total 严格一致。
             if is_garbage:
-                other = self.scanner.list_stage_works(
-                    self.scanner.STAGE1_FOLDER, "已发送1次", 1, force=force)
-                counts = {"sent": len(other), "garbage": len(works)}
+                other_count = self.scanner.get_stage_works_count(self.scanner.STAGE1_FOLDER)
+                counts = {"sent": other_count, "garbage": len(works)}
             else:
-                other = self.scanner.list_stage_works(
-                    self.scanner.GARBAGE_FOLDER, "已废弃-垃圾", 0, force=force)
-                counts = {"sent": len(works), "garbage": len(other)}
+                other_count = self.scanner.get_stage_works_count(self.scanner.GARBAGE_FOLDER)
+                counts = {"sent": len(works), "garbage": other_count}
 
             self.send_json(200, {
                 "ok": True,

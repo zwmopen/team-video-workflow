@@ -329,15 +329,24 @@ final class PlatformCopyParser {
 
     // DSH-142 & DSH-144: 平台与版本别名族（全跨端对齐，严格按独立版本拆分，严禁包含"红书"/"抖音"/"方案"等泛词子串防止跨按钮误打勾）
     private static final String[][] ALIAS_FAMILIES = new String[][] {
+        // HR / 备用 / 方案决策族
         {"hr", "hr决策版", "决策版", "hr方案决策版", "备用", "备用岗", "备用文案", "备用方案", "方案版", "决策矩阵", "hr决策讨论"},
-        {"xhs", "种草版", "种草", "小红书", "红书种草", "原生种草", "自然种草版", "小红书自然种草版", "小红书种草版", "发布"},
-        {"xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"},
-        {"红书自然", "小红书自然", "小红书自然版"},
+        // 小红书种草族
+        {"xhs", "种草版", "种草", "小红书", "红书种草", "原生种草", "小红书种草版", "发布"},
+        // 小红书大纲方案族
+        {"xhs2", "xhs_2", "小红书2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"},
+        // 小红书自然族
+        {"红书自然", "小红书自然", "小红书自然版", "小红书1", "xhs1", "自然攻略版", "自然版", "自然种草版", "小红书自然种草版"},
+        // 抖音无营销族
         {"douyin", "规避营销版", "抖音", "抖音无营销", "无营销版", "抖音规避营销版"},
-        {"抖音攻略", "抖音攻略版"},
+        // 抖音攻略族
+        {"抖音攻略", "抖音攻略版", "攻略版"},
+        // 抖音避坑族
         {"抖音避坑", "避坑版", "抖音避坑版", "抖音玩法避坑版"},
+        // 微信公众号族
         {"wechat", "公众号版", "公众号", "微信", "微信公众号", "微信公众号版"},
-        {"xhs3", "xhs_3", "短文精选版", "短文版", "精选版"}
+        // 短文精选族
+        {"xhs3", "xhs_3", "小红书3", "短文精选版", "短文版", "精选版"}
     };
 
     private static String normalizeVersionTag(String s) {
@@ -346,6 +355,13 @@ final class PlatformCopyParser {
         while (t.startsWith("✓") || t.startsWith("✔")) {
             t = t.substring(1).trim();
         }
+        t = t.replace("｜", "|")
+             .replace("：", ":")
+             .replace("（", "(")
+             .replace("）", ")")
+             .replace("\u2800", "")
+             .replace(" ", "")
+             .replace("\t", "");
         return t.toLowerCase(java.util.Locale.ROOT);
     }
 
@@ -361,6 +377,23 @@ final class PlatformCopyParser {
                 if (cleanB.equals(item)) inB = true;
             }
             if (inA && inB) return true;
+        }
+
+        // 复合标签拆解匹配（如「小红书2|大纲方案版」拆为「小红书2」和「大纲方案版」）
+        String[] partsA = cleanA.split("\\|");
+        String[] partsB = cleanB.split("\\|");
+        for (String pa : partsA) {
+            for (String pb : partsB) {
+                if (pa.equals(pb)) return true;
+                for (String[] family : ALIAS_FAMILIES) {
+                    boolean inPa = false, inPb = false;
+                    for (String item : family) {
+                        if (pa.equals(item)) inPa = true;
+                        if (pb.equals(item)) inPb = true;
+                    }
+                    if (inPa && inPb) return true;
+                }
+            }
         }
         return false;
     }

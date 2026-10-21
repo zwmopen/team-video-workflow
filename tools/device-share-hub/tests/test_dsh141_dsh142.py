@@ -40,6 +40,9 @@ def test_code_contracts():
         ios_c_code = f.read()
     assert "deleteOnlineImage(workId:" in ios_c_code, "iOS OnlineGalleryClient 必须包含 deleteOnlineImage"
     assert "/api/online/delete-image" in ios_c_code, "iOS deleteOnlineImage 必须调用 /api/online/delete-image"
+    assert "downloadSingleImageAttempt" in ios_c_code, "iOS 批量原图下载必须具备单图独立重试 downloadSingleImageAttempt"
+    assert "sendRecordUseAttempt" in ios_c_code, "iOS 使用上报必须具备重试守卫 sendRecordUseAttempt"
+    assert "maxAttempts = 3" in ios_c_code or "maxAttempts: 3" in ios_c_code or "maxAttempts" in ios_c_code, "iOS 必须支持待机唤醒网络重试"
 
     with open(IOS_CONTENT, "r", encoding="utf-8") as f:
         ios_ui_code = f.read()
@@ -52,13 +55,16 @@ def test_code_contracts():
     assert "actionRow.setContentCompressionResistancePriority(.required, for: .vertical)" in ios_ui_code, "iOS 底部 actionRow 必须具备最高垂直抗压缩优先级"
     assert "actionRow.heightAnchor.constraint(equalToConstant: 36)" in ios_ui_code, "iOS actionRow 必须固定 36pt 高度防挤压"
     assert "extraDetailLines += 1" in ios_ui_code, "iOS sizeForItemAt 必须根据在线卡记录动态累加 extraDetailLines"
+    assert "willEnterForegroundNotification" in ios_ui_code, "iOS 必须监听切回前台事件自动刷新分发状态"
 
     with open(IOS_PARSER, "r", encoding="utf-8") as f:
         ios_p_code = f.read()
     assert "aliasFamilies" in ios_p_code, "iOS PlatformCopyParser 必须包含 aliasFamilies 别名族"
     assert "isPlatformOrVersionDispatched" in ios_p_code, "iOS 必须包含 isPlatformOrVersionDispatched"
     assert "备用岗" in ios_p_code, "iOS 别名族必须包含「备用岗」"
-    print("  PASS 2. iOS 单图删除、防挤压、动态行高自适应与别名打勾契约完备")
+    assert "｜" in ios_p_code and "|" in ios_p_code, "iOS 必须包含全角竖线到半角竖线归一化"
+    assert "split(separator: \"|\")" in ios_p_code, "iOS 必须包含复合标签按竖线拆分匹配"
+    print("  PASS 2. iOS 单图删除、防挤压、动态行高自适应、待机重试与复合版本打勾契约完备")
 
     # 3. Android 端契约
     with open(ANDROID_CLIENT, "r", encoding="utf-8") as f:
@@ -77,7 +83,9 @@ def test_code_contracts():
     assert "ALIAS_FAMILIES" in and_p_code, "Android PlatformCopyParser 必须包含 ALIAS_FAMILIES"
     assert "isPlatformOrVersionDispatched" in and_p_code, "Android 必须包含 isPlatformOrVersionDispatched"
     assert "备用岗" in and_p_code, "Android 别名族必须包含「备用岗」"
-    print("  PASS 3. Android 单图删除、记录精简与别名打勾契约完备")
+    assert "｜" in and_p_code and "|" in and_p_code, "Android 必须包含全角竖线到半角竖线归一化"
+    assert "split(\"\\\\|\")" in and_p_code, "Android 必须包含复合标签按竖线拆分匹配"
+    print("  PASS 3. Android 单图删除、记录精简与全角复合别名打勾契约完备")
 
 
 def test_alias_normalization():
@@ -85,29 +93,56 @@ def test_alias_normalization():
     
     # 模拟两端相同的匹配逻辑
     ALIAS_FAMILIES = [
-        {"hr", "hr决策版", "决策版", "备用", "备用岗", "备用文案", "备用方案", "方案", "方案版"},
-        {"xhs", "种草版", "种草", "小红书", "红书", "红书种草", "自然种草版", "小红书自然种草版", "发布"},
-        {"xhs2", "xhs_2", "大纲方案版", "红书大纲", "大纲版", "方案大纲"},
-        {"douyin", "规避营销版", "抖音", "抖音无营销", "抖音避坑", "无营销版", "避坑版"},
-        {"wechat", "公众号版", "公众号", "微信", "微信公众号"},
-        {"xhs3", "xhs_3", "短文精选版", "短文版", "精选版"}
+        {"xhs", "种草版", "种草", "小红书", "红书", "红书种草", "发布"},
+        {"xhs2", "xhs_2", "小红书2", "大纲方案版", "红书大纲", "大纲版", "方案大纲", "小红书大纲", "小红书大纲版"},
+        {"红书自然", "小红书自然", "小红书自然版", "小红书1", "xhs1", "自然攻略版", "自然版", "自然种草版", "小红书自然种草版"},
+        {"douyin", "规避营销版", "抖音", "抖音无营销", "无营销版", "抖音规避营销版"},
+        {"抖音攻略", "抖音攻略版", "攻略版"},
+        {"抖音避坑", "避坑版", "抖音避坑版", "抖音玩法避坑版"},
+        {"wechat", "公众号版", "公众号", "微信", "微信公众号", "微信公众号版"},
+        {"xhs3", "xhs_3", "小红书3", "短文精选版", "短文版", "精选版"},
+        {"hr", "hr决策版", "决策版", "备用", "备用岗", "备用文案", "备用方案", "方案", "方案版"}
     ]
 
+    def normalize_tag(s):
+        t = s.strip()
+        while t.startswith("✓") or t.startswith("✔"):
+            t = t[1:].strip()
+        t = (t.replace("｜", "|")
+             .replace("：", ":")
+             .replace("（", "(")
+             .replace("）", ")")
+             .replace("\u2800", "")
+             .replace(" ", "")
+             .replace("\t", ""))
+        return t.lower()
+
     def is_matched(a, b):
-        ca = a.strip().lower()
-        cb = b.strip().lower()
+        ca = normalize_tag(a)
+        cb = normalize_tag(b)
         if not ca or not cb: return False
         if ca == cb: return True
-        if len(ca) >= 2 and len(cb) >= 2 and (ca in cb or cb in ca): return True
         for fam in ALIAS_FAMILIES:
-            in_a = any(ca == item or (len(ca) >= 2 and ca in item) for item in fam)
-            in_b = any(cb == item or (len(cb) >= 2 and cb in item) for item in fam)
-            if in_a and in_b: return True
+            if ca in fam and cb in fam: return True
+        # 复合标签拆解匹配（如「小红书2｜大纲方案版」拆为「小红书2」和「大纲方案版」）
+        parts_a = [p for p in ca.split("|") if p]
+        parts_b = [p for p in cb.split("|") if p]
+        for pa in parts_a:
+            for pb in parts_b:
+                if pa == pb: return True
+                for fam in ALIAS_FAMILIES:
+                    if pa in fam and pb in fam: return True
         return False
 
     def extract_ver(record):
-        if "(" in record and ")" in record:
-            inside = record.split("(", 1)[1].split(")", 1)[0].strip()
+        # 兼容中文全角括号与半角括号，从后向前匹配
+        close_idx = record.rfind(")")
+        open_idx = record.rfind("(", 0, close_idx) if close_idx >= 0 else -1
+        if open_idx < 0 or close_idx <= open_idx:
+            close_idx = record.rfind("）")
+            open_idx = record.rfind("（", 0, close_idx) if close_idx >= 0 else -1
+        if open_idx >= 0 and close_idx > open_idx:
+            inside = record[open_idx + 1:close_idx].strip()
             if "@" in inside:
                 return inside.split("@", 1)[0].strip()
             return inside
@@ -129,10 +164,22 @@ def test_alias_normalization():
     assert ext_xhs2 == "红书大纲"
     assert is_matched("大纲方案版", ext_xhs2), "红书大纲 与 大纲方案版 必须匹配"
 
-    # 测试用例 4: 抖音规避营销版
+    # 测试用例 4: 复合版本号与全角竖线匹配（重点病灶）
+    assert is_matched("小红书2｜大纲方案版", "大纲方案版"), "小红书2｜大纲方案版 必须匹配 大纲方案版"
+    assert is_matched("大纲方案版", "小红书2｜大纲方案版"), "反向复合标签必须匹配"
+    assert is_matched("小红书2｜大纲方案版", "红书大纲"), "小红书2｜大纲方案版 必须跨别名族匹配 红书大纲"
+    assert is_matched("小红书1｜自然攻略版", "红书自然"), "小红书1｜自然攻略版 必须匹配 红书自然"
+    assert is_matched("小红书2 ｜ 大纲方案版", "小红书2"), "带空格全角竖线复合标签必须匹配 小红书2"
+
+    rec_compound = "iPhone 12 (小红书2｜大纲方案版 @ 2026-10-21 12:00:00)"
+    ext_compound = extract_ver(rec_compound)
+    assert ext_compound == "小红书2｜大纲方案版"
+    assert is_matched("大纲方案版", ext_compound), "从 iPhone 记录提取的复合版本必须与 大纲方案版 按钮打勾"
+
+    # 测试用例 5: 抖音规避营销版
     assert is_matched("规避营销版", "抖音无营销"), "规避营销版 与 抖音无营销 必须匹配"
 
-    # 测试用例 5: 负向用例（不相干的版本不能误判）
+    # 测试用例 6: 负向用例（不相干的版本不能误判）
     assert not is_matched("规避营销版", "小红书"), "抖音 与 小红书 绝不能误匹配"
     assert not is_matched("HR决策版", "种草版"), "HR版 与 种草版 绝不能误匹配"
 
