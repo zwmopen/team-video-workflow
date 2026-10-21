@@ -295,7 +295,7 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
             controller.completionWithItemsHandler = { [weak self] _, completed, _, _ in
                 guard let self = self else { return }
                 if completed { self.showToast("🚀 分享完成") }
-                self.setupData()
+                self.render()
             }
             present(controller, animated: true)
         } catch {
