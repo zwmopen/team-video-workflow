@@ -17,24 +17,25 @@ final class SettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { return 5 }
+    override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [4, 2, 2, 2, 5][section]
+        return [4, 2, 2, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return ["设备", "作品文件夹", "自动整理", "提醒", "软件"][section]
+        return ["设备", "作品文件夹", "自动整理", "提醒", "外观", "软件"][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         if section == 0 { return "电脑复制文案时自动同步至手机剪贴板；默认180秒自动清空，不留输入法永久记录。" }
         if section == 1 { return "当前文件夹就是作品与普通文件的唯一真实来源。" }
-        if section == 4 { return "素材与记录只保存在所选文件夹，不上传服务器，也不自动读取截图或系统剪切板。" }
+        if section == 4 { return "可手动切换浅色或深色模式，默认跟随 iOS 系统设置。" }
+        if section == 5 { return "素材与记录只保存在所选文件夹，不上传服务器，也不自动读取截图或系统剪切板。" }
         return nil
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let usesSubtitle = indexPath.section == 3 || indexPath.section == 4 || (indexPath.section == 0 && indexPath.row == 3)
+        let usesSubtitle = indexPath.section == 3 || indexPath.section == 5 || (indexPath.section == 0 && indexPath.row == 3)
         let cell = UITableViewCell(style: usesSubtitle ? .subtitle : .value1, reuseIdentifier: nil)
         cell.textLabel?.numberOfLines = 0
         cell.detailTextLabel?.numberOfLines = 0
@@ -91,16 +92,21 @@ final class SettingsViewController: UITableViewController {
             toggle.addTarget(self, action: #selector(vibrationSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
         case (4, 0):
+            cell.textLabel?.text = "外观风格"
+            cell.detailTextLabel?.text = AppThemePreferences.currentMode.title
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (5, 0):
             cell.textLabel?.text = "名称"
             cell.detailTextLabel?.text = "相册"
-        case (4, 1):
+        case (5, 1):
             cell.textLabel?.text = "版本"
             cell.detailTextLabel?.text = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.3"
-        case (4, 2):
+        case (5, 2):
             cell.textLabel?.text = "检查版本更新"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
-        case (4, 3):
+        case (5, 3):
             cell.textLabel?.text = "软件说明"
             cell.textLabel?.textColor = view.tintColor
             cell.selectionStyle = .default
@@ -132,16 +138,41 @@ final class SettingsViewController: UITableViewController {
             }
         } else if indexPath.section == 2 {
             showCleanupChoices(editingMove: indexPath.row == 0)
-        } else if indexPath.section == 4 && indexPath.row == 2 {
+        } else if indexPath.section == 4 {
+            showThemeModeChoices()
+        } else if indexPath.section == 5 && indexPath.row == 2 {
             AlbumUpdateChecker.check(from: self)
-        } else if indexPath.section == 4 && indexPath.row == 3 {
+        } else if indexPath.section == 5 && indexPath.row == 3 {
             showAbout()
-        } else if indexPath.section == 4 && indexPath.row == 4 {
+        } else if indexPath.section == 5 && indexPath.row == 4 {
             library.copyDiagnostics()
             let alert = UIAlertController(title: nil, message: "诊断信息已复制", preferredStyle: .alert)
             present(alert, animated: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { alert.dismiss(animated: true) }
         }
+    }
+
+    private func showThemeModeChoices() {
+        let alert = UIAlertController(title: "外观风格", message: "选择深色或浅色模式", preferredStyle: .actionSheet)
+        let current = AppThemePreferences.currentMode
+        let options: [(AppThemeMode, String)] = [
+            (.system, "跟随系统"),
+            (.light, "浅色模式"),
+            (.dark, "深色模式")
+        ]
+        options.forEach { (mode, label) in
+            let isCurrent = mode == current
+            alert.addAction(UIAlertAction(title: label + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
+                AppThemePreferences.currentMode = mode
+                self?.tableView.reloadData()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
     }
 
     @objc private func clipboardSyncSwitchChanged(_ sender: UISwitch) {

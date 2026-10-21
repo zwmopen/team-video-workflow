@@ -47,6 +47,7 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ThemePalette.applySystemBarAppearance(this);
         setContentView(ScreenInsets.protect(buildUi()));
     }
 
@@ -54,19 +55,20 @@ public final class SettingsActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(16), dp(20), dp(16), dp(36));
-        root.setBackgroundColor(Color.rgb(242, 242, 247));
+        root.setBackgroundColor(ThemePalette.getBgPrimary(this));
 
         TextView title = text("设置", 26, true);
         root.addView(title);
         TextView subtitle = text("常用选项集中在这里，修改后立即生效。", 12, false);
-        subtitle.setTextColor(Color.rgb(118, 118, 123));
+        subtitle.setTextColor(ThemePalette.getTextSecondary(this));
         root.addView(subtitle, margins(0, dp(4), 0, dp(20)));
 
         root.addView(label("手机名称（电脑端显示）"));
         deviceName = new EditText(this);
         deviceName.setSingleLine(true);
         deviceName.setText(getSharedPreferences(PREFS, MODE_PRIVATE).getString("deviceName", "我的手机"));
-        deviceName.setBackground(round(Color.WHITE, 14));
+        deviceName.setBackground(round(ThemePalette.getCardBg(this), 14));
+        deviceName.setTextColor(ThemePalette.getTextPrimary(this));
         deviceName.setPadding(dp(14), 0, dp(14), 0);
         root.addView(deviceName, new LinearLayout.LayoutParams(-1, dp(52)));
         Button saveName = button("保存名称", true);
@@ -75,7 +77,8 @@ public final class SettingsActivity extends Activity {
 
         root.addView(label("作品文件夹"));
         pathText = text(currentPathName(), 16, true);
-        pathText.setBackground(round(Color.WHITE, 14));
+        pathText.setBackground(round(ThemePalette.getCardBg(this), 14));
+        pathText.setTextColor(ThemePalette.getTextPrimary(this));
         pathText.setPadding(dp(14), dp(16), dp(14), dp(16));
         root.addView(pathText);
         Button choose = button("更改作品文件夹", false);
@@ -127,6 +130,15 @@ public final class SettingsActivity extends Activity {
         });
         root.addView(vibrationSwitch, settingMargins(dp(20)));
 
+        // ---- 新增：外观风格（深色模式） ----
+        root.addView(label("外观"));
+        int currentThemeMode = ThemePalette.getThemeMode(this);
+        String currentModeText = currentThemeMode == ThemePalette.THEME_MODE_LIGHT ? "浅色模式"
+                : (currentThemeMode == ThemePalette.THEME_MODE_DARK ? "深色模式" : "跟随系统");
+        LinearLayout themeRow = choiceRow("外观风格", currentModeText);
+        themeRow.setOnClickListener(v -> showThemeModeDialog());
+        root.addView(themeRow, settingMargins(dp(20)));
+
         root.addView(label("软件"));
         SettingSwitchRow autoUpdateSwitch = settingSwitch(
                 "自动检查更新",
@@ -141,11 +153,13 @@ public final class SettingsActivity extends Activity {
         String sourceLabel = lan.isEmpty() ? "更新源  优先电脑局域网 / 备用云端" : "更新源  电脑局域网 (" + lan.replace("http://", "") + ")";
         TextView updateEntry = text(sourceLabel, 15, true);
         updateEntry.setPadding(dp(14), dp(16), dp(14), dp(16));
-        updateEntry.setBackground(round(Color.WHITE, 14));
+        updateEntry.setBackground(round(ThemePalette.getCardBg(this), 14));
+        updateEntry.setTextColor(ThemePalette.getTextPrimary(this));
         root.addView(updateEntry, settingMargins(dp(20)));
         TextView version = text("当前版本  " + UpdateChecker.currentVersion(this), 16, true);
         version.setPadding(dp(14), dp(16), dp(14), dp(16));
-        version.setBackground(round(Color.WHITE, 14));
+        version.setBackground(round(ThemePalette.getCardBg(this), 14));
+        version.setTextColor(ThemePalette.getTextPrimary(this));
         root.addView(version);
         Button update = button("检查更新", false);
         String updateLabel = update.getText().toString();
@@ -172,6 +186,21 @@ public final class SettingsActivity extends Activity {
         SpringScrollView scroll = new SpringScrollView(this);
         scroll.addView(root);
         return scroll;
+    }
+
+    private void showThemeModeDialog() {
+        String[] options = {"跟随系统", "浅色模式", "深色模式"};
+        int current = ThemePalette.getThemeMode(this);
+        new AlertDialog.Builder(this)
+                .setTitle("外观风格")
+                .setSingleChoiceItems(options, current, (dialog, which) -> {
+                    ThemePalette.setThemeMode(this, which);
+                    ThemePalette.applySystemBarAppearance(this);
+                    dialog.dismiss();
+                    recreate();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void saveName() {
@@ -247,6 +276,17 @@ public final class SettingsActivity extends Activity {
         DiagnosticLog.write(this, "cleanup_settings_saved",
                 "moveHours=" + moveHours + " deleteHours=" + deleteHours);
         toast("已保存");
+    }
+
+    private EditText numberField(String value) {
+        EditText field = new EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(InputType.TYPE_CLASS_NUMBER);
+        field.setText(value);
+        field.setBackground(round(ThemePalette.getCardBg(this), 14));
+        field.setTextColor(ThemePalette.getTextPrimary(this));
+        field.setPadding(dp(14), 0, dp(14), 0);
+        return field;
     }
 
     @Override
@@ -340,7 +380,7 @@ public final class SettingsActivity extends Activity {
         content.setPadding(dp(24), 0, dp(24), 0);
 
         TextView copy = text(description, 14, false);
-        copy.setTextColor(Color.rgb(70, 70, 67));
+        copy.setTextColor(ThemePalette.getTextSecondary(this));
         copy.setLineSpacing(dp(2), 1f);
         content.addView(copy, new LinearLayout.LayoutParams(-1, -2));
 
@@ -401,59 +441,53 @@ public final class SettingsActivity extends Activity {
         } catch (Exception ignored) { return "已设置"; }
     }
 
-    private TextView label(String value) { TextView v = text(value, 14, true); v.setPadding(0, 0, 0, dp(7)); return v; }
-    private TextView settingCaption(String title, String detail) {
-        TextView value = text(title + "\n" + detail, 14, false);
-        value.setTextColor(Color.rgb(70, 70, 67));
-        value.setPadding(0, 0, 0, dp(7));
-        return value;
+    private TextView label(String value) {
+        TextView v = text(value, 14, true);
+        v.setTextColor(ThemePalette.getTextSecondary(this));
+        v.setPadding(0, 0, 0, dp(7));
+        return v;
     }
+
     private LinearLayout cleanupRow(String title, int hours) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(8), dp(14), dp(8));
-        row.setBackground(round(Color.WHITE, 14));
+        row.setBackground(round(ThemePalette.getCardBg(this), 14));
         row.setClickable(true);
         row.setFocusable(true);
         TextView titleView = text(title, 15, false);
         TextView timingView = text(cleanupTimingText(hours), 15, false);
-        timingView.setTextColor(Color.rgb(85, 85, 82));
+        timingView.setTextColor(ThemePalette.getTextSecondary(this));
         timingView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         row.addView(titleView, new LinearLayout.LayoutParams(0, -1, 1));
         row.addView(timingView, new LinearLayout.LayoutParams(-2, -1));
         return row;
     }
+
     private LinearLayout choiceRow(String title, String value) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(11), dp(14), dp(11));
         row.setMinimumHeight(dp(58));
-        row.setBackground(round(Color.WHITE, 16));
+        row.setBackground(round(ThemePalette.getCardBg(this), 16));
         row.setClickable(true);
         row.setFocusable(true);
         TextView titleView = text(title, 15, false);
         TextView valueView = text(value, 13, false);
-        valueView.setTextColor(Color.rgb(118, 118, 123));
+        valueView.setTextColor(ThemePalette.getTextSecondary(this));
         valueView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         row.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
         row.addView(valueView, new LinearLayout.LayoutParams(-2, -2));
         return row;
     }
+
     private String cleanupTimingText(int hours) {
         String timing = hours == 0 ? "立刻" : hours + " 小时后";
         return timing + "  ›";
     }
-    private EditText numberField(String value) {
-        EditText field = new EditText(this);
-        field.setSingleLine(true);
-        field.setInputType(InputType.TYPE_CLASS_NUMBER);
-        field.setText(value);
-        field.setBackground(round(Color.WHITE, 14));
-        field.setPadding(dp(14), 0, dp(14), 0);
-        return field;
-    }
+
     private SettingSwitchRow settingSwitch(String title, String detail, boolean checked) {
         return new SettingSwitchRow(title, detail, checked);
     }
@@ -467,12 +501,12 @@ public final class SettingsActivity extends Activity {
             setGravity(Gravity.CENTER_VERTICAL);
             setPadding(dp(14), dp(10), dp(14), dp(10));
             setMinimumHeight(dp(72));
-            setBackground(round(Color.WHITE, 16));
+            setBackground(round(ThemePalette.getCardBg(SettingsActivity.this), 16));
             LinearLayout copy = new LinearLayout(SettingsActivity.this);
             copy.setOrientation(VERTICAL);
             TextView titleView = text(title, 15, false);
             TextView detailView = text(detail, 12, false);
-            detailView.setTextColor(Color.rgb(118, 118, 123));
+            detailView.setTextColor(ThemePalette.getTextSecondary(SettingsActivity.this));
             detailView.setLineSpacing(dp(1), 1f);
             detailView.setMaxLines(2);
             copy.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
@@ -558,7 +592,8 @@ public final class SettingsActivity extends Activity {
 
             paint.clearShadowLayer();
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(blend(Color.rgb(209, 209, 214), Color.rgb(52, 199, 89), position));
+            int inactiveTrack = ThemePalette.isDarkMode(SettingsActivity.this) ? Color.rgb(58, 58, 60) : Color.rgb(209, 209, 214);
+            paint.setColor(blend(inactiveTrack, Color.rgb(52, 199, 89), position));
             canvas.drawRoundRect(track, radius, radius, paint);
 
             float inset = 2f * density;
@@ -580,11 +615,52 @@ public final class SettingsActivity extends Activity {
             return Color.rgb(red, green, blue);
         }
     }
-    private TextView text(String value, int sp, boolean bold) { TextView v = new TextView(this); v.setText(value); v.setTextSize(sp); v.setTextColor(Color.rgb(35, 35, 33)); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v; }
-    private Button button(String value, boolean primary) { Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(15); b.setTextColor(primary ? Color.WHITE : Color.rgb(45, 45, 42)); b.setBackground(round(primary ? Color.rgb(15, 155, 99) : Color.rgb(229, 231, 230), 14)); b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); return b; }
-    private GradientDrawable round(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
-    private LinearLayout.LayoutParams margins(int left, int top, int right, int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(48)); p.setMargins(left, top, right, bottom); return p; }
-    private LinearLayout.LayoutParams settingMargins(int bottom) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.setMargins(0, 0, 0, bottom); return p; }
-    private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private TextView text(String value, int sp, boolean bold) {
+        TextView v = new TextView(this);
+        v.setText(value);
+        v.setTextSize(sp);
+        v.setTextColor(ThemePalette.getTextPrimary(this));
+        if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return v;
+    }
+
+    private Button button(String value, boolean primary) {
+        Button b = new Button(this);
+        b.setText(value);
+        b.setAllCaps(false);
+        b.setTextSize(15);
+        b.setTextColor(primary ? Color.WHITE : ThemePalette.getTextPrimary(this));
+        b.setBackground(round(primary ? ThemePalette.getBrandPrimary() : ThemePalette.getCardBg(this), 14));
+        b.setGravity(Gravity.CENTER);
+        b.setMinHeight(dp(48));
+        return b;
+    }
+
+    private GradientDrawable round(int color, int radius) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(dp(radius));
+        return d;
+    }
+
+    private LinearLayout.LayoutParams margins(int left, int top, int right, int bottom) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(48));
+        p.setMargins(left, top, right, bottom);
+        return p;
+    }
+
+    private LinearLayout.LayoutParams settingMargins(int bottom) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.setMargins(0, 0, 0, bottom);
+        return p;
+    }
+
+    private void toast(String value) {
+        Toast.makeText(this, value, Toast.LENGTH_SHORT).show();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
 }

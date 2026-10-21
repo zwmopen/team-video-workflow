@@ -5,6 +5,11 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.BitmapDrawable;
+import android.view.animation.AlphaAnimation;
+import android.view.HapticFeedbackConstants;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -203,6 +208,7 @@ public final class MainActivity extends Activity {
     private Button filterButton;
     private final Set<String> selectedSeasons = new HashSet<>();
     private final Set<String> selectedFlowTypes = new HashSet<>();
+    private int lastThemeMode = -1;
     private long lastRemoteViewStateUpdatedAt = 0L;
     // DSH-111：在线相册自动刷新（页面可见时周期探测，服务端有变化才真刷列表）
     private Runnable onlineAutoRefreshRunnable;
@@ -297,6 +303,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ThemePalette.applySystemBarAppearance(this);
         android.os.StrictMode.setThreadPolicy(new android.os.StrictMode.ThreadPolicy.Builder().permitAll().build());
         isOnlineMode = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_IS_ONLINE_MODE, false);
         onlineClient = new OnlineGalleryClient(this);
@@ -423,7 +430,7 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(pad, dp(8), pad, dp(36));
-        root.setBackgroundColor(Color.rgb(248, 249, 248));
+        root.setBackgroundColor(ThemePalette.getBgPrimary(this));
         root.setClipChildren(false);
         root.setClipToPadding(false);
 
@@ -431,7 +438,7 @@ public final class MainActivity extends Activity {
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.setPadding(dp(12), dp(18), dp(12), dp(10));
-        titleRow.setBackgroundColor(Color.rgb(248, 249, 248));
+        titleRow.setBackgroundColor(ThemePalette.getBgPrimary(this));
         LinearLayout titleCluster = new LinearLayout(this);
         titleCluster.setOrientation(LinearLayout.HORIZONTAL);
         titleCluster.setGravity(Gravity.CENTER_VERTICAL);
@@ -532,26 +539,26 @@ public final class MainActivity extends Activity {
         categoryScrollView.addView(categoryBar, new FrameLayout.LayoutParams(-2, -1));
 
         categorySelector = new FrameLayout(this);
-        categorySelector.setBackground(round(Color.rgb(232, 234, 233), 11));
+        categorySelector.setBackground(round(ThemePalette.isDarkMode(this) ? Color.rgb(28, 28, 30) : Color.rgb(232, 234, 233), 11));
         categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(40)));
 
         searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
         searchBar.setGravity(Gravity.CENTER_VERTICAL);
-        searchBar.setBackground(roundWithStroke(Color.WHITE, 12, Color.rgb(220, 224, 222)));
+        searchBar.setBackground(roundWithStroke(ThemePalette.getCardBg(this), 12, ThemePalette.getCardStroke(this)));
         searchBar.setPadding(dp(10), 0, dp(6), 0);
 
         ImageView searchIcon = new ImageView(this);
         searchIcon.setImageResource(R.drawable.ic_album_search);
-        searchIcon.setImageTintList(ColorStateList.valueOf(Color.rgb(130, 136, 133)));
+        searchIcon.setImageTintList(ColorStateList.valueOf(ThemePalette.getTextSecondary(this)));
         LinearLayout.LayoutParams sIconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
         sIconParams.setMargins(0, 0, dp(6), 0);
         searchBar.addView(searchIcon, sIconParams);
 
         searchInput = new EditText(this);
         searchInput.setHint(isOnlineMode ? "搜索标题/地点" : "搜索标题/文件夹");
-        searchInput.setHintTextColor(Color.rgb(155, 160, 158));
-        searchInput.setTextColor(Color.rgb(32, 34, 33));
+        searchInput.setHintTextColor(ThemePalette.getTextMuted(this));
+        searchInput.setTextColor(ThemePalette.getTextPrimary(this));
         searchInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         searchInput.setBackground(null);
         searchInput.setSingleLine(true);
@@ -772,7 +779,7 @@ public final class MainActivity extends Activity {
         contentFrame.addView(contentScroll, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout frozenLayout = new LinearLayout(this);
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
-        frozenLayout.setBackgroundColor(Color.rgb(248, 249, 248));
+        frozenLayout.setBackgroundColor(ThemePalette.getBgPrimary(this));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
         // 【0.8.43 修】把 statusText 提到顶栏下方做 sticky 状态栏：不再被作品列表推到底部屏幕外。
         // 文案里始终带「💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）」，离线时也保留 snapshot 年龄。
@@ -1337,14 +1344,17 @@ public final class MainActivity extends Activity {
     }
 
     private void updatePillStyle(Button btn, boolean selected) {
+        boolean dark = ThemePalette.isDarkMode(this);
         if (selected) {
             btn.setTextColor(Color.WHITE);
             btn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            btn.setBackground(round(Color.rgb(16, 151, 99), 10));
+            btn.setBackground(round(ThemePalette.getPillSelectedBg(), 10));
         } else {
-            btn.setTextColor(Color.rgb(50, 55, 53));
+            btn.setTextColor(dark ? Color.rgb(174, 174, 178) : Color.rgb(50, 55, 53));
             btn.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
-            btn.setBackground(roundWithStroke(Color.rgb(243, 246, 244), 10, Color.rgb(218, 224, 220)));
+            btn.setBackground(roundWithStroke(
+                    dark ? Color.rgb(44, 44, 46) : Color.rgb(243, 246, 244), 10,
+                    dark ? Color.rgb(58, 58, 60) : Color.rgb(218, 224, 220)));
         }
     }
 
@@ -1385,56 +1395,90 @@ public final class MainActivity extends Activity {
         final Set<String> tempSeasons = new HashSet<>(selectedSeasons);
         final Set<String> tempFlows = new HashSet<>(selectedFlowTypes);
 
-        ScrollView scrollView = new ScrollView(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(16), dp(18), dp(16));
-        scrollView.addView(root);
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Translucent_NoTitleBar);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
 
+        FrameLayout rootLayout = new FrameLayout(this);
+        rootLayout.setBackgroundColor(ThemePalette.getBackdropColor());
+        rootLayout.setOnClickListener(v -> dialog.dismiss());
+
+        LinearLayout cardView = new LinearLayout(this);
+        cardView.setOrientation(LinearLayout.VERTICAL);
+        cardView.setPadding(dp(18), dp(16), dp(18), dp(24));
+        cardView.setBackground(ThemePalette.roundTop(ThemePalette.getCardBg(this), 18, getResources().getDisplayMetrics().density));
+        cardView.setClickable(true);
+        cardView.setFocusable(true);
+        cardView.setOnClickListener(v -> {}); // 阻止点击穿透到背景遮罩
+
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        rootLayout.addView(cardView, cardParams);
+
+        // 顶部栏：重置清空 | 标题 | 取消（100% 对齐 iOS 顶部栏）
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button resetBtn = new Button(this);
+        resetBtn.setText("重置清空");
+        resetBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        resetBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        resetBtn.setTextColor(Color.rgb(229, 57, 53));
+        resetBtn.setBackground(null);
+        resetBtn.setPadding(dp(4), dp(4), dp(4), dp(4));
+        resetBtn.setMinWidth(0);
+        resetBtn.setMinimumWidth(0);
+        resetBtn.setAllCaps(false);
+        topBar.addView(resetBtn);
 
         TextView title = new TextView(this);
         title.setText("作品标签筛选（支持多选）");
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setTextColor(Color.rgb(32, 34, 33));
-        topBar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        title.setTextColor(ThemePalette.getTextPrimary(this));
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
+        topBar.addView(title, titleParams);
 
-        Button resetBtn = new Button(this);
-        resetBtn.setText("重置清空");
-        resetBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        resetBtn.setTextColor(Color.rgb(205, 58, 48));
-        resetBtn.setBackground(null);
-        resetBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
-        topBar.addView(resetBtn);
-        root.addView(topBar);
+        Button cancelBtn = new Button(this);
+        cancelBtn.setText("取消");
+        cancelBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        cancelBtn.setTextColor(ThemePalette.getTextSecondary(this));
+        cancelBtn.setBackground(null);
+        cancelBtn.setPadding(dp(4), dp(4), dp(4), dp(4));
+        cancelBtn.setMinWidth(0);
+        cancelBtn.setMinimumWidth(0);
+        cancelBtn.setAllCaps(false);
+        cancelBtn.setOnClickListener(v -> dialog.dismiss());
+        topBar.addView(cancelBtn);
+
+        cardView.addView(topBar, new LinearLayout.LayoutParams(-1, dp(36)));
 
         View div1 = new View(this);
-        div1.setBackgroundColor(Color.rgb(230, 233, 231));
+        div1.setBackgroundColor(ThemePalette.getDividerColor(this));
         LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
         divParams.setMargins(0, dp(10), 0, dp(12));
-        root.addView(div1, divParams);
+        cardView.addView(div1, divParams);
 
+        // 1. 季节标签标题 + 两行药丸按钮
         TextView sec1 = new TextView(this);
-        sec1.setText("1. 季节标签（不选默认显示全部季节）");
+        sec1.setText("1. 季节标签（可多选，不选默认显示全部季节）");
         sec1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         sec1.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        sec1.setTextColor(Color.rgb(80, 85, 83));
-        root.addView(sec1);
+        sec1.setTextColor(ThemePalette.getTextSecondary(this));
+        cardView.addView(sec1);
 
         LinearLayout seasonRow1 = new LinearLayout(this);
         seasonRow1.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams row1Params = new LinearLayout.LayoutParams(-1, -2);
         row1Params.setMargins(0, dp(8), 0, dp(4));
-        root.addView(seasonRow1, row1Params);
+        cardView.addView(seasonRow1, row1Params);
 
         LinearLayout seasonRow2 = new LinearLayout(this);
         seasonRow2.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams row2Params = new LinearLayout.LayoutParams(-1, -2);
         row2Params.setMargins(0, dp(4), 0, dp(12));
-        root.addView(seasonRow2, row2Params);
+        cardView.addView(seasonRow2, row2Params);
 
         Map<String, Button> seasonButtonMap = new HashMap<>();
         for (int i = 0; i < ALL_SEASON_OPTIONS.length; i++) {
@@ -1442,10 +1486,11 @@ public final class MainActivity extends Activity {
             int count = seasonCounts.containsKey(opt) ? seasonCounts.get(opt) : 0;
             Button b = new Button(this);
             b.setText(opt + " (" + count + ")");
-            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
             b.setMinHeight(0);
             b.setMinimumHeight(0);
             b.setPadding(dp(4), dp(8), dp(4), dp(8));
+            b.setAllCaps(false);
             seasonButtonMap.put(opt, b);
 
             b.setOnClickListener(v -> {
@@ -1458,7 +1503,7 @@ public final class MainActivity extends Activity {
             });
             updatePillStyle(b, tempSeasons.contains(opt));
 
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(34), 1);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(38), 1);
             p.setMargins(dp(3), 0, dp(3), 0);
             if (i < 3) {
                 seasonRow1.addView(b, p);
@@ -1467,28 +1512,30 @@ public final class MainActivity extends Activity {
             }
         }
 
+        // 2. 流量标签标题 + 一行药丸按钮
         TextView sec2 = new TextView(this);
-        sec2.setText("2. 流量标签（不选默认显示全部场景）");
+        sec2.setText("2. 流量标签（可多选，不选默认显示全部类型）");
         sec2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         sec2.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        sec2.setTextColor(Color.rgb(80, 85, 83));
-        root.addView(sec2);
+        sec2.setTextColor(ThemePalette.getTextSecondary(this));
+        cardView.addView(sec2);
 
         LinearLayout flowRow = new LinearLayout(this);
         flowRow.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams flowParams = new LinearLayout.LayoutParams(-1, -2);
         flowParams.setMargins(0, dp(8), 0, dp(16));
-        root.addView(flowRow, flowParams);
+        cardView.addView(flowRow, flowParams);
 
         Map<String, Button> flowButtonMap = new HashMap<>();
         for (String opt : ALL_FLOW_OPTIONS) {
             int count = flowCounts.containsKey(opt) ? flowCounts.get(opt) : 0;
             Button b = new Button(this);
             b.setText(opt + " (" + count + ")");
-            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
             b.setMinHeight(0);
             b.setMinimumHeight(0);
             b.setPadding(dp(4), dp(8), dp(4), dp(8));
+            b.setAllCaps(false);
             flowButtonMap.put(opt, b);
 
             b.setOnClickListener(v -> {
@@ -1501,7 +1548,7 @@ public final class MainActivity extends Activity {
             });
             updatePillStyle(b, tempFlows.contains(opt));
 
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(34), 1);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(38), 1);
             p.setMargins(dp(3), 0, dp(3), 0);
             flowRow.addView(b, p);
         }
@@ -1517,42 +1564,52 @@ public final class MainActivity extends Activity {
             }
         });
 
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setView(scrollView)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("确认筛选", (d, which) -> {
-                    selectedSeasons.clear();
-                    selectedSeasons.addAll(tempSeasons);
-                    selectedFlowTypes.clear();
-                    selectedFlowTypes.addAll(tempFlows);
+        // 底部苹果同款全宽绿色确定按钮
+        Button confirmBtn = new Button(this);
+        confirmBtn.setText("确认筛选");
+        confirmBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        confirmBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        confirmBtn.setTextColor(Color.WHITE);
+        confirmBtn.setBackground(ThemePalette.round(ThemePalette.getPillSelectedBg(), 12, getResources().getDisplayMetrics().density));
+        confirmBtn.setAllCaps(false);
+        confirmBtn.setOnClickListener(v -> {
+            selectedSeasons.clear();
+            selectedSeasons.addAll(tempSeasons);
+            selectedFlowTypes.clear();
+            selectedFlowTypes.addAll(tempFlows);
 
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                            .putStringSet(PREF_ONLINE_FILTER_SEASONS, new HashSet<>(selectedSeasons))
-                            .putStringSet(PREF_ONLINE_FILTER_FLOWS, new HashSet<>(selectedFlowTypes))
-                            .apply();
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putStringSet(PREF_ONLINE_FILTER_SEASONS, new HashSet<>(selectedSeasons))
+                    .putStringSet(PREF_ONLINE_FILTER_FLOWS, new HashSet<>(selectedFlowTypes))
+                    .apply();
 
-                    updateFilterButtonStyle();
-                    if (isOnlineMode) {
-                        applyOnlineCategoryFilter(selectedOnlineCategory);
-                    } else {
-                        applyCategoryFilter(selectedCategory);
-                    }
+            updateFilterButtonStyle();
+            if (isOnlineMode) {
+                applyOnlineCategoryFilter(selectedOnlineCategory);
+            } else {
+                applyCategoryFilter(selectedCategory);
+            }
 
-                    int totalActive = selectedSeasons.size() + selectedFlowTypes.size();
-                    if (totalActive == 0) {
-                        toast("已重置标签筛选，显示全部作品");
-                    } else {
-                        int matchedCount = isOnlineMode ? currentOnlineFilteredEntries.size() : (renderedWorks != null ? renderedWorks.size() : 0);
-                        toast("筛选已生效：匹配 " + matchedCount + " 套作品");
-                    }
-                })
-                .create();
-        dialog.show();
-        Button posBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-        if (posBtn != null) {
-            posBtn.setTextColor(Color.rgb(16, 151, 99));
-            posBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            int totalActive = selectedSeasons.size() + selectedFlowTypes.size();
+            if (totalActive == 0) {
+                toast("已重置标签筛选，显示全部作品");
+            } else {
+                int matchedCount = isOnlineMode ? currentOnlineFilteredEntries.size() : (renderedWorks != null ? renderedWorks.size() : 0);
+                toast("筛选已生效：匹配 " + matchedCount + " 套作品");
+            }
+            dialog.dismiss();
+        });
+        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(-1, dp(46));
+        confirmParams.setMargins(0, dp(14), 0, 0);
+        cardView.addView(confirmBtn, confirmParams);
+
+        dialog.setContentView(rootLayout);
+        android.view.Window win = dialog.getWindow();
+        if (win != null) {
+            win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            win.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         }
+        dialog.show();
     }
 
     // ---- DSH-111：在线相册自动刷新 ----
@@ -2859,6 +2916,14 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        int currentThemeMode = ThemePalette.getThemeMode(this);
+        if (lastThemeMode != -1 && lastThemeMode != currentThemeMode) {
+            lastThemeMode = currentThemeMode;
+            recreate();
+            return;
+        }
+        lastThemeMode = currentThemeMode;
+        ThemePalette.applySystemBarAppearance(this);
         UpdateChecker.checkOnResume(this);
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
@@ -3051,7 +3116,7 @@ public final class MainActivity extends Activity {
         card.setClipChildren(true);
         card.setClipToPadding(true);
         card.setBackground(roundWithStroke(
-                Color.WHITE, 16, Color.rgb(224, 228, 226)));
+                ThemePalette.getCardBg(this), 16, ThemePalette.getCardStroke(this)));
         card.setElevation(dp(1));
         return card;
     }
@@ -3115,20 +3180,26 @@ public final class MainActivity extends Activity {
         if (style == STYLE_PRIMARY_GREEN) {
             button.setTextColor(Color.WHITE);
             button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            normalBg = round(Color.rgb(16, 151, 99), 14);
+            normalBg = round(ThemePalette.getPillSelectedBg(), 14);
             pressedBg = round(Color.rgb(11, 122, 80), 14);
             shadowColor = Color.argb(55, 16, 151, 99);
         } else if (style == STYLE_DANGER_WHITE) {
-            button.setTextColor(Color.rgb(205, 58, 48));
+            boolean dark = ThemePalette.isDarkMode(this);
+            button.setTextColor(dark ? Color.rgb(255, 69, 58) : Color.rgb(205, 58, 48));
             button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            normalBg = roundWithStroke(Color.rgb(255, 255, 255), 14, Color.rgb(243, 208, 204));
-            pressedBg = roundWithStroke(Color.rgb(255, 242, 240), 14, Color.rgb(235, 185, 180));
+            normalBg = roundWithStroke(dark ? Color.rgb(44, 30, 30) : Color.rgb(255, 255, 255), 14,
+                    dark ? Color.rgb(80, 40, 40) : Color.rgb(243, 208, 204));
+            pressedBg = roundWithStroke(dark ? Color.rgb(55, 35, 35) : Color.rgb(255, 242, 240), 14,
+                    dark ? Color.rgb(90, 45, 45) : Color.rgb(235, 185, 180));
             shadowColor = Color.argb(45, 205, 58, 48);
         } else { // STYLE_MUTED_GRAY
-            button.setTextColor(Color.rgb(72, 80, 76));
+            boolean dark = ThemePalette.isDarkMode(this);
+            button.setTextColor(dark ? Color.rgb(174, 174, 178) : Color.rgb(72, 80, 76));
             button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
-            normalBg = roundWithStroke(Color.rgb(240, 243, 241), 14, Color.rgb(222, 226, 224));
-            pressedBg = roundWithStroke(Color.rgb(226, 230, 228), 14, Color.rgb(212, 216, 214));
+            normalBg = roundWithStroke(dark ? Color.rgb(44, 44, 46) : Color.rgb(240, 243, 241), 14,
+                    dark ? Color.rgb(58, 58, 60) : Color.rgb(222, 226, 224));
+            pressedBg = roundWithStroke(dark ? Color.rgb(58, 58, 60) : Color.rgb(226, 230, 228), 14,
+                    dark ? Color.rgb(72, 72, 75) : Color.rgb(212, 216, 214));
             shadowColor = Color.argb(30, 60, 70, 65);
             elevationDp = 1.5f;
         }
@@ -3189,7 +3260,7 @@ public final class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(sp);
-        view.setTextColor(Color.rgb(33, 34, 32));
+        view.setTextColor(ThemePalette.getTextPrimary(this));
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
     }
@@ -3904,19 +3975,22 @@ public final class MainActivity extends Activity {
     }
 
     private void applyOnlineCategoryButtonStyle(Button button, boolean isSelected, boolean isPinned) {
+        boolean dark = ThemePalette.isDarkMode(this);
         if (isSelected) {
-            button.setBackground(round(Color.WHITE, 10));
-            button.setTextColor(Color.rgb(24, 25, 24));
+            button.setBackground(round(dark ? Color.rgb(50, 50, 54) : Color.WHITE, 10));
+            button.setTextColor(dark ? Color.WHITE : Color.rgb(24, 25, 24));
             button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             button.setElevation(dp(1));
         } else if (isPinned) {
-            button.setBackground(roundWithStroke(Color.rgb(242, 248, 244), 10, Color.rgb(180, 222, 202)));
-            button.setTextColor(Color.rgb(16, 120, 80));
+            button.setBackground(roundWithStroke(
+                    dark ? Color.rgb(22, 56, 38) : Color.rgb(242, 248, 244), 10,
+                    dark ? Color.rgb(35, 95, 65) : Color.rgb(180, 222, 202)));
+            button.setTextColor(dark ? Color.rgb(75, 215, 140) : Color.rgb(16, 120, 80));
             button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
             button.setElevation(0);
         } else {
             button.setBackgroundColor(Color.TRANSPARENT);
-            button.setTextColor(Color.rgb(104, 108, 106));
+            button.setTextColor(dark ? Color.rgb(142, 142, 147) : Color.rgb(104, 108, 106));
             button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
             button.setElevation(0);
         }
@@ -4461,7 +4535,7 @@ public final class MainActivity extends Activity {
 
         if (work.used) {
             card.setBackground(roundWithStroke(
-                    Color.rgb(243, 245, 243), 16, Color.rgb(218, 224, 220)));
+                    ThemePalette.getCardUsedBg(this), 16, ThemePalette.getCardUsedStroke(this)));
             card.setElevation(0);
         }
 
@@ -4939,7 +5013,14 @@ public final class MainActivity extends Activity {
             }
 
             final int imgIndex = i;
-            thumbView.setOnClickListener(v -> showOnlineImageDialog(workId, workTitle, images, imgIndex));
+            final ImageView finalThumb = thumbView;
+            thumbView.setOnClickListener(v -> {
+                Bitmap currentBm = null;
+                if (finalThumb.getDrawable() instanceof BitmapDrawable) {
+                    currentBm = ((BitmapDrawable) finalThumb.getDrawable()).getBitmap();
+                }
+                showOnlineImageDialog(workId, workTitle, images, imgIndex, currentBm);
+            });
             strip.addView(thumbView, params);
         }
 
@@ -4995,7 +5076,14 @@ public final class MainActivity extends Activity {
             }
 
             final int imgIndex = i;
-            thumbView.setOnClickListener(v -> showOnlineImageDialog(work.id, work.title, work.images, imgIndex));
+            final ImageView finalThumbList = thumbView;
+            thumbView.setOnClickListener(v -> {
+                Bitmap currentBm = null;
+                if (finalThumbList.getDrawable() instanceof BitmapDrawable) {
+                    currentBm = ((BitmapDrawable) finalThumbList.getDrawable()).getBitmap();
+                }
+                showOnlineImageDialog(work.id, work.title, work.images, imgIndex, currentBm);
+            });
             strip.addView(thumbView, params);
         }
 
@@ -5706,7 +5794,7 @@ public final class MainActivity extends Activity {
                         if (e1 == null || e2 == null) return false;
                         float diffX = e2.getX() - e1.getX();
                         float diffY = e2.getY() - e1.getY();
-                        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 100 && Math.abs(velocityX) > 200) {
+                        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 80 && Math.abs(velocityX) > 150) {
                             if (diffX > 0 && currentIndex[0] > 0) {
                                 currentIndex[0]--;
                                 renderPage.run();
@@ -5890,78 +5978,175 @@ public final class MainActivity extends Activity {
     }
 
     private void showOnlineImageDialog(String workId, String workTitle, List<String> images, int imageIndex) {
+        showOnlineImageDialog(workId, workTitle, images, imageIndex, null);
+    }
+
+    private void showOnlineImageDialog(String workId, String workTitle, List<String> images, int imageIndex, Bitmap initialBitmap) {
         if (images.isEmpty() || imageIndex < 0 || imageIndex >= images.size()) return;
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setGravity(Gravity.CENTER);
-        layout.setPadding(dp(14), dp(14), dp(14), dp(14));
-
-        LinearLayout headerRow = new LinearLayout(this);
-        headerRow.setOrientation(LinearLayout.HORIZONTAL);
-        headerRow.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView title = text("", 14, true);
-        title.setSingleLine(true);
-        title.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1.0f);
-        headerRow.addView(title, titleParams);
-
-        TextView badge = text("", 11, false);
-        badge.setPadding(dp(8), dp(3), dp(8), dp(3));
-        headerRow.addView(badge, new LinearLayout.LayoutParams(-2, -2));
-
-        // DSH-141: 右上角垃圾箱单图删除按钮
-        Button deleteImgBtn = new Button(this);
-        deleteImgBtn.setText("🗑️");
-        deleteImgBtn.setTextSize(13);
-        deleteImgBtn.setPadding(dp(6), 0, dp(6), 0);
-        deleteImgBtn.setBackground(round(Color.rgb(240, 240, 240), 8));
-        LinearLayout.LayoutParams delParams = new LinearLayout.LayoutParams(dp(36), dp(30));
-        delParams.setMargins(dp(6), 0, 0, 0);
-        headerRow.addView(deleteImgBtn, delParams);
-
-        layout.addView(headerRow, margins(0, 0, 0, dp(8)));
-
-        ImageView fullView = new ImageView(this);
-        fullView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        fullView.setAdjustViewBounds(true);
-        fullView.setBackground(round(Color.rgb(20, 20, 20), 12));
-
-        int maxImgHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.68f);
-        fullView.setMaxHeight(maxImgHeight);
-
-        ProgressBar spinner = new ProgressBar(this);
-        layout.addView(spinner, new LinearLayout.LayoutParams(dp(36), dp(36)));
-        layout.addView(fullView, new LinearLayout.LayoutParams(-1, -2));
-
-        // 左右切图控制条：支持点击按钮或直接左右滑动整张图
-        LinearLayout navRow = new LinearLayout(this);
-        navRow.setOrientation(LinearLayout.HORIZONTAL);
-        navRow.setGravity(Gravity.CENTER);
-        Button prevBtn = smallButton("‹", false);
-        Button nextBtn = smallButton("›", true);
-        navRow.addView(prevBtn, new LinearLayout.LayoutParams(-2, dp(38)));
-        navRow.addView(nextBtn, new LinearLayout.LayoutParams(-2, dp(38)));
-        LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(-1, -2);
-        navParams.setMargins(0, dp(10), 0, 0);
-        layout.addView(navRow, navParams);
-
-        builder.setView(layout);
-        builder.setPositiveButton("关闭", null);
-        AlertDialog dialog = builder.create();
-        dialog.setOnDismissListener(d -> {
-            onlinePrefetchVersion++;
-        });
-        dialog.show();
-
+        final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         final List<String> mutableImages = new ArrayList<>(images);
         final int[] currentIndex = new int[]{imageIndex};
 
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+
+        // 安全区适配（刘海屏/打孔屏与系统导航栏）
+        final int statusBarHeight = ScreenInsets.getStatusBarHeight(this);
+        final int navBarHeight = ScreenInsets.getNavigationBarHeight(this);
+        final int safeTopPadding = Math.max(dp(12), statusBarHeight + dp(8));
+        final int safeBottomPadding = Math.max(dp(18), navBarHeight + dp(12));
+
+        // 1. 核心手势缩放与全屏大图组件 (0ms 秒开 + 双指捏合 + 双击放大 + 左右滑动)
+        final ZoomableImageView fullView = new ZoomableImageView(this);
+        fullView.setBackgroundColor(Color.BLACK);
+        if (initialBitmap != null && !initialBitmap.isRecycled()) {
+            fullView.setImageBitmap(initialBitmap);
+        }
+        root.addView(fullView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // 2. 苹果同款右上角悬浮药丸工具栏 (状态药丸 + 垃圾桶 + 关闭)
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        topParams.setMargins(0, safeTopPadding, dp(16), 0);
+        root.addView(topBar, topParams);
+
+        // 原画状态药丸 (statusBadge: 小菊花 + 状态文字)
+        final LinearLayout statusBadge = new LinearLayout(this);
+        statusBadge.setOrientation(LinearLayout.HORIZONTAL);
+        statusBadge.setGravity(Gravity.CENTER_VERTICAL);
+        statusBadge.setBackground(round(Color.argb(140, 25, 25, 25), 16));
+        statusBadge.setPadding(dp(12), dp(4), dp(12), dp(4));
+
+        final ProgressBar badgeSpinner = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+        badgeSpinner.setIndeterminate(true);
+        LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(dp(16), dp(16));
+        statusBadge.addView(badgeSpinner, spinnerParams);
+
+        final TextView badgeLabel = text("正在拉取原图…", 12, true);
+        badgeLabel.setTextColor(Color.WHITE);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        labelParams.setMargins(dp(6), 0, 0, 0);
+        statusBadge.addView(badgeLabel, labelParams);
+
+        LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(32));
+        badgeParams.setMargins(0, 0, dp(10), 0);
+        topBar.addView(statusBadge, badgeParams);
+
+        // 单图删除垃圾桶按钮 (trashBtn)
+        Button trashBtn = new Button(this);
+        trashBtn.setText("🗑️");
+        trashBtn.setTextSize(15);
+        trashBtn.setTextColor(Color.WHITE);
+        trashBtn.setGravity(Gravity.CENTER);
+        trashBtn.setPadding(0, 0, 0, 0);
+        trashBtn.setIncludeFontPadding(false);
+        trashBtn.setBackground(round(Color.argb(140, 25, 25, 25), 18));
+        LinearLayout.LayoutParams trashParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+        trashParams.setMargins(0, 0, dp(10), 0);
+        topBar.addView(trashBtn, trashParams);
+
+        // 圆形关闭按钮 (closeBtn: ✕)
+        Button closeBtn = new Button(this);
+        closeBtn.setText("✕");
+        closeBtn.setTextSize(17);
+        closeBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        closeBtn.setTextColor(Color.WHITE);
+        closeBtn.setGravity(Gravity.CENTER);
+        closeBtn.setPadding(0, 0, 0, 0);
+        closeBtn.setIncludeFontPadding(false);
+        closeBtn.setBackground(round(Color.argb(140, 25, 25, 25), 18));
+        topBar.addView(closeBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
+
+        // 3. 苹果同款底部居中悬浮页码药丸 (counterLabel: P 1 / 7)
+        final TextView counterLabel = text("", 13, true);
+        counterLabel.setTextColor(Color.WHITE);
+        counterLabel.setGravity(Gravity.CENTER);
+        counterLabel.setBackground(round(Color.argb(140, 25, 25, 25), 14));
+        counterLabel.setPadding(dp(14), dp(4), dp(14), dp(4));
+        FrameLayout.LayoutParams counterParams = new FrameLayout.LayoutParams(
+                dp(96), dp(28), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        counterParams.setMargins(0, 0, 0, safeBottomPadding);
+        root.addView(counterLabel, counterParams);
+
+        // 4. 两侧悬浮微切图胶囊按钮 (‹ 与 ›)
+        final Button sidePrevBtn = new Button(this);
+        sidePrevBtn.setText("‹");
+        sidePrevBtn.setTextSize(22);
+        sidePrevBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        sidePrevBtn.setTextColor(Color.WHITE);
+        sidePrevBtn.setGravity(Gravity.CENTER);
+        sidePrevBtn.setPadding(0, 0, 0, 0);
+        sidePrevBtn.setIncludeFontPadding(false);
+        sidePrevBtn.setBackground(round(Color.argb(110, 25, 25, 25), 18));
+        FrameLayout.LayoutParams sidePrevParams = new FrameLayout.LayoutParams(
+                dp(36), dp(36), Gravity.START | Gravity.CENTER_VERTICAL);
+        sidePrevParams.setMargins(dp(10), 0, 0, 0);
+        root.addView(sidePrevBtn, sidePrevParams);
+
+        final Button sideNextBtn = new Button(this);
+        sideNextBtn.setText("›");
+        sideNextBtn.setTextSize(22);
+        sideNextBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        sideNextBtn.setTextColor(Color.WHITE);
+        sideNextBtn.setGravity(Gravity.CENTER);
+        sideNextBtn.setPadding(0, 0, 0, 0);
+        sideNextBtn.setIncludeFontPadding(false);
+        sideNextBtn.setBackground(round(Color.argb(110, 25, 25, 25), 18));
+        FrameLayout.LayoutParams sideNextParams = new FrameLayout.LayoutParams(
+                dp(36), dp(36), Gravity.END | Gravity.CENTER_VERTICAL);
+        sideNextParams.setMargins(0, 0, dp(10), 0);
+        root.addView(sideNextBtn, sideNextParams);
+
+        // 渲染与翻页闭环
         final Runnable[] renderHolder = new Runnable[1];
 
-        deleteImgBtn.setOnClickListener(v -> {
+        Runnable stepPrev = () -> {
+            if (currentIndex[0] > 0) {
+                currentIndex[0]--;
+                fullView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                renderHolder[0].run();
+            }
+        };
+
+        Runnable stepNext = () -> {
+            if (currentIndex[0] < mutableImages.size() - 1) {
+                currentIndex[0]++;
+                fullView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                renderHolder[0].run();
+            }
+        };
+
+        fullView.setOnSwipeListener(new ZoomableImageView.OnSwipeListener() {
+            @Override
+            public void onSwipeLeft() {
+                stepNext.run();
+            }
+
+            @Override
+            public void onSwipeRight() {
+                stepPrev.run();
+            }
+        });
+
+        sidePrevBtn.setOnClickListener(v -> stepPrev.run());
+        sideNextBtn.setOnClickListener(v -> stepNext.run());
+
+        closeBtn.setOnClickListener(v -> {
+            closeBtn.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            dialog.dismiss();
+        });
+
+        // 垃圾桶单图删除 (DSH-141)
+        trashBtn.setOnClickListener(v -> {
+            trashBtn.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (mutableImages.size() <= 1) {
                 new AlertDialog.Builder(this)
                         .setTitle("无法删除单张")
@@ -5979,7 +6164,8 @@ public final class MainActivity extends Activity {
                     .setMessage("确定要删除第 " + (curr + 1) + " 张图片（" + targetImg + "）吗？\n\n图片将安全备份至垃圾样本库，作品其余图片仍将保留。")
                     .setNegativeButton("取消", null)
                     .setPositiveButton("删除单图", (d, which) -> {
-                        badge.setText("🗑️ 删除中…");
+                        badgeLabel.setText("🗑️ 删除中…");
+                        badgeSpinner.setVisibility(View.VISIBLE);
                         onlineClient.deleteImage(workId, targetImg, getDeviceName(), new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteImageResult>() {
                             @Override
                             public void onSuccess(OnlineGalleryClient.DeleteImageResult result) {
@@ -6014,69 +6200,70 @@ public final class MainActivity extends Activity {
                     .show();
         });
 
+        statusBadge.setOnClickListener(v -> {
+            // 点击重试拉取原图
+            statusBadge.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            renderHolder[0].run();
+        });
+
         renderHolder[0] = () -> {
             String imageName = mutableImages.get(currentIndex[0]);
-            title.setText(workTitle + " (" + (currentIndex[0] + 1) + "/" + mutableImages.size() + ")");
-            boolean isFullCached = onlineClient.hasFullImageCached(workId, imageName);
-            badge.setText(isFullCached ? "原图 100%" : "原图 0%");
-            badge.setTextColor(isFullCached ? Color.rgb(15, 135, 88) : Color.rgb(180, 120, 20));
-            badge.setBackground(round(isFullCached ? Color.rgb(235, 247, 240) : Color.rgb(255, 246, 230), 8));
-            if (!isFullCached) spinner.setVisibility(View.VISIBLE);
+            counterLabel.setText("P " + (currentIndex[0] + 1) + " / " + mutableImages.size());
 
-            prevBtn.setEnabled(currentIndex[0] > 0);
-            prevBtn.setAlpha(currentIndex[0] > 0 ? 1f : 0.4f);
-            nextBtn.setEnabled(currentIndex[0] < mutableImages.size() - 1);
-            nextBtn.setAlpha(currentIndex[0] < mutableImages.size() - 1 ? 1f : 0.4f);
+            sidePrevBtn.setEnabled(currentIndex[0] > 0);
+            sidePrevBtn.setAlpha(currentIndex[0] > 0 ? 1f : 0.25f);
+            sideNextBtn.setEnabled(currentIndex[0] < mutableImages.size() - 1);
+            sideNextBtn.setAlpha(currentIndex[0] < mutableImages.size() - 1 ? 1f : 0.25f);
 
-            // 1. 先展示缩略图占位（0 秒白屏）
+            // 1. 先展示缩略图占位 (0 秒白屏)
             String cacheKeyThumb = "online:" + workId + ":" + imageName;
             Bitmap cachedThumb = THUMBNAIL_CACHE.get(cacheKeyThumb);
-            fullView.setImageBitmap(cachedThumb != null && !cachedThumb.isRecycled() ? cachedThumb : null);
+            if (cachedThumb != null && !cachedThumb.isRecycled()) {
+                fullView.setImageBitmap(cachedThumb);
+            }
 
-            // 2. 高清原画内存缓存
+            // 2. 高清原画内存缓存检测
             String cacheKeyFull = "online:full:" + workId + ":" + imageName;
             Bitmap cachedFull = THUMBNAIL_CACHE.get(cacheKeyFull);
             if (cachedFull != null && !cachedFull.isRecycled()) {
                 fullView.setImageBitmap(cachedFull);
-                spinner.setVisibility(View.GONE);
-                badge.setText("原图 100%");
-                badge.setTextColor(Color.rgb(15, 135, 88));
-                badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+                badgeSpinner.setVisibility(View.GONE);
+                badgeLabel.setText("✅ 100% 原图");
                 prefetchOnlineImages(workId, mutableImages, currentIndex[0]);
                 return;
             }
 
-            // 3. 异步拉取 100% 原始画质（本地磁盘秒开，无本地磁盘则向电脑拉取）
+            // 3. 异步拉取 100% 原画
+            badgeSpinner.setVisibility(View.VISIBLE);
+            badgeLabel.setText("正在拉取原图…");
             final int requestIndex = currentIndex[0];
+
             onlineClient.loadFullImage(workId, imageName, new OnlineGalleryClient.ProgressCallback<Bitmap>() {
                 @Override
                 public void onProgress(int percent) {
                     if (currentIndex[0] == requestIndex) {
-                        badge.setText("原图 " + percent + "%");
+                        badgeLabel.setText("原图 " + percent + "%");
                     }
                 }
 
                 @Override
                 public void onSuccess(Bitmap result) {
                     if (currentIndex[0] >= mutableImages.size() || !mutableImages.get(currentIndex[0]).equals(imageName)) return;
-                    spinner.setVisibility(View.GONE);
+                    badgeSpinner.setVisibility(View.GONE);
                     if (result != null && !result.isRecycled()) {
                         THUMBNAIL_CACHE.put(cacheKeyFull, result);
                         fullView.setImageBitmap(result);
-                        fullView.requestLayout();
-                        fullView.invalidate();
-                        badge.setText("原图 100%");
-                        badge.setTextColor(Color.rgb(15, 135, 88));
-                        badge.setBackground(round(Color.rgb(235, 247, 240), 8));
+                        AlphaAnimation fade = new AlphaAnimation(0.7f, 1.0f);
+                        fade.setDuration(160);
+                        fullView.startAnimation(fade);
+                        badgeLabel.setText("✅ 100% 原图");
                     }
                 }
 
                 @Override
                 public void onError(Exception error) {
-                    spinner.setVisibility(View.GONE);
-                    badge.setText("原图加载失败");
-                    badge.setTextColor(Color.GRAY);
-                    badge.setBackground(round(Color.rgb(240, 240, 240), 8));
+                    badgeSpinner.setVisibility(View.GONE);
+                    badgeLabel.setText("⚠️ 点击重试");
                 }
             });
 
@@ -6084,54 +6271,21 @@ public final class MainActivity extends Activity {
             prefetchOnlineImages(workId, mutableImages, currentIndex[0]);
         };
 
-        Runnable stepPrev = () -> {
-            if (currentIndex[0] > 0) {
-                currentIndex[0]--;
-                renderHolder[0].run();
-            }
-        };
-        Runnable stepNext = () -> {
-            if (currentIndex[0] < mutableImages.size() - 1) {
-                currentIndex[0]++;
-                renderHolder[0].run();
-            }
-        };
-
-        prevBtn.setOnClickListener(v -> stepPrev.run());
-        nextBtn.setOnClickListener(v -> stepNext.run());
-
-        // 图片上左右滑动切图（右滑看下一张，与手机相册习惯一致）
-        final float[] downX = new float[]{0f};
-        final float[] downY = new float[]{0f};
-        fullView.setOnTouchListener((v, event) -> {
-            switch (event.getAction()) {
-                case android.view.MotionEvent.ACTION_DOWN:
-                    downX[0] = event.getX();
-                    downY[0] = event.getY();
-                    return true;
-                case android.view.MotionEvent.ACTION_UP:
-                    float dx = event.getX() - downX[0];
-                    float dy = event.getY() - downY[0];
-                    float threshold = dp(45);
-                    if (Math.abs(dx) > threshold && Math.abs(dx) > Math.abs(dy)) {
-                        if (dx < 0) stepNext.run();   // 左滑 → 下一张
-                        else stepPrev.run();          // 右滑 → 上一张
-                        return true;
-                    }
-                    return false;
-                default:
-                    return false;
-            }
+        dialog.setContentView(root);
+        dialog.setOnDismissListener(d -> {
+            onlinePrefetchVersion++;
         });
 
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+            dialog.getWindow().setLayout(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        }
+
+        dialog.show();
         renderHolder[0].run();
     }
 
-    /**
-     * 同作品大图后台并发静默预加载：
-     * 打开某张大图或切图时，使用 THUMBNAIL_EXECUTOR 自动对该作品的其余图片发起
-     * loadThumbnail 和 loadFullImage 预加载，优先拉取相邻前后的图片进 THUMBNAIL_CACHE。
-     */
     private void prefetchOnlineImages(String workId, List<String> images, int centerIndex) {
         if (images == null || images.size() <= 1) return;
         final int prefetchVersion = ++onlinePrefetchVersion;

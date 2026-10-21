@@ -30,3 +30,49 @@ enum AppColors {
         return UIColor(white: 0.78, alpha: 1)
     }
 }
+
+// MARK: - 主题外观模式（跟随系统、浅色模式、深色模式）
+enum AppThemeMode: Int {
+    case system = 0
+    case light = 1
+    case dark = 2
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色模式"
+        case .dark: return "深色模式"
+        }
+    }
+}
+
+enum AppThemePreferences {
+    private static let key = "appThemeMode"
+
+    static var currentMode: AppThemeMode {
+        get {
+            let val = UserDefaults.standard.integer(forKey: key)
+            return AppThemeMode(rawValue: val) ?? .system
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+            applyTheme()
+        }
+    }
+
+    static func applyTheme(to targetWindow: UIWindow? = nil) {
+        if #available(iOS 13.0, *) {
+            let style: UIUserInterfaceStyle
+            switch currentMode {
+            case .system: style = .unspecified
+            case .light: style = .light
+            case .dark: style = .dark
+            }
+            if let targetWindow = targetWindow {
+                targetWindow.overrideUserInterfaceStyle = style
+            } else {
+                UIApplication.shared.windows.forEach { $0.overrideUserInterfaceStyle = style }
+            }
+        }
+    }
+}

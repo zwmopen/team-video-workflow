@@ -1223,6 +1223,8 @@ LOCAL_LATEST_JSON = os.path.join(LOCAL_OUT_DIR, "local_latest.json")
 def _read_local_ipa_path() -> Optional[str]:
     """检查本地是否已有最新构建的 iOS IPA 产物，优先秒级直供"""
     candidates = [
+        r"C:\Users\z\Desktop\album-iOS-v0.8.114.ipa",
+        r"D:\AICode\_ipa_downloads_v114\album-iOS-v0.8.114-altstore.ipa",
         r"C:\Users\z\Desktop\album-iOS-v0.8.113.ipa",
         r"D:\AICode\_ipa_downloads_v111\album-iOS-v0.8.111-altstore.ipa",
         r"D:\AICode\_ipa_downloads\album-iOS-v0.8.111-altstore.ipa",
@@ -1388,8 +1390,8 @@ def fetch_altstore_manifest(force: bool = False) -> Dict[str, Any]:
                     "category": "photo-video",
                     "versions": [
                         {
-                            "version": ios_info.get("version_name", "0.8.113"),
-                            "buildVersion": str(ios_info.get("build", 224)),
+                            "version": ios_info.get("version_name", "0.8.114"),
+                            "buildVersion": str(ios_info.get("build", 225)),
                             "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "localizedDescription": "局域网高速版本更新",
                             "downloadURL": f"http://{local_ip}:{port}/download/ipa",
@@ -1962,11 +1964,12 @@ class WorkScanner:
             self._stage_cache[folder_name] = (now, out)
         return out
 
-    def get_stage_works_count(self, folder_name: str) -> int:
-        with self._lock:
-            cached = self._stage_cache.get(folder_name)
-            if cached:
-                return len(cached[1])
+    def get_stage_works_count(self, folder_name: str, force: bool = False) -> int:
+        if not force:
+            with self._lock:
+                cached = self._stage_cache.get(folder_name)
+                if cached:
+                    return len(cached[1])
         base = os.path.join(self.root, folder_name)
         return len(list(self._iter_work_dirs(base)))
 
@@ -4384,11 +4387,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # 另一个 Tab 也列一遍（垃圾库很小，代价可忽略），
             # 让两个 Tab 的角标数字与各自列表的 total 严格一致。
             if is_garbage:
-                other_count = self.scanner.get_stage_works_count(self.scanner.STAGE1_FOLDER)
-                counts = {"sent": other_count, "garbage": len(works)}
+                other_works = self.scanner.list_stage_works(self.scanner.STAGE1_FOLDER, "已发送1次", 1, force=force)
+                counts = {"sent": len(other_works), "garbage": len(works)}
             else:
-                other_count = self.scanner.get_stage_works_count(self.scanner.GARBAGE_FOLDER)
-                counts = {"sent": len(works), "garbage": other_count}
+                other_works = self.scanner.list_stage_works(self.scanner.GARBAGE_FOLDER, "已废弃-垃圾", 0, force=force)
+                counts = {"sent": len(works), "garbage": len(other_works)}
 
             self.send_json(200, {
                 "ok": True,
