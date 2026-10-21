@@ -2006,7 +2006,14 @@ class WorkScanner:
     def _resolve_source_compare_info(
         self, dir_path: str, images: List[str], manifest_data: Dict[str, Any]
     ) -> Tuple[List[str], List[str], Dict[str, str], float, str]:
-        """解析作品每页对应的原素材对比图（供手机端与电脑端「对比视图」同框展示）。"""
+        """解析作品每页对应的原素材对比图（供手机端与电脑端「对比视图」同框展示）。
+        全兼容升级：
+        1. 兼容 pageMap, sourcePageMap, pagePlan 多种元数据格式；
+        2. 兼容 sourcePath(str), sourcePaths(list), sourceImages(list of dicts/str), sourceImage；
+        3. 兼容 sourcePath, sourceMaterialPath, rawMaterialPath, sourceCurrentPath, sourceOriginalPath 根路径；
+        4. 兼容作品内本地 '原素材' / '素材' / 'source' 目录；
+        5. 兼容按 output 文件名、path、page (如 P1/P2)、以及页码下标 index 多级智能兜底。
+        """
         source_images: List[str] = []
         source_names: List[str] = []
         source_lookup: Dict[str, str] = {}
@@ -2014,22 +2021,57 @@ class WorkScanner:
         if not isinstance(manifest_data, dict):
             manifest_data = {}
 
-        page_map = manifest_data.get("pageMap") if isinstance(manifest_data.get("pageMap"), list) else []
+        raw_page_map = (
+            manifest_data.get("pageMap")
+            or manifest_data.get("sourcePageMap")
+            or manifest_data.get("pagePlan")
+            or []
+        )
+        page_map = raw_page_map if isinstance(raw_page_map, list) else []
+
         src_root = str(
-            manifest_data.get("sourceMaterialPath")
+            manifest_data.get("sourcePath")
+            or manifest_data.get("sourceMaterialPath")
             or manifest_data.get("rawMaterialPath")
+            or manifest_data.get("sourceCurrentPath")
+            or manifest_data.get("sourceOriginalPath")
             or ""
         ).strip()
+
+        # 本地作品内原素材目录检测（若产线随作品归档了原素材）
+        local_src_imgs: List[str] = []
+        if dir_path and os.path.isdir(dir_path):
+            for cand_sub in ("原素材", "素材", "source", "_source"):
+                sub_dir = os.path.join(dir_path, cand_sub)
+                if os.path.isdir(sub_dir):
+                    try:
+                        for fn in sorted(os.listdir(sub_dir)):
+                            if os.path.splitext(fn)[1].lower() in IMAGE_EXTENSIONS:
+                                full_s = os.path.join(sub_dir, fn)
+                                if os.path.isfile(full_s):
+                                    local_src_imgs.append(full_s)
+                    except Exception:
+                        pass
+                    if local_src_imgs:
+                        break
 
         pm_by_out: Dict[str, Dict[str, Any]] = {}
         for item in page_map:
             if isinstance(item, dict):
-                out_k = os.path.basename(str(item.get("output") or "").strip().replace("\\", "/"))
-                if out_k:
-                    pm_by_out[out_k] = item
+                for k in ("output", "path"):
+                    v = item.get(k)
+                    if isinstance(v, str) and v.strip():
+                        bn = os.path.basename(v.strip().replace("\\", "/"))
+                        if bn:
+                            pm_by_out[bn] = item
+                            pm_by_out[os.path.splitext(bn)[0]] = item
+                page_k = str(item.get("page") or item.get("templateRole") or "").strip()
+                if page_k:
+                    pm_by_out[page_k] = item
+                    pm_by_out[page_k.lower()] = item
 
         src_dir_imgs: List[str] = []
-        if not page_map and src_root and os.path.isdir(src_root):
+        if src_root and os.path.isdir(src_root):
             try:
                 for fn in sorted(os.listdir(src_root)):
                     if os.path.splitext(fn)[1].lower() in IMAGE_EXTENSIONS:
@@ -2039,23 +2081,61 @@ class WorkScanner:
             except Exception:
                 pass
 
+        def _extract_cands(pm_obj: Dict[str, Any]) -> List[str]:
+            cands: List[str] = []
+            if not isinstance(pm_obj, dict):
+                return cands
+            for k in ("sourcePath", "source_path", "srcPath", "sourceImage", "source_image"):
+                v = pm_obj.get(k)
+                if isinstance(v, str) and v.strip():
+                    cands.append(v.strip())
+            for k in ("sourcePaths", "source_paths"):
+                v = pm_obj.get(k)
+                if isinstance(v, list):
+                    for x in v:
+                        if isinstance(x, str) and x.strip():
+                            cands.append(x.strip())
+            for k in ("sourceImages", "source_images"):
+                v = pm_obj.get(k)
+                if isinstance(v, list):
+                    for x in v:
+                        if isinstance(x, dict):
+                            p = str(x.get("path") or x.get("sourcePath") or x.get("url") or "").strip()
+                            if p:
+                                cands.append(p)
+                        elif isinstance(x, str) and x.strip():
+                            cands.append(x.strip())
+            return cands
+
         for idx, img_rel in enumerate(images):
             out_bn = os.path.basename(str(img_rel).replace("\\", "/"))
-            pm = pm_by_out.get(out_bn)
+            page_stem = os.path.splitext(out_bn)[0]
+
+            pm = (
+                pm_by_out.get(out_bn)
+                or pm_by_out.get(page_stem)
+                or pm_by_out.get(page_stem.lower())
+            )
             if not pm and idx < len(page_map) and isinstance(page_map[idx], dict):
                 pm = page_map[idx]
 
             src_phys = ""
             if pm:
-                sp = str(pm.get("sourcePath") or "").strip()
-                if sp and os.path.isfile(sp) and os.path.splitext(sp.lower())[1] in IMAGE_EXTENSIONS:
-                    src_phys = sp
-                elif src_root and pm.get("sourceImage"):
-                    cand = os.path.join(src_root, str(pm.get("sourceImage")).strip())
+                for cand in _extract_cands(pm):
                     if os.path.isfile(cand) and os.path.splitext(cand.lower())[1] in IMAGE_EXTENSIONS:
                         src_phys = cand
-            elif idx < len(src_dir_imgs):
+                        break
+                    if src_root:
+                        cand_full = os.path.join(src_root, cand)
+                        if os.path.isfile(cand_full) and os.path.splitext(cand_full.lower())[1] in IMAGE_EXTENSIONS:
+                            src_phys = cand_full
+                            break
+
+            if not src_phys and idx < len(src_dir_imgs):
                 src_phys = src_dir_imgs[idx]
+
+            if not src_phys and idx < len(local_src_imgs):
+                src_phys = local_src_imgs[idx]
 
             if src_phys and os.path.splitext(src_phys.lower())[1] in IMAGE_EXTENSIONS:
                 token = f"__src__:{out_bn}"
