@@ -1,3 +1,10 @@
+# 2026-10-22 DSH-180：对比视图点图进大图双端落地 + iOS 原图预缓存 + 修复 0.8.114 深色模式启动崩溃（Android 0.8.116/227 · iOS 0.8.115/226）
+
+- **对比视图点图进大图（双端）**：对比视图点击任一图区进入全屏大图模式（定位当前页），关闭后回到对比视图原页（页码与布局模式保留）。Android 在 `showOnlineCompareDialog` 手势检测器加 `onSingleTapUp` 复用 `showOnlineImageDialog`；iOS 在 `OnlineComparePreviewController` 左右图容器加 tap，present `OnlineImagePreviewController`（当前画面 0ms 占位）。
+- **iOS 在线原图预缓存**：点开作品预览/对比时后台静默并发预下载全部原图到磁盘缓存，点平台分享命中 `areAllWorkImagesCachedLocally` 快路径 0 毫秒唤起，不再现场等待整套 PNG 下载。
+- **Android 启动崩溃修复**：`ThemePalette.applySystemBarAppearance` 在 `setContentView` 前调用 `getInsetsController`，MIUI/Android 15+ 上 mDecor 未创建导致 NPE 启动即崩（0.8.114 `f8fbae7` 深色模式引入，真机安装验证时捕获）。修复为调用前先 `window.getDecorView()` 触发 installDecor，`SettingsActivity` 同隐患一并消除；视觉应用由 `onResume` 二次调用兜底。
+- **验证**：Android 官方构建链（单测 106 + assembleRelease + lintRelease + 权限/签名 v2v3）全绿；红米真机无线 ADB 安装 0.8.116，冷启动无崩溃，在线模式读到 388 套，对比视图→点图→大图→返回对比页交互闭环通过。iOS 待 CI 出 IPA 装机验收。
+
 # 2026-10-21 DSH-152：对齐苹果底半屏筛选面板与全屏大图交互 + 实装双端全功能深色模式（已构建 0.8.114/225）
 
 - **Android 沉浸全屏纯黑大图交互全面对齐苹果**：

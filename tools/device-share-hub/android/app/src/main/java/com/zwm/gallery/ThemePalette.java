@@ -175,6 +175,12 @@ public final class ThemePalette {
         window.setNavigationBarColor(bg);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // 2026-10-22 修复启动崩溃：onCreate 里 setContentView 之前调用本方法时，
+            // 部分 ROM（小米 MIUI / Android 15+）的 PhoneWindow.getInsetsController
+            // 直接解引用尚未创建的 mDecor 导致 NPE（0.8.114 引入，真机启动即崩）。
+            // 先调 getDecorView() 触发 installDecor，保证 DecorView 存在；
+            // 视觉效果由 MainActivity.onResume 里的再次调用兜底。
+            window.getDecorView();
             WindowInsetsController controller = window.getInsetsController();
             if (controller != null) {
                 if (dark) {

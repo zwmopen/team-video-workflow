@@ -1063,6 +1063,23 @@ public final class OnlineGalleryClient {
         return fileManager.fileExists(atPath: diskURL.path)
     }
 
+    /// 2026-10-22 预缓存：点开作品预览时后台静默并发预下载全部原图到磁盘缓存，
+    /// 使点平台分享时命中 areAllWorkImagesCachedLocally 快路径（0 毫秒唤起，不再等下载）。
+    private var prewarmedWorkIDs = Set<String>()
+    private let prewarmLock = NSLock()
+    public func prewarmWorkImages(_ entry: OnlineWorkEntry) {
+        guard !entry.images.isEmpty else { return }
+        prewarmLock.lock()
+        if prewarmedWorkIDs.contains(entry.id) {
+            prewarmLock.unlock()
+            return
+        }
+        prewarmedWorkIDs.insert(entry.id)
+        prewarmLock.unlock()
+        if areAllWorkImagesCachedLocally(entry) { return }
+        downloadWorkImages(entry: entry, onProgress: { _, _, _ in }, completion: { _ in })
+    }
+
     /// 检查某作品的所有原画图片是否均已在本地就绪
     public func areAllWorkImagesCachedLocally(_ entry: OnlineWorkEntry) -> Bool {
         guard !entry.images.isEmpty else { return true }

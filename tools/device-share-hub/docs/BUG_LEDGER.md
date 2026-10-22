@@ -1,3 +1,18 @@
+# DSH-180：对比视图点图进大图（双端）+ 真机捕获 0.8.114 深色模式启动崩溃（已修复 · Android 0.8.116/227 真机闭环 · 2026-10-22）
+
+- **诉求**：对比视图（素材 vs 成品）里点图进全屏大图模式，关闭大图回到对比模式原页；以 iOS 交互为基准复刻到 Android 并真机校验。
+- **顺带抓到的回归**：真机安装 0.8.115 后**启动即崩**——`MainActivity.onCreate:306` 在 `setContentView` 前调 `ThemePalette.applySystemBarAppearance`，MIUI/Android 15+ 的 `PhoneWindow.getInsetsController` 直接解引用尚未创建的 mDecor → NPE。根因提交 `f8fbae7`（0.8.114 双端深色模式），手机此前停在 0.8.111 故从未暴露；0.8.114 发布缺真机启动验证，属"构建绿≠真机绿"的活例。
+- **修复与实现**：
+  1. Android `showOnlineCompareDialog` 的 GestureDetector 增加 `onSingleTapUp`：复用 `showOnlineImageDialog` 大图查看器盖在对比 Dialog 之上，关闭自然回到对比视图（页码与布局模式保留）。
+  2. iOS `OnlineComparePreviewController.setupGestures` 给左右图容器加 tap → present `OnlineImagePreviewController`（当前页 + 当前画面 0ms 占位）。
+  3. 崩溃修复：`applySystemBarAppearance` 在 `getInsetsController()` 前先 `window.getDecorView()` 触发 installDecor；视觉应用由 `MainActivity.onResume` 再次调用兜底；`SettingsActivity` 同隐患一并消除。
+- **验证**：
+  - Android 官方构建链 `build-local.ps1 -AndroidOnly`：单测 + assembleRelease + lintRelease + aapt 权限 + apksigner v2/v3 全过（0.8.115/226、0.8.116/227 各一轮）。
+  - 真机（Redmi 无线 ADB 192.168.0.104）：0.8.111→0.8.116；冷启动无 FATAL、进程存活、版本回读 0.8.116/227；在线模式连 `192.168.0.107:45835` 读到 388 套；对比视图 → 点图 → 大图（✅100% 原图，P 1/6）→ ✕ → 回到对比视图 P1/P6，交互闭环通过。
+  - iOS 仅静态 diff 核对（Windows 无法编译），待 0.8.115 IPA 经 CI 构建后 AltStore 安装验收；iPhone（iOS 26.6）当前 0.8.113/224，USB 通道（pymobiledevice3）已打通。
+- **状态**：Android 代码+构建+真机闭环完成；iOS 待构建装机。git 未 commit（等用户授权）。
+- **影响文档**：本账本；未改协议与公共契约。
+
 # DSH-179：跨设备剪贴板双向同步与防残留设置（已实现 · 0.8.108/219 · 2026-10-17）
 
 - **现象与诉求**：用户在电脑与手机（Redmi 9A，Android 11）之间分发小红书/抖音等文案时，针对个别 32 位老机型缺少统一输入法生态的需求提供跨设备剪贴板同步能力；对于其他已有微信输入法同步的设备，开关默认应保持关闭状态避免被打扰。真要使用时，在目标手机设置页手动开启即可。
@@ -3513,6 +3528,7 @@ totalWorks = 472
 
 | 日期 (时间) | 执行者 | 记录 |
 |---|---|---|
+| 2026-10-22 08:40 | WorkBuddy | DSH-180 对比视图点图进大图双端落地；真机捕获并修复 0.8.114 启动崩溃；Android 0.8.116/227 真机闭环，iOS 待 IPA |
 | 2026-10-15 19:52 | 反重力 | record v0.8.106 used-work pin release evidence |
 | 2026-10-15 18:02 | 反重力 | pin active used works ahead of time-sorted works; repair stale prefetch guard |
 | 2026-10-12 23:50 | 反重力 | record v0.8.105 release closure |

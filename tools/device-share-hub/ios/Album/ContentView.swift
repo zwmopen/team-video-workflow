@@ -1820,6 +1820,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int, initialImage: UIImage? = nil) {
         guard !entry.images.isEmpty else { return }
+        OnlineGalleryClient.shared.prewarmWorkImages(entry)   // 2026-10-22 预缓存原图，点分享秒开
         let vc = OnlineImagePreviewController(entry: entry, initialIndex: initialIndex, initialImage: initialImage)
         vc.modalPresentationStyle = .fullScreen
         vc.modalTransitionStyle = .crossDissolve
@@ -1832,6 +1833,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func openOnlineComparePreview(entry: OnlineWorkEntry, initialIndex: Int) {
         guard !entry.images.isEmpty else { return }
+        OnlineGalleryClient.shared.prewarmWorkImages(entry)   // 2026-10-22 预缓存原图，点分享秒开
         let vc = OnlineComparePreviewController(entry: entry, initialIndex: initialIndex)
         vc.modalPresentationStyle = .fullScreen
         vc.modalTransitionStyle = .crossDissolve
@@ -4853,6 +4855,20 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
         let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(prevPage))
         swipeRight.direction = .right
         view.addGestureRecognizer(swipeRight)
+
+        // 2026-10-22 对比视图点图进大图模式：大图模态盖在对比视图之上，关闭后回到对比模式
+        let tapLeft = UITapGestureRecognizer(target: self, action: #selector(openBigImageMode))
+        leftContainer.addGestureRecognizer(tapLeft)
+        let tapRight = UITapGestureRecognizer(target: self, action: #selector(openBigImageMode))
+        rightContainer.addGestureRecognizer(tapRight)
+    }
+
+    /// 在当前页打开全屏大图（成品序列），右图当前画面做 0ms 占位；关闭大图即回到对比模式
+    @objc private func openBigImageMode() {
+        let vc = OnlineImagePreviewController(entry: entry, initialIndex: currentIndex, initialImage: rightImageView.image)
+        vc.modalPresentationStyle = .fullScreen
+        vc.modalTransitionStyle = .crossDissolve
+        present(vc, animated: true)
     }
 
     deinit {

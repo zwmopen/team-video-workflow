@@ -5790,6 +5790,17 @@ public final class MainActivity extends Activity {
         final android.view.GestureDetector gestureDetector = new android.view.GestureDetector(this,
                 new android.view.GestureDetector.SimpleOnGestureListener() {
                     @Override
+                    public boolean onSingleTapUp(android.view.MotionEvent e) {
+                        // 2026-10-22 对齐 iOS：对比视图点击图区进入全屏大图模式，
+                        // 大图 Dialog 盖在对比 Dialog 之上，关闭后自然回到对比模式。
+                        if (!dialog.isShowing()) return false;
+                        android.graphics.drawable.Drawable d = rightImage.getDrawable();
+                        Bitmap currentBm = (d instanceof android.graphics.drawable.BitmapDrawable)
+                                ? ((android.graphics.drawable.BitmapDrawable) d).getBitmap() : null;
+                        showOnlineImageDialog(work.id, work.title, work.images, currentIndex[0], currentBm);
+                        return true;
+                    }
+                    @Override
                     public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float velocityX, float velocityY) {
                         if (e1 == null || e2 == null) return false;
                         float diffX = e2.getX() - e1.getX();
