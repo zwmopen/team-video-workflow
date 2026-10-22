@@ -1303,30 +1303,72 @@ LOCAL_OUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 LOCAL_LATEST_JSON = os.path.join(LOCAL_OUT_DIR, "local_latest.json")
 
 
-def _read_local_ipa_path() -> Optional[str]:
-    """检查本地是否已有最新构建的 iOS IPA 产物，优先秒级直供"""
-    candidates = [
-        r"C:\Users\z\Desktop\album-iOS-v0.8.114.ipa",
-        r"D:\AICode\_ipa_downloads_v114\album-iOS-v0.8.114-altstore.ipa",
-        r"C:\Users\z\Desktop\album-iOS-v0.8.113.ipa",
-        r"D:\AICode\_ipa_downloads_v111\album-iOS-v0.8.111-altstore.ipa",
-        r"D:\AICode\_ipa_downloads\album-iOS-v0.8.111-altstore.ipa",
+def _list_local_ipas() -> List[str]:
+    """DSH-187：收集本机所有候选 IPA（仓库 _ipa/、桌面、_ipa_downloads* 目录）。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    dirs = [
+        os.path.abspath(os.path.join(here, "..", "_ipa")),
+        r"C:\Users\z\Desktop",
+        r"D:\AICode",
     ]
-    desktop_dir = r"C:\Users\z\Desktop"
-    if os.path.isdir(desktop_dir):
+    if os.path.isdir(r"D:\AICode"):
         try:
-            for f in os.listdir(desktop_dir):
-                if f.lower().startswith("album-ios") and f.lower().endswith(".ipa"):
-                    p = os.path.join(desktop_dir, f)
-                    if p not in candidates:
-                        candidates.append(p)
+            for name in os.listdir(r"D:\AICode"):
+                if name.lower().startswith("_ipa"):
+                    dirs.append(os.path.join(r"D:\AICode", name))
         except Exception:
             pass
-    for c in candidates:
-        if os.path.isfile(c) and os.path.getsize(c) > 1024 * 1024:
-            return c
-    return None
+    seen, out = set(), []
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            names = os.listdir(d)
+        except Exception:
+            continue
+        for f in names:
+            low = f.lower()
+            if not (low.startswith("album-ios") and low.endswith(".ipa")):
+                continue
+            p = os.path.join(d, f)
+            if p in seen or not os.path.isfile(p) or os.path.getsize(p) < 1024 * 1024:
+                continue
+            seen.add(p)
+            out.append(p)
+    return out
 
+
+def _ipa_version_tuple(path: str) -> Tuple[int, ...]:
+    m = re.search(r"v(\d+)\.(\d+)\.(\d+)", os.path.basename(path), re.I)
+    return tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+
+
+def _read_local_ipa_path(want_version: str = "", want_sha: str = "") -> Optional[str]:
+    """挑本机「最新的、且与清单对得上」的 IPA（DSH-187）。
+
+    ← 旧实现把桌面 v0.8.114 的绝对路径写死在候选首位、命中即返回，
+      于是 /download/ipa 永远转发 0.8.114，而清单已升到更高版本，
+      手机端 UpdatePackageValidator 必判校验失败（或装回旧包）。
+    新口径：先按 want_version 精确匹配，没有再按文件名版本号从高到低排；
+    给了 want_sha 就逐个验哈希，不匹配的跳过（宁可回源出网，也不发错包）。
+    """
+    cands = _list_local_ipas()
+    if want_version:
+        exact = [p for p in cands
+                 if ("v" + want_version).lower() in os.path.basename(p).lower()]
+        if exact:
+            cands = exact
+    cands.sort(key=_ipa_version_tuple, reverse=True)
+    for p in cands:
+        if want_sha:
+            try:
+                with open(p, "rb") as fh:
+                    if hashlib.sha256(fh.read()).hexdigest().lower() != want_sha.lower():
+                        continue
+            except Exception:
+                continue
+        return p
+    return None
 
 def _read_local_update_manifest() -> Optional[Dict[str, Any]]:
     """优先读取本机刚编译落盘的 local_latest.json（若存在且对应的本地 APK 文件真实有效）。"""
@@ -1532,7 +1574,12 @@ def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
                 except Exception:
                     pass
     if kind == "ipa":
-        local_ipa = _read_local_ipa_path()
+        # DSH-187：按清单版本 + 哈希挑本地 IPA，避免把旧包当新版发出去
+        ios_meta = manifest.get("ios") or {}
+        local_ipa = _read_local_ipa_path(
+            want_version=(ios_meta.get("version_name") or "").strip(),
+            want_sha=_update_expected_sha(manifest, "ipa"),
+        )
         if local_ipa and os.path.isfile(local_ipa):
             try:
                 with open(local_ipa, "rb") as ifh:

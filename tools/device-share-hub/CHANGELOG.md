@@ -1,3 +1,11 @@
+# 2026-10-22 DSH-187：修复局域网中继 `/download/ipa` 一直转发 0.8.114 旧包（服务端 1.2.1）
+
+- **发现方式**：DSH-186 验证时逐字节核对中继——`/latest.json` 声明 iOS 0.8.118 / sha `9ca6d655…`，但 `/download/ipa` 实际吐出 **22,646,374 字节、sha `a5d67106…`**，体积正好等于桌面上的 `album-iOS-v0.8.114.ipa`。iOS 端 `UpdatePackageValidator` 必判「更新包校验失败」，用户会以为中继挂了。
+- **根因（两处）**：①`_read_local_ipa_path()` 把桌面 v0.8.114 的绝对路径**写死在候选首位**、命中即返回，所以永远选不到新包；②`_download_upstream` 的 `ipa` 分支**不校验 sha**（`apk` 分支有 `_update_expected_sha` 校验），错包被原样发出去。
+- **修复**：新增 `_list_local_ipas()`（扫仓库 `_ipa/`、桌面、`D:\AICode\_ipa*`）+ `_ipa_version_tuple()`；`_read_local_ipa_path(want_version, want_sha)` 改为「按清单版本精确匹配 → 版本号降序 → 逐个验 sha，不匹配跳过」；ipa 分支传入清单 `ios.version_name` 与 sha，挑不到就回源出网，绝不发错包。
+- **验证**：服务端单测 77/77；重启后 `/download/ipa` = 22,656,473 字节 / sha `9ca6d655…` 与清单一致；`/download/apk` 931,928 字节 / sha `f2b129ae…` 与 `local_latest.json` 一致。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`。
+
 # 2026-10-22 DSH-186：大图查看改拉服务端缩放图，根治「高清原图加载中」极慢（Android 0.8.119/230 · iOS 0.8.118/229 · 服务端 1.2.1）
 
 - **现象**：苹果端「高清原图加载中」极慢——大图查看链拉的是 2.67MB 均值（最大 4.6MB）原图，2.4GHz 802.11n 半双工实际吞吐仅 1~3MB/s，单张要 1~3s 起步，叠加扫描尖刺更慢。iOS 的 `maxPixel` 只做本地解码缩放，下载的仍是全量原图。
