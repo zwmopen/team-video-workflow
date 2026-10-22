@@ -1,3 +1,26 @@
+# 2026-10-22 DSH-189：扫描期间主动让出 GIL，消除 ping 超时 3.5s 与手机「连接超时」（服务端 1.2.1）
+
+- **现象**：`logs/supervisor.log` 反复出现「判定为高并发/处理中」——即 `/api/online/ping`（超时 3.5s）连续失败，但进程活着、端口在监听。
+- **实证**：探针实测（修复前）扫描期间 349 次 ping：p50=6ms、p90=90ms、**max=4484ms、1 次 >1s**。服务端后台扫描自身耗时中位 2.7s、p90 12.7s、实测尖峰 175s（5895 次采样）。
+- **根因**：扫描是「每作品读 manifest + 列目录 + 拼装」的长循环，Python 只在字节码之间切换线程，成片的 CPU 工作把 HTTP 线程挤出 GIL 队列，ping 只能排队。
+- **修复**：新增 `_scan_yield_if_needed()`，在 `_inspect_work_dir`（每个作品一次）每 4 个作品 `time.sleep(0.005)` 主动让出 GIL。代价约 0.4s/轮。
+- **回归**：同样 50s / 450 次采样 —— p50=4.7ms、**p90=24ms（93→24）**、**max=354ms（4484→354）**、**>1s 次数 0（原 1）**。手机端「连接超时 / 离线快照」的下游症状随之消失。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`。
+
+# 2026-10-22 DSH-188：双端真机巡检发现的 6 个缺陷（Android 0.8.120/231 · iOS 0.8.119/230）
+
+两台真机（红米 13 + iPhone）多维度巡检后修复：
+
+1. **「加载更多作品」永远无效（严重）**：`ONLINE_AUTO_REFRESH_INTERVAL_MS=30s` 的自动刷新成功后会走 `applyOnlineCategoryFilter` → `onlinePageLimit=30` + `scrollTo(0,0)`，把用户点出来的后续页打回 30 套。改法：新增 `onlineFilterSignature()`（分类+季节+流量+搜索词），**只有筛选条件真变了才重置分页与滚动**，刷新/翻页保留滚动位置。真机回归：30 → 点击 → 60/188，跨 50 秒（两次自动刷新）后仍是 60/188。
+2. **进出回收站后顶栏「文件浏览」按钮永久消失（严重）**：`switchToOnlineMode()` 把 `modeButton` 设 GONE，与 DSH-097「folderItem 双模式可见」注释自相矛盾。改回 VISIBLE。真机回归：进回收站→返回，按钮仍在。
+3. **大图 ✕ 关闭按钮间歇无响应（严重/未稳定复现）**：加 `Log.d` 取证；坐标精确校准后 3/3 轮均正常关闭，翻页按钮亦正常。判定多为自动化注入/窗口焦点切换造成，保留日志便于下次抓取。
+4. **传送文件页深色模式白底（一般）**：TransferActivity 13 处硬编码浅色改 `ThemePalette` 动态色，`text()` 助手默认取 `getTextPrimary`。像素采样验证：底色由 rgb(246,244,240) 变为 (18,18,18)。
+5. **iOS 在线图磁盘缓存只写不淘汰（中）**：目录实测 **881.2MB / 3547 文件**，App 数据容器 1.03GB。新增 400MB 上限 + 按 mtime 淘汰到 300MB，每 30 次落盘体检一次。
+6. **iOS 列表下标越界（中）**：`sizeForItemAt` 早有 guard，`cellForItemAt` / `didSelectItemAt` 却漏了，历史已致 2 次 `EXC_BREAKPOINT/SIGTRAP`（0.8.35/107、0.8.52/124）。补齐在线/本地共 4 处守卫。
+
+- **验证**：Android 官方构建链（assembleRelease + lintVitalRelease）通过；服务端单测 77/77；红米真机 0.8.120/231 逐项回归。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`。
+
 # 2026-10-22 DSH-187：修复局域网中继 `/download/ipa` 一直转发 0.8.114 旧包（服务端 1.2.1）
 
 - **发现方式**：DSH-186 验证时逐字节核对中继——`/latest.json` 声明 iOS 0.8.118 / sha `9ca6d655…`，但 `/download/ipa` 实际吐出 **22,646,374 字节、sha `a5d67106…`**，体积正好等于桌面上的 `album-iOS-v0.8.114.ipa`。iOS 端 `UpdatePackageValidator` 必判「更新包校验失败」，用户会以为中继挂了。

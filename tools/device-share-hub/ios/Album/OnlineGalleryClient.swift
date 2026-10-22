@@ -376,6 +376,59 @@ public final class OnlineGalleryClient {
         self.diskCacheURL = cacheDirectory
         imageCache.countLimit = 500
         imageCache.totalCostLimit = 120 * 1024 * 1024 // 120MB 内存缓存
+        trimDiskCacheIfNeeded()   // DSH-188：目录原本只写不淘汰，实测已膨胀到 881MB
+    }
+
+    // ---- DSH-188：在线图磁盘缓存淘汰 ----
+    /// 上限 400MB，超量后按 mtime 从旧到新裁到 300MB（防止「只写不删」把 App 数据容器顶到 1GB+）。
+    private static let diskCacheMaxBytes: Int64 = 400 * 1024 * 1024
+    private static let diskCacheTrimBytes: Int64 = 300 * 1024 * 1024
+    private let diskTrimLock = NSLock()
+    private var diskWriteCounter = 0
+
+    /// 每次落盘后调用：每 30 次写才做一次目录体检，避免频繁 contentsOfDirectory 开销。
+    private func maybeTrimAfterWrite() {
+        diskTrimLock.lock()
+        diskWriteCounter += 1
+        let shouldTrim = diskWriteCounter >= 30
+        if shouldTrim { diskWriteCounter = 0 }
+        diskTrimLock.unlock()
+        if shouldTrim { trimDiskCacheIfNeeded() }
+    }
+
+    /// 按修改时间淘汰最旧文件，直到目录体积 <= trimBytes。后台并发队列执行，不挡启动与渲染。
+    func trimDiskCacheIfNeeded() {
+        imageIOQueue.async { [weak self] in
+            guard let self = self else { return }
+            let fm = FileManager.default
+            guard let urls = try? fm.contentsOfDirectory(
+                at: self.diskCacheURL,
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isDirectoryKey],
+                options: .skipsHiddenFiles) else { return }
+            var items: [(url: URL, mtime: TimeInterval, size: Int64)] = []
+            var total: Int64 = 0
+            for u in urls {
+                guard let rv = try? u.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .isDirectoryKey]),
+                      rv.isDirectory != true,
+                      let mtime = rv.contentModificationDate?.timeIntervalSince1970 else { continue }
+                let size = Int64(rv.fileSize ?? 0)
+                total += size
+                items.append((u, mtime, size))
+            }
+            guard total > OnlineGalleryClient.diskCacheMaxBytes else { return }
+            items.sort { $0.mtime < $1.mtime }
+            var freed: Int64 = 0
+            for it in items {
+                guard total - freed > OnlineGalleryClient.diskCacheTrimBytes else { break }
+                do {
+                    try fm.removeItem(at: it.url)
+                    freed += it.size
+                } catch {
+                    // 单文件删除失败不中断整体淘汰
+                }
+            }
+            NSLog("[OnlineGalleryClient] DSH-188 disk cache trimmed: before=%lld freed=%lld", total, freed)
+        }
     }
 
     private func beginCategoriesRequest() -> UInt64 {
@@ -958,6 +1011,7 @@ public final class OnlineGalleryClient {
                 self.imageCache.setObject(image, forKey: cacheKey)
                 do {
                     try data.write(to: diskURL)
+                    maybeTrimAfterWrite()   // DSH-188
                 } catch {
                     NSLog("[OnlineGalleryClient] loadImage disk write failed: path=%@ error=%@",
                           (path as NSString).lastPathComponent, error.localizedDescription)
@@ -1165,6 +1219,7 @@ public final class OnlineGalleryClient {
             }
             do {
                 try data.write(to: diskURL)
+                maybeTrimAfterWrite()   // DSH-188
                 completion(.success(()))
             } catch {
                 completion(.failure(error))

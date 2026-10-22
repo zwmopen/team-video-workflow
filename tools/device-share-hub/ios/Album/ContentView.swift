@@ -1525,6 +1525,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "WorkCell", for: indexPath) as! WorkCell
         if isOnlineMode {
+            // DSH-188：下标兜底（异步刷新竞态曾致 2 次 SIGTRAP 崩溃）
+            guard indexPath.item < displayedOnlineWorks.count else { return cell }
             let entry = displayedOnlineWorks[indexPath.item]
             cell.configureOnline(entry, viewMode: currentViewMode)
             cell.onOnlineShare = { [weak self, weak cell] item in
@@ -1558,6 +1560,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             return cell
         }
 
+        // DSH-188：本地列表下标兜底（与 sizeForItemAt 同款守卫）
+        guard indexPath.item < filteredWorks.count else { return cell }
         let work = filteredWorks[indexPath.item]
         cell.configure(work, viewMode: currentViewMode)
         cell.onShare = { [weak self, weak cell] item in self?.share(work, item: item, source: cell) }
@@ -1590,6 +1594,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if isOnlineMode {
+            // DSH-188：下标兜底（异步刷新竞态曾致 2 次 SIGTRAP 崩溃）
+            guard indexPath.item < displayedOnlineWorks.count else { return }
             let entry = displayedOnlineWorks[indexPath.item]
             // 对比视图即使某一页暂时没有素材，也要打开成品与空素材槽位，
             // 不能退回普通预览让用户误以为对比功能失效。
@@ -1600,6 +1606,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 openOnlinePreview(entry: entry, initialIndex: 0, initialImage: cell?.firstThumbnailImage)
             }
         } else {
+            // DSH-188：本地列表点击路径下标兜底
+            guard indexPath.item < filteredWorks.count else { return }
             let work = filteredWorks[indexPath.item]
             navigationController?.pushViewController(WorkDetailViewController(library: library, work: work), animated: true)
         }

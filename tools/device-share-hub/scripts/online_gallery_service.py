@@ -1727,6 +1727,25 @@ def extract_category_from_folder_name(folder_name: str) -> str:
     return cat
 
 
+# DSH-189：扫描长循环期间的 GIL 让出节奏（每处理 SCAN_YIELD_EVERY 个作品 sleep 一次）
+_SCAN_YIELD_TICK = 0
+SCAN_YIELD_EVERY = 4          # 每 4 个作品让出一次
+SCAN_YIELD_SLEEP_SEC = 0.005  # 单次让出时长（足够 HTTP 线程拿到 GIL 完成一次 ping）
+
+
+def _scan_yield_if_needed():
+    """DSH-189：后台扫描期间主动让出 GIL。
+
+    没有这一步时，354 套作品的扫描会把 HTTP 线程挤出 GIL 队列，实测 /api/online/ping
+    最长被拖到 4.5s（supervisor 探活阈值 3.5s ⇒ 反复告警），手机端表现为「连接超时 /
+    离线快照」。sleep 会释放 GIL，代价仅约 0.4s/轮。
+    """
+    global _SCAN_YIELD_TICK
+    _SCAN_YIELD_TICK += 1
+    if _SCAN_YIELD_TICK % SCAN_YIELD_EVERY == 0:
+        time.sleep(SCAN_YIELD_SLEEP_SEC)
+
+
 def is_shelf_folder(name: str) -> bool:
     """判定是否为标准成品货架目录，防止工作区/产线等非货架目录伪装成分类按钮或产出假作品。"""
     if not name or name.startswith(".") or name.startswith("_"):
@@ -3258,6 +3277,7 @@ class WorkScanner:
         return []
 
     def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int, default_category: str = "") -> Optional[Dict[str, Any]]:
+        _scan_yield_if_needed()   # DSH-189：让出 GIL，保证扫描期间 HTTP 仍能秒回
         # Junction / 软链接检测与解析
         is_symlink = False
         source_path = dir_path

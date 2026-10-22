@@ -1,3 +1,24 @@
+# DSH-189：扫描期间 GIL 被占死，ping 超时 3.5s / 手机「连接超时」（已修复 · 服务端 1.2.1 · 2026-10-22）
+
+- **现象**：`logs/supervisor.log` 反复出现「判定为高并发/处理中」——`/api/online/ping`（超时 3.5s）连续失败，但进程存活、端口仍在监听。
+- **实证（修复前探针）**：扫描期间 349 次 ping —— p50=6ms、p90=90ms、**max=4484ms、1 次 >1s**。后台扫描自身耗时：5895 次采样，中位 2.7s、p90 12.7s、**尖峰 175s**。
+- **根因**：扫描是「每作品读 manifest + 列目录 + 拼装」的长循环；Python 只在字节码之间切换线程，成片 CPU 工作把 HTTP 线程挤出 GIL 队列。
+- **修复**：新增 `_scan_yield_if_needed()`，`_inspect_work_dir` 内每 4 个作品 `time.sleep(0.005)` 主动让出 GIL（代价 ≈0.4s/轮）。
+- **回归（修复后）**：450 次采样 —— p50=4.7ms、**p90=24ms（原 90）**、**max=354ms（原 4484）**、**>1s 次数 0（原 1）**。
+- **影响文档**：本账本、根 CHANGELOG.md。
+
+# DSH-188：双端真机巡检发现的 6 个缺陷（已修复 · Android 0.8.120/231 · iOS 0.8.119/230 · 2026-10-22）
+
+- **来源**：红米 13（0.8.119）+ iPhone（0.8.118）装机后做多维度巡检（子智能体各一份报告：`_inspect_红米_20261022/报告.md`、`_inspect_iPhone_20261022/报告.md`）。
+- **①「加载更多作品」永远无效（严重）**：`ONLINE_AUTO_REFRESH_INTERVAL_MS=30s` 自动刷新成功后走 `applyOnlineCategoryFilter` → `onlinePageLimit=30` + `scrollTo(0,0)`，把翻出来的页打回 30 套。修法：新增 `onlineFilterSignature()`（分类+季节+流量+搜索词），**只有筛选真变了才重置分页与滚动**。真机回归：30 → 点 → 60/188，跨 50s（两次自动刷新）仍 60/188。
+- **②进出回收站后顶栏「文件浏览」按钮永久消失（严重）**：`switchToOnlineMode()` 把 `modeButton` 设 GONE，与 DSH-097「folderItem 双模式可见」注释矛盾。改回 VISIBLE，回归通过。
+- **③大图 ✕ 间歇无响应（严重/未稳定复现）**：已加 `Log.d` 取证；坐标精确校准后 3/3 轮正常关闭，‹ › 翻页亦正常 ⇒ 多为自动化注入/窗口焦点切换，保留日志待下次抓取。
+- **④传送文件页深色白底（一般）**：TransferActivity 13 处硬编码浅色 → `ThemePalette` 动态色，`text()` 默认 `getTextPrimary`。像素采样：底色 rgb(246,244,240) → **(18,18,18)**。
+- **⑤iOS 在线图磁盘缓存只写不淘汰（中）**：实测 **881.2MB / 3547 文件**，容器 1.03GB。新增 400MB 上限 + 按 mtime 淘汰到 300MB，每 30 次落盘体检一次。
+- **⑥iOS 列表下标越界（中）**：`sizeForItemAt` 早有 guard，`cellForItemAt`/`didSelectItemAt` 漏了，历史 2 次 `EXC_BREAKPOINT/SIGTRAP`（0.8.35/107、0.8.52/124）。补齐在线/本地共 4 处守卫。
+- **验证**：assembleRelease + lintVitalRelease 通过；服务端单测 77/77；红米 0.8.120/231 逐项回归。
+- **影响文档**：本账本、根 CHANGELOG.md。
+
 # DSH-187：/download/ipa 一直转发 0.8.114 旧包（已修复 · 服务端 1.2.1 · 2026-10-22）
 
 - **现象**：DSH-186 验证时逐字节核对中继发现——`/latest.json` 声明 iOS 0.8.118 / sha `9ca6d655…`，`/download/ipa` 实际吐 22,646,374 字节 / sha `a5d67106…`，体积正好等于桌面 `album-iOS-v0.8.114.ipa`。iOS 端 UpdatePackageValidator 必判「更新包校验失败」，用户只会以为中继挂了。

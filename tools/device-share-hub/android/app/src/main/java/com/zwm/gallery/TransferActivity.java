@@ -93,11 +93,11 @@ public final class TransferActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(18), dp(18), dp(28));
-        root.setBackgroundColor(Color.rgb(246, 244, 240));
+        root.setBackgroundColor(ThemePalette.getBgPrimary(this));
         TextView title = text("传送到", 28, true);
         root.addView(title);
         TextView hint = text("先选传送方式和设备，再选文件或文件夹。同一 Wi‑Fi 可直连；数据线需要打开 USB 网络共享。", 14, false);
-        hint.setTextColor(Color.rgb(103, 100, 95));
+        hint.setTextColor(ThemePalette.getTextMuted(this));
         root.addView(hint, margins(0, dp(8), 0, dp(14)));
         LinearLayout channelRow = new LinearLayout(this);
         channelRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -106,8 +106,8 @@ public final class TransferActivity extends Activity {
         channelButton = new Button(this);
         channelButton.setAllCaps(false);
         channelButton.setTextSize(14);
-        channelButton.setTextColor(Color.rgb(38, 115, 77));
-        channelButton.setBackground(round(Color.WHITE, 14));
+        channelButton.setTextColor(ThemePalette.getBrandLightText(this));
+        channelButton.setBackground(round(ThemePalette.getCardBg(this), 14));
         channelButton.setOnClickListener(v -> chooseChannel());
         updateChannelButton();
 
@@ -115,8 +115,8 @@ public final class TransferActivity extends Activity {
         refreshButton.setText("🔄 刷新设备");
         refreshButton.setAllCaps(false);
         refreshButton.setTextSize(14);
-        refreshButton.setTextColor(Color.rgb(38, 115, 77));
-        refreshButton.setBackground(round(Color.WHITE, 14));
+        refreshButton.setTextColor(ThemePalette.getBrandLightText(this));
+        refreshButton.setBackground(round(ThemePalette.getCardBg(this), 14));
         refreshButton.setPadding(dp(14), 0, dp(14), 0);
         refreshButton.setOnClickListener(v -> {
             OnlineService.requestImmediateDiscovery(TransferActivity.this);
@@ -152,7 +152,7 @@ public final class TransferActivity extends Activity {
         root.addView(progress, margins(0, dp(18), 0, 0));
         status = text("正在发现附近设备…", 13, false);
         status.setGravity(Gravity.CENTER);
-        status.setTextColor(Color.rgb(71, 104, 87));
+        status.setTextColor(ThemePalette.getTextSecondary(this));
         root.addView(status, margins(0, dp(12), 0, 0));
 
         LinearLayout recordsHeader = new LinearLayout(this);
@@ -164,7 +164,7 @@ public final class TransferActivity extends Activity {
         clearBtn.setText("清空");
         clearBtn.setTextSize(13);
         clearBtn.setAllCaps(false);
-        clearBtn.setTextColor(Color.rgb(130, 130, 128));
+        clearBtn.setTextColor(ThemePalette.getTextMuted(this));
         clearBtn.setBackgroundColor(Color.TRANSPARENT);
         clearBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
         clearBtn.setOnClickListener(v -> {
@@ -196,7 +196,7 @@ public final class TransferActivity extends Activity {
             for (String record : records) {
                 TextView item = text(record, 13, false);
                 item.setPadding(dp(12), dp(10), dp(12), dp(10));
-                item.setBackground(round(Color.WHITE, 12));
+                item.setBackground(round(ThemePalette.getCardBg(this), 12));
                 recordsContainer.addView(item, margins(0, 0, 0, dp(7)));
             }
         }
@@ -216,7 +216,7 @@ public final class TransferActivity extends Activity {
                     : "暂未发现设备\n请在另一台设备上打开“相册”或电脑中控";
             TextView empty = text(emptyMessage, 15, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(this));
             empty.setPadding(dp(12), dp(24), dp(12), dp(24));
             peersContainer.addView(empty);
             if (CHANNEL_USB.equals(selectedChannel)) {
@@ -237,8 +237,8 @@ public final class TransferActivity extends Activity {
             item.setText(displayName + "\n" + peer.model + "  ·  " + peer.transport);
             item.setTextSize(15);
             boolean chosen = selected != null && selected.id.equals(peer.id);
-            item.setTextColor(chosen ? Color.WHITE : Color.rgb(38, 39, 38));
-            item.setBackground(round(chosen ? Color.rgb(38, 145, 94) : Color.WHITE, 16));
+            item.setTextColor(chosen ? Color.WHITE : ThemePalette.getTextPrimary(this));
+            item.setBackground(round(chosen ? Color.rgb(38, 145, 94) : ThemePalette.getCardBg(this), 16));
             item.setOnClickListener(v -> {
                 selected = peer;
                 status.setText("已选择“" + peer.name + "”");
@@ -385,6 +385,7 @@ public final class TransferActivity extends Activity {
     }
     private TextView text(String value, int size, boolean bold) {
         TextView view = new TextView(this); view.setText(value); view.setTextSize(size);
+        view.setTextColor(ThemePalette.getTextPrimary(this));   // DSH-188：深色下不再沿用主题默认的黑字
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return view;
     }
     private GradientDrawable round(int color, int radius) {

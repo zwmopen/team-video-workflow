@@ -229,6 +229,8 @@ public final class MainActivity extends Activity {
     private final Map<String, Button> onlineCategoryButtons = new LinkedHashMap<>();
     private final Map<String, String> onlineCategoryLabels = new LinkedHashMap<>();
     private int onlinePageLimit = 30;
+    /** DSH-188：上次生效的筛选指纹，用来判断「筛选条件是否真的变了」。 */
+    private String lastOnlineFilterSignature = "";
     private final List<OnlineWorkEntry> currentOnlineFilteredEntries = new ArrayList<>();
 
     // ---- 在线回收站（电脑端 45835）：已使用 / 已标记垃圾 双 Tab ----
@@ -3361,7 +3363,9 @@ public final class MainActivity extends Activity {
         showingOnlineRecycle = false;
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
-        if (modeButton != null) modeButton.setVisibility(View.GONE);
+        // DSH-188：DSH-097 明确要求 folderItem 双模式可见（在线模式点击进回收站）；
+        // 这里原先写 GONE，导致进出一次回收站后该按钮永久消失。
+        if (modeButton != null) modeButton.setVisibility(View.VISIBLE);
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
         footerNote.setText("💻 电脑在线作品：实时读取电脑首发成品，点击文案复制并唤起分享；长按文案按钮可全屏预览。");
@@ -4401,9 +4405,24 @@ public final class MainActivity extends Activity {
         renderOnlineRecycleCards();
     }
 
+    /** DSH-188：筛选指纹 = 分类 + 季节 + 流量 + 搜索词（顺序无关）。 */
+    private String onlineFilterSignature() {
+        return String.valueOf(selectedOnlineCategory) + "|"
+                + new java.util.TreeSet<>(selectedSeasons) + "|"
+                + new java.util.TreeSet<>(selectedFlowTypes) + "|"
+                + (searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT));
+    }
+
     private void applyOnlineCategoryFilter(String catKey) {
         if (!isOnlineMode || showingTrash || showingOnlineRecycle) return;
-        onlinePageLimit = 30;
+        // DSH-188：只有筛选条件真的变了才重置分页。之前无条件重置，导致 30s 自动刷新
+        // 一回来就把用户点出来的「加载更多」打回 30 套（加载更多永远无效的元凶）。
+        final String filterSig = onlineFilterSignature();
+        final boolean filterChanged = !filterSig.equals(lastOnlineFilterSignature);
+        lastOnlineFilterSignature = filterSig;
+        if (filterChanged) {
+            onlinePageLimit = 30;
+        }
         String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = query.isEmpty() ? new String[0] : query.split("\\s+");
 
@@ -4455,9 +4474,16 @@ public final class MainActivity extends Activity {
             }
             currentOnlineFilteredEntries.add(work);
         }
+        final int keepScrollY = (contentScroll != null && !filterChanged) ? contentScroll.getScrollY() : 0;
         renderOnlineWorksCards(currentOnlineFilteredEntries, false);
         if (contentScroll != null) {
-            contentScroll.scrollTo(0, 0);
+            if (filterChanged) {
+                contentScroll.scrollTo(0, 0);
+            } else {
+                // DSH-188：后台刷新不打断用户正在看的位置
+                final int y = keepScrollY;
+                contentScroll.post(() -> contentScroll.scrollTo(0, y));
+            }
         }
     }
 
@@ -4519,8 +4545,15 @@ public final class MainActivity extends Activity {
             loadMoreBtn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(200, 230, 215)));
             loadMoreBtn.setPadding(dp(16), dp(10), dp(16), dp(10));
             loadMoreBtn.setOnClickListener(v -> {
+                // DSH-188：翻页后保持滚动位置（removeAllViews 会把 ScrollView 拉回 0）
+                final int keepY = contentScroll != null ? contentScroll.getScrollY() : 0;
                 onlinePageLimit += 30;
+                Log.d("MainActivity", "DSH-188 loadMore click -> limit=" + onlinePageLimit);
                 renderOnlineWorksCards(currentOnlineFilteredEntries, false);
+                if (contentScroll != null) {
+                    final int y = keepY;
+                    contentScroll.post(() -> contentScroll.scrollTo(0, y));
+                }
             });
             LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(-1, dp(44));
             btnParams.setMargins(dp(12), dp(8), dp(12), dp(24));
@@ -6154,6 +6187,7 @@ public final class MainActivity extends Activity {
 
         closeBtn.setOnClickListener(v -> {
             closeBtn.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            Log.d("MainActivity", "DSH-188 imageViewer closeBtn click");
             dialog.dismiss();
         });
 
