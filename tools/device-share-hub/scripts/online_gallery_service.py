@@ -1084,6 +1084,79 @@ def build_thumbnail_bytes(img_path: str, mtime: float) -> Optional[bytes]:
         _inflight_release(cache_key)
 
 
+def build_scaled_image_bytes(img_path: str, mtime: float, max_w: int) -> Optional[bytes]:
+    """DSH-186：按长边 max_w 缩放的预览图（内存 → 磁盘 → PIL 三级，与缩略图同套缓存）。
+
+    大图查看场景：手机屏幕仅 ~1080 宽，1600px 缩放图与原图在屏幕上视觉无差别，
+    但 2.9MB PNG → ~300KB JPEG；实测 WiFi 是 2.4GHz 802.11n（链路 65Mbps、
+    实际吞吐 1~3MB/s），原图 ~3s/张、缩放图 ~0.3s/张，「高清原图加载中」从
+    转圈数秒降到近乎秒开。仅用于「看」；分享/下载原图链路不受影响。
+    返回 None 表示无法缩放（缺 Pillow），调用方据此显式降级回原图。
+    """
+    if max_w <= 0:
+        return None
+    cache_key = hashlib.md5(f"{img_path}_{mtime}_w{max_w}".encode("utf-8")).hexdigest()
+
+    data = thumb_cache_get(cache_key)
+    if data is not None:
+        _thumb_stat("memoryHit")
+        return data
+
+    disk_path = os.path.join(DISK_THUMB_DIR, f"w{max_w}_{cache_key}.jpg")
+    if os.path.isfile(disk_path):
+        try:
+            with open(disk_path, "rb") as fp:
+                data = fp.read()
+            thumb_cache_put(cache_key, data)
+            _thumb_stat("diskHit")
+            return data
+        except Exception:
+            pass
+
+    if not HAS_PIL:
+        _thumb_stat("fallbackOriginal")
+        return None
+
+    inflight = _inflight_acquire(cache_key)
+    try:
+        with inflight:
+            data = thumb_cache_get(cache_key)
+            if data is not None:
+                _thumb_stat("memoryHit")
+                return data
+            if os.path.isfile(disk_path):
+                try:
+                    with open(disk_path, "rb") as fp:
+                        data = fp.read()
+                    thumb_cache_put(cache_key, data)
+                    _thumb_stat("diskHit")
+                    return data
+                except Exception:
+                    pass
+            try:
+                with Image.open(img_path) as im:
+                    im.thumbnail((max_w, max_w), Image.Resampling.LANCZOS)
+                    buf = BytesIO()
+                    im.convert("RGB").save(buf, format="JPEG", quality=85)
+                    data = buf.getvalue()
+            except Exception as e:
+                print(f"[Scaled] 生成失败 {img_path}: {e}")
+                _thumb_stat("fallbackOriginal")
+                return None
+
+            thumb_cache_put(cache_key, data)
+            try:
+                with open(disk_path, "wb") as fp:
+                    fp.write(data)
+                evict_disk_cache_if_needed()
+            except Exception:
+                pass
+            _thumb_stat("generated")
+            return data
+    finally:
+        _inflight_release(cache_key)
+
+
 def thumbnail_health() -> Dict[str, Any]:
     """缩略图链路健康快照（/api/online/status 暴露，供运维与手机端自检）。"""
     try:
@@ -4512,6 +4585,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             file_name = query.get("file", [""])[0]
             raw_path = query.get("path", [""])[0]
             thumb = query.get("thumb", ["0"])[0] == "1"
+            # DSH-186：大图查看缩放图。客户端传 w=1600 之类，服务端按需缩放（远小于原图）
+            try:
+                scaled_w = int(query.get("w", ["0"])[0] or 0)
+            except Exception:
+                scaled_w = 0
 
             img_path = ""
             if work_id and file_name:
@@ -4585,6 +4663,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     # 客户端与运维都能一眼看出「缩略图链路挂了」，不会再静默发几 MB 原图。
                     degraded = True
                     print(f"[Thumb] !! 缩略图不可用，已降级返回原图：{img_path}")
+            elif scaled_w > 0:
+                # DSH-186：缩放预览图。生成失败降级原图（不静默，打印 + X-Scaled 头标记）。
+                data = build_scaled_image_bytes(img_path, mtime, scaled_w)
+                if data is None:
+                    degraded = True
+                    print(f"[Scaled] !! 缩放图不可用，已降级返回原图：{img_path}")
 
             if data is None:
                 try:
@@ -4604,6 +4688,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 if thumb:
                     # 健康标记：手机端可据此提示「电脑端缩略图未启用」；X-Thumb-Fallback=1 表示发的是原图
                     self.send_header("X-Thumb", "fallback" if degraded else "ok")
+                if scaled_w > 0:
+                    # DSH-186：标记本次发的是缩放图还是降级原图，便于客户端/运维核对
+                    self.send_header("X-Scaled", ("fallback" if degraded else "ok") + f";w={scaled_w}")
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(data)

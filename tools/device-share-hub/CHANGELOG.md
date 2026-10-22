@@ -1,3 +1,13 @@
+# 2026-10-22 DSH-186：大图查看改拉服务端缩放图，根治「高清原图加载中」极慢（Android 0.8.119/230 · iOS 0.8.118/229 · 服务端 1.2.1）
+
+- **现象**：苹果端「高清原图加载中」极慢——大图查看链拉的是 2.67MB 均值（最大 4.6MB）原图，2.4GHz 802.11n 半双工实际吞吐仅 1~3MB/s，单张要 1~3s 起步，叠加扫描尖刺更慢。iOS 的 `maxPixel` 只做本地解码缩放，下载的仍是全量原图。
+- **服务端**：`/api/online/image` 新增 `w` 参数（长边缩放，PIL LANCZOS → JPEG q85），`build_scaled_image_bytes` 复用缩略图三级缓存（内存 LRU / 磁盘 `w{w}_{md5}.jpg` / single-flight），响应头加 `X-Scaled: ok|fallback;w=…`。实测 2.82MB 原图 → 492KB（5.9 倍缩小），缓存命中 7ms。
+- **Android**：`loadFullImage` URL 加 `&w=1600`（0.8.119/230）。**分享/下载链 `downloadOneImageToFile` 不加 w，继续拉原图**（用户要原图进相册/发小红书）。
+- **iOS**：`loadImageWithProgress` 新增 `serverWidth: Int? = nil`，`!isThumbnail` 时自动追加 `w=1600` query——对比视图（4920/4944）、大图页（4138）、预取（4204/5009）共 5 个调用点零改动全覆盖；下载分享链（1211 独立构造 URL）不受影响。
+- **缓存口径**：两端大图磁盘缓存 key 不变，旧原图缓存继续命中复用，新下载为缩放图，均为查看器可用数据；原图下载链 key 独立互不污染。
+- **验证**：服务端 curl 实测 `?w=1600` 返回 492KB / X-Scaled:ok / 二刷 7ms；Android 官方链编译通过、vivo 真机装 0.8.119/230 冷启动正常（主列表 366 套渲染正常）。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`。
+
 # 2026-10-22 DSH-183/184/185：弹窗深色适配补齐 + 预热风暴根治「高清原图加载慢/分享拉图卡死」（Android 0.8.118/229）
 
 - **DSH-184 预热风暴（真凶，服务端）**：多维度巡检时用户反馈「苹果高清原图加载极慢、安卓点文案按钮拉取图卡死」。服务端日志实锤 `thumb prewarm complete: covers=385 elapsed_ms≈47000` 反复出现——DSH-182 预热每次扫描后全量重跑 385 张（47s/轮），持续读 2.67MB 原图 + PIL 解码，把手机端原图请求挤到 D 盘 IO 队列后面。修复：①`PREWARM_MIN_INTERVAL_SEC=600` 全局节流；②预热循环内磁盘缩略图已存在（md5(path_mtime).jpg）直接跳过，不读原图不跑 PIL；③stats 加 `skipped` 字段。重启生效（staleCode=false）。实测：修复后 vivo 点「红书自然」4 张原图 ~9s 完成并唤起分享面板，不卡死。

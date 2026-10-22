@@ -1149,7 +1149,10 @@ public final class OnlineGalleryClient {
             try {
                 String baseUrl = resolveBaseUrl();
                 String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
-                        + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=0";
+                        + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=0"
+                        // DSH-186：查看器大图改拉服务端缩放图（w=1600 长边，实测 2.7MB→492KB）；
+                        // 2.7MB 原图只留给「下载到相册/分享」链路（downloadOneImageToFile）。
+                        + "&w=1600";
                 URL url = new URL(uStr);
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestProperty("Connection", "close");

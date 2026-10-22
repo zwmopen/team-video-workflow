@@ -858,6 +858,7 @@ public final class OnlineGalleryClient {
         workId: String? = nil,
         isThumbnail: Bool = true,
         maxPixel: CGFloat = 200,
+        serverWidth: Int? = nil,
         onProgress: ((Int) -> Void)? = nil,
         completion: @escaping (UIImage?) -> Void
     ) -> ImageLoadRequest {
@@ -875,6 +876,11 @@ public final class OnlineGalleryClient {
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/image")
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
+        // DSH-186：非缩略图查看路径默认请求服务端缩放图（w=1600 长边，实测 2.7MB→492KB），
+        // 显著加快「高清原图加载中」；原图只保留给下载/分享链路（独立构造 URL，不经此函数）。
+        if !isThumbnail {
+            queryItems.append(URLQueryItem(name: "w", value: String(serverWidth ?? 1600)))
+        }
         if let workId = workId, !workId.isEmpty {
             let bn = path.hasPrefix("__src__:") ? path : (path as NSString).lastPathComponent
             queryItems.append(URLQueryItem(name: "id", value: workId))
