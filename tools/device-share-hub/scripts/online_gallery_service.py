@@ -835,7 +835,9 @@ IMAGE_SUBDIR_FALLBACKS = ("产出素材",)
 #    每个缩略图请求都要读磁盘、冷缓存时还要跑 PIL，是手机端「一直在读取」的放大器。
 THUMB_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 THUMB_CACHE_LOCK = threading.Lock()
-MAX_CACHE_ENTRIES = 500
+# DSH-182：500 → 1500。385 套作品 × 平均 8 图 ≈ 3000 张缩略图，500 条只覆盖最近浏览，
+# 回头看旧作品仍会冷生成（0.3~0.7s/张）。1500 条 ≈ 45MB 内存，Windows 常驻无压力。
+MAX_CACHE_ENTRIES = 1500
 
 # 磁盘缓存的 key 是「路径 + mtime」，图片一改就生成新条目、旧条目永不失效。
 # 不加上限的话，图库长到万张级会累积到几百 MB（且不会自动回收）。
@@ -1875,6 +1877,12 @@ class WorkScanner:
         self._cached_scan_revision = 0
         self._cleanup_refreshing = False
         self._last_cleanup_schedule_time = 0.0
+        # DSH-182：扫描完成后后台限速预热「封面」缩略图（single-flight），
+        # 让手机端滑动列表时磁盘缓存直接命中（~5ms），不再每张冷生成 0.3~0.7s。
+        self._thumb_prewarming = False
+        self._thumb_prewarm_stats: Dict[str, Any] = {
+            "running": False, "warmed": 0, "total": 0, "lastRunAt": 0.0, "elapsedMs": 0,
+        }
         # DSH-117：HTTP 入口 refresh=1 的强制扫描限速（FORCE_SCAN_MIN_INTERVAL 秒一次）
         self._last_force_scan = 0.0
         self._force_scan_throttled = 0
@@ -2554,6 +2562,11 @@ class WorkScanner:
             try:
                 works = self.scan(force=force)
                 print(f"[DSH-157] background scan complete: works={len(works)} elapsed_ms={_dsh157_elapsed_ms(started)}")
+                # DSH-182：扫描完顺手预热封面缩略图（独立线程，不占用本线程退出）
+                try:
+                    self._schedule_thumb_prewarm(works)
+                except Exception as _pw_exc:
+                    print(f"[DSH-182] thumb prewarm schedule failed: {type(_pw_exc).__name__}")
             except Exception as exc:
                 print(f"[DSH-157] background scan failed: {type(exc).__name__}")
             finally:
@@ -2566,6 +2579,69 @@ class WorkScanner:
         except Exception:
             with self._scan_state_lock:
                 self._scan_refreshing = False
+            raise
+        return True
+
+    def _schedule_thumb_prewarm(self, works: List[Dict[str, Any]]) -> bool:
+        """DSH-182：后台限速预热每套作品的封面缩略图，让列表滑动磁盘命中（~5ms）。
+
+        实测磁盘缓存命中 0 时冷生成 0.3~0.7s/张（PIL 解码 PNG），手机滑列表遇冷图即卡。
+        只预热封面（列表唯一刚需，385 张 ≈ 3 分钟），每张间隔 sleep 限速避免 PIL 抢 GIL
+        拖慢 HTTP 线程；single-flight，扫描 revision 更新会带新一轮。
+        """
+        if not HAS_PIL:
+            return False
+        with self._scan_state_lock:
+            if self._thumb_prewarming:
+                return False
+            self._thumb_prewarming = True
+        self._thumb_prewarm_stats["running"] = True
+        self._thumb_prewarm_stats["warmed"] = 0
+        self._thumb_prewarm_stats["total"] = 0
+
+        def _run():
+            started = time.perf_counter()
+            try:
+                for w in works:
+                    images = w.get("images") or []
+                    if not images:
+                        continue
+                    rel = images[0]  # 封面 = 列表唯一刚需
+                    file_name = os.path.basename(rel)
+                    try:
+                        img_path = self.resolve_image_for_work(w, file_name) or ""
+                    except Exception:
+                        img_path = ""
+                    if not img_path or not os.path.isfile(img_path):
+                        continue
+                    try:
+                        mtime = os.path.getmtime(img_path)
+                    except Exception:
+                        mtime = 0
+                    try:
+                        build_thumbnail_bytes(img_path, mtime)
+                    except Exception:
+                        pass
+                    self._thumb_prewarm_stats["warmed"] += 1
+                    self._thumb_prewarm_stats["total"] += 1
+                    time.sleep(0.12)  # 限速：PIL 解码是 CPU 密集，避免抢 GIL 拖慢 HTTP
+                self._thumb_prewarm_stats["lastRunAt"] = time.time()
+                self._thumb_prewarm_stats["elapsedMs"] = int((time.perf_counter() - started) * 1000)
+                print(f"[DSH-182] thumb prewarm complete: covers={self._thumb_prewarm_stats['warmed']} elapsed_ms={self._thumb_prewarm_stats['elapsedMs']}")
+            except Exception as exc:
+                print(f"[DSH-182] thumb prewarm failed: {type(exc).__name__}")
+            finally:
+                with self._scan_state_lock:
+                    self._thumb_prewarming = False
+                self._thumb_prewarm_stats["running"] = False
+
+        thread = threading.Thread(target=_run, name="DSH182-thumb-prewarm", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self._scan_state_lock:
+                self._thumb_prewarming = False
+            self._thumb_prewarm_stats["running"] = False
             raise
         return True
 
@@ -3979,7 +4055,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.0",
+                "version": "1.2.1",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -4004,6 +4080,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 # thumb=1 静默回落成几 MB 原图，手机端在线回收站直接卡死。此字段让运维
                 # 一条命令就能看出缩略图是否真的在生效，不再靠用户体感发现。
                 "thumbnail": thumbnail_health(),
+                # DSH-182：封面缩略图后台预热进度（running/warmed/total/elapsedMs），
+                # 一眼看出预热是否在跑、跑到哪了，不再靠体感判断列表卡不卡。
+                "thumbPrewarm": dict(self.scanner._thumb_prewarm_stats),
                 # 代码新鲜度：一眼看出「正在跑的进程」有没有落后于磁盘上的脚本
                 "code": code_freshness(),
                 # 平台槽位守卫：剔除骨架/过薄槽位的计数。slotsDropped>0 是响铃，不是噪音。
