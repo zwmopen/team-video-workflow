@@ -386,7 +386,7 @@ public final class SettingsActivity extends Activity {
 
         TextView download = text(
                 "手动下载最新版安装包\n" + UpdateEndpoint.RELEASE_PAGE, 14, true);
-        download.setTextColor(Color.rgb(0, 122, 255));
+        download.setTextColor(ThemePalette.getLinkColor(SettingsActivity.this));
         download.setPaintFlags(download.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
         download.setContentDescription("打开发布页手动下载最新版安装包");
         download.setClickable(true);

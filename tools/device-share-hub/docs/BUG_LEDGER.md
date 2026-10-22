@@ -1,3 +1,17 @@
+# DSH-193：深色模式下 6 个界面仍是白底，且详情页上下两条系统栏白边（已修复 · Android 0.8.121/232 · 2026-10-22）
+
+- **来源**：用户原话「点进某个界面主题不符合、某个小按钮看起来不太行，这些我没发现的小细节你自己去修」。
+- **取证**：手机 `settings get secure ui_night_mode` = **2**（深色模式开启）。截图 + PIL 像素采样（不靠肉眼）：
+  - 主界面 (18,18,18) 正常；
+  - **作品详情页：内容区 (18,18,18)，顶部状态栏与底部导航栏却是 (248,249,248)** ⇒ 中间深色、上下两条浅色；
+  - 切到文件浏览：卡片是白底。
+- **根因①（内容层）**：4 个二级 Activity 把页底写死 `Color.rgb(246, 244, 240)`、卡片 `Color.WHITE`、辅助文字 `Color.GRAY`；`MainActivity` 另有刷新指示器/加载态/空状态/"加载更多"按钮等一批白色卡片与灰字。
+- **根因②（系统栏层，更隐蔽）**：`applySystemBarAppearance()` 只有 MainActivity、SettingsActivity 调过 —— 系统栏颜色不会自动跟随，没调就是主题的浅色。
+- **修复**：97 处硬编码 → `ThemePalette` 动态色（新增 11 个：accentText / danger×3 / link / infoBadge×3 / warnBadge×2 / brandSoftStroke）；5 个 Activity 在 `setContentView` 之后补 `applySystemBarAppearance`（7 个 Activity 全覆盖）。
+- **验证**：构建 + lint 全过、单测 106/106；真机采样：详情页顶/中/底全部 **(18,18,18)**，文件浏览卡片 **(30,30,30)+(44,44,46)**。回归测试 `tests/test_android_dark_theme.py` 7/7。
+- **教训**：①「主界面主题对了」不代表全对 —— 主题适配必须**逐个 Activity 走一遍**，尤其不能漏系统栏。②`applySystemBarAppearance` 必须在 `setContentView` **之后**调（onCreate 早于 installDecor 会 NPE，ThemePalette 注释里有 0.8.114 的血案）。③语义图标色和「深色遮罩上的白字」不属于主题问题，别顺手改掉。
+- **影响文档**：本账本、根 CHANGELOG.md、新增 `tests/test_android_dark_theme.py`。
+
 # DSH-192：iOS 磁盘缓存淘汰挂在懒加载单例上，装上 0.8.119 后一分没裁（已修复 · iOS 0.8.120/231 · 2026-10-22）
 
 - **现象**：DSH-188 号称加了 400MB 上限 + 按 mtime 淘汰到 300MB。0.8.119 装进 iPhone 后实测缓存目录 **884.4MB / 3621 文件**（比修复前的 881.2MB 还多 74 个文件）。

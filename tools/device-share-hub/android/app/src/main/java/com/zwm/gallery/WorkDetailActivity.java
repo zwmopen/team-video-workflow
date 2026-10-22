@@ -70,6 +70,10 @@ public final class WorkDetailActivity extends Activity {
             work = library.getActive(getIntent().getStringExtra(EXTRA_WORK_ID));
             if (work == null) throw new IllegalStateException("作品不存在或已在回收站");
             setContentView(ScreenInsets.protect(buildUi()));
+            // DSH-193：系统栏（状态栏/导航栏）必须跟着主题走。
+            // 之前只有 MainActivity / SettingsActivity 调过 applySystemBarAppearance，
+            // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
+            ThemePalette.applySystemBarAppearance(this);
             render();
             int initialIndex = getIntent().getIntExtra(EXTRA_IMAGE_INDEX, -1);
             if (initialIndex >= 0 && initialIndex < work.images.size()) {
@@ -90,11 +94,11 @@ public final class WorkDetailActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(14), dp(18), dp(14));
-        root.setBackgroundColor(Color.rgb(246, 244, 240));
+        root.setBackgroundColor(ThemePalette.getBgPrimary(WorkDetailActivity.this));
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        Button back = button("‹", Color.WHITE, Color.rgb(45, 45, 42));
+        Button back = button("‹", ThemePalette.getCardBg(WorkDetailActivity.this), ThemePalette.getTextPrimary(WorkDetailActivity.this));
         back.setTextSize(26);
         back.setOnClickListener(v -> finish());
         top.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -128,12 +132,12 @@ public final class WorkDetailActivity extends Activity {
         LinearLayout textCard = new LinearLayout(this);
         textCard.setOrientation(LinearLayout.VERTICAL);
         textCard.setPadding(dp(16), dp(14), dp(16), dp(14));
-        textCard.setBackground(round(Color.WHITE, 18));
+        textCard.setBackground(round(ThemePalette.getCardBg(WorkDetailActivity.this), 18));
         TextView fileName = text("文案.txt", 15, true);
-        fileName.setTextColor(Color.rgb(53, 105, 82));
+        fileName.setTextColor(ThemePalette.getAccentText(WorkDetailActivity.this));
         textCard.addView(fileName);
         TextView preview = text(work.text.trim().isEmpty() ? "没有文案" : work.text.trim(), 13, false);
-        preview.setTextColor(Color.rgb(92, 89, 84));
+        preview.setTextColor(ThemePalette.getTextSecondary(WorkDetailActivity.this));
         preview.setMaxLines(3);
         preview.setPadding(0, dp(8), 0, 0);
         textCard.addView(preview);
@@ -152,7 +156,7 @@ public final class WorkDetailActivity extends Activity {
         ArrayList<Attachment> attachments = loadAttachments();
         if (!attachments.isEmpty()) {
             TextView heading = text("其他文件  " + attachments.size(), 15, true);
-            heading.setTextColor(Color.rgb(54, 86, 72));
+            heading.setTextColor(ThemePalette.getAccentText(WorkDetailActivity.this));
             content.addView(heading, margins(dp(4), dp(18), dp(4), dp(6)));
             for (Attachment attachment : attachments) {
                 content.addView(fileCard(attachment), margins(0, dp(4), 0, dp(4)));
@@ -163,7 +167,7 @@ public final class WorkDetailActivity extends Activity {
             int trashCount = library.imageTrashCount(work.id);
             if (trashCount > 0) {
                 Button restore = button("图片回收站  " + trashCount + "  ·  全部恢复",
-                        Color.WHITE, Color.rgb(71, 104, 87));
+                        ThemePalette.getCardBg(WorkDetailActivity.this), ThemePalette.getAccentText(WorkDetailActivity.this));
                 restore.setOnClickListener(v -> restoreImages());
                 content.addView(restore, margins(0, dp(12), 0, dp(18)));
             }
@@ -175,7 +179,7 @@ public final class WorkDetailActivity extends Activity {
         boolean chosen = selected.contains(name);
         FrameLayout frame = new FrameLayout(this);
         frame.setPadding(dp(5), dp(5), dp(5), dp(5));
-        frame.setBackground(round(chosen ? Color.rgb(38, 145, 94) : Color.WHITE, 18));
+        frame.setBackground(round(chosen ? ThemePalette.getPillSelectedBg() : ThemePalette.getCardBg(WorkDetailActivity.this), 18));
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         loadThumbnailAsync(new File(work.directory, name), 420, image);
@@ -200,11 +204,11 @@ public final class WorkDetailActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackground(round(Color.WHITE, 16));
+        row.setBackground(round(ThemePalette.getCardBg(WorkDetailActivity.this), 16));
         TextView type = text(fileType(attachment.name), 12, true);
         type.setGravity(Gravity.CENTER);
-        type.setTextColor(Color.rgb(54, 105, 82));
-        type.setBackground(round(Color.rgb(231, 239, 233), 12));
+        type.setTextColor(ThemePalette.getAccentText(WorkDetailActivity.this));
+        type.setBackground(round(ThemePalette.getPillBg(WorkDetailActivity.this), 12));
         row.addView(type, new LinearLayout.LayoutParams(dp(48), dp(42)));
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
@@ -213,7 +217,7 @@ public final class WorkDetailActivity extends Activity {
         info.addView(name);
         String detail = attachment.size > 0 ? Formatter.formatShortFileSize(this, attachment.size) : "点按打开";
         TextView size = text(detail, 12, false);
-        size.setTextColor(Color.GRAY);
+        size.setTextColor(ThemePalette.getTextMuted(WorkDetailActivity.this));
         info.addView(size);
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, -2, 1);
         ip.setMargins(dp(12), 0, 0, 0);
@@ -275,14 +279,14 @@ public final class WorkDetailActivity extends Activity {
         actionBar.removeAllViews();
         if (selected.isEmpty()) {
             TextView hint = text("点图片预览，长按可多选", 12, false);
-            hint.setTextColor(Color.GRAY);
+            hint.setTextColor(ThemePalette.getTextMuted(WorkDetailActivity.this));
             actionBar.addView(hint);
             return;
         }
         ImageButton delete = imageActionButton(R.drawable.ic_album_trash, "移到回收站",
-                Color.rgb(255, 241, 239), Color.rgb(188, 66, 60));
+                ThemePalette.getDangerSoftBg(WorkDetailActivity.this), ThemePalette.getDangerColor(WorkDetailActivity.this));
         ImageButton share = imageActionButton(R.drawable.ic_album_share, "分享到其他应用",
-                Color.WHITE, Color.rgb(54, 86, 72));
+                ThemePalette.getCardBg(WorkDetailActivity.this), ThemePalette.getAccentText(WorkDetailActivity.this));
         ImageButton send = imageActionButton(R.drawable.ic_album_transfer, "传送到其他设备",
                 Color.rgb(38, 145, 94), Color.WHITE);
         delete.setOnClickListener(v -> confirmDelete());

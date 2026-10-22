@@ -1,3 +1,14 @@
+# 2026-10-22 DSH-193：深色模式下「点进某个界面主题不符合」——6 个界面白底 + 上下白边（Android 0.8.121/232）
+
+用户反馈「点进某个界面主题不符合、某个小按钮看起来不太行」。实测手机 `ui_night_mode=2`（深色模式开启），逐界面像素采样取证，问题分两层：
+
+- **①内容层（6 个界面白底）**：`FileBrowserActivity` / `WorkDetailActivity` / `ShareImportActivity` / `ShareActivity` 页底写死奶油白 `Color.rgb(246, 244, 240)`，卡片写死 `Color.WHITE`，辅助文字写死 `Color.GRAY`；主界面 `MainActivity` 另有刷新指示器、加载/空状态卡片、"加载更多"按钮等一批白色卡片与灰色文字。深色模式下就是「白底 + 灰字」。
+- **②系统栏层（上下白边）**：`ThemePalette.applySystemBarAppearance()` **只有 MainActivity 和 SettingsActivity 调过**，其余 Activity 的状态栏/导航栏沿用 `Theme.Material.Light`。作品详情页实测：内容区 (18,18,18)，**顶部状态栏与底部导航栏却都是 (248,249,248)** —— 中间深色、上下两条浅色，非常扎眼。
+- **修复**：①把 97 处硬编码换成 `ThemePalette` 动态色（其中主界面 40 处在第二轮补的徽章/卡片/按钮），新增 11 个动态色：`getAccentText`、`getDangerColor`/`getDangerSoftBg`/`getDangerSoftStroke`、`getLinkColor`、`getInfoBadge*`×3、`getWarnBadge*`×2、`getBrandSoftStroke`；②给 `FileBrowserActivity`/`WorkDetailActivity`/`ShareImportActivity`/`TransferActivity`/`ShareActivity` 在 `setContentView` 之后补 `applySystemBarAppearance`（7 个 Activity 全覆盖）。
+- **刻意不动的**：文件类型图标色（文件夹/图片/视频/PDF 等 7 个语义色）、图片查看器与对比视图的纯黑遮罩、绿底/红底按钮上的白字 —— 这些在深浅两色下都要能看见，改了反而错。
+- **验证**：`assembleRelease` + `lintVitalRelease` 全过，单测 106/106；真机深色模式下采样：作品详情 **顶/中/底 全部 (18,18,18)**（原顶底 248,249,248），文件浏览卡片 **(30,30,30) + (44,44,46) 描边**（原奶油白 + 纯白卡片）。新增 `tests/test_android_dark_theme.py` 7 项全过（含「全量扫描不许再有奶油白页底」「每个有内容视图的 Activity 都要应用系统栏主题且必须在 setContentView 之后」「语义图标色不许被误改」）。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`、新增 `tests/test_android_dark_theme.py`。
+
 # 2026-10-22 DSH-192：iOS 磁盘缓存淘汰挂到 App 启动链路，修掉「装上 0.8.119 却一分没裁」（iOS 0.8.120/231）
 
 - **现象**：0.8.119 装上 iPhone 后，在线图缓存目录仍是 **884.4MB / 3621 文件**（比 DSH-188 修复前的 881.2MB 还多了 74 个文件）。

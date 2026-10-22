@@ -86,6 +86,10 @@ public final class ShareActivity extends Activity {
             if (work == null) throw new IllegalStateException("作品不存在或已进入回收站");
             DiagnosticLog.write(this, "share_activity_open", workId);
             setContentView(ScreenInsets.protect(preparingView()));
+            // DSH-193：系统栏（状态栏/导航栏）必须跟着主题走。
+            // 之前只有 MainActivity / SettingsActivity 调过 applySystemBarAppearance，
+            // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
+            ThemePalette.applySystemBarAppearance(this);
             prepareShare(work);
         } catch (Exception error) {
             DiagnosticLog.write(this, "share_activity_failed", error.getMessage());
@@ -215,13 +219,13 @@ public final class ShareActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER);
         root.setPadding(48, 48, 48, 48);
-        root.setBackgroundColor(Color.rgb(246, 244, 240));
+        root.setBackgroundColor(ThemePalette.getBgPrimary(ShareActivity.this));
         ProgressBar progress = new ProgressBar(this);
         root.addView(progress);
         TextView label = new TextView(this);
         label.setText("正在准备图片…");
         label.setTextSize(16);
-        label.setTextColor(Color.rgb(45, 45, 42));
+        label.setTextColor(ThemePalette.getTextPrimary(ShareActivity.this));
         label.setGravity(Gravity.CENTER);
         label.setPadding(0, 24, 0, 0);
         root.addView(label);
@@ -237,6 +241,10 @@ public final class ShareActivity extends Activity {
                 outcomeDecider.onChooserResult(SystemClock.elapsedRealtime());
         if (action == ShareOutcomeDecider.Action.WAIT_FOR_CHOSEN_CALLBACK) {
             setContentView(ScreenInsets.protect(confirmingView()));
+            // DSH-193：系统栏（状态栏/导航栏）必须跟着主题走。
+            // 之前只有 MainActivity / SettingsActivity 调过 applySystemBarAppearance，
+            // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
+            ThemePalette.applySystemBarAppearance(this);
             DiagnosticLog.write(this, "share_waiting_chosen_callback", workId);
             mainHandler.postDelayed(this::finishChosenCallbackWait, CHOSEN_CALLBACK_GRACE_MS);
         } else if (action == ShareOutcomeDecider.Action.WAIT_FOR_DEFERRED_TARGET) {

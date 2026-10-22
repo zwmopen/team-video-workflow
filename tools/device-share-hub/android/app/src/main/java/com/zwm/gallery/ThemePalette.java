@@ -150,6 +150,61 @@ public final class ThemePalette {
         return isDarkMode(c) ? Color.rgb(75, 215, 140) : Color.rgb(25, 120, 80);
     }
 
+    /** DSH-193：绿色强调文字（深色荧光绿 #4BD78C，浅色深墨绿 #356952） */
+    public static int getAccentText(Context c) {
+        return isDarkMode(c) ? Color.rgb(75, 215, 140) : Color.rgb(53, 105, 82);
+    }
+
+    /** DSH-193：危险/删除色（深色亮红 #FF6961，浅色砖红 #BC423C） */
+    public static int getDangerColor(Context c) {
+        return isDarkMode(c) ? Color.rgb(255, 105, 97) : Color.rgb(188, 66, 60);
+    }
+
+    /** DSH-193：危险操作浅底卡片（深色 #38201E，浅色 #FAE6E2） */
+    public static int getDangerSoftBg(Context c) {
+        return isDarkMode(c) ? Color.rgb(56, 32, 30) : Color.rgb(250, 230, 226);
+    }
+
+    /** DSH-193：危险操作浅底卡片描边（深色 #6E3A34，浅色 #D17E74） */
+    public static int getDangerSoftStroke(Context c) {
+        return isDarkMode(c) ? Color.rgb(110, 58, 52) : Color.rgb(209, 126, 116);
+    }
+
+    /** DSH-193：可点击链接蓝（深色 #0A84FF，浅色 #007AFF） */
+    public static int getLinkColor(Context c) {
+        return isDarkMode(c) ? Color.rgb(10, 132, 255) : Color.rgb(0, 122, 255);
+    }
+
+    /** DSH-193：蓝色信息徽章底（深色 #0B3650，浅色 #E0F2FE） */
+    public static int getInfoBadgeBg(Context c) {
+        return isDarkMode(c) ? Color.rgb(11, 54, 80) : Color.rgb(224, 242, 254);
+    }
+
+    /** DSH-193：蓝色信息徽章文字（深色 #56BEF0，浅色 #0284C7） */
+    public static int getInfoBadgeText(Context c) {
+        return isDarkMode(c) ? Color.rgb(86, 190, 240) : Color.rgb(2, 132, 199);
+    }
+
+    /** DSH-193：蓝色信息徽章描边（深色 #1E5A82，浅色 #BADCF0） */
+    public static int getInfoBadgeStroke(Context c) {
+        return isDarkMode(c) ? Color.rgb(30, 90, 130) : Color.rgb(186, 220, 240);
+    }
+
+    /** DSH-193：橙色提醒徽章底（深色 #3C2A1C，浅色 #FEF3EB） */
+    public static int getWarnBadgeBg(Context c) {
+        return isDarkMode(c) ? Color.rgb(60, 42, 28) : Color.rgb(254, 243, 235);
+    }
+
+    /** DSH-193：橙色提醒徽章文字（深色 #F0B478，浅色 #B45514） */
+    public static int getWarnBadgeText(Context c) {
+        return isDarkMode(c) ? Color.rgb(240, 180, 120) : Color.rgb(180, 85, 20);
+    }
+
+    /** DSH-193：品牌绿浅描边（深色 #235F41，浅色 #C8E6D7） */
+    public static int getBrandSoftStroke(Context c) {
+        return isDarkMode(c) ? Color.rgb(35, 95, 65) : Color.rgb(200, 230, 215);
+    }
+
     /** 半屏面板/弹窗遮罩背景色：45% 黑色透明遮罩 */
     public static int getBackdropColor() {
         return Color.argb(115, 0, 0, 0);

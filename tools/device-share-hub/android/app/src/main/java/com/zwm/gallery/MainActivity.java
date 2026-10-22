@@ -597,7 +597,7 @@ public final class MainActivity extends Activity {
 
         clearSearchButton = new ImageView(this);
         clearSearchButton.setImageResource(R.drawable.ic_album_clear);
-        clearSearchButton.setImageTintList(ColorStateList.valueOf(Color.rgb(150, 155, 153)));
+        clearSearchButton.setImageTintList(ColorStateList.valueOf(ThemePalette.getTextMuted(MainActivity.this)));
         clearSearchButton.setVisibility(View.GONE);
         clearSearchButton.setPadding(dp(6), dp(6), dp(6), dp(6));
         clearSearchButton.setContentDescription("清空搜索");
@@ -705,16 +705,16 @@ public final class MainActivity extends Activity {
         root.addView(worksContainer);
 
         statusText = text("局域网接收已开启", 13, false);
-        statusText.setTextColor(Color.rgb(90, 105, 96));
+        statusText.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
         statusText.setGravity(Gravity.CENTER);
-        statusText.setBackground(round(Color.rgb(231, 239, 233), 16));
+        statusText.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 16));
         statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
         // 【0.8.43 修】statusText 不再 add 到滚动 root 末尾（之前会被作品列表推到底部屏幕外），
         // 改为由 buildUi() 末尾的 frozenLayout.addView 统一加到 titleRow 之下，
         // 做真正的 sticky 顶部状态栏。
 
         footerNote = text("点击平台按钮会复制对应文案并打开图片分享。首次使用后按现有清理设置自动回收；两个平台共用一个作品生命周期。", 12, false);
-        footerNote.setTextColor(Color.GRAY);
+        footerNote.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
         root.addView(footerNote, margins(0, dp(12), 0, 0));
 
         contentScroll = new SpringScrollView(this);
@@ -764,12 +764,12 @@ public final class MainActivity extends Activity {
         refreshIndicator.setGravity(Gravity.CENTER);
         refreshIndicator.setAlpha(0f);
         refreshIndicator.setPadding(dp(12), dp(7), dp(12), dp(7));
-        refreshIndicator.setBackground(round(Color.WHITE, 16));
+        refreshIndicator.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 16));
         refreshSpinner = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
         refreshSpinner.setIndeterminateTintList(ColorStateList.valueOf(Color.rgb(16, 151, 99)));
         refreshSpinner.setVisibility(View.GONE);
         refreshIndicatorText = text("下拉刷新", 12, false);
-        refreshIndicatorText.setTextColor(Color.rgb(80, 86, 82));
+        refreshIndicatorText.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
         refreshIndicator.addView(refreshSpinner, new LinearLayout.LayoutParams(dp(20), dp(20)));
         LinearLayout.LayoutParams refreshTextParams = new LinearLayout.LayoutParams(-2, -2);
         refreshTextParams.setMargins(dp(7), 0, 0, 0);
@@ -946,9 +946,9 @@ public final class MainActivity extends Activity {
         refreshLocalTrashTabStyles();
         TextView loading = text("正在清空回收站…", 14, false);
         loading.setGravity(Gravity.CENTER);
-        loading.setTextColor(Color.GRAY);
+        loading.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
         loading.setPadding(dp(14), dp(28), dp(14), dp(28));
-        loading.setBackground(round(Color.WHITE, 18));
+        loading.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 18));
         worksContainer.addView(loading, new LinearLayout.LayoutParams(-1, -2));
         scannedCountText.setText("…");
         statusText.setText("正在清空回收站…");
@@ -1095,9 +1095,9 @@ public final class MainActivity extends Activity {
             }
             TextView empty = text(emptyMsg, 14, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
-            empty.setBackground(round(Color.WHITE, 18));
+            empty.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 18));
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             if (!animate) worksContainer.setLayoutTransition(transition);
             return;
@@ -1425,7 +1425,7 @@ public final class MainActivity extends Activity {
         resetBtn.setText("重置清空");
         resetBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         resetBtn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        resetBtn.setTextColor(Color.rgb(229, 57, 53));
+        resetBtn.setTextColor(ThemePalette.getDangerColor(MainActivity.this));
         resetBtn.setBackground(null);
         resetBtn.setPadding(dp(4), dp(4), dp(4), dp(4));
         resetBtn.setMinWidth(0);
@@ -1769,11 +1769,11 @@ public final class MainActivity extends Activity {
         boolean selecting = !selectedWorkIds.isEmpty() && !showingTrash;
         if (selected) {
             card.setBackground(roundWithStroke(
-                    Color.rgb(250, 230, 226), 16, Color.rgb(209, 126, 116)));
+                    ThemePalette.getDangerSoftBg(MainActivity.this), 16, ThemePalette.getDangerSoftStroke(MainActivity.this)));
             card.setElevation(dp(2));
         } else if (!showingTrash && work.used) {
             card.setBackground(roundWithStroke(
-                    Color.rgb(231, 231, 228), 16, Color.rgb(211, 211, 207)));
+                    ThemePalette.getCardUsedBg(MainActivity.this), 16, ThemePalette.getCardUsedStroke(MainActivity.this)));
             card.setElevation(0);
         }
         LinearLayout nameRow = new LinearLayout(this);
@@ -1787,7 +1787,7 @@ public final class MainActivity extends Activity {
         CheckBox checkBox = new CheckBox(this);
         checkBox.setButtonTintList(new ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
-                new int[]{Color.rgb(188, 66, 60), Color.rgb(145, 145, 140)}));
+                new int[]{ThemePalette.getDangerColor(MainActivity.this), ThemePalette.getTextSecondary(MainActivity.this)}));
         checkBox.setChecked(selected);
         checkBox.setVisibility(selecting ? View.VISIBLE : View.GONE);
         checkBox.setContentDescription(selected ? "取消选择" : "选择作品");
@@ -1815,7 +1815,7 @@ public final class MainActivity extends Activity {
         else if (work.trashedDate != null) detail += "\n等待自动清理";
         else if (!work.warning.isEmpty()) detail += "\n请检查多个 TXT";
         TextView meta = text(detail, 12, false);
-        meta.setTextColor(work.sharedDate == null ? Color.GRAY : Color.rgb(78, 78, 75));
+        meta.setTextColor(work.sharedDate == null ? ThemePalette.getTextMuted(MainActivity.this) : ThemePalette.getTextSecondary(MainActivity.this));
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.setMargins(0, dp(3), 0, dp(5));
         card.addView(meta, metaParams);
@@ -1965,7 +1965,7 @@ public final class MainActivity extends Activity {
             ImageView thumbnail = new ImageView(this);
             thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
             thumbnail.setBackground(roundWithStroke(
-                    Color.rgb(239, 242, 240), 10, Color.rgb(216, 222, 218)));
+                    ThemePalette.getCardBg(MainActivity.this), 10, ThemePalette.getCardStroke(MainActivity.this)));
             thumbnail.setClipToOutline(true);
             thumbnail.setContentDescription("预览第 " + (index + 1) + " 张图片");
             File imageFile = new File(work.directory, imageName);
@@ -2158,13 +2158,13 @@ public final class MainActivity extends Activity {
 
     private void applyCategoryButtonStyle(Button button, boolean isSelected) {
         if (isSelected) {
-            button.setBackground(round(Color.WHITE, 10));
-            button.setTextColor(Color.rgb(24, 25, 24));
+            button.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 10));
+            button.setTextColor(ThemePalette.getTextPrimary(MainActivity.this));
             button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             button.setElevation(dp(1));
         } else {
             button.setBackgroundColor(Color.TRANSPARENT);
-            button.setTextColor(Color.rgb(104, 108, 106));
+            button.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
             button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
             button.setElevation(0);
         }
@@ -2466,7 +2466,7 @@ public final class MainActivity extends Activity {
         rightModeButton.setEnabled(true);
         rightModeButton.setAlpha(1f);
         if (filePath.size() > 1) {
-            worksContainer.addView(fileRow(R.drawable.ic_file_up, Color.rgb(91, 107, 98),
+            worksContainer.addView(fileRow(R.drawable.ic_file_up, ThemePalette.getTextPrimary(MainActivity.this),
                     "返回上一级", "当前目录", true, v -> {
                         filePath.pop();
                         refreshFiles();
@@ -2480,7 +2480,7 @@ public final class MainActivity extends Activity {
         if (entries.isEmpty()) {
             TextView empty = text("这个文件夹是空的", 14, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
             empty.setPadding(0, dp(42), 0, dp(18));
             worksContainer.addView(empty);
         }
@@ -2492,7 +2492,7 @@ public final class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(11), dp(14), dp(11));
-        row.setBackground(round(Color.WHITE, 15));
+        row.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 15));
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconResource);
         icon.setColorFilter(iconColor);
@@ -2506,7 +2506,7 @@ public final class MainActivity extends Activity {
         name.setMaxLines(2);
         textStack.addView(name);
         TextView meta = text(detail, 12, false);
-        meta.setTextColor(Color.GRAY);
+        meta.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
         meta.setPadding(0, dp(3), 0, 0);
         textStack.addView(meta);
         row.addView(textStack, new LinearLayout.LayoutParams(0, -2, 1));
@@ -2613,9 +2613,9 @@ public final class MainActivity extends Activity {
         if (renderedWorks.isEmpty()) {
             TextView empty = text(showingTrash ? "回收站是空的" : "还没有作品\n从电脑拖入 ZIP，或选择手机里的 Lark 文件夹", 14, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
-            empty.setBackground(round(Color.WHITE, 18));
+            empty.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 18));
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
         }
 
@@ -3753,15 +3753,15 @@ public final class MainActivity extends Activity {
         LinearLayout errorCard = new LinearLayout(this);
         errorCard.setOrientation(LinearLayout.VERTICAL);
         errorCard.setPadding(dp(18), dp(24), dp(18), dp(24));
-        errorCard.setBackground(round(Color.WHITE, 16));
+        errorCard.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 16));
         errorCard.setGravity(Gravity.CENTER);
 
         TextView title = text("未连接到电脑在线相册", 16, true);
-        title.setTextColor(Color.rgb(180, 50, 40));
+        title.setTextColor(ThemePalette.getDangerColor(MainActivity.this));
         errorCard.addView(title);
 
         TextView hint = text("请确认：\n1. 电脑端已启动在线相册服务（端口 45835）\n2. 手机与电脑连接同一 Wi-Fi 网络\n3. 电脑防火墙已放行 45835 端口", 13, false);
-        hint.setTextColor(Color.rgb(90, 95, 92));
+        hint.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
         hint.setLineSpacing(dp(3), 1.15f);
         LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
         hintParams.setMargins(0, dp(12), 0, dp(16));
@@ -4050,8 +4050,8 @@ public final class MainActivity extends Activity {
             btn.setTextColor(Color.WHITE);
             btn.setBackground(round(Color.rgb(15, 135, 88), 11));
         } else {
-            btn.setTextColor(Color.rgb(70, 78, 74));
-            btn.setBackground(round(Color.rgb(232, 234, 233), 11));
+            btn.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
+            btn.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 11));
         }
     }
 
@@ -4157,9 +4157,9 @@ public final class MainActivity extends Activity {
                     : "电脑端「_已发送1次」暂为空\n点过平台按钮的作品会自动进入这里";
             TextView empty = text(emptyMsg, 14, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
-            empty.setBackground(round(Color.WHITE, 18));
+            empty.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 18));
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             worksContainer.addView(recycleLocalTrashEntry(), margins(0, dp(10), 0, dp(18)));
             return;
@@ -4175,8 +4175,8 @@ public final class MainActivity extends Activity {
             loadMoreBtn.setText("加载更多 (已显示 " + showCount + " / " + onlineRecycleWorks.size() + " 套)");
             loadMoreBtn.setAllCaps(false);
             loadMoreBtn.setTextSize(13);
-            loadMoreBtn.setTextColor(Color.rgb(15, 135, 88));
-            loadMoreBtn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(200, 230, 215)));
+            loadMoreBtn.setTextColor(ThemePalette.getPillSelectedBg());
+            loadMoreBtn.setBackground(roundWithStroke(ThemePalette.getCardBg(MainActivity.this), 14, ThemePalette.getBrandSoftStroke(MainActivity.this)));
             loadMoreBtn.setPadding(dp(16), dp(10), dp(16), dp(10));
             loadMoreBtn.setOnClickListener(v -> {
                 onlineRecyclePageLimit += 30;
@@ -4196,8 +4196,8 @@ public final class MainActivity extends Activity {
         btn.setText("📱 打开手机本地回收站");
         btn.setAllCaps(false);
         btn.setTextSize(13);
-        btn.setTextColor(Color.rgb(90, 96, 93));
-        btn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(214, 219, 216)));
+        btn.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
+        btn.setBackground(roundWithStroke(ThemePalette.getCardBg(MainActivity.this), 14, ThemePalette.getDividerColor(MainActivity.this)));
         btn.setPadding(dp(14), dp(10), dp(14), dp(10));
         btn.setContentDescription("打开手机本地回收站");
         btn.setOnClickListener(v -> {
@@ -4214,8 +4214,8 @@ public final class MainActivity extends Activity {
         btn.setText("💻 打开电脑端回收站（_已发送1次 + _垃圾作品）");
         btn.setAllCaps(false);
         btn.setTextSize(13);
-        btn.setTextColor(Color.rgb(2, 132, 199));
-        btn.setBackground(roundWithStroke(Color.rgb(224, 242, 254), 14, Color.rgb(186, 220, 240)));
+        btn.setTextColor(ThemePalette.getInfoBadgeText(MainActivity.this));
+        btn.setBackground(roundWithStroke(ThemePalette.getInfoBadgeBg(MainActivity.this), 14, ThemePalette.getInfoBadgeStroke(MainActivity.this)));
         btn.setPadding(dp(14), dp(10), dp(14), dp(10));
         btn.setContentDescription("打开电脑端回收站");
         btn.setOnClickListener(v -> {
@@ -4230,7 +4230,7 @@ public final class MainActivity extends Activity {
         card.setTag("online_recycle:" + work.id);
         card.setOrientation(LinearLayout.VERTICAL);
         if (work.garbage) {
-            card.setBackground(roundWithStroke(Color.rgb(250, 246, 245), 16, Color.rgb(233, 216, 212)));
+            card.setBackground(roundWithStroke(ThemePalette.getCardBg(MainActivity.this), 16, ThemePalette.getCardStroke(MainActivity.this)));
             card.setElevation(0);
         }
 
@@ -4240,8 +4240,8 @@ public final class MainActivity extends Activity {
 
         String badgeText = work.garbage ? "🗑️ 垃圾样本" : ("✅ 已使用 " + Math.max(1, work.useCount) + " 次");
         TextView stageBadge = text(badgeText, 11, true);
-        stageBadge.setTextColor(work.garbage ? Color.rgb(168, 62, 52) : Color.rgb(180, 85, 20));
-        stageBadge.setBackground(round(work.garbage ? Color.rgb(250, 232, 229) : Color.rgb(254, 243, 235), 8));
+        stageBadge.setTextColor(work.garbage ? ThemePalette.getDangerColor(MainActivity.this) : ThemePalette.getWarnBadgeText(MainActivity.this));
+        stageBadge.setBackground(round(work.garbage ? ThemePalette.getDangerSoftBg(MainActivity.this) : ThemePalette.getWarnBadgeBg(MainActivity.this), 8));
         stageBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
         LinearLayout.LayoutParams stageParams = new LinearLayout.LayoutParams(-2, -2);
         stageParams.setMargins(0, 0, dp(6), 0);
@@ -4249,8 +4249,8 @@ public final class MainActivity extends Activity {
 
         if (work.destination != null && !work.destination.isEmpty() && !"其他".equals(work.destination)) {
             TextView destBadge = text(work.destination, 11, true);
-            destBadge.setTextColor(Color.rgb(25, 120, 80));
-            destBadge.setBackground(round(Color.rgb(228, 244, 235), 8));
+            destBadge.setTextColor(ThemePalette.getBrandLightText(MainActivity.this));
+            destBadge.setBackground(round(ThemePalette.getBrandLightBg(MainActivity.this), 8));
             destBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
             LinearLayout.LayoutParams destParams = new LinearLayout.LayoutParams(-2, -2);
             destParams.setMargins(0, 0, dp(6), 0);
@@ -4283,7 +4283,7 @@ public final class MainActivity extends Activity {
             detail.append(" · 🗑️ 垃圾样本\n垃圾备注：").append(work.garbageRemark.isEmpty() ? "（未填写）" : work.garbageRemark);
         }
         TextView meta = text(detail.toString(), 12, false);
-        meta.setTextColor(Color.rgb(75, 82, 78));
+        meta.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.setMargins(0, dp(3), 0, dp(5));
         card.addView(meta, metaParams);
@@ -4523,9 +4523,9 @@ public final class MainActivity extends Activity {
             }
             TextView empty = text(emptyMsg, 14, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
-            empty.setBackground(round(Color.WHITE, 18));
+            empty.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 18));
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             if (!animate) worksContainer.setLayoutTransition(transition);
             return;
@@ -4541,8 +4541,8 @@ public final class MainActivity extends Activity {
             loadMoreBtn.setText("加载更多作品 (已显示 " + showCount + " / " + entries.size() + " 套)");
             loadMoreBtn.setAllCaps(false);
             loadMoreBtn.setTextSize(13);
-            loadMoreBtn.setTextColor(Color.rgb(15, 135, 88));
-            loadMoreBtn.setBackground(roundWithStroke(Color.WHITE, 14, Color.rgb(200, 230, 215)));
+            loadMoreBtn.setTextColor(ThemePalette.getPillSelectedBg());
+            loadMoreBtn.setBackground(roundWithStroke(ThemePalette.getCardBg(MainActivity.this), 14, ThemePalette.getBrandSoftStroke(MainActivity.this)));
             loadMoreBtn.setPadding(dp(16), dp(10), dp(16), dp(10));
             loadMoreBtn.setOnClickListener(v -> {
                 // DSH-188：翻页后保持滚动位置（removeAllViews 会把 ScrollView 拉回 0）
@@ -4581,8 +4581,8 @@ public final class MainActivity extends Activity {
         // Destination badge
         if (work.destination != null && !work.destination.isEmpty() && !"其他".equals(work.destination)) {
             TextView destBadge = text(work.destination, 11, true);
-            destBadge.setTextColor(Color.rgb(25, 120, 80));
-            destBadge.setBackground(round(Color.rgb(228, 244, 235), 8));
+            destBadge.setTextColor(ThemePalette.getBrandLightText(MainActivity.this));
+            destBadge.setBackground(round(ThemePalette.getBrandLightBg(MainActivity.this), 8));
             destBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
             LinearLayout.LayoutParams destParams = new LinearLayout.LayoutParams(-2, -2);
             destParams.setMargins(0, 0, dp(6), 0);
@@ -4610,8 +4610,8 @@ public final class MainActivity extends Activity {
                 }
             }
             TextView useBadge = text(statusText, 11, true);
-            useBadge.setTextColor(Color.rgb(180, 85, 20));
-            useBadge.setBackground(round(Color.rgb(254, 243, 235), 8));
+            useBadge.setTextColor(ThemePalette.getWarnBadgeText(MainActivity.this));
+            useBadge.setBackground(round(ThemePalette.getWarnBadgeBg(MainActivity.this), 8));
             useBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
             LinearLayout.LayoutParams useBadgeParams = new LinearLayout.LayoutParams(-2, -2);
             useBadgeParams.setMargins(0, 0, dp(6), 0);
@@ -4657,7 +4657,7 @@ public final class MainActivity extends Activity {
             }
         }
         TextView meta = text(detail.toString(), 12, false);
-        meta.setTextColor(work.useCount == 0 ? Color.rgb(75, 82, 78) : Color.rgb(115, 120, 118));
+        meta.setTextColor(work.useCount == 0 ? ThemePalette.getTextSecondary(MainActivity.this) : ThemePalette.getTextMuted(MainActivity.this));
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.setMargins(0, dp(3), 0, dp(5));
         card.addView(meta, metaParams);
@@ -4682,7 +4682,7 @@ public final class MainActivity extends Activity {
             missing.setAlpha(0.55f);
             missing.setTextSize(12);
             styleNeumorphicButton(missing, STYLE_MUTED_GRAY);
-            missing.setTextColor(Color.rgb(178, 34, 34));
+            missing.setTextColor(ThemePalette.getDangerColor(MainActivity.this));
             missing.setContentDescription("该在线作品文案缺失，已禁止分发");
             platformRow.addView(missing, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
@@ -4916,8 +4916,8 @@ public final class MainActivity extends Activity {
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView originBadge = text("💻 在线作品", 11, true);
-        originBadge.setTextColor(Color.rgb(2, 132, 199));
-        originBadge.setBackground(round(Color.rgb(224, 242, 254), 8));
+        originBadge.setTextColor(ThemePalette.getInfoBadgeText(MainActivity.this));
+        originBadge.setBackground(round(ThemePalette.getInfoBadgeBg(MainActivity.this), 8));
         originBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
         LinearLayout.LayoutParams originParams = new LinearLayout.LayoutParams(-2, -2);
         originParams.setMargins(0, 0, dp(6), 0);
@@ -4925,8 +4925,8 @@ public final class MainActivity extends Activity {
 
         if (item.destination != null && !item.destination.isEmpty() && !"其他".equals(item.destination)) {
             TextView destBadge = text(item.destination, 11, true);
-            destBadge.setTextColor(Color.rgb(25, 120, 80));
-            destBadge.setBackground(round(Color.rgb(228, 244, 235), 8));
+            destBadge.setTextColor(ThemePalette.getBrandLightText(MainActivity.this));
+            destBadge.setBackground(round(ThemePalette.getBrandLightBg(MainActivity.this), 8));
             destBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
             LinearLayout.LayoutParams destParams = new LinearLayout.LayoutParams(-2, -2);
             destParams.setMargins(0, 0, dp(6), 0);
@@ -4950,7 +4950,7 @@ public final class MainActivity extends Activity {
             timeStr = " · 移入时间 " + sdf.format(new java.util.Date(item.trashedAtMs));
         }
         TextView meta = text(item.images.size() + " 张图片" + timeStr + " · 遵循手机端设置保留", 12, false);
-        meta.setTextColor(Color.rgb(115, 120, 118));
+        meta.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.setMargins(0, dp(3), 0, dp(8));
         card.addView(meta, metaParams);
@@ -4972,8 +4972,8 @@ public final class MainActivity extends Activity {
         btnRow.addView(restoreBtn, new LinearLayout.LayoutParams(0, dp(40), 1));
 
         Button delBtn = smallButton("彻底删除", true);
-        delBtn.setTextColor(Color.rgb(220, 38, 38));
-        delBtn.setBackground(roundWithStroke(Color.WHITE, 12, Color.rgb(254, 202, 202)));
+        delBtn.setTextColor(ThemePalette.getDangerColor(MainActivity.this));
+        delBtn.setBackground(roundWithStroke(ThemePalette.getCardBg(MainActivity.this), 12, ThemePalette.getDangerSoftStroke(MainActivity.this)));
         LinearLayout.LayoutParams delParams = new LinearLayout.LayoutParams(0, dp(40), 1);
         delParams.setMargins(dp(10), 0, 0, 0);
         delBtn.setLayoutParams(delParams);
@@ -5018,7 +5018,7 @@ public final class MainActivity extends Activity {
             String imageName = images.get(i);
             ImageView thumbView = new ImageView(this);
             thumbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            thumbView.setBackground(round(Color.rgb(230, 235, 232), 8));
+            thumbView.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 8));
             thumbView.setClipToOutline(true);
 
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(thumbW, thumbH);
@@ -5083,7 +5083,7 @@ public final class MainActivity extends Activity {
             String imageName = work.images.get(i);
             ImageView thumbView = new ImageView(this);
             thumbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            thumbView.setBackground(round(Color.rgb(230, 235, 232), 6));
+            thumbView.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 6));
             thumbView.setClipToOutline(true);
 
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(thumbW, thumbH);
@@ -5154,14 +5154,14 @@ public final class MainActivity extends Activity {
             // 对比卡片与 iOS 保持相近的宽度和 3:4 双图尺寸，主页一次能看清一组素材/成品。
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setBackground(round(Color.rgb(243, 248, 245), 10));
+            card.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 10));
             card.setPadding(dp(5), dp(3), dp(5), dp(5));
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(cardWidthDp), dp(cardHeightDp));
             cardParams.setMargins(0, 0, dp(8), 0);
 
             // 标头：P1 素材 ➔ 成品
             TextView header = text("P" + (i + 1) + " 素材 ➔ 成品", 10, true);
-            header.setTextColor(Color.rgb(20, 115, 75));
+            header.setTextColor(ThemePalette.getBrandLightText(MainActivity.this));
             header.setGravity(Gravity.CENTER);
             card.addView(header, new LinearLayout.LayoutParams(-1, dp(18)));
 
@@ -5172,7 +5172,7 @@ public final class MainActivity extends Activity {
 
             // 左：素材
             FrameLayout leftBox = new FrameLayout(this);
-            leftBox.setBackground(round(Color.rgb(230, 235, 232), 6));
+            leftBox.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 6));
             leftBox.setClipToOutline(true);
             ImageView leftIv = new ImageView(this);
             leftIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -5208,14 +5208,14 @@ public final class MainActivity extends Activity {
                 }
             } else {
                 TextView noSrc = text("无原图", 9, false);
-                noSrc.setTextColor(Color.rgb(150, 155, 153));
+                noSrc.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
                 FrameLayout.LayoutParams noSrcParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
                 leftBox.addView(noSrc, noSrcParams);
             }
 
             // 右：成品
             FrameLayout rightBox = new FrameLayout(this);
-            rightBox.setBackground(round(Color.rgb(230, 235, 232), 6));
+            rightBox.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 6));
             rightBox.setClipToOutline(true);
             ImageView rightIv = new ImageView(this);
             rightIv.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -6921,7 +6921,7 @@ public final class MainActivity extends Activity {
 
         AlertDialog dialog = builder.create();
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(round(Color.WHITE, 16));
+            dialog.getWindow().setBackgroundDrawable(round(ThemePalette.getCardBg(MainActivity.this), 16));
         }
         dialog.setCanceledOnTouchOutside(false);
         dialog.show();

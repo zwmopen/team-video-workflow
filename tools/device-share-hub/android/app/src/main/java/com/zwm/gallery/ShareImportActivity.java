@@ -58,6 +58,10 @@ public final class ShareImportActivity extends Activity {
         readSharedContent(getIntent());
         setTitle("发送到设备");
         setContentView(ScreenInsets.protect(buildUi()));
+            // DSH-193：系统栏（状态栏/导航栏）必须跟着主题走。
+            // 之前只有 MainActivity / SettingsActivity 调过 applySystemBarAppearance，
+            // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
+        ThemePalette.applySystemBarAppearance(this);
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
         renderPeers();
     }
@@ -125,14 +129,14 @@ public final class ShareImportActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(18), dp(18), dp(28));
-        root.setBackgroundColor(Color.rgb(246, 244, 240));
+        root.setBackgroundColor(ThemePalette.getBgPrimary(ShareImportActivity.this));
         root.addView(text("发送到在线设备", 27, true));
         String summary = uris.size() + " 个文件";
         if (!sharedText.isEmpty()) summary += "＋文字";
         TextView hint = text(summary
                 + "\n普通文件按作品文件夹存放；图片和文字一起分享时，到达后进入分享准备。",
                 13, false);
-        hint.setTextColor(Color.rgb(96, 94, 90));
+        hint.setTextColor(ThemePalette.getTextSecondary(ShareImportActivity.this));
         root.addView(hint, margins(0, dp(7), 0, dp(14)));
         peersContainer = new LinearLayout(this);
         peersContainer.setOrientation(LinearLayout.VERTICAL);
@@ -143,7 +147,7 @@ public final class ShareImportActivity extends Activity {
         root.addView(progress, margins(0, dp(16), 0, 0));
         status = text("正在发现在线设备…", 13, false);
         status.setGravity(Gravity.CENTER);
-        status.setTextColor(Color.rgb(54, 105, 72));
+        status.setTextColor(ThemePalette.getAccentText(ShareImportActivity.this));
         root.addView(status, margins(0, dp(10), 0, 0));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
@@ -157,9 +161,9 @@ public final class ShareImportActivity extends Activity {
         if (peers.isEmpty()) {
             TextView empty = text("暂未发现设备\n请让另一台设备打开相册并连接同一 Wi‑Fi", 15, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(ShareImportActivity.this));
             empty.setPadding(dp(12), dp(24), dp(12), dp(24));
-            empty.setBackground(round(Color.WHITE, 15));
+            empty.setBackground(round(ThemePalette.getCardBg(ShareImportActivity.this), 15));
             peersContainer.addView(empty);
             return;
         }
@@ -171,7 +175,7 @@ public final class ShareImportActivity extends Activity {
             item.setText(peer.name + "\n" + peer.model + " · 在线");
             item.setTextSize(15);
             item.setPadding(dp(16), dp(8), dp(16), dp(8));
-            item.setBackground(round(Color.WHITE, 15));
+            item.setBackground(round(ThemePalette.getCardBg(ShareImportActivity.this), 15));
             item.setOnClickListener(v -> send(peer));
             peersContainer.addView(item, margins(0, 0, 0, dp(9)));
         }
@@ -230,7 +234,7 @@ public final class ShareImportActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(size);
-        view.setTextColor(Color.rgb(35, 35, 33));
+        view.setTextColor(ThemePalette.getTextPrimary(ShareImportActivity.this));
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
     }

@@ -40,6 +40,10 @@ public final class FileBrowserActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(ScreenInsets.protect(buildUi()));
+            // DSH-193：系统栏（状态栏/导航栏）必须跟着主题走。
+            // 之前只有 MainActivity / SettingsActivity 调过 applySystemBarAppearance，
+            // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
+        ThemePalette.applySystemBarAppearance(this);
         if (android.os.Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
         String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
         if (stored.isEmpty()) {
@@ -55,7 +59,7 @@ public final class FileBrowserActivity extends Activity {
         LinearLayout screen = new LinearLayout(this);
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setPadding(dp(18), dp(14), dp(18), dp(28));
-        screen.setBackgroundColor(Color.rgb(246, 244, 240));
+        screen.setBackgroundColor(ThemePalette.getBgPrimary(FileBrowserActivity.this));
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
@@ -76,9 +80,9 @@ public final class FileBrowserActivity extends Activity {
         screen.addView(top);
 
         status = text("正在读取…", 13, false);
-        status.setTextColor(Color.rgb(83, 99, 89));
+        status.setTextColor(ThemePalette.getTextSecondary(FileBrowserActivity.this));
         status.setPadding(dp(12), dp(10), dp(12), dp(10));
-        status.setBackground(round(Color.rgb(231, 239, 233), 14));
+        status.setBackground(round(ThemePalette.getPillBg(FileBrowserActivity.this), 14));
         screen.addView(status);
 
         list = new LinearLayout(this);
@@ -132,7 +136,7 @@ public final class FileBrowserActivity extends Activity {
         heading.setText(path.size() > 1 ? "文件夹" : "文件");
         status.setText(entries.size() + " 项");
         if (path.size() > 1) {
-            list.addView(row(R.drawable.ic_file_up, Color.rgb(91, 107, 98),
+            list.addView(row(R.drawable.ic_file_up, ThemePalette.getTextPrimary(FileBrowserActivity.this),
                     "返回上一级", "当前目录", true, v -> {
                 path.pop();
                 refresh();
@@ -146,7 +150,7 @@ public final class FileBrowserActivity extends Activity {
         if (entries.isEmpty()) {
             TextView empty = text("这个文件夹是空的", 15, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.GRAY);
+            empty.setTextColor(ThemePalette.getTextMuted(FileBrowserActivity.this));
             empty.setPadding(0, dp(50), 0, 0);
             list.addView(empty);
         }
@@ -158,7 +162,7 @@ public final class FileBrowserActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(12), dp(16), dp(12));
-        row.setBackground(round(Color.WHITE, 15));
+        row.setBackground(round(ThemePalette.getCardBg(FileBrowserActivity.this), 15));
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconResource);
         icon.setColorFilter(iconColor);
@@ -172,7 +176,7 @@ public final class FileBrowserActivity extends Activity {
         name.setMaxLines(2);
         textStack.addView(name);
         TextView meta = text(detail, 12, false);
-        meta.setTextColor(Color.GRAY);
+        meta.setTextColor(ThemePalette.getTextSecondary(FileBrowserActivity.this));
         meta.setPadding(0, dp(4), 0, 0);
         textStack.addView(meta);
         row.addView(textStack, new LinearLayout.LayoutParams(0, -2, 1));
@@ -282,8 +286,8 @@ public final class FileBrowserActivity extends Activity {
     private ImageButton iconButton(int resource, String description) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(resource);
-        button.setColorFilter(Color.rgb(54, 86, 72));
-        button.setBackground(round(Color.rgb(231, 239, 233), 22));
+        button.setColorFilter(ThemePalette.getAccentText(FileBrowserActivity.this));
+        button.setBackground(round(ThemePalette.getPillBg(FileBrowserActivity.this), 22));
         button.setPadding(dp(9), dp(9), dp(9), dp(9));
         button.setContentDescription(description);
         return button;
@@ -294,8 +298,8 @@ public final class FileBrowserActivity extends Activity {
         button.setText(value);
         button.setAllCaps(false);
         button.setTextSize(14);
-        button.setTextColor(Color.rgb(47, 48, 46));
-        button.setBackground(round(Color.rgb(232, 230, 225), 14));
+        button.setTextColor(ThemePalette.getTextPrimary(FileBrowserActivity.this));
+        button.setBackground(round(ThemePalette.getPillBg(FileBrowserActivity.this), 14));
         return button;
     }
 
@@ -303,7 +307,7 @@ public final class FileBrowserActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(sp);
-        view.setTextColor(Color.rgb(33, 34, 32));
+        view.setTextColor(ThemePalette.getTextPrimary(FileBrowserActivity.this));
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
     }

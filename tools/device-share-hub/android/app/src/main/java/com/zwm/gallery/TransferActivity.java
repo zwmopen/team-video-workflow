@@ -64,6 +64,10 @@ public final class TransferActivity extends Activity {
                 .getString(PREF_TRANSFER_CHANNEL, CHANNEL_AUTO);
         setTitle("传送");
         setContentView(ScreenInsets.protect(buildUi()));
+            // DSH-193：系统栏（状态栏/导航栏）必须跟着主题走。
+            // 之前只有 MainActivity / SettingsActivity 调过 applySystemBarAppearance，
+            // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
+        ThemePalette.applySystemBarAppearance(this);
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
         renderPeers();
     }
