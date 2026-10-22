@@ -167,6 +167,114 @@ enum AppColors {
         }
         return UIColor(red: 60/255, green: 65/255, blue: 63/255, alpha: 1)
     }
+
+    /// 平台标签胶囊·已分发：浅色文字 0.06/0.48/0.32、底 0.85/0.96/0.90、边 0.55/0.85/0.68；深色文字 #4BD78C、底 #163826、边 rgb(46,110,80)
+    static var platformChipActiveText: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 75/255, green: 215/255, blue: 140/255, alpha: 1)
+                    : UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1)
+    }
+    static var platformChipActiveBg: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 22/255, green: 56/255, blue: 38/255, alpha: 1)
+                    : UIColor(red: 0.85, green: 0.96, blue: 0.90, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.85, green: 0.96, blue: 0.90, alpha: 1)
+    }
+    static var platformChipActiveBorder: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 46/255, green: 110/255, blue: 80/255, alpha: 1)
+                    : UIColor(red: 0.55, green: 0.85, blue: 0.68, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.55, green: 0.85, blue: 0.68, alpha: 1)
+    }
+
+    /// 平台标签胶囊·未分发：浅色文字 0.12/0.52/0.32、底 0.92/0.97/0.94；深色文字 rgb(120,200,160)、底 rgb(28,38,32)
+    static var platformChipIdleText: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 120/255, green: 200/255, blue: 160/255, alpha: 1)
+                    : UIColor(red: 0.12, green: 0.52, blue: 0.32, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.12, green: 0.52, blue: 0.32, alpha: 1)
+    }
+    static var platformChipIdleBg: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 28/255, green: 38/255, blue: 32/255, alpha: 1)
+                    : UIColor(red: 0.92, green: 0.97, blue: 0.94, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.92, green: 0.97, blue: 0.94, alpha: 1)
+    }
+
+    /// 行动行灰钮（重置/删除/复制路径）：浅色文字 0.32/0.36/0.34、底 0.93/0.94/0.93；深色文字 rgb(185,195,188)、底 rgb(46,50,48)
+    static var actionGrayText: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 185/255, green: 195/255, blue: 188/255, alpha: 1)
+                    : UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1)
+    }
+    static var actionGrayBg: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 46/255, green: 50/255, blue: 48/255, alpha: 1)
+                    : UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
+            }
+        }
+        return UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
+    }
+
+    /// 分类 Tab 钉住态：浅色文字 0.06/0.48/0.32、底 0.94/0.97/0.95、边 0.70/0.88/0.78；深色文字 #4BD78C、底 rgb(26,40,32)、边 rgb(52,100,76)
+    static var pinnedTabText: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 75/255, green: 215/255, blue: 140/255, alpha: 1)
+                    : UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1.0)
+            }
+        }
+        return UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1.0)
+    }
+    static var pinnedTabBg: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 26/255, green: 40/255, blue: 32/255, alpha: 1)
+                    : UIColor(red: 0.94, green: 0.97, blue: 0.95, alpha: 1.0)
+            }
+        }
+        return UIColor(red: 0.94, green: 0.97, blue: 0.95, alpha: 1.0)
+    }
+    static var pinnedTabBorder: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 52/255, green: 100/255, blue: 76/255, alpha: 1)
+                    : UIColor(red: 0.70, green: 0.88, blue: 0.78, alpha: 1.0)
+            }
+        }
+        return UIColor(red: 0.70, green: 0.88, blue: 0.78, alpha: 1.0)
+    }
 }
 
 // MARK: - 主题外观模式（跟随系统、浅色模式、深色模式）

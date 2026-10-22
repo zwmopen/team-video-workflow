@@ -1,8 +1,9 @@
-# 2026-10-22 DSH-181：顶部区域深色模式适配（0.8.116 / build 227）
+# 2026-10-22 DSH-181：顶部区域与卡片胶囊深色模式适配（0.8.117 / build 228）
 
 - 顶栏按钮（`toolbarButton` / `toolbarItem`）、来源切换、状态胶囊、视图/筛选/排序按钮的硬编码浅色（薄荷绿底 + 深绿图标等）全部改走 `AppColors` 主题感知取色（`UIColor(dynamicProvider:)`），深色下为暗墨绿底 + 亮绿图标，浅色保持原值零回归。
 - `AppColors` 新增 `brandLightBg / brandLightText / onlineBlueBg / onlineBlueText / statusWarning* / statusLocal* / listPurple* / neutralChip*` 十组动态色，深色调色板对齐 Android `ThemePalette`（品牌深底 #163826、亮绿 #4BD78C、在线深蓝底 rgb(11,54,80) 等）。
 - 与 Android 0.8.117/228 同批修复（vivo 真机深浅双模式截图验证通过）。
+- 第二轮：卡片平台标签胶囊（已分发/未分发）、行动行灰钮（重置/删除/复制路径）、分类 Tab 钉住态同步主题化；iPhone 真机已装 0.8.116 验证顶栏深色生效，0.8.117 覆盖剩余亮面。
 
 # 2026-10-22 DSH-180：对比视图点图进大图与在线原图预缓存（0.8.115 / build 226）
 

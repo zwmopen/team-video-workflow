@@ -1502,12 +1502,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             button.layer.shadowRadius = 2
             button.layer.borderWidth = 0
         } else if isPinned {
-            button.backgroundColor = UIColor(red: 0.94, green: 0.97, blue: 0.95, alpha: 1.0)
-            button.setTitleColor(UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1.0), for: .normal)
+            button.backgroundColor = AppColors.pinnedTabBg
+            button.setTitleColor(AppColors.pinnedTabText, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
             button.layer.cornerRadius = 8
             button.layer.borderWidth = 1
-            button.layer.borderColor = UIColor(red: 0.70, green: 0.88, blue: 0.78, alpha: 1.0).cgColor
+            button.layer.borderColor = AppColors.pinnedTabBorder.cgColor
             button.layer.shadowOpacity = 0
         } else {
             button.backgroundColor = .clear
@@ -3670,8 +3670,8 @@ private final class WorkCell: UICollectionViewCell {
     private func configureResetButton() {
         // DSH-097：撤销 DSH-096 高对比（橙底橙字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
         resetButton.setTitle("重置状态", for: .normal)
-        resetButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
-        resetButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
+        resetButton.setTitleColor(AppColors.actionGrayText, for: .normal)
+        resetButton.backgroundColor = AppColors.actionGrayBg
         resetButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         resetButton.layer.cornerRadius = 8
         resetButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -3682,8 +3682,8 @@ private final class WorkCell: UICollectionViewCell {
     private func configureDeleteButton() {
         // DSH-097：撤销 DSH-096 高对比（红底红字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
         deleteButton.setTitle("删除", for: .normal)
-        deleteButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
-        deleteButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
+        deleteButton.setTitleColor(AppColors.actionGrayText, for: .normal)
+        deleteButton.backgroundColor = AppColors.actionGrayBg
         deleteButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         deleteButton.layer.cornerRadius = 8
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -3695,8 +3695,8 @@ private final class WorkCell: UICollectionViewCell {
     private func configureCopyPathButton() {
         // DSH-097：保持浅灰（与重置/删除同色），与 Android 行动行三件套统一。
         copyPathButton.setTitle("复制路径", for: .normal)
-        copyPathButton.setTitleColor(UIColor(red: 0.32, green: 0.36, blue: 0.34, alpha: 1), for: .normal)
-        copyPathButton.backgroundColor = UIColor(red: 0.93, green: 0.94, blue: 0.93, alpha: 1)
+        copyPathButton.setTitleColor(AppColors.actionGrayText, for: .normal)
+        copyPathButton.backgroundColor = AppColors.actionGrayBg
         copyPathButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         copyPathButton.layer.cornerRadius = 8
         copyPathButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -3708,13 +3708,13 @@ private final class WorkCell: UICollectionViewCell {
     private func applyPlatformStyle(_ button: UIButton, isOptimistic: Bool) {
         if isOptimistic {
             // 已分发状态：翡翠绿深绿 + 浅绿高亮底，带清爽边框
-            button.setTitleColor(UIColor(red: 0.06, green: 0.48, blue: 0.32, alpha: 1), for: .normal)
-            button.backgroundColor = UIColor(red: 0.85, green: 0.96, blue: 0.90, alpha: 1)
+            button.setTitleColor(AppColors.platformChipActiveText, for: .normal)
+            button.backgroundColor = AppColors.platformChipActiveBg
             button.layer.borderWidth = 1
-            button.layer.borderColor = UIColor(red: 0.55, green: 0.85, blue: 0.68, alpha: 1).cgColor
+            button.layer.borderColor = AppColors.platformChipActiveBorder.cgColor
         } else {
-            button.setTitleColor(UIColor(red: 0.12, green: 0.52, blue: 0.32, alpha: 1), for: .normal)
-            button.backgroundColor = UIColor(red: 0.92, green: 0.97, blue: 0.94, alpha: 1)
+            button.setTitleColor(AppColors.platformChipIdleText, for: .normal)
+            button.backgroundColor = AppColors.platformChipIdleBg
             button.layer.borderWidth = 0
         }
     }
