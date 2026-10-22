@@ -430,9 +430,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         // DSH-097：顶栏按钮与安卓 ImageButton 42dp 半圆对齐 —— 34pt → 38pt、cornerRadius 11 → 19、浅绿实色 RGB(226,244,236)、图标 RGB(15,135,88) 深绿。
-        button.backgroundColor = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+        button.backgroundColor = AppColors.brandLightBg
         button.layer.cornerRadius = 19
-        button.setImage(AlbumToolbarIcon.image(symbol, color: UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)), for: .normal)
+        button.setImage(AlbumToolbarIcon.image(symbol, color: AppColors.brandLightText), for: .normal)
         button.imageView?.contentMode = .scaleAspectFit
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
@@ -446,14 +446,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func updateModeButtonStyle() {
         // 与安卓严格一致：contentDescription 既说「当前状态」也说「点击会发生什么」
         if !isOnlineMode {
-            let fg = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
-            let bg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+            let fg = AppColors.brandLightText
+            let bg = AppColors.brandLightBg
             modeButton.backgroundColor = bg
             modeButton.setImage(AlbumToolbarIcon.image(.phone, color: fg), for: .normal)
             modeButton.accessibilityLabel = "当前：手机本地作品 (点击切换到电脑在线)"
         } else {
-            let fg = UIColor(red: 2/255, green: 132/255, blue: 199/255, alpha: 1)
-            let bg = UIColor(red: 224/255, green: 242/255, blue: 254/255, alpha: 1)
+            let fg = AppColors.onlineBlueText
+            let bg = AppColors.onlineBlueBg
             modeButton.backgroundColor = bg
             modeButton.setImage(AlbumToolbarIcon.image(.computer, color: fg), for: .normal)
             modeButton.accessibilityLabel = "当前：电脑在线作品 (点击切换到手机本地)"
@@ -525,9 +525,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let button = UIButton(type: .system)
         button.frame = CGRect(x: 0, y: 0, width: 38, height: 38)
         // DSH-097：与 toolbarButton 同设计 —— 38pt 半圆 + 浅绿实色 + 深绿图标。
-        button.backgroundColor = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+        button.backgroundColor = AppColors.brandLightBg
         button.layer.cornerRadius = 19
-        button.setImage(AlbumToolbarIcon.image(symbol, color: UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)), for: .normal)
+        button.setImage(AlbumToolbarIcon.image(symbol, color: AppColors.brandLightText), for: .normal)
         button.imageView?.contentMode = .scaleAspectFit
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
@@ -541,8 +541,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func configureFilterBar() {
         onlineStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         onlineStatusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        onlineStatusLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
-        onlineStatusLabel.backgroundColor = UIColor(red: 231/255, green: 239/255, blue: 233/255, alpha: 1)
+        onlineStatusLabel.textColor = AppColors.brandLightText
+        onlineStatusLabel.backgroundColor = AppColors.brandLightBg
         onlineStatusLabel.layer.cornerRadius = 6
         onlineStatusLabel.clipsToBounds = true
         onlineStatusLabel.textAlignment = .center
@@ -596,17 +596,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if isOnlineMode {
             if let override = onlineStatusOverride, !override.isEmpty {
                 onlineStatusLabel.text = override
-                onlineStatusLabel.textColor = UIColor(red: 0.52, green: 0.32, blue: 0.05, alpha: 1)
-                onlineStatusLabel.backgroundColor = UIColor(red: 250/255, green: 243/255, blue: 224/255, alpha: 1)
+                onlineStatusLabel.textColor = AppColors.statusWarningText
+                onlineStatusLabel.backgroundColor = AppColors.statusWarningBg
             } else {
                 onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
-                onlineStatusLabel.textColor = UIColor(red: 0.08, green: 0.45, blue: 0.30, alpha: 1)
-                onlineStatusLabel.backgroundColor = UIColor(red: 231/255, green: 239/255, blue: 233/255, alpha: 1)
+                onlineStatusLabel.textColor = AppColors.brandLightText
+                onlineStatusLabel.backgroundColor = AppColors.brandLightBg
             }
         } else {
             onlineStatusLabel.text = "📱 手机本地作品 · 共 \(library.works.count) 套"
-            onlineStatusLabel.textColor = UIColor(red: 0.15, green: 0.35, blue: 0.55, alpha: 1)
-            onlineStatusLabel.backgroundColor = UIColor(red: 235/255, green: 243/255, blue: 250/255, alpha: 1)
+            onlineStatusLabel.textColor = AppColors.statusLocalText
+            onlineStatusLabel.backgroundColor = AppColors.statusLocalBg
         }
     }
 
@@ -776,13 +776,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineViewModeButton.setTitle("视图▾", for: .normal)
         switch currentViewMode {
         case .grid:
-            let fg = UIColor(red: 2/255, green: 132/255, blue: 199/255, alpha: 1)
-            let bg = UIColor(red: 224/255, green: 242/255, blue: 254/255, alpha: 1)
+            let fg = AppColors.onlineBlueText
+            let bg = AppColors.onlineBlueBg
             onlineViewModeButton.backgroundColor = bg
             onlineViewModeButton.setTitleColor(fg, for: .normal)
         case .list:
-            let fg = UIColor(red: 124/255, green: 58/255, blue: 237/255, alpha: 1)
-            let bg = UIColor(red: 237/255, green: 233/255, blue: 254/255, alpha: 1)
+            let fg = AppColors.listPurpleText
+            let bg = AppColors.listPurpleBg
             onlineViewModeButton.backgroundColor = bg
             onlineViewModeButton.setTitleColor(fg, for: .normal)
         case .compare:
@@ -847,8 +847,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func updateFilterButtonStyle() {
         let activeCount = selectedSeasons.count + selectedFlowTypes.count
-        let primaryGreen = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
-        let lightGreenBg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+        let primaryGreen = AppColors.brandLightText
+        let lightGreenBg = AppColors.brandLightBg
         if activeCount > 0 {
             onlineFilterButton.setTitle("筛选(\(activeCount))", for: .normal)
             onlineFilterButton.backgroundColor = primaryGreen
@@ -864,13 +864,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineSortButton.setTitle("排序▾", for: .normal)
         let isCustom = (currentSortKey != "time_desc")
         if isCustom {
-            let fg = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
-            let bg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+            let fg = AppColors.brandLightText
+            let bg = AppColors.brandLightBg
             onlineSortButton.backgroundColor = bg
             onlineSortButton.setTitleColor(fg, for: .normal)
         } else {
-            onlineSortButton.backgroundColor = UIColor(red: 240/255, green: 242/255, blue: 241/255, alpha: 1)
-            onlineSortButton.setTitleColor(UIColor(red: 60/255, green: 65/255, blue: 63/255, alpha: 1), for: .normal)
+            onlineSortButton.backgroundColor = AppColors.neutralChipBg
+            onlineSortButton.setTitleColor(AppColors.neutralChipText, for: .normal)
         }
     }
 
@@ -4229,8 +4229,8 @@ final class OnlineFilterSheetViewController: UIViewController {
     private var flowButtons: [String: UIButton] = [:]
     private let confirmButton = UIButton(type: .system)
 
-    private let primaryGreen = UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1)
-    private let lightGreenBg = UIColor(red: 226/255, green: 244/255, blue: 236/255, alpha: 1)
+    private var primaryGreen: UIColor { AppColors.brandLightText }
+    private var lightGreenBg: UIColor { AppColors.brandLightBg }
 
     init(
         seasonOptions: [String],

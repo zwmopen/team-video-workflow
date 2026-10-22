@@ -1,3 +1,9 @@
+# 2026-10-22 DSH-181：顶部区域深色模式适配（0.8.116 / build 227）
+
+- 顶栏按钮（`toolbarButton` / `toolbarItem`）、来源切换、状态胶囊、视图/筛选/排序按钮的硬编码浅色（薄荷绿底 + 深绿图标等）全部改走 `AppColors` 主题感知取色（`UIColor(dynamicProvider:)`），深色下为暗墨绿底 + 亮绿图标，浅色保持原值零回归。
+- `AppColors` 新增 `brandLightBg / brandLightText / onlineBlueBg / onlineBlueText / statusWarning* / statusLocal* / listPurple* / neutralChip*` 十组动态色，深色调色板对齐 Android `ThemePalette`（品牌深底 #163826、亮绿 #4BD78C、在线深蓝底 rgb(11,54,80) 等）。
+- 与 Android 0.8.117/228 同批修复（vivo 真机深浅双模式截图验证通过）。
+
 # 2026-10-22 DSH-180：对比视图点图进大图与在线原图预缓存（0.8.115 / build 226）
 
 - 对比视图点击图区进入全屏大图模式（定位当前页），关闭后回到对比视图原页。
