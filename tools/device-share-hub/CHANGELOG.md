@@ -2,7 +2,7 @@
 
 - **DSH-184 预热风暴（真凶，服务端）**：多维度巡检时用户反馈「苹果高清原图加载极慢、安卓点文案按钮拉取图卡死」。服务端日志实锤 `thumb prewarm complete: covers=385 elapsed_ms≈47000` 反复出现——DSH-182 预热每次扫描后全量重跑 385 张（47s/轮），持续读 2.67MB 原图 + PIL 解码，把手机端原图请求挤到 D 盘 IO 队列后面。修复：①`PREWARM_MIN_INTERVAL_SEC=600` 全局节流；②预热循环内磁盘缩略图已存在（md5(path_mtime).jpg）直接跳过，不读原图不跑 PIL；③stats 加 `skipped` 字段。重启生效（staleCode=false）。实测：修复后 vivo 点「红书自然」4 张原图 ~9s 完成并唤起分享面板，不卡死。
 - **DSH-183 系统弹窗深色遗漏（Android）**：巡检抓到排序/视图弹窗深色模式下仍白底刺眼。根因 `AppTheme` 写死 `Theme.Material.Light`。修复：styles.xml 加 `AppDialogTheme.Dark/Light`；ThemePalette 加 `dialogThemeRes()/popupThemeRes()`；批量替换 33 处 `AlertDialog.Builder` + 2 处排序/视图 `PopupMenu`；6532 下载进度弹窗、6784 文案预览弹窗写死颜色改动态色。PopupMenu 首版用 5 参 Widget style 实测不生效，改 `ContextThemeWrapper` 传完整主题。
-- **DSH-185 Android 原图下载并发加速（Android）**：`downloadWorkImages` 串行 for + 逐张 `getFD().sync()` → 独立 4 线程池并发（不复用 this.executor 防死锁），slots[i] 保序；去逐张 fsync；buffer 8KB→64KB。单张逻辑抽成 `downloadOneImageToFile`（原子 rename 口径不变 DSH-118）。
+- **DSH-185 Android 原图下载优化（Android）**：`downloadWorkImages` 单张逻辑抽成 `downloadOneImageToFile`（原子 rename 口径不变 DSH-118），去逐张 `getFD().sync()` 刷盘、buffer 8KB→64KB。**并发实验证伪后回退串行**：先做过 4 线程池并发，真机实测 6 张原图反而 ~84s——WiFi 是 2.4GHz 802.11n（65Mbps 链速、实际吞吐 1~3MB/s）且半双工，多路并发互相碰撞 + 机械盘随机寻道，比串行跑满带宽更慢。故保留串行协调，只留「去 fsync + 大缓冲」的真实收益。
 - **验证**：本地 parity 契约 52/52 全过；服务端单测 77/77 全过；官方构建链编译通过；vivo 真机装 0.8.118/229。
 - **影响文档**：本文件、`docs/BUG_LEDGER.md`。
 

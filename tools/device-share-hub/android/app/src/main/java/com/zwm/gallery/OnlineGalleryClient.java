@@ -1578,37 +1578,22 @@ public final class OnlineGalleryClient {
 
                 List<java.io.File> result = new ArrayList<>();
                 int total = fileNames != null ? fileNames.size() : 0;
-                if (fileNames != null && !fileNames.isEmpty()) {
-                    // DSH-185：串行 → 4 路并发。原实现逐张下载且每张 getFD().sync() 强制刷盘，
-                    // 一套 4 张 × 2.7MB 实测 ~10s，滑动到分享中间长时间卡在进度弹窗；
-                    // 并发后压到 2~3s。结果顺序用 slots[i] 保持（分享/预览按 fileNames 顺序消费），
-                    // 并发池是独立局部池，不复用 this.executor —— 避免在 4 线程池里等自身子任务造成死锁。
-                    final int n = total;
-                    final java.io.File[] slots = new java.io.File[n];
-                    final java.util.concurrent.atomic.AtomicInteger doneCount = new java.util.concurrent.atomic.AtomicInteger(0);
-                    final java.util.concurrent.atomic.AtomicReference<Exception> firstErr = new java.util.concurrent.atomic.AtomicReference<>();
-                    java.util.concurrent.ExecutorService dlPool = Executors.newFixedThreadPool(Math.min(n, 4));
-                    List<java.util.concurrent.Future<?>> futs = new ArrayList<>();
-                    for (int idx = 0; idx < n; idx++) {
-                        final int i = idx;
-                        final String fileName = fileNames.get(i);
-                        futs.add(dlPool.submit(() -> {
-                            currentFileName[0] = fileName;  // DSH-099：catch 块用
-                            try {
-                                slots[i] = downloadOneImageToFile(baseUrl, targetDir, workId, fileName);
-                            } catch (Exception e) {
-                                firstErr.compareAndSet(null, e);
-                            }
-                            final int done = doneCount.incrementAndGet();
-                            mainHandler.post(() -> callback.onProgress(done, n, fileName));
-                        }));
+                if (fileNames != null) {
+                    // DSH-185 修订：并发回退为串行。真机实测 4 路并发下 6 张原图反而 ~84s
+                    // （WiFi 半双工多路碰撞 + 机械盘随机寻道），串行配合「去 fsync + 64KB 缓冲」
+                    // 更稳更快。downloadOneImageToFile 保留原子落盘口径（DSH-118）。
+                    int count = 0;
+                    for (String fileName : fileNames) {
+                        currentFileName[0] = fileName;  // DSH-099：catch 块用
+                        final int progStart = count;
+                        final String curName = fileName;
+                        mainHandler.post(() -> callback.onProgress(progStart, total, curName));
+                        java.io.File f = downloadOneImageToFile(baseUrl, targetDir, workId, fileName);
+                        result.add(f);
+                        count++;
+                        final int progDone = count;
+                        mainHandler.post(() -> callback.onProgress(progDone, total, curName));
                     }
-                    dlPool.shutdown();
-                    for (java.util.concurrent.Future<?> f : futs) {
-                        f.get();
-                    }
-                    if (firstErr.get() != null) throw firstErr.get();
-                    for (java.io.File f : slots) result.add(f);
                 }
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
