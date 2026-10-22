@@ -380,12 +380,16 @@ def main():
 
     # C22 iOS toolbarButton / toolbarItem 38pt 半圆浅绿（与 Android ImageButton 42dp 视觉对齐）。
     # 改前实测：34pt + cornerRadius 11 + `tintColor.withAlphaComponent(0.11)`（颜色不全、不固定 RGB）。
+    # DSH-181 起颜色改走 AppColors 主题感知动态色：ContentView 引用 brandLightBg/brandLightText，
+    # 浅色原值 RGB(226,244,236)/RGB(15,135,88) 仍保留在 AppColors 定义里（深色取 #163826/#4BD78C）。
     c22_size = "widthAnchor.constraint(equalToConstant: 38)" in cv \
         and "heightAnchor.constraint(equalToConstant: 38)" in cv
     c22_corner = "layer.cornerRadius = 19" in cv
-    c22_bg = "red: 226/255, green: 244/255, blue: 236/255" in cv
-    c22_icon = "red: 15/255, green: 135/255, blue: 88/255" in cv
-    c22_btn_count = cv.count("red: 226/255, green: 244/255, blue: 236/255")
+    c22_bg = "AppColors.brandLightBg" in cv \
+        and has(IOS_SRC, "226/255, green: 244/255, blue: 236/255")
+    c22_icon = "AppColors.brandLightText" in cv \
+        and has(IOS_SRC, "15/255, green: 135/255, blue: 88/255")
+    c22_btn_count = cv.count("AppColors.brandLightBg")
     results.append(check(
         "C22 iOS toolbarButton/toolbarItem 38pt 半圆浅绿",
         c22_size and c22_corner and c22_bg and c22_icon and c22_btn_count >= 2,
