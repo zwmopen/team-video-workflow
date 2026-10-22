@@ -1,3 +1,10 @@
+# 2026-10-22 DSH-181：修复 Android 顶部按钮深色模式适配（Android 0.8.117/228）
+
+- **问题**：深色模式下主界面顶部按钮（作品夹/发送/接收/回收站/设置）图标与背景仍是硬编码浅色薄荷绿（rgb 226,244,236），深色下白圈刺眼；「已同步/已扫描」计数胶囊与在线/本地切换按钮同问题。
+- **修复**：`iconButton()` 图标着色与圆形背景改走 `ThemePalette.getBrandLightText()` / `getBrandLightBg()` 主题取色；计数胶囊同款替换；`updateSourceModeButtonStyle()` 本地分支改 BrandLight 套色，在线分支深色下图标 rgb(86,190,240)/底 rgb(11,54,80)，浅色保持原蓝色不变。
+- **验证**：官方构建链（单测 + assembleRelease + lintRelease + 权限/签名 v2v3）全绿；vivo 真机（10AF3319YR002ZC，USB）安装 0.8.117/228，冷启动无崩溃；系统深色/浅色双模式截图对比，顶部按钮随主题取色、浅色无回归；设置页「外观风格」（跟随系统/浅色模式/深色模式）可见可用，应用内深色覆盖实测生效后恢复跟随系统；局域网更新中转 local_latest.json 同步指向 0.8.117。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`。
+
 # 2026-10-22 DSH-180：对比视图点图进大图双端落地 + iOS 原图预缓存 + 修复 0.8.114 深色模式启动崩溃（Android 0.8.116/227 · iOS 0.8.115/226）
 
 - **对比视图点图进大图（双端）**：对比视图点击任一图区进入全屏大图模式（定位当前页），关闭后回到对比视图原页（页码与布局模式保留）。Android 在 `showOnlineCompareDialog` 手势检测器加 `onSingleTapUp` 复用 `showOnlineImageDialog`；iOS 在 `OnlineComparePreviewController` 左右图容器加 tap，present `OnlineImagePreviewController`（当前画面 0ms 占位）。

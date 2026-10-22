@@ -1,3 +1,12 @@
+# DSH-181：Android 顶部按钮深色模式不适配（已修复 · 0.8.117/228 真机闭环 · 2026-10-22）
+
+- **现象**：vivo 真机深色模式下主界面顶部按钮（作品夹/发送/接收/回收站/设置）仍是硬编码浅色薄荷绿底（rgb 226,244,236）+ 深色图标，深色下白圈刺眼；计数胶囊与在线/本地切换按钮同问题。用户报「手机端顶部按钮还是没适配深色」。
+- **根因**：0.8.114 双端深色模式只改了页面底色，顶栏按钮造控件的 `iconButton()` 与 `updateSourceModeButtonStyle()` 颜色写死，未走 `ThemePalette` 主题取色。
+- **修复**：4 处字节级补丁（MainActivity.java，CRLF 保持）：①`iconButton()` 图标 `setImageTintList(ThemePalette.getBrandLightText(this))` + 背景 `round(ThemePalette.getBrandLightBg(this), 21)`；②`scannedCountText` 同款；③`updateSourceModeButtonStyle()` 本地分支 BrandLight 套色；④在线分支深色图标 rgb(86,190,240)/底 rgb(11,54,80)，浅色保持原蓝。
+- **验证**：build-local.ps1 -AndroidOnly 全绿（单测/lint/签名 v2v3）；vivo（10AF3319YR002ZC，USB）pm install 0.8.117/228，冷启动无崩溃；系统深色/浅色截图对比通过，浅色无回归；设置「外观风格」（跟随系统/浅色/深色）弹窗可见可用，应用内深色覆盖实测生效；local_latest.json 已同步 0.8.117。
+- **状态**：Android 闭环完成。iOS 同款硬编码浅色（ContentView.swift 多处 rgb 226/244/236）待修，另行升版走 CI。
+- **影响文档**：本账本、根 CHANGELOG.md。
+
 # DSH-180：对比视图点图进大图（双端）+ 真机捕获 0.8.114 深色模式启动崩溃（已修复 · Android 0.8.116/227 真机闭环 · 2026-10-22）
 
 - **诉求**：对比视图（素材 vs 成品）里点图进全屏大图模式，关闭大图回到对比模式原页；以 iOS 交互为基准复刻到 Android 并真机校验。

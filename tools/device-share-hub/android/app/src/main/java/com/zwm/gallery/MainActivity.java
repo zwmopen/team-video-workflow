@@ -449,9 +449,9 @@ public final class MainActivity extends Activity {
         titleCluster.addView(headingText, new LinearLayout.LayoutParams(-2, -2));
         scannedCountText = text("", 12, true);
         scannedCountText.setSingleLine(true);
-        scannedCountText.setTextColor(Color.rgb(53, 105, 82));
+        scannedCountText.setTextColor(ThemePalette.getBrandLightText(this));
         scannedCountText.setGravity(Gravity.CENTER);
-        scannedCountText.setBackground(round(Color.rgb(226, 239, 232), 14));
+        scannedCountText.setBackground(round(ThemePalette.getBrandLightBg(this), 14));
         scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
         scannedCountText.setVisibility(View.GONE);
         modeButton = iconButton(R.drawable.ic_file_folder, "切换到文件浏览");
@@ -3243,8 +3243,9 @@ public final class MainActivity extends Activity {
     private ImageButton iconButton(int imageResource, String description) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(imageResource);
-        button.setImageTintList(ColorStateList.valueOf(Color.rgb(15, 135, 88)));
-        button.setBackground(round(Color.rgb(226, 244, 236), 21));
+        // 2026-10-22 深色适配：顶部圆形按钮跟随主题（深色暗墨绿底+亮绿图标）
+        button.setImageTintList(ColorStateList.valueOf(ThemePalette.getBrandLightText(this)));
+        button.setBackground(round(ThemePalette.getBrandLightBg(this), 21));
         button.setPadding(dp(9), dp(9), dp(9), dp(9));
         button.setContentDescription(description);
         return button;
@@ -3307,13 +3308,14 @@ public final class MainActivity extends Activity {
         }
         if (!isOnlineMode) {
             sourceModeButton.setImageResource(R.drawable.ic_mode_phone);
-            sourceModeButton.setImageTintList(ColorStateList.valueOf(Color.rgb(15, 135, 88)));
-            sourceModeButton.setBackground(round(Color.rgb(226, 244, 236), 21));
+            sourceModeButton.setImageTintList(ColorStateList.valueOf(ThemePalette.getBrandLightText(this)));
+            sourceModeButton.setBackground(round(ThemePalette.getBrandLightBg(this), 21));
             sourceModeButton.setContentDescription("当前：手机本地作品 (点击切换到电脑在线)");
         } else {
             sourceModeButton.setImageResource(R.drawable.ic_mode_pc);
-            sourceModeButton.setImageTintList(ColorStateList.valueOf(Color.rgb(2, 132, 199)));
-            sourceModeButton.setBackground(round(Color.rgb(224, 242, 254), 21));
+            boolean darkModeNow = ThemePalette.isDarkMode(this);
+            sourceModeButton.setImageTintList(ColorStateList.valueOf(darkModeNow ? Color.rgb(86, 190, 240) : Color.rgb(2, 132, 199)));
+            sourceModeButton.setBackground(round(darkModeNow ? Color.rgb(11, 54, 80) : Color.rgb(224, 242, 254), 21));
             sourceModeButton.setContentDescription("当前：电脑在线作品 (点击切换到手机本地)");
         }
     }
