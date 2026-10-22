@@ -4217,7 +4217,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.1",
+                "version": "1.2.2",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -4724,7 +4724,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             degraded = False
 
             if thumb:
-                data = build_thumbnail_bytes(img_path, mtime)
+                # DSH-194：缩略图支持 w 按需缩放（64..320 夹紧）。手机端卡片缩略图
+                # 实际显示长边仅 ~112dp（2x 屏 224px），固定发 320px 会多传约 2 倍字节，
+                # 客户端解码耗时/显存/纹理上传同步放大（实测加载更多场景掉帧 5.26%、
+                # Slow bitmap uploads 167）。旧客户端不传 w → 维持 320 原行为。
+                if 0 < scaled_w < 320:
+                    data = build_scaled_image_bytes(img_path, mtime, max(64, scaled_w))
+                else:
+                    data = build_thumbnail_bytes(img_path, mtime)
                 if data is None:
                     # 本机无法生成缩略图（通常是 Pillow 缺失）：显式降级为原图 + 明确标记，
                     # 客户端与运维都能一眼看出「缩略图链路挂了」，不会再静默发几 MB 原图。
@@ -4761,7 +4768,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_header("Connection", "close")
                 if thumb:
                     # 健康标记：手机端可据此提示「电脑端缩略图未启用」；X-Thumb-Fallback=1 表示发的是原图
-                    self.send_header("X-Thumb", "fallback" if degraded else "ok")
+                    thumb_mark = "fallback" if degraded else "ok"
+                    if 0 < scaled_w < 320:
+                        thumb_mark += f";w={max(64, scaled_w)}"
+                    self.send_header("X-Thumb", thumb_mark)
                 if scaled_w > 0:
                     # DSH-186：标记本次发的是缩放图还是降级原图，便于客户端/运维核对
                     self.send_header("X-Scaled", ("fallback" if degraded else "ok") + f";w={scaled_w}")

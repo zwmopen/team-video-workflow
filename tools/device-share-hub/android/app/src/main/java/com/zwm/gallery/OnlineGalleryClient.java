@@ -170,7 +170,15 @@ public final class OnlineGalleryClient {
 
     public OnlineGalleryClient(Context context) {
         this.context = context.getApplicationContext();
+        // DSH-194：缩略图按「实际显示长边像素」向服务端要图。
+        // 卡片缩略图 84×112dp / 紧凑列表 60×80dp，长边都是 112dp；红米 320dpi → 224px。
+        // 服务端 1.2.2 起支持 thumb=1&w=N 按 N 缩放（64..320 夹紧），旧服务端忽略该参数，
+        // 行为自动退回 320px 全量缩略图，双端版本不需要齐步走。
+        thumbDisplayPx = Math.max(64, Math.round(112f * context.getResources().getDisplayMetrics().density));
     }
+
+    /** DSH-194：缩略图请求的目标长边像素（= 112dp 换算），见构造器注释 */
+    private final int thumbDisplayPx;
 
     /** 判断是否为回环地址（仅 ADB reverse 隧道在场时才可达，纯 Wi-Fi 设备必然失败） */
     public static boolean isLoopbackUrl(String url) {
@@ -985,7 +993,7 @@ public final class OnlineGalleryClient {
         try {
             String baseUrl = resolveBaseUrl();
             String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
-                    + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=1";
+                    + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=1&w=" + thumbDisplayPx;
             conn = (HttpURLConnection) new URL(uStr).openConnection();
             conn.setRequestProperty("Connection", "close");
             conn.setConnectTimeout(THUMB_CONNECT_TIMEOUT_MS);

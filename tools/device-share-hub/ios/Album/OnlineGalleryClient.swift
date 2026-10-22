@@ -931,7 +931,12 @@ public final class OnlineGalleryClient {
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "thumb", value: isThumbnail ? "1" : "0")]
         // DSH-186：非缩略图查看路径默认请求服务端缩放图（w=1600 长边，实测 2.7MB→492KB），
         // 显著加快「高清原图加载中」；原图只保留给下载/分享链路（独立构造 URL，不经此函数）。
-        if !isThumbnail {
+        // DSH-194：缩略图同样按显示长边像素要图（112pt × scale；2x=224、3x=336）。
+        // 服务端 1.2.2 起 thumb=1&w=N 按 N 缩放（64..320 夹紧），旧服务端忽略该参数。
+        if isThumbnail {
+            let thumbW = max(64, Int((112 * UIScreen.main.scale).rounded()))
+            queryItems.append(URLQueryItem(name: "w", value: String(thumbW)))
+        } else {
             queryItems.append(URLQueryItem(name: "w", value: String(serverWidth ?? 1600)))
         }
         if let workId = workId, !workId.isEmpty {

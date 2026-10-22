@@ -1,3 +1,16 @@
+# DSH-194：在线列表滚动掉帧 5.26% + 展开全量后内存冲 692MB（已修复 · Android 0.8.122/233 · iOS 0.8.121/232 · 服务端 1.2.2 · 2026-10-23）
+
+- **来源**：用户原话「连着 WiFi 时，随便划、随便加载，要有一种很丝滑的感觉」。
+- **取证（全部真机实测，红米13 720×1600@320dpi）**：`dumpsys gfxinfo` 帧统计 + `dumpsys meminfo` + 服务端 curl 计时，不靠肉眼：
+  - 滚动+手动翻页 6 页：掉帧 5.26%（170/3233）、Slow bitmap uploads 167、Slow issue draw 77、PSS 372MB；
+  - 全部 183 套展开后：PSS **692MB** / Graphics **222MB**（~1500 个 ImageView 各持位图，无回收）；
+  - 服务端同图缩略图：320px=33.8KB vs 224px=20.3KB vs 168px=12.4KB。
+- **根因**：①缩略图恒发 320px，显示仅需 224px（该机）→ 传输/解码/显存/纹理上传全链路超发 ~2 倍；②「加载更多」每次 `removeAllViews()` 整页重建 O(n²)；③ScrollView 架构无回收，内存无界；④（修复中自查发现）分帧链被全量重建打断时若直接 return，会泄漏 `onlineAutoLoadingMore=true` + LayoutTransition=null → auto-load 永久停摆。
+- **修复**：服务端 `thumb=1&w=N` 按需缩放（64..320 夹紧 + X-Thumb 标记）；Android 六件套（w 按需要图 / 增量追加 / 距底 1.2 屏自动加载 / 追加与大渲染双分帧 / 离屏缩略图手动回收不 recycle / 代际守卫+transition 真源）；iOS 缩略图同带 w。
+- **复测（同口径）**：掉帧 1.12%、Slow bitmap uploads 23、Graphics 36MB、PSS 344MB。
+- **教训**：①「看着不卡」不等于不卡 —— gfxinfo 的 Janky frames / Slow bitmap uploads / Slow issue draw 三个计数器 + meminfo 的 Graphics 才是判据。②ScrollView+全量 inflate 架构必须自己补「离屏回收」，否则内存随内容无界涨。③异步分帧链必须有「代际守卫 + 资源恢复」，被打断时静默 return 就是泄漏。④uiautomator 的节点树只含 a11y 可见节点，**不能用来数 ImageView**（本次误判「只剩 2 张卡」的教训）；判滚动是否生效用「连续截图逐字节比对」。
+- **影响文档**：本账本、根 CHANGELOG.md、新增 `tests/test_thumb_scaled_w.py` / `tests/test_android_smooth_scroll.py` / `tests/test_ios_thumb_w.py`。
+
 # DSH-193：深色模式下 6 个界面仍是白底，且详情页上下两条系统栏白边（已修复 · Android 0.8.121/232 · 2026-10-22）
 
 - **来源**：用户原话「点进某个界面主题不符合、某个小按钮看起来不太行，这些我没发现的小细节你自己去修」。
