@@ -1,0 +1,32 @@
+{
+  "name": "teambuilding-copywriter-public",
+  "public_version": "2026-10-22.1",
+  "public_repository": "zwmopen/team-video-workflow",
+  "public_path": "skills/teambuilding-copywriter-public",
+  "private_source_repository": "zwmopen/skills",
+  "private_source_visibility": "private",
+  "sync_model": "private-source-of-truth -> sanitized-public-mirror",
+  "sync_required_for": [
+    "default output contract",
+    "Xiaohongshu/Douyin platform behavior",
+    "high-density template",
+    "length limits",
+    "U+2800 formatting",
+    "reference timeline policy",
+    "title/fact constraints"
+  ],
+  "private_only": [
+    "private raw references",
+    "work IDs and production records",
+    "local paths and account data",
+    "internal automation and validation details",
+    "private business/customer data"
+  ],
+  "public_files": [
+    "README.md",
+    "SKILL.md",
+    "references/high-density-template.md",
+    "references/examples.md",
+    "PUBLIC_SYNC_MANIFEST.json"
+  ]
+}
