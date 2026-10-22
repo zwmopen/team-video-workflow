@@ -191,7 +191,7 @@ public final class SettingsActivity extends Activity {
     private void showThemeModeDialog() {
         String[] options = {"跟随系统", "浅色模式", "深色模式"};
         int current = ThemePalette.getThemeMode(this);
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("外观风格")
                 .setSingleChoiceItems(options, current, (dialog, which) -> {
                     ThemePalette.setThemeMode(this, which);
@@ -221,7 +221,7 @@ public final class SettingsActivity extends Activity {
         for (int index = 0; index < hours.length; index++) {
             if (hours[index] == currentHours) checked = index;
         }
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle(editingMove ? "自动移入回收站" : "自动彻底删除")
                 .setSingleChoiceItems(labels, checked, null)
                 .setNegativeButton("取消", null)
@@ -240,7 +240,7 @@ public final class SettingsActivity extends Activity {
         LinearLayout holder = new LinearLayout(this);
         holder.setPadding(dp(22), dp(4), dp(22), 0);
         holder.addView(input, new LinearLayout.LayoutParams(-1, dp(52)));
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("自定义小时数")
                 .setMessage("请输入 0～720 的整数；0 表示立刻。")
                 .setView(holder)
@@ -398,7 +398,7 @@ public final class SettingsActivity extends Activity {
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("相册 · 作品与文件中控")
                 .setView(scroll)
                 .setPositiveButton("知道了", null).show();

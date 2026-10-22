@@ -8,4 +8,12 @@
         <item name="android:windowDisablePreview">false</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <!-- DSH-183：系统弹窗深色适配。AppTheme 写死 Light，弹窗单独按 ThemePalette 选深浅主题 -->
+    <style name="AppDialogTheme.Light" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#0F9B63</item>
+    </style>
+    <style name="AppDialogTheme.Dark" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#4BD78C</item>
+    </style>
 </resources>

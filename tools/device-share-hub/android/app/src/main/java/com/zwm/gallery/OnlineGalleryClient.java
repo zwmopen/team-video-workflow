@@ -1578,110 +1578,37 @@ public final class OnlineGalleryClient {
 
                 List<java.io.File> result = new ArrayList<>();
                 int total = fileNames != null ? fileNames.size() : 0;
-                int count = 0;
-                if (fileNames != null) {
-                    for (String fileName : fileNames) {
-                        currentFileName[0] = fileName;  // DSH-099：catch 块用
-                        final int progStart = count;
-                        final String curName = fileName;
-                        mainHandler.post(() -> callback.onProgress(progStart, total, curName));
-
-                        java.io.File localFile = new java.io.File(targetDir, fileName);
-                        // DSH-100：服务端 _collect_images 两级策略 → 图在 产出素材/ 子目录时返回「成品库根相对路径」
-                        // （如 "已发送0次（抖音小红书可发）/20260917_.../产出素材/P1.png"），必须先把中间子目录建出来，
-                        // 否则 FileOutputStream 直接 ENOENT。iOS 走 ?path= 走 resolve_image_path 不需要这一步，
-                        // Android 走 ?id+?file 必须显式 mkdirs。
-                        java.io.File parent = localFile.getParentFile();
-                        if (parent != null && !parent.exists()) parent.mkdirs();
-                        if (localFile.exists() && localFile.length() > 0) {
-                            result.add(localFile);
-                            count++;
-                            final int progDone = count;
-                            mainHandler.post(() -> callback.onProgress(progDone, total, curName));
-                            continue;
-                        }
-                        String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
-                                + "&file=" + URLEncoder.encode(fileName, "UTF-8");
-                        URL url = new URL(uStr);
-                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                        conn.setConnectTimeout(TIMEOUT_MS);
-                        conn.setReadTimeout(TIMEOUT_MS * 3);
-                        int httpCode = conn.getResponseCode();
-                        if (httpCode != 200) {
-                            // DSH-099：HTTP 错误分支 —— Log.w + DiagnosticLog 双写（不抛 e 之前先留证）
-                            String detail = "HTTP " + httpCode + " 下载 " + fileName + " 失败";
-                            Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);
-                            DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName
-                                    + " | HTTP " + httpCode);
-                            throw new Exception(detail);
-                        }
-                        InputStream in = new BufferedInputStream(conn.getInputStream());
-                        // 【DSH-118】必须「临时文件 + 原子 rename」，不能直写最终文件。
-                        // 直写时一旦中途失败（Wi-Fi 断 / 磁盘满 / App 被杀），磁盘上留下的是
-                        // 一个**名字符合预期但内容残缺**的文件；下一轮判据
-                        // `localFile.exists() && length() > 0` 会把它当成已下好的成品直接复用
-                        // ⇒ 用户看到半张图 / 打不开的图，而全程零报错、无法自查。
-                        // 与缩略图链路（downloadThumb）保持同一套原子落盘口径。
-                        java.io.File partFile = new java.io.File(
-                                localFile.getAbsolutePath() + ".part");
-                        if (partFile.exists() && !partFile.delete()) {
-                            Log.w(TAG, "残留临时文件清理失败: " + partFile.getName());
-                        }
-                        java.io.FileOutputStream out = new java.io.FileOutputStream(partFile);
-                        byte[] buf = new byte[8192];
-                        int len;
-                        long writtenBytes = 0L;
-                        try {
-                            while ((len = in.read(buf)) != -1) {
-                                out.write(buf, 0, len);
-                                writtenBytes += len;
-                            }
-                            out.flush();
+                if (fileNames != null && !fileNames.isEmpty()) {
+                    // DSH-185：串行 → 4 路并发。原实现逐张下载且每张 getFD().sync() 强制刷盘，
+                    // 一套 4 张 × 2.7MB 实测 ~10s，滑动到分享中间长时间卡在进度弹窗；
+                    // 并发后压到 2~3s。结果顺序用 slots[i] 保持（分享/预览按 fileNames 顺序消费），
+                    // 并发池是独立局部池，不复用 this.executor —— 避免在 4 线程池里等自身子任务造成死锁。
+                    final int n = total;
+                    final java.io.File[] slots = new java.io.File[n];
+                    final java.util.concurrent.atomic.AtomicInteger doneCount = new java.util.concurrent.atomic.AtomicInteger(0);
+                    final java.util.concurrent.atomic.AtomicReference<Exception> firstErr = new java.util.concurrent.atomic.AtomicReference<>();
+                    java.util.concurrent.ExecutorService dlPool = Executors.newFixedThreadPool(Math.min(n, 4));
+                    List<java.util.concurrent.Future<?>> futs = new ArrayList<>();
+                    for (int idx = 0; idx < n; idx++) {
+                        final int i = idx;
+                        final String fileName = fileNames.get(i);
+                        futs.add(dlPool.submit(() -> {
+                            currentFileName[0] = fileName;  // DSH-099：catch 块用
                             try {
-                                out.getFD().sync();
-                            } catch (Exception syncIgnored) {
-                                // 部分厂商 / SD 卡不支持 sync；rename 本身仍是原子的
+                                slots[i] = downloadOneImageToFile(baseUrl, targetDir, workId, fileName);
+                            } catch (Exception e) {
+                                firstErr.compareAndSet(null, e);
                             }
-                        } finally {
-                            try { out.close(); } catch (Throwable ignored) { }
-                            try { in.close(); } catch (Throwable ignored) { }
-                        }
-                        conn.disconnect();
-                        if (writtenBytes <= 0) {
-                            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
-                            Log.w(TAG, "downloadWorkImages 空文件 | " + workId + "/" + fileName);
-                            DiagnosticLog.write(context, "download_work_empty",
-                                    workId + "/" + fileName + " | written=0");
-                            throw new Exception("下载内容为空：" + fileName);
-                        }
-                        if (localFile.exists() && !localFile.delete()) {
-                            Log.w(TAG, "旧文件删除失败: " + localFile.getName());
-                        }
-                        if (!partFile.renameTo(localFile)) {
-                            // 跨分区 / 部分 ROM 上 renameTo 会返回 false：
-                            // 退化成显式拷贝，仍然保证「最终文件只在写完整之后才出现」。
-                            String detail = "renameTo failed: " + partFile + " -> " + localFile;
-                            Log.w(TAG, detail);
-                            DiagnosticLog.write(context, "download_work_rename_failed",
-                                    workId + "/" + fileName + " | " + detail);
-                            java.io.FileInputStream fin = new java.io.FileInputStream(partFile);
-                            java.io.FileOutputStream fout = new java.io.FileOutputStream(localFile);
-                            try {
-                                byte[] cb = new byte[8192];
-                                int cl;
-                                while ((cl = fin.read(cb)) != -1) fout.write(cb, 0, cl);
-                                fout.flush();
-                            } finally {
-                                try { fout.close(); } catch (Throwable ignored) { }
-                                try { fin.close(); } catch (Throwable ignored) { }
-                            }
-                            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
-                        }
-                        result.add(localFile);
-                        count++;
-                        final int progDone = count;
-                        mainHandler.post(() -> callback.onProgress(progDone, total, curName));
+                            final int done = doneCount.incrementAndGet();
+                            mainHandler.post(() -> callback.onProgress(done, n, fileName));
+                        }));
                     }
+                    dlPool.shutdown();
+                    for (java.util.concurrent.Future<?> f : futs) {
+                        f.get();
+                    }
+                    if (firstErr.get() != null) throw firstErr.get();
+                    for (java.io.File f : slots) result.add(f);
                 }
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
@@ -1695,6 +1622,87 @@ public final class OnlineGalleryClient {
             }
         });
     }
+
+    /**
+     * DSH-185：单张原图下载（原子落盘 + 64KB 缓冲，去掉逐张 fsync）。返回最终文件。
+     * 与旧串行循环体等价，但抽成独立方法供并发池调用；原子 rename 口径不变（DSH-118）。
+     */
+    private java.io.File downloadOneImageToFile(String baseUrl, java.io.File targetDir, String workId, String fileName) throws Exception {
+        java.io.File localFile = new java.io.File(targetDir, fileName);
+        // DSH-100：图在 产出素材/ 子目录时返回「成品库根相对路径」，必须先建中间子目录。
+        java.io.File parent = localFile.getParentFile();
+        if (parent != null && !parent.exists()) parent.mkdirs();
+        if (localFile.exists() && localFile.length() > 0) {
+            return localFile;   // 已缓存直接复用
+        }
+        String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
+                + "&file=" + URLEncoder.encode(fileName, "UTF-8");
+        URL url = new URL(uStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(TIMEOUT_MS);
+        conn.setReadTimeout(TIMEOUT_MS * 3);
+        int httpCode = conn.getResponseCode();
+        if (httpCode != 200) {
+            Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);
+            DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName
+                    + " | HTTP " + httpCode);
+            throw new Exception("HTTP " + httpCode + " 下载 " + fileName + " 失败");
+        }
+        InputStream in = new BufferedInputStream(conn.getInputStream());
+        // 【DSH-118】临时文件 + 原子 rename，残缺文件不会被当成成品复用。
+        java.io.File partFile = new java.io.File(localFile.getAbsolutePath() + ".part");
+        if (partFile.exists() && !partFile.delete()) {
+            Log.w(TAG, "残留临时文件清理失败: " + partFile.getName());
+        }
+        java.io.FileOutputStream out = new java.io.FileOutputStream(partFile);
+        byte[] buf = new byte[65536];   // DSH-185：8KB → 64KB，2.7MB 原图系统调用少 8 倍
+        int len;
+        long writtenBytes = 0L;
+        try {
+            while ((len = in.read(buf)) != -1) {
+                out.write(buf, 0, len);
+                writtenBytes += len;
+            }
+            out.flush();
+            // DSH-185：去掉 getFD().sync()。renameTo 本身就是原子提交，逐张 fsync 只换来
+            // 几十毫秒×N 的刷盘开销，对「点文案→分享」链路的耗时拖累远大于断电兜底收益。
+        } finally {
+            try { out.close(); } catch (Throwable ignored) { }
+            try { in.close(); } catch (Throwable ignored) { }
+        }
+        conn.disconnect();
+        if (writtenBytes <= 0) {
+            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+            Log.w(TAG, "downloadWorkImages 空文件 | " + workId + "/" + fileName);
+            DiagnosticLog.write(context, "download_work_empty",
+                    workId + "/" + fileName + " | written=0");
+            throw new Exception("下载内容为空：" + fileName);
+        }
+        if (localFile.exists() && !localFile.delete()) {
+            Log.w(TAG, "旧文件删除失败: " + localFile.getName());
+        }
+        if (!partFile.renameTo(localFile)) {
+            // 跨分区 / 部分 ROM 上 renameTo 返回 false：退化成显式拷贝，仍保证原子。
+            String detail = "renameTo failed: " + partFile + " -> " + localFile;
+            Log.w(TAG, detail);
+            DiagnosticLog.write(context, "download_work_rename_failed",
+                    workId + "/" + fileName + " | " + detail);
+            java.io.FileInputStream fin = new java.io.FileInputStream(partFile);
+            java.io.FileOutputStream fout = new java.io.FileOutputStream(localFile);
+            try {
+                byte[] cb = new byte[65536];
+                int cl;
+                while ((cl = fin.read(cb)) != -1) fout.write(cb, 0, cl);
+                fout.flush();
+            } finally {
+                try { fout.close(); } catch (Throwable ignored) { }
+                try { fin.close(); } catch (Throwable ignored) { }
+            }
+            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+        }
+        return localFile;
+    }
+
 
     private String httpGet(URL url) throws Exception {
         try {

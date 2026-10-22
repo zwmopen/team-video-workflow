@@ -1,3 +1,15 @@
+# DSH-183/184/185：弹窗深色补齐 + 预热风暴根治「原图加载慢/分享拉图卡死」+ 下载并发加速（已修复 · Android 0.8.118/229 · 2026-10-22）
+
+- **现象**：用户多维度巡检授权后实测反馈两条：①苹果「高清原图加载中」极慢、打开一个作品很慢；②安卓点文案按钮拉取图到手机「直接卡死、下载失败」。
+- **DSH-184 根因（服务端预热风暴，真凶）**：服务端日志实锤 `thumb prewarm complete: covers=385 elapsed_ms≈47000` 反复出现——DSH-182 预热**每次扫描后全量重跑 385 张、47s/轮**，持续读 2.67MB 原图 + PIL 解码，把手机端原图请求挤到 D 盘 IO 队列后面。本机 curl 实测原图下载 22~246ms/张（54MB/s），证明服务端传输本身不是瓶颈，瓶颈就是预热抢 IO。
+- **DSH-184 修复**：①加 `PREWARM_MIN_INTERVAL_SEC=600` 全局节流（10 分钟内不重跑）；②预热循环内磁盘缩略图已存在（md5(path_mtime).jpg）直接 skip，不读原图不跑 PIL 不 sleep；③stats 加 `skipped` 字段。重启生效（staleCode=false，totalWorks=385）。
+- **DSH-183 弹窗深色遗漏（巡检抓到）**：排序/视图弹窗深色模式下仍白底刺眼。根因 `AppTheme` 写死 `Theme.Material.Light`，30+ 处系统 AlertDialog + 2 处 PopupMenu 全白。修复：styles.xml 加 `AppDialogTheme.Dark/Light`；ThemePalette 加 `dialogThemeRes()/popupThemeRes()`；批量替换 33 处 Builder + 2 处 PopupMenu；6532 下载进度弹窗与 6784 文案预览弹窗的写死颜色改 ThemePalette 动态色。**坑**：PopupMenu 用 5 参构造传 Widget style 实测不生效（Widget.Material.PopupMenu 只是 widget 属性不含窗口背景），改 `ContextThemeWrapper(context, 完整主题)` 才解析出深色背景。
+- **DSH-185 下载并发加速（客户端）**：`downloadWorkImages` 串行 for + 逐张 `getFD().sync()` → 独立 4 线程池并发（不复用 this.executor 防死锁），slots[i] 保序（分享按 fileNames 顺序消费）；去逐张 fsync（rename 原子已够，DSH-118 口径不变）；buffer 8KB→64KB。单张逻辑抽成 `downloadOneImageToFile`。
+- **验证**：本地 parity 契约 52/52 全过；服务端单测 77/77 全过；gradle assembleDebug 编译通过；vivo 真机装 0.8.118/229。**修复前实测**：vivo 点「红书自然」4 张原图 ~9s 完成并唤起分享面板（未卡死），确认服务端风暴是主因。
+- **现象澄清**：「离线快照·刷新失败：连接超时」= 服务端重启期间瞬时状态，手动下拉刷新即恢复；下载接口（/api/online/image）与列表接口（/api/online/works）独立，下载能通不代表列表能通。
+- **遗留**：iOS 端大图加载逻辑未改（服务端 DSH-184 修复对 iOS 同样生效）；主列表 2520 个 View 原生堆叠（非 RecyclerView 懒加载）是滚动偶发卡顿的架构根因，本次不动。
+- **影响文档**：本账本、根 CHANGELOG.md。
+
 # DSH-182：服务端间歇卡顿致手机「离线快照·刷新失败」+ 缩略图冷图卡顿（已修复 · 服务端 1.2.1 · 2026-10-22）
 
 - **现象**：iPhone 真机实况截图抓到黄色警示条「离线快照 · 共385套 · 刷新失败」，且第一张卡片的图与标题未渲染、只剩操作按钮漂浮；服务端日志日常有 730 次扫描 >10s（252 次 >30s），极端一次 works 请求 json 序列化 41s、后台扫描 155s。

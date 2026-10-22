@@ -843,6 +843,14 @@ MAX_CACHE_ENTRIES = 1500
 # 不加上限的话，图库长到万张级会累积到几百 MB（且不会自动回收）。
 # 2026-09-20 补：低频检查 + 超限时按 mtime 淘汰最旧的一批（只留 90%，避免刚淘汰完又立刻再触发）。
 MAX_DISK_ENTRIES = 2000
+
+# DSH-184：预热最小间隔（秒）。预热原本「每次扫描后全量重跑 385 张」，
+# 实测 47s/轮且随扫描反复触发 —— 期间持续读 2.67MB 原图 + PIL 解码，把手机端的
+# 原图请求挤到 D 盘 IO 队列后面，表现为「高清原图加载中」长时间停在低百分比、
+# 以及分享拉图（串行下 4 张原图）超过读超时而失败。缩略图 key 含 mtime，
+# 一旦落盘就不会失效，没必要每轮重扫；10 分钟节流足以覆盖新增作品。
+PREWARM_MIN_INTERVAL_SEC = 600.0
+
 DISK_EVICT_CHECK_EVERY = 200      # 每 N 次写盘才检查一次，避免每次写盘都全目录 stat
 _disk_write_count = 0
 DISK_EVICT_LOCK = threading.Lock()
@@ -1882,6 +1890,7 @@ class WorkScanner:
         self._thumb_prewarming = False
         self._thumb_prewarm_stats: Dict[str, Any] = {
             "running": False, "warmed": 0, "total": 0, "lastRunAt": 0.0, "elapsedMs": 0,
+            "skipped": 0,   # DSH-184：磁盘已命中直接跳过的张数
         }
         # DSH-117：HTTP 入口 refresh=1 的强制扫描限速（FORCE_SCAN_MIN_INTERVAL 秒一次）
         self._last_force_scan = 0.0
@@ -2591,6 +2600,10 @@ class WorkScanner:
         """
         if not HAS_PIL:
             return False
+        # DSH-184：全局节流。上一轮跑完 10 分钟内不再重跑（详见 PREWARM_MIN_INTERVAL_SEC 注释）。
+        last_run = float(self._thumb_prewarm_stats.get("lastRunAt") or 0.0)
+        if last_run > 0 and (time.time() - last_run) < PREWARM_MIN_INTERVAL_SEC:
+            return False
         with self._scan_state_lock:
             if self._thumb_prewarming:
                 return False
@@ -2598,6 +2611,7 @@ class WorkScanner:
         self._thumb_prewarm_stats["running"] = True
         self._thumb_prewarm_stats["warmed"] = 0
         self._thumb_prewarm_stats["total"] = 0
+        self._thumb_prewarm_stats["skipped"] = 0
 
         def _run():
             started = time.perf_counter()
@@ -2618,6 +2632,12 @@ class WorkScanner:
                         mtime = os.path.getmtime(img_path)
                     except Exception:
                         mtime = 0
+                    # DSH-184：磁盘缩略图已存在就跳过，不读原图、不跑 PIL、不 sleep。
+                    # 没有这一步的话，即使有 10 分钟节流，每次跑仍是全量 385 张解码。
+                    cache_key = hashlib.md5(f"{img_path}_{mtime}".encode("utf-8")).hexdigest()
+                    if os.path.isfile(os.path.join(DISK_THUMB_DIR, cache_key + ".jpg")):
+                        self._thumb_prewarm_stats["skipped"] += 1
+                        continue
                     try:
                         build_thumbnail_bytes(img_path, mtime)
                     except Exception:
@@ -2627,7 +2647,9 @@ class WorkScanner:
                     time.sleep(0.12)  # 限速：PIL 解码是 CPU 密集，避免抢 GIL 拖慢 HTTP
                 self._thumb_prewarm_stats["lastRunAt"] = time.time()
                 self._thumb_prewarm_stats["elapsedMs"] = int((time.perf_counter() - started) * 1000)
-                print(f"[DSH-182] thumb prewarm complete: covers={self._thumb_prewarm_stats['warmed']} elapsed_ms={self._thumb_prewarm_stats['elapsedMs']}")
+                print(f"[DSH-184] thumb prewarm complete: generated={self._thumb_prewarm_stats['warmed']} "
+                      f"skipped={self._thumb_prewarm_stats.get('skipped', 0)} "
+                      f"elapsed_ms={self._thumb_prewarm_stats['elapsedMs']}")
             except Exception as exc:
                 print(f"[DSH-182] thumb prewarm failed: {type(exc).__name__}")
             finally:

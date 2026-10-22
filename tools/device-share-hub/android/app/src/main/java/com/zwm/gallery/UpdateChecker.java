@@ -128,7 +128,7 @@ final class UpdateChecker {
         String detail = prefs.getString(PREF_DOWNLOAD_ERROR, "");
         prefs.edit().remove(PREF_DOWNLOAD_RESULT).remove(PREF_DOWNLOAD_ERROR).apply();
         boolean invalid = RESULT_CHECKSUM_FAILED.equals(result);
-        new AlertDialog.Builder(activity)
+        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
                 .setTitle(invalid ? "更新包校验失败" : "更新下载中断")
                 .setMessage(invalid
                         ? "下载文件与发布版本不一致或系统无法解析，已自动删除。请重新下载。"
@@ -148,7 +148,7 @@ final class UpdateChecker {
         if (!file.isFile()) return false;
         String size = String.format(java.util.Locale.US, "%.2f MB",
                 file.length() / 1024d / 1024d);
-        new AlertDialog.Builder(activity)
+        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
                 .setTitle("更新 " + version + " 已准备好")
                 .setMessage(fileName + "\n" + size
                         + "\n\n安装包已校验。点击“安装”进入 Android 系统安装界面。")
@@ -288,7 +288,7 @@ final class UpdateChecker {
         String message = "lan".equals(source)
                 ? "检测到电脑本地有新版本，可通过局域网极速下载更新（约 1~2 秒）。是否立即更新？"
                 : "是否下载更新？下载完成后会先校验安装包，再由你点击“安装”进入 Android 系统安装界面。";
-        AlertDialog.Builder builder = new AlertDialog.Builder(activity)
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
                 .setTitle(title)
                 .setMessage(downloadable ? message : "新版本尚未准备好安装包，请稍后再试。")
                 .setNegativeButton("稍后", null);
@@ -320,7 +320,7 @@ final class UpdateChecker {
             toast(activity, "正在下载更新，可在通知中查看进度");
         } catch (Exception error) {
             DiagnosticLog.write(activity, "update_app_download_start_failed", error.getMessage());
-            new AlertDialog.Builder(activity).setTitle("无法开始下载")
+            new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity)).setTitle("无法开始下载")
                     .setMessage(error.getMessage() == null ? "请确认网络后重试" : error.getMessage())
                     .setPositiveButton("知道了", null).show();
         }

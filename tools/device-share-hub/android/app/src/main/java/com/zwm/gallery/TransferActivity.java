@@ -267,7 +267,7 @@ public final class TransferActivity extends Activity {
         String[] values = {CHANNEL_AUTO, CHANNEL_USB, CHANNEL_WIFI};
         int checked = CHANNEL_USB.equals(selectedChannel) ? 1
                 : CHANNEL_WIFI.equals(selectedChannel) ? 2 : 0;
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("传送方式")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                     selectedChannel = values[which];

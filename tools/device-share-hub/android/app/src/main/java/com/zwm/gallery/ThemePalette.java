@@ -47,6 +47,24 @@ public final class ThemePalette {
         return nightModeFlags == Configuration.UI_MODE_NIGHT_YES;
     }
 
+    /**
+     * DSH-183：系统弹窗（AlertDialog）主题资源。
+     * AppTheme 写死 Theme.Material.Light，系统弹窗在深色模式下仍白底刺眼；
+     * 统一改用本方法取主题，深色模式给深色对话框、浅色给浅色对话框。
+     */
+    public static int dialogThemeRes(Context context) {
+        return isDarkMode(context) ? R.style.AppDialogTheme_Dark : R.style.AppDialogTheme_Light;
+    }
+
+    /**
+     * DSH-183：PopupMenu（排序/视图菜单）要传「完整主题」给 ContextThemeWrapper。
+     * 第一版用 5 参构造的 Widget style（Widget.Material.PopupMenu）实测不生效——
+     * 那只是 widget 属性，不含弹窗窗口背景；必须传完整主题让 popupMenuStyle 解析出深色背景。
+     */
+    public static int popupThemeRes(Context context) {
+        return isDarkMode(context) ? android.R.style.Theme_Material : android.R.style.Theme_Material_Light;
+    }
+
     /** 主页面背景色：深色 #121212，浅色 #F8F9F8 */
     public static int getBgPrimary(Context c) {
         return isDarkMode(c) ? Color.rgb(18, 18, 18) : Color.rgb(248, 249, 248);

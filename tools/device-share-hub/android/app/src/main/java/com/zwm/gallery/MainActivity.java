@@ -923,7 +923,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmClearTrash() {
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("清空回收站？")
                 .setMessage("将同时删除“相册回收站”里的原文件夹和 App 缓存，清空后不能恢复。")
                 .setNegativeButton("取消", null)
@@ -1136,7 +1136,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showSortKeyMenu() {
-        android.widget.PopupMenu popup = new android.widget.PopupMenu(this, sortKeyButton);
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(new android.view.ContextThemeWrapper(this, ThemePalette.popupThemeRes(this)), sortKeyButton);
         for (String[] pair : SORT_MENU) {
             android.view.MenuItem mi = popup.getMenu().add(pair[1]);
             // 给当前选中的排序打勾（视觉状态显示）
@@ -1221,7 +1221,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showViewModeMenu() {
-        android.widget.PopupMenu popup = new android.widget.PopupMenu(this, viewModeButton);
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(new android.view.ContextThemeWrapper(this, ThemePalette.popupThemeRes(this)), viewModeButton);
         // The current renderer keeps one work card per row and enlarges its thumbnail strip.
         // Keep the menu text truthful until a real two-column card layout is implemented.
         android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（大图缩略图）");
@@ -2240,7 +2240,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmMoveWorkToTrash(String id) {
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("移到回收站？")
                 .setMessage("作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。\n\n选择「备注并删除」可先填写垃圾原因备注（随作品写入手机本地元数据）。")
                 .setNegativeButton("取消", null)
@@ -2267,7 +2267,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("垃圾备注（随作品写入元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -2300,7 +2300,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("垃圾备注（写入手机本地元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -2326,7 +2326,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmResetWork(String id) {
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("重置为未发布？")
                 .setMessage("确定要重置为未发布状态吗？\n将清零分享点击记录、取消 1 小时自动清理排期，并恢复为未发作品。")
                 .setNegativeButton("取消", null)
@@ -2585,7 +2585,7 @@ public final class MainActivity extends Activity {
     private void confirmMoveSelectedToTrash() {
         if (selectedWorkIds.isEmpty()) return;
         LinkedHashSet<String> ids = new LinkedHashSet<>(selectedWorkIds);
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("将 " + ids.size() + " 个作品移到回收站？")
                 .setMessage("这些作品会从当前列表消失，并移动到“相册回收站”；分享次数会保留。")
                 .setNegativeButton("取消", null)
@@ -2905,7 +2905,7 @@ public final class MainActivity extends Activity {
         String stored = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TREE_URI, "");
         if (!stored.isEmpty()) return;
         initialFolderPromptShown = true;
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("先选择作品文件夹")
                 .setMessage("只需设置一次。相册会递归识别里面包含图片和 TXT 的作品文件夹。")
                 .setNegativeButton("稍后", null)
@@ -3100,7 +3100,7 @@ public final class MainActivity extends Activity {
     private void showFolderPermissionRecovery() {
         statusText.setText("作品文件夹权限已失效，请重新选择 Lark 文件夹");
         if (isFinishing()) return;
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("重新连接作品文件夹")
                 .setMessage("华为系统更新了文件夹地址。重新选择一次 Lark 后，作品、回收站和文件管理器会继续双向同步，现有记录不会丢失。")
                 .setNegativeButton("稍后", null)
@@ -3478,7 +3478,7 @@ public final class MainActivity extends Activity {
         int count = onlineWorks.size();
         String age = snapshotAgeText();
         String snapLine = age != null ? "\n本地快照：" + age + "（离线也能秒开）" : "";
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("在线相册网络状态")
                 .setMessage("当前状态：" + modeStr + "\n电脑服务：" + serverUrl + "\n在线作品缓存：" + count + " 套" + snapLine + "\n\n提示：点击小图标可直接在手机与电脑之间秒切。")
                 .setNegativeButton("关闭", null)
@@ -4323,7 +4323,7 @@ public final class MainActivity extends Activity {
     private void confirmRestoreOnlineRecycleWork(OnlineWorkEntry work) {
         String tail = "garbage".equals(onlineRecycleTab)
                 ? "，并撤销垃圾标记。" : "，使用次数归零。";
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("恢复作品")
                 .setMessage("将把该作品移回电脑端「已发送0次（抖音小红书可发）」" + tail
                         + "\n\n恢复后它会重新出现在在线相册里。")
@@ -4363,7 +4363,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("垃圾备注（写入作品元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -4746,7 +4746,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmResetOnlineWork(String workId) {
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("重置使用状态")
                 .setMessage("是否重置该电脑在线作品为待首发状态？")
                 .setNegativeButton("取消", null)
@@ -4796,7 +4796,7 @@ public final class MainActivity extends Activity {
     private void confirmDeleteOnlineWork(OnlineWorkEntry work) {
         String msg = "手机端：移入回收站（右上角垃圾箱可随时恢复）\n\n电脑端：移入垃圾样本库并在元数据标记为垃圾（全渠道硬拦截）\n\n选择「备注并删除」可先填写垃圾原因备注。";
 
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("删除未发送作品")
                 .setMessage(msg)
                 .setNegativeButton("取消", null)
@@ -4818,7 +4818,7 @@ public final class MainActivity extends Activity {
         lp.setMargins(pad, pad, pad, 0);
         holder.addView(input, lp);
 
-        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("垃圾备注（随作品写入元数据）")
                 .setView(holder)
                 .setNegativeButton("取消", null)
@@ -4945,7 +4945,7 @@ public final class MainActivity extends Activity {
         delParams.setMargins(dp(10), 0, 0, 0);
         delBtn.setLayoutParams(delParams);
         delBtn.setOnClickListener(v -> {
-            new AlertDialog.Builder(this)
+            new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                     .setTitle("彻底删除")
                     .setMessage("彻底删除后无法恢复，确定删除？")
                     .setNegativeButton("取消", null)
@@ -6161,7 +6161,7 @@ public final class MainActivity extends Activity {
         trashBtn.setOnClickListener(v -> {
             trashBtn.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (mutableImages.size() <= 1) {
-                new AlertDialog.Builder(this)
+                new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                         .setTitle("无法删除单张")
                         .setMessage("作品至少需保留 1 张图片。如需整套下架，请直接在相册卡片底部点击「删除」按钮。")
                         .setPositiveButton("我知道了", null)
@@ -6172,7 +6172,7 @@ public final class MainActivity extends Activity {
             if (curr < 0 || curr >= mutableImages.size()) return;
             String targetImg = mutableImages.get(curr);
 
-            new AlertDialog.Builder(this)
+            new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                     .setTitle("删除单张图片")
                     .setMessage("确定要删除第 " + (curr + 1) + " 张图片（" + targetImg + "）吗？\n\n图片将安全备份至垃圾样本库，作品其余图片仍将保留。")
                     .setNegativeButton("取消", null)
@@ -6529,7 +6529,7 @@ public final class MainActivity extends Activity {
         }
 
         // 创建并显示动态下载进度弹窗（仅在未缓存需要真实下载时弹出）
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this));
         builder.setCancelable(false);
 
         LinearLayout dlLayout = new LinearLayout(this);
@@ -6537,11 +6537,11 @@ public final class MainActivity extends Activity {
         dlLayout.setPadding(dp(20), dp(20), dp(20), dp(18));
 
         TextView dlTitle = text("正在从电脑同步原图到手机…", 15, true);
-        dlTitle.setTextColor(Color.rgb(24, 25, 24));
+        dlTitle.setTextColor(ThemePalette.getTextPrimary(this));
         dlLayout.addView(dlTitle);
 
         TextView dlStatus = text("准备连接电脑拉取 " + work.images.size() + " 张原图…", 12, false);
-        dlStatus.setTextColor(Color.rgb(104, 108, 106));
+        dlStatus.setTextColor(ThemePalette.getTextSecondary(this));
         dlLayout.addView(dlStatus, margins(0, dp(6), 0, dp(12)));
 
         ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -6551,7 +6551,7 @@ public final class MainActivity extends Activity {
         dlLayout.addView(pb, new LinearLayout.LayoutParams(-1, dp(8)));
 
         TextView dlCounter = text("0 / " + work.images.size() + " 张", 12, true);
-        dlCounter.setTextColor(Color.rgb(15, 135, 88));
+        dlCounter.setTextColor(ThemePalette.getBrandLightText(this));
         dlCounter.setGravity(Gravity.END);
         dlLayout.addView(dlCounter, margins(0, dp(6), 0, 0));
 
@@ -6781,7 +6781,7 @@ public final class MainActivity extends Activity {
 
     private void showCopyPreviewDialog(String workId, String workTitle, String versionLabel, String copyText, CopyShareConsumer onShareAction) {
         if (isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this));
 
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
@@ -6800,13 +6800,13 @@ public final class MainActivity extends Activity {
         container.addView(subView, subParams);
 
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackground(round(Color.rgb(244, 246, 245), 10));
+        scroll.setBackground(round(ThemePalette.getCardBg(this), 10));
         scroll.setPadding(dp(12), dp(10), dp(12), dp(10));
 
         EditText editContent = new EditText(this);
         editContent.setText(copyText != null && !copyText.trim().isEmpty() ? copyText : "");
         editContent.setTextSize(13.5f);
-        editContent.setTextColor(Color.rgb(40, 42, 41));
+        editContent.setTextColor(ThemePalette.getTextPrimary(this));
         editContent.setLineSpacing(dp(3), 1.15f);
         editContent.setBackground(null);
         editContent.setGravity(Gravity.TOP | Gravity.START);
@@ -6960,7 +6960,7 @@ public final class MainActivity extends Activity {
         input.setHint("例如: 192.168.1.27 或 192.168.1.27:45999");
         String current = onlineClient.resolveBaseUrl().replace("http://", "").replace(":" + OnlineGalleryClient.DEFAULT_PC_PORT, "");
         input.setText(current);
-        AlertDialog protectedInputDialog = new AlertDialog.Builder(this)
+        AlertDialog protectedInputDialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("设置电脑在线相册地址")
                 .setMessage("请输入运行 online_gallery_service.py 的电脑局域网 IP；\n"
                         + "电脑那边用了别的端口就写成「IP:端口」，例如 192.168.1.27:45999。\n"

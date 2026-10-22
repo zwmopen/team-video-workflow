@@ -466,7 +466,7 @@ public final class WorkDetailActivity extends Activity {
 
     private void shareSelected() {
         if (work.shareCount > 0) {
-            new AlertDialog.Builder(this)
+            new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                     .setTitle("这个作品已分享 " + work.shareCount + " 次")
                     .setMessage("继续操作会再记一次。确认是发到另一个平台或重新尝试吗？")
                     .setNegativeButton("取消", null)
@@ -491,7 +491,7 @@ public final class WorkDetailActivity extends Activity {
     }
 
     private void confirmDelete() {
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("移除 " + selected.size() + " 张图片？")
                 .setMessage("图片会进入本作品的图片回收站，保留 7 天；不会改动你原来选择的作品文件夹。")
                 .setNegativeButton("取消", null)
