@@ -4746,6 +4746,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     self.send_error(500, "Failed to read image")
                     return
 
+            # DSH-190：图片请求遥测（只记非缩略图，避免刷屏）。一眼看出客户端到底
+            # 拉的是原图还是 w=1600 缩放图 —— 不用再靠猜。
+            if not thumb:
+                try:
+                    print(f"[Image-bytes] file={os.path.basename(img_path)} w={scaled_w} bytes={len(data)} degraded={degraded}")
+                except Exception:
+                    pass
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", mime)

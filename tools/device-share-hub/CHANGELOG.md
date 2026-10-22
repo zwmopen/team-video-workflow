@@ -1,3 +1,28 @@
+# 2026-10-22 DSH-192：iOS 磁盘缓存淘汰挂到 App 启动链路，修掉「装上 0.8.119 却一分没裁」（iOS 0.8.120/231）
+
+- **现象**：0.8.119 装上 iPhone 后，在线图缓存目录仍是 **884.4MB / 3621 文件**（比 DSH-188 修复前的 881.2MB 还多了 74 个文件）。
+- **取证**：容器里 `Library/Caches/com.apple.dyld` 的 mtime 是 **22:22:28**，晚于 0.8.119 的安装时间 22:14 ⇒ App 确实启动过；但缓存目录 mtime 停在 **21:43:49**、`Documents/_相册状态.json` 停在 21:43:24 ⇒ 启动后没进过在线页。崩溃目录里也没有 22:22 的 Album 报告（最近一份还是 10-08 的 `Album-2026-10-08-153542.ips`），排除「启动即崩」。
+- **根因**：DSH-188 把淘汰写进了 `OnlineGalleryClient` 的 `private init()`，而这个单例是**懒加载**的——只有用户点进「在线」页签才会初始化，`didFinishLaunchingWithOptions` 里根本不碰它。⇒ 「只写不删」的兜底被绑死在「用户走哪个页签」上。
+- **修复**：`AlbumApp.swift` 的 `didFinishLaunchingWithOptions` 在首屏渲染前调用 `OnlineGalleryClient.shared.trimDiskCacheIfNeeded()`（内部 `imageIOQueue.async`，不占主线程）；原有「每 30 次落盘体检一次」保留。
+- **验证受限（如实记录）**：Windows 上无 Xcode，iOS 包只能由 CI 产出；且 iOS 26 的开发者服务必须走 RemoteXPC tunnel（`pymobiledevice3 remote tunneld` 要求管理员权限，沙箱内拿不到），本机**无法拉起 App**。故本轮只做到「代码路径 + 回归测试」：`tests/test_ios_disk_cache_eviction.py` 8 项全过（淘汰实现契约 4 项 + 启动挂载 3 项 + 版本真源递增 1 项）。真机效果待用户下一次打开 App 后复测缓存目录体积。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`、新增 `tests/test_ios_disk_cache_eviction.py`。
+
+# 2026-10-22 DSH-191：局域网极速更新源 4348 既没常驻、又一直吐 0.8.109 陈年老包（脚本/服务端 · 无客户端改动）
+
+- **现象**：手机设置页写着「更新源 电脑局域网 (192.168.0.106:4348)」，但 `netstat` 里 4348 从来没监听过；前台手动起一次，打印的是「Serving Latest Version: **0.8.109**」，而版本真源 `build.gradle.kts` 已经是 **0.8.120/231**。
+- **根因①（版本错）**：`get_latest_apk_info()` 按 `[RELEASES_DIR, ALT_OUT_DIR]` 顺序「取第一个存在元数据文件的目录」——外部技能包发布目录里那份 0.8.109 永远压过刚构建出来的 `android/out`。附带证据：仓库 `android/out/latest.json` 至今还写着 **0.8.64/175**，同一仓库里至少 3 套版本号并存。
+- **根因②（没常驻）**：`lan_update_server.py` 全仓库**只有文档提到它**（`docs/MAINTAINER_HANDOFF.md` 自 2026-09-12 起就写成「启动常驻服务」），没有任何 .ps1/.bat/.vbs 启动器，也没挂进 `install-autostart.ps1`。⇒ 它一次都没真正在后台跑过，手机点「检查更新」一直走 1.5 秒超时后静默降级到云端源。
+- **修复**：①版本解析改为「扫全部候选目录 → 元数据候选 + 文件名扫描候选 → **按版本号取最大** → **sha256 现场实算**」（元数据里的假 sha 只告警、不采信）；iOS 版本号改读 `ios/project.yml` 真源，不再硬编码 0.8.45/117；日志从外部技能包目录挪回本仓库 `scripts/`；新增 `/download/apk`、`/download/ipa` 别名与 5 秒元数据缓存。②新增 `scripts/start_lan_update_server.ps1`（幂等 + `-Restart`），并挂进 `restart_online_gallery.ps1`，随既有开机自启一起恢复。
+- **验证**：`tests/test_lan_update_server.py` 9 项全过（含「陈旧目录压不过新目录」「元数据腐烂时文件名兜底」「sha256 造假以实际文件为准」「跨目录解析新包」）；`http://127.0.0.1:4348/latest.json` 现吐 0.8.120/231 / sha `a89f6237…`；真机点「检查更新」后 4348 日志出现 `192.168.0.107:36120 GET /latest.json` ⇒ **局域网源第一次真正被用上**；`curl` 下来的 APK 与磁盘 sha256 逐字节一致。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`、新增 `tests/test_lan_update_server.py`、`scripts/start_lan_update_server.ps1`。
+
+# 2026-10-22 DSH-190：给 `/api/online/image` 加 `[Image-bytes]` 遥测，逐张实证 DSH-186 双链契约（服务端 1.2.1）
+
+- **背景**：DSH-186 的契约是「查看器链加 `w=1600`，下载/分享链绝不加」。此前只验证了服务端 curl，没证明真机两条链的实际走向。
+- **做法**：`/api/online/image` 在响应前打印 `file=… w=… bytes=… degraded=…`（仅非缩略图请求）。
+- **实证**：红米真机打开大图 → 连续 8 张 `w=1600 bytes=428898~565832 degraded=False`；走下载/分享 → `w=0 bytes=2321877~2545802`（完整原图）。**两半契约各自成立，查看链与下载链无交叉污染。**
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`。
+
 # 2026-10-22 DSH-189：扫描期间主动让出 GIL，消除 ping 超时 3.5s 与手机「连接超时」（服务端 1.2.1）
 
 - **现象**：`logs/supervisor.log` 反复出现「判定为高并发/处理中」——即 `/api/online/ping`（超时 3.5s）连续失败，但进程活着、端口在监听。
