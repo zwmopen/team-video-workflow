@@ -71,3 +71,10 @@ tools/      本地执行工具源码
 memory/     项目共享记忆和交接规则
 reports/    最近一次关键处理报告
 ```
+
+
+## 公开 Skill
+
+- [团建双平台文案 Skill｜公开版](./skills/teambuilding-copywriter-public/README.md)
+  - 默认输出：小红书1自然攻略 / 小红书2高密度种草 / 抖音攻略
+  - 公开版为可分享镜像；私有完整版在 `zwmopen/skills` 中维护
