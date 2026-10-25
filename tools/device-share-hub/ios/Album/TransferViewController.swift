@@ -111,10 +111,12 @@ final class TransferViewController: UIViewController, UITableViewDataSource, UIT
     }
 
     @objc private func reloadPeers() {
+        // DSH-195：打开界面就立刻拉一次电脑服务端目录（广播被拦时的兜底通路）
+        NotificationCenter.default.post(name: .forceServerDirectory, object: nil)
         peers = PeerDirectory.shared.peers()
         if let selected = selectedID, !peers.contains(where: { $0.id == selected }) { selectedID = nil }
         table.reloadData()
-        if peers.isEmpty { status.text = "暂未发现设备，请在另一台设备上打开“相册”或电脑中控" }
+        if peers.isEmpty { status.text = "暂未发现设备，请在另一台设备上打开“相册”；若路由器屏蔽了设备互传广播，请保持电脑端「在线相册服务」运行，列表会经电脑中转发现" }
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return peers.count }

@@ -63,6 +63,8 @@ public final class ShareImportActivity extends Activity {
             // 其余界面在深色模式下会出现「内容深色 + 上下两条浅色系统栏」的白边。
         ThemePalette.applySystemBarAppearance(this);
         startService(new Intent(this, OnlineService.class).setAction(OnlineService.ACTION_START));
+        // DSH-195：一进界面就主动刷新（含拉取电脑服务端设备目录，广播被拦时靠它兜底）
+        OnlineService.requestImmediateDiscovery(this);
         renderPeers();
     }
 
@@ -159,7 +161,8 @@ public final class ShareImportActivity extends Activity {
         List<PeerDevice> peers = OnlineService.peers();
         peersContainer.removeAllViews();
         if (peers.isEmpty()) {
-            TextView empty = text("暂未发现设备\n请让另一台设备打开相册并连接同一 Wi‑Fi", 15, false);
+            TextView empty = text("暂未发现设备\n请让另一台设备打开相册并连接同一 Wi‑Fi；"
+                    + "若路由器屏蔽了设备互传广播，请保持电脑端「在线相册服务」运行，列表会经电脑中转发现", 14, false);
             empty.setGravity(Gravity.CENTER);
             empty.setTextColor(ThemePalette.getTextMuted(ShareImportActivity.this));
             empty.setPadding(dp(12), dp(24), dp(12), dp(24));

@@ -1,3 +1,17 @@
+# 2026-10-25 DSH-195：「在线设备」刷新不出来 —— 路由器屏蔽 UDP 广播时的服务端目录兜底（Android 0.8.124/235 · iOS 0.8.122/233）
+
+用户口径：从系统分享面板选「相册」发送文件、以及从设置里点发送，「在线设备」反复刷新就是空的，「明明都在同一个 WiFi」。
+
+- **取证（服务端视角）**：`/api/online/phones` 实时可见两台设备 —— vivo V2327A（.103）与红米13（.105），均 `com.zwm.gallery 0.8.122/233`、`lastSeen` 秒级刷新、`verified=true`。⇒ **手机↔电脑 HTTP 链路完全正常**，问题只出在「手机↔手机」这一段。
+- **取证（UDP 实测）**：从电脑向 `255.255.255.255:45834` 广播 `ZWMDS2_DISCOVER` **零应答**；改**单播**直连 .105:45834 立刻收到完整 `ZWMDS2_HERE|2|...` 报文；单播 .103:45834 无应答（vivo 侧发现 socket 未服役，但其 HTTP 45833 正常应答 `/v2/info`）。⇒ 该路由器**拦截了客户端之间的 UDP 广播**（客户端隔离），而单播畅通 —— 这正是现象级 BUG 的根因：两端 App 的「在线设备」列表此前**只认 UDP 广播发现**。
+- **修复（两端同构）**：「在线设备」列表新增**经电脑服务端目录兜底**的通路 —— 手机本来就为同步在跟服务端通信，服务端 `/api/online/phones` 手里有全量设备清单（IP/端口/名称/型号/版本/作品数/lastSeen）：
+  - Android：`OnlineService` 每 10s 拉一次目录合并进 `SERVER_PEERS`，`peers()` = UDP 直连发现 ∪ 服务端目录（UDP 优先）；用户点刷新（`ACTION_DISCOVER_PEERS`）立即拉目录，并对目录内设备**补发单播 `ZWMDS2_DISCOVER`**（对方回 `ZWMDS2_HERE`，P2P 发现就此自愈）；`ShareImportActivity` 打开即主动刷新。🔴 目录拉取必须走**独立单线程池** `directoryExecutor` —— 首版误用 `serviceExecutor`（2 线程被 httpLoop/discoveryLoop 两个长跑循环永久占满），实测任务排队 10s+ 才溜进去一次，列表时有时无；0.8.124 修正后打开界面 4 秒内即出设备。
+  - iOS：`PeerDirectory.mergeServerPhones()` 同构合并；`IncomingTransferService` 的 2s beacon 定时器节流 10s 拉目录；`TransferViewController` 打开时发 `.forceServerDirectory` 立即拉一次。
+  - 两端都过滤「自己」（deviceId/本机 IP）与掉线设备（服务端 lastSeen 超 150s）；空态文案补充「保持电脑端在线相册服务运行，列表会经电脑中转发现」。
+- **兼容性**：服务端无改动（`/api/online/phones` 已存在）；旧版本 App 行为不变；UDP 广播正常的网络下两条通路并存，UDP 信息优先。
+- **测试**：新增 `tests/test_dsh195_server_directory_fallback.py`（7 项）、`tests/test_ios_dsh195_server_directory.py`（5 项）全过。
+- **影响文档**：本文件、`docs/BUG_LEDGER.md`、新增上述 2 个测试文件。
+
 # 2026-10-23 DSH-194：在线列表「丝滑」专项 —— 缩略图按需尺寸 + 增量加载 + 自动加载 + 离屏回收（Android 0.8.122/233 · iOS 0.8.121/232 · 服务端 1.2.2）
 
 用户口径：「连着 WiFi 时，随便划、随便加载，要有一种很丝滑的感觉。」先实测再动手，真机取证（红米13，720×1600@320dpi，筛选后 183 套列表滚到底）：

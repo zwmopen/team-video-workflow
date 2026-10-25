@@ -27,15 +27,18 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.InterfaceAddress;
@@ -43,6 +46,7 @@ import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -51,6 +55,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -108,8 +113,25 @@ public final class OnlineService extends Service {
     private static final String TASK_MANIFEST_NAME = "task.json";
     private static final long PEER_TIMEOUT_MS = 15_000L;
     private static final ConcurrentHashMap<String, PeerDevice> PEERS = new ConcurrentHashMap<>();
+    /**
+     * DSH-195：经电脑服务端目录发现的设备（/api/online/phones）。
+     * 路由器开客户端隔离时 UDP 广播到不了别的设备，但手机↔电脑的 HTTP 一直通，
+     * 服务端手里有全量设备清单 ⇒ 用它给「在线设备」列表兜底，并对这些 IP 补发
+     * 单播 ZWMDS2_DISCOVER，让 P2P 发现也能在隔离网络下自愈。
+     */
+    private static final ConcurrentHashMap<String, PeerDevice> SERVER_PEERS = new ConcurrentHashMap<>();
+    private static final long SERVER_DIRECTORY_INTERVAL_MS = 10_000L;
+    /** 服务端 lastSeen 超过该时长视为掉线，不进列表 */
+    private static final long SERVER_PEER_FRESH_MS = 150_000L;
+    private volatile long lastServerDirectoryMs = 0L;
 
     private final ExecutorService serviceExecutor = Executors.newFixedThreadPool(2);
+    /**
+     * DSH-195：服务端设备目录拉取专用单线程池。
+     * ⚠️ 不能复用 serviceExecutor —— 它只有 2 个线程且被 httpLoop/discoveryLoop
+     * 两个长跑循环永久占满，目录任务排队到天荒地老（实测 10s+ 才溜进去一次）。
+     */
+    private final ExecutorService directoryExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(16);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running;
@@ -121,6 +143,10 @@ public final class OnlineService extends Service {
     private volatile boolean discoveryLoopActive;
     private volatile boolean beaconRequested;
     private volatile boolean discoverRequested;
+    /** DSH-195：请求对服务端目录里的设备补发单播 ZWMDS2_DISCOVER */
+    private volatile boolean unicastProbeRequested;
+    /** 「还没学到电脑地址」只提醒一次 */
+    private boolean serverUrlWarned;
     private boolean discoveryRecovering;
     private WifiManager.MulticastLock multicastLock;
     private final Object taskLock = new Object();
@@ -172,7 +198,11 @@ public final class OnlineService extends Service {
     public static List<PeerDevice> peers() {
         long cutoff = System.currentTimeMillis() - PEER_TIMEOUT_MS;
         PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
-        ArrayList<PeerDevice> result = new ArrayList<>(PEERS.values());
+        SERVER_PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
+        // 合并：UDP 直连发现优先，服务端目录兜底（DSH-195：广播被路由器拦截时的活路）
+        LinkedHashMap<String, PeerDevice> merged = new LinkedHashMap<>(SERVER_PEERS);
+        merged.putAll(PEERS);
+        ArrayList<PeerDevice> result = new ArrayList<>(merged.values());
         result.sort((left, right) -> left.name.compareToIgnoreCase(right.name));
         return result;
     }
@@ -323,6 +353,10 @@ public final class OnlineService extends Service {
         if (ACTION_DISCOVER_PEERS.equals(action)) {
             beaconRequested = true;
             discoverRequested = true;
+            // DSH-195：用户主动刷新时，立刻拉一次服务端目录并对已知设备补单播探测
+            lastServerDirectoryMs = 0L;
+            unicastProbeRequested = true;
+            fetchServerDirectory(null);
             ensureForegroundAndLoops("ACTION_DISCOVER_PEERS");
             return START_STICKY;
         }
@@ -1624,6 +1658,15 @@ public final class OnlineService extends Service {
                     }
                     nextBeacon = now + 2500;
                 }
+                // DSH-195：广播被路由器客户端隔离拦掉时，靠电脑服务端目录兜底发现设备
+                if (now - lastServerDirectoryMs >= SERVER_DIRECTORY_INTERVAL_MS) {
+                    lastServerDirectoryMs = now;
+                    fetchServerDirectory(socket);
+                }
+                if (unicastProbeRequested) {
+                    unicastProbeRequested = false;
+                    unicastProbeServerPeers(socket);
+                }
                 try {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     socket.receive(packet);
@@ -1695,6 +1738,148 @@ public final class OnlineService extends Service {
             }
         } catch (Exception error) {
             DiagnosticLog.write(this, "peer_packet_invalid", compact(error.getMessage()));
+        }
+    }
+
+    // ==================== DSH-195：服务端设备目录兜底 ====================
+
+    /** 电脑服务端地址：用户手工指定优先，否则用信标自动学到的。 */
+    private String pcServerBaseUrl() {
+        SharedPreferences prefs = getSharedPreferences("device_share", Context.MODE_PRIVATE);
+        String manual = prefs.getString("manualPcServerUrl", "").trim();
+        if (!manual.isEmpty() && !isLoopbackUrl(manual)) {
+            return manual.endsWith("/") ? manual.substring(0, manual.length() - 1) : manual;
+        }
+        String beacon = prefs.getString("beaconPcServerUrl", "").trim();
+        if (beacon.isEmpty()) return "";
+        return beacon.endsWith("/") ? beacon.substring(0, beacon.length() - 1) : beacon;
+    }
+
+    private static boolean isLoopbackUrl(String url) {
+        return url.contains("127.0.0.1") || url.contains("localhost") || url.contains("0.0.0.0");
+    }
+
+    /**
+     * 拉取电脑服务端的设备目录并合并进 SERVER_PEERS。
+     * 独立线程池执行（serviceExecutor 被两个长跑循环占满，见字段注释）；
+     * 失败只记诊断日志，不影响 UDP 主链路。
+     */
+    private void fetchServerDirectory(final DatagramSocket socket) {
+        final String base = pcServerBaseUrl();
+        if (base.isEmpty()) {
+            // 还没学到电脑地址（全新装/信标也被拦）：只提醒一次，别每 10 秒刷日志
+            if (!serverUrlWarned) {
+                serverUrlWarned = true;
+                DiagnosticLog.write(this, "server_directory_skipped", "no pc server url yet");
+            }
+            return;
+        }
+        serverUrlWarned = false;
+        directoryExecutor.execute(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(base + "/api/online/phones");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(3000);
+                conn.setRequestMethod("GET");
+                if (conn.getResponseCode() != 200) {
+                    DiagnosticLog.write(this, "server_directory_http", "code=" + conn.getResponseCode());
+                    return;
+                }
+                StringBuilder body = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) body.append(line);
+                }
+                mergeServerDirectory(body.toString());
+                // 合并完成后对目录内设备补发单播探测，让对方回 ZWMDS2_HERE（P2P 自愈）
+                unicastProbeServerPeers(socket);
+            } catch (Exception error) {
+                DiagnosticLog.write(this, "server_directory_failed", compact(error.getMessage()));
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        });
+    }
+
+    /** 解析 /api/online/phones 的 devices[]，过滤自己与掉线设备，合并后广播刷新。 */
+    private void mergeServerDirectory(String body) {
+        try {
+            JSONObject root = new JSONObject(body);
+            JSONArray devices = root.optJSONArray("devices");
+            if (devices == null) return;
+            SharedPreferences prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            String ownId = prefs.getString("deviceId", "");
+            String ownIp = localIpAddress();
+            long now = System.currentTimeMillis();
+            Set<String> before = new HashSet<>(SERVER_PEERS.keySet());
+
+            for (int i = 0; i < devices.length(); i++) {
+                JSONObject device = devices.optJSONObject(i);
+                if (device == null) continue;
+                String id = device.optString("deviceId", "").trim();
+                String ip = device.optString("ip", "").trim();
+                if (id.isEmpty() || ip.isEmpty()) continue;
+                if (id.equals(ownId) || ip.equals(ownIp)) continue;
+                // 服务端 lastSeenTs 是 epoch 秒；缺失时按在线处理
+                double seenTs = device.optDouble("lastSeenTs", 0);
+                if (seenTs > 0 && now - seenTs * 1000.0 > SERVER_PEER_FRESH_MS) continue;
+                int port = device.optInt("port", HTTP_PORT);
+                String name = device.optString("name", "").trim();
+                String model = device.optString("model", "").trim();
+                int workCount = -1;
+                JSONObject counts = device.optJSONObject("workCounts");
+                if (counts != null) workCount = counts.optInt("total", -1);
+                PeerDevice peer = new PeerDevice(id, name, model, ip, port, "online",
+                        workCount, now, "WiFi");
+                SERVER_PEERS.put(id, peer);
+            }
+
+            if (!before.equals(new HashSet<>(SERVER_PEERS.keySet()))) {
+                sendBroadcast(new Intent(ACTION_PEERS_CHANGED).setPackage(getPackageName()));
+                DiagnosticLog.write(this, "server_directory_merged",
+                        "server=" + SERVER_PEERS.size());
+            }
+        } catch (Exception error) {
+            DiagnosticLog.write(this, "server_directory_parse", compact(error.getMessage()));
+        }
+    }
+
+    /** 本机 wlan0 IP（用于把「自己」从服务端目录里剔掉）。 */
+    private static String localIpAddress() {
+        try {
+            java.util.Enumeration<NetworkInterface> nis = NetworkInterface.getNetworkInterfaces();
+            while (nis.hasMoreElements()) {
+                NetworkInterface ni = nis.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                    InetAddress addr = ia.getAddress();
+                    if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    /**
+     * 对服务端目录里的设备补发**单播** ZWMDS2_DISCOVER。
+     * 广播被路由器拦截时，这条路能让对方立刻单播回 ZWMDS2_HERE，
+     * P2P 发现就此自愈（设备清单本来就已经有了，这只是让信息更新鲜）。
+     */
+    private void unicastProbeServerPeers(DatagramSocket socket) {
+        if (socket == null || socket.isClosed()) return;
+        byte[] data = "ZWMDS2_DISCOVER".getBytes(StandardCharsets.UTF_8);
+        for (PeerDevice peer : new ArrayList<>(SERVER_PEERS.values())) {
+            try {
+                socket.send(new DatagramPacket(data, data.length,
+                        InetAddress.getByName(peer.ip), DISCOVERY_PORT));
+            } catch (Exception ignored) {
+            }
         }
     }
 

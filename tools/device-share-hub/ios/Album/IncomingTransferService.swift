@@ -24,6 +24,9 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
     private var udpReady = false
     private let pathMonitor = NWPathMonitor()
     private var currentNetworkType = "unknown"
+    /// DSH-195：服务端设备目录兜底（路由器屏蔽 UDP 广播时「在线设备」的唯一活路）
+    private var lastServerDirectoryAt = Date.distantPast
+    private static let serverDirectoryInterval: TimeInterval = 10
 
     /// 更新通道标识，与 Android `OnlineService.UPDATE_CAPABILITY` 对称。
     /// Android 是 `apk-push-v1`（电脑端可直接推送 APK 让手机安装）；
@@ -193,9 +196,31 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         timer.setEventHandler { [weak self] in
             self?.broadcastBeacon()
             self?.processRelayQueue()
+            self?.maybeFetchServerDirectory()
         }
         timer.resume()
         beaconTimer = timer
+        // 传输界面打开时立刻拉一次，不用等 10s 节流
+        NotificationCenter.default.addObserver(forName: .forceServerDirectory, object: nil,
+                                               queue: queue) { [weak self] _ in
+            self?.lastServerDirectoryAt = Date.distantPast
+            self?.maybeFetchServerDirectory()
+        }
+    }
+
+    /// 拉取电脑服务端设备目录（节流 10s）。失败静默——UDP 广播仍是主链路。
+    private func maybeFetchServerDirectory() {
+        let now = Date()
+        guard now.timeIntervalSince(lastServerDirectoryAt) >= Self.serverDirectoryInterval else { return }
+        lastServerDirectoryAt = now
+        let baseUrl = OnlineGalleryClient.shared.resolveBaseUrl()
+        guard !baseUrl.isEmpty, let url = URL(string: "\(baseUrl)/api/online/phones") else { return }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            guard error == nil,
+                  let response = response as? HTTPURLResponse, response.statusCode == 200,
+                  let data = data else { return }
+            PeerDirectory.shared.mergeServerPhones(data)
+        }.resume()
     }
 
     private func handleRemoteInbox(_ session: RemoteRelayClient.Session,
