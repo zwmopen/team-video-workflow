@@ -1,3 +1,47 @@
+# 2026-10-25 DSH-197：发送即归档改为「电脑端 → `_已发送`」，手机端发送就是发送（Android 0.8.126/237 · iOS 0.8.123/234 · Windows 4.3.34 · 服务端 1.2.3）
+
+用户口径：
+1. 「那个『不参与扫描』的机制以后取消吧，**发送就是发送**」；
+2. 「给它改个名儿，叫『已发送』文件夹，由电脑这边设置；文件夹开头要带下划线」；
+3. 「电脑端拖动文件发送到其他设备，电脑本地就把文件移动到『已发送』」；
+4. 「手机端用不到这个功能，手机上发送就是发送」；
+5. 「本地没有这个文件夹就创建一个」。
+
+**目录契约（唯一真源）**
+- 归档目录统一为 `成品库/_已发送`；`_` 前缀 ⇒ 天然不参与扫描；服务启动/每轮扫描 `ensure_sent_folder()` 自动补齐。
+- 历史目录 `_已发送1次（微信公众号可发）` **已物理改名**为 `_已发送`（394 个条目原样迁移，单次 rename 未删除任何内容）。
+- 服务端 `STAGE1_FOLDER = SENT_FOLDER`，回收站「已使用」Tab 自动指向新目录；历史名仍留在忽略表，防止旧目录被扫进来。
+
+**电脑端（Windows 4.3.34）**
+- 新增 `ArchiveSentPaths()`：发送**成功后**把**本地源条目**移入 `_已发送`；失败则源文件原地保留。
+- 触发点：拖拽到设备卡片、库内单发/批量发送、资源管理器右键「发送到」。
+- 硬规则：只搬成品库根目录之内的条目（库外文件如桌面/下载一律不动，只记 `sent_archive_skipped`）；
+  已在 `_已发送` 里的不重复搬；重名加时间戳后缀；`rename` 失败退回「复制后删源」。
+- 批量发多台设备时**整批发完再搬**，避免后面的设备拿到空源。
+- 「自动补货」保持不归档（自动行为，避免静默抽空货架）。
+
+**手机端（Android 0.8.126 / iOS 0.8.123）**
+- `/api/online/use-work` 取消自动搬家与首发倒计时：`should_move = bool(force_move)`、`expireAtMs` 恒回 0。
+- Android `OnlineWorkLifecycle.AUTO_ARCHIVE_DISABLED = true`：`markUsed` 不再记 `firstSharedAtMs`、
+  `ensureTrashed` 直接返回、`getTrashedIds`/`shouldBeInTrash`/`getActiveUsedItems` 跳过到期分支
+  ⇒ 手机端发送后作品原地不动、不隐藏、不进回收站。
+- 回收站「已使用」Tab 保留（手动删除/恢复仍可用），空态文案改为「电脑端发送后自动归档到这里」。
+
+**附带小修（同期积压的技术债）**
+- **信标地址纠偏**：电脑多网卡/换 DHCP 后信标载荷可能指向不可服务的网卡（现场：自报 `.107`、
+  实际可服务 `.101`）。`OnlineGalleryClient.preferPacketSource()` 以「收到的 UDP 包源 IP」为准改写私网地址，
+  并记 `beacon_host_mismatch`。
+- **目录拉取单飞**：`directoryInFlight` 原子闸门，避免「单线程池 + 每 10s 入队 + 单次最坏 24s」的无界积压。
+- **手动地址失效让位**：手动填的电脑地址连续 3 次拉取失败后，本次进程内临时让位给信标地址（`manual_url_suspended`），
+  不再永久指向死地址。
+
+**验证**
+- `python -m unittest tests.test_dsh195_server_directory_fallback` → **28 项全过**（新增 `TestDSH197SendArchive` 7 项）。
+- 服务端重启后 `/api/online/status`：version 1.2.3、totalWorks 341、scanErrors 0；`_已发送` 目录存在。
+- ⚠️ Windows 4.3.34 **本机缺 CMake 未编译**（`build-local.ps1` 已明确提示用 GitHub Actions windows-2022 出包）。
+
+**影响文档**：本文件、`docs/BUG_LEDGER.md`、`scripts/online_gallery_service.py` 模块头。
+
 # 2026-10-25 DSH-196：外部分享界面重做 —— 居中模态卡片 + 两步确认流程（Android 0.8.125/236）
 
 用户口径（同日四条反馈中的 2/3/4）：

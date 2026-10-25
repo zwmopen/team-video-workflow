@@ -132,6 +132,17 @@ public final class OnlineService extends Service {
      * 两个长跑循环永久占满，目录任务排队到天荒地老（实测 10s+ 才溜进去一次）。
      */
     private final ExecutorService directoryExecutor = Executors.newSingleThreadExecutor();
+    /**
+     * 【DSH-197】单飞守卫：单线程池 + 每 10s 入队 + 单次最坏「8s 连接 + 8s 读」再重试一次
+     * ≈ 24~32s，网络一差队列就会单调增长，设备列表滞后好几分钟。加这个标志保证
+     * 同一时刻最多一个目录请求在飞，后来的直接跳过（下一轮 10s 后会自然再试）。
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean directoryInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 手动地址连续失败次数；达到阈值后本次进程内让位给信标地址 */
+    private int manualFailStreak = 0;
+    private volatile boolean manualUrlSuspended = false;
+    private static final int MANUAL_FAIL_LIMIT = 3;
     private final ExecutorService requestExecutor = Executors.newFixedThreadPool(16);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running;
@@ -1752,12 +1763,22 @@ public final class OnlineService extends Service {
     private String pcServerBaseUrl() {
         SharedPreferences prefs = getSharedPreferences("device_share", Context.MODE_PRIVATE);
         String manual = prefs.getString("manualPcServerUrl", "").trim();
-        if (!manual.isEmpty() && !isLoopbackUrl(manual)) {
+        // 【DSH-197】手动地址不再无条件压制信标：它连续拉取失败（多半是电脑换了 IP，
+        // 手动填的还是旧地址）后，本次进程内临时让位给信标地址，避免永久指向死地址。
+        if (!manual.isEmpty() && !isLoopbackUrl(manual) && !manualUrlSuspended) {
             return manual.endsWith("/") ? manual.substring(0, manual.length() - 1) : manual;
         }
         String beacon = prefs.getString("beaconPcServerUrl", "").trim();
         if (beacon.isEmpty()) return "";
         return beacon.endsWith("/") ? beacon.substring(0, beacon.length() - 1) : beacon;
+    }
+
+    /** 当前返回的 base 是否来自「手动填写」——用于判定失败计数该记在谁头上 */
+    private boolean isManualBaseInUse() {
+        if (manualUrlSuspended) return false;
+        String manual = getSharedPreferences("device_share", Context.MODE_PRIVATE)
+                .getString("manualPcServerUrl", "").trim();
+        return !manual.isEmpty() && !isLoopbackUrl(manual);
     }
 
     private static boolean isLoopbackUrl(String url) {
@@ -1780,43 +1801,67 @@ public final class OnlineService extends Service {
             return;
         }
         serverUrlWarned = false;
+        // 【DSH-197】单飞守卫：上一轮还在飞（网络慢）就跳过本轮，别让单线程队列无界积压
+        if (!directoryInFlight.compareAndSet(false, true)) {
+            DiagnosticLog.write(this, "server_directory_busy", "skip");
+            return;
+        }
+        final boolean manualBase = isManualBaseInUse();
         directoryExecutor.execute(() -> {
-            // DSH-196：局域网 HTTP 偶发超时（手机 WiFi 省电唤醒等）。3s 太紧，
-            // 放到 8s 并允许失败后立即重试一次，避免列表因一次抖动清空。
-            for (int attempt = 0; attempt < 2; attempt++) {
-                HttpURLConnection conn = null;
-                try {
-                    URL url = new URL(base + "/api/online/phones");
-                    conn = (HttpURLConnection) url.openConnection();
-                    conn.setConnectTimeout(8000);
-                    conn.setReadTimeout(8000);
-                    conn.setRequestMethod("GET");
-                    if (conn.getResponseCode() != 200) {
-                        DiagnosticLog.write(this, "server_directory_http", "code=" + conn.getResponseCode());
+            try {
+                // DSH-196：局域网 HTTP 偶发超时（手机 WiFi 省电唤醒等）。3s 太紧，
+                // 放到 8s 并允许失败后立即重试一次，避免列表因一次抖动清空。
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    HttpURLConnection conn = null;
+                    try {
+                        URL url = new URL(base + "/api/online/phones");
+                        conn = (HttpURLConnection) url.openConnection();
+                        conn.setConnectTimeout(8000);
+                        conn.setReadTimeout(8000);
+                        conn.setRequestMethod("GET");
+                        if (conn.getResponseCode() != 200) {
+                            DiagnosticLog.write(this, "server_directory_http", "code=" + conn.getResponseCode());
+                            return;
+                        }
+                        StringBuilder body = new StringBuilder();
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) body.append(line);
+                        }
+                        mergeServerDirectory(body.toString());
+                        manualFailStreak = 0;
+                        // 合并完成后对目录内设备补发单播探测，让对方回 ZWMDS2_HERE（P2P 自愈）
+                        unicastProbeServerPeers(socket);
                         return;
+                    } catch (Exception error) {
+                        boolean lastAttempt = attempt == 1;
+                        if (lastAttempt) {
+                            DiagnosticLog.write(this, "server_directory_failed", compact(error.getMessage()));
+                            if (manualBase) noteManualBaseFailure();
+                        } else {
+                            DiagnosticLog.write(this, "server_directory_retry", compact(error.getMessage()));
+                        }
+                    } finally {
+                        if (conn != null) conn.disconnect();
                     }
-                    StringBuilder body = new StringBuilder();
-                    try (BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) body.append(line);
-                    }
-                    mergeServerDirectory(body.toString());
-                    // 合并完成后对目录内设备补发单播探测，让对方回 ZWMDS2_HERE（P2P 自愈）
-                    unicastProbeServerPeers(socket);
-                    return;
-                } catch (Exception error) {
-                    boolean lastAttempt = attempt == 1;
-                    if (lastAttempt) {
-                        DiagnosticLog.write(this, "server_directory_failed", compact(error.getMessage()));
-                    } else {
-                        DiagnosticLog.write(this, "server_directory_retry", compact(error.getMessage()));
-                    }
-                } finally {
-                    if (conn != null) conn.disconnect();
                 }
+            } finally {
+                directoryInFlight.set(false);
             }
         });
+    }
+
+    /**
+     * 【DSH-197】手动地址连续失败 ⇒ 本次进程内停用它，让位给信标地址。
+     * 典型现场：电脑 DHCP 换了 IP，设置里手填的旧地址永远打不通，信标却一直是新的。
+     */
+    private void noteManualBaseFailure() {
+        manualFailStreak++;
+        if (manualFailStreak >= MANUAL_FAIL_LIMIT && !manualUrlSuspended) {
+            manualUrlSuspended = true;
+            DiagnosticLog.write(this, "manual_url_suspended", "streak=" + manualFailStreak);
+        }
     }
 
     /** 解析 /api/online/phones 的 devices[]，过滤自己与掉线设备，合并后广播刷新。 */

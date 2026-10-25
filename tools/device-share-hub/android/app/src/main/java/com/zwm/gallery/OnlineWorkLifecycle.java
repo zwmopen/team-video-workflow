@@ -126,7 +126,19 @@ public final class OnlineWorkLifecycle {
                 .edit().putString(KEY_RECORDS, arr.toString()).apply();
     }
 
-    /** 记录使用：首次使用打标并启动移入垃圾箱倒计时 */
+    /**
+     * 【2026-10-25 机制取消】「发送即归档 / 保留倒计时」整体停用。
+     *
+     * 用户口径：**发送就是发送** —— 手机端发送只记录次数，不再把作品从在线货架隐藏、
+     * 也不再按倒计时自动移入回收站。归档只发生在电脑端：电脑发送成功后把本地源文件
+     * 移入 `成品库/_已发送`（`_` 前缀 ⇒ 不参与扫描）。
+     *
+     * 保留这个开关而不是删代码：回收站「已使用」Tab、手动删除、恢复这些能力仍然可用；
+     * 只是不再有任何**自动**隐藏/搬家。将来若要恢复倒计时，把这里改回 false 即可。
+     */
+    public static final boolean AUTO_ARCHIVE_DISABLED = true;
+
+    /** 记录使用：首次使用打标（机制取消后不再启动移入垃圾箱倒计时） */
     public static synchronized Item markUsed(Context context, OnlineWorkEntry work, long nowMs) {
         List<Item> list = loadAll(context);
         Item existing = null;
@@ -137,12 +149,14 @@ public final class OnlineWorkLifecycle {
             }
         }
         if (existing == null) {
-            long firstShared = work.firstSharedAtMs > 0 ? work.firstSharedAtMs : nowMs;
+            long firstShared = AUTO_ARCHIVE_DISABLED
+                    ? 0L
+                    : (work.firstSharedAtMs > 0 ? work.firstSharedAtMs : nowMs);
             existing = new Item(work.id, work.title, work.destination, firstShared, 0,
                     Math.max(1, work.useCount + 1), work.images, work.copyText);
             list.add(existing);
         } else {
-            if (existing.firstSharedAtMs <= 0) {
+            if (!AUTO_ARCHIVE_DISABLED && existing.firstSharedAtMs <= 0) {
                 existing.firstSharedAtMs = work.firstSharedAtMs > 0 ? work.firstSharedAtMs : nowMs;
             }
             existing.useCount++;
@@ -173,8 +187,9 @@ public final class OnlineWorkLifecycle {
         return existing;
     }
 
-    /** DSH-140: 确保作品被记入回收站（到期时自动沉淀，避免手机端货架遗留） */
+    /** DSH-140: 确保作品被记入回收站（机制取消后不再自动沉淀） */
     public static synchronized void ensureTrashed(Context context, OnlineWorkEntry work, long expireAtMs) {
+        if (AUTO_ARCHIVE_DISABLED) return;   // 2026-10-25：发送就是发送，不再自动入回收站
         if (work == null || work.id == null || work.id.isEmpty()) return;
         List<Item> list = loadAll(context);
         Item existing = null;
@@ -205,7 +220,8 @@ public final class OnlineWorkLifecycle {
         for (Item it : list) {
             if (it.trashedAtMs > 0) {
                 trashed.add(it.id);
-            } else if (it.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= it.firstSharedAtMs + moveAfterMs) {
+            } else if (!AUTO_ARCHIVE_DISABLED && it.firstSharedAtMs > 0 && moveAfterMs >= 0
+                    && nowMs >= it.firstSharedAtMs + moveAfterMs) {
                 it.trashedAtMs = it.firstSharedAtMs + moveAfterMs;
                 trashed.add(it.id);
                 modified = true;
@@ -223,7 +239,8 @@ public final class OnlineWorkLifecycle {
         Item it = ITEM_MAP.get(workId);
         if (it != null) {
             if (it.trashedAtMs > 0) return true;
-            if (it.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= it.firstSharedAtMs + moveAfterMs) {
+            if (!AUTO_ARCHIVE_DISABLED && it.firstSharedAtMs > 0 && moveAfterMs >= 0
+                    && nowMs >= it.firstSharedAtMs + moveAfterMs) {
                 it.trashedAtMs = it.firstSharedAtMs + moveAfterMs;
                 saveAll(context, new ArrayList<>(MEMORY_CACHE));
                 return true;
@@ -251,7 +268,8 @@ public final class OnlineWorkLifecycle {
         for (Item item : list) {
             if (item.useCount <= 0) continue;
             if (item.trashedAtMs > 0) continue;
-            if (item.firstSharedAtMs > 0 && moveAfterMs >= 0 && nowMs >= item.firstSharedAtMs + moveAfterMs) {
+            if (!AUTO_ARCHIVE_DISABLED && item.firstSharedAtMs > 0 && moveAfterMs >= 0
+                    && nowMs >= item.firstSharedAtMs + moveAfterMs) {
                 // 倒计时结束：自动转入回收站（与本地作品同一种清理策略）
                 item.trashedAtMs = item.firstSharedAtMs + moveAfterMs;
                 modified = true;

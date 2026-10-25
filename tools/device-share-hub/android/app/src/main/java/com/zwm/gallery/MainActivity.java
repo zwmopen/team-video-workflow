@@ -256,7 +256,7 @@ public final class MainActivity extends Activity {
     // ---- 在线回收站（电脑端 45835）：已使用 / 已标记垃圾 双 Tab ----
     /** 是否正停靠在「在线回收站」页面（与本地回收站 showingTrash 互斥） */
     private boolean showingOnlineRecycle = false;
-    /** 当前 Tab：sent=已使用（_已发送1次） / garbage=已标记垃圾（_垃圾作品） */
+    /** 当前 Tab：sent=已使用（_已发送） / garbage=已标记垃圾（_垃圾作品） */
     private String onlineRecycleTab = "sent";
     private int onlineRecycleSentCount = 0;
     private int onlineRecycleGarbageCount = 0;
@@ -538,7 +538,7 @@ public final class MainActivity extends Activity {
             else {
                 // DSH-094：统一回收站入口。本地/在线模式都进 showTrash() —— 同一个屏幕，
                 // 在线模式进入后顶部会追加一个「💻 电脑端回收站 → 进入」按钮跳原 OnlineRecycle
-                // （双 Tab ↔ 已使用/已标记垃圾 ↔ 服务器侧 _已发送1次 + _垃圾作品）。
+                // （双 Tab ↔ 已使用/已标记垃圾 ↔ 服务器侧 _已发送 + _垃圾作品）。
                 toast("回收站");
                 showTrash();
             }
@@ -1053,7 +1053,7 @@ public final class MainActivity extends Activity {
         worksContainer.removeAllViews();
 
         // DSH-094：统一回收站入口 —— 在线模式进 showTrash 后顶部追加一个「💻 电脑端回收站」按钮
-        // 跳原 OnlineRecycle（_已发送1次 + _垃圾作品 的服务器侧双 Tab）。
+        // 跳原 OnlineRecycle（_已发送 + _垃圾作品 的服务器侧双 Tab）。
         // 本地模式直接进 trash 时不进这条（enteredTrashFromOnline 默认 false）。
         if (showingTrash && enteredTrashFromOnline) {
             worksContainer.addView(buildOnlineRecycleEntry(), margins(0, 0, 0, dp(10)));
@@ -4055,7 +4055,7 @@ public final class MainActivity extends Activity {
     // 在线回收站（电脑端 45835）：已使用 / 已标记垃圾 双 Tab
     // ------------------------------------------------------------------
     // 电脑端阶段库：
-    //   已使用   -> _已发送1次（微信公众号可发）  ：点过平台按钮、useCount>=1
+    //   已使用   -> _已发送  ：点过平台按钮、useCount>=1
     //   已标记垃圾 -> _垃圾作品（后续参考分析）   ：手机端点删除判定为垃圾，永久保留
     // 「恢复」两个 Tab 通用：移回「已发送0次」+ 次数归零 + 撤销垃圾标记。
     // ==================================================================
@@ -4135,7 +4135,7 @@ public final class MainActivity extends Activity {
         rightModeButton.setImageResource(R.drawable.ic_album_refresh);
         rightModeButton.setContentDescription("刷新在线回收站");
         headingText.setText("在线回收站");
-        footerNote.setText("♻️ 在线回收站：读取电脑端「_已发送1次」与「_垃圾作品」两个阶段库。"
+        footerNote.setText("♻️ 在线回收站：读取电脑端「_已发送」与「_垃圾作品」两个阶段库。"
                 + "点「恢复」即移回「已发送0次」并归零次数、撤销垃圾标记；垃圾样本库电脑端永久保留，不会自动清理。");
         worksContainer.removeAllViews();
         scannedCountText.setText("0");
@@ -4182,7 +4182,7 @@ public final class MainActivity extends Activity {
         if (onlineRecycleWorks.isEmpty()) {
             String emptyMsg = "garbage".equals(onlineRecycleTab)
                     ? "电脑端「_垃圾作品」暂为空\n手机端判定删除的作品会永久保留在这里，供后续参考分析"
-                    : "电脑端「_已发送1次」暂为空\n点过平台按钮的作品会自动进入这里";
+                    : "电脑端「_已发送」暂为空\n电脑端把文件发送到设备后会自动归档到这里";
             TextView empty = text(emptyMsg, 14, false);
             empty.setGravity(Gravity.CENTER);
             empty.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
@@ -4239,7 +4239,7 @@ public final class MainActivity extends Activity {
     // 与 recycleLocalTrashEntry 互为镜像。
     private View buildOnlineRecycleEntry() {
         Button btn = new Button(this);
-        btn.setText("💻 打开电脑端回收站（_已发送1次 + _垃圾作品）");
+        btn.setText("💻 打开电脑端回收站（_已发送 + _垃圾作品）");
         btn.setAllCaps(false);
         btn.setTextSize(13);
         btn.setTextColor(ThemePalette.getInfoBadgeText(MainActivity.this));

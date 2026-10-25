@@ -418,11 +418,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         updateFolderItemVisibility()
     }
 
-    /// DSH-097：folderItem 双模式可见 —— 本地模式进本地文件分发，在线模式进回收站（_已发送1次 + _垃圾作品 = DSH-095 统一入口）。
+    /// DSH-097：folderItem 双模式可见 —— 本地模式进本地文件分发，在线模式进回收站（_已发送 + _垃圾作品 = DSH-095 统一入口）。
     private func updateFolderItemVisibility() {
         folderItem?.customView?.isHidden = false
         folderItem?.accessibilityLabel = isOnlineMode
-            ? "在线模式：打开电脑端回收站（_已发送1次 + _垃圾作品）"
+            ? "在线模式：打开电脑端回收站（_已发送 + _垃圾作品）"
             : "本地模式：打开本地文件浏览"
     }
 
@@ -2198,7 +2198,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     @objc private func openTrash() {
         // DSH-094：统一回收站入口（与 Android 严格对齐）。本地/在线模式都进 TrashViewController
         // （同一屏：本地回收站条目 + OnlineWorkLifecycle 生命周期追踪的标记删除记录）；
-        // 电脑端回收站（_已发送1次 + _垃圾作品）通过 TrashView 顶部的「💻 打开电脑端回收站」按钮仍可达。
+        // 电脑端回收站（_已发送 + _垃圾作品）通过 TrashView 顶部的「💻 打开电脑端回收站」按钮仍可达。
         navigationController?.pushViewController(TrashViewController(library: library), animated: true)
     }
 

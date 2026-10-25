@@ -52,7 +52,7 @@ final class TrashViewController: UITableViewController {
         navigationItem.titleView = segmented
         let onlineRecycle = UIBarButtonItem(title: "💻 电脑回收站", style: .plain,
                                             target: self, action: #selector(openOnlineRecycle))
-        onlineRecycle.accessibilityLabel = "打开电脑端回收站（_已发送1次 + _垃圾作品）"
+        onlineRecycle.accessibilityLabel = "打开电脑端回收站（_已发送 + _垃圾作品）"
         let clearBtn = UIBarButtonItem(title: "清空", style: .plain,
                                        target: self, action: #selector(confirmClear))
         navigationItem.rightBarButtonItems = [onlineRecycle, clearBtn]
@@ -73,7 +73,7 @@ final class TrashViewController: UITableViewController {
 
     @objc private func openOnlineRecycle() {
         // DSH-095 v2：右上「💻 电脑回收站」按钮 —— push OnlineRecycleViewController
-        // （_已发送1次 + _垃圾作品 的服务器侧双 Tab），与 Android `showOnlineRecycle("sent")` 对称。
+        // （_已发送 + _垃圾作品 的服务器侧双 Tab），与 Android `showOnlineRecycle("sent")` 对称。
         navigationController?.pushViewController(OnlineRecycleViewController(library: library), animated: true)
     }
 

@@ -9,7 +9,8 @@ Online Gallery LAN Service for Device Share Hub & Mobile Gallery
 
 核心铁律：
 - 严格仅扫描「已发送0次（抖音小红书可发）」与根目录直出合法成品；
-- 彻底排除「已发送1次」、「已发送2次」及所有「_」或「.」开头的忽略目录；
+- 彻底排除「_已发送」、历史「已发送1次/2次」及所有「_」或「.」开头的忽略目录；
+- 「发送即归档」只由电脑端触发（发送成功后把本地源文件移入 `_已发送`）；手机端发送不搬家；
 - 电脑真源安全防护：手机端在线浏览与取用均不破坏电脑文件。
 """
 
@@ -824,6 +825,34 @@ DESTINATIONS = [
     "苏州", "杭州", "上海", "江浙沪"
 ]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+# 【2026-10-25 治本一】「发送即归档」的落点统一为 `_已发送`。
+# 规则（用户 10-25 明确定义）：
+#   1. 电脑端把文件发送到设备成功后，由电脑把**本地源文件**物理移到 `成品库/_已发送/`；
+#   2. 手机端发送就是发送，不计数、不排倒计时、不物理搬家；
+#   3. `_已发送` 以 `_` 开头 ⇒ 天然不参与扫描；不存在时服务启动自动创建。
+# 历史遗留名（`_已发送1次（微信公众号可发）` 等）继续列入忽略表，避免旧目录被扫进来。
+SENT_FOLDER = "_已发送"
+SENT_FOLDER_LEGACY = (
+    "_已发送1次（微信公众号可发）",
+    "已发送1次（微信公众号可发）",
+    "_已发送2次（其他平台可发）",
+    "已发送2次（其他平台可发）",
+    "已发送一次",
+)
+
+
+def ensure_sent_folder(root: str) -> str:
+    """确保 `成品库/_已发送` 存在（不存在就创建），返回其绝对路径。
+
+    只在服务启动/扫描时调用，失败不抛异常（只读盘、无网络时也不能拦住扫描）。
+    """
+    path = os.path.join(root, SENT_FOLDER)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception as exc:
+        print(f"[Warn] 创建「{SENT_FOLDER}」目录失败：{exc}")
+    return path
 
 # 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/` 子目录里。
 # 【2026-09-21 修】老实现只 os.listdir 看顶层 ⇒ 图在子目录的 103 套作品
@@ -1999,8 +2028,9 @@ class WorkScanner:
     """
 
     # 三个阶段库的物理目录名（与成品库实际结构一致）
+    # 【2026-10-25】阶段一目录更名为 `_已发送`：手机端不再触发归档，改由电脑端发送成功后搬运。
     STAGE0_FOLDER = "已发送0次（抖音小红书可发）"
-    STAGE1_FOLDER = "_已发送1次（微信公众号可发）"
+    STAGE1_FOLDER = SENT_FOLDER
     GARBAGE_FOLDER = "_垃圾作品样本"
     # 需要下钻一层的中间目录前缀（作品集/游戏类会在阶段库里再套一层）
     NESTED_PREFIXES = ("作品集", "团建游戏", "游戏", "游戏类")
@@ -2880,6 +2910,10 @@ class WorkScanner:
                 "_垃圾作品样本",
                 "发布空间", "待制作待补全", "抖音小红书"
             }
+            # 【2026-10-25】扫描前确保归档目录存在：用户要求「本地没有就创建一个」。
+            # `_` 前缀 ⇒ 自动被下面的开始字符过滤挡掉，不参与扫描。
+            ensure_sent_folder(self.root)
+
             try:
                 root_entries = os.listdir(self.root)
             except Exception as _e:
@@ -2992,6 +3026,7 @@ class WorkScanner:
                 return 0.0
 
         IGNORED_NAMES = {
+            SENT_FOLDER,
             "已发送1次（微信公众号可发）", "_已发送1次（微信公众号可发）",
             "_已发送一次", "已发送2次（其他平台可发）", "_已发送2次（其他平台可发）",
             "已废弃-负面样本库", "归档", "不合格成品", "temp", "cache", "scripts",
@@ -3136,8 +3171,12 @@ class WorkScanner:
             "rootDir": self.root,
         }
 
-    def move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str = "系统自动守护", action_type: str = "dispatched") -> Tuple[bool, str, str]:
-        """DSH-140: 将作品从货架目录物理移入「_已发送1次（微信公众号可发）」。"""
+    def move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str = "电脑端发送", action_type: str = "dispatched") -> Tuple[bool, str, str]:
+        """把作品从货架物理移入「_已发送」。
+
+        【2026-10-25 语义变更】归档只由**电脑端发送成功**触发；手机端 `/api/online/use-work`
+        已不再调用本方法（发送就是发送，不搬家）。
+        """
         src_path = target_work.get("path", "")
         if not src_path or not os.path.exists(src_path):
             return False, "", "原作品路径不存在"
@@ -3146,7 +3185,7 @@ class WorkScanner:
         work_id = target_work.get("id", "")
 
         root_dir = self.root
-        dest_base = os.path.join(root_dir, "_已发送1次（微信公众号可发）")
+        dest_base = os.path.join(root_dir, SENT_FOLDER)
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -3155,7 +3194,7 @@ class WorkScanner:
             target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
 
         if os.path.abspath(target_dest) == os.path.abspath(src_path):
-            return True, target_dest, "作品已位于「_已发送1次（微信公众号可发）」"
+            return True, target_dest, f"作品已位于「{SENT_FOLDER}」"
 
         move_err = None
         for attempt in range(3):
@@ -3183,7 +3222,7 @@ class WorkScanner:
 
         log_portfolio_move(root_dir, device_name, work_id, src_path, target_dest, use_count, action_type)
 
-        return True, target_dest, "已移入「_已发送1次（微信公众号可发）」"
+        return True, target_dest, f"已移入「{SENT_FOLDER}」"
 
     def cleanup_expired_works(self) -> List[Dict[str, Any]]:
         """DSH-140: 主动巡检货架上到期未下架的作品，自动移入回收站并清理软链接镜像。"""
@@ -3551,7 +3590,8 @@ class WorkScanner:
             "statusLabel": "已使用" if use_count_int > 0 else "",
             "dispatchedTo": (distribution.get("dispatchedTo") or []) if use_count_int > 0 else [],
             "firstSharedAtMs": int(distribution.get("firstSharedAtMs") or 0) if use_count_int > 0 else 0,
-            "expireAtMs": int(distribution.get("expireAtMs") or 0) if use_count_int > 0 else 0,
+            # 【2026-10-25】倒计时机制取消：恒 0 ⇒ 手机端不会再因「到期」隐藏任何作品
+            "expireAtMs": 0,
             "originDevice": str(distribution.get("originDevice") or "") if use_count_int > 0 else "",
             "dispatchedVersions": (distribution.get("dispatchedVersions") or []) if use_count_int > 0 else [],
             "imageCount": len(images),
@@ -4217,7 +4257,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.2",
+                "version": "1.2.3",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -5692,16 +5732,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             new_count = current_count + 1
             dist["useCount"] = new_count
 
-            # DSH-135 & DSH-139: 首发设备生命周期继承与防二次使用异常清空
+            # DSH-135 & DSH-139 生命周期机制【2026-10-25 取消】：
+            # 用户口径「发送就是发送」—— 手机端点平台按钮只做使用记录，
+            # 不再排首发倒计时、不再因为倒计时到期把作品从货架搬走。
+            # 保留字段仅用于历史统计展示，一律不再写入新的 expireAtMs。
             now_ms = int(time.time() * 1000)
-            retention_ms = req.get("retentionDurationMs")
-            if retention_ms is not None:
-                retention_duration_ms = max(0, int(retention_ms))
-            else:
-                retention_duration_ms = 0
+            retention_duration_ms = 0
 
-            # 判定作品当前是否已有活跃且未到期的首发倒计时
-            has_active_lifecycle = bool(dist.get("expireAtMs") and dist["expireAtMs"] > now_ms)
+            # 历史遗留倒计时不再继承（统一视为无生命周期），避免老作品继续被隐藏/搬走
+            has_active_lifecycle = False
 
             if not has_active_lifecycle:
                 # 之前没有活跃倒计时（或已过期）：仅当本次显式要求保留时长时，才开启倒计时
@@ -5755,23 +5794,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Warn] Failed to write usage log: {e}")
 
-            # DSH-135 & DSH-139: 核心业务规则加固：
-            # 1. 若显式声明 forceMove，则强制移动；
-            # 2. 若存在活跃且未到期的首发倒计时 (has_active_lifecycle == True)，绝对不移动！作品安稳留在货架上；
-            # 3. 仅当已到达过期时间 expireAtMs，才物理移库；
-            # 4. 若从始至终无任何保留时间配置且无 expireAtMs，才物理移动。
+            # 【2026-10-25 取消自动搬家】手机端发送后作品原地不动：
+            # 只有显式 forceMove（管理端/脚本）才搬；否则一律留在货架。
+            # 归档容器 `_已发送` 只由电脑端发送成功后搬运（见 windows-native/main.cpp）。
             moved = False
             target_dest_path = ""
             force_move = bool(req.get("forceMove", False))
-
-            if force_move:
-                should_move = True
-            elif has_active_lifecycle:
-                should_move = False
-            elif dist.get("expireAtMs"):
-                should_move = bool(now_ms >= dist["expireAtMs"])
-            else:
-                should_move = bool(retention_duration_ms <= 0)
+            should_move = bool(force_move)
 
             if should_move and new_count >= 1:
                 ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
@@ -5783,7 +5812,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     except Exception as _ce:
                         print(f"[Warn] 清理关联软链接失败: {_ce}")
 
-            msg = f"已成功记录第 {new_count} 次使用" + ("，电脑端已自动移入「_已发送1次」" if moved else "，保留在货架并已继承首发生命周期")
+            msg = f"已记录第 {new_count} 次使用" + ("，已移入「_已发送」" if moved else "，作品保留在货架（手机端发送不归档）")
 
             self.scanner.scan(force=True)
 
@@ -5797,7 +5826,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "message": msg,
                 "dispatchedTo": dispatched_list,
                 "firstSharedAtMs": dist.get("firstSharedAtMs", 0),
-                "expireAtMs": dist.get("expireAtMs", 0),
+                # 【2026-10-25】倒计时机制取消：恒回 0，手机端就不会再隐藏/归档任何作品
+                "expireAtMs": 0,
                 "originDevice": dist.get("originDevice", ""),
                 "dispatchedVersions": dist.get("dispatchedVersions", [])
             })

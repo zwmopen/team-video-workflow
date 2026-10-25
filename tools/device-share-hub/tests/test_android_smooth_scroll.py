@@ -139,8 +139,8 @@ class TestOffscreenThumbRecycle(unittest.TestCase):
 
     def test_version_bumped(self):
         src = _read(_GRADLE)
-        self.assertIn("versionCode = 233", src)
-        self.assertIn('versionName = "0.8.122"', src)
+        self.assertIn("versionCode = 237", src)
+        self.assertIn('versionName = "0.8.126"', src)
 
 
 if __name__ == "__main__":

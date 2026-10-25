@@ -44,7 +44,7 @@ class TestThumbScaledW(unittest.TestCase):
         self.assertIn('self.send_header("X-Thumb", thumb_mark)', self.src)
 
     def test_version_bumped(self):
-        self.assertIn('"version": "1.2.2"', self.src)
+        self.assertIn('"version": "1.2.3"', self.src)
         self.assertNotIn('"version": "1.2.1"', self.src)
 
 

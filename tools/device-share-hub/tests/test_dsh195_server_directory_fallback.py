@@ -169,5 +169,61 @@ class TestDSH196ShareModalFlow(unittest.TestCase):
         self.assertIn("for (int attempt = 0; attempt < 2; attempt++)", service)
 
 
+class TestDSH197SendArchive(unittest.TestCase):
+    """2026-10-25「发送即归档」改版：`_已发送` 单目录 + 电脑端搬运 + 手机端不归档。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = read(os.path.join(HUB_DIR, "scripts", "online_gallery_service.py"))
+        cls.main_cpp = read(os.path.join(HUB_DIR, "windows-native", "src", "main.cpp"))
+        cls.lifecycle = read(os.path.join(HUB_DIR, "android", "app", "src", "main", "java",
+                                          "com", "zwm", "gallery", "OnlineWorkLifecycle.java"))
+        cls.client = read(os.path.join(HUB_DIR, "android", "app", "src", "main", "java",
+                                       "com", "zwm", "gallery", "OnlineGalleryClient.java"))
+        cls.service = read(SERVICE)
+
+    def test_sent_folder_constant(self):
+        # 归档目录统一叫 `_已发送`（下划线前缀 ⇒ 不参与扫描），阶段一常量必须指向它
+        self.assertIn('SENT_FOLDER = "_已发送"', self.server)
+        self.assertIn("STAGE1_FOLDER = SENT_FOLDER", self.server)
+
+    def test_sent_folder_auto_created_and_ignored(self):
+        # 用户要求：本地没有这个目录就自动创建；同时必须列入忽略表
+        self.assertIn("def ensure_sent_folder(", self.server)
+        self.assertIn("os.makedirs(path, exist_ok=True)", self.server)
+        self.assertIn("ensure_sent_folder(self.root)", self.server)
+        self.assertIn("IGNORED_NAMES = {\n            SENT_FOLDER,", self.server)
+
+    def test_phone_send_never_archives(self):
+        # 「发送就是发送」：手机端 /use-work 不再物理搬家，也不再排倒计时
+        self.assertIn("should_move = bool(force_move)", self.server)
+        self.assertNotIn("elif has_active_lifecycle:", self.server)
+        self.assertIn('"expireAtMs": 0,', self.server)
+
+    def test_android_lifecycle_switch_off(self):
+        self.assertIn("AUTO_ARCHIVE_DISABLED = true", self.lifecycle)
+        self.assertIn("if (AUTO_ARCHIVE_DISABLED) return;", self.lifecycle)
+
+    def test_windows_archives_after_successful_send(self):
+        # 电脑端：发送成功后把本地源文件移到 `_已发送`
+        self.assertIn("void ArchiveSentPaths(", self.main_cpp)
+        self.assertIn('root / L"_已发送"', self.main_cpp)
+        self.assertIn("if (UploadToDevice(device, files, std::wstring(), true, false, false)) {",
+                      self.main_cpp)
+        # 批量发送必须整批发完再归档，避免后面的设备拿到空源
+        self.assertIn("if (anySucceeded) ArchiveSentPaths(files);", self.main_cpp)
+
+    def test_beacon_prefers_packet_source_ip(self):
+        # 电脑多网卡/换 IP 时会广播旧地址；收到的 UDP 包源地址一定可达
+        self.assertIn("preferPacketSource(", self.client)
+        self.assertIn("beacon_host_mismatch", self.client)
+
+    def test_directory_fetch_single_flight(self):
+        # 单线程池 + 10s 入队 + 单次最坏 24s ⇒ 会无界积压；必须单飞
+        self.assertIn("directoryInFlight.compareAndSet(false, true)", self.service)
+        self.assertIn("directoryInFlight.set(false);", self.service)
+        self.assertIn("manual_url_suspended", self.service)
+
+
 if __name__ == "__main__":
     unittest.main()

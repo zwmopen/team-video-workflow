@@ -401,7 +401,13 @@ public final class OnlineGalleryClient {
                         String text = new String(pkt.getData(), 0, pkt.getLength(), StandardCharsets.UTF_8);
                         String url = parseBeaconUrl(text);
                         if (url != null && !url.isEmpty()) {
-                            applyBeaconUrl(url, onAddressChanged);
+                            // 【DSH-197】多网卡 / 地址漂移加固：电脑广播的是自己缓存的
+                            // 「主网卡」地址，实测出现过自报 .107、而实际能连通的是 .101
+                            // （DHCP 换址后日志仍是旧值）。收到包的源 IP 一定可达，
+                            // 所以载荷 host 与包源 IP 不一致时，用包源 IP 重建 URL。
+                            String sender = pkt.getAddress() != null
+                                    ? pkt.getAddress().getHostAddress() : null;
+                            applyBeaconUrl(preferPacketSource(url, sender), onAddressChanged);
                         }
                     } catch (SocketTimeoutException te) {
                         idleRounds++;
@@ -460,6 +466,45 @@ public final class OnlineGalleryClient {
                     mainHandler.post(onAddressChanged);
                 }
             }
+        }
+    }
+
+    /**
+     * 【DSH-197】把信标 URL 里的 host 换成「实际发包的源 IP」。
+     *
+     * 背景：电脑端信标载荷里的地址来自 `get_local_ip()`，多网卡/换网/换 DHCP 时
+     * 可能指向一张并不在服务的网卡（实测：日志自报 192.168.0.107，实际可服务的是 .101），
+     * 手机照着旧地址拉目录必然超时 ⇒ 在线设备列表长期为空。
+     * 收到的 UDP 包源地址一定可达，所以载荷 host 与包源不一致且同为私网时，以包源为准。
+     */
+    private String preferPacketSource(String url, String sender) {
+        if (url == null || sender == null || sender.isEmpty()) return url;
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            String host = uri.getHost();
+            if (host == null || host.isEmpty() || host.equals(sender)) return url;
+            if (!isPrivateIPv4(host)) return url;   // 域名 / 公网（远程中继）地址保持原样
+            int port = uri.getPort() > 0 ? uri.getPort() : DEFAULT_PC_PORT;
+            DiagnosticLog.write(context, "beacon_host_mismatch",
+                    "payload=" + host + " sender=" + sender);
+            return "http://" + sender + ":" + port;
+        } catch (Exception ignored) {
+            return url;
+        }
+    }
+
+    /** 仅 10/172.16-31/192.168 三类私网地址才算「局域网内可替换」 */
+    private static boolean isPrivateIPv4(String host) {
+        String[] parts = host.split("\\.");
+        if (parts.length != 4) return false;
+        try {
+            int a = Integer.parseInt(parts[0]);
+            int b = Integer.parseInt(parts[1]);
+            if (a == 10) return true;
+            if (a == 172 && b >= 16 && b <= 31) return true;
+            return a == 192 && b == 168;
+        } catch (NumberFormatException error) {
+            return false;
         }
     }
 
@@ -1304,7 +1349,7 @@ public final class OnlineGalleryClient {
     }
 
     // ------------------------------------------------------------------
-    // 在线回收站：已使用（_已发送1次）/ 已标记垃圾（_垃圾作品）
+    // 在线回收站：已使用（_已发送）/ 已标记垃圾（_垃圾作品）
     // ------------------------------------------------------------------
 
     public static class RecycleResult {

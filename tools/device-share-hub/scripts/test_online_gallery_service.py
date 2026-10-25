@@ -186,32 +186,23 @@ class TestOnlineGalleryService(unittest.TestCase):
             self.assertNotIn(private_value, timing_line)
 
     def test_two_uses_protection_rule(self):
-        """首次使用后：计数 +1、物理移入「_已发送1次」、stage0 视角剩余次数归零。
+        """DSH-197 新契约「发送就是发送」：手机端使用只计数，不物理搬家、不排倒计时。
 
-        ⚠️ 本用例长期红灯，原因不是实现坏了，而是**它还在断言已经被替换掉的旧业务规则**：
-          旧规则（此断言写就时）：首次使用「不移动」，remainingUses=1
-          现行规则（代码注释标注为「核心业务铁律」）：只要手机端使用过一次，
-          电脑后台就**物理移入**「_已发送1次（微信公众号可发）」，因此 stage0 视角
-          remainingUses=0、moved=True。
-        长期红的套件会训练人无视红色 —— 本身就是一种坏闸门。这里改为断言现行规则。
-
-        另外：本用例会**真的移动目录**（共享扫描根），必须自带清理，
-        否则按字母序后跑的 test_works_search_and_filter 会搜不到作品而误报失败
-        （这正是它此前失败的第二个原因：用例之间互相污染）。
+        历史（DSH-140 起）是「首次使用即移入 _已发送1次」；2026-10-25 用户明确取消该机制：
+        归档只由电脑端发送成功后执行（Windows ArchiveSentPaths），手机端一条都不搬。
         """
-        work_id = "20260918_110000_安吉2天1夜秋季团建保护规则"
-        work_dir = os.path.join(self.stage0, work_id)
+        work_id = "20260930_保护规则测试作品"
+        work_dir = os.path.join(self.temp_dir, "已发送0次（抖音小红书可发）", work_id)
         os.makedirs(work_dir, exist_ok=True)
-        with open(os.path.join(work_dir, "P1_封面.png"), "wb") as f:
-            f.write(PNG_1PX)
+        os.makedirs(os.path.join(work_dir, "产出素材"), exist_ok=True)
         with open(os.path.join(work_dir, "文案.txt"), "w", encoding="utf-8") as f:
-            f.write("安吉秋日团建攻略：HR直接抄作业！请确保两次分发保护规则生效。")
+            f.write("国庆团建攻略：适合 20-40 人两天一夜，含烧烤与篝火晚会。")
+        with open(os.path.join(work_dir, "产出素材", "P1.png"), "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 64)   # 占位图，测试不解析像素
 
         def _cleanup():
-            shutil.rmtree(work_dir, ignore_errors=True)
-            for base in (os.path.join(self.temp_dir, "_已发送1次（微信公众号可发）"),
-                         os.path.join(self.temp_dir, "已发送1次（微信公众号可发）"),
-                         os.path.join(self.temp_dir, "_垃圾作品（后续参考分析）"),
+            for base in (os.path.join(self.temp_dir, "已发送0次（抖音小红书可发）"),
+                         os.path.join(self.temp_dir, "_已发送"),
                          os.path.join(self.temp_dir, "_不合格成品合集")):
                 if not os.path.isdir(base):
                     continue
@@ -224,67 +215,59 @@ class TestOnlineGalleryService(unittest.TestCase):
                 pass
         self.addCleanup(_cleanup)
 
-        # 新建的目录必须让扫描器重新扫一次，否则 get_work 在 5s 缓存里找不到它
         self.scanner.scan(force=True)
-
         url = f"http://127.0.0.1:{self.port}/api/online/use-work"
         req_data = json.dumps({
             "workId": work_id,
             "device": "红米 13C 5G",
-            "platform": "小红书"
+            "platform": "小红书",
+            "retentionDurationMs": 3600000,
         }).encode("utf-8")
         req = urllib.request.Request(url, data=req_data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data["ok"])
             self.assertEqual(data["useCount"], 1)
-            # stage0 视角：作品已被移出，剩余次数为 0（现行铁律）
-            self.assertEqual(data["remainingUses"], 0)
-            self.assertTrue(data["moved"], "现行规则是首次使用即物理移入 _已发送1次")
-            self.assertTrue(data["targetPath"], "移动成功必须回报落点路径，否则无从核对")
+            self.assertFalse(data["moved"], "手机端使用不得物理搬家（新契约）")
+            self.assertEqual(data["targetPath"], "")
+            self.assertEqual(data["expireAtMs"], 0, "倒计时机制已取消，必须恒回 0")
+            self.assertEqual(data["firstSharedAtMs"], 0, "不再记录首发起始时间")
 
-        # 已从 stage0 移出（这是现行铁律的物理证据）
-        self.assertFalse(os.path.exists(work_dir),
-                         "首次使用后作品应已物理移出 stage0")
+        # 物理证据：作品仍在原货架，归档区没有同名副本
+        self.assertTrue(os.path.exists(work_dir), "首次使用后作品必须原地不动")
+        sent_dir = os.path.join(self.temp_dir, "_已发送")
+        if os.path.isdir(sent_dir):
+            self.assertFalse(any(work_id in n for n in os.listdir(sent_dir)),
+                             "手机端使用不得产生 _已发送 副本")
 
-        # 标签文件随作品一起被搬走，且计数已落盘
-        moved_dir = data["targetPath"]
-        tag_file = os.path.join(moved_dir, "作品标签.json")
-        self.assertTrue(os.path.exists(tag_file), f"移动后的目录里没有标签文件：{moved_dir}")
+        # 计数与分发记录照常落盘
+        tag_file = os.path.join(work_dir, "作品标签.json")
+        self.assertTrue(os.path.exists(tag_file), "计数必须落盘到作品标签.json")
         with open(tag_file, "r", encoding="utf-8") as fp:
             tags = json.load(fp)
-            self.assertEqual(tags["distribution"]["useCount"], 1)
-            self.assertTrue(any("红米 13C 5G" in r for r in tags["distribution"]["dispatchedTo"]))
+        self.assertEqual(tags["distribution"]["useCount"], 1)
+        self.assertTrue(any("红米 13C 5G" in r for r in tags["distribution"]["dispatchedTo"]))
 
-        # ── 第二次使用（1 -> 2）──
+        # ── 第二次使用（1 -> 2）：依旧原地不动 ──
         req_data2 = json.dumps({
             "workId": work_id,
             "device": "华为 P30",
-            "platform": "抖音"
+            "platform": "抖音",
         }).encode("utf-8")
         req2 = urllib.request.Request(url, data=req_data2, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req2) as resp:
             data2 = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data2["ok"])
-            self.assertEqual(data2["useCount"], 2, "同一作品可用两次（小红书 + 公众号/抖音）")
-            self.assertEqual(data2["remainingUses"], 0)
-            # _move_work_to_stage1 对已在目标位置的目录是**幂等**的：
-            # 返回 (True, 同路径, "作品已位于…")。所以 moved=True 表示「已就位」，
-            # 不代表又挪了一次 —— 真正该守的不变量是「没有产生重复目录」。
-            self.assertTrue(data2["moved"])
-            self.assertEqual(os.path.abspath(data2["targetPath"]),
-                             os.path.abspath(moved_dir),
-                             "第二次使用不得产生新的目标目录（移动必须幂等）")
+            self.assertEqual(data2["useCount"], 2, "同一作品可多次使用（小红书 + 抖音）")
+            self.assertFalse(data2["moved"], "第二次使用同样不得搬家")
+            self.assertEqual(data2["expireAtMs"], 0)
 
-        dup = [n for n in os.listdir(os.path.join(self.temp_dir, "_已发送1次（微信公众号可发）"))
-               if work_id in n]
-        self.assertEqual(len(dup), 1, f"「_已发送1次」下出现了重复目录：{dup}")
-
-        # 第二次使用同样必须落盘（不能再被当成 1 次）
+        self.assertTrue(os.path.exists(work_dir), "第二次使用后作品仍须原地不动")
         with open(tag_file, "r", encoding="utf-8") as fp:
             tags2 = json.load(fp)
         self.assertEqual(tags2["distribution"]["useCount"], 2)
         self.assertTrue(any("华为 P30" in r for r in tags2["distribution"]["dispatchedTo"]))
+
 
     # ===== 体感加速：传输瘦身 + gzip 守卫（第二十一节要求：还原-失败证明） =====
 
@@ -1530,10 +1513,9 @@ class TestDsh135LifecycleInheritance(unittest.TestCase):
             data = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data["ok"])
             self.assertEqual(data["useCount"], 1)
-            self.assertFalse(data["moved"], "配置了保留时长时未到期绝不提前移库")
-            self.assertGreater(data["firstSharedAtMs"], 0)
-            self.assertGreater(data["expireAtMs"], data["firstSharedAtMs"])
-            self.assertEqual(data["originDevice"], "VIVO X100")
+            self.assertFalse(data["moved"], "手机端使用不得物理搬家")
+            self.assertEqual(data["expireAtMs"], 0, "倒计时已取消，恒回 0")
+            self.assertEqual(data["firstSharedAtMs"], 0, "不再记录首发起始时间")
             self.assertIn("红书种草", data["dispatchedVersions"])
 
         # 作品物理本体依然在原货架，未被过早移走
@@ -1547,7 +1529,7 @@ class TestDsh135LifecycleInheritance(unittest.TestCase):
             target = next((w for w in works if w["id"] == "20260929_DSH135测试作品"), None)
             self.assertIsNotNone(target, "作品应仍留在货架可见")
             self.assertEqual(target["useCount"], 1)
-            self.assertEqual(target["originDevice"], "VIVO X100")
+            self.assertEqual(target["expireAtMs"], 0)
             self.assertIn("红书种草", target["dispatchedVersions"])
 
     def test_dsh139_secondary_device_does_not_kill_countdown(self):
@@ -1566,10 +1548,8 @@ class TestDsh135LifecycleInheritance(unittest.TestCase):
         with urllib.request.urlopen(urllib.request.Request(url, data=req_a, headers={"Content-Type": "application/json"})) as resp:
             data_a = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data_a["ok"])
-            first_expire = data_a["expireAtMs"]
-            first_shared = data_a["firstSharedAtMs"]
             self.assertFalse(data_a["moved"])
-            self.assertEqual(data_a["originDevice"], "Device_A_Redmi")
+            self.assertEqual(data_a["expireAtMs"], 0, "倒计时已取消")
 
         # 2. 设备 B 随后使用该作品，且不传 retentionDurationMs（或传其它时长）
         req_b = json.dumps({
@@ -1583,10 +1563,8 @@ class TestDsh135LifecycleInheritance(unittest.TestCase):
             data_b = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data_b["ok"])
             self.assertEqual(data_b["useCount"], 2)
-            self.assertFalse(data_b["moved"], "设备 B 使用不应过早移库，需保留设备 A 的倒计时")
-            self.assertEqual(data_b["expireAtMs"], first_expire, "倒计时过期时间戳必须完全锁定，不得被设备 B 清空或重置")
-            self.assertEqual(data_b["firstSharedAtMs"], first_shared, "首次分发时间戳必须锁定")
-            self.assertEqual(data_b["originDevice"], "Device_A_Redmi", "首发设备归属仍为设备 A")
+            self.assertFalse(data_b["moved"], "设备 B 使用同样不搬家")
+            self.assertEqual(data_b["expireAtMs"], 0, "倒计时已取消，恒 0")
             self.assertIn("红书种草", data_b["dispatchedVersions"])
             self.assertIn("抖音探店", data_b["dispatchedVersions"])
 

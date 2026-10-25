@@ -2,7 +2,7 @@ import UIKit
 
 // ==================================================================
 // 在线回收站（与 Android 严格对齐）
-//   已使用     -> 电脑端「_已发送1次（微信公众号可发）」
+//   已使用     -> 电脑端「_已发送」
 //   已标记垃圾 -> 电脑端「_垃圾作品（后续参考分析）」，永久保留、绝不自动清理
 //
 // 「恢复」两个 Tab 通用：移回「已发送0次」+ 次数归零 + 撤销垃圾标记。
@@ -154,7 +154,7 @@ final class OnlineRecycleViewController: UITableViewController {
             label.textColor = AppColors.secondaryText
             label.text = currentTab == .garbage
                 ? "电脑端「_垃圾作品」暂为空\n\n手机端判定删除的作品会永久保留在这里，供后续参考分析。"
-                : "电脑端「_已发送1次」暂为空\n\n点过平台按钮的作品会自动进入这里。"
+                : "电脑端「_已发送」暂为空\n\n电脑端把文件发送到设备后会自动归档到这里。"
             tableView.backgroundView = label
         } else {
             tableView.backgroundView = nil

@@ -120,7 +120,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.33";
+constexpr wchar_t APP_VERSION[] = L"4.3.34";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -2327,6 +2327,95 @@ void SyncWindowsClipboard() {
     BroadcastClipboardText(text, messageId, WindowsDeviceId(), 4, {});
 }
 
+// 【2026-10-25 发送即归档】电脑端把文件成功发到设备后，把**本地源条目**物理移入
+// `成品库\_已发送\`（`_` 前缀 ⇒ 不参与在线相册扫描，手机端也看不到）。
+// 规则：
+//   1. 只处理成品库根目录之下的条目；库外文件（桌面、下载目录…）一律不动，只记诊断；
+//   2. 已在 `_已发送` 里的不重复搬；
+//   3. 批量发多台设备时，必须等整批都发完再调用，否则后面的设备会拿到空源；
+//   4. 任何失败只记诊断日志 + 状态栏提示，绝不影响发送结果本身。
+void ArchiveSentPaths(const std::vector<std::filesystem::path>& paths) {
+    if (paths.empty()) return;
+    const std::wstring rootText = gOnlineStatus.libraryRoot;
+    if (rootText.empty()) {
+        WriteDiagnosticLog(L"sent_archive_skipped",
+                           L"libraryRoot 为空，未归档 " + std::to_wstring(paths.size()) + L" 项");
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::weakly_canonical(std::filesystem::path(rootText), ec);
+    if (ec || !std::filesystem::is_directory(root, ec)) {
+        WriteDiagnosticLog(L"sent_archive_skipped", L"libraryRoot 不可用：" + rootText);
+        return;
+    }
+    const std::filesystem::path sentDir = root / L"_已发送";
+    std::filesystem::create_directories(sentDir, ec);
+    if (ec) {
+        WriteDiagnosticLog(L"sent_archive_failed", L"创建 _已发送 失败：" + Utf8ToWide(ec.message()));
+        return;
+    }
+    int moved = 0;
+    int skipped = 0;
+    for (const auto& path : paths) {
+        std::error_code itemEc;
+        std::filesystem::path source = std::filesystem::weakly_canonical(path, itemEc);
+        if (itemEc || !std::filesystem::exists(source, itemEc)) { ++skipped; continue; }
+        auto relative = source.lexically_relative(root);
+        if (source == root || relative.empty()) { ++skipped; continue; }
+        // 库外（以 .. 开头）或已在归档区 ⇒ 不动
+        if (relative.wstring().rfind(L"..", 0) == 0) { ++skipped; continue; }
+        if (relative.wstring().rfind(L"_已发送", 0) == 0) { ++skipped; continue; }
+        // 保护：作品内部的单个文件不搬（把 P1.png 抽走会拆坏作品）；只搬目录，
+        // 或「货架级」散文件（深度 ≤ 2，如 成品库/上海成品/封面.png）
+        std::error_code typeEc;
+        if (std::filesystem::is_regular_file(source, typeEc)) {
+            int depth = 0;
+            for (const auto& part : relative) { (void)part; ++depth; }
+            if (depth > 2) {
+                WriteDiagnosticLog(L"sent_archive_skip_nested", source.wstring());
+                ++skipped;
+                continue;
+            }
+        }
+        std::filesystem::path target = sentDir / source.filename();
+        if (std::filesystem::exists(target, itemEc)) {
+            target = sentDir / (source.filename().wstring() + L"_"
+                                + std::to_wstring(GetTickCount64() % 100000));
+        }
+        std::error_code moveEc;
+        std::filesystem::rename(source, target, moveEc);
+        if (moveEc) {
+            // 跨卷/占用：退回「复制后删源」
+            std::error_code copyEc;
+            std::filesystem::copy(source, target,
+                                  std::filesystem::copy_options::recursive
+                                      | std::filesystem::copy_options::overwrite_existing,
+                                  copyEc);
+            if (!copyEc) {
+                std::error_code removeEc;
+                std::filesystem::remove_all(source, removeEc);
+                moveEc = removeEc;
+            } else {
+                moveEc = copyEc;
+            }
+        }
+        if (moveEc) {
+            WriteDiagnosticLog(L"sent_archive_failed",
+                               source.wstring() + L" -> " + target.wstring() + L" : " + Utf8ToWide(moveEc.message()));
+        } else {
+            ++moved;
+            WriteDiagnosticLog(L"sent_archived", source.wstring() + L" -> " + target.wstring());
+        }
+    }
+    if (moved > 0) {
+        PostStatus(L"已发送，其中 " + std::to_wstring(moved) + L" 项已移入「_已发送」");
+        WriteDiagnosticLog(L"sent_archive_done",
+                           L"moved=" + std::to_wstring(moved) + L" skipped=" + std::to_wstring(skipped));
+    } else {
+        WriteDiagnosticLog(L"sent_archive_none", L"skipped=" + std::to_wstring(skipped));
+    }
+}
+
 bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std::wstring caption,
                     bool checkHistory, bool /*notifyCompletion*/, bool androidUpdate) {
     std::wstring taskId = NewTaskId();
@@ -2644,7 +2733,11 @@ void ProcessPendingShellSend() {
     gShellTransferActive = true;
     ShowShellProgress(L"正在发送到“" + device.name + L"”…", 0, true);
     PostStatus(L"准备发送到“" + device.name + L"”…");
-    std::thread(UploadToDevice, device, std::move(paths), std::wstring(), false, true, false).detach();
+    std::thread([device, paths = std::move(paths)]() mutable {
+        if (UploadToDevice(device, paths, std::wstring(), false, true, false)) {
+            ArchiveSentPaths(paths);
+        }
+    }).detach();
 }
 
 void SyncSendToMenu(const std::vector<Device>& devices,
@@ -3565,7 +3658,12 @@ void HandleDrop(HDROP drop) {
         return;
     }
     Device device = gDisplayedDevices[static_cast<size_t>(index)];
-    std::thread(UploadToDevice, device, std::move(files), std::wstring(), true, false, false).detach();
+    // 【2026-10-25】发送成功才归档：失败的话源文件必须留在原地
+    std::thread([device, files = std::move(files)]() mutable {
+        if (UploadToDevice(device, files, std::wstring(), true, false, false)) {
+            ArchiveSentPaths(files);
+        }
+    }).detach();
 }
 
 void DrawActionButton(const DRAWITEMSTRUCT* item) {
@@ -4861,7 +4959,12 @@ void SendSelectedLibraryItem() {
     }
     std::vector<std::filesystem::path> files{*source};
     if (devices.size() == 1) {
-        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false, false).detach();
+        Device target = devices[0];
+        std::thread([target, files = std::move(files)]() mutable {
+            if (UploadToDevice(target, files, std::wstring(), true, false, false)) {
+                ArchiveSentPaths(files);
+            }
+        }).detach();
         return;
     }
     std::wstring confirmMsg = L"将把选中的内容发送到以下 " + std::to_wstring(devices.size()) + L" 台设备：\n\n";
@@ -4874,14 +4977,17 @@ void SendSelectedLibraryItem() {
     gQueueTotal = devices.size();
     gQueueIndex = 0;
     std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
+        bool anySucceeded = false;
         for (size_t i = 0; i < devices.size(); ++i) {
             gQueueIndex = i + 1;
             PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
                        + L"：正在发送到“" + devices[i].name + L"”…");
-            UploadToDevice(devices[i], files, std::wstring(), true, false, false);
+            if (UploadToDevice(devices[i], files, std::wstring(), true, false, false)) anySucceeded = true;
         }
         gQueueTotal = 0;
         gQueueIndex = 0;
+        // 整批发完再归档，避免中途把源文件搬走导致后面的设备发空
+        if (anySucceeded) ArchiveSentPaths(files);
         PostStatus(L"批量传送完成，共 " + std::to_wstring(devices.size()) + L" 台设备。");
     }).detach();
 }
@@ -4980,7 +5086,12 @@ void ChooseAndSend(bool folder) {
     if (devices.empty()) { MessageBoxW(gWindow, L"请先选择至少一台在线设备。\n提示：可点选多台设备进行批量发送。", L"相册投送", MB_OK | MB_ICONINFORMATION); return; }
     auto files = PickPaths(folder); if (files.empty()) return;
     if (devices.size() == 1) {
-        std::thread(UploadToDevice, devices[0], std::move(files), std::wstring(), true, false, false).detach();
+        Device target = devices[0];
+        std::thread([target, files = std::move(files)]() mutable {
+            if (UploadToDevice(target, files, std::wstring(), true, false, false)) {
+                ArchiveSentPaths(files);
+            }
+        }).detach();
         return;
     }
     std::wstring confirmMsg = L"将把选中的文件发送到 " + std::to_wstring(devices.size()) + L" 台设备，确认？";
@@ -4988,14 +5099,17 @@ void ChooseAndSend(bool folder) {
     gQueueTotal = devices.size();
     gQueueIndex = 0;
     std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
+        bool anySucceeded = false;
         for (size_t i = 0; i < devices.size(); ++i) {
             gQueueIndex = i + 1;
             PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
                        + L"：正在发送到“" + devices[i].name + L"”…");
-            UploadToDevice(devices[i], files, std::wstring(), true, false, false);
+            if (UploadToDevice(devices[i], files, std::wstring(), true, false, false)) anySucceeded = true;
         }
         gQueueTotal = 0;
         gQueueIndex = 0;
+        // 整批发完再归档，避免中途把源文件搬走导致后面的设备发空
+        if (anySucceeded) ArchiveSentPaths(files);
         PostStatus(L"批量传送完成，共 " + std::to_wstring(devices.size()) + L" 台设备。");
     }).detach();
 }

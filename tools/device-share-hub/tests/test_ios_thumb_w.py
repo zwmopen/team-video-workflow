@@ -34,8 +34,8 @@ class TestIosThumbW(unittest.TestCase):
         self.assertIn('URLQueryItem(name: "w", value: String(serverWidth ?? 1600))', self.src)
 
     def test_version_bumped(self):
-        self.assertIn("CURRENT_PROJECT_VERSION: 232", self.proj)
-        self.assertIn("MARKETING_VERSION: 0.8.121", self.proj)
+        self.assertIn("CURRENT_PROJECT_VERSION: 234", self.proj)
+        self.assertIn("MARKETING_VERSION: 0.8.123", self.proj)
 
 
 if __name__ == "__main__":
