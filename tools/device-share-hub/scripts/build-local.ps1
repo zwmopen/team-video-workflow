@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
     [switch]$WindowsOnly,
-    [switch]$AndroidOnly
+    [switch]$AndroidOnly,
+    [string]$ReleaseNotes = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -183,6 +184,23 @@ function Build-Android {
         file_name = $apkName
         sha256 = $hash
     } | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $out 'android-release-metadata.json')
+    # DSH-195：online_gallery_service 的局域网更新中转读的是 local_latest.json，
+    # 不是 android-release-metadata.json。这个文件以前靠手工同步，腐烂过
+    # （停在 0.8.122/233 而 out/ 里已是 0.8.124/235，中转一直供旧包）⇒ 构建时一并写掉。
+    # 用 WriteAllText + UTF8Encoding($false)：lan_update_server.py 以 utf-8 读，BOM 会炸 json.loads。
+    $localLatest = [ordered]@{
+        version_name = $versionName
+        version_code = $versionCode
+        versionName = $versionName
+        versionCode = $versionCode
+        tag_name = "v$versionName"
+        apk_url = '/download/apk'
+        sha256 = $hash
+        size = (Get-Item -LiteralPath $publishedApk).Length
+        notes = $(if ($ReleaseNotes) { $ReleaseNotes } else { "v$versionName 本地构建（build-local.ps1 自动生成）" })
+        local_apk_path = $publishedApk.Replace('\', '/')
+    } | ConvertTo-Json
+    [System.IO.File]::WriteAllText((Join-Path $out 'local_latest.json'), $localLatest, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "Android 构建、单测、Lint、APK 权限/签名安全检查已通过：$versionName / $versionCode。"
 
     if ($stageRoot) {

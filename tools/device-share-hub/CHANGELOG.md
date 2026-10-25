@@ -10,6 +10,8 @@
   - 两端都过滤「自己」（deviceId/本机 IP）与掉线设备（服务端 lastSeen 超 150s）；空态文案补充「保持电脑端在线相册服务运行，列表会经电脑中转发现」。
 - **兼容性**：服务端无改动（`/api/online/phones` 已存在）；旧版本 App 行为不变；UDP 广播正常的网络下两条通路并存，UDP 信息优先。
 - **测试**：新增 `tests/test_dsh195_server_directory_fallback.py`（7 项）、`tests/test_ios_dsh195_server_directory.py`（5 项）全过。
+- **iOS 编译修复（commit `48af59f`，同日追加）**：run 40155789279 `ios-altstore-build` 失败，全模块唯一 error 在 `IncomingTransferService.swift:205` —— `NotificationCenter.addObserver(forName:object:queue:)` 的 `queue` 参数要 `OperationQueue`，误传本类 `DispatchQueue`（iOS 无本地编译环境，只能靠 CI 暴露）。改 `.main`（该通知本就由 `TransferViewController.reloadPeers()` 主线程投递）。版本号不动：0.8.122/233 从未成功发布过，本次即首发。run 40156698991 全绿，IPA sha256 校验 + 内部 Info.plist 回读 0.8.122/233 通过。
+- **附带修复：local_latest.json 腐烂导致更新中转供旧包（同日追加）**：`online_gallery_service._read_local_update_manifest()` 读 `android/out/local_latest.json`，该文件 10-23 起停在 0.8.122/233（且指向的旧 APK 还在、校验能过），而 `build-local.ps1` 只写 `android-release-metadata.json` ⇒ 45835 中转一直供 0.8.122。已把数据文件更正为 0.8.124/235，并给 `build-local.ps1` 打补丁：构建时一并写 `local_latest.json`（UTF-8 无 BOM —— `lan_update_server.py` 以 utf-8 读，BOM 会炸 `json.loads`），新增 `-ReleaseNotes` 参数。回归测试 3 项并入 `test_dsh195_server_directory_fallback.py`（共 11 项全过）。
 - **影响文档**：本文件、`docs/BUG_LEDGER.md`、新增上述 2 个测试文件。
 
 # 2026-10-23 DSH-194：在线列表「丝滑」专项 —— 缩略图按需尺寸 + 增量加载 + 自动加载 + 离屏回收（Android 0.8.122/233 · iOS 0.8.121/232 · 服务端 1.2.2）

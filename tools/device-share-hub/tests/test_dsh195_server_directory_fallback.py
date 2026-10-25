@@ -71,5 +71,32 @@ class TestDSH195ServerDirectoryFallback(unittest.TestCase):
         self.assertIn("中转", self.share)
 
 
+class TestBuildScriptWritesLocalLatest(unittest.TestCase):
+    """DSH-195 附带修复：local_latest.json 腐烂导致局域网更新中转供旧包。
+
+    事实链（2026-10-25 实测）：online_gallery_service 的 _read_local_update_manifest()
+    读 android/out/local_latest.json；该文件 10-23 起停在 0.8.122/233（指向的旧 APK 还在，
+    校验能过），而 build-local.ps1 只写 android-release-metadata.json ⇒ 中转一直供 0.8.122。
+    修法：构建时一并写 local_latest.json（无 BOM，lan_update_server 用 utf-8 读）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.build = read(os.path.join(HUB_DIR, "scripts", "build-local.ps1"))
+        cls.service = read(os.path.join(HUB_DIR, "scripts", "online_gallery_service.py"))
+
+    def test_build_script_writes_local_latest(self):
+        self.assertIn("local_latest.json", self.build)
+        self.assertIn("local_apk_path", self.build)
+
+    def test_build_script_writes_utf8_no_bom(self):
+        # lan_update_server.py 以 utf-8 读 local_latest.json，BOM 会炸 json.loads
+        self.assertIn("UTF8Encoding($false)", self.build.replace(" ", ""))
+
+    def test_service_reads_local_latest(self):
+        self.assertIn("LOCAL_LATEST_JSON", self.service)
+        self.assertIn("_read_local_update_manifest", self.service)
+
+
 if __name__ == "__main__":
     unittest.main()
