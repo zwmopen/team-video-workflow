@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.view.View;
@@ -244,6 +245,10 @@ public final class ThemePalette {
         int bg = getBgPrimary(activity);
         Window window = activity.getWindow();
         if (window == null) return;
+        // DSH-196：AppTheme 继承 Theme.Material.Light，窗口背景默认白色。
+        // 内容没充满屏幕时（ScrollView 过短、加载中的空隙）会露出白色窗口底，
+        // 深色模式下就是用户反馈的「一黑一白」。这里统一把窗口背景涂成主题背景色。
+        window.setBackgroundDrawable(new ColorDrawable(bg));
         window.setStatusBarColor(bg);
         window.setNavigationBarColor(bg);
 

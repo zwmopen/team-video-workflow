@@ -198,7 +198,12 @@ public final class OnlineService extends Service {
     public static List<PeerDevice> peers() {
         long cutoff = System.currentTimeMillis() - PEER_TIMEOUT_MS;
         PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
-        SERVER_PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < cutoff);
+        // DSH-196：服务端目录兜底条目用 150s 新鲜度（SERVER_PEER_FRESH_MS）。
+        // 原来两张表共用 15s 截断——实测手机↔电脑 HTTP 偶发超时（diagnostics: server_directory_failed|timeout），
+        // 一次拉取失败就把列表清空、下次成功又冒出来，界面持续抖动。目录条目本就 10s 才刷一次，
+        // 容忍 150s 间隙；UDP 直连条目仍保持 15s（它靠 2.5s 广播+单播主动探测，时效要求高）。
+        long serverCutoff = System.currentTimeMillis() - SERVER_PEER_FRESH_MS;
+        SERVER_PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < serverCutoff);
         // 合并：UDP 直连发现优先，服务端目录兜底（DSH-195：广播被路由器拦截时的活路）
         LinkedHashMap<String, PeerDevice> merged = new LinkedHashMap<>(SERVER_PEERS);
         merged.putAll(PEERS);
@@ -1776,30 +1781,40 @@ public final class OnlineService extends Service {
         }
         serverUrlWarned = false;
         directoryExecutor.execute(() -> {
-            HttpURLConnection conn = null;
-            try {
-                URL url = new URL(base + "/api/online/phones");
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(3000);
-                conn.setReadTimeout(3000);
-                conn.setRequestMethod("GET");
-                if (conn.getResponseCode() != 200) {
-                    DiagnosticLog.write(this, "server_directory_http", "code=" + conn.getResponseCode());
+            // DSH-196：局域网 HTTP 偶发超时（手机 WiFi 省电唤醒等）。3s 太紧，
+            // 放到 8s 并允许失败后立即重试一次，避免列表因一次抖动清空。
+            for (int attempt = 0; attempt < 2; attempt++) {
+                HttpURLConnection conn = null;
+                try {
+                    URL url = new URL(base + "/api/online/phones");
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(8000);
+                    conn.setReadTimeout(8000);
+                    conn.setRequestMethod("GET");
+                    if (conn.getResponseCode() != 200) {
+                        DiagnosticLog.write(this, "server_directory_http", "code=" + conn.getResponseCode());
+                        return;
+                    }
+                    StringBuilder body = new StringBuilder();
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) body.append(line);
+                    }
+                    mergeServerDirectory(body.toString());
+                    // 合并完成后对目录内设备补发单播探测，让对方回 ZWMDS2_HERE（P2P 自愈）
+                    unicastProbeServerPeers(socket);
                     return;
+                } catch (Exception error) {
+                    boolean lastAttempt = attempt == 1;
+                    if (lastAttempt) {
+                        DiagnosticLog.write(this, "server_directory_failed", compact(error.getMessage()));
+                    } else {
+                        DiagnosticLog.write(this, "server_directory_retry", compact(error.getMessage()));
+                    }
+                } finally {
+                    if (conn != null) conn.disconnect();
                 }
-                StringBuilder body = new StringBuilder();
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) body.append(line);
-                }
-                mergeServerDirectory(body.toString());
-                // 合并完成后对目录内设备补发单播探测，让对方回 ZWMDS2_HERE（P2P 自愈）
-                unicastProbeServerPeers(socket);
-            } catch (Exception error) {
-                DiagnosticLog.write(this, "server_directory_failed", compact(error.getMessage()));
-            } finally {
-                if (conn != null) conn.disconnect();
             }
         });
     }

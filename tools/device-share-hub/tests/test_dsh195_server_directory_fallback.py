@@ -98,5 +98,76 @@ class TestBuildScriptWritesLocalLatest(unittest.TestCase):
         self.assertIn("_read_local_update_manifest", self.service)
 
 
+class TestDSH196ShareModalFlow(unittest.TestCase):
+    """DSH-196：外部分享界面重做 —— 居中模态卡片 + 两步流程（选设备 → 确认发送）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.share = read(os.path.join(HUB_DIR, "android", "app", "src", "main", "java",
+                                      "com", "zwm", "gallery", "ShareImportActivity.java"))
+        cls.theme = read(os.path.join(HUB_DIR, "android", "app", "src", "main", "java",
+                                      "com", "zwm", "gallery", "ThemePalette.java"))
+
+    def test_two_step_flow_states(self):
+        self.assertIn("STEP_PICK", self.share)
+        self.assertIn("STEP_CONFIRM", self.share)
+        self.assertIn("STEP_SENDING", self.share)
+
+    def test_confirm_step_asks_before_sending(self):
+        # 选中设备后必须先确认，不能直接发送
+        self.assertIn("发送到以下设备？", self.share)
+        self.assertIn('pillButton("取消"', self.share)
+        self.assertIn('pillButton("发送"', self.share)
+
+    def test_modal_card_with_backdrop(self):
+        # 居中模态卡片 + 遮罩点击取消
+        self.assertIn("getBackdropColor()", self.share)
+        self.assertIn("Gravity.CENTER", self.share)
+        self.assertIn("cardView", self.share)
+
+    def test_no_default_styled_buttons(self):
+        # 旧版用系统默认 Button（白底）导致深色模式一黑一白；新版 Button 必须自带主题背景
+        for statement in ("setAllCaps(false)", "setBackground(ThemePalette.round("):
+            self.assertIn(statement, self.share)
+
+    def test_window_background_follows_theme(self):
+        # AppTheme 继承 Material.Light，窗口背景默认白；applySystemBarAppearance 必须涂主题底色
+        self.assertIn("window.setBackgroundDrawable(new ColorDrawable(bg));", self.theme)
+        self.assertIn("import android.graphics.drawable.ColorDrawable;", self.theme)
+
+    def test_progress_feedback_during_send(self):
+        self.assertIn("setProgressTintList", self.share)
+        self.assertIn("updateProgress", self.share)
+
+    def test_cold_start_learns_pc_url_via_beacon(self):
+        # 冷启动（重装后/杀进程后从系统分享面板进）学不到电脑地址 ⇒ 目录兜底没有 URL。
+        # ShareImportActivity 必须自己拉起信标监听，并在学到地址后重拉目录。
+        self.assertIn("new OnlineGalleryClient(this)", self.share)
+        self.assertIn("startBeaconListener", self.share)
+        self.assertIn("requestImmediateDiscovery", self.share)
+        self.assertIn("stopBeaconListener", self.share)
+
+    def test_card_is_small_centered_dialog(self):
+        # 用户要「居中的小小卡片」，不是占满屏幕的宽面板
+        self.assertIn("dp(300)", self.share)
+        self.assertNotIn("cardParams.leftMargin = dp(28)", self.share)
+
+    def test_server_peers_use_long_freshness_window(self):
+        # DSH-196：实测手机↔电脑 HTTP 偶发 timeout（diagnostics.log: server_directory_failed|timeout），
+        # 一次拉取失败就把列表清空 ⇒ 界面抖动。服务端目录条目必须用 150s 新鲜度，不能与 UDP 共用 15s。
+        service = read(os.path.join(HUB_DIR, "android", "app", "src", "main", "java",
+                                    "com", "zwm", "gallery", "OnlineService.java"))
+        self.assertIn("long serverCutoff = System.currentTimeMillis() - SERVER_PEER_FRESH_MS;",
+                      service)
+        self.assertIn("SERVER_PEERS.entrySet().removeIf(entry -> entry.getValue().lastSeenMs < serverCutoff);",
+                      service)
+
+    def test_directory_fetch_has_timeout_and_retry(self):
+        service = read(os.path.join(HUB_DIR, "android", "app", "src", "main", "java",
+                                    "com", "zwm", "gallery", "OnlineService.java"))
+        self.assertIn("conn.setConnectTimeout(8000);", service)
+        self.assertIn("for (int attempt = 0; attempt < 2; attempt++)", service)
+
+
 if __name__ == "__main__":
     unittest.main()

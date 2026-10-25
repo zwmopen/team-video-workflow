@@ -430,6 +430,11 @@ public final class OnlineGalleryClient {
         beaconSocket = null;
     }
 
+    /** DSH-196：信标监听是否在跑。冷启动入口（系统分享面板）据此判断该不该自己拉起来。 */
+    public boolean isBeaconRunning() {
+        return beaconRunning;
+    }
+
     /** 收到信标：持久化，并在地址变化时通知界面刷新 */
     private void applyBeaconUrl(String url, Runnable onAddressChanged) {
         SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
