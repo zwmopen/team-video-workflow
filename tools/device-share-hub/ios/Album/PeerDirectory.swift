@@ -113,7 +113,7 @@ final class PeerDirectory {
             let interface = pointer.pointee
             defer { current = interface.ifa_next }
             guard let addr = interface.ifa_addr,
-                  interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+                  addr.pointee.sa_family == UInt8(AF_INET) else { continue }
             var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             if getnameinfo(addr, socklen_t(MemoryLayout<sockaddr>.size),
                            &hostBuffer, socklen_t(hostBuffer.count), nil, 0, NI_NUMERICHOST) == 0 {

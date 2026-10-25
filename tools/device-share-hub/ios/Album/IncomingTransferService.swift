@@ -200,9 +200,11 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
         }
         timer.resume()
         beaconTimer = timer
-        // 传输界面打开时立刻拉一次，不用等 10s 节流
+        // 传输界面打开时立刻拉一次，不用等 10s 节流。
+        // 注意：addObserver 的 queue 是 OperationQueue，不是本类的 DispatchQueue（CI 编译教训 DSH-195）。
+        // forceServerDirectory 由 TransferViewController.reloadPeers() 在主线程投递，用主队列最自然。
         NotificationCenter.default.addObserver(forName: .forceServerDirectory, object: nil,
-                                               queue: queue) { [weak self] _ in
+                                               queue: .main) { [weak self] _ in
             self?.lastServerDirectoryAt = Date.distantPast
             self?.maybeFetchServerDirectory()
         }
