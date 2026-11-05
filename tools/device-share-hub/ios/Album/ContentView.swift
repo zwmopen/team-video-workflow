@@ -959,18 +959,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func sortOnlineWorksLocally(_ list: inout [OnlineWorkEntry], sortKey: String) {
-        let now = Date().timeIntervalSince1970 * 1000
         list.sort { a, b in
-            // DSH-178: keep active used works pinned in every sort mode.
-            // The chosen sort key orders active ties and all remaining works.
-            let aUsed = (a.expireAtMs > now && a.useCount > 0)
-            let bUsed = (b.expireAtMs > now && b.useCount > 0)
+            // 2026-10-27 用户定标：手机端被使用过的作品必须置顶，且**最新被使用的那条严格第一**。
+            // 旧实现（DSH-178）用 `expireAtMs > now && useCount > 0` 判定「活跃已使用」，但服务端
+            // 自 DSH-197 起 expireAtMs 恒为 0 ⇒ 这个条件永远为假，iOS 上已使用作品根本不会置顶；
+            // 排序键又用 firstSharedAtMs（首次发送时间），第二次以后再发也排不到最上面。
+            // 现在与 Android / 服务端统一：只看 useCount，时间取 lastUsedAtMs。
+            let aUsed = (a.useCount > 0)
+            let bUsed = (b.useCount > 0)
             if aUsed != bUsed { return aUsed }
             if aUsed {
-                let aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt
-                let bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt
+                let aTime = max(a.lastUsedAtMs, a.firstSharedAtMs)
+                let bTime = max(b.lastUsedAtMs, b.firstSharedAtMs)
                 if aTime != bTime { return aTime > bTime }
                 if a.id != b.id { return a.id < b.id }
+                return false
             }
             // 二级规则（DSH-109）：按指定的 sortKey 排序（与 Android / 服务端 SORT_KEYS 统一）
             switch sortKey {

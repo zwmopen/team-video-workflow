@@ -3650,6 +3650,8 @@ class WorkScanner:
             "statusLabel": "已使用" if use_count_int > 0 else "",
             "dispatchedTo": (distribution.get("dispatchedTo") or []) if use_count_int > 0 else [],
             "firstSharedAtMs": int(distribution.get("firstSharedAtMs") or 0) if use_count_int > 0 else 0,
+            # 2026-10-27 定标：最近一次被使用时间（手机端置顶排序依据）；未用过则为 0
+            "lastUsedAtMs": int(distribution.get("lastUsedAtMs") or 0) if use_count_int > 0 else 0,
             # 【2026-10-25】倒计时机制取消：恒 0 ⇒ 手机端不会再因「到期」隐藏任何作品
             "expireAtMs": 0,
             "originDevice": str(distribution.get("originDevice") or "") if use_count_int > 0 else "",
@@ -3834,15 +3836,20 @@ def sort_online_work_entries(works: List[Dict[str, Any]], sort_key: str, categor
         now_ms = time.time() * 1000.0
 
         def is_active_used(work: Dict[str, Any]) -> bool:
+            # 2026-10-27 定标：只要被使用过就置顶，不再要求「未过期」。
+            # 旧条件 `useCount > 0 and expireAtMs > now` 自 DSH-197 起恒为假
+            # （服务端 expireAtMs 恒回 0），导致「已使用置顶」这条契约三端全部空转。
             try:
-                return (int(work.get("useCount", 0) or 0) > 0
-                        and float(work.get("expireAtMs", 0) or 0) > now_ms)
+                return int(work.get("useCount", 0) or 0) > 0
             except (TypeError, ValueError):
                 return False
 
         def used_at(work: Dict[str, Any]) -> float:
+            # 用「最近一次被使用」的时间排序：最新用过的严格置顶。
+            # firstSharedAtMs 只记首次，重复发送不会变，排不到最上面。
             try:
-                return float(work.get("firstSharedAtMs") or work.get("updatedAt") or 0.0)
+                return float(work.get("lastUsedAtMs") or work.get("firstSharedAtMs")
+                             or work.get("updatedAt") or 0.0)
             except (TypeError, ValueError):
                 return 0.0
 
@@ -5273,6 +5280,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         dist["dispatchedTo"] = dispatched_list
         dist["lastDispatchedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
         dist["status"] = f"已使用{new_count}次"
+        # 2026-10-27 定标：记录「最近一次被使用」的时间戳。
+        # 手机端排序要用它把「最新用过的」严格置顶；firstSharedAtMs 只记首次，重复发送不会变。
+        dist["lastUsedAtMs"] = int(time.time() * 1000)
         try:
             atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)
         except Exception:
@@ -5826,6 +5836,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             dist["dispatchedTo"] = dispatched_list
             dist["lastDispatchedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
             dist["status"] = f"已使用{new_count}次"
+            # 2026-10-27 定标：记录「最近一次被使用」的时间戳。
+            # 手机端排序要用它把「最新用过的」严格置顶；firstSharedAtMs 只记首次，重复发送不会变。
+            dist["lastUsedAtMs"] = int(time.time() * 1000)
 
             try:
                 atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)

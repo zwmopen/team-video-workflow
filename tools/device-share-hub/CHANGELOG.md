@@ -41,9 +41,19 @@
 - `OnlineWorkLifecycle.AUTO_ARCHIVE_DISABLED` 由 `true` 改回 `false`（= 恢复「首发 + 超时」倒计时归档），
   与上面双源兜底配套；开关与注释保留，随时可一键回退。
 
-**2）已使用作品严格置顶 + 最新优先**
-- `OnlineWorkEntry` 新增 `lastUsedAtMs`（服务端 `lastUsedAtMs` → 客户端字段，旧数据自动回落
-  `firstSharedAtMs` 或 `updatedAt`，无需迁移）。
+**2）已使用作品严格置顶 + 最新优先（三端真正打通）**
+- **服务端 1.2.4 补记 `lastUsedAtMs`**：`use-work` 两条计数写入路径（软链接镜像 / 主路径）都记下
+  `dist["lastUsedAtMs"] = now_ms`，`/api/online/works` 一并下发；未用过则为 0。
+  此前 Android 侧虽然读了 `lastUsedAtMs`，但服务端压根没写过这个字段 ⇒ 恒为 0 ⇒ 实际仍按首次发送排序，
+  「最新用过的严格置顶」等于没做。
+- **服务端 `is_active_used` 去掉过期门槛**：旧条件 `useCount > 0 and expireAtMs > now`，
+  而 `expireAtMs` 自 DSH-197 起恒回 0 ⇒ 判定永远为假、置顶恒不生效；改为只看 `useCount`。
+  `used_at()` 同步改为优先取 `lastUsedAtMs`。
+- **iOS 同构补齐**：`OnlineWorkEntry` 增加 `lastUsedAtMs`；`sortOnlineWorksLocally` 由
+  `expireAtMs > now && useCount > 0` 改为 `useCount > 0`，排序键改 `max(lastUsedAtMs, firstSharedAtMs)`。
+  旧逻辑下 iOS 的已使用作品**一次都不会置顶**。
+- **Android**：`OnlineWorkEntry` 新增 `lastUsedAtMs`（旧数据自动回落 `firstSharedAtMs` 或 `updatedAt`，无需迁移）。
+- parity 校验 C26 同步改为新契约（含反例守卫：不得再把 `expireAtMs` 当置顶门槛）。
 - 排序规则（`MainActivity`）：`useCount > 0` 判定「已使用」→ 置顶；同组内按
   `max(lastUsedAtMs, firstSharedAtMs)` **倒序**，最新被使用的严格第一条；再以 `id` 兜底稳定排序。
   旧实现用 `firstSharedAtMs`（首次发送时间），第二次以后再用不会往上走，与用户定标不符。

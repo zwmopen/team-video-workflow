@@ -441,7 +441,11 @@ def main():
         "id 参数=%s get_work=%s path+bn join=%s basename=%s"
         % (c25_id_param, c25_get_work, c25_path_join, c25_basename)))
 
-    # C26：未过期的已使用作品始终置顶；其余作品遵循用户选择的时间顺序。
+    # C26：被使用过的作品始终置顶（最新被用的严格第一）；其余作品遵循用户选择的时间顺序。
+    #
+    # 2026-10-27 用户定标改口径：不再是旧 DSH-178 的「未过期且已使用才置顶」——
+    # 那个条件里的 expireAtMs 自 DSH-197 起恒为 0，三端判定全部恒假，「置顶」等于没做。
+    # 新口径：useCount > 0 即置顶；组内按 lastUsedAtMs（最近一次被使用）倒序。
     sort_helper_match = re.search(
         r'def sort_online_work_entries\(.*?(?=\ndef _dir_size_bytes)',
         server_src, re.DOTALL)
@@ -459,27 +463,33 @@ def main():
         and 'createdAtMs' in sort_helper
         and 'def is_active_used(work:' in sort_helper
         and 'work.get("useCount", 0)' in sort_helper
-        and 'work.get("expireAtMs", 0)' in sort_helper
+        and 'work.get("lastUsedAtMs")' in sort_helper
         and 'active_used.sort' in sort_helper
         and 'works[:] = active_used + remaining' in sort_helper
+        # 反例守卫：不能再把 expireAtMs 当作「是否置顶」的门槛
+        and 'work.get("expireAtMs", 0) or 0) > now_ms' not in sort_helper
     )
     c26_android = (
-        'a.useCount > 0 && a.expireAtMs > now' in android_sort
+        'boolean aUsed = (a.useCount > 0);' in android_sort
+        and 'boolean bUsed = (b.useCount > 0);' in android_sort
         and 'if (aUsed != bUsed)' in android_sort
+        and 'Math.max(a.lastUsedAtMs, a.firstSharedAtMs)' in android_sort
         and android_sort.find('if (aUsed != bUsed)') < android_sort.find('if ("time_desc".equals(sortKey))')
         and 'String.valueOf(a.id)' in android_sort
         and 'if (!chronologicalSort)' not in android_sort
     )
     c26_ios = (
-        'a.expireAtMs > now && a.useCount > 0' in ios_sort
+        'let aUsed = (a.useCount > 0)' in ios_sort
+        and 'let bUsed = (b.useCount > 0)' in ios_sort
         and 'if aUsed != bUsed' in ios_sort
+        and 'max(a.lastUsedAtMs, a.firstSharedAtMs)' in ios_sort
         and ios_sort.find('if aUsed != bUsed') < ios_sort.find('case "time_desc":')
         and 'return a.id < b.id' in ios_sort
         and 'if !chronologicalSort' not in ios_sort
     )
     c26_sort = c26_server and c26_android and c26_ios
     results.append(check(
-        "C26 活跃已使用作品置顶，其余按选定时间顺序排序",
+        "C26 已使用作品置顶（最新使用第一），其余按选定时间顺序排序",
         c26_sort,
         "server=%s android=%s ios=%s" % (c26_server, c26_android, c26_ios)))
 

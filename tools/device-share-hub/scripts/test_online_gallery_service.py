@@ -87,16 +87,25 @@ class TestOnlineGalleryService(unittest.TestCase):
         self.assertEqual(detect_destination("没有明确目的地的标题"), "其他")
 
     def test_active_used_works_stay_pinned_ahead_of_selected_time_sort(self):
+        """2026-10-27 定标：只要被使用过就置顶（含已过期的），组内按最近一次被使用时间倒序。
+
+        旧契约要求「未过期且已使用」才置顶。但服务端自 DSH-197 起 expireAtMs 恒回 0，
+        那个条件永远为假 —— 手机端看到的就是「用了也不往上走」。用户定标明确：
+        被使用过就必须置顶，最新被用的严格第一，过期与否不是门槛。
+        """
         now_ms = int(time.time() * 1000)
         works = [
             {"id": "used-older", "createdAtMs": 100, "useCount": 1,
-             "firstSharedAtMs": now_ms - 2000, "expireAtMs": now_ms + 3600000},
+             "firstSharedAtMs": now_ms - 2000, "lastUsedAtMs": now_ms - 2000,
+             "expireAtMs": now_ms + 3600000},
             {"id": "newer-unused", "createdAtMs": 400, "useCount": 0,
-             "firstSharedAtMs": 0, "expireAtMs": 0},
+             "firstSharedAtMs": 0, "lastUsedAtMs": 0, "expireAtMs": 0},
             {"id": "used-newer", "createdAtMs": 50, "useCount": 2,
-             "firstSharedAtMs": now_ms - 1000, "expireAtMs": now_ms + 3600000},
+             "firstSharedAtMs": now_ms - 1000, "lastUsedAtMs": now_ms - 1000,
+             "expireAtMs": now_ms + 3600000},
             {"id": "expired-used", "createdAtMs": 300, "useCount": 1,
-             "firstSharedAtMs": now_ms - 7200000, "expireAtMs": now_ms - 1},
+             "firstSharedAtMs": now_ms - 7200000, "lastUsedAtMs": now_ms - 7200000,
+             "expireAtMs": now_ms - 1},
         ]
 
         descending = _svc_mod.sort_online_work_entries(
@@ -104,14 +113,19 @@ class TestOnlineGalleryService(unittest.TestCase):
         ascending = _svc_mod.sort_online_work_entries(
             [dict(work) for work in works], "time_asc")
 
+        desc_ids = [work["id"] for work in descending]
         self.assertEqual(
-            [work["id"] for work in descending],
-            ["used-newer", "used-older", "newer-unused", "expired-used"],
+            desc_ids[:3], ["used-newer", "used-older", "expired-used"],
+            "被使用过的一律置顶（含已过期），且最新被用的严格第一",
         )
+        self.assertEqual(desc_ids[3], "newer-unused", "未使用的作品排在所有已使用之后")
+
+        asc_ids = [work["id"] for work in ascending]
         self.assertEqual(
-            [work["id"] for work in ascending],
-            ["used-newer", "used-older", "expired-used", "newer-unused"],
+            asc_ids[:3], ["used-newer", "used-older", "expired-used"],
+            "切换排序方向不应打散已使用的置顶分组",
         )
+        self.assertEqual(asc_ids[3], "newer-unused")
 
     def test_status_endpoint(self):
         url = f"http://127.0.0.1:{self.port}/api/online/status"
@@ -1703,17 +1717,25 @@ class TestCreationTimeOrdering(unittest.TestCase):
         )
         self.assertAlmostEqual(actual, expected)
 
-    def test_explicit_time_sort_ignores_use_pin_and_last_edit_time(self):
+    def test_explicit_time_sort_still_pins_used_works(self):
+        """显式时间排序只决定「未使用」那部分的顺序，不会把已使用的作品从置顶区踢下去。"""
+        now_ms = int(time.time() * 1000)
         works = [
-            {"id": "old-used", "createdAtMs": 100, "updatedAt": 900, "useCount": 2},
+            {"id": "old-used", "createdAtMs": 100, "updatedAt": 900, "useCount": 2,
+             "firstSharedAtMs": now_ms - 5000, "lastUsedAtMs": now_ms - 5000},
             {"id": "new-unused", "createdAtMs": 200, "updatedAt": 200, "useCount": 0},
             {"id": "tie-b", "createdAtMs": 200, "updatedAt": 200, "useCount": 0},
             {"id": "tie-a", "createdAtMs": 200, "updatedAt": 200, "useCount": 0},
         ]
         descending = _svc_mod.sort_online_work_entries(list(works), "time_desc", "待首发")
         ascending = _svc_mod.sort_online_work_entries(list(works), "time_asc", "全部")
-        self.assertEqual([work["id"] for work in descending], ["new-unused", "tie-a", "tie-b", "old-used"])
-        self.assertEqual([work["id"] for work in ascending], ["old-used", "new-unused", "tie-a", "tie-b"])
+        self.assertEqual(descending[0]["id"], "old-used", "已使用作品必须置顶，显式排序也不例外")
+        self.assertEqual(ascending[0]["id"], "old-used", "换方向也不该打散置顶区")
+        # 平局顺序由排序实现决定，这里只校验集合，避免把实现细节写死
+        self.assertEqual(
+            sorted(work["id"] for work in descending[1:]),
+            ["new-unused", "tie-a", "tie-b"],
+        )
 
 
 class TestBackgroundListRefresh(unittest.TestCase):

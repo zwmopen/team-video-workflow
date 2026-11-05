@@ -37,6 +37,10 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let firstSharedAtMs: Double
     /// DSH-135: 移入回收站倒计时过期时间戳（毫秒）
     public let expireAtMs: Double
+    /// 2026-10-27 定标：最近一次被使用的时间戳（毫秒）。
+    /// 「手机端被使用的，最新被使用过的必须置顶」—— 排序要用这一项，而不是 firstSharedAtMs
+    /// （后者是首次发送时间，第二次以后再发不会变，永远排不到最上面）。
+    public let lastUsedAtMs: Double
     /// DSH-135: 首发设备名称
     public let originDevice: String
     /// DSH-137: 已分发版本标签列表
@@ -68,6 +72,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
                 copyText: String, hasCopyText: Bool, dispatchedTo: [String],
                 updatedAt: Double, garbage: Bool = false, garbageRemark: String = "",
                 path: String = "", firstSharedAtMs: Double = 0, expireAtMs: Double = 0,
+                lastUsedAtMs: Double = 0,
                 originDevice: String = "", dispatchedVersions: [String] = [],
                 season: String = "四季通用", flowType: String = "精准流量团建", tags: [String] = [],
                 sourceImages: [String] = [], sourceNames: [String] = [],
@@ -93,6 +98,8 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.path = path
         self.firstSharedAtMs = firstSharedAtMs
         self.expireAtMs = expireAtMs
+        // 服务端没记过使用时间（旧库/未升级）时回落首次发送或更新时间，保证排序有值可用
+        self.lastUsedAtMs = lastUsedAtMs > 0 ? lastUsedAtMs : (firstSharedAtMs > 0 ? firstSharedAtMs : updatedAt)
         self.originDevice = originDevice
         self.dispatchedVersions = dispatchedVersions
         self.season = season
@@ -153,6 +160,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
 
         let firstSharedAtMs = (dict["firstSharedAtMs"] as? Double) ?? Double((dict["firstSharedAtMs"] as? Int) ?? 0)
         let expireAtMs = (dict["expireAtMs"] as? Double) ?? Double((dict["expireAtMs"] as? Int) ?? 0)
+        let lastUsedAtMs = (dict["lastUsedAtMs"] as? Double) ?? Double((dict["lastUsedAtMs"] as? Int) ?? 0)
         let originDevice = (dict["originDevice"] as? String) ?? ""
         let dispatchedVersions = (dict["dispatchedVersions"] as? [String]) ?? []
         let tags = (dict["tags"] as? [String]) ?? []
@@ -253,6 +261,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
             updatedAt: updatedAt, garbage: garbage, garbageRemark: garbageRemark,
             path: (dict["path"] as? String) ?? "",
             firstSharedAtMs: firstSharedAtMs, expireAtMs: expireAtMs,
+            lastUsedAtMs: lastUsedAtMs,
             originDevice: originDevice, dispatchedVersions: dispatchedVersions,
             season: season, flowType: flowType, tags: tags,
             sourceImages: sourceImages, sourceNames: sourceNames,
