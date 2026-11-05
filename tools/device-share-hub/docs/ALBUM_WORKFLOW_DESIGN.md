@@ -60,7 +60,7 @@ iOS 的 `CFBundleShortVersionString` / `CFBundleVersion` 走 `$(MARKETING_VERSIO
 ### 3.1 扫描根
 
 ```
-DEFAULT_LIBRARY_ROOT = "D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+DEFAULT_LIBRARY_ROOT = "D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
 ```
 
 ⚠️ **这是脚本里的硬编码常量**（`--root` 可覆盖）。**客户端不参与、没有设置界面。**

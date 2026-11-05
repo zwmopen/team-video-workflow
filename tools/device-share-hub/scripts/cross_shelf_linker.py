@@ -29,7 +29,7 @@ except Exception:
     pass
 
 # 默认成品库路径
-DEFAULT_GALLERY_ROOT = os.path.normpath(r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）")
+DEFAULT_GALLERY_ROOT = os.path.normpath(r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库")
 REGISTRY_REL_PATH = os.path.join("_内部台账与历史数据", "junction_links_registry.json")
 
 # Windows Reparse Tag 常量

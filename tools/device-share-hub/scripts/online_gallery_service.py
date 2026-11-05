@@ -5,7 +5,7 @@ Online Gallery LAN Service for Device Share Hub & Mobile Gallery
 ===============================================================
 提供面向手机相册客户端的在线读取、缩略图流式分发、文案获取与协同打标服务。
 端口：默认 45835
-真源目录：D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目\\成品库（GPT+本地脚本制作）
+真源目录：D:\\AICode\\项目推进\\projects\\江湖有旅人\\主项目\\03-成品库
 
 核心铁律：
 - 严格仅扫描「已发送0次（抖音小红书可发）」与根目录直出合法成品；
@@ -359,7 +359,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import phone_sync  # noqa: E402
 
 DEFAULT_PORT = 45835
-DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
 
 # ============================================================================
 # 已授权设备白名单（用户最终决定：默认放行所有设备，无需扫码/弹框）
@@ -1749,7 +1749,9 @@ def extract_category_from_folder_name(folder_name: str) -> str:
     cat = folder_name.strip()
     if cat.startswith("已发送0次"):
         return ""
-    for suffix in ("成品", "作品", "合集"):
+    if "手动" in cat:
+        return cat
+    for suffix in ("成品", "作品", "合集", "制作"):
         if cat.endswith(suffix) and len(cat) > len(suffix):
             cat = cat[:-len(suffix)].strip()
             break
@@ -1779,10 +1781,12 @@ def is_shelf_folder(name: str) -> bool:
     """判定是否为标准成品货架目录，防止工作区/产线等非货架目录伪装成分类按钮或产出假作品。"""
     if not name or name.startswith(".") or name.startswith("_"):
         return False
-    for kw in ("产线", "制作", "暂存", "样本", "台账", "排产", "草稿", "工作区", "workspace", "pipeline", "draft", "backup", "cache"):
+    if "手动" in name:
+        return True
+    for kw in ("产线", "正在制作", "制作中", "暂存", "样本", "台账", "排产", "草稿", "工作区", "workspace", "pipeline", "draft", "backup", "cache"):
         if kw in name:
             return False
-    if name.endswith(("成品", "作品", "合集")):
+    if name.endswith(("成品", "作品", "合集", "制作")):
         return True
     if name in ("综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
         return True
@@ -3436,24 +3440,58 @@ class WorkScanner:
                 _slot_guard_stat("slotsDropped", cached_slot_diag["droppedCount"])
             return dict(cached_work)
 
-        # 读取下发文案：【唯一真源 = 文案.txt】（2026-09-22 用户口径）
-        # 「软件只识别 文案.txt」—— `三平台文案.txt` 是早期 Codex 产线遗留，不是它的改名版；
-        # 实测库内 145 套两份都有、其中 32 套内容并不相同，按旧 priority 优先读它
-        # ⇒ 手机端会显示一份未经确认的历史副本。故下发只认 文案.txt；
-        # 其余历史 txt（三平台文案 / 小红书文案 / 全量生成记录…）仅供服务端关键词检索，不参与下发。
+        # 读取下发文案：
+        # 1. 唯一真源【优先 = 文案.txt】（2026-09-22 用户口径）：只要存在「文案.txt」，绝对以其为准；
+        #    严禁被 Codex 早期遗留的三平台文案等历史副本覆盖。
+        # 2. 智能候选兜底识别（2026-10-29 升级）：
+        #    若作品目录中【没有 文案.txt】（例如用户在 A手动制作 等目录手戳建立的「新建 文本文档.txt」、或自定义文案），
+        #    按优先级智能候选兜底（新建 文本文档 > 包含文案的txt > 其他有效txt），
+        #    避免手动制作的有效作品被误判为「文案缺失（空壳作品，不可分发）」。
         copy_text = ""
         copy_search_blob = ""   # 搜索专用：即使判定为缺失也保留原文，避免空壳/薄文案失去关键词可检索性
         AUTHORITATIVE_COPY = "文案.txt"
-        txt_candidates.sort(key=lambda x: (x != AUTHORITATIVE_COPY, x))
+        LEGACY_COPY_BLACKLIST = {
+            "三平台文案.txt", "三平台文案_候选.txt", "11版本文案_候选.txt", "逐页迁移计划.txt"
+        }
+
+        def _candidate_rank(fn: str) -> int:
+            if fn == AUTHORITATIVE_COPY:
+                return 0
+            if fn in LEGACY_COPY_BLACKLIST or fn.startswith((".", "_")):
+                return 999
+            if fn.startswith("新建") and "文本文档" in fn:
+                return 1
+            if "文案" in fn:
+                return 2
+            lower = fn.lower()
+            if any(k in lower for k in ("copy", "draft", "caption", "text", "content")):
+                return 3
+            if any(k in lower for k in ("prompt", "syslog", "log", "qa", "test", "page_map", "plan")):
+                return 999
+            return 4
+
+        has_authoritative = any(f == AUTHORITATIVE_COPY for f in txt_candidates)
+        if has_authoritative:
+            sorted_candidates = [f for f in txt_candidates if f == AUTHORITATIVE_COPY]
+        else:
+            sorted_candidates = sorted(
+                [f for f in txt_candidates if _candidate_rank(f) < 999],
+                key=lambda x: (_candidate_rank(x), -_f_stamp(os.path.join(dir_path, x))[1])
+            )
 
         for f in txt_candidates:
             try:
                 with open(os.path.join(dir_path, f), "r", encoding="utf-8", errors="ignore") as fp:
                     raw_c = fp.read().strip()
-                if not copy_search_blob:
+                if not copy_search_blob and raw_c:
                     copy_search_blob = copy_search_text(raw_c)
-                if f != AUTHORITATIVE_COPY:
-                    continue
+            except Exception:
+                pass
+
+        for f in sorted_candidates:
+            try:
+                with open(os.path.join(dir_path, f), "r", encoding="utf-8", errors="ignore") as fp:
+                    raw_c = fp.read().strip()
                 if copy_is_real(raw_c):
                     copy_text = raw_c
                     break
@@ -3556,10 +3594,32 @@ class WorkScanner:
             clean_title = re.sub(r'^\d{8}[_\-]?', '', clean_title)
             clean_title = re.sub(r'^(网页CDP|CodexAPI|Codex|CDP|GPT\s*[a-zA-Z0-9]*)[_\-\s]?', '', clean_title, flags=re.I)
             clean_title = re.sub(r'^[（\(\[【_\-\s]+', '', clean_title)
-            clean_title = re.sub(r'[\)\]】_\-\s]+$', '', clean_title)
+            if clean_title.count('(') < clean_title.count(')') or clean_title.count('（') < clean_title.count('）'):
+                clean_title = re.sub(r'[\)\]】_\-\s]+$', '', clean_title)
+            else:
+                clean_title = re.sub(r'[_\-\s]+$', '', clean_title)
             clean_title = re.sub(r'[\(（]?_{0,3}COPY_FORMAT_\d+_{0,3}[\)）]?', '', clean_title)
             clean_title = re.sub(r'<{1,3}COPY_FORMAT:\d+>{1,3}', '', clean_title)
             clean_title = clean_title.replace("[转]", "").strip()
+
+        # 智能提取手戳目录的主题标题（若文件夹名为 1、新建文件夹 等纯序号/默认名，从文案提取第一行核心标题）
+        is_generic_name = bool(
+            re.match(r'^(新建文件夹(\s*\(\d+\))?|\d+|work\d*|temp\d*)$', clean_title, re.IGNORECASE)
+        )
+        if is_generic_name and copy_text:
+            m_vtitle = re.search(r'<<<VERSION_START:[^>]+>>>\s*(.+)', copy_text)
+            candidate_title = ""
+            if m_vtitle:
+                candidate_title = m_vtitle.group(1).strip()
+            else:
+                for line in copy_text.splitlines():
+                    ls = line.strip()
+                    if ls and not ls.startswith("<") and not ls.startswith("#"):
+                        candidate_title = ls
+                        break
+            if candidate_title:
+                clean_title = f"{candidate_title} ({folder_name})" if not folder_name.startswith("新建") else candidate_title
+
         if not clean_title:
             clean_title = folder_name
 
@@ -4257,7 +4317,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.3",
+                "version": "1.2.4",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,

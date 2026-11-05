@@ -35,6 +35,7 @@ public final class OnlineWorkEntry {
     public final long firstSharedAtMs;
     /** DSH-135: 移入回收站倒计时过期时间戳（毫秒） */
     public final long expireAtMs;
+    public final long lastUsedAtMs;
     /** DSH-135: 首发设备名称 */
     public final String originDevice;
     /** DSH-137: 已分发的版本标签列表（如 xhs_grass、douyin 等） */
@@ -112,6 +113,24 @@ public final class OnlineWorkEntry {
                            List<String> sourceImages, List<String> sourceNames,
                            boolean hasSourceCompare, double maxSimilarity, String similarityTag,
                            String pipelineBadge, String formattedDate, String imageCountText) {
+        this(id, title, destination, stage, useCount, maxUses, used, remainingUses,
+                statusLabel, images, imageCount, copyText, hasCopyText, dispatchedTo,
+                updatedAt, garbage, garbageRemark, path, firstSharedAtMs, expireAtMs,
+                (firstSharedAtMs > 0 ? firstSharedAtMs : updatedAt), originDevice, dispatchedVersions,
+                season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
+                pipelineBadge, formattedDate, imageCountText);
+    }
+
+    public OnlineWorkEntry(String id, String title, String destination, String stage,
+                           int useCount, int maxUses, boolean used, int remainingUses,
+                           String statusLabel, List<String> images, int imageCount,
+                           String copyText, boolean hasCopyText, List<String> dispatchedTo,
+                           long updatedAt, boolean garbage, String garbageRemark, String path,
+                           long firstSharedAtMs, long expireAtMs, long lastUsedAtMs, String originDevice, List<String> dispatchedVersions,
+                           String season, String flowType, List<String> tags,
+                           List<String> sourceImages, List<String> sourceNames,
+                           boolean hasSourceCompare, double maxSimilarity, String similarityTag,
+                           String pipelineBadge, String formattedDate, String imageCountText) {
         this.id = id;
         this.title = title == null ? "" : title;
         this.destination = destination == null ? "其他" : destination;
@@ -132,6 +151,7 @@ public final class OnlineWorkEntry {
         this.path = path == null ? "" : path;
         this.firstSharedAtMs = firstSharedAtMs;
         this.expireAtMs = expireAtMs;
+        this.lastUsedAtMs = lastUsedAtMs > 0 ? lastUsedAtMs : (firstSharedAtMs > 0 ? firstSharedAtMs : updatedAt);
         this.originDevice = originDevice == null ? "" : originDevice;
         this.dispatchedVersions = dispatchedVersions == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(dispatchedVersions));
         this.season = season == null || season.trim().isEmpty() ? "四季通用" : season;
@@ -213,6 +233,7 @@ public final class OnlineWorkEntry {
 
         long firstSharedAtMs = json.optLong("firstSharedAtMs", 0L);
         long expireAtMs = json.optLong("expireAtMs", 0L);
+        long lastUsedAtMs = json.optLong("lastUsedAtMs", 0L);
         String originDevice = json.optString("originDevice", "");
         List<String> dispatchedVersions = new ArrayList<>();
         JSONArray versArr = json.optJSONArray("dispatchedVersions");
@@ -271,20 +292,18 @@ public final class OnlineWorkEntry {
         if (pipelineBadge.isEmpty()) {
             String pl = json.optString("pipeline", "");
             String f = (title + " " + id).toUpperCase();
-            if (f.contains("CDP-A") || f.contains("网页GPT-A") || f.contains("ORLANDOCARDOZO706") || f.contains("账号1")) {
-                pipelineBadge = "网页GPT-A";
-            } else if (f.contains("CDP-B") || f.contains("网页GPT-B") || f.contains("账号2") || f.contains("账号3")) {
-                pipelineBadge = "网页GPT-B";
-            } else if (f.contains("CDP")) {
-                pipelineBadge = f.contains("A") ? "网页GPT-A" : "网页GPT-B";
-            } else if (f.contains("CODEX") || pl.contains("Codex")) {
-                pipelineBadge = "Codex-API";
-            } else if (f.contains("GPT-A")) {
-                pipelineBadge = "网页GPT-A";
-            } else if (f.contains("GPT-B")) {
-                pipelineBadge = "网页GPT-B";
+            if (f.contains("CODEX") || pl.contains("Codex") || f.contains("本地")) {
+                pipelineBadge = "本地GPT";
+            } else if (f.contains("ZWMRPG") || f.contains("CDP-A") || f.contains("GPT-A") || f.contains("账号1")) {
+                pipelineBadge = "在线GPT-zwmrpg";
+            } else if (f.contains("ORLANDOCARDOZO706") || f.contains("ORLANDO")) {
+                pipelineBadge = "在线GPT-orlando";
+            } else if (f.contains("Z X") || f.contains("账号3")) {
+                pipelineBadge = "在线GPT-zx";
+            } else if (f.contains("CDP-B") || f.contains("GPT-B") || f.contains("账号2")) {
+                pipelineBadge = "在线GPT-B";
             } else {
-                pipelineBadge = "网页GPT";
+                pipelineBadge = "在线GPT";
             }
         }
 
@@ -303,7 +322,7 @@ public final class OnlineWorkEntry {
         return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
                 hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark,
-                json.optString("path", ""), firstSharedAtMs, expireAtMs, originDevice, dispatchedVersions,
+                json.optString("path", ""), firstSharedAtMs, expireAtMs, lastUsedAtMs, originDevice, dispatchedVersions,
                 season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
                 pipelineBadge, formattedDate, imageCountText);
     }

@@ -18,7 +18,7 @@ import subprocess
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_SCRIPT = os.path.join(SCRIPT_DIR, "online_gallery_service.py")
 SUPERVISOR_SCRIPT = os.path.join(SCRIPT_DIR, "online_gallery_supervisor.py")
-LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
 PORT = 45835
 PYTHONW = r"C:\Users\z\AppData\Local\Programs\Python\Python311\pythonw.exe"
 if not os.path.exists(PYTHONW):

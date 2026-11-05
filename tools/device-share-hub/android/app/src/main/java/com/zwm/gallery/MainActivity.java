@@ -141,7 +141,7 @@ public final class MainActivity extends Activity {
             String prev = clean;
             clean = clean.replaceFirst("^\\d{8}[_\\-]\\d{6}[_\\-]?", "");
             clean = clean.replaceFirst("^\\d{8}[_\\-]?", "");
-            clean = clean.replaceFirst("^(网页CDP|CodexAPI|Codex|CDP|制作中|待补全|成品)[_\\-]?", "");
+            clean = clean.replaceFirst("^(在线GPT|本地GPT|网页CDP|CodexAPI|Codex|CDP|制作中|待补全|成品)[_\\-]?", "");
             clean = clean.replaceFirst("^[（\\(\\[【\\_\\-\\s]+", "");
             clean = clean.replaceFirst("[\\)\\]】\\_\\-\\s]+$", "");
             clean = clean.replace("[转]", "");
@@ -1192,18 +1192,17 @@ public final class MainActivity extends Activity {
         if (list == null || list.size() <= 1) return;
         final long now = System.currentTimeMillis();
         Collections.sort(list, (a, b) -> {
-            // DSH-178: active used works stay at the top for every sort mode;
-            // the selected sort key orders active ties and all remaining works.
-            boolean aUsed = (a.useCount > 0 && a.expireAtMs > now);
-            boolean bUsed = (b.useCount > 0 && b.expireAtMs > now);
+            // 用户定标（2026-10-27）：手机端被使用的，最新被使用过的必须置顶！
+            // 且同时有几条被使用过时，最新一条严格置顶在最最顶端！
+            boolean aUsed = (a.useCount > 0);
+            boolean bUsed = (b.useCount > 0);
             if (aUsed != bUsed) return aUsed ? -1 : 1;
             if (aUsed) {
-                long aTime = a.firstSharedAtMs > 0 ? a.firstSharedAtMs : a.updatedAt;
-                long bTime = b.firstSharedAtMs > 0 ? b.firstSharedAtMs : b.updatedAt;
+                long aTime = Math.max(a.lastUsedAtMs, a.firstSharedAtMs);
+                long bTime = Math.max(b.lastUsedAtMs, b.firstSharedAtMs);
                 int cmp = Long.compare(bTime, aTime);
                 if (cmp != 0) return cmp;
-                cmp = String.valueOf(a.id).compareTo(String.valueOf(b.id));
-                if (cmp != 0) return cmp;
+                return String.valueOf(a.id).compareTo(String.valueOf(b.id));
             }
             // 二级规则（DSH-109）：按选定的 sortKey 排序（与 iOS / 服务端 SORT_KEYS 统一）
             if ("time_desc".equals(sortKey)) {
@@ -4463,9 +4462,10 @@ public final class MainActivity extends Activity {
 
         currentOnlineFilteredEntries.clear();
         for (OnlineWorkEntry work : onlineWorks) {
-            // DSH-140: 核心生命周期对齐：若服务端或本地首发倒计时已到期（expireAtMs <= nowMs），或已被移入手机回收站，在在线活跃相册中彻底隐藏
-            if (work.expireAtMs > 0 && nowMs >= work.expireAtMs) {
-                OnlineWorkLifecycle.ensureTrashed(this, work, work.expireAtMs);
+            // 核心生命周期对齐：若服务端或本地首发倒计时已到期（无论是服务端的 expireAtMs 还是首发+超时兜底），直接在活跃货架中隐藏，绝不滞留显示「正在移入回收站」
+            long effectiveExpireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? (work.firstSharedAtMs + moveAfterMs) : 0);
+            if (effectiveExpireMs > 0 && nowMs >= effectiveExpireMs) {
+                OnlineWorkLifecycle.ensureTrashed(this, work, effectiveExpireMs);
                 continue;
             }
             if (trashedIds.contains(work.id)) {
@@ -4888,9 +4888,9 @@ public final class MainActivity extends Activity {
                 long remainMs = expireMs - System.currentTimeMillis();
                 if (remainMs > 0) {
                     int remainMin = Math.max(1, (int) (remainMs / 60000L));
-                    statusText = "已使用 · 剩 " + remainMin + " 分钟入回收站";
+                    statusText = "已使用 · 剩 " + remainMin + " 分钟";
                 } else {
-                    statusText = "已到期 · 正在移入回收站…";
+                    statusText = "已发送";
                 }
             }
             TextView useBadge = text(statusText, 11, true);

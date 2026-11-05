@@ -136,7 +136,7 @@ public final class OnlineWorkLifecycle {
      * 保留这个开关而不是删代码：回收站「已使用」Tab、手动删除、恢复这些能力仍然可用；
      * 只是不再有任何**自动**隐藏/搬家。将来若要恢复倒计时，把这里改回 false 即可。
      */
-    public static final boolean AUTO_ARCHIVE_DISABLED = true;
+    public static final boolean AUTO_ARCHIVE_DISABLED = false;
 
     /** 记录使用：首次使用打标（机制取消后不再启动移入垃圾箱倒计时） */
     public static synchronized Item markUsed(Context context, OnlineWorkEntry work, long nowMs) {

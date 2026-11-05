@@ -729,6 +729,24 @@ class TestPlatformSlotGuard(unittest.TestCase):
         self.assertFalse(w2["copyMissing"])
         self.assertEqual(w2["copyText"], REAL_COPY, "文案.txt 必须原样下发")
 
+    # ---- 5.6 智能兜底：无 文案.txt 时支持 新建 文本文档.txt ----
+    def test_smart_copy_fallback_for_manual_files(self):
+        """2026-10-29 升级：无 文案.txt 时，智能识别 新建 文本文档.txt 等有效文案兜底，不再误判空壳作品。"""
+        name = "手戳新建文档测试"
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d, exist_ok=True)
+        for i in range(2):
+            with open(os.path.join(d, f"{i:02d}.jpg"), "wb") as fp:
+                fp.write(b"\xff\xd8\xff\xe0fake-jpeg")
+
+        with open(os.path.join(d, "新建 文本文档.txt"), "w", encoding="utf-8") as fp:
+            fp.write(REAL_COPY)
+
+        w = self.scanner._inspect_work_dir(d, name, "已发送0次", 0)
+        self.assertIsNotNone(w)
+        self.assertFalse(w["copyMissing"], "无 文案.txt 时，新建 文本文档.txt 应被智能识别下发")
+        self.assertEqual(w["copyText"], REAL_COPY)
+
     # ---- 6. 搜索可检索性不因守卫丢失 ----
     def test_search_blob_survives_sanitization(self):
         """被剔除的骨架作品，其原文仍应可被关键词搜到，否则等于把内容从库里抹掉。"""

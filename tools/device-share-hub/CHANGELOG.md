@@ -1,3 +1,116 @@
+# 2026-11-05 DSH-198：iOS 拉取进度假死根治 · 补记 0.8.127/128（Android 0.8.129/240 · iOS 0.8.124/235 · Windows 4.3.34 · 服务端 1.2.4）
+
+用户口径：
+1. 「苹果这个你看看手机截图拉取也没个进度，看着就像卡死了一样。」
+2. 「手机端拉取图失败、拉取不动」（分享前拉原图，看着像死机，只能强退）；
+3. （2026-10-27 定标）「手机端被使用的，**最新被使用过的必须置顶**，且同时有几条被使用时最新一条严格置顶在最顶端」；
+4. 「绝不滞留显示『正在移入回收站』这种假状态」；
+5. （发布口径）「修掉 UpdateChecker.java 那个假 diff / 补 CHANGELOG 区块 / 版本统一 / 提交、推、CI 五连构建、发布」。
+
+本条目同时把 2026-10-27、10-29 两批**已上线但未记账**的改动补进 CHANGELOG（0.8.127/0.8.128 从未写过条目）。
+
+## 一、DSH-198（本次）：iOS 分享前拉原图「零进度」假死
+
+**根因（不是网络慢，是没有任何存活反馈）**
+- `OnlineGalleryClient.downloadWorkImages(entry:onProgress:completion:)` 的 `onProgress` **只在每张图写盘完成后**回调一次。
+- 弹窗文案是静态的「准备连接电脑拉取 N 张原图…」，首图慢、或某张图落到 60s 资源超时 + 3 次重试时，
+  界面会连续数分钟**一个数字都不动** ⇒ 用户看到的就是卡死。
+- 叠加因素：分享面板弹出时主线程跑在 modal runloop，裸 `Timer` 容易不被调度。
+
+**修复（`ios/Album/ContentView.swift`，+46/−3）**
+- 新增 `PullProgressBox`：线程安全的状态盒子，`note(done:total:name:)` 收进度，`message(elapsed:)` 出文案。
+- 弹窗改为**秒级节拍驱动**：`Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true)` +
+  `RunLoop.main.add(ticker, forMode: .common)`，保证分享面板/弹窗期间也照常走秒。
+- 文案三态（都有数字、都有用时，绝不空转）：
+  | 阶段 | 文案 |
+  |---|---|
+  | 还没拿到第一张 | `已用时 N 秒，正在连接电脑并下载第 1 张（0/M）…` |
+  | 进行中 | `k/M 张（已用时 N 秒，当前：<文件名>）` |
+  | 收尾 | `已完成 M/M 张（用时 N 秒），正在准备分享…` |
+- `ticker.invalidate()` 放在 completion 首行，取消路径（弹窗「取消」）也立即停表，不留幽灵 Timer。
+
+## 二、补记 Android 0.8.127 / 0.8.128（2026-10-27 ~ 10-29 攒批）
+
+**1）拔除「已到期 · 正在移入回收站…」死卡假状态**
+- `MainActivity` 活跃货架过滤新增**双源到期兜底**：
+  `effectiveExpireMs = work.expireAtMs > 0 ? work.expireAtMs : (firstSharedAtMs + moveAfterMs)`。
+  旧实现只看服务端 `expireAtMs`，服务端恒回 0（DSH-197 取消自动归档）时手机端算不出到期点，
+  卡片会永远顶着「已到期 · 正在移入回收站…」却一动不动 —— 就是用户说的「死卡」。
+- 徽标文案同步改口径：`已使用 · 剩 N 分钟入回收站` → **`已使用 · 剩 N 分钟`**；
+  `已到期 · 正在移入回收站…` → **`已发送`**。
+- `OnlineWorkLifecycle.AUTO_ARCHIVE_DISABLED` 由 `true` 改回 `false`（= 恢复「首发 + 超时」倒计时归档），
+  与上面双源兜底配套；开关与注释保留，随时可一键回退。
+
+**2）已使用作品严格置顶 + 最新优先**
+- `OnlineWorkEntry` 新增 `lastUsedAtMs`（服务端 `lastUsedAtMs` → 客户端字段，旧数据自动回落
+  `firstSharedAtMs` 或 `updatedAt`，无需迁移）。
+- 排序规则（`MainActivity`）：`useCount > 0` 判定「已使用」→ 置顶；同组内按
+  `max(lastUsedAtMs, firstSharedAtMs)` **倒序**，最新被使用的严格第一条；再以 `id` 兜底稳定排序。
+  旧实现用 `firstSharedAtMs`（首次发送时间），第二次以后再用不会往上走，与用户定标不符。
+
+**3）制作流水角标口径统一**
+- `OnlineWorkEntry` 徽标判定重写，废弃 `网页GPT-A / 网页GPT-B / Codex-API` 旧口径：
+
+  | 命中关键词 | 角标 |
+  |---|---|
+  | `CODEX` / `本地` | `本地GPT` |
+  | `ZWMRPG` / `CDP-A` / `GPT-A` / `账号1` | `在线GPT-zwmrpg` |
+  | `ORLANDOCARDOZO706` / `ORLANDO` | `在线GPT-orlando` |
+  | `Z X` / `账号3` | `在线GPT-zx` |
+  | `CDP-B` / `GPT-B` / `账号2` | `在线GPT-B` |
+  | 其余 | `在线GPT` |
+
+- `MainActivity` 标题清洗正则同步加 `在线GPT|本地GPT` 前缀，避免新角标词漏进作品标题。
+
+**4）更新弹窗透明化（`UpdateChecker.java`）**
+- 读取发布清单 `notes` 字段，**全量展示更新日志**：
+  - 「发现新版本」弹窗：源说明 + `【本次更新内容】` + 是否立即下载；主按钮 `下载更新` → **`立即更新`**；
+  - 「已准备好」弹窗：文件名 + 大小 + `【更新内容】` + 校验完成提示。
+- `notes` 经 `readyUpdateNotes` 持久化，静默下载与手动下载两条链路都能带出日志。
+- 附：本文件此前 773 行的「整文件 diff」是**换行被改**（LF↔CRLF）造成的假 diff，
+  已按仓库 HEAD 风格归一化，真实改动 30 增 11 删。
+
+## 三、服务端 1.2.4：手戳目录（`A手动制作`）终于能被识别
+
+**库根改名**：`成品库（GPT+本地脚本制作）` → **`03-成品库`**（`DEFAULT_LIBRARY_ROOT` 与模块头同步）。
+
+**1）分类直通**：`extract_category_from_folder_name` / `is_shelf_folder` 对含「手动」的目录名直接放行并原样作分类，
+不再被 `制作` 关键词误杀成「产线目录」。`is_shelf_folder` 的排除词由 `制作` 收窄为 `正在制作 / 制作中`。
+
+**2）文案智能兜底（核心）**：手戳作品常常没有 `文案.txt`，旧逻辑一律判「文案缺失（空壳，不可分发）」。
+新逻辑：命中 `文案.txt` 时**仍然绝对以它为准**（2026-09-22 铁律不变）；没有时按优先级智能候选：
+
+| 优先级 | 规则 |
+|---|---|
+| 0 | `文案.txt`（存在即唯一下发源） |
+| 1 | `新建 文本文档.txt`（Windows 右键新建的默认名） |
+| 2 | 文件名含「文案」 |
+| 3 | 含 `copy / draft / caption / text / content` |
+| 4 | 其余有效 txt，按修改时间新→旧 |
+| 排除 | `三平台文案.txt`、`三平台文案_候选.txt`、`11版本文案_候选.txt`、`逐页迁移计划.txt`、`. / _` 开头，以及 `prompt / log / qa / test / page_map / plan` |
+
+- 搜索用 `copy_search_blob` 与下发用 `copy_text` 分开采集，空壳作品的关键词可检索性不再丢失。
+
+**3）标题清洗括号平衡**：仅当右括号多于左括号时才剥掉尾部 `)/]/】`，否则只剥 `_ - 空格`，
+避免 `(1)`、`(副本)` 这类正常标题被啃掉半截。
+
+**4）通用目录名提炼标题**：目录名为 `1`、`新建文件夹`、`work1`、`temp2` 时，从文案
+`<<<VERSION_START:xxx>>>` 后第一行（或首个非 `#`/`<` 行）提取主题作为标题；非「新建」前缀时追加 ` (<目录名>)` 便于区分。
+
+## 验证
+
+- `python -m unittest scripts.test_online_gallery_service` → 新增 `test_smart_copy_fallback_for_manual_files`（无 `文案.txt` 时 `新建 文本文档.txt` 正常下发、`copyMissing=False`）。
+- 服务重启后 `/api/online/status`：`version 1.2.4`、`totalWorks 264`、`staleCode=false`、
+  `thumbnail.pil=true`；`/api/online/image` 原图 2.87MB/14ms、`&thumb=1` 33KB/7ms。
+- 现场故障复盘：发布前发现电脑端相册服务**已僵死**（端口 45835 仍 LISTENING，但本地 `curl` 连续 3 次
+  `http=000`、手机侧多条 `CLOSE_WAIT`，PID 12628 CPU 154s）。已用 `restart_online_gallery.ps1 -Port 45835`
+  重启，恢复后 `status` 8ms/200、作品 264 篇、图片链路正常 —— 这也是「手机端拉取不动」的电脑侧成因之一。
+
+## 影响文档
+
+本文件、`docs/BUG_LEDGER.md`、`docs/AUDIT_530_WORKS_MOBILE_INTEGRITY.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`
+（均为库根路径改名 `03-成品库`）、`scripts/online_gallery_service.py` 模块头。
+
 # 2026-10-25 DSH-197：发送即归档改为「电脑端 → `_已发送`」，手机端发送就是发送（Android 0.8.126/237 · iOS 0.8.123/234 · Windows 4.3.34 · 服务端 1.2.3）
 
 用户口径：
@@ -2858,7 +2971,7 @@ self_check：tree-sitter 解析 ContentView.swift，1 处 ERROR 为 `as? T ?? de
 
 **实时看图机制**（已存在，DSH-109 复用）：
 - `/api/online/works?refresh=1` 触发服务端 `scan(force=True)` 强制重扫磁盘。手机端每次点刷新都带 `refresh=1`，磁盘新增图片 5 秒内可见。
-- 三门槛：① 文件夹在 `D://AICode//项目推进//projects//江湖有旅人//主项目//成品库（GPT+本地脚本制作）`（非 `.`/`_` 开头）；② 至少 1 张图（`.jpg/.jpeg/.png/.webp/.bmp`，顶层优先 → 回落 `产出素材/`）；③ 有 `文案.txt`（缺则按钮置灰 `copyMissing=true`）。
+- 三门槛：① 文件夹在 `D://AICode//项目推进//projects//江湖有旅人//主项目//03-成品库`（非 `.`/`_` 开头）；② 至少 1 张图（`.jpg/.jpeg/.png/.webp/.bmp`，顶层优先 → 回落 `产出素材/`）；③ 有 `文案.txt`（缺则按钮置灰 `copyMissing=true`）。
 
 **排序键**（5 种 + 1 default）：
 - `time_asc`（默认，用户口径）：updatedAt 升序，最新作品排在最底
@@ -2932,7 +3045,7 @@ service started PID=420
 watchdog.active = True
 watchdog.intervalSec = 60.0
 watchdog.trackedPaths = 0  # 首次轮询还没跑（sleep 10s）
-watchdog.rootDir = D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）
+watchdog.rootDir = D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库
 totalWorks = 472
 ```
 

@@ -27,7 +27,7 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-PORTFOLIO_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+PORTFOLIO_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
 
 def main():
     if not os.path.isdir(PORTFOLIO_ROOT):

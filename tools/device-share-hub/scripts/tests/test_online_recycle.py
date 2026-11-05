@@ -25,7 +25,7 @@ except Exception:
     pass
 
 DEFAULT_BASE = "http://127.0.0.1:45835"
-DEFAULT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+DEFAULT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
 
 STAGE0 = "已发送0次（抖音小红书可发）"
 STAGE1 = "_已发送1次（微信公众号可发）"

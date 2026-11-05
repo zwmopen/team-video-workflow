@@ -26,7 +26,7 @@ REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 LOG_DIR = os.path.join(REPO_ROOT, "logs")
 SUPERVISOR_LOG = os.path.join(LOG_DIR, "supervisor.log")
 LOCK_FILE = os.path.join(SCRIPT_DIR, "online_gallery_supervisor.lock")
-LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\成品库（GPT+本地脚本制作）"
+LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
 PORT = 45835
 PAUSE_FLAG = r"D:\AICode\运行数据\应用状态\后台服务控制\online-gallery.paused"
 

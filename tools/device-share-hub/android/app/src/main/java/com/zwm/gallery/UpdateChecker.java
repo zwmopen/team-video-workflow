@@ -94,11 +94,12 @@ final class UpdateChecker {
                 String sha256 = release.optString("sha256", "");
                 String source = release.optString("source", "cloud");
                 String current = currentVersion(activity);
+                String notes = release.optString("notes", "").trim();
                 markChecked(activity);
                 activity.runOnUiThread(() -> {
                     if (isNewer(tag, current)) {
-                        if (silent) downloadUpdate(activity, tag, apkUrl, sha256);
-                        else showUpdate(activity, tag, apkUrl, sha256, source);
+                        if (silent) downloadUpdate(activity, tag, apkUrl, sha256, notes);
+                        else showUpdate(activity, tag, apkUrl, sha256, source, notes);
                     } else if (shouldShowCheckResultToast(silent, showRoutineResult)) {
                         toast(activity, "当前已经是最新版本 " + current);
                     }
@@ -148,10 +149,16 @@ final class UpdateChecker {
         if (!file.isFile()) return false;
         String size = String.format(java.util.Locale.US, "%.2f MB",
                 file.length() / 1024d / 1024d);
+        String notes = prefs.getString("readyUpdateNotes", "").trim();
+        StringBuilder sb = new StringBuilder();
+        sb.append(fileName).append(" (").append(size).append(")\n");
+        if (!notes.isEmpty()) {
+            sb.append("\n【更新内容】\n").append(notes).append("\n");
+        }
+        sb.append("\n安装包已校验完成。点击“安装”进入系统安装界面。");
         new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
                 .setTitle("更新 " + version + " 已准备好")
-                .setMessage(fileName + "\n" + size
-                        + "\n\n安装包已校验。点击“安装”进入 Android 系统安装界面。")
+                .setMessage(sb.toString())
                 .setNegativeButton("稍后", null)
                 .setPositiveButton("安装", (dialog, which) ->
                         activity.startActivity(new Intent(activity, UpdateInstallActivity.class)))
@@ -282,22 +289,33 @@ final class UpdateChecker {
         return "";
     }
 
-    private static void showUpdate(Activity activity, String version, String apkUrl, String sha256, String source) {
+    private static void showUpdate(Activity activity, String version, String apkUrl, String sha256, String source, String notes) {
         boolean downloadable = apkUrl != null && !apkUrl.trim().isEmpty();
         String title = "发现新版本 " + version + ("lan".equals(source) ? "（本地极速源）" : "（云端源）");
-        String message = "lan".equals(source)
-                ? "检测到电脑本地有新版本，可通过局域网极速下载更新（约 1~2 秒）。是否立即更新？"
-                : "是否下载更新？下载完成后会先校验安装包，再由你点击“安装”进入 Android 系统安装界面。";
+        StringBuilder sb = new StringBuilder();
+        if ("lan".equals(source)) {
+            sb.append("检测到电脑本地发布了新版本，支持局域网秒级更新。\n");
+        } else {
+            sb.append("检测到云端发布了新版本。\n");
+        }
+        if (notes != null && !notes.trim().isEmpty()) {
+            sb.append("\n【本次更新内容】\n").append(notes.trim()).append("\n");
+        }
+        sb.append("\n是否立即下载更新？");
         AlertDialog.Builder builder = new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
                 .setTitle(title)
-                .setMessage(downloadable ? message : "新版本尚未准备好安装包，请稍后再试。")
+                .setMessage(downloadable ? sb.toString() : "新版本尚未准备好安装包，请稍后再试。")
                 .setNegativeButton("稍后", null);
-        if (downloadable) builder.setPositiveButton("下载更新", (dialog, which) ->
-                downloadUpdate(activity, version, apkUrl, sha256));
+        if (downloadable) builder.setPositiveButton("立即更新", (dialog, which) ->
+                downloadUpdate(activity, version, apkUrl, sha256, notes));
         builder.show();
     }
 
     private static void downloadUpdate(Activity activity, String version, String apkUrl, String expectedSha256) {
+        downloadUpdate(activity, version, apkUrl, expectedSha256, "");
+    }
+
+    private static void downloadUpdate(Activity activity, String version, String apkUrl, String expectedSha256, String notes) {
         try {
             android.content.SharedPreferences prefs =
                     activity.getSharedPreferences("device_share", Activity.MODE_PRIVATE);
@@ -313,6 +331,7 @@ final class UpdateChecker {
             boolean stored = prefs.edit().putLong(PREF_PENDING_DOWNLOAD_ID, -1L)
                     .putString(PREF_PENDING_DOWNLOAD_SHA256, expectedSha256 == null ? "" : expectedSha256.trim())
                     .putString(PREF_PENDING_DOWNLOAD_VERSION, version)
+                    .putString("readyUpdateNotes", notes == null ? "" : notes.trim())
                     .remove(PREF_DOWNLOAD_RESULT).remove(PREF_DOWNLOAD_ERROR).commit();
             if (!stored) throw new IllegalStateException("无法保存下载状态");
             AppUpdateService.start(activity, version, apkUrl.trim(), expectedSha256);
