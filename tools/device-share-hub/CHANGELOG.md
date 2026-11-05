@@ -1,3 +1,37 @@
+# 2026-11-05 DSH-199：恢复「发送就是发送」—— 撤回 10-27 误启用的自动归档（Android 0.8.130/241 · iOS 0.8.124/235 · Windows 4.3.34 · 服务端 1.2.4）
+
+用户口径：
+1. （2026-10-25）「发送就是发送」—— 手机端发送只记录次数，不把作品从在线货架藏起来、不自动进回收站；
+2. （2026-11-05）核对 0.8.129 时发现 10-27 那批把开关改回了 `false`，与上面直接冲突，要求**修复**。
+
+## 问题
+
+- `OnlineWorkLifecycle.AUTO_ARCHIVE_DISABLED` 在 2026-10-27 被从 `true` 改成 `false`，
+  等于重新启用「首发时间 + 超时」自动归档：手机端发送过的作品到点会从在线货架消失、被塞进回收站。
+- 这与 DSH-197 的用户口径相反。而 `tests/test_dsh195_server_directory_fallback.py` 里
+  `AUTO_ARCHIVE_DISABLED = true` 的契约断言因此变红 —— 但**该测试没被任何 CI job 调用**，
+  所以从 10-27 一直红到 11-05 都没人发现（假闸门比没闸门更危险）。
+- 叠加副作用：`MainActivity` 的已使用徽标会拿本地 `lifeItem.firstSharedAtMs` 反推一个到期点，
+  于是 10-27~11-05 期间产生的本地记录会在货架上顶着「已发送」文案却纹丝不动 ——
+  正是用户反馈过的「死卡假状态」。
+
+## 修复
+
+- `AUTO_ARCHIVE_DISABLED` 恢复 `true`，注释里写清 10-27 的误改与 11-05 的恢复原因，
+  并提示「将来若真要恢复倒计时，必须连同那个契约测试一起改」。
+- `MainActivity` 已使用徽标移除本地倒计时反推：归档机制取消后不存在任何到期点，
+  统一显示「已使用 N 次」，不再出现「剩 N 分钟」「已发送」这类会误导的文案。
+- 服务端 `expireAtMs` 维持恒 0（DSH-197 既定），不需要跟着改。
+- 「已使用作品置顶 + 最新优先」不受影响：走 `useCount` / `lastUsedAtMs`，与归档机制解耦。
+
+## 验证
+
+- `tests/test_dsh195_server_directory_fallback.py` → **28 项全过**（此前 1 项红）。
+- `tests/parity_ios_android.py` → **52/52 全过**。
+- `scripts.test_online_gallery_service` → **78 项全过**。
+
+**影响文档**：本文件、`android/.../OnlineWorkLifecycle.java` 类注释、`android/.../MainActivity.java` 徽标段注释。
+
 # 2026-11-05 DSH-198：iOS 拉取进度假死根治 · 补记 0.8.127/128（Android 0.8.129/240 · iOS 0.8.124/235 · Windows 4.3.34 · 服务端 1.2.4）
 
 用户口径：

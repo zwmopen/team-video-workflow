@@ -47,7 +47,7 @@ def _clip(s, max_chars):
     return s[: max_chars - 1].rstrip() + "…"
 
 
-def extract(path=DEFAULT_PATH, max_items=9, max_chars=100, max_total=800):
+def extract(path=DEFAULT_PATH, max_items=9, max_chars=100, max_total=1100):
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as fp:
             lines = fp.read().splitlines()
@@ -56,10 +56,11 @@ def extract(path=DEFAULT_PATH, max_items=9, max_chars=100, max_total=800):
 
     title = ""
     heads = []   # 二级标题 / 加粗要点
-    bullets = []  # 普通要点（兜底）
+    bullets = []  # 普通要点（兜底）；先存原文，最后统一截断
     in_fence = False
     skipping = False
     started = False
+    in_bullet = False  # 上一行是要点 ⇒ 后续缩进的裸文本视为它的软换行续行
 
     for ln in lines:
         stripped = ln.strip()
@@ -78,6 +79,7 @@ def extract(path=DEFAULT_PATH, max_items=9, max_chars=100, max_total=800):
             continue
 
         if stripped.startswith("## "):
+            in_bullet = False
             if _SKIP_SECTION.match(stripped):
                 skipping = True
                 continue
@@ -90,6 +92,9 @@ def extract(path=DEFAULT_PATH, max_items=9, max_chars=100, max_total=800):
         if in_fence or skipping:
             continue
 
+        if stripped.startswith(("#", "**", ">", "|")):
+            in_bullet = False
+
         m = re.fullmatch(r"\*\*(.+?)\*\*", stripped)
         if m:
             text = _clean(_ORDINAL.sub("", m.group(1)))
@@ -100,12 +105,29 @@ def extract(path=DEFAULT_PATH, max_items=9, max_chars=100, max_total=800):
         if stripped.startswith("- ") and "|" not in stripped:
             text = _clean(stripped[2:])
             if text:
-                bullets.append(_clip(text, max_chars))
+                bullets.append(text)
+                in_bullet = True
+            continue
+
+        # 软换行续行：markdown 里一条要点常被折成多行，直接取首行会断在逗号上。
+        if in_bullet and stripped:
+            if bullets:
+                joined = (bullets[-1] + " " + _clean(stripped)).strip()
+                # 中文标点后不需要空格（源文件折行处会留下多余空白）
+                joined = re.sub(r"([，。；：、）】」』！？…])\s+", r"\g<1>", joined)
+                bullets[-1] = joined
+            continue
+        if not stripped:
+            in_bullet = False
 
     picked = heads if len(heads) >= 2 else bullets
+    # 「## 问题 / ## 修复 / ## 验证」这类纯章节名没有信息量，弹窗里等于三条废话。
+    # 判据：heads 里够长的不足 2 条，就改用正文要点行。
+    if picked is heads and len([h for h in heads if len(h) >= 10]) < 2:
+        picked = bullets
     if not title or not picked:
         return ""
-    out = [title] + ["· " + p for p in picked[:max_items]]
+    out = [title] + ["· " + _clip(p, max_chars) for p in picked[:max_items]]
     text = "\n".join(out)
     if len(text) > max_total:
         text = text[: max_total - 1].rstrip() + "…"

@@ -135,8 +135,14 @@ public final class OnlineWorkLifecycle {
      *
      * 保留这个开关而不是删代码：回收站「已使用」Tab、手动删除、恢复这些能力仍然可用；
      * 只是不再有任何**自动**隐藏/搬家。将来若要恢复倒计时，把这里改回 false 即可。
+     *
+     * 【2026-11-05 复核恢复】本开关 10-27 曾被改成 false（重新启用「首发 + 超时」自动归档），
+     * 与上面的用户口径直接冲突：手机端发送后作品会到点从货架消失、徽标顶着「已发送」却还在原地，
+     * 正是用户反馈过的假状态；并且让 tests/test_dsh195_server_directory_fallback.py 里
+     * `AUTO_ARCHIVE_DISABLED = true` 的契约断言变红（该测试没被任何 CI job 调用，所以一直没暴露）。
+     * 已恢复为 true。若将来真要恢复倒计时，请连同上面那个契约测试一起改。
      */
-    public static final boolean AUTO_ARCHIVE_DISABLED = false;
+    public static final boolean AUTO_ARCHIVE_DISABLED = true;
 
     /** 记录使用：首次使用打标（机制取消后不再启动移入垃圾箱倒计时） */
     public static synchronized Item markUsed(Context context, OnlineWorkEntry work, long nowMs) {

@@ -4877,13 +4877,10 @@ public final class MainActivity extends Activity {
         if (work.useCount > 0) {
             String statusText = "已使用 " + work.useCount + " 次";
             CleanupSettings.Values cleanup = CleanupSettings.read(this);
+            // 2026-11-05：归档机制已取消（AUTO_ARCHIVE_DISABLED = true），不存在任何到期点。
+            // 旧实现还会拿本地 lifeItem.firstSharedAtMs 反推一个 expireMs —— 10-27~11-05 期间
+            // 留下的本地记录因此会在货架上顶着「已发送」却纹丝不动，就是用户说的假状态。
             long expireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? work.firstSharedAtMs + cleanup.moveAfterMs() : 0);
-            if (expireMs == 0) {
-                OnlineWorkLifecycle.Item lifeItem = OnlineWorkLifecycle.getItem(this, work.id);
-                if (lifeItem != null && lifeItem.firstSharedAtMs > 0) {
-                    expireMs = lifeItem.firstSharedAtMs + cleanup.moveAfterMs();
-                }
-            }
             if (expireMs > 0) {
                 long remainMs = expireMs - System.currentTimeMillis();
                 if (remainMs > 0) {
