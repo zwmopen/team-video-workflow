@@ -133,6 +133,16 @@ jobs:
       # ⚠️ 本 job 是 publish-gallery-updates 的前置：这里红 ⇒ 整条发版链断。
       - name: Verify iOS / Android parity contract
         run: python tools/device-share-hub/tests/parity_ios_android.py
+      # 【2026-11-05 新增】DSH-197「发送就是发送」契约（手机端永不自动归档）。
+      # 这个测试从 10-27 起就是红的（AUTO_ARCHIVE_DISABLED 被误改回 false），
+      # 但**没有任何 job 调用它**，于是一直红到 11-05 才在人工核对时被发现 ——
+      # 又一次证明「没接进 CI 的守卫等于没有守卫」。只跑 TestDSH197SendArchive 这个类：
+      # 它只读源码、不依赖 Pillow，在干净 runner 上也能跑。
+      - name: Verify "send is send" contract (phones never auto-archive)
+        env:
+          # Windows runner 默认 cp1252，断言信息里有中文 ⇒ 不加这行会 UnicodeEncodeError
+          PYTHONIOENCODING: utf-8
+        run: python tools/device-share-hub/tests/test_dsh195_server_directory_fallback.py TestDSH197SendArchive
       # 【2026-09-27 新增】C++ 测试闸门体检：盯的不是「代码对不对」，而是
       # 「这些测试到底有没有在跑」。仓库里 content_store_tests / send_to_integration_tests
       # 长期用 assert，而本 job 编的是 Release（预定义 NDEBUG）⇒ assert 被整段编译掉
