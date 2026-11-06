@@ -1733,26 +1733,20 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
 
         let total = entry.images.count
-        // DSH-198：拉取过程必须有"活着"的反馈。
-        // 旧实现只在每张图写盘完成后才回调一次 onProgress，首图慢或被重试拖住时，
-        // 弹窗会长时间停在「准备连接电脑拉取 N 张原图…」一个数字都不动，
-        // 用户看到的就是假死（真机反馈：拉取图看着卡死、没有任何进度）。
-        let progressBox = PullProgressBox(total: total)
-        let startedAt = Date()
-        let alert = UIAlertController(title: "正在从电脑同步原图到手机…",
-                                      message: progressBox.message(elapsed: 0),
-                                      preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(alert, animated: true)
+        // DSH-202：与安卓端对齐的进度面板 —— 标题 / 状态行（当前文件名）/ 横向进度条 / 右侧计数。
+        // 之前是 UIAlertController 里一行每秒更换的文字，看不到进度条，也说不出第几张。
+        let progressVC = PullProgressViewController(total: total)
+        present(progressVC, animated: true)
 
-        let ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak alert] _ in
-            alert?.message = progressBox.message(elapsed: Int(Date().timeIntervalSince(startedAt)))
+        let ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak progressVC] _ in
+            // DSH-198：秒级心跳，保证「已用时」一直在动，绝不出现假死。
+            progressVC?.tick()
         }
         RunLoop.main.add(ticker, forMode: .common)
 
         OnlineGalleryClient.shared.downloadWorkImages(entry: entry, onProgress: { done, count, name in
-            progressBox.note(done: done, total: count, name: name)
-        }, completion: { [weak self, weak alert] result in
+            progressVC.note(done: done, total: count, name: name)
+        }, completion: { [weak self, weak progressVC] result in
             ticker.invalidate()
             guard let self = self else { return }
             let launchShare: ([URL]) -> Void = { urls in
@@ -1777,8 +1771,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 self.present(activity, animated: true)
             }
 
-            if let prg = alert {
-                prg.dismiss(animated: true) {
+            if let vc = progressVC {
+                vc.dismiss(animated: true) {
                     switch result {
                     case .success(let urls):
                         launchShare(urls)
@@ -5069,36 +5063,5 @@ final class OnlineComparePreviewController: UIViewController, UIScrollViewDelega
 
     @objc private func closeTapped() {
         dismiss(animated: true)
-    }
-}
-
-/// DSH-198：拉取进度盒子。
-///
-/// 存在的唯一理由：让「正在从电脑同步原图到手机」的弹窗**每秒都有新内容**。
-/// 原实现把进度绑定在「每张图写盘完成」这一件事上，首图慢时界面一分钟都不变，
-/// 真机反馈是"拉取图看着就像卡死"。这里改成时间节拍驱动，完成数只做增量更新。
-private final class PullProgressBox {
-    private let total: Int
-    private var done = 0
-    private var lastName = ""
-
-    init(total: Int) {
-        self.total = max(1, total)
-    }
-
-    func note(done: Int, total: Int, name: String) {
-        self.done = done
-        if !name.isEmpty { lastName = name }
-    }
-
-    func message(elapsed: Int) -> String {
-        if done <= 0 {
-            return "已用时 \(elapsed) 秒，正在连接电脑并下载第 1 张（0/\(total)）…"
-        }
-        if done >= total {
-            return "已完成 \(done)/\(total) 张（用时 \(elapsed) 秒），正在准备分享…"
-        }
-        let tail = lastName.isEmpty ? "" : "，当前：\(lastName)"
-        return "\(done)/\(total) 张（已用时 \(elapsed) 秒\(tail)）"
     }
 }
