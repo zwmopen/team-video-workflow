@@ -197,7 +197,21 @@ function Build-Android {
         apk_url = '/download/apk'
         sha256 = $hash
         size = (Get-Item -LiteralPath $publishedApk).Length
-        notes = $(if ($ReleaseNotes) { $ReleaseNotes } else { "v$versionName 本地构建（build-local.ps1 自动生成）" })
+        # DSH-200：notes 会原样进手机更新弹窗，所以默认值必须是**人话**。
+        # 优先用 -ReleaseNotes，其次从 CHANGELOG 的「## 手机上看得到的变化」抽，
+        # 都拿不到才用这句兜底（不再写 versionCode / 构建脚本名给用户看）。
+        notes = $(if ($ReleaseNotes) {
+            $ReleaseNotes
+        } else {
+            $extracted = ""
+            try {
+                $extractor = Join-Path $PSScriptRoot 'extract_changelog_notes.py'
+                if (Test-Path -LiteralPath $extractor) {
+                    $extracted = (& python $extractor 2>$null | Out-String).Trim()
+                }
+            } catch { $extracted = "" }
+            if ($extracted) { $extracted } else { "这次更新修了几处问题、顺手做了些优化，装完如果有哪里不对，直接告诉我。" }
+        })
         local_apk_path = $publishedApk.Replace('\', '/')
     } | ConvertTo-Json
     [System.IO.File]::WriteAllText((Join-Path $out 'local_latest.json'), $localLatest, (New-Object System.Text.UTF8Encoding($false)))
