@@ -1,3 +1,48 @@
+# 2026-11-06 DSH-201：iOS 分享前拉原图「卡住 / 拉取失败」—— 并发打满弱网 + 单张 60 秒判死（iOS 0.8.125/236）
+
+## 手机上看得到的变化
+
+- 分享前拉原图更稳：同时只拉 3 张，不再一次把整组推出去把网挤死
+- 单张图最多等 3 分钟才判失败（原来 60 秒），重试间隔也拉长到 1.5 秒、3 秒
+- 少了某一张不再整单失败，能发几张就发几张，并告诉你有几张没取到
+
+用户口径：
+1. （2026-11-06）「苹果拉取失败看看卡住什么原因，修复下」；
+2. 期望：能连手机读现场，别靠猜。
+
+## 问题
+
+- 手机端 `downloadWorkImages` 是「有几张就同时发几张」，`httpMaximumConnectionsPerHost = 20`。
+  一次 9~10 张、每张 2~4MB，20 条流同时抢弱网带宽 ⇒ 每条只剩十几 KB/s。
+- 会话 `timeoutIntervalForResource = 60`：单张 3MB 在 200KB/s 以下必然被判死；
+  服务端不支持 Range，重试从 0 字节重新下，越重试越堵。
+- 任何一张失败 ⇒ `valid.count != total` ⇒ 整单 `.failure`，用户看到「下载图片失败」，
+  哪怕另外 9 张已经在本地缓存里。
+
+## 现场证据（不是猜）
+
+- 手机侧缓存目录 `Library/Caches/OnlineGalleryImageCache`：1040 个文件 220.8MB，
+  其中 `_full`（原图）112 个；今天 14:19 只落了 9 张 `_thumb`，**该作品一张 `_full` 都没有**。
+- 昨天最后一次成功的原图落盘：`11-05 16:19:39 → 16:21:50`，10 张 30MB 用了 **131 秒**（约 230KB/s），
+  时间戳呈「1 张 → 85 秒后 3 张 → 25 秒后 3 张」的超时重试节奏。
+- 服务端本机回环同样 5 张 15MB 只要 0.14 秒（60~250MB/s）⇒ 电脑侧磁盘与 CPU 不是瓶颈。
+- 全量审计 261 个作品 / 2217 张图，**全部 200**，没有缺图；所以不是 404 问题。
+
+## 修复
+
+- `OnlineGalleryClient`：原图另起 `fullImageSession`（资源超时 180s、`maximumConnectionsPerHost=3`）；
+  `DispatchSemaphore(3)` 限制在飞数量；重试退避 0.5s→1.5s/3s。
+- 收尾改为「拿到几张发几张」：`valid.isEmpty` 才 failure，否则 success，缺的张数在 toast 里说明。
+- 服务端 `/api/online/image` 补 `[Image-serve]` 遥测（ip / bytes / sent / ms / MBps / ok）
+  与 `[Image-404]`（id / file / path / resolved）。下次再卡住，一条日志就能算出链路速度、
+  以及是「根本没发出」还是「发到一半被客户端掐断」。
+
+## 验证
+
+- `python -m ast` 语法通过；`build-local.ps1` 与 workflow YAML 解析通过。
+- Swift 侧由 CI `ios-altstore-build`（macos runner）编译验证。
+- 装机后需要在手机上实测一次「分享前拉原图」，看 `[Image-serve] MBps` 与是否仍失败。
+
 # 2026-11-05 DSH-199：恢复「发送就是发送」—— 撤回 10-27 误启用的自动归档（Android 0.8.130/241 · iOS 0.8.124/235 · Windows 4.3.34 · 服务端 1.2.4）
 
 ## 手机上看得到的变化

@@ -4818,6 +4818,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             if not img_path or not os.path.isfile(img_path):
+                # DSH-201：以前 404 只有 traceback，没有「谁要哪张」的记录，
+                # 516 次 not found 完全无法归因。把请求参数原样打出来。
+                try:
+                    print(
+                        f"[Image-404] ip={self.client_address[0]} id={work_id!r} file={file_name!r}"
+                        f" path={raw_path!r} thumb={int(thumb)} resolved={img_path!r}"
+                    )
+                except Exception:
+                    pass
                 self.send_error(404, "Image file not found")
                 return
 
@@ -4867,6 +4876,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     print(f"[Image-bytes] file={os.path.basename(img_path)} w={scaled_w} bytes={len(data)} degraded={degraded}")
                 except Exception:
                     pass
+            # DSH-201：原图拉取「卡住/失败」一直查不清，因为这里只记了字节数、没记
+            # 谁拉的、发完没有、用了多久。补一条结构化疗测：手机端一次拉取失败后，
+            # 直接用 MB/s 判断是「链路本来就慢」还是「服务端发到一半被客户端掐断」。
+            serve_t0 = time.time()
+            sent_bytes = 0
+            serve_ok = True
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", mime)
@@ -4885,10 +4900,24 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(data)
+                sent_bytes = len(data)
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.error):
-                pass
+                # 客户端中途掐断：记成 aborted，并留下已经发出去多少 —— 这就是
+                # 「手机显示卡住」的现场证据（发到 40% 被掐 vs 根本没开始发）。
+                serve_ok = False
             finally:
                 self.close_connection = True
+                if not thumb:
+                    try:
+                        dt = max(time.time() - serve_t0, 1e-6)
+                        mb = len(data) / 1048576.0
+                        print(
+                            f"[Image-serve] ip={self.client_address[0]} file={os.path.basename(img_path)}"
+                            f" bytes={len(data)} sent={sent_bytes} ms={int(dt*1000)}"
+                            f" MBps={mb/dt:.2f} ok={1 if serve_ok else 0}"
+                        )
+                    except Exception:
+                        pass
             return
 
         # ===== 已授权设备白名单列表（GET · share.html 用）=====

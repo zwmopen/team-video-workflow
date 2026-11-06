@@ -1760,7 +1760,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     self.showToast("图片加载失败，无法拉起分享；文案已在剪贴板")
                     return
                 }
-                self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
+                // DSH-201：允许「少几张也先发」——过去少一张就整单报失败，明明可以发。
+                if urls.count < total {
+                    self.showToast("⚠️ 已准备 \(urls.count) 张原图（\(total - urls.count) 张没取到，已跳过），正在唤起分享…")
+                } else {
+                    self.showToast("✅ 已准备 \(urls.count) 张原图，正在唤起分享…")
+                }
                 let activity = UIActivityViewController(activityItems: urls.map { $0 as NSURL },
                                                         applicationActivities: nil)
                 activity.popoverPresentationController?.sourceView = source

@@ -358,10 +358,17 @@ public final class OnlineGalleryClient {
     private var cachedBaseUrl: String?
 
     private let session: URLSession
+    /// DSH-201：原图下载专用会话。
+    /// 原图单张 2~4MB，弱网下用列表/缩略图那套 60 秒资源超时会把**正常但慢**的传输判死；
+    /// 并发也收敛到 3 条 —— 手机实测 10 张 30MB 用了 131 秒，就是 20 条并发把上行打满后
+    /// 各自只剩十几 KB/s，超时重试又从 0 开始，越重试越卡。
+    private let fullImageSession: URLSession
+    /// 同时在飞的图片请求上限
+    private static let fullImageConcurrency = 3
     private let thumbnailMaxAttempts = 3
     private let thumbnailRetryDelay: TimeInterval = 0.5
     private let originalMaxAttempts = 3
-    private let originalRetryDelay: TimeInterval = 0.5
+    private let originalRetryDelay: TimeInterval = 1.5
     private let listRequestLock = NSLock()
     private var latestCategoriesRequestID: UInt64 = 0
     private var latestWorksRequestID: UInt64 = 0
@@ -378,10 +385,18 @@ public final class OnlineGalleryClient {
         config.timeoutIntervalForRequest = 25
         config.timeoutIntervalForResource = 60
         config.httpMaximumConnectionsPerHost = 20
+        // DSH-201：原图另起一套参数。60 秒资源超时对 3MB 原图在弱网下太短，
+        // 一旦被判死就整张重下（服务端没有 Range），等于把已经收到的字节全扔了。
+        let fullConfig = URLSessionConfiguration.default
+        fullConfig.timeoutIntervalForRequest = 30
+        fullConfig.timeoutIntervalForResource = 180
+        fullConfig.httpMaximumConnectionsPerHost = Self.fullImageConcurrency
+        fullConfig.waitsForConnectivity = false
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let cacheDirectory = caches.appendingPathComponent("OnlineGalleryImageCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         self.session = URLSession(configuration: config)
+        self.fullImageSession = URLSession(configuration: fullConfig)
         self.diskCacheURL = cacheDirectory
         imageCache.countLimit = 500
         imageCache.totalCostLimit = 120 * 1024 * 1024 // 120MB 内存缓存
@@ -1194,13 +1209,14 @@ public final class OnlineGalleryClient {
         maxAttempts: Int,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        let task = session.dataTask(with: url) { [weak self] data, response, error in
+        // DSH-201：原图走 fullImageSession（180 秒资源超时 / 3 条并发）。
+        let task = fullImageSession.dataTask(with: url) { [weak self] data, response, error in
             guard let self = self else { return }
             let statusCode = (response as? HTTPURLResponse)?.statusCode
             let isRetryable = error != nil || statusCode == nil || statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false) || (data != nil && (data?.count ?? 0) <= 1024)
             if let error = error {
                 if attempt < maxAttempts && isRetryable {
-                    let delay = 0.5 * Double(attempt)
+                    let delay = Self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
                     }
@@ -1211,7 +1227,7 @@ public final class OnlineGalleryClient {
             }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 if attempt < maxAttempts && isRetryable {
-                    let delay = 0.5 * Double(attempt)
+                    let delay = Self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
                     }
@@ -1222,7 +1238,7 @@ public final class OnlineGalleryClient {
             }
             guard let data = data, data.count > 1024 else {
                 if attempt < maxAttempts {
-                    let delay = 0.5 * Double(attempt)
+                    let delay = Self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
                     }
@@ -1256,6 +1272,8 @@ public final class OnlineGalleryClient {
         var collected = [URL?](repeating: nil, count: total)
         let group = DispatchGroup()
         let lock = NSLock()
+        // DSH-201：并发闸门（值 = fullImageConcurrency），避免一次把整组原图全推出去。
+        let fullGate = DispatchSemaphore(value: Self.fullImageConcurrency)
         var firstError: Error?
         var completedCount = 0
 
@@ -1293,34 +1311,46 @@ public final class OnlineGalleryClient {
             guard let url = components?.url else { continue }
 
             group.enter()
-            self.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: 1, maxAttempts: 3) { res in
-                defer { group.leave() }
-                switch res {
-                case .success:
-                    lock.lock()
-                    collected[index] = diskURL
-                    completedCount += 1
-                    let c = completedCount
-                    lock.unlock()
-                    DispatchQueue.main.async {
-                        onProgress(c, total, (imgPath as NSString).lastPathComponent)
+            // DSH-201：同时最多 3 张在飞（原来是有几张就并发几张）。
+            // 10 张 3MB 一起挤弱网 ⇒ 每条流只剩十几 KB/s ⇒ 60 秒资源超时判死 ⇒
+            // 重试又从头下（服务端无 Range），越重试越卡，最后整单报失败。
+            DispatchQueue.global(qos: .userInitiated).async {
+                fullGate.wait()
+                self.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: 1,
+                                                maxAttempts: self.originalMaxAttempts) { res in
+                    fullGate.signal()
+                    defer { group.leave() }
+                    switch res {
+                    case .success:
+                        lock.lock()
+                        collected[index] = diskURL
+                        completedCount += 1
+                        let c = completedCount
+                        lock.unlock()
+                        DispatchQueue.main.async {
+                            onProgress(c, total, (imgPath as NSString).lastPathComponent)
+                        }
+                    case .failure(let err):
+                        lock.lock()
+                        if firstError == nil { firstError = err }
+                        lock.unlock()
                     }
-                case .failure(let err):
-                    lock.lock()
-                    if firstError == nil { firstError = err }
-                    lock.unlock()
                 }
             }
         }
 
         group.notify(queue: .main) {
             let valid = collected.compactMap { $0 }
-            if valid.count == total {
+            // DSH-201：只要拿到至少一张就继续分享，缺的那几张单独告警。
+            // 过去是「少一张就整单 failure」——9 张都下好了因为第 10 张超时，
+            // 用户看到的就是「下载图片失败」，明明可以发。
+            if !valid.isEmpty {
                 completion(.success(valid))
             } else if let err = firstError {
                 completion(.failure(err))
             } else {
-                completion(.success(valid))
+                completion(.failure(NSError(domain: "OnlineGalleryClient", code: -3,
+                                            userInfo: [NSLocalizedDescriptionKey: "一张都没取到，请确认手机和电脑在同一个 Wi-Fi"])))
             }
         }
     }
