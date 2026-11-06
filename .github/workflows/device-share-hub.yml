@@ -663,13 +663,19 @@ jobs:
           current_json=$(curl --fail --silent --show-error --retry 3 \
             "https://raw.githubusercontent.com/${repo}/main/latest.json" || printf '{}')
           # DSH-198：手机端更新弹窗现在会全量展示 notes，所以这里不能只写版本号+commit，
-          # 否则「更新内容」永远是一句废话。改为从 CHANGELOG 顶部区块现抽真实变更点；
-          # 抽不到就回落到旧模板（宁可信息少，也不能让发布红掉或写出空 notes）。
-          fallback_notes="相册 Android ${version_name}（versionCode ${version_code}）/ iOS ${ios_version_name}（build ${ios_build}）；源码提交 ${GITHUB_SHA}"
-          update_notes=$(python3 tools/device-share-hub/scripts/extract_changelog_notes.py 2>/dev/null || true)
+          # 否则「更新内容」永远是一句废话。
+          # DSH-200：改为优先抽 CHANGELOG 的「## 手机上看得到的变化」人话段（脚本内做清洗 +
+          # 黑话闸门）；抽不到才回落——回落文案也必须是**人话**，不能再塞 versionCode / SHA，
+          # 那正是用户抱怨的「一大堆编号，听不懂」。
+          fallback_notes="这次更新修了几处问题、顺手做了些优化，装完如果有哪里不对，直接告诉我。"
+          update_notes=$(python3 tools/device-share-hub/scripts/extract_changelog_notes.py --debug 2>/tmp/notes_debug.txt || true)
+          cat /tmp/notes_debug.txt >&2 2>/dev/null || true
           if [ -z "$update_notes" ]; then
-            echo "::warning::CHANGELOG 抽取失败，notes 回落为版本模板"
+            echo "::warning::CHANGELOG 里没抽到人话要点（检查顶部区块的「## 手机上看得到的变化」），notes 回落为通用文案"
             update_notes="$fallback_notes"
+          fi
+          if printf '%s' "$update_notes" | grep -Eq 'DSH-[0-9]|versionCode|\.java|\.swift|test_|https?://|`'; then
+            echo "::warning::notes 里仍有工程黑话，手机弹窗会看不懂"
           fi
           echo "更新内容 notes："
           printf '%s\n' "$update_notes"
