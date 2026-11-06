@@ -1216,7 +1216,7 @@ public final class OnlineGalleryClient {
             let isRetryable = error != nil || statusCode == nil || statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false) || (data != nil && (data?.count ?? 0) <= 1024)
             if let error = error {
                 if attempt < maxAttempts && isRetryable {
-                    let delay = Self.originalRetryDelay * Double(attempt)
+                    let delay = self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
                     }
@@ -1227,7 +1227,7 @@ public final class OnlineGalleryClient {
             }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 if attempt < maxAttempts && isRetryable {
-                    let delay = Self.originalRetryDelay * Double(attempt)
+                    let delay = self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
                     }
@@ -1238,7 +1238,7 @@ public final class OnlineGalleryClient {
             }
             guard let data = data, data.count > 1024 else {
                 if attempt < maxAttempts {
-                    let delay = Self.originalRetryDelay * Double(attempt)
+                    let delay = self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
                     }
