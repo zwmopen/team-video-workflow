@@ -1,3 +1,73 @@
+# 2026-11-06 DSH-203：删除落点按「用过 / 没用过」分流 —— 用过的进「_已发送」（iOS 0.8.127/238 / Android 0.8.131/242）
+
+## 手机上看得到的变化
+
+- 删除作品时，电脑端会先看你有没有用过它：用过的进「_已发送」，从没用过的才进「垃圾样本库」
+- 删除确认框和删除后的提示都说清了这件事，不再让你以为东西被扔了
+- 自动删除（到期下架）也只搬用过的作品，没用过的不会被顺手清走
+
+用户口径：
+1. （2026-11-06）「手机上点击删除不是应该电脑端移动到 `_已发送` 吗？你之前那都放哪里了」
+2. （2026-11-06）「垃圾样本库是我一直都没用过的才进入…我点击用过使用过，无论自动删除还是自动，那都是到已发送，你好好看看，修复」
+
+## 问题
+
+- `/api/online/delete-work` 里写死：手机端删除**一律**进 `_垃圾作品样本`，并在
+  `manifest.json` / `quality_tag.json` 写死垃圾标记（全渠道硬拦截）。「用过没用过」根本不参与判断。
+- 后果：今天从手机删的 7 个作品，`useCount` 分别是 4 / 4 / 2 / 3 / 2 / 2 / 2，
+  全是发过、点过的成品，却被当废品埋进垃圾库并打了垃圾标记。
+- 更早的存量同理：`_垃圾作品样本` 158 个目录里 **62 个是「用过」**，
+  而 `_已发送` 才是它们该待的地方。
+
+## 修复
+
+- 新增 `OnlineGalleryService._work_has_been_used(work)` 作为唯一判据：
+  内存字段 `useCount > 0` / `used is True` / `lastUsedAtMs > 0` / `firstSharedAtMs > 0`；
+  再用作品目录里的 `作品标签.json`、`manifest.json` 的 `distribution` 段兜底
+  （`useCount` / `lastUsedAtMs` / `firstSharedAtMs` / `dispatchedTo`）。
+  文件兜底是为了 `_moved_works` 里的旧对象缺字段时不误判——宁可多判一次「用过」，
+  也不能把已经发出去的成品当废品。
+- `/api/online/delete-work` 分流重写：
+  - 用过 → `move_work_to_stage1(..., "deleted_after_use")`，落 `_已发送`，响应 `action="archived_to_sent"`；
+  - 没用过 → `_move_work_to_garbage(...)`，落 `_垃圾作品样本` 并打垃圾标记，响应 `action="garbage_deleted"`。
+  响应新增 `action` 与 `usedBeforeDelete`，两端可据此提示。
+- `cleanup_expired_works()` 加同一道前置判断：到期巡检**只搬「用过」的作品**进 `_已发送`，
+  没用过的即便到了期也留在货架，绝不因为一个到期时间被当废品搬走。
+- 两端提示文案同步改（iOS `ContentView.swift`、Android `MainActivity.java`）：
+  确认框写「用过的作品移入「_已发送」，从没用过的才移入垃圾样本库并标记垃圾」。
+
+## 存量数据修正（已执行）
+
+- 一次性脚本 `fix_garbage_usage.py`：扫 `_垃圾作品样本`，把「用过」的作品迁回 `_已发送`，
+  并撤掉 `quality_tag.json` / `manifest.json` 里的垃圾标记。
+- 结果：迁移 **62 个**；`_已发送` 457 个、`_垃圾作品样本` 96 个、残留「用过」作品 **0**。
+- 流水：`_portfolio_move_logs\DSH-203_已用作品从垃圾库归位_20261106_170540.csv`。
+- 补充轮 `fix_garbage_usage_v2.py`（直接复用生产判据 `work_has_been_used`）：
+  又抓出 1 个 `lastUsedAtMs>0` 但 `useCount=0` 的 11-05 遗留作品，迁回 `_已发送`。
+  末态：`_已发送` 457 个、`_垃圾作品样本` 95 个、垃圾库里「用过」作品 **0**。
+- 流水：`_portfolio_move_logs\DSH-203b_已用作品从垃圾库归位_20261106_171555.csv`。
+
+## 验证
+
+- `python -c "import ast; ast.parse(...)"` → 语法 ok。
+- 判据单元验证（拿真实目录跑）：`useCount=3` → True、`useCount=0` → False、`used=True` → True、空对象 → False。
+- 迁移后复查垃圾库 `useCount > 0` 的目录数 = 0（含补充轮把 `lastUsedAtMs>0` 的那个 11-05 遗留作品也搬回）。
+- **端到端实测（造样本 → 调接口 → 看落点）**：
+  - 造「用过」样本（`distribution.useCount=3`）→ `POST /api/online/delete-work` →
+    返回 `action=archived_to_sent`、`usedBeforeDelete=true`、落点 `_已发送\DSH203自检_用过_171806`；
+  - 造「没用过」样本（`useCount=0`）→ 返回 `action=garbage_deleted`、`usedBeforeDelete=false`、
+    落点 `_垃圾作品样本\DSH203自检_没用过_172132`，并写入垃圾标记；
+  - 两个样本验完已进回收站，`苏州成品` / `_已发送` / `_垃圾作品样本` 均无自检残留。
+- 编译与产物由 CI `android-build` / `ios-altstore-build` 负责，装机后回读真机版本号核验。
+
+## 自检抓到的两个「类归属」坑（写在这里防复发）
+
+- `move_work_to_stage1()` 挂在 **`WorkScanner`** 上，不在 `OnlineGalleryHandler` 上。
+  最初写成 `self.move_work_to_stage1(...)` → 真机上 `AttributeError`，HTTP 直接空响应（无 JSON、无 500）。
+  现改为 `self.scanner.move_work_to_stage1(...)`。
+- `cleanup_expired_works()` 在 `WorkScanner` 里，所以判据函数不能只挂在 handler 上。
+  现已提成模块级 `work_has_been_used(work)`，两边共用；handler 上的 `_work_has_been_used` 只是薄包装。
+
 # 2026-11-06 DSH-202：iOS 拉原图进度面板对齐安卓 —— 进度条 + 第几张/共几张（iOS 0.8.126/237）
 
 ## 手机上看得到的变化

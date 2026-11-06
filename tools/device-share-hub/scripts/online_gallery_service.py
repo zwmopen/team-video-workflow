@@ -2023,6 +2023,55 @@ def sort_work_images(images: List[str], manifest_data: Optional[Dict[str, Any]] 
     return sorted(images, key=_smart_key)
 
 
+def work_has_been_used(work: Dict[str, Any]) -> bool:
+    """作品是否「点过用过」——决定删除后去 `_已发送` 还是 `_垃圾作品样本`。
+
+    用户口径（2026-11-06）：用过的作品无论是手动删还是自动删，都该进 `_已发送`；
+    只有从没用过的才进垃圾样本库。
+
+    判据优先级：内存字段（useCount / used / lastUsedAtMs / firstSharedAtMs）
+    → 作品目录里的 `作品标签.json` / `manifest.json` 的 distribution。
+    加这层文件兜底，是因为 `_moved_works` 里的旧对象可能缺字段：宁可多判一次
+    「用过」，也不能把已经发出去的成品当废品埋进垃圾库。
+
+    放在模块级（而不是挂某个类上）：`WorkScanner.cleanup_expired_works` 与
+    `OnlineGalleryHandler /api/online/delete-work` 分属两个类，必须共用同一把尺子。
+    """
+    def _int(v: Any) -> int:
+        try:
+            return int(v or 0)
+        except Exception:
+            return 0
+
+    if _int(work.get("useCount")) > 0:
+        return True
+    if work.get("used") is True:
+        return True
+    if _int(work.get("lastUsedAtMs")) > 0 or _int(work.get("firstSharedAtMs")) > 0:
+        return True
+
+    dir_path = work.get("path") or ""
+    for name in ("作品标签.json", "manifest.json"):
+        fp = os.path.join(dir_path, name)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                meta = json.load(f)
+        except Exception:
+            continue
+        dist = meta.get("distribution") or {}
+        if not isinstance(dist, dict):
+            continue
+        if _int(dist.get("useCount")) > 0:
+            return True
+        if _int(dist.get("lastUsedAtMs")) > 0 or _int(dist.get("firstSharedAtMs")) > 0:
+            return True
+        if dist.get("dispatchedTo"):
+            return True
+    return False
+
+
 class WorkScanner:
     """负责扫描成品库「可发布」作品与元数据。
 
@@ -3256,6 +3305,10 @@ class WorkScanner:
                     })
                     continue
 
+                # DSH-203：到期自动下架只对「用过」的作品成立 —— 与手动删除同一口径
+                # （用过 → `_已发送`；没用过的留在货架，绝不因为一个到期时间被搬走）。
+                if not work_has_been_used(work):
+                    continue
                 ok, dest_path, msg = self.move_work_to_stage1(work, "系统自动到期守护", "expired_auto_clean")
                 if ok:
                     try:
@@ -3268,7 +3321,7 @@ class WorkScanner:
                         "path": dest_path,
                         "message": msg
                     })
-                    print(f"[DSH-140] 作品倒计时已到期，系统守护已自动移入「_已发送1次」: {work_id} -> {dest_path}")
+                    print(f"[DSH-140] 作品倒计时已到期，系统守护已自动移入「{SENT_FOLDER}」: {work_id} -> {dest_path}")
 
         if cleaned:
             self.invalidate_stage_cache()
@@ -4991,6 +5044,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         shelf_name = os.path.basename(dest_base)
         return True, target_dest, f"已移回待发货架「{shelf_name}」"
 
+    def _work_has_been_used(self, work: Dict[str, Any]) -> bool:
+        """薄包装：真正的判据在模块级 `work_has_been_used()`（与 WorkScanner 共用）。"""
+        return work_has_been_used(work)
+
     def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "") -> Tuple[bool, str, str]:
         """
         未发送作品的人工判定删除：物理移入垃圾样本库「_垃圾作品样本」，
@@ -6103,10 +6160,23 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            # 判定权在手机端：只要手机点了删除（含「用过 → 重置 → 再删除」），
-            # 一律视为人工判定垃圾：物理移入「_垃圾作品样本」永久保留，
-            # 并在元数据写死垃圾标记（全渠道硬拦截）。电脑端绝不自动清理该样本库。
-            ok, target_dest, action_desc = self._move_work_to_garbage(target_work, device_name, remark)
+            # 【2026-11-06 用户口径】删除落点按「有没有用过」分流，不再一律进垃圾库：
+            #   用过（useCount>0 / used / 有首次分享或最后使用时间）
+            #       → 移入 `_已发送`：它已经是「发过的成品」，该归档，不该被当废品；
+            #   从没用过
+            #       → 移入 `_垃圾作品样本`，并在元数据写死垃圾标记（全渠道硬拦截）。
+            # 自动删除（到期巡检 cleanup_expired_works）本来就只搬「用过且到期」的作品
+            # 进 `_已发送`，与这里的手动路径同一条出口，口径终于一致。
+            used_before = self._work_has_been_used(target_work)
+            if used_before:
+                # 注意：`move_work_to_stage1` 挂在 WorkScanner 上，不在 handler 上（自检踩过）
+                ok, target_dest, action_desc = self.scanner.move_work_to_stage1(
+                    target_work, device_name, "deleted_after_use")
+                action = "archived_to_sent"
+            else:
+                ok, target_dest, action_desc = self._move_work_to_garbage(
+                    target_work, device_name, remark)
+                action = "garbage_deleted"
             if not ok:
                 self.send_json(200, {"ok": False, "error": action_desc})
                 return
@@ -6122,7 +6192,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
-                "action": "garbage_deleted",
+                "action": action,
+                "usedBeforeDelete": used_before,
                 "message": action_desc,
                 "targetPath": target_dest,
                 "remark": remark,

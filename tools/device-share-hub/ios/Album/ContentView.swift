@@ -1934,7 +1934,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func confirmDeleteOnline(_ entry: OnlineWorkEntry) {
         let alert = UIAlertController(title: "删除未发送作品？",
-                                      message: "《\(entry.title)》\n\n手机端：移入回收站（右上角垃圾箱可随时恢复）\n电脑端：移入垃圾样本库并在元数据标记为垃圾（全渠道硬拦截）\n\n选择「备注并删除」可先填写垃圾原因备注。",
+                                      message: "《\(entry.title)》\n\n手机端：移入回收站（右上角垃圾箱可随时恢复）\n电脑端：用过的作品移入「_已发送」，从没用过的才移入垃圾样本库并标记垃圾\n\n选择「备注并删除」可先填写垃圾原因备注。",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "备注并删除", style: .default) { [weak self] _ in
@@ -1968,8 +1968,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         // 2. 手机端移入本地回收站记录
         OnlineWorkLifecycle.moveToTrash(work: entry)
         let trimmed = (remark ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        showToast(trimmed.isEmpty ? "已删除：手机回收站 + 电脑垃圾样本库"
-                                  : "已删除并备注：手机回收站 + 电脑垃圾样本库")
+        showToast(trimmed.isEmpty ? "已删除：手机回收站；电脑端已按「用过/没用过」归档"
+                                  : "已删除并备注：手机回收站；电脑端已按「用过/没用过」归档")
         renderOnlineUI()
     }
 
