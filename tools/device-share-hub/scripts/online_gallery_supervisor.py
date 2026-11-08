@@ -30,16 +30,28 @@ LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-�
 PORT = 45835
 PAUSE_FLAG = r"D:\AICode\运行数据\应用状态\后台服务控制\online-gallery.paused"
 
+# 2026-11-09 修复：原实现只 os.stat 判断存在，一个写着 "off" 的旧标记（2026-10-24 遗留）
+# 把监管进程永久按在暂停态，服务 11-07 12:37 挂掉后再也没被拉起。
+# 现在改为「读内容」：只有内容不是明确的放行词才算暂停。空文件仍视为暂停（兼容旧语义）。
+_RESUME_TOKENS = {"off", "false", "0", "no", "resume", "run", "running"}
+
+
 def supervision_paused() -> bool:
-    """An existing flag blocks recovery; only its owner creates/removes it."""
+    """Only a genuinely-paused flag blocks recovery.
+
+    The flag must carry a truthy value to pause. Tokens such as ``off``/``false``
+    mean the owner wants supervision to run, which is the opposite of the old
+    existence-only check.
+    """
     try:
-        os.stat(PAUSE_FLAG)
-        return True
+        with open(PAUSE_FLAG, "r", encoding="utf-8", errors="replace") as fp:
+            raw = fp.read().strip().lower()
     except FileNotFoundError:
         return False
     except OSError:
         # An unreadable control state is not permission to restart a service.
         return True
+    return raw not in _RESUME_TOKENS
 
 # 确保日志目录存在
 os.makedirs(LOG_DIR, exist_ok=True)
