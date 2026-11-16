@@ -4174,3 +4174,10 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | 反重力 | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |
+
+# 2026-11-17 DSH-191 follow-up：隔离 LAN 更新源与相册工作台端口（源码已应用，运行待维护窗口）
+
+- `start_lan_update_server.ps1` 增加 `-BindHost`，健康回读跟随绑定地址，只回收命令行明确属于自身的旧进程，并拒绝通配/目标地址上的外部占用。
+- `restart_online_gallery.ps1` 仅从有默认网关且网卡为 Up 的实体接口选择 WLAN IPv4，避免常见虚拟/VPN 地址；未改变 45835 主服务端口。
+- 影响设计文档：无（不改变手机协议和更新 URL 合同；只修正启动绑定与防误杀）。
+- 验证状态：PowerShell 解析错误 0；Android 静态地址合同通过；源仓库未重启 4348/45835，真实手机回读和服务深度健康仍待维护窗口。

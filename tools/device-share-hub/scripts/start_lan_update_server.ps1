@@ -16,6 +16,7 @@ DSH-191：拉起 / 重启「局域网极速更新源」(4348)。
 [CmdletBinding()]
 param(
     [int]$Port = 4348,
+    [string]$BindHost = '0.0.0.0',
     [switch]$Restart
 )
 
@@ -31,23 +32,47 @@ if (-not (Test-Path -LiteralPath $ServiceScript)) {
     exit 1
 }
 
-# 1. 端口占用检查
+# 1. 端口占用检查：只允许回收本服务自己的旧进程。
+#    工作台可能同时使用 127.0.0.1:$Port；当 BindHost 是具体 WLAN IP 时，不能按端口全杀。
+#    0.0.0.0/:: 会覆盖目标地址，必须视为冲突。
+$WildcardAddresses = @('0.0.0.0', '::', '::0')
+$HealthHost = if ([string]::IsNullOrWhiteSpace($BindHost) -or $WildcardAddresses -contains $BindHost) { '127.0.0.1' } else { $BindHost }
+$HealthUri = "http://$HealthHost`:$Port/health"
 $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 if ($conns.Count -gt 0) {
+    $targetConns = @($conns | Where-Object {
+        $addr = [string]$_.LocalAddress
+        ($WildcardAddresses -contains $BindHost) -or ($addr -eq $BindHost) -or ($WildcardAddresses -contains $addr)
+    })
+    $ownPids = @()
+    foreach ($c in $targetConns) {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.CommandLine -match 'lan_update_server\.py') {
+            $ownPids += [int]$c.OwningProcess
+        }
+    }
     if (-not $Restart) {
         try {
-            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2
-            Write-Host "LAN update server already running: v$($resp.latest_version) (port $Port)" -ForegroundColor Green
-            exit 0
-        } catch {
-            Write-Host "Port $Port occupied but not responding, cleaning up..." -ForegroundColor Yellow
-            foreach ($c in $conns) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }
-            Start-Sleep -Milliseconds 800
+            $resp = Invoke-RestMethod -Uri $HealthUri -TimeoutSec 2
+            if ($resp.service -eq 'lan-update-server') {
+                Write-Host "LAN update server already running: v$($resp.latest_version) (port $Port)" -ForegroundColor Green
+                exit 0
+            }
+        } catch {}
+    } elseif ($ownPids.Count -gt 0) {
+        Write-Host "Restarting own LAN update server on $BindHost`:$Port ..."
+        foreach ($pid in ($ownPids | Select-Object -Unique)) {
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
         }
-    } else {
-        Write-Host "Restarting LAN update server on port $Port ..."
-        foreach ($c in $conns) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }
         Start-Sleep -Milliseconds 800
+    }
+    $remaining = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Where-Object {
+        $addr = [string]$_.LocalAddress
+        ($WildcardAddresses -contains $BindHost) -or ($addr -eq $BindHost) -or ($WildcardAddresses -contains $addr)
+    })
+    if ($remaining.Count -gt 0) {
+        Write-Host "Target $BindHost`:$Port is occupied by another service; refusing to stop it." -ForegroundColor Yellow
+        exit 2
     }
 }
 
@@ -66,7 +91,7 @@ if (Test-Path -LiteralPath $defaultPyw) {
 }
 
 # 3. 用 Win32_Process.Create 脱离父进程启动（Start-Process 的窗口样式在这里不可靠）
-$cmdLine = "`"$pythonExe`" `"$ServiceScript`" --port $Port"
+$cmdLine = "`"$pythonExe`" `"$ServiceScript`" --host $BindHost --port $Port"
 $wmi = [wmiclass]"Win32_Process"
 $res = $wmi.Create($cmdLine, $ScriptDir, $null)
 if ($res.ReturnValue -ne 0) {
@@ -79,9 +104,11 @@ $ok = $false
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
     try {
-        $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2
-        $ok = $true
-        break
+        $resp = Invoke-RestMethod -Uri $HealthUri -TimeoutSec 2
+        if ($resp.service -eq 'lan-update-server') {
+            $ok = $true
+            break
+        }
     } catch { }
 }
 

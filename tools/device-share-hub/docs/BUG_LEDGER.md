@@ -3726,3 +3726,12 @@ totalWorks = 472
 | 2026-10-11 01:59 | Codex | Android comparison respects system-bar insets after Redmi device verification |
 | 2026-10-11 01:12 | Codex | stabilize Android compare view in v0.8.79; reuse full-screen flow, show clear load feedback, and reject stale page callbacks |
 | 2026-10-10 16:07 | 反重力 | speed up online thumbnails and reconnect recovery |
+
+# DSH-191 follow-up：端口隔离启动器误报与外部占用风险（源码已应用，运行待验收 · 2026-11-17）
+
+- **现象**：原隔离预演把 LAN 更新源绑定到具体 WLAN 地址后，启动器仍固定请求 `127.0.0.1:4348/health`；如果回环端口由相册工作台占用，可能误报更新源失败。原逻辑还可能按端口强杀外部监听者。
+- **根因**：健康探测地址和绑定地址没有同源；端口冲突判断没有按 `LocalAddress` 与进程命令行收窄。
+- **修复**：启动器使用 `BindHost` 对应健康 URL，按目标/通配地址过滤，只回收命令行含 `lan_update_server.py` 的自身进程；无可用实体 WLAN 地址时跳过 LAN 更新源。
+- **验证**：两份 PowerShell 解析错误为 0；当前候选 WLAN 为 `192.168.10.225`；Android 更新检查会使用电脑实际对端地址并允许 `192.168.x.x`；未重启现有服务，真实手机请求/读回和 `/api/online/status` 深度健康仍未验收。
+- **回退**：应用前脚本副本和 `OnlineGallery-Supervisor` 任务 XML 已保存于本机迁移证据目录；恢复时只还原两份脚本，不覆盖其他脏工作。
+- **影响文档**：本账本、`CHANGELOG.md`；无版本发布。

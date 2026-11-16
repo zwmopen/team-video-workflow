@@ -28,7 +28,21 @@ $svcExit = $LASTEXITCODE
 $LanScript = Join-Path $ScriptDir "start_lan_update_server.ps1"
 if (Test-Path -LiteralPath $LanScript) {
     try {
-        & $LanScript -Port 4348 -Restart | Out-Host
+        # 只从有默认网关且网卡已启用的实体网络接口选地址，排除常见虚拟/VPN适配器。
+        $lanIp = Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.IPv4Address -and $_.IPv4DefaultGateway -and
+                $_.NetAdapter.Status -eq 'Up' -and
+                $_.InterfaceAlias -notmatch '(?i)VPN|VMware|Virtual|Hyper-V|WSL|Tailscale|Loopback|Bluetooth|蓝牙'
+            } |
+            ForEach-Object { $_.IPv4Address | Select-Object -First 1 -ExpandProperty IPAddress } |
+            Where-Object { $_ -notlike '127.*' -and $_ -notlike '169.254.*' } |
+            Select-Object -First 1
+        if ($lanIp) {
+            & $LanScript -Port 4348 -BindHost $lanIp -Restart | Out-Host
+        } else {
+            Write-Host "[warn] 未找到可用 WLAN 地址，跳过 LAN update server，避免占用工作台回环端口。" -ForegroundColor Yellow
+        }
     } catch {
         Write-Host "[warn] LAN update server (4348) 启动失败：$($_.Exception.Message)" -ForegroundColor Yellow
     }
