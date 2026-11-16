@@ -32,6 +32,27 @@ if (-not (Test-Path -LiteralPath $ServiceScript)) {
     exit 1
 }
 
+function Invoke-LocalJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [int]$TimeoutMs = 2000
+    )
+    $request = [System.Net.HttpWebRequest]::Create($Uri)
+    $request.Proxy = $null
+    $request.Timeout = $TimeoutMs
+    $request.ReadWriteTimeout = $TimeoutMs
+    $response = $null
+    $reader = $null
+    try {
+        $response = $request.GetResponse()
+        $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
+        return ($reader.ReadToEnd() | ConvertFrom-Json)
+    } finally {
+        if ($reader) { $reader.Dispose() }
+        if ($response) { $response.Dispose() }
+    }
+}
+
 # 1. 端口占用检查：只允许回收本服务自己的旧进程。
 #    工作台可能同时使用 127.0.0.1:$Port；当 BindHost 是具体 WLAN IP 时，不能按端口全杀。
 #    0.0.0.0/:: 会覆盖目标地址，必须视为冲突。
@@ -53,7 +74,7 @@ if ($conns.Count -gt 0) {
     }
     if (-not $Restart) {
         try {
-            $resp = Invoke-RestMethod -Uri $HealthUri -TimeoutSec 2
+            $resp = Invoke-LocalJson -Uri $HealthUri
             if ($resp.service -eq 'lan-update-server') {
                 Write-Host "LAN update server already running: v$($resp.latest_version) (port $Port)" -ForegroundColor Green
                 exit 0
@@ -104,7 +125,7 @@ $ok = $false
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
     try {
-        $resp = Invoke-RestMethod -Uri $HealthUri -TimeoutSec 2
+        $resp = Invoke-LocalJson -Uri $HealthUri
         if ($resp.service -eq 'lan-update-server') {
             $ok = $true
             break

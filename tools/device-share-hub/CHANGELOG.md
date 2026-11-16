@@ -4181,3 +4181,10 @@ IHDR CRC 与 IDAT 长度都不对，Pillow 会报 `cannot identify image file`�
 - `restart_online_gallery.ps1` 仅从有默认网关且网卡为 Up 的实体接口选择 WLAN IPv4，避免常见虚拟/VPN 地址；未改变 45835 主服务端口。
 - 影响设计文档：无（不改变手机协议和更新 URL 合同；只修正启动绑定与防误杀）。
 - 验证状态：PowerShell 解析错误 0；Android 静态地址合同通过；源仓库未重启 4348/45835，真实手机回读和服务深度健康仍待维护窗口。
+
+# 2026-11-17 DSH-191 follow-up：修复本机代理导致的局部健康检查误报（源码已应用，运行待维护窗口）
+
+- start_lan_update_server.ps1 的两个本地健康检查改用禁用代理的 HttpWebRequest，避免系统代理把本机 WLAN 地址误报为 502。
+- 隔离端口 4549 绑定 192.168.10.225 通过：/health 与 /latest.json 均可读，脚本返回 0；精确端口进程已停止，4549 回读无监听。
+- 影响设计文档：无（不改变手机协议、版本或生产端口）；真实 4348/45835 未重启。
+- 验证状态：PowerShell 解析错误 0；PYTHONNOUSERSITE=1 python -m pytest tests/test_lan_update_server.py -q 8/8 通过。隔离证据：lan-update-host-separation-runtime-20261117.json，SHA-256 C6B63B0D3F109941809ACBB66D8E73B9B8C9F55251B7DC836CE045849C386A6A。

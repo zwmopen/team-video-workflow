@@ -3735,3 +3735,9 @@ totalWorks = 472
 - **验证**：两份 PowerShell 解析错误为 0；当前候选 WLAN 为 `192.168.10.225`；Android 更新检查会使用电脑实际对端地址并允许 `192.168.x.x`；未重启现有服务，真实手机请求/读回和 `/api/online/status` 深度健康仍未验收。
 - **回退**：应用前脚本副本和 `OnlineGallery-Supervisor` 任务 XML 已保存于本机迁移证据目录；恢复时只还原两份脚本，不覆盖其他脏工作。
 - **影响文档**：本账本、`CHANGELOG.md`；无版本发布。
+
+## 2026-11-17 DSH-191 follow-up：本机代理误报已隔离验证
+
+- 原启动器使用 Invoke-RestMethod 做本地健康检查，在当前系统代理存在时可能得到 502，即使 LAN 服务已经正常监听。
+- 已改为 HttpWebRequest + Proxy = null，并在隔离端口 4549 绑定 192.168.10.225 完成 /health、/latest.json 直接回读；测试进程已按精确端口停止，未触碰生产服务。
+- 证据：D:\Backups\江湖有旅人迁移\20261113\preflight-evidence\lan-update-host-separation-sandbox-20261117\lan-update-host-separation-runtime-20261117.json（SHA-256 C6B63B0D3F109941809ACBB66D8E73B9B8C9F55251B7DC836CE045849C386A6A）。
