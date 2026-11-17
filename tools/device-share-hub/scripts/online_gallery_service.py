@@ -855,18 +855,39 @@ SENT_FOLDER_LEGACY = (
     "已发送2次（其他平台可发）",
     "已发送一次",
 )
+# 【2026-11-17 用户口径】HR 成品进驻统一成品库，单独回收站物理隔离：携程与微信主业不分发 HR 资料，防止污染主业发稿池
+HR_SENT_FOLDER = "_HR已发送"
+HR_GARBAGE_FOLDER = "_HR垃圾作品样本"
+
+
+def is_hr_work(work: Dict[str, Any]) -> bool:
+    """判定作品是否属于行政 HR / HR资料体系（与携程/微信等团建主业物理隔离）。"""
+    if not isinstance(work, dict):
+        return False
+    path = (work.get("path") or "").replace("/", "\\")
+    dest = (work.get("destination") or "").strip()
+    cat = (work.get("category") or "").strip()
+    for kw in ("HR资料成品", "行政HR成品", "行政HR资料号", "行政HR", "HR资料"):
+        if kw in path:
+            return True
+    for kw in ("HR资料", "行政HR", "HR"):
+        if dest == kw or cat == kw:
+            return True
+    return False
 
 
 def ensure_sent_folder(root: str) -> str:
-    """确保 `成品库/_已发送` 存在（不存在就创建），返回其绝对路径。
+    """确保普通与 HR 专属归档目录存在（不存在就创建），返回普通已发送绝对路径。
 
     只在服务启动/扫描时调用，失败不抛异常（只读盘、无网络时也不能拦住扫描）。
     """
     path = os.path.join(root, SENT_FOLDER)
-    try:
-        os.makedirs(path, exist_ok=True)
-    except Exception as exc:
-        print(f"[Warn] 创建「{SENT_FOLDER}」目录失败：{exc}")
+    for folder_name in (SENT_FOLDER, HR_SENT_FOLDER, HR_GARBAGE_FOLDER, "_垃圾作品样本"):
+        target_p = os.path.join(root, folder_name)
+        try:
+            os.makedirs(target_p, exist_ok=True)
+        except Exception as exc:
+            print(f"[Warn] 创建「{folder_name}」目录失败：{exc}")
     return path
 
 # 产线标准布局：成品图不一定在作品根目录，也可能在 `产出素材/` 子目录里。
@@ -2239,13 +2260,15 @@ class WorkScanner:
         self.invalidate_wire_cache()
 
     def resolve_stage_work(self, work_id: str) -> Optional[Dict[str, Any]]:
-        """在三个阶段库（已发送0次 / _已发送1次 / _垃圾作品）里按 id 定位作品。"""
+        """在各阶段库与归档库（已发送0次 / _已发送 / _垃圾作品样本 / _HR已发送 / _HR垃圾作品样本）里按 id 定位作品。"""
         work_id = (work_id or "").strip()
         if not work_id:
             return None
         for folder, stage, base_count in (
             (self.STAGE1_FOLDER, "已发送1次", 1),
             (self.GARBAGE_FOLDER, "已废弃-垃圾", 0),
+            (HR_SENT_FOLDER, "已发送1次", 1),
+            (HR_GARBAGE_FOLDER, "已废弃-垃圾", 0),
             (self.STAGE0_FOLDER, "已发送0次", 0),
         ):
             base = os.path.join(self.root, folder)
@@ -3368,11 +3391,12 @@ class WorkScanner:
             "rootDir": self.root,
         }
 
-    def move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str = "电脑端发送", action_type: str = "dispatched") -> Tuple[bool, str, str]:
-        """把作品从货架物理移入「_已发送」。
+    def move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str = "电脑端发送", action_type: str = "dispatched", target_folder: Optional[str] = None) -> Tuple[bool, str, str]:
+        """把作品从货架物理移入归档目录（普通成品 -> `_已发送`；HR 成品 -> `_HR已发送`）。
 
         【2026-10-25 语义变更】归档只由**电脑端发送成功**触发；手机端 `/api/online/use-work`
         已不再调用本方法（发送就是发送，不搬家）。
+        【2026-11-17 规则】HR 成品进驻统一成品库，单独落入 `_HR已发送` 物理隔离。
         """
         src_path = target_work.get("path", "")
         if not src_path or not os.path.exists(src_path):
@@ -3382,7 +3406,8 @@ class WorkScanner:
         work_id = target_work.get("id", "")
 
         root_dir = self.root
-        dest_base = os.path.join(root_dir, SENT_FOLDER)
+        dest_folder = target_folder or (HR_SENT_FOLDER if is_hr_work(target_work) else SENT_FOLDER)
+        dest_base = os.path.join(root_dir, dest_folder)
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -3391,7 +3416,7 @@ class WorkScanner:
             target_dest = os.path.join(dest_base, f"{folder_name}_{ts}")
 
         if os.path.abspath(target_dest) == os.path.abspath(src_path):
-            return True, target_dest, f"作品已位于「{SENT_FOLDER}」"
+            return True, target_dest, f"作品已位于「{dest_folder}」"
 
         move_err = None
         for attempt in range(3):
@@ -3419,7 +3444,7 @@ class WorkScanner:
 
         log_portfolio_move(root_dir, device_name, work_id, src_path, target_dest, use_count, action_type)
 
-        return True, target_dest, f"已移入「{SENT_FOLDER}」"
+        return True, target_dest, f"已移入「{dest_folder}」"
 
     def cleanup_expired_works(self) -> List[Dict[str, Any]]:
         """DSH-140: 主动巡检货架上到期未下架的作品，自动移入回收站并清理软链接镜像。"""
@@ -3437,7 +3462,8 @@ class WorkScanner:
             if expire_at > 0 and now_ms >= expire_at:
                 work_id = work.get("id", "")
                 work_path = work.get("path", "")
-                is_link = work.get("is_symlink", False) or is_junction_or_symlink(work_path)
+                is_hr = is_hr_work(work)
+                is_link = (work.get("is_symlink", False) or is_junction_or_symlink(work_path)) and not is_hr
 
                 if is_link:
                     unlink_ok, unlink_msg = unlink_junction(work_path, self.root)
@@ -3450,10 +3476,11 @@ class WorkScanner:
                     continue
 
                 # DSH-203：到期自动下架只对「用过」的作品成立 —— 与手动删除同一口径
-                # （用过 → `_已发送`；没用过的留在货架，绝不因为一个到期时间被搬走）。
+                # （用过 → `_已发送` / `_HR已发送`；没用过的留在货架，绝不因为一个到期时间被搬走）。
                 if not work_has_been_used(work):
                     continue
-                ok, dest_path, msg = self.move_work_to_stage1(work, "系统自动到期守护", "expired_auto_clean")
+                target_f = HR_SENT_FOLDER if is_hr else SENT_FOLDER
+                ok, dest_path, msg = self.move_work_to_stage1(work, "系统自动到期守护", "expired_auto_clean", target_folder=target_f)
                 if ok:
                     try:
                         cleanup_junctions_for_source(work_path, self.root)
@@ -3465,7 +3492,7 @@ class WorkScanner:
                         "path": dest_path,
                         "message": msg
                     })
-                    print(f"[DSH-140] 作品倒计时已到期，系统守护已自动移入「{SENT_FOLDER}」: {work_id} -> {dest_path}")
+                    print(f"[DSH-140] 作品倒计时已到期，系统守护已自动移入「{target_f}」: {work_id} -> {dest_path}")
 
         if cleaned:
             self.invalidate_stage_cache()
@@ -4935,17 +4962,26 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/recycle":
-            # 在线回收站：顶部两个 Tab —— 已使用（_已发送1次）/ 已标记垃圾（_垃圾作品）
+            # 在线回收站：顶部两个 Tab —— 已使用（_已发送 / _HR已发送）/ 已标记垃圾（_垃圾作品样本 / _HR垃圾作品样本）
             tab_raw = (query.get("tab", ["sent"])[0] or "sent").strip().lower()
+            scope_raw = (query.get("scope", [""])[0] or query.get("category", [""])[0] or "").strip().lower()
+            is_hr_scope = scope_raw in ("hr", "hr_data", "行政hr", "hr资料")
             is_garbage = tab_raw in ("garbage", "trash", "已标记垃圾", "垃圾")
             force = query.get("refresh", ["0"])[0] == "1"
 
-            if is_garbage:
-                folder, stage, base_count = self.scanner.GARBAGE_FOLDER, "已废弃-垃圾", 0
-                tab, label = "garbage", "已标记垃圾"
+            if is_hr_scope:
+                sent_f = HR_SENT_FOLDER
+                trash_f = HR_GARBAGE_FOLDER
             else:
-                folder, stage, base_count = self.scanner.STAGE1_FOLDER, "已发送1次", 1
-                tab, label = "sent", "已使用"
+                sent_f = self.scanner.STAGE1_FOLDER
+                trash_f = self.scanner.GARBAGE_FOLDER
+
+            if is_garbage:
+                folder, stage, base_count = trash_f, "已废弃-垃圾", 0
+                tab, label = "garbage", ("HR已标记垃圾" if is_hr_scope else "已标记垃圾")
+            else:
+                folder, stage, base_count = sent_f, "已发送1次", 1
+                tab, label = "sent", ("HR已使用" if is_hr_scope else "已使用")
 
             works = self.scanner.list_stage_works(folder, stage, base_count, force=force)
             for w in works:
@@ -4954,15 +4990,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # 另一个 Tab 也列一遍（垃圾库很小，代价可忽略），
             # 让两个 Tab 的角标数字与各自列表的 total 严格一致。
             if is_garbage:
-                other_works = self.scanner.list_stage_works(self.scanner.STAGE1_FOLDER, "已发送1次", 1, force=force)
+                other_works = self.scanner.list_stage_works(sent_f, "已发送1次", 1, force=force)
                 counts = {"sent": len(other_works), "garbage": len(works)}
             else:
-                other_works = self.scanner.list_stage_works(self.scanner.GARBAGE_FOLDER, "已废弃-垃圾", 0, force=force)
+                other_works = self.scanner.list_stage_works(trash_f, "已废弃-垃圾", 0, force=force)
                 counts = {"sent": len(works), "garbage": len(other_works)}
 
             self.send_json(200, {
                 "ok": True,
                 "tab": tab,
+                "scope": ("hr" if is_hr_scope else "regular"),
                 "label": label,
                 "folder": folder,
                 "total": len(works),
@@ -5185,15 +5222,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
-    def _move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str, action_type: str = "dispatched") -> Tuple[bool, str, str]:
-        return self.scanner.move_work_to_stage1(target_work, device_name, action_type)
+    def _move_work_to_stage1(self, target_work: Dict[str, Any], device_name: str, action_type: str = "dispatched", target_folder: Optional[str] = None) -> Tuple[bool, str, str]:
+        return self.scanner.move_work_to_stage1(target_work, device_name, action_type, target_folder=target_folder)
 
     def _move_work_to_stage0(self, target_work: Dict[str, Any]) -> Tuple[bool, str, str]:
-        """把作品从「_已发送1次」移回「已发送0次」——「重置使用状态」的另一半。
+        """把作品从「_已发送」或「_HR已发送」移回待发货架 ——「重置使用状态」的另一半。
 
         【2026-09-21 修复】此前 /api/online/reset-work 只把 useCount 归零、**不移动目录**，
         结果作品永远挂在「已使用」Tab，主页「全部」里也找不到它，与提示语
         「重置为待首发状态」不符。失败不致命：调用方仍返回「计数已归零」。
+        【2026-11-17 规则】HR 成品重置时优先放回 行政HR成品 目录。
         """
         src_path = target_work["path"]
         folder_name = os.path.basename(src_path)
@@ -5206,7 +5244,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if home and os.path.isdir(home) and self._is_valid_restore_parent(home):
             dest_base = home
         if not dest_base:
-            dest_base = self._find_target_shelf_dir(target_work.get("destination", ""), folder_name)
+            if is_hr_work(target_work):
+                for hr_c in ("行政HR成品", "HR资料成品"):
+                    p = os.path.join(root_dir, hr_c)
+                    if os.path.isdir(p):
+                        dest_base = p
+                        break
+            if not dest_base:
+                dest_base = self._find_target_shelf_dir(target_work.get("destination", ""), folder_name)
 
         os.makedirs(dest_base, exist_ok=True)
 
@@ -5250,9 +5295,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         """薄包装：真正的判据在模块级 `work_has_been_used()`（与 WorkScanner 共用）。"""
         return work_has_been_used(work)
 
-    def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "") -> Tuple[bool, str, str]:
+    def _move_work_to_garbage(self, target_work: Dict[str, Any], device_name: str, remark: str = "", target_folder: Optional[str] = None) -> Tuple[bool, str, str]:
         """
-        未发送作品的人工判定删除：物理移入垃圾样本库「_垃圾作品样本」，
+        未发送作品的人工判定删除：物理移入垃圾样本库（普通成品 -> `_垃圾作品样本`；HR 成品 -> `_HR垃圾作品样本`），
         并在元数据（manifest.json + quality_tag.json）永久标记为垃圾，全渠道分发引擎硬拦截。
         """
         src_path = target_work["path"]
@@ -5262,7 +5307,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
 
         root_dir = self.scanner.root
-        dest_base = os.path.join(root_dir, "_垃圾作品样本")
+        dest_folder = target_folder or (HR_GARBAGE_FOLDER if is_hr_work(target_work) else "_垃圾作品样本")
+        dest_base = os.path.join(root_dir, dest_folder)
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -5271,7 +5317,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             target_dest = os.path.join(dest_base, f"{folder_name}_{ts_suffix}")
 
         if os.path.abspath(target_dest) == os.path.abspath(src_path):
-            return True, target_dest, "作品已位于垃圾样本库「_垃圾作品样本」"
+            return True, target_dest, f"作品已位于垃圾样本库「{dest_folder}」"
 
         move_err = None
         for attempt in range(3):
@@ -5294,6 +5340,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if move_err is not None:
             return False, "", f"物理移动失败: {str(move_err)}"
 
+        is_hr = is_hr_work(target_work)
         # 1) quality_tag.json：全渠道硬拦截标记
         try:
             quality = {
@@ -5304,6 +5351,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "marked_by": device_name,
                 "marked_at": ts,
                 "source_stage": f"{target_work.get('stage', '未发送')}（手机端在线相册人工判定删除）",
+                "is_hr": is_hr,
             }
             quality_file = os.path.join(target_dest, "quality_tag.json")
             atomic_write_json(quality_file, quality, ensure_ascii=False, indent=2)
@@ -5321,6 +5369,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "remark": remark,
                     "markedBy": device_name,
                     "markedAt": ts,
+                    "isHr": is_hr,
                 }
                 atomic_write_json(manifest_file, manifest, ensure_ascii=False, indent=2)
         except Exception:
@@ -5331,7 +5380,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         log_portfolio_move(root_dir, device_name, work_id, src_path, target_dest, 0, "garbage_delete", remark)
 
-        msg = "已移入垃圾样本库「_垃圾作品样本」并在元数据标记为垃圾"
+        msg = f"已移入垃圾样本库「{dest_folder}」并在元数据标记为垃圾"
         if remark:
             msg += f"（备注：{remark}）"
         return True, target_dest, msg
@@ -5339,7 +5388,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def _delete_single_image(self, target_work: Dict[str, Any], image_name: str, device_name: str = "") -> Tuple[bool, str, List[str]]:
         """
         DSH-141: 预览界面直接删除单张图片
-        - 安全移入 _垃圾作品样本/_deleted_images/{work_id}/{image_name}（零丢失可恢复）
+        - 安全移入 _垃圾作品样本（或 _HR垃圾作品样本）/_deleted_images/{work_id}/{image_name}（零丢失可恢复）
         - 联动清理缓存 (%TEMP%/gallery_thumb_cache)
         - 联动更新 manifest.json
         - 保证作品至少保留 1 张图（最后 1 张图拦截提醒整套删除）
@@ -5365,9 +5414,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if len(current_images) <= 1:
             return False, "作品至少需保留 1 张图片，如需整套下架请直接点击删除作品", current_images
 
-        # 1. 物理备份移入 _垃圾作品样本/_deleted_images/ (零丢失)
+        # 1. 物理备份移入 对应垃圾样本库/_deleted_images/ (零丢失)
         root_dir = self.scanner.root
-        trash_dir = os.path.join(root_dir, "_垃圾作品样本", "_deleted_images", work_id)
+        dest_folder = HR_GARBAGE_FOLDER if is_hr_work(target_work) else "_垃圾作品样本"
+        trash_dir = os.path.join(root_dir, dest_folder, "_deleted_images", work_id)
         os.makedirs(trash_dir, exist_ok=True)
         dest_img_path = os.path.join(trash_dir, f"{time.strftime('%Y%m%d_%H%M%S')}_{img_name}")
         try:
@@ -5448,6 +5498,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             ("湖州", "湖州成品"), ("台州", "台州成品"), ("金华", "金华成品"),
             ("义乌", "义乌成品"), ("乌镇", "乌镇成品"), ("游戏", "团建游戏成品"),
             ("中秋", "中秋国庆成品"), ("国庆", "中秋国庆成品"),
+            ("HR", "行政HR成品"), ("人事", "行政HR成品"), ("行政", "行政HR成品"),
         ]:
             if kw in folder_name:
                 candidates.append(shelf_name)
@@ -5624,7 +5675,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             dest_base = home
             restored_to_album = True
         if not dest_base:
-            dest_base = self._find_target_shelf_dir(target_work.get("destination", ""), folder_name)
+            if is_hr_work(target_work):
+                for hr_c in ("行政HR成品", "HR资料成品"):
+                    p = os.path.join(root_dir, hr_c)
+                    if os.path.isdir(p):
+                        dest_base = p
+                        restored_to_album = True
+                        break
+            if not dest_base:
+                dest_base = self._find_target_shelf_dir(target_work.get("destination", ""), folder_name)
         os.makedirs(dest_base, exist_ok=True)
 
         target_dest = os.path.join(dest_base, folder_name)
@@ -6336,10 +6395,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             dir_path = target_work["path"]
-            is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
+            is_hr = is_hr_work(target_work)
+            is_link = (target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)) and not is_hr
 
             if is_link:
-                # 【软链接镜像删除】：
+                # 【软链接镜像删除（仅限普通跨城市软链接镜像）】：
                 # 仅解绑当前副货架上的软链接，绝对不污染/移走主货架物理本体！
                 unlink_ok, unlink_msg = unlink_junction(dir_path, self.scanner.root)
                 self.scanner.scan(force=True)
@@ -6353,23 +6413,32 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            # 【2026-11-06 用户口径】删除落点按「有没有用过」分流，不再一律进垃圾库：
-            #   用过（useCount>0 / used / 有首次分享或最后使用时间）
-            #       → 移入 `_已发送`：它已经是「发过的成品」，该归档，不该被当废品；
-            #   从没用过
-            #       → 移入 `_垃圾作品样本`，并在元数据写死垃圾标记（全渠道硬拦截）。
-            # 自动删除（到期巡检 cleanup_expired_works）本来就只搬「用过且到期」的作品
-            # 进 `_已发送`，与这里的手动路径同一条出口，口径终于一致。
+            # 【2026-11-06 / 2026-11-17 规则】删除落点按「有没有用过」分流：
+            #   普通作品：
+            #     用过 → 移入 `_已发送`
+            #     没用过 → 移入 `_垃圾作品样本`
+            #   HR 作品（独立回收站，携程和微信用不到，物理隔离防污染）：
+            #     用过 → 移入 `_HR已发送`
+            #     没用过 → 移入 `_HR垃圾作品样本`
             used_before = self._work_has_been_used(target_work)
-            if used_before:
-                # 注意：`move_work_to_stage1` 挂在 WorkScanner 上，不在 handler 上（自检踩过）
-                ok, target_dest, action_desc = self.scanner.move_work_to_stage1(
-                    target_work, device_name, "deleted_after_use")
-                action = "archived_to_sent"
+            if is_hr:
+                if used_before:
+                    ok, target_dest, action_desc = self.scanner.move_work_to_stage1(
+                        target_work, device_name, "deleted_after_use", target_folder=HR_SENT_FOLDER)
+                    action = "archived_to_hr_sent"
+                else:
+                    ok, target_dest, action_desc = self._move_work_to_garbage(
+                        target_work, device_name, remark, target_folder=HR_GARBAGE_FOLDER)
+                    action = "garbage_deleted_to_hr_trash"
             else:
-                ok, target_dest, action_desc = self._move_work_to_garbage(
-                    target_work, device_name, remark)
-                action = "garbage_deleted"
+                if used_before:
+                    ok, target_dest, action_desc = self.scanner.move_work_to_stage1(
+                        target_work, device_name, "deleted_after_use")
+                    action = "archived_to_sent"
+                else:
+                    ok, target_dest, action_desc = self._move_work_to_garbage(
+                        target_work, device_name, remark)
+                    action = "garbage_deleted"
             if not ok:
                 self.send_json(200, {"ok": False, "error": action_desc})
                 return
@@ -6384,7 +6453,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             # 触发电脑端统一通知（异步不阻塞）
             try:
-                def _do_desktop_notify(clean_title, dest_desc, dev_name, is_used):
+                def _do_desktop_notify(clean_title, dest_desc, dev_name, is_used, hr_flag):
                     try:
                         import sys
                         notify_dir = r"D:\AICode\AI\skills\技能包\技能\shared-notification\scripts"
@@ -6392,20 +6461,25 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             sys.path.insert(0, notify_dir)
                         from unified_notify import unified_notify
                         st = "info" if is_used else "warning"
-                        msg = f"手机端已删除《{clean_title}》\n已物理移入：{dest_desc}\n操作设备：{dev_name}"
-                        unified_notify(msg, title="手机相册操作通知", status=st, channels=["desktop"])
+                        tag = "【HR专属】" if hr_flag else ""
+                        msg = f"手机端已删除{tag}《{clean_title}》\n已物理移入：{dest_desc}\n操作设备：{dev_name}"
+                        unified_notify(msg, title=f"手机相册{tag}操作通知", status=st, channels=["desktop"])
                     except Exception as _ne:
                         print(f"[Warn] unified_notify error: {_ne}")
 
                 clean_t = target_work.get("title") or target_work.get("rawTitle") or work_id
-                dest_str = "「_已发送」归档" if used_before else "「_垃圾作品样本」"
-                threading.Thread(target=_do_desktop_notify, args=(clean_t, dest_str, device_name, used_before), daemon=True).start()
+                if is_hr:
+                    dest_str = f"HR专属归档「{HR_SENT_FOLDER}」" if used_before else f"HR专属垃圾库「{HR_GARBAGE_FOLDER}」"
+                else:
+                    dest_str = f"「{SENT_FOLDER}」归档" if used_before else "「_垃圾作品样本」"
+                threading.Thread(target=_do_desktop_notify, args=(clean_t, dest_str, device_name, used_before, is_hr), daemon=True).start()
             except Exception as _te:
                 print(f"[Warn] Failed to launch notify thread: {_te}")
 
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
+                "isHr": is_hr,
                 "action": action,
                 "usedBeforeDelete": used_before,
                 "message": action_desc,

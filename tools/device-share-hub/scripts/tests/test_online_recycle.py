@@ -25,10 +25,10 @@ except Exception:
     pass
 
 DEFAULT_BASE = "http://127.0.0.1:45835"
-DEFAULT_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
+DEFAULT_ROOT = r"D:\江湖有旅人\03-生产车间\05-成品库"
 
 STAGE0 = "已发送0次（抖音小红书可发）"
-STAGE1 = "_已发送1次（微信公众号可发）"
+STAGE1 = "_已发送"
 GARBAGE = "_垃圾作品样本"
 RESTORE_SHELF = "综合与其它城市"
 
