@@ -2116,7 +2116,8 @@ class WorkScanner:
         self._last_scan_time = 0.0
         # DSH-157: HTTP 列表始终从上次完整快照读取；过期扫描在单飞后台线程执行。
         # 此锁与全盘扫描 _lock 分离，status/列表读取不等待磁盘扫描。
-        self._scan_state_lock = threading.Lock()
+        # ⚠️ 必须是 RLock：快照更新与 wire 缓存作废可能会在同线程内重入嵌套！
+        self._scan_state_lock = threading.RLock()
         self._scan_refreshing = False
         self._scan_revision = 0
         self._cached_scan_revision = 0
@@ -2827,30 +2828,32 @@ class WorkScanner:
         调用此方法后，手机端下一次请求绝不会拿到已不存在的作品，无需等待耗时的全库重扫。
         """
         with self._scan_state_lock:
-            if not self._cached_works:
-                return 0
-            original_len = len(self._cached_works)
-            if specific_deleted_paths:
-                norm_deleted = {os.path.normcase(os.path.abspath(p)) for p in specific_deleted_paths}
-                valid = [
-                    w for w in self._cached_works
-                    if os.path.normcase(os.path.abspath(w.get("path", ""))) not in norm_deleted
-                    and os.path.exists(w.get("path", ""))
-                ]
-            else:
-                valid = [
-                    w for w in self._cached_works
-                    if os.path.exists(w.get("path", ""))
-                ]
-            pruned_count = original_len - len(valid)
-            if pruned_count > 0:
+            cached = list(self._cached_works)
+        if not cached:
+            return 0
+        original_len = len(cached)
+        if specific_deleted_paths:
+            norm_deleted = {os.path.normcase(os.path.abspath(p)) for p in specific_deleted_paths}
+            valid = [
+                w for w in cached
+                if os.path.normcase(os.path.abspath(w.get("path", ""))) not in norm_deleted
+                and os.path.exists(w.get("path", ""))
+            ]
+        else:
+            valid = [
+                w for w in cached
+                if os.path.exists(w.get("path", ""))
+            ]
+        pruned_count = original_len - len(valid)
+        if pruned_count > 0:
+            with self._scan_state_lock:
                 self._cached_works = valid
                 self._works_by_id = {w["id"]: w for w in valid}
                 self._scan_revision += 1
                 self._cached_scan_revision = self._scan_revision
-                self.invalidate_wire_cache()
-                print(f"[WorkScanner] 瞬时剔除 {pruned_count} 套已物理删除的作品快照，当前保留 {len(valid)} 套")
-            return pruned_count
+                self._wire_revision = -1
+            print(f"[WorkScanner] 瞬时剔除 {pruned_count} 套已物理删除的作品快照，当前保留 {len(valid)} 套")
+        return pruned_count
 
     def scan_throttled(self, force: bool = False) -> List[Dict[str, Any]]:
         """兼容现有 HTTP 调用方的快照入口。"""
