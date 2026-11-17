@@ -1967,13 +1967,19 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func performDeleteOnline(_ entry: OnlineWorkEntry, remark: String?) {
-        // 1. 电脑端移入垃圾样本库并标记垃圾元数据
-        OnlineGalleryClient.shared.deleteWork(workId: entry.id, remark: remark)
+        // 1. 异步通知电脑端归档
+        OnlineGalleryClient.shared.deleteWork(workId: entry.id, remark: remark) { ok, msg in
+            DispatchQueue.main.async {
+                if ok {
+                    let desc = msg.isEmpty ? "已按「用过/没用过」完成归档" : msg
+                    self.showToast("✔ 电脑端：" + desc)
+                } else {
+                    self.showToast("手机已删除；电脑端未同步：" + (msg.isEmpty ? "请求失败" : msg))
+                }
+            }
+        }
         // 2. 手机端移入本地回收站记录
         OnlineWorkLifecycle.moveToTrash(work: entry)
-        let trimmed = (remark ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        showToast(trimmed.isEmpty ? "已删除：手机回收站；电脑端已按「用过/没用过」归档"
-                                  : "已删除并备注：手机回收站；电脑端已按「用过/没用过」归档")
         renderOnlineUI()
     }
 

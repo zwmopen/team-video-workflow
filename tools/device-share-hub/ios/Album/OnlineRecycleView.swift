@@ -340,12 +340,19 @@ final class OnlineRecycleViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    /// 与 Android 完全一致：手机端记入本地回收站 + 电脑端移入垃圾样本库并写死垃圾标记。
+    /// 与 Android 完全一致：手机端记入本地回收站 + 电脑端按用过/没用过安全归档。
     private func performDelete(_ work: OnlineWorkEntry, remark: String?) {
         _ = OnlineWorkLifecycle.moveToTrash(work: work)
-        OnlineGalleryClient.shared.deleteWork(workId: work.id, remark: remark) { _, _ in }
-        showToast(remark == nil ? "🗑️ 已删除：手机回收站 + 电脑垃圾样本库"
-                                : "🗑️ 已删除并备注：手机回收站 + 电脑垃圾样本库")
+        OnlineGalleryClient.shared.deleteWork(workId: work.id, remark: remark) { ok, msg in
+            DispatchQueue.main.async {
+                if ok {
+                    let desc = msg.isEmpty ? "已安全归档" : msg
+                    self.showToast("✔ 电脑端：" + desc)
+                } else {
+                    self.showToast("手机已删除；电脑端未同步：" + (msg.isEmpty ? "请求失败" : msg))
+                }
+            }
+        }
         loadData()
     }
 

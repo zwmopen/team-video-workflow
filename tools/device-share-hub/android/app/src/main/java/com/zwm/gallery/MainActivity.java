@@ -5140,7 +5140,10 @@ public final class MainActivity extends Activity {
                     toast("手机回收站已完成；电脑端同步失败：" + detail);
                     return;
                 }
-                toast("电脑端已按「用过 / 没用过」规则归档");
+                String detail = result != null && result.message != null && !result.message.isEmpty()
+                        ? result.message
+                        : "已按「用过 / 没用过」规则完成物理归档";
+                toast("✔ 电脑端：" + detail);
             }
 
             @Override
