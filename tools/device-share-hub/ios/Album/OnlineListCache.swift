@@ -12,9 +12,9 @@ import Foundation
 /// 1. **只做缓存，不做判定**。原样存服务端返回的 JSON Data，不解析、不改写字段，
 ///    避免与 `OnlineWorkEntry.from(dict:)` 的字段演进脱节。
 /// 2. **原子写**：先写 `.tmp` 再 rename，杜绝进程被杀时留下半截 JSON。
-/// 3. **有保质期**：超过 `maxAgeMs`（7 天）的快照不再使用，宁可显示「正在连接」也不要错内容。
+/// 3. **有保质期**：超过 `maxAgeMs`（4 小时）的快照不再使用，杜绝展示已删除的历史幽灵作品。
 public enum OnlineListCache {
-    public static let maxAgeMs: Int64 = 7 * 24 * 3600 * 1000
+    public static let maxAgeMs: Int64 = 4 * 3600 * 1000
 
     private static let dirName = "online_cache"
     private static let fileWorks = "last_works.json"

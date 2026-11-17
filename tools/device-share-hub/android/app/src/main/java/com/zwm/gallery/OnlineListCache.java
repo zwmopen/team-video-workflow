@@ -34,8 +34,8 @@ final class OnlineListCache {
     private static final String FILE_WORKS = "last_works.json";
     private static final String FILE_CATEGORIES = "last_categories.json";
 
-    /** 快照保质期：7 天。超期直接丢弃，宁可慢也不要错。 */
-    static final long MAX_AGE_MS = 7L * 24 * 3600 * 1000L;
+    /** 快照保质期：4 小时。超期直接丢弃，杜绝展示已删除的历史幽灵作品。 */
+    static final long MAX_AGE_MS = 4L * 3600 * 1000L;
 
     private OnlineListCache() { }
 

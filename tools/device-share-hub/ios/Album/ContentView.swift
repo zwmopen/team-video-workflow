@@ -58,6 +58,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var isOnlineMode: Bool = false
     private var onlineWorks: [OnlineWorkEntry] = []
     private var onlineCategories: [OnlineCategoryItem] = []
+    private var onlineStages: [OnlineCategoryItem] = []
     private var selectedOnlineCategory: String = "全部"
     private var modeButton: UIButton!
     private var folderItem: UIBarButtonItem?
@@ -1142,16 +1143,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             onlineStatusOverride = "正在同步电脑在线作品…"
             updateOnlineStatusHint()
         }
-        OnlineGalleryClient.shared.fetchCategories { [weak self] result in
+        OnlineGalleryClient.shared.fetchCategories(refresh: !silent) { [weak self] result in
             guard let self = self,
                   self.isOnlineMode,
                   self.onlineLoadGeneration == requestGeneration else { return }
             if case .success(let categories) = result {
                 self.onlineCategories = categories.categories
+                self.onlineStages = categories.stages
                 self.renderOnlineUI()
             }
         }
-        OnlineGalleryClient.shared.fetchWorks(sortKey: currentSortKey) { [weak self] result in
+        OnlineGalleryClient.shared.fetchWorks(sortKey: currentSortKey, refresh: !silent) { [weak self] result in
             guard let self = self,
                   self.isOnlineMode,
                   self.onlineLoadGeneration == requestGeneration else { return }
@@ -1207,10 +1209,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     mergedWorks.append(updated)
                 }
 
-                let activeUsed = mergedWorks.filter { $0.expireAtMs > now }
-                    .sorted { $0.firstSharedAtMs > $1.firstSharedAtMs }
-                let remaining = mergedWorks.filter { $0.expireAtMs <= now }
-                var finalWorks = activeUsed + remaining
+                var finalWorks = mergedWorks
                 self.sortOnlineWorksLocally(&finalWorks, sortKey: self.currentSortKey)
                 self.onlineWorks = finalWorks
                 self.onlineStatusOverride = nil
@@ -1372,12 +1371,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 sortedKeys.append(pinKey)
             }
         }
-        // 阶段 2: 🔥 高频项 (score > 0)
-        let frequentKeys = rawDict.keys
-            .filter { !pinnedList.contains($0) && (rawDict[$0]?.score ?? 0) > 0 }
-            .sorted { (rawDict[$0]?.score ?? 0) > (rawDict[$1]?.score ?? 0) }
-        sortedKeys.append(contentsOf: frequentKeys)
-        // 阶段 3: 常规未常用项
+        // 阶段 2: 保持服务端权威分类原始顺序（严禁各设备按本地点击频次打乱，保证多端绝对一致）
         for cat in onlineCategories {
             if !sortedKeys.contains(cat.name) && rawDict[cat.name] != nil {
                 sortedKeys.append(cat.name)
@@ -1396,6 +1390,16 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             filterStackView.addArrangedSubview(btn)
             filterButtons[key] = btn
         }
+
+        // 3. 追加「♻️ 已发送」直达按钮，货架首页一眼可见并一键直达
+        let sentStage = onlineStages.first(where: { $0.name == "已发送" })
+        let sentCnt = sentStage?.count ?? 0
+        let sentTitle = sentCnt > 0 ? "♻️ 已发送 \(sentCnt)" : "♻️ 已发送"
+        let sentBtn = createFilterButton(key: "RECYCLE_SENT", display: "已发送", fullTitle: sentTitle,
+                                         isSelected: false, isPinned: false)
+        sentBtn.addTarget(self, action: #selector(openTrash), for: .touchUpInside)
+        filterStackView.addArrangedSubview(sentBtn)
+
         updateOnlineStatusHint()
     }
 
@@ -2210,10 +2214,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func openTrash() {
-        // DSH-094：统一回收站入口（与 Android 严格对齐）。本地/在线模式都进 TrashViewController
-        // （同一屏：本地回收站条目 + OnlineWorkLifecycle 生命周期追踪的标记删除记录）；
-        // 电脑端回收站（_已发送 + _垃圾作品）通过 TrashView 顶部的「💻 打开电脑端回收站」按钮仍可达。
-        navigationController?.pushViewController(TrashViewController(library: library), animated: true)
+        if isOnlineMode {
+            // 【直达在线回收站】在线模式下点击回收站，直接打开电脑端在线回收站（_已发送 + _垃圾作品）
+            navigationController?.pushViewController(OnlineRecycleViewController(library: library), animated: true)
+        } else {
+            navigationController?.pushViewController(TrashViewController(library: library), animated: true)
+        }
     }
 
     @objc private func openSettings() {

@@ -832,12 +832,16 @@ public final class OnlineGalleryClient {
     }
 
     public void fetchCategories(Callback<CategoriesResult> callback) {
+        fetchCategories(false, callback);
+    }
+
+    public void fetchCategories(boolean refresh, Callback<CategoriesResult> callback) {
         final long queuedAt = SystemClock.elapsedRealtime();
         executor.execute(() -> {
             final long startedAt = SystemClock.elapsedRealtime();
             try {
                 String baseUrl = resolveBaseUrl();
-                URL url = new URL(baseUrl + "/api/online/categories");
+                URL url = new URL(baseUrl + "/api/online/categories" + (refresh ? "?refresh=1" : ""));
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
                 CategoriesResult result = parseCategories(resp);
                 Log.i(TAG, "fetchCategories parsed queueMs=" + (startedAt - queuedAt)
@@ -856,11 +860,15 @@ public final class OnlineGalleryClient {
     }
 
     public void fetchWorks(String category, String query, Callback<List<OnlineWorkEntry>> callback) {
-        fetchWorks(category, query, null, callback);
+        fetchWorks(category, query, null, false, callback);
     }
 
     // DSH-109：sortKey 可选，与服务端 SORT_KEYS 对齐；传 null 则不发 sort 参数（服务端默认 default）
     public void fetchWorks(String category, String query, String sortKey, Callback<List<OnlineWorkEntry>> callback) {
+        fetchWorks(category, query, sortKey, false, callback);
+    }
+
+    public void fetchWorks(String category, String query, String sortKey, boolean refresh, Callback<List<OnlineWorkEntry>> callback) {
         final long requestSequence = worksRequestSequence.incrementAndGet();
         final boolean fullList = (category == null || category.isEmpty())
                 && (query == null || query.isEmpty());
@@ -870,6 +878,9 @@ public final class OnlineGalleryClient {
             try {
                 String baseUrl = resolveBaseUrl();
                 StringBuilder sb = new StringBuilder(baseUrl).append("/api/online/works?");
+                if (refresh) {
+                    sb.append("refresh=1&");
+                }
                 if (category != null && !category.isEmpty()) {
                     sb.append("category=").append(URLEncoder.encode(category, "UTF-8")).append("&");
                 }

@@ -58,3 +58,6 @@ _ci_apk/
 _ci_apk_unzipped/
 _ci_artifacts/
 devimages/
+tools/device-share-hub/_*/
+tools/device-share-hub/scripts/*.bak*
+tools/ios-sideload-automation/

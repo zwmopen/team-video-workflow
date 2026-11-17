@@ -105,6 +105,7 @@ constexpr int IDC_SETTINGS_PHONES_DRY = 423;
 constexpr int IDC_SETTINGS_PHONES_SYNC = 424;
 constexpr int IDC_SETTINGS_SHORTCUTS = 425;
 constexpr int IDC_SETTINGS_ONLINE_LOG = 426;
+constexpr int IDC_SETTINGS_IOS_SIGNING_SKILL = 427;
 // 探测结果回传消息：探测走后台线程，探完 PostMessage 回 UI 线程
 constexpr UINT WM_ONLINE_PROBE_DONE = WM_APP + 11;
 // 在线手机面板的结果回传（扫描 / 同步都在后台线程，回来再 PostMessage）
@@ -120,7 +121,7 @@ constexpr int IDC_PICK_FOLDER = 204;
 constexpr int IDI_MAIN_ICON = 101;
 constexpr int DISCOVERY_PORT = 45834;
 constexpr int DEVICE_RETENTION_SECONDS = 90;
-constexpr wchar_t APP_VERSION[] = L"4.3.34";
+constexpr wchar_t APP_VERSION[] = L"4.3.35";
 constexpr wchar_t MOBILE_UPDATE_CAPABILITY[] = L"apk-push-v1";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_HOST[] = L"raw.githubusercontent.com";
 constexpr wchar_t MOBILE_UPDATE_MANIFEST_PATH[] = L"/zwmopen/gallery-updates/main/latest.json";
@@ -4359,6 +4360,41 @@ void OpenServiceLog(HWND owner) {
     }
 }
 
+std::wstring FindIosSigningSkillPath() {
+    std::filesystem::path current(online_service::ModuleDirectory());
+    std::error_code ec;
+    while (!current.empty()) {
+        const std::filesystem::path bundled =
+            current / L"ios-sideload-automation" / L"SKILL.md";
+        if (std::filesystem::exists(bundled, ec) && !ec) return bundled.wstring();
+
+        const std::filesystem::path project =
+            current / L"tools" / L"ios-sideload-automation" / L"SKILL.md";
+        ec.clear();
+        if (std::filesystem::exists(project, ec) && !ec) return project.wstring();
+
+        ec.clear();
+        const std::filesystem::path parent = current.parent_path();
+        if (parent == current) break;
+        current = parent;
+    }
+    return {};
+}
+
+void OpenIosSigningSkill(HWND owner) {
+    static constexpr wchar_t kSkillUrl[] =
+        L"https://github.com/zwmopen/team-video-workflow/blob/main/tools/ios-sideload-automation/SKILL.md";
+    const std::wstring localPath = FindIosSigningSkillPath();
+    const std::wstring target = localPath.empty() ? std::wstring(kSkillUrl) : localPath;
+    WriteDiagnosticLog(L"ios_signing_skill_opened", target);
+    const auto result = ShellExecuteW(owner, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<intptr_t>(result) <= 32) {
+        MessageBoxW(owner,
+                    L"技能说明暂时打不开。请检查网络，或确认便携包中包含 ios-sideload-automation 文件夹。",
+                    L"iPhone 签名技能", MB_OK | MB_ICONWARNING);
+    }
+}
+
 void RefreshOnlineServiceSection() {
     if (!IsWindow(gSettingsOnlineHeadline)) return;
     SetWindowTextW(gSettingsOnlinePythonPath, gOnlineConfig.pythonPath.empty()
@@ -4647,9 +4683,11 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             SendMessageW(gSettingsDarkModeCheck, WM_SETFONT, reinterpret_cast<WPARAM>(gFont), TRUE);
             AddSettingsButton(window, L"桌面快捷方式", IDC_SETTINGS_SHORTCUTS, 350, 928, 180, 36);
             AddSettingsButton(window, L"打开诊断日志", IDC_SETTINGS_DIAGNOSTICS, 540, 930, 164, 36);
+            AddSettingsButton(window, L"iPhone 签名技能说明", IDC_SETTINGS_IOS_SIGNING_SKILL,
+                              40, 970, 210, 32);
             AddSettingsText(window,
-                L"通用文件库与多设备收发工具；文件只在本机和已选设备间传输。",
-                40, 976, 650, 24);
+                L"查看签名安装、版本核验与续签流程。",
+                264, 976, 440, 24);
 
             AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 1034, 120, 38);
             // 配置（端口 / 解释器 / 脚本）存在 HKCU 里，第一次打开会自动探测并落盘
@@ -4746,6 +4784,10 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 if (gLogPath.empty()) gLogPath = DiagnosticLogPath();
                 WriteDiagnosticLog(L"log_opened", gLogPath.wstring());
                 ShellExecuteW(window, L"open", gLogPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_IOS_SIGNING_SKILL) {
+                OpenIosSigningSkill(window);
                 return 0;
             }
             if (id == IDC_SETTINGS_ONLINE_PYTHON) { ChooseOnlinePython(window); return 0; }

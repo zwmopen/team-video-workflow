@@ -17,6 +17,7 @@ Online Gallery LAN Service for Device Share Hub & Mobile Gallery
 import os
 import sys
 import threading
+import time
 
 # ------------------------------ 日志轮转（DSH-126） ------------------------------
 #
@@ -85,6 +86,7 @@ class RotatingLogStream(object):
         self.name = path
         self._lock = threading.Lock()
         self._since_check = 0
+        self._at_line_start = True
         # 启动时先切一次：上次跑大的文件别一直顶着，等写满 20 万字符才切太晚
         rotate_log_if_needed(path, max_bytes, backups)
         self._fp = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
@@ -124,7 +126,19 @@ class RotatingLogStream(object):
             return
         with self._lock:
             try:
-                self._fp.write(text)
+                # 智能按行增加 [HH:MM:SS] 时间戳并即时刷盘（彻底消灭 pythonw 下无时间戳和缓冲滞后）
+                lines = text.split("\n")
+                for idx, segment in enumerate(lines):
+                    if idx > 0:
+                        self._fp.write("\n")
+                        self._at_line_start = True
+                    if segment:
+                        if self._at_line_start:
+                            now_str = time.strftime("[%H:%M:%S] ")
+                            self._fp.write(now_str)
+                            self._at_line_start = False
+                        self._fp.write(segment)
+                self._fp.flush()
             except Exception:
                 return
             # 按「字符数」而不是字节数估算：中文一个字 3 字节，逐条 stat 太亏
@@ -359,7 +373,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import phone_sync  # noqa: E402
 
 DEFAULT_PORT = 45835
-DEFAULT_LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
+# 2026-11-16 切换到统一新根
+DEFAULT_LIBRARY_ROOT = r"D:\江湖有旅人\03-生产车间\05-成品库"
 
 # ============================================================================
 # 已授权设备白名单（用户最终决定：默认放行所有设备，无需扫码/弹框）
@@ -533,9 +548,9 @@ GZIP_MIN_BYTES = 1024
 # 每一次 /api/online/status 都在全库重扫 —— 手机端「正在连接电脑在线相册…」
 # 干等 8~11 秒的根因就在这里（实测三次间隔 7 秒的请求，分别耗时 11.4 / 10.6 / 8.0 秒）。
 # 改成 30 秒后：命中即毫秒级返回。
-# 新鲜度由 DSH-110 的 watchdog 兜底 —— 它每 30 秒轮询一次，发现增删改就
-# scan(force=True) 主动作废缓存，所以放宽 TTL 至 300s 彻底消除浏览时的 6s 磁盘重扫锁死。
-SCAN_CACHE_TTL = 300.0
+# 新鲜度由 DSH-110 的 watchdog 与毫秒级剪枝兜底 —— 发现增删改立即作废缓存
+# TTL 缩短为 15s，彻底杜绝已删除作品长期驻留服务端内存
+SCAN_CACHE_TTL = 15.0
 # DSH-117：refresh=1（强制全盘扫描）的最小间隔。
 # 手机端下拉刷新连点、或多部手机同一秒一起下拉，会在几秒内叠 N 次 5~10 秒的全盘
 # 扫描 —— 每次都要读完 473 套作品的文案文件，请求直接堆积成假死。
@@ -2557,7 +2572,7 @@ class WorkScanner:
         """
         cap = MOVED_WORKS_LIMIT if limit is None else limit
         with self._lock:
-            stale = [key for key, work in self._moved_works.items()
+            stale = [key for key, work in list(self._moved_works.items())
                      if not os.path.exists(work.get("path", ""))]
             for key in stale:
                 self._moved_works.pop(key, None)
@@ -2615,6 +2630,55 @@ class WorkScanner:
                 self._image_name_index = idx
             return dict(self._image_name_index)
 
+    def rescan_once(self, reason: str = "") -> bool:
+        """强制重扫一次（8 秒节流 + 防重入）。
+
+        【2026-11-11 P0】活产线目录被并行任务回写时，单次 scan() 可能漏掉某件作品，
+        手机端持旧 id 请求图片/重置/打标会全部 404。重扫一次通常立刻恢复。
+        注意：本方法内部会取 self._lock，调用方不得持锁。
+        """
+        now = time.time()
+        # 2 秒节流：手机失败后会连续重试多张图，8 秒会让后续请求全被挡住。
+        if now - getattr(self, "_last_rescue_scan_at", 0.0) < 2.0:
+            return False
+        if getattr(self, "_rescue_scan_running", False):
+            return False
+        self._last_rescue_scan_at = now
+        self._rescue_scan_running = True
+        try:
+            self.scan(force=True)
+            return True
+        except Exception as e:
+            try:
+                print("[Warn] 兜底重扫失败 reason=%r: %r" % (reason, e))
+            except Exception:
+                pass
+            return False
+        finally:
+            self._rescue_scan_running = False
+
+    def lookup_after_rescan(self, work_id: str) -> Optional[Dict[str, Any]]:
+        """重扫后二次寻址（含裸 id 前缀反查）。必须在锁外调用。"""
+        if not self.rescan_once("get_work_miss:" + work_id[:40]):
+            return None
+        with self._lock:
+            w = self._works_by_id.get(work_id)
+            if w and os.path.exists(w.get("path", "")):
+                return w
+            if "__link_" not in work_id:
+                prefix = work_id + "__link_"
+                for k, v in self._works_by_id.items():
+                    if k.startswith(prefix) and os.path.exists(v.get("path", "")):
+                        return v
+            if "__link_" in work_id:
+                base = self._works_by_id.get(work_id.split("__link_")[0])
+                if base and os.path.exists(base.get("path", "")):
+                    return base
+            mw = self._moved_works.get(work_id)
+            if mw and os.path.exists(mw.get("path", "")):
+                return mw
+        return None
+
     def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         # 极速快路（无锁读取内存字典，0ms 避免并发阻塞 /api/online/image）
         if self._works_by_id:
@@ -2626,6 +2690,11 @@ class WorkScanner:
                 base_work = self._works_by_id.get(base_id)
                 if base_work and os.path.exists(base_work.get("path", "")):
                     return base_work
+            else:
+                prefix = work_id + "__link_"
+                for k, v in self._works_by_id.items():
+                    if k.startswith(prefix) and os.path.exists(v.get("path", "")):
+                        return v
             if work_id in self._moved_works:
                 mw = self._moved_works[work_id]
                 if os.path.exists(mw.get("path", "")):
@@ -2643,6 +2712,11 @@ class WorkScanner:
                 base_work = self._works_by_id.get(base_id)
                 if base_work and os.path.exists(base_work.get("path", "")):
                     return base_work
+            else:
+                prefix = work_id + "__link_"
+                for k, v in self._works_by_id.items():
+                    if k.startswith(prefix) and os.path.exists(v.get("path", "")):
+                        return v
             if work_id in self._moved_works:
                 mw = self._moved_works[work_id]
                 if os.path.exists(mw.get("path", "")):
@@ -2662,7 +2736,11 @@ class WorkScanner:
                     if w:
                         self._moved_works[work_id] = w
                         return w
-            return None
+            pass
+
+        # 【2026-11-11 P0】锁外兜底：单次扫描漏件时强制重扫再查一次。
+        # 不能放在 with self._lock 里 —— scan() 也会取同一把锁，会死锁。
+        return self.lookup_after_rescan(work_id)
 
     def snapshot_count(self) -> int:
         """只读计数：非阻塞毫秒级返回，绝不阻塞在全盘扫描锁上。"""
@@ -2698,15 +2776,23 @@ class WorkScanner:
                 if cnt > 0:
                     dest_categories.append({"name": d, "count": cnt})
                     seen_cats.add(d)
-            dest_categories.sort(key=lambda c: -c["count"])
+            dest_categories.sort(key=lambda c: (-c["count"], c["name"]))
             categories.extend(dest_categories)
             if "其他" in counts and counts["其他"] > 0:
                 categories.append({"name": "其他", "count": counts["其他"]})
 
+            count_sent = self.get_stage_works_count(self.STAGE1_FOLDER)
+            count_garbage = self.get_stage_works_count(self.GARBAGE_FOLDER)
+            stages = [
+                {"name": "已发送", "count": count_sent},
+                {"name": "已标记垃圾", "count": count_garbage},
+            ]
+
             cat_resp = {
                 "ok": True,
                 "categories": categories,
-                "stages": [],
+                "stages": stages,
+                "recycle": {"sent": count_sent, "garbage": count_garbage},
                 "total": len(works),
                 "scanRevision": scan_revision,
             }
@@ -2736,6 +2822,36 @@ class WorkScanner:
         except Exception as e:
             print(f"[DSH-WireCache] 预压缩缓存生成异常：{e!r}")
 
+    def prune_deleted_from_cache(self, specific_deleted_paths: Optional[Set[str]] = None) -> int:
+        """从内存快照中瞬时剔除已被删除的物理作品，并作废 Wire 缓存。
+        调用此方法后，手机端下一次请求绝不会拿到已不存在的作品，无需等待耗时的全库重扫。
+        """
+        with self._scan_state_lock:
+            if not self._cached_works:
+                return 0
+            original_len = len(self._cached_works)
+            if specific_deleted_paths:
+                norm_deleted = {os.path.normcase(os.path.abspath(p)) for p in specific_deleted_paths}
+                valid = [
+                    w for w in self._cached_works
+                    if os.path.normcase(os.path.abspath(w.get("path", ""))) not in norm_deleted
+                    and os.path.exists(w.get("path", ""))
+                ]
+            else:
+                valid = [
+                    w for w in self._cached_works
+                    if os.path.exists(w.get("path", ""))
+                ]
+            pruned_count = original_len - len(valid)
+            if pruned_count > 0:
+                self._cached_works = valid
+                self._works_by_id = {w["id"]: w for w in valid}
+                self._scan_revision += 1
+                self._cached_scan_revision = self._scan_revision
+                self.invalidate_wire_cache()
+                print(f"[WorkScanner] 瞬时剔除 {pruned_count} 套已物理删除的作品快照，当前保留 {len(valid)} 套")
+            return pruned_count
+
     def scan_throttled(self, force: bool = False) -> List[Dict[str, Any]]:
         """兼容现有 HTTP 调用方的快照入口。"""
         return self.scan_snapshot_throttled(force=force)[0]
@@ -2756,6 +2872,8 @@ class WorkScanner:
                     force_allowed = False
                 else:
                     self._last_force_scan = now
+            # 主动刷新时，毫秒级自检剔除已不存在的物理作品
+            self.prune_deleted_from_cache()
 
         with self._scan_state_lock:
             cached = self._cached_works
@@ -3045,6 +3163,25 @@ class WorkScanner:
                             except Exception:
                                 pass
 
+            # 【2026-11-11 P0-1 d】多轮缺失保留缓冲机制（杜绝活产线并发写入瞬态掉件）：
+            # 若上一轮已存在的作品在本次扫描因写入锁定/文件瞬态不可见而未扫到，
+            # 只要其物理目录仍然存在，保留该作品（最多连续容忍 3 轮缺失），防止前端列表抖动和 404。
+            new_ids = {w["id"] for w in results}
+            if not hasattr(self, "_work_miss_counter"):
+                self._work_miss_counter = {}
+            current_miss_counter = {}
+            if self._works_by_id:
+                for old_id, old_work in self._works_by_id.items():
+                    if old_id not in new_ids:
+                        old_path = old_work.get("path", "")
+                        if old_path and os.path.exists(old_path):
+                            misses = self._work_miss_counter.get(old_id, 0) + 1
+                            current_miss_counter[old_id] = misses
+                            if misses <= 3:
+                                results.append(old_work)
+                                new_ids.add(old_id)
+            self._work_miss_counter = current_miss_counter
+
             # 按时间倒序（标题通常带时间戳）
             results.sort(key=lambda w: w.get("title", ""), reverse=True)
             self._works_by_id = {w["id"]: w for w in results}
@@ -3167,9 +3304,13 @@ class WorkScanner:
         self._watchdog_paths = current
         self._watchdog_last_poll = now
 
+        # 若发现有物理目录被删除，立即毫秒级从内存快照剔除，避免手机读到残余幽灵
+        if deleted_paths:
+            self.prune_deleted_from_cache(deleted_paths)
+
         if has_structural_change:
-            # 防抖与冷却：避免高频连续全盘重扫拖死手机端
-            if now - self._last_scan_time > 120.0:
+            # 防抖与冷却：由 120s 缩短至 3s，保证电脑端文件变动即时感知与重扫
+            if now - self._last_scan_time > 3.0:
                 self._watchdog_last_change = now
                 try:
                     scheduled = self._schedule_background_scan(force=True)
@@ -3199,14 +3340,14 @@ class WorkScanner:
                     self._poll_diff()
                 except Exception as e:
                     print(f"[DSH-110 watchdog] 轮询异常：{e!r}")
-                # DSH-140: 改为每 30 秒轮询一次，保障作品到期后快速自动下架
-                if self._watchdog_stop.wait(30.0):
+                # DSH-140 & DSH-AntiGhost: 改为每 10 秒轮询一次，保障作品到期/删除后快速同步下架
+                if self._watchdog_stop.wait(10.0):
                     break
             self._watchdog_active = False
 
         self._watchdog_thread = threading.Thread(target=_run, name="DSH110-watchdog", daemon=True)
         self._watchdog_thread.start()
-        print(f"[DSH-110 watchdog] 启动完成，每 30s 轮询一次")
+        print(f"[DSH-110 watchdog] 启动完成，每 10s 轮询一次")
 
     def stop_watchdog(self) -> None:
         self._watchdog_stop.set()
@@ -3686,6 +3827,14 @@ class WorkScanner:
 
         created_at_ms = int(round(_extract_work_timestamp(folder_name, dir_path, manifest_data)))
 
+        # 【2026-11-11 P1-2】maxUses 配置化与放宽：
+        # 优先从 manifest / 作品标签读取，未指定时默认设为 10（避免失败重试即超限阻断）
+        max_uses_val = manifest_data.get("maxUses") or distribution.get("maxUses") or 10
+        try:
+            max_uses_int = int(max_uses_val)
+        except Exception:
+            max_uses_int = 10
+
         work_result = {
             "id": work_id,
             "title": clean_title,
@@ -3697,9 +3846,9 @@ class WorkScanner:
             "source_path": source_path,
             "shelf": default_category or os.path.basename(os.path.dirname(dir_path)),
             "useCount": use_count_int,
-            "maxUses": 2,
+            "maxUses": max_uses_int,
             "used": bool(use_count_int > 0),
-            "remainingUses": max(0, 2 - use_count_int),
+            "remainingUses": max(0, max_uses_int - use_count_int),
             "statusLabel": "已使用" if use_count_int > 0 else "",
             "dispatchedTo": (distribution.get("dispatchedTo") or []) if use_count_int > 0 else [],
             "firstSharedAtMs": int(distribution.get("firstSharedAtMs") or 0) if use_count_int > 0 else 0,
@@ -4516,6 +4665,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         if path == "/api/online/categories":
             route_timing = {"route": "categories"}
+            force_refresh = query.get("refresh", ["0"])[0] == "1"
             # DSH-140: 聚合分类前快速巡检到期作品，防止已到期作品污染分类计数
             phase_started = time.perf_counter()
             try:
@@ -4524,7 +4674,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 print(f"[DSH-140] categories 巡检异常: {_ce!r}")
             route_timing["cleanup_ms"] = _dsh157_elapsed_ms(phase_started)
             phase_started = time.perf_counter()
-            works, scan_revision = self.scanner.scan_snapshot_throttled()
+            works, scan_revision = self.scanner.scan_snapshot_throttled(force=force_refresh)
             route_timing["scan_ms"] = _dsh157_elapsed_ms(phase_started)
 
             # ⚡ 预热中放行（防止手机或看门狗抽检超时）
@@ -4542,13 +4692,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 return
 
             # ⚡ 预压缩线缆快照命中（0ms 极速下发）
-            with self.scanner._scan_state_lock:
-                wire_raw = self.scanner._wire_cat_raw
-                wire_gz = self.scanner._wire_cat_gz
-                wire_rev = self.scanner._wire_revision
-            if wire_rev == scan_revision and wire_raw is not None:
-                self.send_precompressed(wire_raw, wire_gz)
-                return
+            if not force_refresh:
+                with self.scanner._scan_state_lock:
+                    wire_raw = self.scanner._wire_cat_raw
+                    wire_gz = self.scanner._wire_cat_gz
+                    wire_rev = self.scanner._wire_revision
+                if wire_rev == scan_revision and wire_raw is not None:
+                    self.send_precompressed(wire_raw, wire_gz)
+                    return
 
             phase_started = time.perf_counter()
             counts: Dict[str, int] = {}
@@ -4584,7 +4735,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 if cnt > 0:
                     dest_categories.append({"name": d, "count": cnt})
                     seen_cats.add(d)
-            dest_categories.sort(key=lambda c: -c["count"])
+            dest_categories.sort(key=lambda c: (-c["count"], c["name"]))
             categories.extend(dest_categories)
 
             # 3. 兜底其它
@@ -4594,10 +4745,19 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             route_timing["aggregate_ms"] = _dsh157_elapsed_ms(phase_started)
             route_timing["source_count"] = len(works)
             route_timing["result_count"] = len(categories)
+
+            count_sent = self.scanner.get_stage_works_count(self.scanner.STAGE1_FOLDER, force=force_refresh)
+            count_garbage = self.scanner.get_stage_works_count(self.scanner.GARBAGE_FOLDER, force=force_refresh)
+            stages = [
+                {"name": "已发送", "count": count_sent},
+                {"name": "已标记垃圾", "count": count_garbage},
+            ]
+
             self.send_json(
                 200,
-                {"ok": True, "categories": categories, "stages": [], "total": len(works),
-                 "scanRevision": scan_revision},
+                {"ok": True, "categories": categories, "stages": stages,
+                 "recycle": {"sent": count_sent, "garbage": count_garbage},
+                 "total": len(works), "scanRevision": scan_revision},
                 timing=route_timing,
             )
             return
@@ -4701,9 +4861,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     return
 
             filtered = []
+            if category in ("已发送", "_已发送", "已使用", "回收站"):
+                works = self.scanner.list_stage_works(self.scanner.STAGE1_FOLDER, "已发送1次", 1, force=force_refresh)
+
             for w in works:
                 # 分类过滤（支持专题分类、游戏与地域分类，严格 1:1 匹配本地货架；若粘贴路径搜索则跨全部分类匹配）
-                if category and category != "全部" and not is_path_search:
+                if category and category != "全部" and category not in ("已发送", "_已发送", "已使用", "回收站") and not is_path_search:
                     clean_cat = category.replace("🌕", "").replace("🇨🇳", "").replace("🎮", "").replace("🏷️", "").strip()
                     if clean_cat in ("游戏", "团建游戏"):
                         if w.get("destination") not in ("游戏", "团建游戏") and w.get("shelf") not in ("游戏", "团建游戏"):
@@ -4870,7 +5033,43 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Missing id+file or path")
                 return
 
+            if img_path and not os.path.isfile(img_path):
+                # 【2026-11-11 P0-1 b】短瞬态重试：防止 Windows 独占锁/杀软扫描/原子 rename 导致的微秒级 isfile 假阴性
+                for _ in range(3):
+                    time.sleep(0.05)
+                    if os.path.isfile(img_path):
+                        break
+
             if not img_path or not os.path.isfile(img_path):
+                # 【2026-11-11 P0】竞态兜底：作品目录正被并行写入时，
+                # resolved 可能正确但 isfile 瞬时为假、或作品暂时不在索引里。
+                # 强制重扫一次后重解析，避免手机端直接拿到 404。
+                try:
+                    if self.scanner.rescan_once("image_miss"):
+                        tw = ((self.scanner.get_work(work_id)
+                               or self.scanner.resolve_stage_work(work_id))
+                              if work_id else None)
+                        if tw and file_name:
+                            bn2 = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                            p2 = os.path.join(tw["path"], bn2)
+                            if os.path.isfile(p2):
+                                img_path = p2
+                            else:
+                                img_path = (self.scanner.resolve_image_for_work(tw, file_name)
+                                            or self.scanner.resolve_image_path(file_name)
+                                            or img_path)
+                        elif raw_path:
+                            img_path = self.scanner.resolve_image_path(raw_path) or img_path
+                        if img_path and not os.path.isfile(img_path):
+                            for _ in range(3):
+                                time.sleep(0.05)
+                                if os.path.isfile(img_path):
+                                    break
+                except Exception as _re:
+                    try:
+                        print("[Warn] 图片兜底重解析失败: %r" % (_re,))
+                    except Exception:
+                        pass
                 # DSH-201：以前 404 只有 traceback，没有「谁要哪张」的记录，
                 # 516 次 not found 完全无法归因。把请求参数原样打出来。
                 try:
@@ -4939,7 +5138,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", mime)
                 self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Cache-Control", "no-cache, must-revalidate")
                 self.send_header("Connection", "close")
                 if thumb:
                     # 健康标记：手机端可据此提示「电脑端缩略图未启用」；X-Thumb-Fallback=1 表示发的是原图
@@ -5848,28 +6047,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
 
             if is_link:
-                # 【软链接镜像使用】：
-                # 仅解绑当前副货架上的软链接（不破坏主货架物理本体）
-                unlink_ok, unlink_msg = unlink_junction(dir_path, self.scanner.root)
+                # 【软链接镜像使用】：原地打标记录，绝不摘除货架上的软链接（遵循手机端发送不归档/不破坏真源铁律）
                 source_p = target_work.get("source_path") or resolve_junction_source(dir_path)
                 if source_p and os.path.isdir(source_p):
-                    try:
-                        self._record_work_usage(source_p, device_name, platform, work_id, version_tag)
-                    except Exception:
-                        pass
-                self.scanner.scan(force=True)
-                self.send_json(200, {
-                    "ok": True,
-                    "workId": work_id,
-                    "isSymlink": True,
-                    "useCount": 1,
-                    "remainingUses": 0,
-                    "moved": False,
-                    "unlinked": unlink_ok,
-                    "message": "软链接镜像已从当前副货架安全解除，源物理本体完好保留在原货架",
-                    "targetPath": dir_path
-                })
-                return
+                    dir_path = source_p
+
 
             tag_file = os.path.join(dir_path, "作品标签.json")
             tag_data = {}
@@ -5958,8 +6140,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             # 归档容器 `_已发送` 只由电脑端发送成功后搬运（见 windows-native/main.cpp）。
             moved = False
             target_dest_path = ""
+            max_u = int(target_work.get("maxUses") or 2)
             force_move = bool(req.get("forceMove", False))
-            should_move = bool(force_move)
+            should_move = bool(force_move or new_count >= max_u)
 
             if should_move and new_count >= 1:
                 ok, target_dest_path, move_msg = self._move_work_to_stage1(target_work, device_name, "use_auto_dispatched")
@@ -5975,11 +6158,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
             self.scanner.scan(force=True)
 
+            max_u = int(target_work.get("maxUses") or 10)
             self.send_json(200, {
                 "ok": True,
                 "workId": work_id,
                 "useCount": new_count,
-                "remainingUses": 0,
+                "remainingUses": max(0, max_u - new_count),
                 "moved": moved,
                 "targetPath": target_dest_path,
                 "message": msg,
@@ -6021,12 +6205,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
 
             if is_link:
-                # 软链接镜像重置：解绑当前副货架软链接，并定位到主货架本体
-                unlink_junction(dir_path, self.scanner.root)
+                # 【软链接镜像重置】：定位到物理真源目录重置元数据，但绝对不摘除货架上的软链接
                 source_p = target_work.get("source_path") or resolve_junction_source(dir_path)
                 if source_p and os.path.isdir(source_p):
                     dir_path = source_p
-                    target_work["path"] = source_p
+
 
             tag_file = os.path.join(dir_path, "作品标签.json")
             if os.path.exists(tag_file):
@@ -6079,20 +6262,26 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 move_message = f"回迁异常（计数已归零，不影响重置结果）: {move_ex}"
 
             # 极速局部内存原子更新（毫秒级响应，彻底消灭 13 秒全盘扫描阻塞与超时）：
+            max_u = int(target_work.get("maxUses") or 10)
+            orig_shelf = target_work.get("shelf") or target_work.get("destination") or ""
             target_work["useCount"] = 0
             target_work["used"] = False
-            target_work["remainingUses"] = 2
+            target_work["maxUses"] = max_u
+            target_work["remainingUses"] = max_u
             target_work["statusLabel"] = ""
             target_work["dispatchedTo"] = []
             target_work["dispatchedVersions"] = []
             target_work["firstSharedAtMs"] = 0
             target_work["expireAtMs"] = 0
             target_work["originDevice"] = ""
-            target_work["path"] = new_path
             target_work["stage"] = "已发送0次"
-            shelf_candidate = os.path.basename(os.path.dirname(new_path))
-            target_work["shelf"] = shelf_candidate
-            target_work["folder"] = shelf_candidate
+            if not is_link:
+                target_work["path"] = new_path
+                shelf_candidate = os.path.basename(os.path.dirname(new_path))
+                target_work["shelf"] = shelf_candidate
+                target_work["folder"] = shelf_candidate
+            elif orig_shelf:
+                target_work["shelf"] = orig_shelf
 
             with self.scanner._lock:
                 self.scanner._works_by_id[work_id] = target_work
@@ -6113,6 +6302,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "workId": work_id,
                 "useCount": 0,
+                "remainingUses": max_u,
                 "moved": moved,
                 "newPath": new_path,
                 "message": "已重置为待首发状态" + (f"；{move_message}" if move_message else ""),
@@ -6188,6 +6378,27 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 print(f"[Warn] 清理关联软链接失败: {_ce}")
 
             self.scanner.scan(force=True)
+
+            # 触发电脑端统一通知（异步不阻塞）
+            try:
+                def _do_desktop_notify(clean_title, dest_desc, dev_name, is_used):
+                    try:
+                        import sys
+                        notify_dir = r"D:\AICode\AI\skills\技能包\技能\shared-notification\scripts"
+                        if notify_dir not in sys.path:
+                            sys.path.insert(0, notify_dir)
+                        from unified_notify import unified_notify
+                        st = "info" if is_used else "warning"
+                        msg = f"手机端已删除《{clean_title}》\n已物理移入：{dest_desc}\n操作设备：{dev_name}"
+                        unified_notify(msg, title="手机相册操作通知", status=st, channels=["desktop"])
+                    except Exception as _ne:
+                        print(f"[Warn] unified_notify error: {_ne}")
+
+                clean_t = target_work.get("title") or target_work.get("rawTitle") or work_id
+                dest_str = "「_已发送」归档" if used_before else "「_垃圾作品样本」"
+                threading.Thread(target=_do_desktop_notify, args=(clean_t, dest_str, device_name, used_before), daemon=True).start()
+            except Exception as _te:
+                print(f"[Warn] Failed to launch notify thread: {_te}")
 
             self.send_json(200, {
                 "ok": True,

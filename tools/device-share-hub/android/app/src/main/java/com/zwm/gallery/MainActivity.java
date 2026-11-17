@@ -534,11 +534,13 @@ public final class MainActivity extends Activity {
             } else if (showingOnlineRecycle) {
                 toast("正在刷新在线回收站…");
                 loadOnlineRecycle(onlineRecycleTab, true);
-            } else if (showingTrash) confirmClearTrash();
-            else {
-                // DSH-094：统一回收站入口。本地/在线模式都进 showTrash() —— 同一个屏幕，
-                // 在线模式进入后顶部会追加一个「💻 电脑端回收站 → 进入」按钮跳原 OnlineRecycle
-                // （双 Tab ↔ 已使用/已标记垃圾 ↔ 服务器侧 _已发送 + _垃圾作品）。
+            } else if (showingTrash) {
+                confirmClearTrash();
+            } else if (isOnlineMode) {
+                // 【直达在线回收站】在线相册模式下一键直达电脑端「_已发送」与「_垃圾作品」
+                toast("电脑端回收站（_已发送）");
+                showOnlineRecycle("sent");
+            } else {
                 toast("回收站");
                 showTrash();
             }
@@ -687,12 +689,12 @@ public final class MainActivity extends Activity {
         sortKeyButton.setOnClickListener(v -> showSortKeyMenu());
         searchBar.addView(sortKeyButton, sSortParams);
 
-        // ---- 在线回收站双 Tab（已使用 / 已标记垃圾）：默认隐藏，点顶栏「回收站」才出现 ----
+        // ---- 在线回收站双 Tab（已发送 / 已标记垃圾）：默认隐藏，点顶栏「回收站」才出现 ----
         onlineRecycleTabBar = new LinearLayout(this);
         onlineRecycleTabBar.setOrientation(LinearLayout.HORIZONTAL);
         onlineRecycleTabBar.setGravity(Gravity.CENTER_VERTICAL);
         onlineRecycleTabBar.setVisibility(View.GONE);
-        onlineRecycleSentTabButton = recycleTabButton("已使用");
+        onlineRecycleSentTabButton = recycleTabButton("已发送");
         onlineRecycleSentTabButton.setOnClickListener(v -> selectOnlineRecycleTab("sent"));
         onlineRecycleTabBar.addView(onlineRecycleSentTabButton, new LinearLayout.LayoutParams(0, dp(36), 1));
         onlineRecycleGarbageTabButton = recycleTabButton("已标记垃圾");
@@ -3561,36 +3563,13 @@ public final class MainActivity extends Activity {
                     break;
                 }
             }
-            if (present) continue;
-            List<String> images = item.images == null ? new ArrayList<String>() : new ArrayList<>(item.images);
-            String copyText = item.copyText == null ? "" : item.copyText;
-            String stage = "已发送" + item.useCount + "次";
-            long itemExp = item.firstSharedAtMs > 0 ? (item.firstSharedAtMs + cleanup.moveAfterMs()) : 0L;
-            if (itemExp > 0 && nowMs >= itemExp) continue;
-            onlineWorks.add(new OnlineWorkEntry(
-                    item.id, item.title, item.destination, stage,
-                    item.useCount, 2, true, Math.max(0, 2 - item.useCount), stage,
-                    images, images.size(), copyText, !copyText.trim().isEmpty(),
-                    new ArrayList<String>(), item.firstSharedAtMs, false, "", "",
-                    item.firstSharedAtMs, itemExp, "", Collections.emptyList()));
-        }
-
-        // 置顶：已发送过的排在最前（按最近使用时间倒序），未使用的保持原顺序
-        final java.util.Map<String, Long> usedAt = new java.util.HashMap<>();
-        for (OnlineWorkLifecycle.Item item : usedItems) {
-            usedAt.put(item.id, item.firstSharedAtMs);
-        }
-        java.util.Collections.sort(onlineWorks, new java.util.Comparator<OnlineWorkEntry>() {
-            @Override
-            public int compare(OnlineWorkEntry a, OnlineWorkEntry b) {
-                boolean au = usedAt.containsKey(a.id);
-                boolean bu = usedAt.containsKey(b.id);
-                if (au && bu) return Long.compare(usedAt.get(b.id), usedAt.get(a.id));
-                if (au) return -1;
-                if (bu) return 1;
-                return 0;
+            if (!present) {
+                // 【反诈尸铁律】：服务端已物理删除或归档的作品，本地绝不可注入旧记录死灰复燃！
+                // 彻底清除本地脏记录，确保多端删除即时同步消失。
+                OnlineWorkLifecycle.deletePermanently(this, item.id);
             }
-        });
+        }
+        // 注意：排序一律遵循服务端与 sortOnlineWorks 统一定标，严禁按各手机本地 usedItems 自行重排破坏多端一致性
     }
 
     /**
@@ -3610,7 +3589,7 @@ public final class MainActivity extends Activity {
             statusText.setText("正在连接电脑在线相册…");
         }
 
-        onlineClient.fetchWorks(null, null, currentSortKey, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
+        onlineClient.fetchWorks(null, null, currentSortKey, userInitiated, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
             @Override
             public void onSuccess(List<OnlineWorkEntry> works) {
                 autoDiscoverRetryDelayMs = 15000L;
@@ -3670,7 +3649,7 @@ public final class MainActivity extends Activity {
                 applyOnlineCategoryFilter(selectedOnlineCategory);
                 statusText.setText("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
                 finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
-                refreshOnlineCategoriesAfterWorks();
+                refreshOnlineCategoriesAfterWorks(userInitiated);
             }
 
             @Override
@@ -3690,8 +3669,8 @@ public final class MainActivity extends Activity {
     }
 
     /** 列表成功后再拉分类，避免两个服务端全量扫描入口同时争用扫描器。 */
-    private void refreshOnlineCategoriesAfterWorks() {
-        onlineClient.fetchCategories(new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
+    private void refreshOnlineCategoriesAfterWorks(boolean refresh) {
+        onlineClient.fetchCategories(refresh, new OnlineGalleryClient.Callback<OnlineGalleryClient.CategoriesResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.CategoriesResult catResult) {
                 if (!isOnlineMode || showingTrash) return;
@@ -3938,30 +3917,17 @@ public final class MainActivity extends Activity {
             }
         }
 
-        // DSH-131 智能排序流：
-        // 1. 📌 钉住分类（按用户钉住先后顺序排列）
-        // 2. 🔥 高频常用分类（按使用频次降序）
-        // 3. 常规分类（按默认返回顺序）
+        // 【多端对齐铁律】货架与分类栏必须以服务端为唯一真源，保持绝对一致的顺序！
+        // 严禁各设备按各自本地点击频次打乱排序，导致两台手机并排显示不同顺序。
         List<CategoryDisplayItem> sortedItems = new ArrayList<>();
-        // 阶段 1: 钉住项
+        // 阶段 1: 📌 用户显式钉住项（如果有）
         for (String pinKey : pinnedList) {
             if (rawItems.containsKey(pinKey)) {
                 sortedItems.add(rawItems.remove(pinKey));
             }
         }
-        // 阶段 2: 高频项 (usageScore > 0)
-        List<CategoryDisplayItem> frequentItems = new ArrayList<>();
-        List<CategoryDisplayItem> normalItems = new ArrayList<>();
-        for (CategoryDisplayItem item : rawItems.values()) {
-            if (item.usageScore > 0) {
-                frequentItems.add(item);
-            } else {
-                normalItems.add(item);
-            }
-        }
-        Collections.sort(frequentItems, (a, b) -> Integer.compare(b.usageScore, a.usageScore));
-        sortedItems.addAll(frequentItems);
-        sortedItems.addAll(normalItems);
+        // 阶段 2: 保持服务端权威分类原始顺序
+        sortedItems.addAll(rawItems.values());
 
         // 依次构建并挂载排序后的分类按钮
         for (CategoryDisplayItem item : sortedItems) {
@@ -3972,6 +3938,24 @@ public final class MainActivity extends Activity {
             onlineCategoryButtons.put(item.key, btn);
             onlineCategoryLabels.put(item.key, item.displayBase);
         }
+
+        // 追加「♻️ 已发送」直达按钮，货架首页一眼可见并一键直达电脑端已发送库
+        int sentTotal = 0;
+        if (catResult != null && catResult.stages != null) {
+            for (OnlineGalleryClient.CategoryItem s : catResult.stages) {
+                if ("已发送".equals(s.name)) {
+                    sentTotal = s.count;
+                    break;
+                }
+            }
+        }
+        String sentLabel = sentTotal > 0 ? ("♻️ 已发送 " + sentTotal) : "♻️ 已发送";
+        Button sentRecycleBtn = createOnlineCategoryButton("RECYCLE_SENT", "已发送", sentLabel, false, false);
+        sentRecycleBtn.setOnClickListener(v -> {
+            toast("电脑端回收站（_已发送）");
+            showOnlineRecycle("sent");
+        });
+        categoryBar.addView(sentRecycleBtn);
     }
 
     private Button createOnlineCategoryButton(String key, String displayBase, String buttonText,
@@ -4083,7 +4067,7 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshOnlineRecycleTabStyles() {
-        styleOnlineRecycleTab(onlineRecycleSentTabButton, "已使用",
+        styleOnlineRecycleTab(onlineRecycleSentTabButton, "已发送",
                 "sent".equals(onlineRecycleTab), onlineRecycleSentCount);
         styleOnlineRecycleTab(onlineRecycleGarbageTabButton, "已标记垃圾",
                 "garbage".equals(onlineRecycleTab), onlineRecycleGarbageCount);
@@ -4157,7 +4141,7 @@ public final class MainActivity extends Activity {
                 onlineRecycleWorks.clear();
                 onlineRecycleWorks.addAll(result.works);
                 renderOnlineRecycleCards();
-                statusText.setText("♻️ 在线回收站 · 已使用 " + onlineRecycleSentCount
+                statusText.setText("♻️ 在线回收站 · 已发送 " + onlineRecycleSentCount
                         + " · 已标记垃圾 " + onlineRecycleGarbageCount);
                 finishVisibleRefresh("在线回收站已刷新");
             }
@@ -5147,22 +5131,28 @@ public final class MainActivity extends Activity {
         // 1. 立即记入手机本地回收站
         OnlineWorkLifecycle.moveToTrash(this, work, System.currentTimeMillis());
 
-        // 2. 异步通知电脑端移入垃圾样本库并标记垃圾元数据
+        // 2. 异步通知电脑端按「用过 / 没用过」规则归档；结果通过回调反馈
         onlineClient.deleteWork(work.id, remark, new OnlineGalleryClient.Callback<OnlineGalleryClient.DeleteResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.DeleteResult result) {
-                // 电脑端移动完成
+                if (result == null || !result.ok) {
+                    String detail = result == null || result.message.isEmpty() ? "电脑端未能完成归档" : result.message;
+                    toast("手机回收站已完成；电脑端同步失败：" + detail);
+                    return;
+                }
+                toast("电脑端已按「用过 / 没用过」规则归档");
             }
 
             @Override
             public void onError(Exception error) {
-                // 网络异常日志已记录，手机端回收站照常生效
+                // 手机端回收站照常生效；明确告知电脑端没有确认归档
+                toast("手机回收站已完成；电脑端未确认归档，请从回收站恢复后重试");
             }
         });
 
         toast(remark == null || remark.trim().isEmpty()
-                ? "🗑️ 已删除：手机回收站；电脑端已按「用过/没用过」归档"
-                : "🗑️ 已删除并备注：手机回收站；电脑端已按「用过/没用过」归档");
+                ? "🗑️ 已移到手机回收站（可恢复）；电脑端归档同步中"
+                : "🗑️ 已备注并移到手机回收站（可恢复）；电脑端归档同步中");
 
         for (int i = 0; i < onlineWorks.size(); i++) {
             if (onlineWorks.get(i).id.equals(work.id)) {

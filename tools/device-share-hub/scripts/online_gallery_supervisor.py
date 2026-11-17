@@ -26,7 +26,8 @@ REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 LOG_DIR = os.path.join(REPO_ROOT, "logs")
 SUPERVISOR_LOG = os.path.join(LOG_DIR, "supervisor.log")
 LOCK_FILE = os.path.join(SCRIPT_DIR, "online_gallery_supervisor.lock")
-LIBRARY_ROOT = r"D:\AICode\项目推进\projects\江湖有旅人\主项目\03-成品库"
+# 2026-11-16 切换到统一新根
+LIBRARY_ROOT = r"D:\江湖有旅人\03-生产车间\05-成品库"
 PORT = 45835
 PAUSE_FLAG = r"D:\AICode\运行数据\应用状态\后台服务控制\online-gallery.paused"
 
@@ -187,9 +188,10 @@ def probe_categories(timeout: float = 10.0) -> bool:
 
 _last_categories_probe_time = 0.0
 _categories_probe_failed = False
+_categories_slow_streak = 0
 
 def is_service_healthy(force_deep: bool = False) -> bool:
-    global _last_categories_probe_time, _categories_probe_failed
+    global _last_categories_probe_time, _categories_probe_failed, _categories_slow_streak
     # 1. 极速 ping 优先（纯内存响应，完全与图片高频加载及磁盘扫描隔离）
     ping_ok = probe_ping(timeout=3.5)
     if not ping_ok:
@@ -209,14 +211,22 @@ def is_service_healthy(force_deep: bool = False) -> bool:
                 # 再次确认极速 ping：如果连 ping 都超时，说明主服务确实彻底挂起或死锁
                 if not probe_ping(timeout=3.0):
                     _categories_probe_failed = True
+                    _categories_slow_streak = 0
                     log("业务端点 /api/online/categories 与探活端点双双超时，判定为业务死锁", "WARN")
                     return False
                 else:
-                    log("业务端点 /api/online/categories 响应偏慢（高频I/O排队中），但探活正常，暂不判定为死锁", "INFO")
+                    _categories_slow_streak += 1
+                    if _categories_slow_streak >= 2:
+                        log(f"业务端点 /api/online/categories 连续 {_categories_slow_streak} 次超时（内部死锁），立即触发自愈重启！", "WARN")
+                        _categories_slow_streak = 0
+                        return False
+                    log(f"业务端点 /api/online/categories 响应偏慢（第 {_categories_slow_streak} 次排队），但探活正常，暂不判定为死锁", "INFO")
                     _categories_probe_failed = False
             else:
+                _categories_slow_streak = 0
                 _categories_probe_failed = False
         else:
+            _categories_slow_streak = 0
             _categories_probe_failed = False
     elif _categories_probe_failed:
         # 深度抽检之前失败，若当前极速 ping 正常，则恢复健康

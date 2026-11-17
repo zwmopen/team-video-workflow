@@ -17,7 +17,7 @@ final class OnlineRecycleViewController: UITableViewController {
         case garbage = 1
 
         var key: String { self == .sent ? "sent" : "garbage" }
-        var title: String { self == .sent ? "已使用" : "已标记垃圾" }
+        var title: String { self == .sent ? "已发送" : "已标记垃圾" }
     }
 
     private let library: WorkLibrary

@@ -1,4 +1,4 @@
-# 文件收发中控（最新：Windows V4.3.33 / Android 0.8.109 / iPhone 0.8.109）
+# 文件收发中控（最新正式发布：Windows V4.3.33 / Android 0.8.109 / iPhone 0.8.109）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
 > 最新构建：**Android 0.8.109 / versionCode 220**、**iPhone 0.8.109 / build 220**、**Windows V4.3.33**。DSH-145 带来移动日志健壮性加固（BOM/空文件检测、并发互斥与换行清洗）、DSH-146 货架未纳管目录诊断与环境变量配置，以及产线目录迁移改址。
@@ -123,7 +123,10 @@
 | `online_gallery-status.cmd`（状态） | 同上；**浏览器打开** 还能看到手机看到的原始画面 |
 | `install-autostart.ps1`（开机自启） | 设置 → 在线相册服务 → 勾「开机自动启动服务」 |
 | `create-desktop-shortcuts.py` | 设置 → 常规与软件 → **桌面快捷方式** |
+| iPhone 签名技能说明 | 设置 → 常规与软件 → **iPhone 签名技能说明** |
 | `phone_sync.py`（手机次数回读） | 设置 → 在线手机 → **刷新 / 预演同步 / 同步次数** |
+
+“iPhone 签名技能说明”会优先打开 Windows 便携包内的技能正文；单独下载 EXE 时会打开项目中的在线技能页。它提供 Codex 的流程说明和工具定位，不会在相册 iPhone App 内运行，也不替代 AltStore/AltServer/Sideloadly 的签名安装流程。
 
 **仍然保持脚本形态的**（有意为之，不是没收进来）：
 

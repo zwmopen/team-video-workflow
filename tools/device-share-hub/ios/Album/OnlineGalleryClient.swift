@@ -807,10 +807,11 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
-    public func fetchCategories(completion: @escaping (Result<OnlineCategoriesResult, Error>) -> Void) {
+    public func fetchCategories(refresh: Bool = false, completion: @escaping (Result<OnlineCategoriesResult, Error>) -> Void) {
         let requestID = beginCategoriesRequest()
         let baseUrl = resolveBaseUrl()
-        guard let url = URL(string: "\(baseUrl)/api/online/categories") else {
+        let path = refresh ? "\(baseUrl)/api/online/categories?refresh=1" : "\(baseUrl)/api/online/categories"
+        guard let url = URL(string: path) else {
             completion(.failure(NSError(domain: "OnlineGallery", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的服务器地址"])))
             return
         }
@@ -855,11 +856,15 @@ public final class OnlineGalleryClient {
 
     public func fetchWorks(category: String? = nil, query: String? = nil,
                            sortKey: String? = nil,
+                           refresh: Bool = false,
                            completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
         let requestID = beginWorksRequest()
         let baseUrl = resolveBaseUrl()
         var components = URLComponents(string: "\(baseUrl)/api/online/works")
         var queryItems: [URLQueryItem] = []
+        if refresh {
+            queryItems.append(URLQueryItem(name: "refresh", value: "1"))
+        }
         if let cat = category, !cat.isEmpty {
             queryItems.append(URLQueryItem(name: "category", value: cat))
         }
