@@ -1745,15 +1745,42 @@ def update_relay_health() -> Dict[str, Any]:
 
 
 def get_local_ip() -> str:
-    """获取当前局域网 IP"""
+    """获取当前真实物理局域网 IP（自动跳过 Clash TUN 198.18.* 与虚拟地址）。"""
+    def _is_ignored(ip: str) -> bool:
+        return (
+            not ip
+            or ip.startswith("127.")
+            or ip.startswith("169.254.")
+            or ip.startswith("198.18.")
+            or ip.startswith("198.19.")
+        )
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.2)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
-        return ip
+        if not _is_ignored(ip):
+            return ip
     except Exception:
-        return "127.0.0.1"
+        pass
+
+    try:
+        candidates = []
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            cand = info[4][0]
+            if not _is_ignored(cand):
+                candidates.append(cand)
+        for prefix in ("192.168.", "10."):
+            for cand in candidates:
+                if cand.startswith(prefix):
+                    return cand
+        if candidates:
+            return candidates[0]
+    except Exception:
+        pass
+    return "127.0.0.1"
 
 
 def is_game_work(title: str, dir_path: str = "") -> bool:
@@ -2161,6 +2188,8 @@ class WorkScanner:
         self._inspect_cache: Dict[Tuple[str, str, str], Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
         # 「文件名 -> 绝对路径」索引：兼容 iOS 旧契约 /api/online/image?path=<文件名>
         self._image_name_index: Optional[Dict[str, str]] = None
+        self._last_image_index_build_at: float = 0.0
+        self._image_index_building: bool = False
         # DSH-WireCache: 预压缩内存快照（秒开级响应保障，0ms序列化）
         self._wire_cat_raw: Optional[bytes] = None
         self._wire_cat_gz: Optional[bytes] = None
@@ -2261,9 +2290,14 @@ class WorkScanner:
 
     def resolve_stage_work(self, work_id: str) -> Optional[Dict[str, Any]]:
         """在各阶段库与归档库（已发送0次 / _已发送 / _垃圾作品样本 / _HR已发送 / _HR垃圾作品样本）里按 id 定位作品。"""
-        work_id = (work_id or "").strip()
-        if not work_id:
+        raw_id = work_id or ""
+        candidates = []
+        for c in (raw_id.strip(), raw_id.replace(" ", "+").strip() if " " in raw_id else ""):
+            if c and c not in candidates:
+                candidates.append(c)
+        if not candidates:
             return None
+        candidate_set = set(candidates)
         for folder, stage, base_count in (
             (self.STAGE1_FOLDER, "已发送1次", 1),
             (self.GARBAGE_FOLDER, "已废弃-垃圾", 0),
@@ -2275,12 +2309,13 @@ class WorkScanner:
             if not os.path.isdir(base):
                 continue
             for name, full in self._iter_work_dirs(base):
-                if name != work_id:
+                if name not in candidate_set:
                     continue
                 w = self._inspect_work_dir(full, name, stage, base_count)
                 if w:
                     w["folder"] = folder
-                    self._moved_works[w["id"]] = w
+                    with self._lock:
+                        self._moved_works[w["id"]] = w
                     return w
         return None
 
@@ -2456,8 +2491,10 @@ class WorkScanner:
             hit = lookup.get(raw_f) or lookup.get(target_out)
             if hit and os.path.isfile(hit):
                 return os.path.realpath(hit)
-            mf = os.path.join(work_path, "manifest.json")
-            if os.path.isfile(mf):
+            for mf_name in ("manifest.json", "source-provenance.json", "metadata.json"):
+                mf = os.path.join(work_path, mf_name)
+                if not os.path.isfile(mf):
+                    continue
                 try:
                     with open(mf, "r", encoding="utf-8-sig", errors="ignore") as fp:
                         mdata = json.load(fp)
@@ -2468,7 +2505,7 @@ class WorkScanner:
                     if hit and os.path.isfile(hit):
                         return os.path.realpath(hit)
                 except Exception:
-                    pass
+                    continue
             return None
 
         clean_file = raw_f.replace("\\", "/")
@@ -2618,41 +2655,57 @@ class WorkScanner:
         重要防串图策略：
         对于全局重名/通用文件名（如 P1.png、P2.png、01.png 等），严禁盲目首命中覆盖！
         发生重名的 basename 一律剔除索引，避免不同作品间串图。
+        并发保护：30 秒重建冷却 + single-flight 护栏，且全部磁盘 stat 在锁外执行，
+        彻底防止 404 突发请求抢占 _lock 引发 CPU/线程雪崩。
         """
+        now = time.time()
         with self._lock:
-            if self._image_name_index is None or rebuild:
-                idx: Dict[str, str] = {}
-                bn_seen: Dict[str, str] = {}
-                bn_duplicates: Set[str] = set()
+            if self._image_name_index is not None:
+                if not rebuild:
+                    return dict(self._image_name_index)
+                if (now - getattr(self, "_last_image_index_build_at", 0.0)) < 30.0 or getattr(self, "_image_index_building", False):
+                    return dict(self._image_name_index)
+            self._image_index_building = True
+            works_snap = list(self._works_by_id.values()) + list(self._moved_works.values())
 
-                for w in list(self._works_by_id.values()) + list(self._moved_works.values()):
-                    base = w.get("path") or ""
-                    if not base:
+        try:
+            idx: Dict[str, str] = {}
+            bn_seen: Dict[str, str] = {}
+            bn_duplicates: Set[str] = set()
+
+            for w in works_snap:
+                base = w.get("path") or ""
+                if not base:
+                    continue
+                for fn in (w.get("images") or []):
+                    fp = os.path.join(base, fn)
+                    if not os.path.isfile(fp):
+                        alt = os.path.join(self.root, fn)
+                        if os.path.isfile(alt):
+                            fp = alt
+                    if not os.path.isfile(fp):
                         continue
-                    for fn in (w.get("images") or []):
-                        fp = os.path.join(base, fn)
-                        if not os.path.isfile(fp):
-                            alt = os.path.join(self.root, fn)
-                            if os.path.isfile(alt):
-                                fp = alt
-                        if not os.path.isfile(fp):
-                            continue
-                        if fn not in idx:
-                            idx[fn] = fp
-                        bn = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                        if bn:
-                            if bn in bn_seen and bn_seen[bn] != fp:
-                                bn_duplicates.add(bn)
-                            else:
-                                bn_seen[bn] = fp
+                    if fn not in idx:
+                        idx[fn] = fp
+                    bn = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    if bn:
+                        if bn in bn_seen and bn_seen[bn] != fp:
+                            bn_duplicates.add(bn)
+                        else:
+                            bn_seen[bn] = fp
 
-                # 仅将全局唯一的 basename 加入索引；重名的 basename 严禁注入，彻底斩断串图通道
-                for bn, fp in bn_seen.items():
-                    if bn not in bn_duplicates and bn not in idx:
-                        idx[bn] = fp
+            # 仅将全局唯一的 basename 加入索引；重名的 basename 严禁注入，彻底斩断串图通道
+            for bn, fp in bn_seen.items():
+                if bn not in bn_duplicates and bn not in idx:
+                    idx[bn] = fp
 
+            with self._lock:
                 self._image_name_index = idx
-            return dict(self._image_name_index)
+                self._last_image_index_build_at = time.time()
+                return dict(self._image_name_index)
+        finally:
+            with self._lock:
+                self._image_index_building = False
 
     def rescan_once(self, reason: str = "") -> bool:
         """强制重扫一次（8 秒节流 + 防重入）。
@@ -2703,68 +2756,80 @@ class WorkScanner:
                 return mw
         return None
 
+    def _find_work_in_memory(self, cand_id: str) -> Optional[Dict[str, Any]]:
+        """在内存快照中精准匹配作品（含软链接镜像与已移动缓存）。"""
+        work = self._works_by_id.get(cand_id)
+        if work and os.path.exists(work.get("path", "")):
+            return work
+        if "__link_" in cand_id:
+            base_id = cand_id.split("__link_")[0]
+            base_work = self._works_by_id.get(base_id)
+            if base_work and os.path.exists(base_work.get("path", "")):
+                return base_work
+        else:
+            prefix = cand_id + "__link_"
+            for k, v in list(self._works_by_id.items()):
+                if k.startswith(prefix) and os.path.exists(v.get("path", "")):
+                    return v
+        if cand_id in self._moved_works:
+            mw = self._moved_works[cand_id]
+            if os.path.exists(mw.get("path", "")):
+                return mw
+        return None
+
     def get_work(self, work_id: str) -> Optional[Dict[str, Any]]:
+        raw_id = work_id or ""
+        candidates = [raw_id]
+        if " " in raw_id:
+            plus_id = raw_id.replace(" ", "+")
+            if plus_id not in candidates:
+                candidates.append(plus_id)
+
         # 极速快路（无锁读取内存字典，0ms 避免并发阻塞 /api/online/image）
         if self._works_by_id:
-            work = self._works_by_id.get(work_id)
-            if work and os.path.exists(work.get("path", "")):
-                return work
-            if "__link_" in work_id:
-                base_id = work_id.split("__link_")[0]
-                base_work = self._works_by_id.get(base_id)
-                if base_work and os.path.exists(base_work.get("path", "")):
-                    return base_work
-            else:
-                prefix = work_id + "__link_"
-                for k, v in self._works_by_id.items():
-                    if k.startswith(prefix) and os.path.exists(v.get("path", "")):
-                        return v
-            if work_id in self._moved_works:
-                mw = self._moved_works[work_id]
-                if os.path.exists(mw.get("path", "")):
-                    return mw
+            for cand in candidates:
+                hit = self._find_work_in_memory(cand)
+                if hit:
+                    return hit
 
         with self._lock:
             if not self._works_by_id:
                 self.scan()
-            work = self._works_by_id.get(work_id)
-            if work and os.path.exists(work.get("path", "")):
-                return work
-            # 兼容软链接镜像 ID 反查或本体 ID 查找
-            if "__link_" in work_id:
-                base_id = work_id.split("__link_")[0]
-                base_work = self._works_by_id.get(base_id)
-                if base_work and os.path.exists(base_work.get("path", "")):
-                    return base_work
-            else:
-                prefix = work_id + "__link_"
-                for k, v in self._works_by_id.items():
-                    if k.startswith(prefix) and os.path.exists(v.get("path", "")):
-                        return v
-            if work_id in self._moved_works:
-                mw = self._moved_works[work_id]
-                if os.path.exists(mw.get("path", "")):
-                    return mw
-            # 兜底到 _已发送1次 / _垃圾作品 查找（必须下钻作品集中间层）
-            for folder, stage, base_count in (
-                (self.STAGE1_FOLDER, "已发送1次", 1),
-                (self.GARBAGE_FOLDER, "已废弃-垃圾", 0),
-            ):
-                base = os.path.join(self.root, folder)
-                if not os.path.isdir(base):
+            for cand in candidates:
+                hit = self._find_work_in_memory(cand)
+                if hit:
+                    return hit
+
+        # 锁外兜底到 _已发送1次 / _垃圾作品 查找（必须下钻作品集中间层），不阻塞 _lock
+        cand_set = {c for c in candidates if c}
+        for folder, stage, base_count in (
+            (self.STAGE1_FOLDER, "已发送1次", 1),
+            (self.GARBAGE_FOLDER, "已废弃-垃圾", 0),
+        ):
+            base = os.path.join(self.root, folder)
+            if not os.path.isdir(base):
+                continue
+            for name, full in self._iter_work_dirs(base):
+                if name not in cand_set:
                     continue
-                for name, full in self._iter_work_dirs(base):
-                    if name != work_id:
-                        continue
-                    w = self._inspect_work_dir(full, name, stage, base_count)
-                    if w:
-                        self._moved_works[work_id] = w
-                        return w
-            pass
+                w = self._inspect_work_dir(full, name, stage, base_count)
+                if w:
+                    with self._lock:
+                        self._moved_works[name] = w
+                    return w
 
         # 【2026-11-11 P0】锁外兜底：单次扫描漏件时强制重扫再查一次。
         # 不能放在 with self._lock 里 —— scan() 也会取同一把锁，会死锁。
-        return self.lookup_after_rescan(work_id)
+        hit = self.lookup_after_rescan(candidates[0])
+        if hit:
+            return hit
+        if len(candidates) > 1:
+            with self._lock:
+                for cand in candidates[1:]:
+                    hit = self._find_work_in_memory(cand)
+                    if hit:
+                        return hit
+        return None
 
     def snapshot_count(self) -> int:
         """只读计数：非阻塞毫秒级返回，绝不阻塞在全盘扫描锁上。"""
@@ -3577,6 +3642,36 @@ class WorkScanner:
             except Exception:
                 pass
 
+        # 来源迁移后的旁车文件是非破坏性的溯源补充：不改写原 manifest，
+        # 但让手机端读取到统一的原素材地址和逐页对照。metadata.json 作为旧包兜底。
+        provenance_data: Dict[str, Any] = {}
+        for aux_name in ("source-provenance.json", "metadata.json"):
+            aux_file = os.path.join(dir_path, aux_name)
+            if not os.path.exists(aux_file):
+                continue
+            try:
+                with open(aux_file, "r", encoding="utf-8-sig", errors="ignore") as fp:
+                    aux = json.load(fp)
+                if not isinstance(aux, dict):
+                    continue
+                if aux_name == "source-provenance.json":
+                    provenance_data = aux
+                # 仅补来源相关字段；原 manifest 的其他字段保持原样。
+                for key in (
+                    "sourcePath", "sourceMaterialPath", "sourceMaterialPaths",
+                    "rawMaterialPath", "sourceCurrentPath", "sourceOriginalPath",
+                    "pageMap", "sourcePageMap", "pagePlan", "similarityAudit"
+                ):
+                    value = aux.get(key)
+                    if value and not manifest_data.get(key):
+                        manifest_data[key] = value
+                if not manifest_data.get("pageMap"):
+                    nested = aux.get("sourceProvenance")
+                    if isinstance(nested, dict) and nested.get("pageMap"):
+                        manifest_data["pageMap"] = nested.get("pageMap")
+            except Exception:
+                continue
+
         images = sort_work_images(images, manifest_data)
 
         cache_key = (dir_path, stage_name, default_category)
@@ -3599,6 +3694,11 @@ class WorkScanner:
                 and dir_st_mtime == cached_dir_stamp[1]
                 and _f_stamp(os.path.join(dir_path, "manifest.json")) == cached_dir_stamp[5]
                 and _f_stamp(os.path.join(dir_path, "作品标签.json")) == cached_dir_stamp[4]
+                and len(cached_dir_stamp) > 7
+                and cached_dir_stamp[7] == tuple(
+                    (name, _f_stamp(os.path.join(dir_path, name)))
+                    for name in ("source-provenance.json", "metadata.json")
+                )
             ):
                 txt_candidates = [f for f in files if f.lower().endswith(".txt")]
                 txt_stamps = tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in txt_candidates)
@@ -3655,6 +3755,10 @@ class WorkScanner:
             _f_stamp(os.path.join(dir_path, "作品标签.json")),
             _f_stamp(os.path.join(dir_path, "manifest.json")),
             source_compare_stamp,
+            tuple(
+                (name, _f_stamp(os.path.join(dir_path, name)))
+                for name in ("source-provenance.json", "metadata.json")
+            ),
         )
         cached_entry = self._inspect_cache.get(cache_key)
         if cached_entry is not None and cached_entry[0] == dir_stamp:
@@ -3893,6 +3997,26 @@ class WorkScanner:
             "sourceImages": src_imgs,
             "sourceNames": src_names,
             "hasSourceCompare": any(bool(x) for x in src_imgs),
+            "sourceMaterialPath": str(
+                provenance_data.get("sourceMaterialPath")
+                or manifest_data.get("sourceMaterialPath")
+                or manifest_data.get("sourcePath")
+                or ""
+            ).strip(),
+            "sourceMaterialPaths": provenance_data.get("sourceMaterialPaths") or manifest_data.get("sourceMaterialPaths") or [],
+            "sourceMaterialStatus": str(
+                provenance_data.get("sourceMaterialStatus")
+                or provenance_data.get("comparison", {}).get("status")
+                or manifest_data.get("sourceMaterialStatus")
+                or "UNRESOLVED"
+            ).strip(),
+            "sourceMaterialName": os.path.basename(str(
+                provenance_data.get("sourceMaterialPath")
+                or manifest_data.get("sourceMaterialPath")
+                or manifest_data.get("sourcePath")
+                or ""
+            ).rstrip("\\/")),
+            "provenanceFile": os.path.join(dir_path, "source-provenance.json") if os.path.isfile(os.path.join(dir_path, "source-provenance.json")) else "",
             "maxSimilarity": max_sim,
             "similarityTag": sim_tag,
             "_sourceLookup": src_lookup,
@@ -5033,11 +5157,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
                     else:
                         bn = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                        direct_p = os.path.join(target_work["path"], bn)
-                        if os.path.isfile(direct_p):
-                            img_path = direct_p
-                        else:
+                        bn_cands = [bn] + ([bn.replace(" ", "+")] if " " in bn else [])
+                        for cand_bn in bn_cands:
+                            direct_p = os.path.join(target_work["path"], cand_bn)
+                            if os.path.isfile(direct_p):
+                                img_path = direct_p
+                                break
+                        if not img_path:
                             img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
+                            if not img_path and " " in file_name:
+                                img_path = self.scanner.resolve_image_for_work(target_work, file_name.replace(" ", "+")) or ""
 
                 if not img_path and "__link_" in work_id:
                     base_id = work_id.split("__link_")[0]

@@ -46,6 +46,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import threading
 import time
 import urllib.error
@@ -65,10 +66,10 @@ except Exception:
 # 手机相册 OnlineService 的监听端口（0.0.0.0:45833）
 PHONE_ALBUM_PORT = 45833
 
-# 扫描参数：254 个地址 / 96 并发 / 0.5s 超时 → 最坏约 1.5s 出结果
-SCAN_WORKERS = 96
-SCAN_TIMEOUT = 0.5
-INFO_TIMEOUT = 1.5
+# 扫描参数：限制并发与超时，避免在 TUN / 多网卡环境掀起连接风暴
+SCAN_WORKERS = 32
+SCAN_TIMEOUT = 0.35
+INFO_TIMEOUT = 0.8
 WORKS_TIMEOUT = 3.0
 
 # 探测结果缓存时间（秒）：面板刷新不至于每次都全量扫
@@ -78,43 +79,122 @@ DISCOVER_TTL = 30.0
 # ────────────────────────────────────────────────────────────────────────
 # 本机网段推导
 # ────────────────────────────────────────────────────────────────────────
+def _is_virtual_or_tun_ip(ip: str) -> bool:
+    """识别回环、链路本地及 Clash TUN (198.18/15) 等虚拟网段地址。"""
+    if not ip:
+        return True
+    return (
+        ip.startswith("127.")
+        or ip.startswith("169.254.")
+        or ip.startswith("198.18.")
+        or ip.startswith("198.19.")
+    )
+
+
+def _is_rfc1918_172_private(ip: str) -> bool:
+    parts = ip.split(".")
+    if len(parts) < 2 or parts[0] != "172":
+        return False
+    try:
+        second = int(parts[1])
+        return 16 <= second <= 31
+    except ValueError:
+        return False
+
+
+def _has_tun_interface() -> bool:
+    """判断本机是否开启 Clash/代理 TUN 虚拟网卡（198.18/15）。"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.15)
+        s.connect(("8.8.8.8", 53))
+        route_ip = s.getsockname()[0]
+        s.close()
+        if route_ip.startswith("198.18.") or route_ip.startswith("198.19."):
+            return True
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip.startswith("198.18.") or ip.startswith("198.19."):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _arp_lan_ips(prefixes) -> set:
+    """读取本机 ARP 邻居缓存，提取属于目标物理局域网前缀的真实在线主机 IP。"""
+    found = set()
+    if os.name != "nt" or not prefixes:
+        return found
+    prefix_dots = tuple(p.rstrip(".") + "." for p in prefixes if p)
+    try:
+        res = subprocess.run(
+            ["arp", "-a"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2.0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        for m in re.finditer(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", res.stdout or ""):
+            ip = m.group(1)
+            if _is_virtual_or_tun_ip(ip) or ip.endswith(".255") or ip.endswith(".0"):
+                continue
+            first = int(ip.split(".")[0])
+            if first >= 224:
+                continue
+            if any(ip.startswith(pd) for pd in prefix_dots):
+                found.add(ip)
+    except Exception:
+        pass
+    return found
+
+
 def local_ipv4_addresses():
-    """本机所有非回环、非链路本地 IPv4，用来推导要扫哪些 /24 网段。"""
+    """本机所有非回环、非虚拟 TUN 的真实物理局域网 IPv4。"""
     ips = set()
 
-    # 默认路由出口 IP（UDP connect 不会真的发包，只是让内核选源地址）
+    # 默认路由出口 IP（若已被 Clash TUN 接管为 198.18.* 则忽略）
     for probe in ("8.8.8.8", "114.114.114.114", "223.5.5.5"):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(0.2)
             s.connect((probe, 53))
-            ips.add(s.getsockname()[0])
+            ip = s.getsockname()[0]
             s.close()
+            if not _is_virtual_or_tun_ip(ip):
+                ips.add(ip)
         except Exception:
             pass
 
     # 主机名解析：多网卡（有线 + 无线）时能额外拿到几个
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ips.add(info[4][0])
+            ip = info[4][0]
+            if not _is_virtual_or_tun_ip(ip):
+                ips.add(ip)
     except Exception:
         pass
 
-    return sorted(
-        ip for ip in ips
-        if ip and not ip.startswith("127.") and not ip.startswith("169.254.")
-    )
+    return sorted(ips)
 
 
 def candidate_subnets(ips=None, prefix_len=24):
-    """把本机 IP 列表折算成待扫描的 /24 网段前缀（去重、保序）。
-
-    返回形如 ["192.168.1", "192.168.31"]，调用方各自补 .1~.254。
-    """
+    """把本机真实局域网 IP 列表折算成待扫描的 /24 网段前缀（剔除 TUN 与虚拟交换机网段）。"""
     if ips is None:
         ips = local_ipv4_addresses()
+    clean_ips = [ip for ip in ips if not _is_virtual_or_tun_ip(ip)]
+    # 若存在 192.168.* 或 10.* 物理路由器内网，剔除 WSL/Hyper-V/Docker 常用的 172.16~31 虚拟网段
+    has_real_lan = any(ip.startswith("192.168.") or ip.startswith("10.") for ip in clean_ips)
+    if has_real_lan:
+        clean_ips = [ip for ip in clean_ips if not _is_rfc1918_172_private(ip)]
+
     out = []
-    for ip in ips:
+    for ip in clean_ips:
         parts = ip.split(".")
         if len(parts) != 4:
             continue
@@ -196,21 +276,27 @@ def fetch_phone_works(host, port=PHONE_ALBUM_PORT, timeout=WORKS_TIMEOUT):
 
 def discover_phones(port=PHONE_ALBUM_PORT, timeout=SCAN_TIMEOUT,
                     workers=SCAN_WORKERS, ips=None, subnets=None, enrich=True):
-    """扫本机所在 /24 网段，找出所有在 45833 上应答的手机相册。
+    """扫真实局域网 /24 网段，找出所有在 45833 上应答的手机相册。
 
-    enrich=True 时对每个命中地址再拉一次 /v2/info，补齐设备名/型号/版本/作品数，
-    并用 packageName 校验确实是我方相册应用（避免别的服务恰好占用 45833）。
+    TUN 模式防护：Clash 等 TUN 代理会把所有未命中连接伪造成 SYN-ACK (Established)，
+    若直接狂扫 254~762 个 IP 会触发数百线程死循环并烧爆 CPU。
+    当检测到 TUN 网卡存在时，仅探测本机 ARP 真实邻居表；若探测命中异常 (>25) 也按 ARP 过滤。
     """
+    runtime_mode = (ips is None and subnets is None)
     own_ips = set(ips if ips is not None else local_ipv4_addresses())
     prefixes = subnets if subnets is not None else candidate_subnets(list(own_ips), 24)
 
-    targets = []
-    for prefix in prefixes:
-        for last in range(1, 255):
-            ip = f"{prefix}.{last}"
-            if ip in own_ips:
-                continue
-            targets.append(ip)
+    if runtime_mode and os.name == "nt" and _has_tun_interface():
+        arp_neighbors = _arp_lan_ips(prefixes)
+        targets = sorted(ip for ip in arp_neighbors if ip not in own_ips)
+    else:
+        targets = []
+        for prefix in prefixes:
+            for last in range(1, 255):
+                ip = f"{prefix}.{last}"
+                if ip in own_ips:
+                    continue
+                targets.append(ip)
 
     if not targets:
         return []
@@ -223,6 +309,13 @@ def discover_phones(port=PHONE_ALBUM_PORT, timeout=SCAN_TIMEOUT,
 
     if not hits:
         return []
+
+    # 兜底二次防护：若 TUN 伪装导致大面积 SYN-ACK 假阳性，立刻用 ARP 过滤并限流
+    if len(hits) > 25 and os.name == "nt":
+        arp_neighbors = _arp_lan_ips(prefixes)
+        if arp_neighbors:
+            hits = [ip for ip in hits if ip in arp_neighbors]
+        hits = hits[:20]
 
     now = time.time()
 
@@ -274,7 +367,7 @@ def discover_phones(port=PHONE_ALBUM_PORT, timeout=SCAN_TIMEOUT,
         })
         return rec
 
-    with ThreadPoolExecutor(max_workers=max(1, min(len(hits), 32))) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, min(len(hits), 8))) as pool:
         devices = list(pool.map(_enrich, hits))
 
     devices.sort(key=lambda d: _ip_sort_key(d["ip"]))
@@ -292,24 +385,30 @@ def _ip_sort_key(ip):
 # 结果缓存（面板 / 顺手回读都要用，避免每次请求都全量扫）
 # ────────────────────────────────────────────────────────────────────────
 class DiscoverCache:
-    """带 TTL 的手机发现缓存。线程安全（用一把最朴素的锁）。"""
+    """带 TTL 与单飞锁的手机发现缓存（空结果同样遵循 TTL，严禁并发风暴）。"""
 
     def __init__(self, ttl=DISCOVER_TTL):
         self.ttl = ttl
         self._lock = threading.Lock()
+        self._scan_lock = threading.Lock()
         self._at = 0.0
         self._devices = []
 
     def get(self, force=False, **kwargs):
         now = time.time()
         with self._lock:
-            if not force and self._devices and (now - self._at) < self.ttl:
-                return self._devices
-        devices = discover_phones(**kwargs)
-        with self._lock:
-            self._at = time.time()
-            self._devices = devices
-        return devices
+            if not force and self._at > 0.0 and (now - self._at) < self.ttl:
+                return list(self._devices)
+        with self._scan_lock:
+            now2 = time.time()
+            with self._lock:
+                if not force and self._at > 0.0 and (now2 - self._at) < self.ttl:
+                    return list(self._devices)
+            devices = discover_phones(**kwargs)
+            with self._lock:
+                self._at = time.time()
+                self._devices = devices
+            return list(devices)
 
     def peek(self):
         """不触发扫描，拿上一次结果（用于把「上次见到」与「本次扫到」合并展示）。"""

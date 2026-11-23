@@ -1948,6 +1948,74 @@ class TestBackgroundListRefresh(unittest.TestCase):
             shutil.rmtree(test_root, ignore_errors=True)
 
 
+class TestPlusIdAndIndexThrottle(unittest.TestCase):
+    """回归：含 + 号的作品 ID 被 URL 解码为空格后仍可命中，且 404 不得无冷却重扫索引锁死 CPU。"""
+
+    def test_plus_work_id_decoded_as_space_returns_200(self):
+        test_root = tempfile.mkdtemp(prefix="test_plus_id_")
+        server = None
+        orig_scanner = getattr(OnlineGalleryHandler, "scanner", None)
+        try:
+            stage0 = os.path.join(test_root, "已发送0次（抖音小红书可发）")
+            os.makedirs(stage0, exist_ok=True)
+            for wid in ("25562+", "59257416+0"):
+                wdir = os.path.join(stage0, wid)
+                os.makedirs(wdir, exist_ok=True)
+                with open(os.path.join(wdir, "01.png"), "wb") as fp:
+                    fp.write(PNG_1PX)
+
+            scanner = WorkScanner(test_root)
+            scanner.scan(force=True)
+            OnlineGalleryHandler.scanner = scanner
+            server = ThreadingHTTPServer(("127.0.0.1", 0), OnlineGalleryHandler)
+            port = server.server_port
+            th = threading.Thread(target=server.serve_forever, daemon=True)
+            th.start()
+
+            no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            for q_id in ("25562+", "59257416+0"):
+                url = f"http://127.0.0.1:{port}/api/online/image?id={q_id}&file=01.png&thumb=1"
+                with no_proxy.open(url, timeout=5) as resp:
+                    self.assertEqual(resp.status, 200)
+                    data = resp.read()
+                    self.assertGreater(len(data), 0)
+        finally:
+            OnlineGalleryHandler.scanner = orig_scanner
+            if server is not None:
+                server.shutdown()
+                server.server_close()
+            shutil.rmtree(test_root, ignore_errors=True)
+
+    def test_image_name_index_rebuild_cooldown_prevents_storm(self):
+        test_root = tempfile.mkdtemp(prefix="test_idx_throttle_")
+        try:
+            stage0 = os.path.join(test_root, "已发送0次（抖音小红书可发）")
+            wdir = os.path.join(stage0, "20261123_sample")
+            os.makedirs(wdir, exist_ok=True)
+            with open(os.path.join(wdir, "01.png"), "wb") as fp:
+                fp.write(PNG_1PX)
+
+            scanner = WorkScanner(test_root)
+            scanner.scan(force=True)
+
+            orig_isfile = os.path.isfile
+            calls = []
+
+            def counting_isfile(path):
+                calls.append(path)
+                return orig_isfile(path)
+
+            with patch("online_gallery_service.os.path.isfile", side_effect=counting_isfile):
+                scanner.image_name_index(rebuild=True)
+                first_calls = len(calls)
+                self.assertGreater(first_calls, 0)
+                calls.clear()
+                scanner.image_name_index(rebuild=True)
+                self.assertEqual(len(calls), 0, "30秒冷却期内不应重复扫盘重建 image_name_index")
+        finally:
+            shutil.rmtree(test_root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
 
