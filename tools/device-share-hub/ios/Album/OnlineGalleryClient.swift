@@ -21,6 +21,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let used: Bool
     public let remainingUses: Int
     public let statusLabel: String
+    public let videoFilename: String
     public let images: [String]
     public let imageCount: Int
     public let copyText: String
@@ -77,7 +78,8 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
                 season: String = "四季通用", flowType: String = "精准流量团建", tags: [String] = [],
                 sourceImages: [String] = [], sourceNames: [String] = [],
                 hasSourceCompare: Bool = false, maxSimilarity: Double = 0, similarityTag: String = "",
-                pipelineBadge: String = "网页GPT", formattedDate: String = "2026-10-20-10:20", imageCountText: String = "") {
+                pipelineBadge: String = "网页GPT", formattedDate: String = "2026-10-20-10:20", imageCountText: String = "",
+                videoFilename: String = "") {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.destination = destination.isEmpty ? "其他" : destination
@@ -87,6 +89,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.used = used || useCount > 0
         self.remainingUses = max(0, remainingUses)
         self.statusLabel = statusLabel
+        self.videoFilename = videoFilename
         self.images = images
         self.imageCount = imageCount > 0 ? imageCount : images.count
         self.copyText = copyText
@@ -267,7 +270,8 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
             sourceImages: sourceImages, sourceNames: sourceNames,
             hasSourceCompare: hasSourceCompare, maxSimilarity: maxSimilarity,
             similarityTag: similarityTag,
-            pipelineBadge: pipelineBadge, formattedDate: formattedDate, imageCountText: imageCountText
+            pipelineBadge: pipelineBadge, formattedDate: formattedDate, imageCountText: imageCountText,
+            videoFilename: (dict["videoFilename"] as? String) ?? ""
         )
     }
 }
@@ -1261,6 +1265,44 @@ public final class OnlineGalleryClient {
             }
         }
         task.resume()
+    }
+
+    public func downloadWorkVideo(entry: OnlineWorkEntry, completion: @escaping (Result<URL, Error>) -> Void) {
+        let filename = entry.videoFilename
+        var components = URLComponents(string: "\(resolveBaseUrl())/api/online/video")
+        components?.queryItems = [URLQueryItem(name: "id", value: entry.id)]
+        guard let url = components?.url,
+              filename.lowercased().hasSuffix(".mp4"),
+              !filename.contains("/"), !filename.contains("\\") else {
+            completion(.failure(URLError(.badURL)))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 120
+        fullImageSession.downloadTask(with: request) { [self] location, response, error in
+            let result = Result {
+                if let error = error { throw error }
+                guard let location = location,
+                      let http = response as? HTTPURLResponse,
+                      http.statusCode == 200, http.mimeType == "video/mp4",
+                      let size = try location.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                      size > 0, Int64(size) == http.expectedContentLength else {
+                    throw URLError(.badServerResponse)
+                }
+                let folder = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+                let destination = folder.appendingPathComponent(filename)
+                do {
+                    try fileManager.moveItem(at: location, to: destination)
+                } catch {
+                    try? fileManager.removeItem(at: folder)
+                    throw error
+                }
+                return destination
+            }
+            DispatchQueue.main.async { completion(result) }
+        }.resume()
     }
 
     public func downloadWorkImages(

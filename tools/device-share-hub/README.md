@@ -1,6 +1,7 @@
 # 文件收发中控（最新正式发布：Windows V4.3.33 / Android 0.8.109 / iPhone 0.8.109）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
+> Android 本地更新 0.8.132 支持在线作品原片播放及 MP4 分享。手机与电脑连同一网络后，在相册设置里点「检查更新」。
 > 最新构建：**Android 0.8.109 / versionCode 220**、**iPhone 0.8.109 / build 220**、**Windows V4.3.33**。DSH-145 带来移动日志健壮性加固（BOM/空文件检测、并发互斥与换行清洗）、DSH-146 货架未纳管目录诊断与环境变量配置，以及产线目录迁移改址。
 > 正式发布：Release [`v0.8.109`](https://github.com/zwmopen/gallery-updates/releases/tag/v0.8.109)；Release 资产 SHA-256：APK `ac388dc3721b9a19de1020d6800a8b59ea6cd5f28dc82daed65ea65e8797e4ac`；IPA `6031a7e2c4074bb0ee89b8f3b16fe427c237b51d6a3079551b6b52d610e92c4c`；Windows `b4c3d8343f535f36dd0d0e54b760a2da0551016264802606f9b307c9d43d8fb3`。
 > 手机升级链路的完整说明见 **[`docs/LAN_UPDATE_RELAY.md`](docs/LAN_UPDATE_RELAY.md)**（局域网更新中转）。

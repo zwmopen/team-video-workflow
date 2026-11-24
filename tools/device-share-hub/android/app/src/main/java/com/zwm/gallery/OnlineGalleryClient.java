@@ -1631,6 +1631,49 @@ public final class OnlineGalleryClient {
         return result;
     }
 
+    public void downloadWorkVideo(String workId, String filename, Callback<java.io.File> callback) {
+        executor.execute(() -> {
+            try {
+                if (workId.isEmpty() || workId.contains("..") || workId.contains("/") || workId.contains("\\")
+                        || filename.contains("..") || filename.contains("/") || filename.contains("\\")
+                        || !filename.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4")) {
+                    throw new java.io.IOException("视频文件名无效");
+                }
+                java.io.File dir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
+                if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
+                    throw new java.io.IOException("无法创建视频缓存目录");
+                }
+                URL url = new URL(resolveBaseUrl() + "/api/online/video?id=" + URLEncoder.encode(workId, "UTF-8"));
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(TIMEOUT_MS);
+                conn.setReadTimeout(TIMEOUT_MS * 3);
+                java.io.File temporary = null;
+                java.io.File file = new java.io.File(dir, filename);
+                try {
+                    if (conn.getResponseCode() != 200 || !"video/mp4".equals(conn.getContentType())) {
+                        throw new java.io.IOException("电脑未返回视频");
+                    }
+                    long expected = conn.getContentLengthLong();
+                    temporary = java.io.File.createTempFile("video-", ".part", dir);
+                    try (InputStream in = conn.getInputStream(); java.io.OutputStream out = new java.io.FileOutputStream(temporary)) {
+                        byte[] buffer = new byte[65536];
+                        int count;
+                        while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+                    }
+                    if (expected <= 0 || temporary.length() != expected || !temporary.renameTo(file)) {
+                        throw new java.io.IOException("视频未完整保存");
+                    }
+                } finally {
+                    conn.disconnect();
+                    if (temporary != null) temporary.delete();
+                }
+                mainHandler.post(() -> callback.onSuccess(file));
+            } catch (Exception error) {
+                mainHandler.post(() -> callback.onError(error));
+            }
+        });
+    }
+
     public void downloadWorkImages(String workId, List<String> fileNames, Callback<List<java.io.File>> callback) {
         downloadWorkImages(workId, fileNames, new DownloadProgressCallback() {
             @Override public void onProgress(int downloaded, int total, String currentFileName) {}

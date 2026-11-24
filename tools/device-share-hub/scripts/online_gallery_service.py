@@ -1299,7 +1299,7 @@ UPDATE_MANIFEST_TTL = 300.0
 UPDATE_CACHE_DIR = os.path.join(tempfile.gettempdir(), "dsh-update-relay")
 
 _UPDATE_LOCK = threading.Lock()
-_UPDATE_MANIFEST_CACHE: Dict[str, Any] = {"at": 0.0, "data": None}
+_UPDATE_MANIFEST_CACHE: Dict[str, Any] = {"at": 0.0, "data": None, "refreshStartedAt": 0.0}
 # 改写前的**原始**下载地址（改写后 apk_url 变成 /download/apk，不能再拿去出网）
 _UPDATE_ORIGIN_URLS: Dict[str, str] = {}
 _UPDATE_RELAY_STATS: Dict[str, Any] = {
@@ -1452,13 +1452,24 @@ def _read_local_update_manifest() -> Optional[Dict[str, Any]]:
     return None
 
 
-def fetch_update_manifest(force: bool = False) -> Dict[str, Any]:
+def fetch_update_manifest(force: bool = False, *, prefer_local: bool = False) -> Dict[str, Any]:
     """取发布清单（TTL 缓存 + 本地构建优先）。失败返回空 dict —— 中转挂了不能拖垮相册服务。"""
     local_data = _read_local_update_manifest()
     with _UPDATE_LOCK:
         now = time.time()
         cached = _UPDATE_MANIFEST_CACHE.get("data")
         if (not force) and cached and (
+        if prefer_local and local_data:
+            if now - max(_UPDATE_MANIFEST_CACHE["at"], _UPDATE_MANIFEST_CACHE["refreshStartedAt"]) >= UPDATE_MANIFEST_TTL:
+                _UPDATE_MANIFEST_CACHE["refreshStartedAt"] = now
+                threading.Thread(target=fetch_update_manifest, kwargs={"force": True}, daemon=True).start()
+            local_vc = int(local_data.get("version_code", local_data.get("versionCode", 0)) or 0)
+            cached_vc = int((cached or {}).get("version_code", (cached or {}).get("versionCode", 0)) or 0)
+            if cached and cached_vc > local_vc:
+                return cached
+            merged = dict(cached or {})
+            merged.update({k: v for k, v in local_data.items() if k != "local_apk_path"})
+            return _rewrite_manifest_for_lan(merged)
                 now - float(_UPDATE_MANIFEST_CACHE.get("at", 0.0)) < UPDATE_MANIFEST_TTL):
             if local_data:
                 local_vc = int(local_data.get("version_code", local_data.get("versionCode", 0)) or 0)
@@ -1618,7 +1629,7 @@ def _update_cache_file(kind: str, version: str, sha: str) -> str:
 
 def _download_upstream(kind: str) -> Tuple[Optional[bytes], str]:
     """代取安装包（按版本落磁盘缓存，两台手机只出网一次；若本机有最新编译包则 0 秒直供）。"""
-    manifest = fetch_update_manifest()
+    manifest = fetch_update_manifest(prefer_local=(kind == "apk"))
     if not manifest:
         return None, "拿不到发布清单（检查 7897 代理）"
     if kind == "apk":
@@ -3706,6 +3717,15 @@ class WorkScanner:
                     # 若已有关联素材或无外部素材依赖，直接命中缓存，避免遍历外部上万个源素材文件
                     if cached_work.get("hasSourceCompare") or not cached_dir_stamp[6]:
                         if cached_slot_diag.get("droppedCount"):
+        video_file = str(manifest_data.get("videoFilename") or "")
+        if (
+            manifest_data.get("workType") != "video"
+            or not video_file.lower().endswith(".mp4")
+            or os.path.basename(video_file) != video_file or any(char in video_file for char in ("/", "\\", ":", "\0"))
+            or not os.path.isfile(os.path.join(dir_path, video_file))
+            or os.path.islink(os.path.join(dir_path, video_file))
+        ):
+            video_file = ""
                             _slot_guard_stat("worksAffected")
                             _slot_guard_stat("slotsDropped", cached_slot_diag["droppedCount"])
                         return dict(cached_work)
@@ -3784,6 +3804,7 @@ class WorkScanner:
 
         def _candidate_rank(fn: str) -> int:
             if fn == AUTHORITATIVE_COPY:
+            video_file,
                 return 0
             if fn in LEGACY_COPY_BLACKLIST or fn.startswith((".", "_")):
                 return 999
@@ -4058,6 +4079,7 @@ class WorkScanner:
             "starRemark": str(manifest_data.get("starRemark") or ""),
         }
         self._inspect_cache[cache_key] = (dir_stamp, work_result, slot_diag)
+            "videoFilename": video_file,
         return dict(work_result)
 
 
@@ -4743,7 +4765,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if path == "/altstore.json":
                 data = fetch_altstore_manifest()
             else:
-                data = fetch_update_manifest()
+                data = fetch_update_manifest(prefer_local=True)
             if not data:
                 self.send_json(503, {"ok": False,
                                      "error": "电脑端代取发布清单失败（检查 7897 代理）"})
@@ -5167,6 +5189,34 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
                             if not img_path and " " in file_name:
                                 img_path = self.scanner.resolve_image_for_work(target_work, file_name.replace(" ", "+")) or ""
+
+        if path == "/api/online/video":
+            work_id = query.get("id", [""])[0]
+            work = self.scanner.get_work(work_id) if work_id else None
+            name = work.get("videoFilename") if work else None
+            if not name:
+                self.send_error(404, "Video not found")
+                return
+            video_path = os.path.join(work["path"], name)
+            if os.path.islink(video_path):
+                self.send_error(404, "Video not found")
+                return
+            try:
+                stream = open(video_path, "rb")
+            except OSError:
+                self.send_error(404, "Video not found")
+                return
+            with stream:
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(os.fstat(stream.fileno()).st_size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                try:
+                    shutil.copyfileobj(stream, self.wfile, 256 * 1024)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            return
 
                 if not img_path and "__link_" in work_id:
                     base_id = work_id.split("__link_")[0]

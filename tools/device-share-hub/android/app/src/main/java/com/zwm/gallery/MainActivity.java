@@ -3632,6 +3632,7 @@ public final class MainActivity extends Activity {
                                     w.season, w.flowType, w.tags, w.sourceImages, w.sourceNames,
                                     w.hasSourceCompare, w.maxSimilarity, w.similarityTag
                             );
+                            mergedEntry.videoFilename = w.videoFilename;
                             onlineWorks.add(mergedEntry);
                         } else {
                             onlineWorks.add(w);
@@ -5071,6 +5072,7 @@ public final class MainActivity extends Activity {
                                                 old.season, old.flowType, old.tags, old.sourceImages, old.sourceNames,
                                                 old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                                         );
+                                        updated.videoFilename = old.videoFilename;
                                         onlineWorks.set(i, updated);
                                         break;
                                     }
@@ -5542,6 +5544,7 @@ public final class MainActivity extends Activity {
 
     /** 全屏同框对比弹窗：原素材 vs AI 成品同框核验预览 */
     private void showOnlineCompareDialog(OnlineWorkEntry work, int imageIndex) {
+        if (work != null && imageIndex == 0 && openOnlineVideoIfPresent(work.id)) return;
         if (work == null || work.images == null || work.images.isEmpty()) return;
         final int total = work.images.size();
         final int[] currentIndex = new int[]{Math.max(0, Math.min(imageIndex, total - 1))};
@@ -6304,6 +6307,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showOnlineImageDialog(String workId, String workTitle, List<String> images, int imageIndex, Bitmap initialBitmap) {
+        if (imageIndex <= 0 && openOnlineVideoIfPresent(workId)) return;
         if (images.isEmpty() || imageIndex < 0 || imageIndex >= images.size()) return;
 
         final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
@@ -6773,6 +6777,7 @@ public final class MainActivity extends Activity {
                         old.season, old.flowType, old.tags, old.sourceImages, old.sourceNames,
                         old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                 );
+                updatedEntry.videoFilename = old.videoFilename;
                 break;
             }
         }
@@ -6826,6 +6831,10 @@ public final class MainActivity extends Activity {
             public void onError(Exception error) {}
         });
 
+        if (!work.videoFilename.isEmpty()) {
+            openOrShareOnlineVideo(work, copyText, true);
+            return;
+        }
         if (work.images == null || work.images.isEmpty()) {
             toast("已复制 " + label + "（无图片作品）");
             return;
@@ -6898,6 +6907,45 @@ public final class MainActivity extends Activity {
                     try { dlDialog.dismiss(); } catch (Exception ignored) {}
                 }
                 toast("下载图片失败: " + (error != null ? error.getMessage() : "网络超时") + "，文案已在剪贴板");
+            }
+        });
+    }
+
+    private boolean openOnlineVideoIfPresent(String workId) {
+        for (OnlineWorkEntry work : onlineWorks) {
+            if (work.id.equals(workId) && !work.videoFilename.isEmpty()) {
+                openOrShareOnlineVideo(work, null, false);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void openOrShareOnlineVideo(OnlineWorkEntry work, String copyText, boolean share) {
+        toast("正在从电脑读取视频…");
+        onlineClient.downloadWorkVideo(work.id, work.videoFilename, new OnlineGalleryClient.Callback<java.io.File>() {
+            @Override public void onSuccess(java.io.File file) {
+                Uri uri = new Uri.Builder().scheme("content").authority(getPackageName() + ".files")
+                        .appendPath("online").appendPath(work.id).appendPath(file.getName()).build();
+                Intent action = new Intent(share ? Intent.ACTION_SEND : Intent.ACTION_VIEW);
+                if (share) {
+                    action.setType("video/mp4");
+                    action.putExtra(Intent.EXTRA_STREAM, uri);
+                    action.putExtra(Intent.EXTRA_TEXT, copyText);
+                } else {
+                    action.setDataAndType(uri, "video/mp4");
+                }
+                action.setClipData(ClipData.newUri(getContentResolver(), "作品视频", uri));
+                action.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                try {
+                    startActivity(Intent.createChooser(action, share ? "分享作品视频" : "打开作品视频"));
+                } catch (Exception error) {
+                    toast("手机没有可处理此视频的应用");
+                }
+            }
+
+            @Override public void onError(Exception error) {
+                toast("视频读取失败：" + error.getMessage());
             }
         });
     }
@@ -6997,6 +7045,7 @@ public final class MainActivity extends Activity {
                         old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                 );
                 onlineWorks.remove(i);
+                updated.videoFilename = old.videoFilename;
                 onlineWorks.add(0, updated);
                 break;
             }
@@ -7031,6 +7080,7 @@ public final class MainActivity extends Activity {
                         old.season, old.flowType, old.tags, newSourceImages, newSourceNames,
                         hasRemainingSource, old.maxSimilarity, old.similarityTag
                 );
+                updated.videoFilename = old.videoFilename;
                 onlineWorks.set(i, updated);
                 break;
             }

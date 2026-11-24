@@ -1,3 +1,12 @@
+# 2026-11-24 在线视频作品
+
+- 电脑在线相册从作品 manifest 的 workType 和 videoFilename 识别视频，走 GET /api/online/video?id=<workId> 流式返回。移动端检测完整字节后才打开或分享。分享计数沿用用户点击时的既有规则。
+- Android 0.8.132/code 243 本地 Release 构建完成，沿用上一版安装包签名。iOS 0.8.132/build 243 为源码候选，待 macOS 构建签名和设备验收。
+- 局域网 /latest.json 提供 Android 243，/download/apk 回读与本地 SHA-256 一致。在线 Android 仍在 242，安装和系统分享待真机。
+- 已在运行中的 45835 服务回读湘湖擂台作品 ID、两张图和 37,092,194 字节原片，SHA-256 与成品库一致。隔离测试覆盖越界视频文件名和不存在的作品。
+
+- 局域网更新在冷缓存时优先回应本地安装包清单，后台刷新 GitHub 并保留已知较新版本。
+
 # 2026-11-14 本地候选：Windows V4.3.35 iPhone 签名技能入口
 
 - `设置 → 常规与软件 → iPhone 签名技能说明` 会优先打开 Windows 便携包中的 `ios-sideload-automation/SKILL.md`；直接运行单个 EXE 时改打开仓库在线技能页。

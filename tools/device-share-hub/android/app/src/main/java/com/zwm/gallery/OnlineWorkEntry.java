@@ -21,6 +21,7 @@ public final class OnlineWorkEntry {
     public final String statusLabel;
     public final List<String> images;
     public final int imageCount;
+    public String videoFilename = "";
     public final String copyText;
     public final boolean hasCopyText;
     public final List<String> dispatchedTo;
@@ -319,11 +320,13 @@ public final class OnlineWorkEntry {
             imageCountText = imageCount + "图";
         }
 
-        return new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
+        OnlineWorkEntry entry = new OnlineWorkEntry(id, title, destination, stage, useCount, maxUses,
                 used, remainingUses, statusLabel, images, imageCount, copyText,
                 hasCopyText, dispatchedTo, updatedAt, garbage, garbageRemark,
                 json.optString("path", ""), firstSharedAtMs, expireAtMs, lastUsedAtMs, originDevice, dispatchedVersions,
                 season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
                 pipelineBadge, formattedDate, imageCountText);
+        entry.videoFilename = json.optString("videoFilename", "");
+        return entry;
     }
 }

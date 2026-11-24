@@ -10,6 +10,10 @@
 
 ## 一、身份与版本
 
+### 在线视频作品
+
+归档 manifest 使用 workType=video 和 videoFilename 标记目录内的原始 MP4。列表仍返回封面、分析图和文案。视频通过 GET /api/online/video?id=<workId> 读取，响应类型为 video/mp4，下载长度须与响应头一致。Android 和 iOS 视频作品的封面入口播放原片，复制并分享入口把 MP4 交给系统菜单，分享点击按既有规则计数。普通图文仍按原来的图片流程处理。
+
 | 端 | 显示名 | 包 / Bundle ID | 版本 | 出处 |
 |---|---|---|---|---|
 | Android | 相册 | `com.zwm.gallery` | **0.8.101 候选**（versionCode 212；本地 Release/APK 构建通过；已安装到 Vivo 并完成关键页面真机回归） | `android/app/build.gradle.kts:13-14` |

@@ -1,5 +1,6 @@
 import UIKit
 import ImageIO
+import AVKit
 
 enum LocalDispatchedStore {
     private static var recentSavedAtMs: [String: Double] = [:]
@@ -1204,7 +1205,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         season: w.season, flowType: w.flowType, tags: w.tags,
                         sourceImages: w.sourceImages, sourceNames: w.sourceNames,
                         hasSourceCompare: w.hasSourceCompare, maxSimilarity: w.maxSimilarity,
-                        similarityTag: w.similarityTag
+                        similarityTag: w.similarityTag,
+                        videoFilename: w.videoFilename
                     )
                     mergedWorks.append(updated)
                 }
@@ -1664,7 +1666,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             season: old.season, flowType: old.flowType, tags: old.tags,
             sourceImages: old.sourceImages, sourceNames: old.sourceNames,
             hasSourceCompare: old.hasSourceCompare, maxSimilarity: old.maxSimilarity,
-            similarityTag: old.similarityTag
+            similarityTag: old.similarityTag,
+            videoFilename: old.videoFilename
         )
 
         // DSH-130-A: 0ms 内存置顶
@@ -1712,6 +1715,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             }
         }
         OnlineWorkLifecycle.markUsed(work: entry)
+        if !entry.videoFilename.isEmpty {
+            openOrShareOnlineVideo(entry: entry, shareSource: source)
+            return
+        }
 
         guard !entry.images.isEmpty else {
             showToast("已复制 \(item.buttonLabel)（无图片作品）")
@@ -1844,7 +1851,35 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         step(0)
     }
 
+    private func openOrShareOnlineVideo(entry: OnlineWorkEntry, shareSource: UIView? = nil) {
+        showToast("正在从电脑读取视频…")
+        OnlineGalleryClient.shared.downloadWorkVideo(entry: entry) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let url):
+                if let source = shareSource {
+                    let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                    activity.popoverPresentationController?.sourceView = source.window == nil ? self.view : source
+                    activity.completionWithItemsHandler = { _, _, _, _ in
+                        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+                    }
+                    self.present(activity, animated: true)
+                } else {
+                    let player = AVPlayerViewController()
+                    player.player = AVPlayer(url: url)
+                    self.present(player, animated: true) { player.player?.play() }
+                }
+            case .failure(let error):
+                self.showToast("读取视频失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
     private func openOnlinePreview(entry: OnlineWorkEntry, initialIndex: Int, initialImage: UIImage? = nil) {
+        if initialIndex == 0 && !entry.videoFilename.isEmpty {
+            openOrShareOnlineVideo(entry: entry)
+            return
+        }
         guard !entry.images.isEmpty else { return }
         OnlineGalleryClient.shared.prewarmWorkImages(entry)   // 2026-10-22 预缓存原图，点分享秒开
         let vc = OnlineImagePreviewController(entry: entry, initialIndex: initialIndex, initialImage: initialImage)
@@ -1858,6 +1893,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func openOnlineComparePreview(entry: OnlineWorkEntry, initialIndex: Int) {
+        if initialIndex == 0 && !entry.videoFilename.isEmpty {
+            openOrShareOnlineVideo(entry: entry)
+            return
+        }
         guard !entry.images.isEmpty else { return }
         OnlineGalleryClient.shared.prewarmWorkImages(entry)   // 2026-10-22 预缓存原图，点分享秒开
         let vc = OnlineComparePreviewController(entry: entry, initialIndex: initialIndex)
@@ -1899,7 +1938,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     sourceNames: w.sourceNames,
                     hasSourceCompare: w.hasSourceCompare,
                     maxSimilarity: w.maxSimilarity,
-                    similarityTag: w.similarityTag
+                    similarityTag: w.similarityTag,
+                    videoFilename: w.videoFilename
                 )
                 break
             }
@@ -4057,7 +4097,8 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
                     sourceNames: self.entry.sourceNames,
                     hasSourceCompare: self.entry.hasSourceCompare,
                     maxSimilarity: self.entry.maxSimilarity,
-                    similarityTag: self.entry.similarityTag
+                    similarityTag: self.entry.similarityTag,
+                    videoFilename: self.entry.videoFilename
                 )
                 self.onImageDeleted?(wid, newImages)
 
