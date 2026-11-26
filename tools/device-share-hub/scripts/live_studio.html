@@ -346,17 +346,17 @@
       <div class="slider-row">
         <div class="slider-head">
           <span>镜头微动幅度</span>
-          <b id="ratioVal">1.06x（微动 6%）</b>
+          <b id="ratioVal">1.018x（微动 1.8%）</b>
         </div>
-        <input id="ratioSlider" type="range" min="1.03" max="1.12" step="0.01" value="1.06" />
+        <input id="ratioSlider" type="range" min="1.005" max="1.08" step="0.002" value="1.018" />
       </div>
 
       <div class="slider-row">
         <div class="slider-head">
           <span>实况播放时长</span>
-          <b id="durationVal">2.5 秒</b>
+          <b id="durationVal">1.6 秒</b>
         </div>
-        <input id="durationSlider" type="range" min="1.5" max="3.5" step="0.1" value="2.5" />
+        <input id="durationSlider" type="range" min="1.0" max="3.5" step="0.1" value="1.6" />
       </div>
 
       <div class="actions">
@@ -384,20 +384,22 @@
 
 <script>
 const DEFAULT_PRESETS = [
-  { id: "zoom_in", label: "呼吸微推（默认）", desc: "镜头缓慢平滑向前推近，自然百搭" },
-  { id: "zoom_out", label: "呼吸微拉", desc: "镜头由近及远缓慢舒展，适合风景全貌" },
-  { id: "pan_up", label: "微幅上移", desc: "画面从下方轻轻上抬，突出建筑/人像层次" },
-  { id: "pan_down", label: "微幅下移", desc: "画面从上方柔和下沉，适合打卡氛围图" },
-  { id: "pan_left", label: "左移轻摇", desc: "水平向右向左平稳滑轨横移" },
-  { id: "pan_right", label: "右移轻摇", desc: "水平向左向右平稳滑轨横移" },
-  { id: "handheld", label: "手持微晃", desc: "模拟真手拿着手机拍摄的轻微呼吸晃动" }
+  { id: "natural_hold", label: "自然手持微动（推荐）", desc: "模拟真实持机拍摄的轻微呼吸稳态，最接近真机实拍" },
+  { id: "subtle_still", label: "几乎静止（极微呼吸）", desc: "极小幅度变化，几乎不改构图，仅保留实况标识" },
+  { id: "zoom_in", label: "轻柔推近", desc: "画面极轻微平滑向前推近（缓入缓出）" },
+  { id: "zoom_out", label: "轻柔拉远", desc: "画面极轻微平滑向后舒展（缓入缓出）" },
+  { id: "pan_up", label: "微幅上移", desc: "画面极轻微平滑向上移动" },
+  { id: "pan_down", label: "微幅下移", desc: "画面极轻微平滑向下移动" },
+  { id: "pan_left", label: "微幅左移", desc: "画面极轻微平滑向左移动" },
+  { id: "pan_right", label: "微幅右移", desc: "画面极轻微平滑向右移动" },
+  { id: "handheld", label: "温和手持轻晃", desc: "克制的小幅自然手持微晃" }
 ];
 
 const state = {
   files: [],
-  mode: "zoom_in",
-  ratio: 1.06,
-  duration: 2.5,
+  mode: "natural_hold",
+  ratio: 1.018,
+  duration: 1.6,
   presets: DEFAULT_PRESETS,
   currentJobId: "",
   currentExportDir: ""
@@ -445,8 +447,8 @@ function renderPresets() {
 
 function updateSlidersUI() {
   ratioSlider.value = String(state.ratio);
-  const pct = Math.round((state.ratio - 1) * 100);
-  ratioVal.textContent = `${state.ratio.toFixed(2)}x（微动 ${pct}%）`;
+  const pct = ((state.ratio - 1) * 100).toFixed(1);
+  ratioVal.textContent = `${state.ratio.toFixed(3)}x（微动 ${pct}%）`;
   durationSlider.value = String(state.duration);
   durationVal.textContent = `${state.duration.toFixed(1)} 秒`;
 }
@@ -525,9 +527,9 @@ async function loadConfig() {
     const resp = await fetch("/api/online/live-config");
     const data = await resp.json();
     if (data.ok && data.config) {
-      state.mode = data.config.mode || "zoom_in";
-      state.ratio = Number(data.config.ratio || 1.06);
-      state.duration = Number(data.config.duration || 2.5);
+      state.mode = data.config.mode || "natural_hold";
+      state.ratio = Number(data.config.ratio || 1.018);
+      state.duration = Number(data.config.duration || 1.6);
       if (Array.isArray(data.presets) && data.presets.length) state.presets = data.presets;
       serverBadge.textContent = "● 电脑本地引擎就绪 (45835)";
     }
@@ -549,7 +551,7 @@ saveDefaultBtn.onclick = async () => {
     });
     const data = await resp.json();
     if (!data.ok) throw new Error(data.error || "保存失败");
-    showStatus("✅ 已保存！手机相册打开「分享时静图自动转实况」开关后将立即按此微动风格现烤。", "var(--brand)");
+    showStatus("✅ 已保存！手机相册打开「分享时静图自动转实况」后将按此效果自动转换。", "var(--brand)");
   } catch (err) {
     showStatus("❌ 保存默认风格失败：" + err.message, "var(--danger)");
   } finally {

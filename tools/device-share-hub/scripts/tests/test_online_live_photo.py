@@ -109,10 +109,10 @@ def test_online_live_photo_scanner_and_routes(tmp_path):
             assert vid_work["livePhotos"] == {}
             assert vid_work["hasLivePhotos"] is False
 
-            # /api/online/status advertises version 1.2.6 and live/autoLive/studio capabilities
+            # /api/online/status advertises version 1.2.7 and live/autoLive/studio capabilities
             with urlopen(f"{base}/api/online/status", timeout=5) as resp:
                 status_json = json.loads(resp.read().decode("utf-8"))
-                assert status_json["version"] == "1.2.6"
+                assert status_json["version"] == "1.2.7"
                 assert "livePhoto" in status_json["features"]
                 assert "autoLiveOnShare" in status_json["features"]
                 assert "liveStudio" in status_json["features"]
@@ -186,31 +186,40 @@ def test_mobile_clients_live_photo_contracts():
     and_svc = (HUB_ROOT / "android/app/src/main/java/com/zwm/gallery/OnlineService.java").read_text(encoding="utf-8")
     and_set = (HUB_ROOT / "android/app/src/main/java/com/zwm/gallery/SettingsActivity.java").read_text(encoding="utf-8")
     assert "isAutoLiveOnShareEnabled" in and_svc
+    assert "getAutoLiveMotionMode" in and_svc
     assert "分享时静图自动转实况" in and_set
+    assert "showAutoLiveModeDialog" in and_set
     assert "&auto_live=1" in and_client
+    assert "syncLiveMotionModeAsync" in and_client
     assert "isAutoLiveOnShareEnabled" in and_main
 
     ios_pref = (HUB_ROOT / "ios/Album/AutoLivePreferences.swift").read_text(encoding="utf-8")
     ios_set = (HUB_ROOT / "ios/Album/SettingsView.swift").read_text(encoding="utf-8")
     assert "album.autoLiveOnShareEnabled.v1" in ios_pref
+    assert "album.autoLiveMotionMode.v1" in ios_pref
     assert "分享时静图自动转实况" in ios_set
+    assert "showAutoLiveModeChoices" in ios_set
     assert "auto_live" in ios_client
+    assert "syncLiveMotionMode" in ios_client
     assert "AutoLivePreferences.isEnabled" in ios_cv
 
 
-def test_seven_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch):
+def test_nine_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch):
     cfg_path = tmp_path / "live_motion_config.json"
     monkeypatch.setattr(motion_photo, "DEFAULT_LIVE_CONFIG_FILE", str(cfg_path))
 
-    # All 7 modes produce valid zoompan filters and clamp ratio/duration safely
-    assert len(motion_photo.MOTION_PRESETS) == 7
+    # All 9 modes produce valid sub-pixel zoompan filters and clamp ratio/duration safely
+    assert len(motion_photo.MOTION_PRESETS) == 9
+    assert motion_photo.DEFAULT_LIVE_CONFIG == {"mode": "natural_hold", "ratio": 1.018, "duration": 1.6, "fps": 30}
     for preset in motion_photo.MOTION_PRESETS:
-        flt = motion_photo._build_zoompan_filter(preset["id"], 1.06, 45, 320, 426, 30)
+        flt = motion_photo._build_zoompan_filter(preset["id"], 1.018, 48, 320, 426, 30)
         assert "zoompan=" in flt
         assert "320x426" in flt
 
     norm = motion_photo.normalize_live_config({"mode": "unknown", "ratio": 9.9, "duration": 0.2, "fps": 99})
-    assert norm == {"mode": "zoom_in", "ratio": 1.15, "duration": 1.5, "fps": 30}
+    assert norm == {"mode": "natural_hold", "ratio": 1.1, "duration": 1.0, "fps": 30}
+    norm_low = motion_photo.normalize_live_config({"mode": "subtle_still", "ratio": 0.5, "duration": 99, "fps": 10})
+    assert norm_low == {"mode": "subtle_still", "ratio": 1.005, "duration": 3.5, "fps": 24}
 
     assert motion_photo.find_ffmpeg() is not None, "ffmpeg must be available for local motion synthesis"
 
@@ -220,7 +229,7 @@ def test_seven_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch)
 
     res1 = motion_photo.synthesize_live_pair(
         src_img,
-        config={"mode": "handheld", "ratio": 1.06, "duration": 1.5, "fps": 24},
+        config={"mode": "natural_hold", "ratio": 1.018, "duration": 1.6, "fps": 24},
         cache_dir=str(cache_dir),
     )
     assert res1["cached"] is False
@@ -233,7 +242,7 @@ def test_seven_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch)
     # Cache hit on identical config
     res2 = motion_photo.synthesize_live_pair(
         src_img,
-        config={"mode": "handheld", "ratio": 1.06, "duration": 1.5, "fps": 24},
+        config={"mode": "natural_hold", "ratio": 1.018, "duration": 1.6, "fps": 24},
         cache_dir=str(cache_dir),
     )
     assert res2["cached"] is True
@@ -242,7 +251,7 @@ def test_seven_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch)
     shelf = tmp_path / "lib" / "主题合集成品" / "纯静图测试作品"
     shelf.mkdir(parents=True)
     (shelf / "static_cover.jpg").write_bytes(_make_jpeg_bytes((150, 90, 60)))
-    (shelf / "文案.txt").write_text("纯静图开启开关后由电脑本地实时现烤微动实况测试文案，满足字数检查。", encoding="utf-8")
+    (shelf / "文案.txt").write_text("纯静图开启开关后由电脑本地自动生成微动实况测试文案，满足字数检查。", encoding="utf-8")
 
     class Handler(OnlineGalleryHandler):
         scanner = WorkScanner(str(tmp_path / "lib"))
@@ -301,8 +310,14 @@ def test_seven_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch)
                     names = set(zf.namelist())
                     assert {item["motionJpgName"], item["appleJpgName"], item["appleMovName"]}.issubset(names)
 
-            # Android ?auto_live=1 synthesizes Motion Photo on the fly
-            q_and = urlencode({"id": static_w["id"], "file": "static_cover.jpg", "live": "motion", "auto_live": "1"})
+            # Android ?auto_live=1&live_mode=subtle_still synthesizes Motion Photo on the fly
+            q_and = urlencode({
+                "id": static_w["id"],
+                "file": "static_cover.jpg",
+                "live": "motion",
+                "auto_live": "1",
+                "live_mode": "subtle_still",
+            })
             with urlopen(f"{base}/api/online/image?{q_and}", timeout=60) as resp:
                 assert resp.headers.get("X-Live-Format") == "motion-photo"
                 assert resp.headers.get("X-Live-Synthesized") == "1"

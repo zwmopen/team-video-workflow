@@ -1866,7 +1866,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
         RunLoop.main.add(ticker, forMode: .common)
 
-        OnlineGalleryClient.shared.downloadWorkLiveAssets(entry: entry, autoLive: autoLive, onProgress: { done, count, name in
+        let selectedMode = AutoLivePreferences.motionMode.rawValue
+        OnlineGalleryClient.shared.downloadWorkLiveAssets(entry: entry, autoLive: autoLive, liveMode: selectedMode, onProgress: { done, count, name in
             progressVC.note(done: done, total: count, name: name)
         }, completion: { [weak self, weak progressVC] result in
             ticker.invalidate()

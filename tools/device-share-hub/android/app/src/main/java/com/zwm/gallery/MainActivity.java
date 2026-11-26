@@ -6840,10 +6840,10 @@ public final class MainActivity extends Activity {
         boolean isLiveWork = work.hasLivePhotos();
         String titleStr = isLiveWork
                 ? "正在从电脑同步实况原图到手机…"
-                : (autoLive ? "正在由电脑本地现烤实况图…" : "正在从电脑同步原图到手机…");
+                : (autoLive ? "正在生成实况图…" : "正在从电脑同步原图到手机…");
         String statusStr = isLiveWork
                 ? "准备连接电脑拉取 " + work.images.size() + " 张实况原图…"
-                : (autoLive ? "正在向电脑请求现烤 " + work.images.size() + " 张微动实况图…" : "准备连接电脑拉取 " + work.images.size() + " 张原图…");
+                : (autoLive ? "正在准备 " + work.images.size() + " 张实况图…" : "准备连接电脑拉取 " + work.images.size() + " 张原图…");
         TextView dlTitle = text(titleStr, 15, true);
         dlTitle.setTextColor(ThemePalette.getTextPrimary(this));
         dlLayout.addView(dlTitle);
@@ -6868,7 +6868,8 @@ public final class MainActivity extends Activity {
         AlertDialog dlDialog = builder.create();
         dlDialog.show();
 
-        onlineClient.downloadWorkImages(work.id, work.images, work.livePhotos, autoLive, new OnlineGalleryClient.DownloadProgressCallback() {
+        String liveMode = OnlineService.getAutoLiveMotionMode(this);
+        onlineClient.downloadWorkImages(work.id, work.images, work.livePhotos, autoLive, liveMode, new OnlineGalleryClient.DownloadProgressCallback() {
             @Override
             public void onProgress(int downloaded, int total, String currentFileName) {
                 if (dlDialog.isShowing()) {

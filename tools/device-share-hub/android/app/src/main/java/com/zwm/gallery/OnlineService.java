@@ -98,6 +98,27 @@ public final class OnlineService extends Service {
     private static final String PREF_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
     public static final String PREF_CLIPBOARD_SYNC_ENABLED = "clipboardSyncEnabled";
     public static final String PREF_AUTO_LIVE_ON_SHARE_ENABLED = "autoLiveOnShareEnabled";
+    public static final String PREF_AUTO_LIVE_MOTION_MODE = "autoLiveMotionMode";
+    public static final String DEFAULT_AUTO_LIVE_MOTION_MODE = "natural_hold";
+    public static final String[] AUTO_LIVE_MODE_IDS = {
+            "natural_hold", "subtle_still", "zoom_in", "zoom_out",
+            "pan_up", "pan_down", "pan_left", "pan_right", "handheld"
+    };
+    public static final String[] AUTO_LIVE_MODE_TITLES = {
+            "自然手持微动（推荐）", "几乎静止（极微呼吸）", "轻柔推近", "轻柔拉远",
+            "微幅上移", "微幅下移", "微幅左移", "微幅右移", "温和手持轻晃"
+    };
+    public static final String[] AUTO_LIVE_MODE_DESCS = {
+            "模拟真实持机拍摄的轻微呼吸稳态，最接近真机实拍",
+            "极小幅度变化，几乎不改构图，仅保留实况标识",
+            "画面极轻微平滑向前推近（缓入缓出）",
+            "画面极轻微平滑向后舒展（缓入缓出）",
+            "画面极轻微平滑向上移动",
+            "画面极轻微平滑向下移动",
+            "画面极轻微平滑向左移动",
+            "画面极轻微平滑向右移动",
+            "克制的小幅自然手持微晃"
+    };
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
@@ -333,6 +354,38 @@ public final class OnlineService extends Service {
                 .edit()
                 .putBoolean(PREF_AUTO_LIVE_ON_SHARE_ENABLED, enabled)
                 .apply();
+    }
+
+    public static String getAutoLiveMotionMode(Context context) {
+        if (context == null) return DEFAULT_AUTO_LIVE_MOTION_MODE;
+        String raw = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_AUTO_LIVE_MOTION_MODE, DEFAULT_AUTO_LIVE_MOTION_MODE);
+        for (String id : AUTO_LIVE_MODE_IDS) {
+            if (id.equals(raw)) return id;
+        }
+        return DEFAULT_AUTO_LIVE_MOTION_MODE;
+    }
+
+    public static void setAutoLiveMotionMode(Context context, String mode) {
+        if (context == null) return;
+        String safe = DEFAULT_AUTO_LIVE_MOTION_MODE;
+        for (String id : AUTO_LIVE_MODE_IDS) {
+            if (id.equals(mode)) {
+                safe = id;
+                break;
+            }
+        }
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_AUTO_LIVE_MOTION_MODE, safe)
+                .apply();
+    }
+
+    public static String getAutoLiveMotionTitle(String mode) {
+        for (int i = 0; i < AUTO_LIVE_MODE_IDS.length; i++) {
+            if (AUTO_LIVE_MODE_IDS[i].equals(mode)) return AUTO_LIVE_MODE_TITLES[i];
+        }
+        return AUTO_LIVE_MODE_TITLES[0];
     }
 
     static String currentNetworkType(Context context) {

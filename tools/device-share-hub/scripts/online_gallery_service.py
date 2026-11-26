@@ -647,7 +647,7 @@ def _get_live_config_payload() -> Dict[str, Any]:
 
 
 def _resolve_live_query_config(query: Dict[str, List[str]]) -> Dict[str, Any]:
-    base = motion_photo.load_live_config() if motion_photo is not None else {"mode": "zoom_in", "ratio": 1.06, "duration": 2.5, "fps": 30}
+    base = motion_photo.load_live_config() if motion_photo is not None else {"mode": "natural_hold", "ratio": 1.018, "duration": 1.6, "fps": 30}
     override: Dict[str, Any] = dict(base)
     if query.get("live_mode", [""])[0].strip():
         override["mode"] = query["live_mode"][0].strip()
@@ -4955,7 +4955,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.6",
+                "version": "1.2.7",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -4973,7 +4973,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "viewModeSync",       # 手机端与电脑端视图模式（图标/列表/对比）实时联动
                     "sourceCompare",      # 手机端原素材 vs 成品对比视图支持
                     "livePhoto",          # 跨端实况照片（Android Motion Photo + iOS 原生 Live Photo）
-                    "autoLiveOnShare",    # 手机端「分享时静图自动转实况」开关 + 电脑端实时现烤
+                    "autoLiveOnShare",    # 手机端「分享时静图自动转实况」开关 + 电脑端本地自动转实况
                     "liveStudio",         # 电脑端「实况图加工工坊」(/live-studio)
                 ],
                 "viewState": get_gallery_view_state(),
@@ -5485,7 +5485,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                         cand = synth["apple_mov"]
                         synthesized = True
                     except Exception as _lve:
-                        print(f"[AutoLive] 现烤伴生 MOV 失败 ({os.path.basename(img_abs)}): {_lve!r}")
+                        print(f"[AutoLive] 合成伴生 MOV 失败 ({os.path.basename(img_abs)}): {_lve!r}")
                         cand = ""
             if not cand or not os.path.isfile(cand):
                 self.send_error(404, "Live video not found")
@@ -5697,7 +5697,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             if wants_motion:
                                 live_format_header = "motion-photo"
                         except Exception as _ale:
-                            print(f"[AutoLive] 现烤实况图降级返回原图 ({os.path.basename(img_path)}): {_ale!r}")
+                            print(f"[AutoLive] 合成实况图降级返回原图 ({os.path.basename(img_path)}): {_ale!r}")
                             data = None
 
             if data is None:

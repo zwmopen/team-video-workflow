@@ -108,12 +108,13 @@ public final class SettingsActivity extends Activity {
 
         SettingSwitchRow autoLiveSwitch = settingSwitch(
                 "分享时静图自动转实况",
-                "开启后点分享自动由电脑本地现烤微动实况图；可在电脑实况工坊调整微动风格",
+                "当前效果：" + OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(this)) + " · 点文字切换效果",
                 OnlineService.isAutoLiveOnShareEnabled(this));
         autoLiveSwitch.setOnCheckedChangeListener((button, enabled) -> {
             OnlineService.setAutoLiveOnShareEnabled(this, enabled);
-            toast(enabled ? "已开启：分享静图时由电脑自动现烤实况" : "已关闭分享自动转实况");
+            toast(enabled ? "已开启：分享静图时自动转为实况图" : "已关闭分享自动转实况");
         });
+        autoLiveSwitch.setOnRowBodyClickListener(v -> showAutoLiveModeDialog(autoLiveSwitch));
         root.addView(autoLiveSwitch, settingMargins(dp(20)));
 
         root.addView(label("自动整理"));
@@ -208,6 +209,29 @@ public final class SettingsActivity extends Activity {
                     ThemePalette.applySystemBarAppearance(this);
                     dialog.dismiss();
                     recreate();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showAutoLiveModeDialog(SettingSwitchRow row) {
+        String current = OnlineService.getAutoLiveMotionMode(this);
+        int checked = 0;
+        String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length];
+        for (int i = 0; i < OnlineService.AUTO_LIVE_MODE_IDS.length; i++) {
+            if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(current)) checked = i;
+            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i] + "\n" + OnlineService.AUTO_LIVE_MODE_DESCS[i];
+        }
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("选择实况动态效果")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    String chosenId = OnlineService.AUTO_LIVE_MODE_IDS[which];
+                    String chosenTitle = OnlineService.AUTO_LIVE_MODE_TITLES[which];
+                    OnlineService.setAutoLiveMotionMode(this, chosenId);
+                    row.setDetail("当前效果：" + chosenTitle + " · 点文字切换效果");
+                    new OnlineGalleryClient(this).syncLiveMotionModeAsync(chosenId);
+                    toast("已切换为：" + chosenTitle);
+                    dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
                 .show();
@@ -511,6 +535,8 @@ public final class SettingsActivity extends Activity {
     }
 
     private final class SettingSwitchRow extends LinearLayout {
+        private final LinearLayout copy;
+        private final TextView detailView;
         private final IOSSwitch control;
 
         SettingSwitchRow(String title, String detail, boolean checked) {
@@ -520,10 +546,10 @@ public final class SettingsActivity extends Activity {
             setPadding(dp(14), dp(10), dp(14), dp(10));
             setMinimumHeight(dp(72));
             setBackground(round(ThemePalette.getCardBg(SettingsActivity.this), 16));
-            LinearLayout copy = new LinearLayout(SettingsActivity.this);
+            copy = new LinearLayout(SettingsActivity.this);
             copy.setOrientation(VERTICAL);
             TextView titleView = text(title, 15, false);
-            TextView detailView = text(detail, 12, false);
+            detailView = text(detail, 12, false);
             detailView.setTextColor(ThemePalette.getTextSecondary(SettingsActivity.this));
             detailView.setLineSpacing(dp(1), 1f);
             detailView.setMaxLines(2);
@@ -543,6 +569,23 @@ public final class SettingsActivity extends Activity {
 
         void setOnCheckedChangeListener(CompoundButton.OnCheckedChangeListener listener) {
             control.setOnCheckedChangeListener(listener);
+        }
+
+        void setDetail(String detail) {
+            detailView.setText(detail);
+        }
+
+        void setOnRowBodyClickListener(View.OnClickListener bodyListener) {
+            if (bodyListener == null) {
+                copy.setClickable(false);
+                copy.setOnClickListener(null);
+                setOnClickListener(v -> control.toggle());
+                return;
+            }
+            setOnClickListener(null);
+            setClickable(false);
+            copy.setClickable(true);
+            copy.setOnClickListener(bodyListener);
         }
 
         void setChecked(boolean checked) {

@@ -1,3 +1,16 @@
+# 2026-11-26 实况动态自然度精调与手机端效果直选（服务端 1.2.7 / Android 0.8.136(247) / iOS 0.8.136(247)）
+
+- **核心落地**：
+  - `scripts/motion_photo.py` 扩展至 9 种微动预设（新增 `natural_hold`「自然手持微动（推荐）」与 `subtle_still`「几乎静止（极微呼吸）」），默认配置下调为 `mode=natural_hold`、`ratio=1.018`、`duration=1.6`，clamp 范围调至 `[1.005, 1.10]` / `[1.0, 3.5]`，cache key 升级 `v2|` 前缀自动失效旧渲染，`_build_zoompan_filter` 升级 3x 超采样与余弦缓入缓出。
+  - `scripts/online_gallery_service.py` 升至 `1.2.7`、`scripts/live_studio.html` 同步 9 种预设与新默认滑动区间，并全仓库清除“现烤”用词。
+  - Android (`0.8.136/247`) `OnlineService` / `SettingsActivity` / `OnlineGalleryClient` / `MainActivity` 与 iOS (`0.8.136/247`) `AutoLivePreferences` / `SettingsView` / `OnlineGalleryClient` / `ContentView` 同步实现双区点击设置行（点开关切换启停、点文字弹出 9 种效果选择器），选中后即时保存并异步 `POST /api/online/live-config` 同步至电脑引擎且在拉图请求携带 `&live_mode=`。
+  - 运维闭环：桌面 `实况图加工工坊.lnk` 已修复指向 `explorer.exe http://127.0.0.1:45835/live-studio`；Windows 计划任务 `\iOS_Cert_AutoRenew_Watchdog` 已升级为每日 4 次巡检（09:00 起每 4 小时一次持续 15 小时），`C:\Users\z\Desktop\06-苹果侧载手机\` 移除旧版 `0.8.127` IPA 并更新至 `0.8.135`，且此前已修好 `ios_sideload_engine.py` 在线代理自动探测并在 USB 真机完成 `0.8.135/246` 侧载回读核验。
+- **验证与证据**：
+  - 零“现烤”全代码扫描通过；5 项 JS 守卫全部通过；`pytest` 7 个目标套件共 `23/23` 通过（含 9 预设与 `?live_mode=subtle_still` 验证）。
+  - Android `scripts/build-local.ps1 -AndroidOnly` 通过，产出 `android/out/album-Android-v0.8.136.apk`（SHA-256 `dba1b59daddfc9b702489ebdbbd1454478e2826f72a9c8a065ecbff58ab27d9f`）。
+  - 本机常驻核验：`45835` 返回 `version="1.2.7"`、`staleCode=False`、`totalWorks=320`、`/api/online/live-config` 返回 9 种预设；`192.168.10.226:4348/latest.json` 返回 Android `0.8.136/247`（SHA-256 一致）与 iOS `0.8.136/247`；`/api/online/phones?refresh=1` 在线 3 台。
+  - **边界**：iOS `0.8.136/247` 源码推送后待 macOS CI 构建 IPA；新双区效果选择器待双端真机安装验收。
+
 # 2026-11-26 全本地实况微动工坊与手机「分享自动转实况」开关（服务端 1.2.6 / Android 0.8.135(246) / iOS 0.8.135(246)）
 
 - **核心落地**：

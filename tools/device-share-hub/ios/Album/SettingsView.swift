@@ -62,7 +62,8 @@ final class SettingsViewController: UITableViewController {
             cell.accessoryView = toggle
         case (0, 4):
             cell.textLabel?.text = "分享时静图自动转实况"
-            cell.detailTextLabel?.text = "开启后点分享自动由电脑本地现烤微动实况图；可在电脑工坊调整微动风格"
+            cell.detailTextLabel?.text = "当前效果：\(AutoLivePreferences.motionMode.title) · 点文字切换效果"
+            cell.selectionStyle = .default
             let toggle = UISwitch()
             toggle.isOn = AutoLivePreferences.isEnabled
             toggle.addTarget(self, action: #selector(autoLiveSwitchChanged(_:)), for: .valueChanged)
@@ -129,6 +130,8 @@ final class SettingsViewController: UITableViewController {
         tableView.deselectRow(at: indexPath, animated: true)
         if indexPath.section == 0 && indexPath.row == 1 {
             promptForDeviceName()
+        } else if indexPath.section == 0 && indexPath.row == 4 {
+            showAutoLiveModeChoices()
         } else if indexPath.section == 1 && indexPath.row == 1 {
             if library.supportsExternalFolderSelection {
                 guard #available(iOS 13.0, *) else { return }
@@ -171,6 +174,29 @@ final class SettingsViewController: UITableViewController {
             let isCurrent = mode == current
             alert.addAction(UIAlertAction(title: label + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
                 AppThemePreferences.currentMode = mode
+                self?.tableView.reloadData()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
+    }
+
+    private func showAutoLiveModeChoices() {
+        let alert = UIAlertController(
+            title: "选择实况动态效果",
+            message: "默认推荐「自然手持微动」或「几乎静止」，更接近真机实拍",
+            preferredStyle: .actionSheet
+        )
+        let current = AutoLivePreferences.motionMode
+        AutoLiveMotionMode.allCases.forEach { mode in
+            let isCurrent = mode == current
+            alert.addAction(UIAlertAction(title: mode.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
+                AutoLivePreferences.motionMode = mode
+                OnlineGalleryClient.shared.syncLiveMotionMode(mode.rawValue)
                 self?.tableView.reloadData()
             })
         }
@@ -230,6 +256,29 @@ final class SettingsViewController: UITableViewController {
         alert.addAction(UIAlertAction(title: "自定义…", style: .default) { [weak self] _ in
             self?.showCustomCleanupHours(editingMove: editingMove, current: current)
         })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
+    }
+
+    private func showAutoLiveModeChoices() {
+        let alert = UIAlertController(
+            title: "选择实况动态效果",
+            message: "默认推荐「自然手持微动」或「几乎静止」，更接近真机实拍",
+            preferredStyle: .actionSheet
+        )
+        let current = AutoLivePreferences.motionMode
+        AutoLiveMotionMode.allCases.forEach { mode in
+            let isCurrent = mode == current
+            alert.addAction(UIAlertAction(title: mode.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
+                AutoLivePreferences.motionMode = mode
+                OnlineGalleryClient.shared.syncLiveMotionMode(mode.rawValue)
+                self?.tableView.reloadData()
+            })
+        }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         if let popover = alert.popoverPresentationController {
             popover.sourceView = view

@@ -1740,6 +1740,10 @@ public final class OnlineGalleryClient {
     }
 
     public void downloadWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos, boolean autoLive, DownloadProgressCallback callback) {
+        downloadWorkImages(workId, fileNames, livePhotos, autoLive, null, callback);
+    }
+
+    public void downloadWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos, boolean autoLive, String liveMode, DownloadProgressCallback callback) {
         executor.execute(() -> {
             // DSH-099：记录循环中文件名，catch 块能定位到具体哪个 fileName 出错
             final String[] currentFileName = { null };
@@ -1761,7 +1765,7 @@ public final class OnlineGalleryClient {
                         final String curName = fileName;
                         mainHandler.post(() -> callback.onProgress(progStart, total, curName));
                         boolean isLive = isLiveImage(livePhotos, fileName);
-                        java.io.File f = downloadOneImageToFile(baseUrl, targetDir, workId, fileName, isLive, autoLive);
+                        java.io.File f = downloadOneImageToFile(baseUrl, targetDir, workId, fileName, isLive, autoLive, liveMode);
                         result.add(f);
                         count++;
                         final int progDone = count;
@@ -1785,19 +1789,22 @@ public final class OnlineGalleryClient {
      * DSH-185：单张原图下载（原子落盘 + 64KB 缓冲，去掉逐张 fsync）。返回最终文件。
      * 与旧串行循环体等价，但抽成独立方法供并发池调用；原子 rename 口径不变（DSH-118）。
      */
-    private java.io.File downloadOneImageToFile(String baseUrl, java.io.File targetDir, String workId, String fileName, boolean isLive, boolean autoLive) throws Exception {
+    private java.io.File downloadOneImageToFile(String baseUrl, java.io.File targetDir, String workId, String fileName, boolean isLive, boolean autoLive, String liveMode) throws Exception {
         boolean isAutoSynth = autoLive && !isLive;
         java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive, isAutoSynth);
         // DSH-100：图在 产出素材/ 子目录时返回「成品库根相对路径」，必须先建中间子目录。
         java.io.File parent = localFile.getParentFile();
         if (parent != null && !parent.exists()) parent.mkdirs();
         if (!isAutoSynth && localFile.exists() && localFile.length() > 0) {
-            return localFile;   // 已缓存直接复用（autoLive 现烤每次回电脑核对最新风格缓存）
+            return localFile;   // 已缓存直接复用（autoLive 每次回电脑核对最新风格缓存）
         }
         String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
                 + "&file=" + URLEncoder.encode(fileName, "UTF-8")
                 + ((isLive || isAutoSynth) ? "&live=motion" : "")
-                + (isAutoSynth ? "&auto_live=1" : "");
+                + (isAutoSynth ? "&auto_live=1" : "")
+                + ((isAutoSynth && liveMode != null && !liveMode.trim().isEmpty())
+                        ? "&live_mode=" + URLEncoder.encode(liveMode.trim(), "UTF-8")
+                        : "");
         URL url = new URL(uStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setConnectTimeout(TIMEOUT_MS);
@@ -2095,6 +2102,19 @@ public final class OnlineGalleryClient {
                 if (callback != null) {
                     mainHandler.post(() -> callback.onError(e));
                 }
+            }
+        });
+    }
+
+    public void syncLiveMotionModeAsync(String mode) {
+        if (mode == null || mode.trim().isEmpty()) return;
+        executor.execute(() -> {
+            try {
+                String baseUrl = resolveBaseUrl();
+                JSONObject body = new JSONObject();
+                body.put("mode", mode.trim());
+                httpPost(new URL(baseUrl + "/api/online/live-config"), body.toString());
+            } catch (Exception ignored) {
             }
         });
     }

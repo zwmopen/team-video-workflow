@@ -1336,6 +1336,7 @@ public final class OnlineGalleryClient {
     public func downloadWorkLiveAssets(
         entry: OnlineWorkEntry,
         autoLive: Bool = false,
+        liveMode: String? = nil,
         onProgress: @escaping (Int, Int, String) -> Void,
         completion: @escaping (Result<LiveAssetsDownloadResult, Error>) -> Void
     ) {
@@ -1390,6 +1391,9 @@ public final class OnlineGalleryClient {
                 ]
                 if shouldAutoSynth {
                     imgItems.append(URLQueryItem(name: "auto_live", value: "1"))
+                    if let mode = liveMode?.trimmingCharacters(in: .whitespacesAndNewlines), !mode.isEmpty {
+                        imgItems.append(URLQueryItem(name: "live_mode", value: mode))
+                    }
                 }
                 var imgComp = URLComponents(string: "\(baseUrl)/api/online/image")
                 imgComp?.queryItems = imgItems
@@ -1416,11 +1420,15 @@ public final class OnlineGalleryClient {
                     } else if shouldAutoSynth {
                         let vDest = stageDir.appendingPathComponent("\(indexedStem).mov")
                         var vidComp = URLComponents(string: "\(baseUrl)/api/online/live-video")
-                        vidComp?.queryItems = [
+                        var vidItems = [
                             URLQueryItem(name: "id", value: entry.id),
                             URLQueryItem(name: "file", value: imgPath),
                             URLQueryItem(name: "auto_live", value: "1"),
                         ]
+                        if let mode = liveMode?.trimmingCharacters(in: .whitespacesAndNewlines), !mode.isEmpty {
+                            vidItems.append(URLQueryItem(name: "live_mode", value: mode))
+                        }
+                        vidComp?.queryItems = vidItems
                         if let vidURL = vidComp?.url {
                             try? self.downloadFileSync(url: vidURL, destination: vDest)
                             if self.fileManager.fileExists(atPath: vDest.path) {
@@ -1882,5 +1890,17 @@ public final class OnlineGalleryClient {
             let msg = (json["message"] as? String) ?? ""
             DispatchQueue.main.async { completion?(ok, msg) }
         }.resume()
+    }
+
+    public func syncLiveMotionMode(_ mode: String) {
+        let trimmed = mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/live-config") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["mode": trimmed])
+        session.dataTask(with: request) { _, _, _ in }.resume()
     }
 }

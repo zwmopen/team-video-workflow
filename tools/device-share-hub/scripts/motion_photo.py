@@ -49,19 +49,21 @@ DEFAULT_CACHE_LIMIT = 200
 DEFAULT_LIVE_CONFIG_FILE = r"D:\AICode\运行数据\江湖有旅人\live_motion_config.json"
 
 MOTION_PRESETS: List[Dict[str, str]] = [
-    {"id": "zoom_in", "label": "呼吸微推（默认）", "desc": "镜头缓慢平滑向前推近，自然百搭"},
-    {"id": "zoom_out", "label": "呼吸微拉", "desc": "镜头由近及远缓慢舒展，适合风景全貌"},
-    {"id": "pan_up", "label": "微幅上移", "desc": "画面从下方轻轻上抬，突出建筑/人像层次"},
-    {"id": "pan_down", "label": "微幅下移", "desc": "画面从上方柔和下沉，适合打卡氛围图"},
-    {"id": "pan_left", "label": "左移轻摇", "desc": "水平向右向左平稳滑轨横移"},
-    {"id": "pan_right", "label": "右移轻摇", "desc": "水平向左向右平稳滑轨横移"},
-    {"id": "handheld", "label": "手持微晃", "desc": "模拟真手拿着手机拍摄的轻微呼吸晃动"},
+    {"id": "natural_hold", "label": "自然手持微动（推荐）", "desc": "模拟真实持机拍摄的轻微呼吸稳态，最接近真机实拍"},
+    {"id": "subtle_still", "label": "几乎静止（极微呼吸）", "desc": "极小幅度变化，几乎不改构图，仅保留实况标识"},
+    {"id": "zoom_in", "label": "轻柔推近", "desc": "画面极轻微平滑向前推近（缓入缓出）"},
+    {"id": "zoom_out", "label": "轻柔拉远", "desc": "画面极轻微平滑向后舒展（缓入缓出）"},
+    {"id": "pan_up", "label": "微幅上移", "desc": "画面极轻微平滑向上移动"},
+    {"id": "pan_down", "label": "微幅下移", "desc": "画面极轻微平滑向下移动"},
+    {"id": "pan_left", "label": "微幅左移", "desc": "画面极轻微平滑向左移动"},
+    {"id": "pan_right", "label": "微幅右移", "desc": "画面极轻微平滑向右移动"},
+    {"id": "handheld", "label": "温和手持轻晃", "desc": "克制的小幅自然手持微晃"},
 ]
 VALID_MOTION_MODES = {item["id"] for item in MOTION_PRESETS}
 DEFAULT_LIVE_CONFIG: Dict[str, Any] = {
-    "mode": "zoom_in",
-    "ratio": 1.06,
-    "duration": 2.5,
+    "mode": "natural_hold",
+    "ratio": 1.018,
+    "duration": 1.6,
     "fps": 30,
 }
 _CONFIG_LOCK = threading.Lock()
@@ -88,13 +90,13 @@ def normalize_live_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ratio = float(src.get("ratio", DEFAULT_LIVE_CONFIG["ratio"]))
     except (TypeError, ValueError):
         ratio = DEFAULT_LIVE_CONFIG["ratio"]
-    ratio = round(max(1.02, min(1.15, ratio)), 3)
+    ratio = round(max(1.005, min(1.10, ratio)), 3)
 
     try:
         duration = float(src.get("duration", DEFAULT_LIVE_CONFIG["duration"]))
     except (TypeError, ValueError):
         duration = DEFAULT_LIVE_CONFIG["duration"]
-    duration = round(max(1.5, min(4.0, duration)), 2)
+    duration = round(max(1.0, min(3.5, duration)), 2)
 
     try:
         fps = int(src.get("fps", DEFAULT_LIVE_CONFIG["fps"]))
@@ -106,7 +108,7 @@ def normalize_live_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 def config_signature(cfg: Optional[Dict[str, Any]]) -> str:
     norm = normalize_live_config(cfg)
-    raw = f"{norm['mode']}|{norm['ratio']:.3f}|{norm['duration']:.2f}|{norm['fps']}"
+    raw = f"v2|{norm['mode']}|{norm['ratio']:.3f}|{norm['duration']:.2f}|{norm['fps']}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -577,38 +579,50 @@ def _build_zoompan_filter(
 ) -> str:
     den = max(1, total_frames - 1)
     p = f"min(1,on/{den})"
+    e = f"((1-cos(PI*{p}))/2)"
     cx = "max(0,min(iw-iw/zoom,(iw-iw/zoom)/2))"
     cy = "max(0,min(ih-ih/zoom,(ih-ih/zoom)/2))"
 
-    if mode == "zoom_out":
-        z_expr = f"{ratio:.4f}-{ratio - 1.0:.4f}*{p}"
+    if mode == "natural_hold":
+        delta = max(0.008, ratio - 1.0)
+        z_expr = f"1.0+{delta:.4f}*(0.15+0.85*{e})"
+        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*(0.5+0.14*sin(PI*{p}))))"
+        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*(0.5+0.10*sin(PI*{p}))))"
+    elif mode == "subtle_still":
+        eff_delta = max(0.005, (ratio - 1.0) * 0.45)
+        z_expr = f"1.0+{eff_delta:.4f}*{e}"
+        x_expr, y_expr = cx, cy
+    elif mode == "zoom_out":
+        z_expr = f"{ratio:.4f}-{ratio - 1.0:.4f}*{e}"
         x_expr, y_expr = cx, cy
     elif mode == "pan_up":
         z_expr = f"{ratio:.4f}"
         x_expr = cx
-        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*(1-{p})))"
+        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*(1-{e})))"
     elif mode == "pan_down":
         z_expr = f"{ratio:.4f}"
         x_expr = cx
-        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*{p}))"
+        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*{e}))"
     elif mode == "pan_left":
         z_expr = f"{ratio:.4f}"
-        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*(1-{p})))"
+        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*(1-{e})))"
         y_expr = cy
     elif mode == "pan_right":
         z_expr = f"{ratio:.4f}"
-        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*{p}))"
+        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*{e}))"
         y_expr = cy
     elif mode == "handheld":
-        z_expr = f"1.0+{ratio - 1.0:.4f}*(0.65+0.35*sin(2*PI*on/{den}))"
-        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*(0.5+0.42*sin(2*PI*on/{den}))))"
-        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*(0.5+0.35*cos(2*PI*on/{den}))))"
-    else:  # zoom_in (default)
-        z_expr = f"1.0+{ratio - 1.0:.4f}*{p}"
+        z_expr = f"1.0+{ratio - 1.0:.4f}*(0.45+0.35*sin(PI*{p}))"
+        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*(0.5+0.20*sin(2*PI*{p})*sin(PI*{p}))))"
+        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)*(0.5+0.14*sin(1.5*PI*{p})*sin(PI*{p}))))"
+    else:  # zoom_in
+        z_expr = f"1.0+{ratio - 1.0:.4f}*{e}"
         x_expr, y_expr = cx, cy
 
-    pre_w = max(out_w * 2, 2)
-    pre_h = max(out_h * 2, 2)
+    scale_mult = min(3.0, 4096.0 / float(max(out_w, out_h, 1)))
+    scale_mult = max(2.0, scale_mult)
+    pre_w = max(2, int(round(out_w * scale_mult)) // 2 * 2)
+    pre_h = max(2, int(round(out_h * scale_mult)) // 2 * 2)
     return (
         f"scale={pre_w}:{pre_h}:flags=lanczos,"
         f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
