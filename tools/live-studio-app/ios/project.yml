@@ -1,0 +1,34 @@
+name: LiveStudio
+options:
+  bundleIdPrefix: com.zwm
+  deploymentTarget:
+    iOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  LiveStudio:
+    type: application
+    platform: iOS
+    sources:
+      - path: LiveStudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zwm.livestudio
+        PRODUCT_NAME: LiveStudio
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 1.0.0
+    info:
+      path: LiveStudio/Info.plist
+      properties:
+        CFBundleDisplayName: 实况工坊
+        CFBundleName: LiveStudio
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSPhotoLibraryUsageDescription: 需要读取手机相册中的静态照片，用于在手机本地转为动态实况照片。
+        NSPhotoLibraryAddUsageDescription: 需要将转换完成的原生动态实况照片保存到手机相册。

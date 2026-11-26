@@ -1,0 +1,9 @@
+# Build outputs & generated IDE files
+**/build/
+**/out/
+**/.gradle/
+**/.idea/
+**/*.xcodeproj/
+*.apk
+*.ipa
+*.log
