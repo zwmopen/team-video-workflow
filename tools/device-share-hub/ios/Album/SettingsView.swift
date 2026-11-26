@@ -264,29 +264,6 @@ final class SettingsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    private func showAutoLiveModeChoices() {
-        let alert = UIAlertController(
-            title: "选择实况动态效果",
-            message: "默认推荐「自然手持微动」或「几乎静止」，更接近真机实拍",
-            preferredStyle: .actionSheet
-        )
-        let current = AutoLivePreferences.motionMode
-        AutoLiveMotionMode.allCases.forEach { mode in
-            let isCurrent = mode == current
-            alert.addAction(UIAlertAction(title: mode.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
-                AutoLivePreferences.motionMode = mode
-                OnlineGalleryClient.shared.syncLiveMotionMode(mode.rawValue)
-                self?.tableView.reloadData()
-            })
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
-    }
-
     private func showCustomCleanupHours(editingMove: Bool, current: Int) {
         let alert = UIAlertController(title: "自定义小时数",
                                       message: "请输入 0～720 的整数；0 表示立刻。",
