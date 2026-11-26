@@ -29,8 +29,11 @@ import android.util.LruCache;
 import android.util.Size;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -92,6 +95,49 @@ public final class MainActivity extends Activity {
     private boolean selectionMode = false;
     private volatile boolean isConverting = false;
 
+    // Swipe / drag-to-multiselect state
+    private boolean isDragSelecting = false;
+    private boolean dragSelectTargetState = true;
+    private int dragStartPos = -1;
+    private int dragLastPos = -1;
+    private final List<Uri> dragBaselineSelected = new ArrayList<>();
+    private float dragDownX = 0f;
+    private float dragDownY = 0f;
+    private float dragLastX = 0f;
+    private float dragLastY = 0f;
+    private int dragDownPos = AdapterView.INVALID_POSITION;
+    private boolean horizontalDragArmed = false;
+    private boolean dragAutoScrollActive = false;
+    private boolean sentCancelToGrid = false;
+    private int touchSlop;
+
+    private final Runnable autoScrollRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isDragSelecting || !dragAutoScrollActive || gridView == null) {
+                dragAutoScrollActive = false;
+                return;
+            }
+            int h = gridView.getHeight();
+            int edge = dp(56);
+            int delta = 0;
+            if (dragLastY < edge && edge > 0) {
+                float factor = Math.min(1f, (edge - dragLastY) / edge);
+                delta = -Math.max(dp(4), Math.round(dp(18) * factor));
+            } else if (dragLastY > h - edge && edge > 0) {
+                float factor = Math.min(1f, (dragLastY - (h - edge)) / edge);
+                delta = Math.max(dp(4), Math.round(dp(18) * factor));
+            }
+            if (delta == 0) {
+                dragAutoScrollActive = false;
+                return;
+            }
+            gridView.scrollListBy(delta);
+            updateDragSelectionAt(dragLastX, dragLastY);
+            mainHandler.postDelayed(this, 16);
+        }
+    };
+
     private boolean isDark;
     private TextView titleView;
     private TextView albumChip;
@@ -113,6 +159,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         int night = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         isDark = night == Configuration.UI_MODE_NIGHT_YES;
         applySystemBars();
@@ -166,6 +213,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        mainHandler.removeCallbacks(autoScrollRunnable);
         ioExecutor.shutdownNow();
         thumbExecutor.shutdownNow();
         super.onDestroy();
@@ -228,7 +276,7 @@ public final class MainActivity extends Activity {
         permissionCard.setPadding(dp(18), dp(22), dp(18), dp(22));
         permissionCard.setBackground(roundRect(cardBg(), 16));
         permissionTitle = label("授权读取手机相册", 16, true, textPrimary());
-        TextView permDesc = label("像系统相册一样浏览本地照片，点开看大图、长按多选，离线转为动态实况并分享或删除。", 13, false, textSecondary());
+        TextView permDesc = label("像系统相册一样浏览本地照片，点开看大图、长按并滑动连选，离线转为动态实况并分享或删除。", 13, false, textSecondary());
         Button grantBtn = actionBtn("允许读取相册", true);
         grantBtn.setOnClickListener(v -> requestGalleryPermission());
 
@@ -251,21 +299,7 @@ public final class MainActivity extends Activity {
         gridView.setClipToPadding(false);
         adapter = new PhotoGridAdapter();
         gridView.setAdapter(adapter);
-        gridView.setOnItemClickListener((parent, view, position, id) -> {
-            if (position < 0 || position >= visiblePhotos.size()) return;
-            GalleryPhoto photo = visiblePhotos.get(position);
-            if (selectionMode) {
-                toggleSelection(photo.uri);
-            } else {
-                showPhotoPreviewDialog(position);
-            }
-        });
-        gridView.setOnItemLongClickListener((parent, view, position, id) -> {
-            if (position < 0 || position >= visiblePhotos.size()) return false;
-            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-            enterSelectionWith(visiblePhotos.get(position).uri);
-            return true;
-        });
+        setupGridInteractions();
         root.addView(gridView, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         // Sticky Bottom Action Bar (shown ONLY during multi-select mode)
@@ -295,6 +329,189 @@ public final class MainActivity extends Activity {
 
         root.addView(bottomBar);
         return root;
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void setupGridInteractions() {
+        gridView.setOnItemClickListener((parent, view, position, id) -> {
+            if (isDragSelecting) return;
+            if (position < 0 || position >= visiblePhotos.size()) return;
+            GalleryPhoto photo = visiblePhotos.get(position);
+            if (selectionMode) {
+                toggleSelection(photo.uri);
+            } else {
+                showPhotoPreviewDialog(position);
+            }
+        });
+        gridView.setOnItemLongClickListener((parent, view, position, id) -> {
+            if (position < 0 || position >= visiblePhotos.size()) return false;
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            boolean alreadySel = selectedUris.contains(visiblePhotos.get(position).uri);
+            startDragSelect(position, !alreadySel);
+            return true;
+        });
+        gridView.setOnTouchListener((v, e) -> handleGridTouch(e));
+    }
+
+    private boolean handleGridTouch(MotionEvent e) {
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                dragDownX = dragLastX = e.getX();
+                dragDownY = dragLastY = e.getY();
+                dragDownPos = gridView.pointToPosition((int) dragDownX, (int) dragDownY);
+                horizontalDragArmed = selectionMode
+                        && dragDownPos != AdapterView.INVALID_POSITION
+                        && dragDownPos < visiblePhotos.size();
+                sentCancelToGrid = false;
+                return false;
+            case MotionEvent.ACTION_MOVE:
+                dragLastX = e.getX();
+                dragLastY = e.getY();
+                if (!isDragSelecting && selectionMode && horizontalDragArmed) {
+                    float dx = Math.abs(dragLastX - dragDownX);
+                    float dy = Math.abs(dragLastY - dragDownY);
+                    if (Math.max(dx, dy) > touchSlop) {
+                        horizontalDragArmed = false;
+                        if (dx > dy * 1.15f && dragDownPos >= 0 && dragDownPos < visiblePhotos.size()) {
+                            gridView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                            boolean alreadySel = selectedUris.contains(visiblePhotos.get(dragDownPos).uri);
+                            startDragSelect(dragDownPos, !alreadySel);
+                            cancelPendingGridTouch(e);
+                            updateDragSelectionAt(dragLastX, dragLastY);
+                            return true;
+                        }
+                    }
+                }
+                if (isDragSelecting) {
+                    cancelPendingGridTouch(e);
+                    updateDragSelectionAt(dragLastX, dragLastY);
+                    int h = gridView.getHeight();
+                    int edge = dp(56);
+                    boolean nearEdge = h > edge * 2 && (dragLastY < edge || dragLastY > h - edge);
+                    if (nearEdge && !dragAutoScrollActive) {
+                        dragAutoScrollActive = true;
+                        mainHandler.post(autoScrollRunnable);
+                    } else if (!nearEdge && dragAutoScrollActive) {
+                        dragAutoScrollActive = false;
+                        mainHandler.removeCallbacks(autoScrollRunnable);
+                    }
+                    return true;
+                }
+                return false;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                horizontalDragArmed = false;
+                if (isDragSelecting) {
+                    cancelPendingGridTouch(e);
+                    stopDragSelect();
+                    return true;
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    private void cancelPendingGridTouch(MotionEvent src) {
+        if (sentCancelToGrid || gridView == null) return;
+        sentCancelToGrid = true;
+        MotionEvent cancel = MotionEvent.obtain(src);
+        cancel.setAction(MotionEvent.ACTION_CANCEL);
+        gridView.onTouchEvent(cancel);
+        cancel.recycle();
+    }
+
+    private void startDragSelect(int startPos, boolean targetSelect) {
+        if (startPos < 0 || startPos >= visiblePhotos.size()) return;
+        selectionMode = true;
+        isDragSelecting = true;
+        dragSelectTargetState = targetSelect;
+        dragStartPos = startPos;
+        dragLastPos = -1;
+        dragBaselineSelected.clear();
+        dragBaselineSelected.addAll(selectedUris);
+        gridView.requestDisallowInterceptTouchEvent(true);
+        applyDragRange(startPos);
+        updateChrome();
+    }
+
+    private void applyDragRange(int endPos) {
+        if (endPos < 0 || endPos >= visiblePhotos.size() || endPos == dragLastPos) return;
+        dragLastPos = endPos;
+        selectedUris.clear();
+        selectedUris.addAll(dragBaselineSelected);
+        if (dragSelectTargetState) {
+            int step = endPos >= dragStartPos ? 1 : -1;
+            for (int i = dragStartPos; ; i += step) {
+                Uri uri = visiblePhotos.get(i).uri;
+                if (!selectedUris.contains(uri)) {
+                    if (selectedUris.size() >= MAX_SELECT) break;
+                    selectedUris.add(uri);
+                }
+                if (i == endPos) break;
+            }
+        } else {
+            int lo = Math.min(dragStartPos, endPos);
+            int hi = Math.max(dragStartPos, endPos);
+            for (int i = lo; i <= hi; i++) {
+                selectedUris.remove(visiblePhotos.get(i).uri);
+            }
+        }
+        updateChrome();
+        refreshVisibleCellSelections();
+    }
+
+    private void updateDragSelectionAt(float x, float y) {
+        if (gridView == null || visiblePhotos.isEmpty()) return;
+        int w = gridView.getWidth();
+        int h = gridView.getHeight();
+        if (w <= 0 || h <= 0) return;
+        float cx = Math.max(dp(4), Math.min(x, Math.max(dp(4), w - dp(4))));
+        float cy = Math.max(dp(4), Math.min(y, Math.max(dp(4), h - dp(4))));
+        int pos = gridView.pointToPosition((int) cx, (int) cy);
+        if (pos == AdapterView.INVALID_POSITION) {
+            int probe = dp(4);
+            int[][] offsets = {{-probe, 0}, {probe, 0}, {0, -probe}, {0, probe}};
+            for (int[] off : offsets) {
+                pos = gridView.pointToPosition((int) cx + off[0], (int) cy + off[1]);
+                if (pos != AdapterView.INVALID_POSITION) break;
+            }
+        }
+        if (pos != AdapterView.INVALID_POSITION && pos < visiblePhotos.size()) {
+            applyDragRange(pos);
+        }
+    }
+
+    private void refreshVisibleCellSelections() {
+        if (gridView == null) return;
+        int first = gridView.getFirstVisiblePosition();
+        int count = gridView.getChildCount();
+        for (int i = 0; i < count; i++) {
+            View child = gridView.getChildAt(i);
+            Object tag = child.getTag();
+            int pos = first + i;
+            if (tag instanceof ViewHolder && pos >= 0 && pos < visiblePhotos.size()) {
+                bindSelectionVisual((ViewHolder) tag, visiblePhotos.get(pos).uri);
+            }
+        }
+    }
+
+    private void stopDragSelect() {
+        isDragSelecting = false;
+        dragAutoScrollActive = false;
+        horizontalDragArmed = false;
+        sentCancelToGrid = false;
+        dragBaselineSelected.clear();
+        mainHandler.removeCallbacks(autoScrollRunnable);
+        if (gridView != null) {
+            gridView.requestDisallowInterceptTouchEvent(false);
+        }
+        if (selectedUris.isEmpty()) {
+            exitSelectionMode();
+        } else {
+            updateChrome();
+            adapter.notifyDataSetChanged();
+        }
     }
 
     private void enterSelectionWith(Uri firstUri) {
@@ -877,7 +1094,7 @@ public final class MainActivity extends Activity {
                 String.format(Locale.US, "微动幅度与时长：%.1f%% · %.1f 秒", pct, currentDuration()),
                 "跳过已是实况的照片：" + (isSkipExistingLive() ? "已开启" : "已关闭"),
                 "清理临时缓存",
-                "关于实况工坊 (v1.0.1)"
+                "关于实况工坊 (v1.0.2)"
         };
         new AlertDialog.Builder(this)
                 .setTitle("设置")
@@ -895,9 +1112,9 @@ public final class MainActivity extends Activity {
                         toast("已清理临时缓存 " + freedKb + " KB");
                     } else {
                         new AlertDialog.Builder(this)
-                                .setTitle("实况工坊 v1.0.1")
+                                .setTitle("实况工坊 v1.0.2")
                                 .setMessage("· 纯手机端离线硬件 GPU + MediaCodec 渲染，无需连电脑\n"
-                                        + "· 浏览模式：点击查看大图，长按或点右上角圆圈进入多选\n"
+                                        + "· 浏览模式：点击查看大图，长按不松手直接滑动连选，多选时横向滑动也可连选\n"
                                         + "· 多选/大图均可一键删除、存实况、分享实况\n"
                                         + "· 生成的实况图统一保存在系统相册「Pictures/实况工坊」")
                                 .setPositiveButton("知道了", null)
@@ -1081,25 +1298,7 @@ public final class MainActivity extends Activity {
             }
             ViewHolder vh = (ViewHolder) cell.getTag();
             GalleryPhoto photo = visiblePhotos.get(position);
-            int selIdx = selectedUris.indexOf(photo.uri);
-            if (selIdx >= 0) {
-                vh.badge.setVisibility(View.VISIBLE);
-                vh.badge.setText(String.valueOf(selIdx + 1));
-                GradientDrawable filled = new GradientDrawable();
-                filled.setShape(GradientDrawable.OVAL);
-                filled.setColor(brandGreen());
-                vh.badge.setBackground(filled);
-                vh.border.setVisibility(View.VISIBLE);
-            } else {
-                vh.badge.setVisibility(View.VISIBLE);
-                vh.badge.setText("");
-                GradientDrawable hollow = new GradientDrawable();
-                hollow.setShape(GradientDrawable.OVAL);
-                hollow.setColor(0x38000000);
-                hollow.setStroke(dp(1), 0xCCFFFFFF);
-                vh.badge.setBackground(hollow);
-                vh.border.setVisibility(View.GONE);
-            }
+            bindSelectionVisual(vh, photo.uri);
             vh.badge.setOnClickListener(v -> toggleSelection(photo.uri));
             vh.liveBadge.setVisibility(photo.looksLive ? View.VISIBLE : View.GONE);
 
@@ -1123,6 +1322,27 @@ public final class MainActivity extends Activity {
                 });
             }
             return cell;
+        }
+    }
+
+    private void bindSelectionVisual(ViewHolder vh, Uri uri) {
+        int selIdx = selectedUris.indexOf(uri);
+        vh.badge.setVisibility(View.VISIBLE);
+        if (selIdx >= 0) {
+            vh.badge.setText(String.valueOf(selIdx + 1));
+            GradientDrawable filled = new GradientDrawable();
+            filled.setShape(GradientDrawable.OVAL);
+            filled.setColor(brandGreen());
+            vh.badge.setBackground(filled);
+            vh.border.setVisibility(View.VISIBLE);
+        } else {
+            vh.badge.setText("");
+            GradientDrawable hollow = new GradientDrawable();
+            hollow.setShape(GradientDrawable.OVAL);
+            hollow.setColor(0x38000000);
+            hollow.setStroke(dp(1), 0xCCFFFFFF);
+            vh.badge.setBackground(hollow);
+            vh.border.setVisibility(View.GONE);
         }
     }
 

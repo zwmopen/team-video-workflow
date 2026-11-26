@@ -3,12 +3,25 @@ import UIKit
 
 final class GalleryViewController: UIViewController,
     UICollectionViewDataSource,
-    UICollectionViewDelegateFlowLayout {
+    UICollectionViewDelegateFlowLayout,
+    UIGestureRecognizerDelegate {
 
     private let imageManager = PHCachingImageManager()
     private var assets: [PHAsset] = []
     private var selectedIds: [String] = []
     private var selectionMode = false
+
+    private var dragStartIndex: Int?
+    private var dragLastIndex: Int?
+    private var dragSelectTarget = true
+    private var dragBaselineIds: [String] = []
+    private var dragAutoScrollLink: CADisplayLink?
+    private var dragPointInViewport: CGPoint = .zero
+    private var panSelectGesture: UIPanGestureRecognizer!
+
+    deinit {
+        dragAutoScrollLink?.invalidate()
+    }
 
     private var activeMode: MotionPreset {
         get {
@@ -63,8 +76,14 @@ final class GalleryViewController: UIViewController,
         view.backgroundColor = .systemBackground
         setupLayout()
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        longPress.minimumPressDuration = 0.35
+        longPress.minimumPressDuration = 0.30
+        longPress.allowableMovement = 14
         collectionView.addGestureRecognizer(longPress)
+
+        panSelectGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
+        panSelectGesture.delegate = self
+        collectionView.addGestureRecognizer(panSelectGesture)
+
         updateChrome()
         loadGallery()
     }
@@ -197,15 +216,181 @@ final class GalleryViewController: UIViewController,
         collectionView.reloadData()
     }
 
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panSelectGesture {
+            guard selectionMode else { return false }
+            let vel = panSelectGesture.velocity(in: collectionView)
+            return abs(vel.x) > abs(vel.y) * 1.15
+        }
+        return true
+    }
+
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began else { return }
         let pt = gesture.location(in: collectionView)
-        guard let indexPath = collectionView.indexPathForItem(at: pt) else { return }
-        let id = assets[indexPath.item].localIdentifier
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        switch gesture.state {
+        case .began:
+            guard let indexPath = indexPathNearPoint(pt) else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            beginDragSelect(at: indexPath.item, pointInCollection: pt)
+        case .changed:
+            updateDragSelect(pointInCollection: pt)
+        case .ended, .cancelled, .failed:
+            endDragSelect()
+        default:
+            break
+        }
+    }
+
+    @objc private func handleSelectionPan(_ gesture: UIPanGestureRecognizer) {
+        let pt = gesture.location(in: collectionView)
+        switch gesture.state {
+        case .began:
+            guard let indexPath = indexPathNearPoint(pt) else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            beginDragSelect(at: indexPath.item, pointInCollection: pt)
+        case .changed:
+            updateDragSelect(pointInCollection: pt)
+        case .ended, .cancelled, .failed:
+            endDragSelect()
+        default:
+            break
+        }
+    }
+
+    private func beginDragSelect(at startIdx: Int, pointInCollection pt: CGPoint) {
+        guard startIdx >= 0 && startIdx < assets.count else { return }
         selectionMode = true
-        if !selectedIds.contains(id), selectedIds.count < 18 {
-            selectedIds.append(id)
+        let id = assets[startIdx].localIdentifier
+        dragSelectTarget = !selectedIds.contains(id)
+        dragStartIndex = startIdx
+        dragLastIndex = nil
+        dragBaselineIds = selectedIds
+        dragPointInViewport = CGPoint(
+            x: pt.x - collectionView.contentOffset.x,
+            y: pt.y - collectionView.contentOffset.y
+        )
+        collectionView.isScrollEnabled = false
+        applyDragRange(to: startIdx)
+    }
+
+    private func updateDragSelect(pointInCollection pt: CGPoint) {
+        guard dragStartIndex != nil else { return }
+        dragPointInViewport = CGPoint(
+            x: pt.x - collectionView.contentOffset.x,
+            y: pt.y - collectionView.contentOffset.y
+        )
+        if let indexPath = indexPathNearPoint(pt) {
+            applyDragRange(to: indexPath.item)
+        }
+        updateAutoScrollState()
+    }
+
+    private func updateAutoScrollState() {
+        let edge: CGFloat = 56
+        let h = collectionView.bounds.height
+        let needScroll = dragPointInViewport.y < edge || dragPointInViewport.y > (h - edge)
+        if needScroll && dragAutoScrollLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(handleAutoScrollTick))
+            link.add(to: .main, forMode: .common)
+            dragAutoScrollLink = link
+        } else if !needScroll, let link = dragAutoScrollLink {
+            link.invalidate()
+            dragAutoScrollLink = nil
+        }
+    }
+
+    @objc private func handleAutoScrollTick() {
+        guard dragStartIndex != nil else {
+            dragAutoScrollLink?.invalidate()
+            dragAutoScrollLink = nil
+            return
+        }
+        let edge: CGFloat = 56
+        let h = collectionView.bounds.height
+        var delta: CGFloat = 0
+        if dragPointInViewport.y < edge {
+            let factor = min(1, (edge - dragPointInViewport.y) / edge)
+            delta = -max(3, 14 * factor)
+        } else if dragPointInViewport.y > (h - edge) {
+            let factor = min(1, (dragPointInViewport.y - (h - edge)) / edge)
+            delta = max(3, 14 * factor)
+        }
+        guard delta != 0 else { return }
+        let minOffsetY = -collectionView.adjustedContentInset.top
+        let maxOffsetY = max(minOffsetY, collectionView.contentSize.height - h + collectionView.adjustedContentInset.bottom)
+        let nextY = min(maxOffsetY, max(minOffsetY, collectionView.contentOffset.y + delta))
+        if abs(nextY - collectionView.contentOffset.y) > 0.2 {
+            collectionView.contentOffset.y = nextY
+            let contentPt = CGPoint(
+                x: dragPointInViewport.x + collectionView.contentOffset.x,
+                y: dragPointInViewport.y + collectionView.contentOffset.y
+            )
+            if let indexPath = indexPathNearPoint(contentPt) {
+                applyDragRange(to: indexPath.item)
+            }
+        }
+    }
+
+    private func indexPathNearPoint(_ rawPt: CGPoint) -> IndexPath? {
+        let b = collectionView.bounds
+        let x = min(max(rawPt.x, b.minX + 4), max(b.minX + 4, b.maxX - 4))
+        let y = min(max(rawPt.y, b.minY + 4), max(b.minY + 4, b.maxY - 4))
+        let clamped = CGPoint(x: x, y: y)
+        if let ip = collectionView.indexPathForItem(at: clamped) { return ip }
+        for (dx, dy) in [(-4 as CGFloat, 0 as CGFloat), (4, 0), (0, -4), (0, 4)] {
+            if let ip = collectionView.indexPathForItem(at: CGPoint(x: clamped.x + dx, y: clamped.y + dy)) {
+                return ip
+            }
+        }
+        return nil
+    }
+
+    private func applyDragRange(to endIdx: Int) {
+        guard let startIdx = dragStartIndex,
+              endIdx >= 0, endIdx < assets.count,
+              dragLastIndex != endIdx else { return }
+        dragLastIndex = endIdx
+        selectedIds = dragBaselineIds
+        if dragSelectTarget {
+            let step = endIdx >= startIdx ? 1 : -1
+            var i = startIdx
+            while true {
+                let id = assets[i].localIdentifier
+                if !selectedIds.contains(id) {
+                    if selectedIds.count >= 18 { break }
+                    selectedIds.append(id)
+                }
+                if i == endIdx { break }
+                i += step
+            }
+        } else {
+            let lo = min(startIdx, endIdx)
+            let hi = max(startIdx, endIdx)
+            let dropSet = Set((lo...hi).map { assets[$0].localIdentifier })
+            selectedIds.removeAll { dropSet.contains($0) }
+        }
+        updateChrome()
+        refreshVisibleSelectionCells()
+    }
+
+    private func refreshVisibleSelectionCells() {
+        for case let cell as PhotoCell in collectionView.visibleCells {
+            guard let ip = collectionView.indexPath(for: cell), ip.item < assets.count else { continue }
+            let id = assets[ip.item].localIdentifier
+            let idx = selectedIds.firstIndex(of: id)
+            cell.configure(index: idx.map { $0 + 1 }, isLive: assets[ip.item].mediaSubtypes.contains(.photoLive))
+        }
+    }
+
+    private func endDragSelect() {
+        dragAutoScrollLink?.invalidate()
+        dragAutoScrollLink = nil
+        dragStartIndex = nil
+        dragLastIndex = nil
+        dragBaselineIds.removeAll()
+        collectionView.isScrollEnabled = true
+        if selectedIds.isEmpty {
+            selectionMode = false
         }
         updateChrome()
         collectionView.reloadData()
