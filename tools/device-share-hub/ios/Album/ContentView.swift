@@ -2679,7 +2679,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         view.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -86),
             label.heightAnchor.constraint(equalToConstant: 36),
             label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40),
             label.widthAnchor.constraint(greaterThanOrEqualToConstant: 120)
@@ -4463,7 +4463,6 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     }
 
     private func showToast(_ text: String) {
-        toastView?.removeFromSuperview()
         let toast = UILabel()
         toast.text = text
         toast.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
@@ -4474,7 +4473,6 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         toast.clipsToBounds = true
         toast.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(toast)
-        toastView = toast
         NSLayoutConstraint.activate([
             toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             toast.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -86),
@@ -4484,9 +4482,8 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         ])
         UIView.animate(withDuration: 0.3, delay: 1.5, options: .curveEaseOut, animations: {
             toast.alpha = 0
-        }, completion: { [weak self] _ in
+        }, completion: { _ in
             toast.removeFromSuperview()
-            if self?.toastView === toast { self?.toastView = nil }
         })
     }
 
