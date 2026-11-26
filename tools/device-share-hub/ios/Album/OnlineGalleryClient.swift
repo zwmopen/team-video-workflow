@@ -22,6 +22,22 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let remainingUses: Int
     public let statusLabel: String
     public let videoFilename: String
+    public let livePhotos: [String: String]
+    public var hasLivePhotos: Bool { !livePhotos.isEmpty }
+
+    public func liveVideoFilename(for imagePath: String) -> String? {
+        if let direct = livePhotos[imagePath], !direct.isEmpty { return direct }
+        let norm = imagePath.replacingOccurrences(of: "\\", with: "/")
+        if let normHit = livePhotos[norm], !normHit.isEmpty { return normHit }
+        let bn = (norm as NSString).lastPathComponent
+        for (k, v) in livePhotos where !v.isEmpty {
+            let kNorm = k.replacingOccurrences(of: "\\", with: "/")
+            if (kNorm as NSString).lastPathComponent == bn {
+                return v
+            }
+        }
+        return nil
+    }
     public let images: [String]
     public let imageCount: Int
     public let copyText: String
@@ -79,7 +95,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
                 sourceImages: [String] = [], sourceNames: [String] = [],
                 hasSourceCompare: Bool = false, maxSimilarity: Double = 0, similarityTag: String = "",
                 pipelineBadge: String = "网页GPT", formattedDate: String = "2026-10-20-10:20", imageCountText: String = "",
-                videoFilename: String = "") {
+                videoFilename: String = "", livePhotos: [String: String] = [:]) {
         self.id = id
         self.title = title.isEmpty ? id : title
         self.destination = destination.isEmpty ? "其他" : destination
@@ -90,6 +106,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.remainingUses = max(0, remainingUses)
         self.statusLabel = statusLabel
         self.videoFilename = videoFilename
+        self.livePhotos = livePhotos
         self.images = images
         self.imageCount = imageCount > 0 ? imageCount : images.count
         self.copyText = copyText
@@ -271,7 +288,8 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
             hasSourceCompare: hasSourceCompare, maxSimilarity: maxSimilarity,
             similarityTag: similarityTag,
             pipelineBadge: pipelineBadge, formattedDate: formattedDate, imageCountText: imageCountText,
-            videoFilename: (dict["videoFilename"] as? String) ?? ""
+            videoFilename: (dict["videoFilename"] as? String) ?? "",
+            livePhotos: (dict["livePhotos"] as? [String: String]) ?? [:]
         )
     }
 }
@@ -1303,6 +1321,167 @@ public final class OnlineGalleryClient {
             }
             DispatchQueue.main.async { completion(result) }
         }.resume()
+    }
+
+    public struct DownloadedLiveAsset {
+        public let imageURL: URL
+        public let videoURL: URL?
+    }
+
+    public struct LiveAssetsDownloadResult {
+        public let directory: URL
+        public let assets: [DownloadedLiveAsset]
+    }
+
+    public func downloadWorkLiveAssets(
+        entry: OnlineWorkEntry,
+        autoLive: Bool = false,
+        onProgress: @escaping (Int, Int, String) -> Void,
+        completion: @escaping (Result<LiveAssetsDownloadResult, Error>) -> Void
+    ) {
+        let images = entry.images
+        guard !images.isEmpty else {
+            completion(.success(LiveAssetsDownloadResult(
+                directory: fileManager.temporaryDirectory,
+                assets: []
+            )))
+            return
+        }
+        let baseUrl = resolveBaseUrl()
+        let total = images.count
+        let stageDir = fileManager.temporaryDirectory
+            .appendingPathComponent("online-live-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: stageDir, withIntermediateDirectories: true)
+        } catch {
+            completion(.failure(error))
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var assets: [DownloadedLiveAsset] = []
+            var firstError: Error?
+
+            for (index, imgPath) in images.enumerated() {
+                let rawName = (imgPath as NSString).lastPathComponent
+                let safeName = rawName.isEmpty ? "image.jpg" : rawName
+                let stem = ((safeName as NSString).deletingPathExtension.isEmpty
+                    ? String(format: "%02d", index + 1)
+                    : (safeName as NSString).deletingPathExtension)
+                let companion = entry.liveVideoFilename(for: imgPath)
+                let shouldAutoSynth = autoLive && companion == nil
+                let ext: String
+                if shouldAutoSynth {
+                    ext = "jpg"
+                } else {
+                    let rawExt = (safeName as NSString).pathExtension
+                    ext = rawExt.isEmpty ? "jpg" : rawExt
+                }
+                let indexedStem = String(format: "%02d_%@", index + 1, stem)
+                let imgDest = stageDir.appendingPathComponent("\(indexedStem).\(ext)")
+
+                var imgItems = [
+                    URLQueryItem(name: "path", value: imgPath),
+                    URLQueryItem(name: "id", value: entry.id),
+                    URLQueryItem(name: "file", value: safeName),
+                    URLQueryItem(name: "thumb", value: "0"),
+                    URLQueryItem(name: "live", value: "raw"),
+                ]
+                if shouldAutoSynth {
+                    imgItems.append(URLQueryItem(name: "auto_live", value: "1"))
+                }
+                var imgComp = URLComponents(string: "\(baseUrl)/api/online/image")
+                imgComp?.queryItems = imgItems
+                guard let imgURL = imgComp?.url else { continue }
+
+                do {
+                    try self.downloadFileSync(url: imgURL, destination: imgDest)
+                    var videoDest: URL? = nil
+                    if let compName = companion, compName != "__embedded__" {
+                        let vExt = (compName as NSString).pathExtension.lowercased()
+                        let targetExt = vExt.isEmpty ? "mov" : vExt
+                        let vDest = stageDir.appendingPathComponent("\(indexedStem).\(targetExt)")
+                        var vidComp = URLComponents(string: "\(baseUrl)/api/online/live-video")
+                        vidComp?.queryItems = [
+                            URLQueryItem(name: "id", value: entry.id),
+                            URLQueryItem(name: "file", value: imgPath),
+                        ]
+                        if let vidURL = vidComp?.url {
+                            try? self.downloadFileSync(url: vidURL, destination: vDest)
+                            if self.fileManager.fileExists(atPath: vDest.path) {
+                                videoDest = vDest
+                            }
+                        }
+                    } else if shouldAutoSynth {
+                        let vDest = stageDir.appendingPathComponent("\(indexedStem).mov")
+                        var vidComp = URLComponents(string: "\(baseUrl)/api/online/live-video")
+                        vidComp?.queryItems = [
+                            URLQueryItem(name: "id", value: entry.id),
+                            URLQueryItem(name: "file", value: imgPath),
+                            URLQueryItem(name: "auto_live", value: "1"),
+                        ]
+                        if let vidURL = vidComp?.url {
+                            try? self.downloadFileSync(url: vidURL, destination: vDest)
+                            if self.fileManager.fileExists(atPath: vDest.path) {
+                                videoDest = vDest
+                            }
+                        }
+                    }
+                    assets.append(DownloadedLiveAsset(imageURL: imgDest, videoURL: videoDest))
+                    let doneCount = index + 1
+                    DispatchQueue.main.async {
+                        onProgress(doneCount, total, safeName)
+                    }
+                } catch {
+                    if firstError == nil { firstError = error }
+                }
+            }
+
+            DispatchQueue.main.async {
+                if !assets.isEmpty {
+                    completion(.success(LiveAssetsDownloadResult(directory: stageDir, assets: assets)))
+                } else {
+                    try? self.fileManager.removeItem(at: stageDir)
+                    completion(.failure(firstError ?? URLError(.cannotLoadFromNetwork)))
+                }
+            }
+        }
+    }
+
+    private func downloadFileSync(url: URL, destination: URL) throws {
+        let sem = DispatchSemaphore(value: 0)
+        var capturedError: Error?
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 120
+        fullImageSession.downloadTask(with: request) { [self] location, response, error in
+            defer { sem.signal() }
+            if let error = error {
+                capturedError = error
+                return
+            }
+            guard let location = location,
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode),
+                  let size = try? location.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size > 0,
+                  http.expectedContentLength <= 0 || Int64(size) == http.expectedContentLength else {
+                capturedError = URLError(.badServerResponse)
+                return
+            }
+            do {
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.moveItem(at: location, to: destination)
+            } catch {
+                capturedError = error
+            }
+        }.resume()
+        sem.wait()
+        if let err = capturedError {
+            throw err
+        }
     }
 
     public func downloadWorkImages(

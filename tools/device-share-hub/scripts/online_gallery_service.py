@@ -204,6 +204,7 @@ _setup_streams()
 import json
 import csv
 import gzip
+import base64
 import time
 import socket
 import threading
@@ -211,7 +212,10 @@ import hashlib
 import urllib.parse
 import urllib.request
 import tempfile
+import uuid
+import zipfile
 import re
+from pathlib import Path
 import datetime
 import shutil
 import subprocess
@@ -247,6 +251,14 @@ try:
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
+
+try:
+    import motion_photo
+except ImportError:
+    try:
+        from . import motion_photo  # type: ignore
+    except ImportError:
+        motion_photo = None  # type: ignore
 
 
 def atomic_write_json(file_path: str, data: Any, ensure_ascii: bool = False, indent: int = 2) -> bool:
@@ -562,7 +574,7 @@ FORCE_SCAN_MIN_INTERVAL = 3.0
 # 服务常驻几个月就是上万条 ⇒ 常驻内存单调涨到上百 MB 且零报错。
 # 800 条足够覆盖「最近移走的作品」，按作品库现规模相当于几个月的使用量。
 MOVED_WORKS_LIMIT = 800
-_WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard", "_sourceLookup")
+_WIRE_OMIT_FIELDS = ("searchBlob", "slotGuard", "_sourceLookup", "_liveSources")
 
 # ── 跨端视图模式实时联动状态 (手机端 <-> 电脑端双向同步) ──────────────────────
 _VIEW_STATE_LOCK = threading.Lock()
@@ -615,6 +627,35 @@ def set_gallery_view_state(view_mode: str, updated_by: str = "unknown") -> Dict[
         except Exception:
             pass
         return dict(state)
+
+
+_LIVE_STUDIO_LOCK = threading.Lock()
+_LIVE_STUDIO_JOBS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_LIVE_STUDIO_JOB_LIMIT = 30
+
+
+def _get_live_config_payload() -> Dict[str, Any]:
+    if motion_photo is not None:
+        cfg = motion_photo.load_live_config()
+        sig = motion_photo.config_signature(cfg)
+        presets = list(motion_photo.MOTION_PRESETS)
+    else:
+        cfg = {"mode": "zoom_in", "ratio": 1.06, "duration": 2.5, "fps": 30}
+        sig = "default"
+        presets = []
+    return {"config": cfg, "signature": sig, "presets": presets}
+
+
+def _resolve_live_query_config(query: Dict[str, List[str]]) -> Dict[str, Any]:
+    base = motion_photo.load_live_config() if motion_photo is not None else {"mode": "zoom_in", "ratio": 1.06, "duration": 2.5, "fps": 30}
+    override: Dict[str, Any] = dict(base)
+    if query.get("live_mode", [""])[0].strip():
+        override["mode"] = query["live_mode"][0].strip()
+    if query.get("live_ratio", [""])[0].strip():
+        override["ratio"] = query["live_ratio"][0].strip()
+    if query.get("live_duration", [""])[0].strip():
+        override["duration"] = query["live_duration"][0].strip()
+    return motion_photo.normalize_live_config(override) if motion_photo is not None else override
 
 # gzip 结果缓存。实测瘦身后的全量列表 1568.5 KB，gzip.compress(body, 6) 要烧约 66 ms CPU，
 # 而这份内容在两次扫描之间是**字节级不变**的（手机端一次进页面只发一次请求，
@@ -1458,7 +1499,6 @@ def fetch_update_manifest(force: bool = False, *, prefer_local: bool = False) ->
     with _UPDATE_LOCK:
         now = time.time()
         cached = _UPDATE_MANIFEST_CACHE.get("data")
-        if (not force) and cached and (
         if prefer_local and local_data:
             if now - max(_UPDATE_MANIFEST_CACHE["at"], _UPDATE_MANIFEST_CACHE["refreshStartedAt"]) >= UPDATE_MANIFEST_TTL:
                 _UPDATE_MANIFEST_CACHE["refreshStartedAt"] = now
@@ -1470,6 +1510,7 @@ def fetch_update_manifest(force: bool = False, *, prefer_local: bool = False) ->
             merged = dict(cached or {})
             merged.update({k: v for k, v in local_data.items() if k != "local_apk_path"})
             return _rewrite_manifest_for_lan(merged)
+        if (not force) and cached and (
                 now - float(_UPDATE_MANIFEST_CACHE.get("at", 0.0)) < UPDATE_MANIFEST_TTL):
             if local_data:
                 local_vc = int(local_data.get("version_code", local_data.get("versionCode", 0)) or 0)
@@ -1862,7 +1903,7 @@ def is_shelf_folder(name: str) -> bool:
             return False
     if name.endswith(("成品", "作品", "合集", "制作")):
         return True
-    if name in ("综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
+    if name in ("大合集素人号", "综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
         return True
     extra = os.environ.get("DSH_EXTRA_SHELVES", "")
     if extra:
@@ -3619,6 +3660,83 @@ class WorkScanner:
                 return hits
         return []
 
+    def _collect_live_photo_info(
+        self,
+        dir_path: str,
+        files: List[str],
+        images: List[str],
+        video_file: str,
+    ) -> Tuple[Dict[str, str], Dict[str, Dict[str, str]]]:
+        """识别作品内每张图片的跨端实况源（同名 .mov/.mp4 伴生文件或已封包 Motion Photo）。"""
+        live_photos: Dict[str, str] = {}
+        live_sources: Dict[str, Dict[str, str]] = {}
+        if not images:
+            return live_photos, live_sources
+
+        root_real = os.path.realpath(self.root)
+        dir_real = os.path.realpath(dir_path)
+        dir_cache: Dict[str, Dict[str, Dict[str, str]]] = {}
+
+        def _scan_dir_videos(target_dir: str) -> Dict[str, Dict[str, str]]:
+            cached = dir_cache.get(target_dir)
+            if cached is not None:
+                return cached
+            mapping: Dict[str, Dict[str, str]] = {}
+            try:
+                entries = files if os.path.realpath(target_dir) == dir_real else os.listdir(target_dir)
+            except OSError:
+                entries = []
+            same_work_root = os.path.realpath(target_dir) == dir_real
+            for name in entries:
+                lower = name.lower()
+                if lower.endswith(".mov"):
+                    ext_key = "mov"
+                elif lower.endswith(".mp4"):
+                    if same_work_root and video_file and name == video_file:
+                        continue
+                    ext_key = "mp4"
+                else:
+                    continue
+                full_p = os.path.join(target_dir, name)
+                if os.path.islink(full_p) or not os.path.isfile(full_p):
+                    continue
+                stem = os.path.splitext(name)[0].lower()
+                mapping.setdefault(stem, {})[ext_key] = full_p
+            dir_cache[target_dir] = mapping
+            return mapping
+
+        for img_rel in images:
+            cand_abs = os.path.join(root_real, img_rel.replace("/", os.sep))
+            if not os.path.isfile(cand_abs):
+                cand_abs = os.path.join(dir_path, os.path.basename(img_rel))
+            if not os.path.isfile(cand_abs) or os.path.islink(cand_abs):
+                continue
+            cand_real = os.path.realpath(cand_abs)
+            if not (cand_real == dir_real or cand_real.startswith(dir_real + os.sep)):
+                continue
+
+            img_dir = os.path.dirname(cand_real)
+            stem = os.path.splitext(os.path.basename(cand_real))[0].lower()
+            companions = _scan_dir_videos(img_dir).get(stem)
+            if companions:
+                mov_p = companions.get("mov", "")
+                mp4_p = companions.get("mp4", "")
+                companion_path = mov_p or mp4_p
+                if companion_path:
+                    live_photos[img_rel] = os.path.basename(companion_path)
+                    live_sources[img_rel] = {"mov": mov_p, "mp4": mp4_p}
+                    continue
+
+            if (
+                cand_real.lower().endswith((".jpg", ".jpeg"))
+                and motion_photo is not None
+                and motion_photo.is_motion_photo_jpeg(cand_real)
+            ):
+                live_photos[img_rel] = "__embedded__"
+                live_sources[img_rel] = {"embedded": cand_real}
+
+        return live_photos, live_sources
+
     def _inspect_work_dir(self, dir_path: str, folder_name: str, stage_name: str, default_count: int, default_category: str = "") -> Optional[Dict[str, Any]]:
         _scan_yield_if_needed()   # DSH-189：让出 GIL，保证扫描期间 HTTP 仍能秒回
         # Junction / 软链接检测与解析
@@ -3656,6 +3774,7 @@ class WorkScanner:
         # 来源迁移后的旁车文件是非破坏性的溯源补充：不改写原 manifest，
         # 但让手机端读取到统一的原素材地址和逐页对照。metadata.json 作为旧包兜底。
         provenance_data: Dict[str, Any] = {}
+        finished_package_work_id = ""
         for aux_name in ("source-provenance.json", "metadata.json"):
             aux_file = os.path.join(dir_path, aux_name)
             if not os.path.exists(aux_file):
@@ -3667,6 +3786,37 @@ class WorkScanner:
                     continue
                 if aux_name == "source-provenance.json":
                     provenance_data = aux
+                if aux_name == "metadata.json" and aux.get("metadataContract", {}).get("name") == "jianghu-finished-product":
+                    canonical = aux.get("canonical", {})
+                    finished_package_work_id = str(canonical.get("identity", {}).get("workId") or "")
+                    source_refs = canonical.get("source", {}).get("refs", [])
+                    material_root = Path(self.root).resolve().parent / "01-原料库"
+                    if isinstance(source_refs, list) and not manifest_data.get("sourceMaterialPath"):
+                        for ref in source_refs:
+                            if not isinstance(ref, str) or not os.path.isabs(ref):
+                                continue
+                            candidate = Path(ref).resolve()
+                            if candidate.is_relative_to(material_root.resolve()) and candidate.is_dir():
+                                manifest_data["sourceMaterialPath"] = str(candidate)
+                                break
+                    if re.fullmatch(r"[A-Za-z0-9_-]+", finished_package_work_id) and not manifest_data.get("pageMap"):
+                        canonical_evidence = Path(self.root).resolve().parent / "04-在制品/生产证据/Codex-API"
+                        evidence_file = (canonical_evidence / finished_package_work_id / "manifest.json").resolve()
+                        source_dir = manifest_data.get("sourceMaterialPath")
+                        if source_dir and evidence_file.is_relative_to(canonical_evidence.resolve()) and evidence_file.is_file():
+                            evidence = json.loads(evidence_file.read_text(encoding="utf-8-sig"))
+                            if evidence.get("workId") == finished_package_work_id:
+                                page_map = []
+                                for page in evidence.get("sourcePageMap", []):
+                                    inputs = page.get("sourceInputs") or []
+                                    source_ref = page.get("sourcePath") or (inputs[0].get("path") if inputs else "")
+                                    if not source_ref or not Path(source_ref).resolve().is_relative_to(Path(source_dir).resolve()):
+                                        continue
+                                    number = str(page.get("page", "")).lstrip("Pp")
+                                    if number.isdigit():
+                                        page_map.append({"page": f"P{int(number)}", "sourcePath": source_ref})
+                                if page_map:
+                                    manifest_data["pageMap"] = page_map
                 # 仅补来源相关字段；原 manifest 的其他字段保持原样。
                 for key in (
                     "sourcePath", "sourceMaterialPath", "sourceMaterialPaths",
@@ -3684,6 +3834,15 @@ class WorkScanner:
                 continue
 
         images = sort_work_images(images, manifest_data)
+        video_file = str(manifest_data.get("videoFilename") or "")
+        if (
+            manifest_data.get("workType") != "video"
+            or not video_file.lower().endswith(".mp4")
+            or os.path.basename(video_file) != video_file or any(char in video_file for char in ("/", "\\", ":", "\0"))
+            or not os.path.isfile(os.path.join(dir_path, video_file))
+            or os.path.islink(os.path.join(dir_path, video_file))
+        ):
+            video_file = ""
 
         cache_key = (dir_path, stage_name, default_category)
         cached_entry = self._inspect_cache.get(cache_key)
@@ -3695,6 +3854,10 @@ class WorkScanner:
             except OSError:
                 return (0, 0)
 
+        txt_candidates = [f for f in files if f.lower().endswith(".txt")]
+        live_video_candidates = [f for f in files if f.lower().endswith((".mov", ".mp4"))]
+        live_video_stamps = tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in sorted(live_video_candidates))
+
         # ⚡ 极速缓存短路径 (Fast Path)：
         # 若已有检查缓存，且作品目录 mtime、manifest.json、作品标签.json 均未变动：
         if cached_entry is not None:
@@ -3705,27 +3868,19 @@ class WorkScanner:
                 and dir_st_mtime == cached_dir_stamp[1]
                 and _f_stamp(os.path.join(dir_path, "manifest.json")) == cached_dir_stamp[5]
                 and _f_stamp(os.path.join(dir_path, "作品标签.json")) == cached_dir_stamp[4]
-                and len(cached_dir_stamp) > 7
+                and len(cached_dir_stamp) > 9
+                and live_video_stamps == cached_dir_stamp[8]
+                and video_file == cached_dir_stamp[9]
                 and cached_dir_stamp[7] == tuple(
                     (name, _f_stamp(os.path.join(dir_path, name)))
                     for name in ("source-provenance.json", "metadata.json")
                 )
             ):
-                txt_candidates = [f for f in files if f.lower().endswith(".txt")]
                 txt_stamps = tuple((f, _f_stamp(os.path.join(dir_path, f))) for f in txt_candidates)
                 if txt_stamps == cached_dir_stamp[3] and tuple(images) == cached_dir_stamp[2]:
                     # 若已有关联素材或无外部素材依赖，直接命中缓存，避免遍历外部上万个源素材文件
                     if cached_work.get("hasSourceCompare") or not cached_dir_stamp[6]:
                         if cached_slot_diag.get("droppedCount"):
-        video_file = str(manifest_data.get("videoFilename") or "")
-        if (
-            manifest_data.get("workType") != "video"
-            or not video_file.lower().endswith(".mp4")
-            or os.path.basename(video_file) != video_file or any(char in video_file for char in ("/", "\\", ":", "\0"))
-            or not os.path.isfile(os.path.join(dir_path, video_file))
-            or os.path.islink(os.path.join(dir_path, video_file))
-        ):
-            video_file = ""
                             _slot_guard_stat("worksAffected")
                             _slot_guard_stat("slotsDropped", cached_slot_diag["droppedCount"])
                         return dict(cached_work)
@@ -3766,6 +3921,7 @@ class WorkScanner:
         )
 
         txt_candidates = [f for f in files if f.lower().endswith(".txt")]
+        live_photos, live_sources = self._collect_live_photo_info(dir_path, files, images, video_file)
         cache_key = (dir_path, stage_name, default_category)
         dir_stamp = (
             default_count,
@@ -3779,6 +3935,8 @@ class WorkScanner:
                 (name, _f_stamp(os.path.join(dir_path, name)))
                 for name in ("source-provenance.json", "metadata.json")
             ),
+            live_video_stamps,
+            video_file,
         )
         cached_entry = self._inspect_cache.get(cache_key)
         if cached_entry is not None and cached_entry[0] == dir_stamp:
@@ -3804,7 +3962,6 @@ class WorkScanner:
 
         def _candidate_rank(fn: str) -> int:
             if fn == AUTHORITATIVE_COPY:
-            video_file,
                 return 0
             if fn in LEGACY_COPY_BLACKLIST or fn.startswith((".", "_")):
                 return 999
@@ -3992,6 +4149,7 @@ class WorkScanner:
 
         work_result = {
             "id": work_id,
+            **({"workId": finished_package_work_id} if finished_package_work_id else {}),
             "title": clean_title,
             "rawTitle": folder_name,
             "destination": destination,
@@ -4015,6 +4173,10 @@ class WorkScanner:
             "dispatchedVersions": (distribution.get("dispatchedVersions") or []) if use_count_int > 0 else [],
             "imageCount": len(images),
             "images": images,
+            "livePhotos": live_photos,
+            "hasLivePhotos": bool(live_photos),
+            "liveCount": len(live_photos),
+            "_liveSources": live_sources,
             "sourceImages": src_imgs,
             "sourceNames": src_names,
             "hasSourceCompare": any(bool(x) for x in src_imgs),
@@ -4045,6 +4207,7 @@ class WorkScanner:
             # 【未填模板守卫】判定口径 = 剔除占位脚手架后的正文，未填模板不再算"有文案"
             "hasCopyText": copy_is_real(copy_text),
             "copyMissing": bool(copy_missing),
+            "videoFilename": video_file,
             # 【平台槽位守卫】诊断：哪些槽位被判为占位/过薄并被剔除
             "slotGuard": {
                 "droppedCount": slot_diag["droppedCount"],
@@ -4067,7 +4230,7 @@ class WorkScanner:
             "pipeline": manifest_data.get("pipeline") or ("CDP双浏览器产线" if "CDP" in folder_name else ("Codex-API产线" if "Codex" in folder_name else "GPT扩展+本地脚本产线")),
             "pipelineBadge": _format_pipeline_badge(folder_name, manifest_data),
             "formattedDate": _format_work_date(created_at_ms),
-            "imageCountText": f"{len(images)}图",
+            "imageCountText": f"{len(images)}图({len(live_photos)}实况)" if live_photos else f"{len(images)}图",
             "workflowVersion": manifest_data.get("workflowVersion") or manifest_data.get("packagerVersion") or ("gpt-ext-v2.0" if manifest_data.get("recordType") == "gpt_work_package" else "v2.0"),
             "productionMode": manifest_data.get("productionMode") or manifest_data.get("apiSubMode") or ("reuse-conversation" if manifest_data.get("conversationUrl") else "1_shuffle"),
             "productionModeName": manifest_data.get("productionModeName") or ("会话母版复刻模式" if manifest_data.get("conversationUrl") else "原图复刻打乱模式"),
@@ -4079,7 +4242,6 @@ class WorkScanner:
             "starRemark": str(manifest_data.get("starRemark") or ""),
         }
         self._inspect_cache[cache_key] = (dir_stamp, work_result, slot_diag)
-            "videoFilename": video_file,
         return dict(work_result)
 
 
@@ -4645,6 +4807,97 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         threading.Thread(target=_worker, name=f"phone-sync-{ip}", daemon=True).start()
 
+    def _find_live_source_entry(
+        self,
+        work: Optional[Dict[str, Any]],
+        img_path: str,
+        file_name: str,
+        raw_path: str,
+    ) -> Optional[Dict[str, str]]:
+        """查找图片对应的实况伴生源（mov/mp4 或 embedded）。"""
+        def _is_safe_rel(value: str) -> bool:
+            if not value or "\0" in value:
+                return False
+            norm_v = value.replace("\\", "/")
+            if norm_v.startswith("/") or (len(norm_v) >= 2 and norm_v[1] == ":"):
+                return False
+            parts = norm_v.split("/")
+            return ".." not in parts
+
+        if work:
+            sources = work.get("_liveSources") or {}
+            candidates = []
+            for key in (file_name, raw_path):
+                if key and _is_safe_rel(key):
+                    norm = key.replace("\\", "/").strip("/")
+                    candidates.append(norm)
+                    bn = norm.rsplit("/", 1)[-1]
+                    if bn:
+                        candidates.append(bn)
+            for cand in candidates:
+                if cand in sources:
+                    return sources[cand]
+            for k, val in sources.items():
+                k_norm = k.replace("\\", "/")
+                k_bn = k_norm.rsplit("/", 1)[-1]
+                if k_bn in candidates or k_norm in candidates:
+                    return val
+
+        if img_path and os.path.isfile(img_path) and not os.path.islink(img_path):
+            img_dir = os.path.dirname(img_path)
+            stem = os.path.splitext(os.path.basename(img_path))[0].lower()
+            vid_exclude = str((work or {}).get("videoFilename") or "")
+            mov_p = ""
+            mp4_p = ""
+            try:
+                for entry in os.listdir(img_dir):
+                    lower = entry.lower()
+                    if lower.endswith(".mov") and os.path.splitext(entry)[0].lower() == stem:
+                        p = os.path.join(img_dir, entry)
+                        if os.path.isfile(p) and not os.path.islink(p):
+                            mov_p = p
+                    elif lower.endswith(".mp4") and os.path.splitext(entry)[0].lower() == stem:
+                        if vid_exclude and entry == vid_exclude and os.path.realpath(img_dir) == os.path.realpath((work or {}).get("path", "")):
+                            continue
+                        p = os.path.join(img_dir, entry)
+                        if os.path.isfile(p) and not os.path.islink(p):
+                            mp4_p = p
+            except OSError:
+                pass
+            if mov_p or mp4_p:
+                return {"mov": mov_p, "mp4": mp4_p}
+            if (
+                img_path.lower().endswith((".jpg", ".jpeg"))
+                and motion_photo is not None
+                and motion_photo.is_motion_photo_jpeg(img_path)
+            ):
+                return {"embedded": img_path}
+        return None
+
+    def _resolve_safe_work_image(
+        self,
+        work: Dict[str, Any],
+        file_name: str,
+    ) -> str:
+        """安全解析作品目录内的静态原图路径（拦截穿越与软链）。"""
+        work_path = work.get("path") or ""
+        if not work_path or not file_name:
+            return ""
+        work_real = os.path.realpath(work_path)
+        norm_f = file_name.replace("\\", "/")
+        if norm_f.startswith("/") or (len(norm_f) >= 2 and norm_f[1] == ":") or "\0" in file_name or ".." in norm_f.split("/"):
+            return ""
+        bn = norm_f.rsplit("/", 1)[-1]
+        cand = os.path.join(work_path, bn)
+        if not os.path.isfile(cand):
+            cand = self.scanner.resolve_image_for_work(work, file_name) or ""
+        if not cand or os.path.islink(cand) or not os.path.isfile(cand):
+            return ""
+        cand_real = os.path.realpath(cand)
+        if not cand_real.startswith(work_real + os.sep):
+            return ""
+        return cand_real
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -4702,7 +4955,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.4",
+                "version": "1.2.6",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -4719,8 +4972,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "lanUpdateRelay",     # 局域网更新中转：手机连不上 GitHub，电脑代取清单+安装包
                     "viewModeSync",       # 手机端与电脑端视图模式（图标/列表/对比）实时联动
                     "sourceCompare",      # 手机端原素材 vs 成品对比视图支持
+                    "livePhoto",          # 跨端实况照片（Android Motion Photo + iOS 原生 Live Photo）
+                    "autoLiveOnShare",    # 手机端「分享时静图自动转实况」开关 + 电脑端实时现烤
+                    "liveStudio",         # 电脑端「实况图加工工坊」(/live-studio)
                 ],
                 "viewState": get_gallery_view_state(),
+                "liveConfig": _get_live_config_payload(),
                 "phoneSyncApi": "/api/online/sync-phone-counts",
                 "phonePanelApi": "/api/online/phones",
                 # 缩略图链路自检：2026-09-20 曾因「进程跑的是旧代码 / Pillow 缺失」导致
@@ -4759,6 +5016,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/api/online/view-state":
             self.send_json(200, {"ok": True, **get_gallery_view_state()})
             return
+
+        if path == "/api/online/live-config":
+            self.send_json(200, {"ok": True, **_get_live_config_payload()})
+            return
+
+        if path == "/api/online/live-export":
+            return self._handle_live_export_get(query)
 
         # -- DSH-113：局域网更新中转路由（必须在 /api 兜底之前） --
         if path in ("/latest.json", "/altstore.json"):
@@ -5156,11 +5420,104 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/online/video":
+            work_id = query.get("id", [""])[0]
+            work = self.scanner.get_work(work_id) if work_id else None
+            name = work.get("videoFilename") if work else None
+            if not name:
+                self.send_error(404, "Video not found")
+                return
+            video_path = os.path.join(work["path"], name)
+            if os.path.islink(video_path):
+                self.send_error(404, "Video not found")
+                return
+            try:
+                stream = open(video_path, "rb")
+            except OSError:
+                self.send_error(404, "Video not found")
+                return
+            with stream:
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(os.fstat(stream.fileno()).st_size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                try:
+                    shutil.copyfileobj(stream, self.wfile, 256 * 1024)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            return
+
+        if path == "/api/online/live-video":
+            work_id = query.get("id", [""])[0] or query.get("workId", [""])[0]
+            file_name = query.get("file", [""])[0] or query.get("path", [""])[0]
+            prefer_fmt = query.get("format", [""])[0].strip().lower()
+            auto_live = query.get("auto_live", ["0"])[0].strip() == "1"
+            norm_f = file_name.replace("\\", "/")
+            if (
+                not work_id or not file_name or "\0" in file_name
+                or norm_f.startswith("/") or (len(norm_f) >= 2 and norm_f[1] == ":")
+                or ".." in norm_f.split("/")
+            ):
+                self.send_error(404, "Live video not found")
+                return
+            work = self.scanner.get_work(work_id) or self.scanner.resolve_stage_work(work_id)
+            if not work:
+                self.send_error(404, "Live video not found")
+                return
+            entry = self._find_live_source_entry(work, "", file_name, "")
+            cand = ""
+            synthesized = False
+            if entry:
+                cand = (entry.get("mp4") or entry.get("mov")) if prefer_fmt == "mp4" else (entry.get("mov") or entry.get("mp4"))
+                if cand:
+                    work_real = os.path.realpath(work["path"])
+                    cand_real = os.path.realpath(cand)
+                    if os.path.islink(cand) or not os.path.isfile(cand_real) or not cand_real.startswith(work_real + os.sep):
+                        cand = ""
+                    else:
+                        cand = cand_real
+            elif auto_live and motion_photo is not None:
+                img_abs = self._resolve_safe_work_image(work, file_name)
+                if img_abs:
+                    try:
+                        synth = motion_photo.synthesize_live_pair(img_abs, _resolve_live_query_config(query))
+                        cand = synth["apple_mov"]
+                        synthesized = True
+                    except Exception as _lve:
+                        print(f"[AutoLive] 现烤伴生 MOV 失败 ({os.path.basename(img_abs)}): {_lve!r}")
+                        cand = ""
+            if not cand or not os.path.isfile(cand):
+                self.send_error(404, "Live video not found")
+                return
+            try:
+                stream = open(cand, "rb")
+            except OSError:
+                self.send_error(404, "Live video not found")
+                return
+            ctype = "video/mp4" if cand.lower().endswith(".mp4") else "video/quicktime"
+            with stream:
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(os.fstat(stream.fileno()).st_size))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                if synthesized:
+                    self.send_header("X-Live-Synthesized", "1")
+                self.send_cors_headers()
+                self.end_headers()
+                try:
+                    shutil.copyfileobj(stream, self.wfile, 256 * 1024)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            return
+
         if path == "/api/online/image":
             work_id = query.get("id", [""])[0] or query.get("workId", [""])[0]
             file_name = query.get("file", [""])[0]
             raw_path = query.get("path", [""])[0]
             thumb = query.get("thumb", ["0"])[0] == "1"
+            target_work = None
             # DSH-186：大图查看缩放图。客户端传 w=1600 之类，服务端按需缩放（远小于原图）
             try:
                 scaled_w = int(query.get("w", ["0"])[0] or 0)
@@ -5189,34 +5546,6 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                             img_path = self.scanner.resolve_image_for_work(target_work, file_name) or ""
                             if not img_path and " " in file_name:
                                 img_path = self.scanner.resolve_image_for_work(target_work, file_name.replace(" ", "+")) or ""
-
-        if path == "/api/online/video":
-            work_id = query.get("id", [""])[0]
-            work = self.scanner.get_work(work_id) if work_id else None
-            name = work.get("videoFilename") if work else None
-            if not name:
-                self.send_error(404, "Video not found")
-                return
-            video_path = os.path.join(work["path"], name)
-            if os.path.islink(video_path):
-                self.send_error(404, "Video not found")
-                return
-            try:
-                stream = open(video_path, "rb")
-            except OSError:
-                self.send_error(404, "Video not found")
-                return
-            with stream:
-                self.send_response(200)
-                self.send_header("Content-Type", "video/mp4")
-                self.send_header("Content-Length", str(os.fstat(stream.fileno()).st_size))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                try:
-                    shutil.copyfileobj(stream, self.wfile, 256 * 1024)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-            return
 
                 if not img_path and "__link_" in work_id:
                     base_id = work_id.split("__link_")[0]
@@ -5309,6 +5638,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = None
             mime = "image/jpeg"
             degraded = False
+            live_format_header = ""
+            live_synth_header = ""
 
             if thumb:
                 # DSH-194：缩略图支持 w 按需缩放（64..320 夹紧）。手机端卡片缩略图
@@ -5330,6 +5661,44 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 if data is None:
                     degraded = True
                     print(f"[Scaled] !! 缩放图不可用，已降级返回原图：{img_path}")
+
+            if data is None and not thumb and scaled_w == 0:
+                live_mode = query.get("live", [""])[0].strip().lower()
+                auto_live = query.get("auto_live", ["0"])[0].strip() == "1"
+                ua = (self.headers.get("User-Agent") or "").lower()
+                client_platform = (self.headers.get("X-Client-Platform") or "").strip().lower()
+                wants_motion = (live_mode == "motion") or (
+                    live_mode != "raw" and (client_platform == "android" or "dalvik" in ua or "android" in ua)
+                )
+                if motion_photo is not None:
+                    live_entry = self._find_live_source_entry(target_work, img_path, file_name, raw_path)
+                    if live_entry:
+                        if wants_motion:
+                            if live_entry.get("embedded"):
+                                live_format_header = "motion-photo"
+                            else:
+                                vid_src = live_entry.get("mp4") or live_entry.get("mov") or ""
+                                if vid_src and os.path.isfile(vid_src) and not os.path.islink(vid_src):
+                                    try:
+                                        data = motion_photo.get_or_build_motion_photo_bytes(img_path, vid_src)
+                                        mime = "image/jpeg"
+                                        live_format_header = "motion-photo"
+                                    except Exception as _lpe:
+                                        print(f"[LivePhoto] Motion Photo 封包降级返回原图 ({os.path.basename(img_path)}): {_lpe!r}")
+                                        data = None
+                    elif auto_live:
+                        try:
+                            synth = motion_photo.synthesize_live_pair(img_path, _resolve_live_query_config(query))
+                            out_key = "motion_jpg" if wants_motion else "apple_jpg"
+                            with open(synth[out_key], "rb") as fp:
+                                data = fp.read()
+                            mime = "image/jpeg"
+                            live_synth_header = "1"
+                            if wants_motion:
+                                live_format_header = "motion-photo"
+                        except Exception as _ale:
+                            print(f"[AutoLive] 现烤实况图降级返回原图 ({os.path.basename(img_path)}): {_ale!r}")
+                            data = None
 
             if data is None:
                 try:
@@ -5368,6 +5737,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 if scaled_w > 0:
                     # DSH-186：标记本次发的是缩放图还是降级原图，便于客户端/运维核对
                     self.send_header("X-Scaled", ("fallback" if degraded else "ok") + f";w={scaled_w}")
+                if live_format_header:
+                    self.send_header("X-Live-Format", live_format_header)
+                if live_synth_header:
+                    self.send_header("X-Live-Synthesized", live_synth_header)
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(data)
@@ -5395,9 +5768,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/api/online/authorized-devices":
             return self._handle_authorized_devices_get(query)
 
-        # ===== 静态资源：share.html（PC 端分发页 · GET）=====
+        # ===== 静态资源：share.html / live_studio.html =====
         if path == "/share.html" or path == "/share":
-            return self._handle_share_html()
+            return self._handle_static_html("share.html")
+
+        if path == "/live-studio" or path == "/live-studio.html":
+            return self._handle_static_html("live_studio.html")
 
         self.send_error(404, "Not Found")
 
@@ -6259,6 +6635,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, **st})
             return
 
+        if path == "/api/online/live-config":
+            return self._handle_live_config_post()
+
+        if path == "/api/online/live-process":
+            return self._handle_live_process_post()
+
+        if path == "/api/online/live-open-dir":
+            return self._handle_live_open_dir_post()
+
         if path == "/api/online/use-work":
             content_length = int(self.headers.get("Content-Length", 0))
             raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
@@ -7011,17 +7396,17 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 print(f"🚫 [whitelist] 移除已授权设备：{removed.get('device_name', device_id[:8])} ({device_id[:8]}…)")
         self.send_json(200, {"ok": True, "removed": removed is not None, "device_id": device_id})
 
-    def _handle_share_html(self) -> None:
-        """GET /share.html → 返回 PC 端分发页（设备列表 + revoke）"""
-        share_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "share.html")
-        if not os.path.exists(share_path):
-            self.send_error(503, "share.html not deployed")
+    def _handle_static_html(self, filename: str) -> None:
+        """返回脚本同目录下的静态控制台页面（share.html / live_studio.html）。"""
+        page_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        if not os.path.exists(page_path):
+            self.send_error(503, f"{filename} not deployed")
             return
         try:
-            with open(share_path, "r", encoding="utf-8-sig") as fp:
+            with open(page_path, "r", encoding="utf-8-sig") as fp:
                 html = fp.read()
         except OSError:
-            self.send_error(500, "share.html read failed")
+            self.send_error(500, f"{filename} read failed")
             return
         body = html.encode("utf-8")
         self.send_response(200)
@@ -7031,6 +7416,200 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         self.send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _read_json_body(self) -> Optional[Dict[str, Any]]:
+        content_length = int(self.headers.get("Content-Length", 0) or 0)
+        if content_length <= 0:
+            return {}
+        if content_length > 120 * 1024 * 1024:
+            self.send_json(413, {"ok": False, "error": "请求体积过大"})
+            return None
+        raw_body = self.rfile.read(content_length).decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw_body) if raw_body else {}
+        except Exception:
+            self.send_json(400, {"ok": False, "error": "Invalid JSON body"})
+            return None
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _handle_live_config_post(self) -> None:
+        if motion_photo is None:
+            self.send_json(503, {"ok": False, "error": "motion_photo 模块未加载"})
+            return
+        req = self._read_json_body()
+        if req is None:
+            return
+        motion_photo.save_live_config(req)
+        self.send_json(200, {"ok": True, **_get_live_config_payload()})
+
+    def _handle_live_process_post(self) -> None:
+        if motion_photo is None:
+            self.send_json(503, {"ok": False, "error": "motion_photo 模块未加载"})
+            return
+        req = self._read_json_body()
+        if req is None:
+            return
+        images = req.get("images") or []
+        if not isinstance(images, list) or not images:
+            self.send_json(400, {"ok": False, "error": "请先选择至少一张图片"})
+            return
+        if len(images) > 20:
+            self.send_json(400, {"ok": False, "error": "单批最多支持 20 张图片"})
+            return
+
+        cfg = motion_photo.normalize_live_config({
+            "mode": req.get("mode"),
+            "ratio": req.get("ratio"),
+            "duration": req.get("duration"),
+            "fps": req.get("fps", 30),
+        })
+        save_to_disk = bool(req.get("saveToDisk", True))
+        job_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+        if save_to_disk:
+            export_dir = os.path.join(self.scanner.root, "_实况加工导出", job_id)
+        else:
+            export_dir = os.path.join(tempfile.gettempdir(), "zwm_live_studio_exports", job_id)
+        os.makedirs(export_dir, exist_ok=True)
+        in_dir = os.path.join(tempfile.gettempdir(), "zwm_live_studio_inputs", job_id)
+        os.makedirs(in_dir, exist_ok=True)
+
+        items: List[Dict[str, Any]] = []
+        file_map: Dict[str, str] = {}
+        try:
+            for idx, item in enumerate(images, 1):
+                if not isinstance(item, dict):
+                    continue
+                raw_name = os.path.basename(str(item.get("name") or f"image_{idx}.jpg"))
+                stem_raw = os.path.splitext(raw_name)[0]
+                stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", stem_raw).strip() or f"live_{idx}"
+                if stem in {it["stem"] for it in items}:
+                    stem = f"{stem}_{idx}"
+                b64_data = str(item.get("dataBase64") or "")
+                try:
+                    raw_bytes = base64.b64decode(b64_data, validate=False)
+                except Exception:
+                    raise ValueError(f"图片 {raw_name} 解码失败")
+                if not raw_bytes or len(raw_bytes) > 25 * 1024 * 1024:
+                    raise ValueError(f"图片 {raw_name} 大小无效或超过 25 MB 上限")
+
+                ext = os.path.splitext(raw_name)[1].lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+                    ext = ".jpg"
+                in_path = os.path.join(in_dir, f"{idx:02d}_{stem}{ext}")
+                with open(in_path, "wb") as fp:
+                    fp.write(raw_bytes)
+
+                synth = motion_photo.synthesize_live_pair(in_path, cfg)
+                motion_name = f"{stem}_android_motion.jpg"
+                apple_jpg_name = f"{stem}.jpg"
+                apple_mov_name = f"{stem}.mov"
+
+                motion_out = os.path.join(export_dir, motion_name)
+                apple_jpg_out = os.path.join(export_dir, apple_jpg_name)
+                apple_mov_out = os.path.join(export_dir, apple_mov_name)
+
+                shutil.copyfile(synth["motion_jpg"], motion_out)
+                shutil.copyfile(synth["apple_jpg"], apple_jpg_out)
+                shutil.copyfile(synth["apple_mov"], apple_mov_out)
+
+                file_map[motion_name] = motion_out
+                file_map[apple_jpg_name] = apple_jpg_out
+                file_map[apple_mov_name] = apple_mov_out
+                items.append({
+                    "stem": stem,
+                    "cached": bool(synth.get("cached")),
+                    "motionJpgName": motion_name,
+                    "appleJpgName": apple_jpg_name,
+                    "appleMovName": apple_mov_name,
+                })
+        except Exception as err:
+            self.send_json(400, {"ok": False, "error": str(err)})
+            return
+        finally:
+            shutil.rmtree(in_dir, ignore_errors=True)
+
+        with _LIVE_STUDIO_LOCK:
+            _LIVE_STUDIO_JOBS[job_id] = {
+                "jobId": job_id,
+                "exportDir": export_dir,
+                "files": file_map,
+                "config": cfg,
+            }
+            while len(_LIVE_STUDIO_JOBS) > _LIVE_STUDIO_JOB_LIMIT:
+                _LIVE_STUDIO_JOBS.popitem(last=False)
+
+        self.send_json(200, {
+            "ok": True,
+            "jobId": job_id,
+            "exportDir": export_dir,
+            "config": cfg,
+            "items": items,
+        })
+
+    def _handle_live_export_get(self, query: Dict[str, List[str]]) -> None:
+        job_id = query.get("job", [""])[0].strip()
+        file_name = query.get("file", [""])[0].strip()
+        with _LIVE_STUDIO_LOCK:
+            job = _LIVE_STUDIO_JOBS.get(job_id)
+        if not job:
+            self.send_error(404, "Export job not found")
+            return
+        files: Dict[str, str] = job.get("files") or {}
+        if file_name:
+            target = files.get(file_name)
+            if not target or not os.path.isfile(target):
+                self.send_error(404, "Export file not found")
+                return
+            ctype = "video/quicktime" if file_name.lower().endswith(".mov") else "image/jpeg"
+            with open(target, "rb") as fp:
+                payload = fp.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Content-Disposition", f'inline; filename="{urllib.parse.quote(file_name)}"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for fname, fpath in files.items():
+                if os.path.isfile(fpath):
+                    zf.write(fpath, arcname=fname)
+        zip_bytes = buf.getvalue()
+        zip_name = f"LiveStudio_{job_id}.zip"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(len(zip_bytes)))
+        self.send_header("Content-Disposition", f'attachment; filename="{zip_name}"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_cors_headers()
+        self.end_headers()
+        self.wfile.write(zip_bytes)
+
+    def _handle_live_open_dir_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else ""
+        if client_ip not in ("127.0.0.1", "::1", get_local_ip()):
+            self.send_json(403, {"ok": False, "error": "仅允许本机打开本地文件夹"})
+            return
+        req = self._read_json_body()
+        if req is None:
+            return
+        job_id = str(req.get("jobId") or "").strip()
+        with _LIVE_STUDIO_LOCK:
+            job = _LIVE_STUDIO_JOBS.get(job_id)
+        if not job or not os.path.isdir(job.get("exportDir", "")):
+            self.send_json(404, {"ok": False, "error": "找不到对应的导出目录"})
+            return
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(job["exportDir"])
+            self.send_json(200, {"ok": True, "exportDir": job["exportDir"]})
+        except Exception as err:
+            self.send_json(500, {"ok": False, "error": str(err)})
 
 
 def start_adb_reverse_daemon(port: int):

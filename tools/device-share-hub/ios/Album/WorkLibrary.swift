@@ -296,7 +296,9 @@ final class WorkLibrary {
             record.firstSharedAtMs = now.timeIntervalSince1970 * 1000
         }
         if record.firstUsedAtMs == nil { record.firstUsedAtMs = record.firstSharedAtMs }
-        if record.deleteScheduledAtMs == nil {
+        if CleanupPreferences.deleteHours < 0 {
+            record.deleteScheduledAtMs = nil
+        } else if record.deleteScheduledAtMs == nil {
             record.deleteScheduledAtMs = (record.firstUsedAtMs ?? now.timeIntervalSince1970 * 1000)
                 + Double(CleanupPreferences.deleteHours) * 3_600_000
         }
@@ -652,7 +654,8 @@ final class WorkLibrary {
                 record.firstSharedAtMs = CleanupPolicy.legacyAnchor(dateText: text, now: now)
             }
             if record.firstUsedAtMs == nil { record.firstUsedAtMs = record.firstSharedAtMs }
-            if record.deleteScheduledAtMs == nil, let first = record.firstUsedAtMs {
+            if record.deleteScheduledAtMs == nil, let first = record.firstUsedAtMs,
+               CleanupPreferences.deleteHours >= 0 {
                 record.deleteScheduledAtMs = first + Double(CleanupPreferences.deleteHours) * 3_600_000
             }
             if record.trashedDate != nil, record.trashedAtMs == nil {
@@ -723,18 +726,20 @@ final class WorkLibrary {
                 throw error
             }
         }
-        for (key, record) in Array(state.works) {
-            guard record.trashedDate != nil || record.trashFolderName != nil,
-                  CleanupPolicy.isDue(anchorMilliseconds: record.deleteScheduledAtMs
-                        ?? record.firstSharedAtMs ?? record.trashedAtMs,
-                        hours: record.deleteScheduledAtMs == nil ? CleanupPreferences.deleteHours : 0,
-                        now: now) else { continue }
-            let folder = trashURL.appendingPathComponent(record.trashFolderName ??
-                URL(fileURLWithPath: key).lastPathComponent, isDirectory: true)
-            if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
-            state.history[key] = record
-            state.works.removeValue(forKey: key)
-            try saveState(to: root)
+        if CleanupPreferences.deleteHours >= 0 {
+            for (key, record) in Array(state.works) {
+                guard record.trashedDate != nil || record.trashFolderName != nil,
+                      CleanupPolicy.isDue(anchorMilliseconds: record.deleteScheduledAtMs
+                            ?? record.firstSharedAtMs ?? record.trashedAtMs,
+                            hours: record.deleteScheduledAtMs == nil ? CleanupPreferences.deleteHours : 0,
+                            now: now) else { continue }
+                let folder = trashURL.appendingPathComponent(record.trashFolderName ??
+                    URL(fileURLWithPath: key).lastPathComponent, isDirectory: true)
+                if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+                state.history[key] = record
+                state.works.removeValue(forKey: key)
+                try saveState(to: root)
+            }
         }
         try purgeExpiredImageTrash(root: root, today: now)
     }

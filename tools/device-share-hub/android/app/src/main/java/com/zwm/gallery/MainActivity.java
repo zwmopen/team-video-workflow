@@ -736,7 +736,7 @@ public final class MainActivity extends Activity {
         // 改为由 buildUi() 末尾的 frozenLayout.addView 统一加到 titleRow 之下，
         // 做真正的 sticky 顶部状态栏。
 
-        footerNote = text("点击平台按钮会复制对应文案并打开图片分享。首次使用后按现有清理设置自动回收；两个平台共用一个作品生命周期。", 12, false);
+        footerNote = text("点击平台按钮会复制对应文案并打开图片分享。自动回收按设置执行，默认手动；两个平台共用一个作品状态。", 12, false);
         footerNote.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
         root.addView(footerNote, margins(0, dp(12), 0, 0));
 
@@ -1404,7 +1404,6 @@ public final class MainActivity extends Activity {
             Set<String> trashedIds = OnlineWorkLifecycle.getTrashedIds(this, nowMs, moveAfterMs);
 
             for (OnlineWorkEntry work : onlineWorks) {
-                if (work.expireAtMs > 0 && nowMs >= work.expireAtMs) continue;
                 if (trashedIds.contains(work.id)) continue;
                 String s = (work.season != null && !work.season.isEmpty()) ? work.season : inferWorkSeason(work.title + " " + work.destination);
                 String f = (work.flowType != null && !work.flowType.isEmpty()) ? work.flowType : inferWorkFlowType(work.title + " " + work.destination);
@@ -2359,7 +2358,7 @@ public final class MainActivity extends Activity {
     private void confirmResetWork(String id) {
         new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("重置为未发布？")
-                .setMessage("确定要重置为未发布状态吗？\n将清零分享点击记录、取消 1 小时自动清理排期，并恢复为未发作品。")
+                .setMessage("确定要重置为未发布状态吗？\n将清零分享点击记录、取消自动清理排期，并恢复为未发作品。")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("重置", (dialog, which) -> resetWork(id))
                 .show();
@@ -3085,7 +3084,7 @@ public final class MainActivity extends Activity {
         Uri usableTree = isTreeReadable(tree) ? tree : null;
         return ExternalTrashManager.purgeExpired(
                 getContentResolver(), usableTree, legacy,
-                library, LocalDate.now());
+                library, System.currentTimeMillis(), CleanupSettings.read(this).deleteAfterMs());
     }
 
     private Uri selectedTree() {
@@ -3546,7 +3545,7 @@ public final class MainActivity extends Activity {
 
     /**
      * 电脑端会把已使用的作品物理移走到对应次数文件夹，但手机端已同步到本地，
-     * 因此这里把本地仍存活的「已发送N次」副本合并回列表并置顶，展示到倒计时结束为止。
+     * 因此这里把本地仍存活的「已发送N次」副本合并回列表并置顶，直到用户手动删除。
      */
     private void mergeLocalSentWorks() {
         long nowMs = System.currentTimeMillis();
@@ -3633,6 +3632,7 @@ public final class MainActivity extends Activity {
                                     w.hasSourceCompare, w.maxSimilarity, w.similarityTag
                             );
                             mergedEntry.videoFilename = w.videoFilename;
+                            mergedEntry.livePhotos = w.livePhotos;
                             onlineWorks.add(mergedEntry);
                         } else {
                             onlineWorks.add(w);
@@ -4447,12 +4447,6 @@ public final class MainActivity extends Activity {
 
         currentOnlineFilteredEntries.clear();
         for (OnlineWorkEntry work : onlineWorks) {
-            // 核心生命周期对齐：若服务端或本地首发倒计时已到期（无论是服务端的 expireAtMs 还是首发+超时兜底），直接在活跃货架中隐藏，绝不滞留显示「正在移入回收站」
-            long effectiveExpireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? (work.firstSharedAtMs + moveAfterMs) : 0);
-            if (effectiveExpireMs > 0 && nowMs >= effectiveExpireMs) {
-                OnlineWorkLifecycle.ensureTrashed(this, work, effectiveExpireMs);
-                continue;
-            }
             if (trashedIds.contains(work.id)) {
                 continue;
             }
@@ -4858,23 +4852,9 @@ public final class MainActivity extends Activity {
             titleRow.addView(destBadge, destParams);
         }
 
-        // Usage protection status badge & lifecycle countdown
+        // Usage protection status badge; online share has no automatic expiration.
         if (work.useCount > 0) {
             String statusText = "已使用 " + work.useCount + " 次";
-            CleanupSettings.Values cleanup = CleanupSettings.read(this);
-            // 2026-11-05：归档机制已取消（AUTO_ARCHIVE_DISABLED = true），不存在任何到期点。
-            // 旧实现还会拿本地 lifeItem.firstSharedAtMs 反推一个 expireMs —— 10-27~11-05 期间
-            // 留下的本地记录因此会在货架上顶着「已发送」却纹丝不动，就是用户说的假状态。
-            long expireMs = work.expireAtMs > 0 ? work.expireAtMs : (work.firstSharedAtMs > 0 ? work.firstSharedAtMs + cleanup.moveAfterMs() : 0);
-            if (expireMs > 0) {
-                long remainMs = expireMs - System.currentTimeMillis();
-                if (remainMs > 0) {
-                    int remainMin = Math.max(1, (int) (remainMs / 60000L));
-                    statusText = "已使用 · 剩 " + remainMin + " 分钟";
-                } else {
-                    statusText = "已发送";
-                }
-            }
             TextView useBadge = text(statusText, 11, true);
             useBadge.setTextColor(ThemePalette.getWarnBadgeText(MainActivity.this));
             useBadge.setBackground(round(ThemePalette.getWarnBadgeBg(MainActivity.this), 8));
@@ -5073,6 +5053,7 @@ public final class MainActivity extends Activity {
                                                 old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                                         );
                                         updated.videoFilename = old.videoFilename;
+                                        updated.livePhotos = old.livePhotos;
                                         onlineWorks.set(i, updated);
                                         break;
                                     }
@@ -6739,7 +6720,7 @@ public final class MainActivity extends Activity {
         // DSH-137: 本地持久化记录已使用的文案版本标签，确保任何刷新对勾 ✓ 永不丢失
         recordLocalDispatchedVersion(workId, versionTag);
 
-        // 2. 本地生命周期打标（启动倒计时）
+        // 2. 本地生命周期打标（只记录使用状态，不启动自动隐藏倒计时）
         for (OnlineWorkEntry w : onlineWorks) {
             if (w.id.equals(workId)) {
                 OnlineWorkLifecycle.markUsed(this, w, System.currentTimeMillis());
@@ -6765,8 +6746,7 @@ public final class MainActivity extends Activity {
                 int newCount = old.useCount + 1;
                 int remaining = Math.max(0, old.remainingUses - 1);
                 long firstShared = old.firstSharedAtMs > 0 ? old.firstSharedAtMs : System.currentTimeMillis();
-                CleanupSettings.Values cVal = CleanupSettings.read(this);
-                long exp = old.expireAtMs > 0 ? old.expireAtMs : (firstShared + cVal.moveAfterMs());
+                long exp = 0L;
                 updatedEntry = new OnlineWorkEntry(
                         old.id, old.title, old.destination, old.stage,
                         newCount, old.maxUses, true, remaining,
@@ -6778,6 +6758,7 @@ public final class MainActivity extends Activity {
                         old.hasSourceCompare, old.maxSimilarity, old.similarityTag
                 );
                 updatedEntry.videoFilename = old.videoFilename;
+                updatedEntry.livePhotos = old.livePhotos;
                 break;
             }
         }
@@ -6817,8 +6798,7 @@ public final class MainActivity extends Activity {
         optimisticMarkWorkUsedAndTop(work.id, dispatchTag, versionTag, work.destination);
 
         // ==================== DSH-143: 0 秒立即向服务端同步使用记录（彻底切断对后续下载或分支的依赖） ====================
-        CleanupSettings.Values cleanupVal = CleanupSettings.read(this);
-        onlineClient.recordUse(work.id, getDeviceName(), versionTag, cleanupVal.moveAfterMs(), versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
+        onlineClient.recordUse(work.id, getDeviceName(), versionTag, 0L, versionTag, new OnlineGalleryClient.Callback<OnlineGalleryClient.UseResult>() {
             @Override
             public void onSuccess(OnlineGalleryClient.UseResult result) {
                 if (result != null && result.ok) {
@@ -6840,9 +6820,11 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        final boolean autoLive = OnlineService.isAutoLiveOnShareEnabled(this);
+
         // ==================== DSH-136: 本地命中 0 弹窗秒呼系统分享 ====================
-        if (onlineClient.areAllWorkImagesCachedLocally(work.id, work.images)) {
-            List<java.io.File> cachedFiles = onlineClient.getCachedLocalWorkImages(work.id, work.images);
+        if (!autoLive && onlineClient.areAllWorkImagesCachedLocally(work.id, work.images, work.livePhotos)) {
+            List<java.io.File> cachedFiles = onlineClient.getCachedLocalWorkImages(work.id, work.images, work.livePhotos);
             launchOnlineShare(work, cachedFiles, copyText, platformCode);
             return;
         }
@@ -6855,11 +6837,18 @@ public final class MainActivity extends Activity {
         dlLayout.setOrientation(LinearLayout.VERTICAL);
         dlLayout.setPadding(dp(20), dp(20), dp(20), dp(18));
 
-        TextView dlTitle = text("正在从电脑同步原图到手机…", 15, true);
+        boolean isLiveWork = work.hasLivePhotos();
+        String titleStr = isLiveWork
+                ? "正在从电脑同步实况原图到手机…"
+                : (autoLive ? "正在由电脑本地现烤实况图…" : "正在从电脑同步原图到手机…");
+        String statusStr = isLiveWork
+                ? "准备连接电脑拉取 " + work.images.size() + " 张实况原图…"
+                : (autoLive ? "正在向电脑请求现烤 " + work.images.size() + " 张微动实况图…" : "准备连接电脑拉取 " + work.images.size() + " 张原图…");
+        TextView dlTitle = text(titleStr, 15, true);
         dlTitle.setTextColor(ThemePalette.getTextPrimary(this));
         dlLayout.addView(dlTitle);
 
-        TextView dlStatus = text("准备连接电脑拉取 " + work.images.size() + " 张原图…", 12, false);
+        TextView dlStatus = text(statusStr, 12, false);
         dlStatus.setTextColor(ThemePalette.getTextSecondary(this));
         dlLayout.addView(dlStatus, margins(0, dp(6), 0, dp(12)));
 
@@ -6879,7 +6868,7 @@ public final class MainActivity extends Activity {
         AlertDialog dlDialog = builder.create();
         dlDialog.show();
 
-        onlineClient.downloadWorkImages(work.id, work.images, new OnlineGalleryClient.DownloadProgressCallback() {
+        onlineClient.downloadWorkImages(work.id, work.images, work.livePhotos, autoLive, new OnlineGalleryClient.DownloadProgressCallback() {
             @Override
             public void onProgress(int downloaded, int total, String currentFileName) {
                 if (dlDialog.isShowing()) {
@@ -7032,7 +7021,7 @@ public final class MainActivity extends Activity {
                     newDispatched.add(dispatchTag);
                 }
                 long finalFirstShared = (firstSharedAtMs > 0) ? firstSharedAtMs : (old.firstSharedAtMs > 0 ? old.firstSharedAtMs : System.currentTimeMillis());
-                long finalExpire = (expireAtMs > 0) ? expireAtMs : old.expireAtMs;
+                long finalExpire = 0L;
                 String finalOrigin = (originDevice != null && !originDevice.isEmpty()) ? originDevice : old.originDevice;
                 OnlineWorkEntry updated = new OnlineWorkEntry(
                         old.id, old.title, old.destination, old.stage,
@@ -7046,6 +7035,7 @@ public final class MainActivity extends Activity {
                 );
                 onlineWorks.remove(i);
                 updated.videoFilename = old.videoFilename;
+                updated.livePhotos = old.livePhotos;
                 onlineWorks.add(0, updated);
                 break;
             }
@@ -7081,6 +7071,7 @@ public final class MainActivity extends Activity {
                         hasRemainingSource, old.maxSimilarity, old.similarityTag
                 );
                 updated.videoFilename = old.videoFilename;
+                updated.livePhotos = old.livePhotos;
                 onlineWorks.set(i, updated);
                 break;
             }

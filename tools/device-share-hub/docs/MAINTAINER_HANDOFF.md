@@ -1,3 +1,37 @@
+# 2026-11-26 全本地实况微动工坊与手机「分享自动转实况」开关（服务端 1.2.6 / Android 0.8.135(246) / iOS 0.8.135(246)）
+
+- **核心落地**：
+  - `scripts/motion_photo.py` 与技能 `live-photo-craft/scripts/make_live.py` 扩展至 7 种本地离线 FFmpeg 微动预设（`zoom_in`、`zoom_out`、`pan_up`、`pan_down`、`pan_left`、`pan_right`、`handheld`），`find_ffmpeg()` 优先选取完整系统安装版（`C:\ffmpeg\bin\ffmpeg.exe`），避开 Electron 精简版 FFmpeg；新增 `synthesize_live_pair` 双端合成（Apple `ContentIdentifier` JPG+MOV 与 Android Motion Photo JPG，带 200 组磁盘原子缓存）与共享配置持久化。
+  - 新增 `scripts/live_studio.html` 电脑端拖图工坊并托管于 `45835/live-studio`，同步创建桌面快捷方式 `C:\Users\z\Desktop\实况图加工工坊.lnk`；`online_gallery_service.py` 升至 `1.2.6`（`features` 新增 `autoLiveOnShare`、`liveStudio`），新增 `/api/online/live-config`、`/api/online/live-process`、`/api/online/live-export`、`/api/online/live-open-dir`，并升级 `/api/online/image` 与 `/api/online/live-video` 支持 `?auto_live=1` 实时现烤纯静图（精做实况源仍优先）。
+  - Android (`0.8.135/246`) `OnlineService` / `SettingsActivity` / `OnlineGalleryClient` / `MainActivity` 新增「分享时静图自动转实况」开关（默认关）；iOS (`0.8.135/246`) 新增 `AutoLivePreferences.swift` 并更新 `SettingsView.swift` / `OnlineGalleryClient.swift` / `ContentView.swift` 同构接入开关。
+- **验证与证据**：
+  - `pytest` 7 个目标套件共 `23/23` 通过（含真实 FFmpeg 渲染、`/live-studio`、配置读写、批处理导出 ZIP、`?auto_live=1` 与路径穿越拦截）；5 项 JS 守卫全部通过；桌面快捷方式已创建。
+  - Android `scripts/build-local.ps1 -AndroidOnly` 通过，产出 `android/out/album-Android-v0.8.135.apk`（SHA-256 `e6345ddb26b78c4915d1d2e69d3ad256b3e3f62a416a18cb750814a3d03ea940`）并更新 `/latest.json`。
+  - 45835 服务经 `\OnlineGallery-Supervisor` 常驻拉起，`/api/online/status` 实测 `version="1.2.6"`、`staleCode=False`、`/live-studio` HTTP 200、`/latest.json` 返回 `0.8.135/246`。
+  - **边界**：iOS `0.8.135/246` 仍待 macOS CI 构建签名；Android 3 台局域网在线机及 iPhone 真机实地安装与小红书识别待现场验收。
+
+# 2026-11-26 跨端实况照片（服务端 1.2.5 / Android 0.8.134(245) / iOS 0.8.134(245)）
+
+- **能力落地**：
+  - 新增 `scripts/motion_photo.py`（O(1) `is_motion_photo_jpeg` 检测、`.mov/.mp4` 统一转封标准 MP4、Google Camera V1/V2 XMP + `Container:Directory` 封包与磁盘缓存，不伪造相机 EXIF）；同步扩展技能脚本 `live-photo-craft/scripts/make_live.py` 支持 `--android-motion` 与 `pack-motion`。
+  - 服务端 `online_gallery_service.py` 升级至 `1.2.5`（features 新增 `"livePhoto"`）：识别伴生实况源与内嵌 Motion Photo，新增 `GET /api/online/live-video`（含路径穿越与软链拦截），并在 `/api/online/image` 原图分发按设备与 `?live=motion|raw` 自动适配（缩略图链路不变）。
+  - Android 升级至 `0.8.134/versionCode 245`：解析 `livePhotos`，下载实况图时显式请求 `&live=motion` + `X-Client-Platform: android` 并以 `.live.jpg` 缓存落盘后经 `GalleryShareBridge` 写入 MediaStore。
+  - iOS 升级至 `0.8.134/build 245`：解析 `livePhotos`，新增只写权限 `NSPhotoLibraryAddUsageDescription`（不引入读取权限），通过 `downloadWorkLiveAssets` + `@available(iOS 14, *) PHPhotoLibrary.requestAuthorization(for: .addOnly)` + `PHAssetCreationRequest` 合体写入系统实况相册并带系统分享回退。
+- **分层验证与运行证据**：
+  - 运行中服务：通过 `\OnlineGallery-Supervisor` 计划任务拉起，`http://127.0.0.1:45835/api/online/status` 实测 `ok=True`、`version="1.2.5"`、`"livePhoto"` 在 features 中、`totalWorks=311`、`staleCode=False`（`scriptShaRunning == scriptShaOnDisk == 605e0bfdda3c`）。
+  - Python & JS 回归：`pytest` 7 个目标套件共 `22/22` 通过（含新增 `scripts/tests/test_online_live_photo.py`、`test_online_video.py`、`test_online_recycle.py`、`test_phone_sync.py`、`test_thumb_scaled_w.py` 等）；`verify-removed-surfaces.mjs` 通过；`verify-work-card-ui.mjs` 21 checks passed；`make_live.py check` 通过。
+  - Android 构建：`scripts/build-local.ps1 -AndroidOnly` 通过（`gradle testDebugUnitTest` + `assembleRelease` + `lintRelease` + aapt 权限 + v2/v3 验签）；产出 `android/out/album-Android-v0.8.134.apk`（SHA-256 `2c6f81b9e8faa3bf1ef4e8f6604fe8ac4a481bac3583644913c5465bea0188fa`），局域网 `/latest.json` 已回读到 `0.8.134/245`。
+  - **边界**：iOS `0.8.134/245` Windows 本机无 Xcode，仅完成源码级与静态契约验证（待 macOS CI/真机）；Android 与 iPhone 实况导入小红书/抖音均尚未做现场真机点击验收；未提交推送或发布 GitHub Release。
+  - **影响文档**：`CHANGELOG.md`、`README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`。
+
+# 2026-11-25 DSH-198：手机清理默认手动（Android/iPhone 0.8.133 / 244 源码候选）
+
+- Android 与 iPhone 自动移入回收站、自动彻底删除改为默认手动；旧版默认的一小时设置在新版首次启动时迁移。用户仍可在设置中分别挑选自动计时。
+- Android 在线列表移除失效的本地到期过滤；iPhone 移除首用后一小时隐藏、分享乐观状态一小时过期和本地合并补写一小时过期。分享记录计数保留，手动删除/恢复/彻底删除入口保留。
+- 根因回读：现有服务端工作副本的 `/api/online/use-work` 已固定不再写新过期时间，但 Android/iPhone 本地列表仍有到期过滤。Android `applyOnlineCategoryFilter` 隐藏作品后调用的 `ensureTrashed` 因归档机制关闭而不落回收站；iPhone 过滤也不持久化回收站记录，并会从首用时间造一小时过期值。默认手动 sentinel `-1ms` 还会让旧 Android 到期计算立即命中，已一并移除该显示过滤。
+- 源码版本：Android `0.8.133/244`、iOS `0.8.133/244`；Windows/服务端未改。未构建或运行测试，未安装设备、未提交推送、未发布或更新 LAN 索引。
+- 手机行为只有在安装匹配候选后才改变；安装后重新同步在线作品，可按标题查找尚未手动删除的作品。已手动删除的记录仍只在手机本地回收站。
+
 # 2026-11-24 在线视频作品
 
 - 电脑在线相册从作品 manifest 的 workType 和 videoFilename 识别视频，走 GET /api/online/video?id=<workId> 流式返回。移动端检测完整字节后才打开或分享。分享计数沿用用户点击时的既有规则。
@@ -6,6 +40,12 @@
 - 已在运行中的 45835 服务回读湘湖擂台作品 ID、两张图和 37,092,194 字节原片，SHA-256 与成品库一致。隔离测试覆盖越界视频文件名和不存在的作品。
 
 - 局域网更新在冷缓存时优先回应本地安装包清单，后台刷新 GitHub 并保留已知较新版本。
+
+# 2026-11-18 本机迁移补充：跨货架维护脚本默认根路径
+
+- `scripts/cross_shelf_linker.py` 的无 `--root` 默认值现为正式项目成品库 `D:\江湖有旅人\03-生产车间\05-成品库`。运行中的在线相册服务独立显式传入新成品根，不依赖此 CLI 默认。
+- `scripts/split_24_shelves.py` 默认根也改为新成品库；默认只读预演，命令行显式 `--apply` 并输入 `APPLY` 才会执行。属性不可读或作品树含重解析点时失败关闭；apply 前复核目录及内容哈希，逐步核对目标货架身份和卷号。普通异常及 Ctrl+C 会尽力逆序回退并报告未清理目录；强制结束、断电或再次中断可能留下部分移动，脚本没有持久事务日志。直接 Python 调用者可主动传确认值，故输入确认只防误触。真实成品库只读计划为 0 项、0 冲突、0 警告，未 apply；命名分类仍需业务审核。
+- 修改范围仅为两个维护脚本默认值、拆分脚本的预演/冲突/回退保护、隔离回归和维护文档；Windows/Android/iOS 应用版本不变，未提交、未推送、未重启服务。
 
 # 2026-11-14 本地候选：Windows V4.3.35 iPhone 签名技能入口
 

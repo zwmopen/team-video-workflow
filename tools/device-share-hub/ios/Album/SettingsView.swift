@@ -19,7 +19,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [4, 2, 2, 2, 1, 5][section]
+        return [5, 2, 2, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -35,7 +35,7 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let usesSubtitle = indexPath.section == 3 || indexPath.section == 5 || (indexPath.section == 0 && indexPath.row == 3)
+        let usesSubtitle = indexPath.section == 3 || indexPath.section == 5 || (indexPath.section == 0 && (indexPath.row == 3 || indexPath.row == 4))
         let cell = UITableViewCell(style: usesSubtitle ? .subtitle : .value1, reuseIdentifier: nil)
         cell.textLabel?.numberOfLines = 0
         cell.detailTextLabel?.numberOfLines = 0
@@ -59,6 +59,13 @@ final class SettingsViewController: UITableViewController {
             let toggle = UISwitch()
             toggle.isOn = ClipboardSyncPreferences.isEnabled
             toggle.addTarget(self, action: #selector(clipboardSyncSwitchChanged(_:)), for: .valueChanged)
+            cell.accessoryView = toggle
+        case (0, 4):
+            cell.textLabel?.text = "分享时静图自动转实况"
+            cell.detailTextLabel?.text = "开启后点分享自动由电脑本地现烤微动实况图；可在电脑工坊调整微动风格"
+            let toggle = UISwitch()
+            toggle.isOn = AutoLivePreferences.isEnabled
+            toggle.addTarget(self, action: #selector(autoLiveSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
         case (1, 0):
             cell.textLabel?.text = "当前文件夹"
@@ -179,6 +186,10 @@ final class SettingsViewController: UITableViewController {
         ClipboardSyncPreferences.isEnabled = sender.isOn
     }
 
+    @objc private func autoLiveSwitchChanged(_ sender: UISwitch) {
+        AutoLivePreferences.isEnabled = sender.isOn
+    }
+
     @objc private func notificationSwitchChanged(_ sender: UISwitch) {
         TransferNotifications.shared.setNotificationsEnabled(sender.isOn) { [weak self, weak sender] granted in
             guard !granted else { return }
@@ -197,7 +208,7 @@ final class SettingsViewController: UITableViewController {
     }
 
     private func showAbout() {
-        let message = "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n核心场景\n从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可继续传送、预览和分享。\n\n作品工作流\n点一次“复制并分享”会立即记录一次，文案只在这次主动操作中交给系统剪切板，图片交给系统分享面板。默认 1 小时后进入回收站并彻底删除，时间可自行调整。\n\n跨设备传送\nWindows、Android 和 iPhone 在同一 Wi-Fi 下自动发现，传送过程显示进度并核对完整性。\n\n系统分享\n其他应用可从系统分享面板选择“相册”并发送给在线设备。普通文件按真实文件夹存放。\n\n设计思路\n内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站保存在本机；坚果云只属于电脑端。"
+        let message = "把分散在电脑和手机里的素材，整理成随手可用的作品库。\n\n核心场景\n从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可继续传送、预览和分享。\n\n作品工作流\n点一次“复制并分享”会立即记录一次，文案只在这次主动操作中交给系统剪切板，图片交给系统分享面板。自动移入回收站和彻底删除默认均为手动，可在设置中选择处理时间。\n\n跨设备传送\nWindows、Android 和 iPhone 在同一 Wi-Fi 下自动发现，传送过程显示进度并核对完整性。\n\n系统分享\n其他应用可从系统分享面板选择“相册”并发送给在线设备。普通文件按真实文件夹存放。\n\n设计思路\n内容优先、操作尽量少、状态一眼可见。目录授权、作品记录、分享次数和回收站保存在本机；坚果云只属于电脑端。"
         let alert = UIAlertController(title: "相册 · 作品与文件中控", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default))
         present(alert, animated: true)
@@ -207,7 +218,8 @@ final class SettingsViewController: UITableViewController {
         let current = editingMove ? CleanupPreferences.moveHours : CleanupPreferences.deleteHours
         let title = editingMove ? "自动移入回收站" : "自动彻底删除"
         let alert = UIAlertController(title: title, message: "选择后立即保存", preferredStyle: .actionSheet)
-        [(0, "立刻"), (1, "1 小时后"), (3, "3 小时后"),
+        [(CleanupPreferences.manual, "手动"), (0, "立刻"),
+         (1, "1 小时后"), (3, "3 小时后"),
          (6, "6 小时后"), (24, "24 小时后")].forEach { preset in
             let (hours, label) = preset
             alert.addAction(UIAlertAction(title: label + (hours == current ? "  ✓" : ""),
@@ -231,7 +243,7 @@ final class SettingsViewController: UITableViewController {
                                       message: "请输入 0～720 的整数；0 表示立刻。",
                                       preferredStyle: .alert)
         alert.addTextField { field in
-            field.text = "\(current)"
+            field.text = "\(current >= 0 ? current : 1)"
             field.keyboardType = .numberPad
             field.clearButtonMode = .whileEditing
         }
@@ -245,10 +257,13 @@ final class SettingsViewController: UITableViewController {
 
     private func saveCleanupChoice(_ value: Int, editingMove: Bool) {
         let move = editingMove ? value : CleanupPreferences.moveHours
-        let delete = editingMove ? max(value, CleanupPreferences.deleteHours) : value
+        let currentDelete = CleanupPreferences.deleteHours
+        let delete = editingMove
+            ? (value >= 0 && currentDelete >= 0 ? max(value, currentDelete) : currentDelete)
+            : value
         guard CleanupPreferences.save(moveHours: move, deleteHours: delete) else {
             let failed = UIAlertController(title: "没有保存",
-                                           message: "请输入 0～720；彻底删除不能早于移入回收站。",
+                                           message: "请选择“手动”或输入 0～720；彻底删除不能早于移入回收站。",
                                            preferredStyle: .alert)
             failed.addAction(UIAlertAction(title: "知道了", style: .default))
             present(failed, animated: true)
@@ -259,6 +274,7 @@ final class SettingsViewController: UITableViewController {
     }
 
     private func cleanupTimingText(_ hours: Int) -> String {
+        if hours == CleanupPreferences.manual { return "手动" }
         return hours == 0 ? "立刻" : "\(hours) 小时后"
     }
 

@@ -97,6 +97,7 @@ public final class OnlineService extends Service {
     private static final String PREF_COMMITTED_TASKS = "committedIncomingTasks";
     private static final String PREF_AUTO_RECEIVE_ENABLED = "autoReceiveEnabled";
     public static final String PREF_CLIPBOARD_SYNC_ENABLED = "clipboardSyncEnabled";
+    public static final String PREF_AUTO_LIVE_ON_SHARE_ENABLED = "autoLiveOnShareEnabled";
     private static final String FOREGROUND_CHANNEL_ID = "device_share_online_quiet_v2";
     private static final String ALERT_CHANNEL_ID = "device_share_alerts_v2";
     private static final String SILENT_ALERT_CHANNEL_ID = "device_share_alerts_silent_v1";
@@ -318,6 +319,20 @@ public final class OnlineService extends Service {
 
     private boolean isClipboardSyncEnabled() {
         return isClipboardSyncEnabled(this);
+    }
+
+    public static boolean isAutoLiveOnShareEnabled(Context context) {
+        return context != null && context
+                .getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_AUTO_LIVE_ON_SHARE_ENABLED, false);
+    }
+
+    public static void setAutoLiveOnShareEnabled(Context context, boolean enabled) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_AUTO_LIVE_ON_SHARE_ENABLED, enabled)
+                .apply();
     }
 
     static String currentNetworkType(Context context) {

@@ -1,3 +1,10 @@
+# 2026-11-25 手机清理默认手动（iOS 0.8.133 / build 244 源码候选）
+
+- 设置中的自动移入回收站和自动彻底删除默认均为手动，旧版本一小时默认项在首次启动时迁移；用户仍可主动选择计时。
+- 在线作品不再按分享后一小时由本地列表过滤；乐观状态和 `/api/online/use-work` 请求不再写入一小时过期时间，手动删除仍正常进入本地回收站。
+- 影响文档：根目录 `CHANGELOG.md`、`README.md`、`docs/ALBUM_WORKFLOW_DESIGN.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`ios/README.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`。
+- 源码候选未构建、未签名、未安装或发布；测试未运行。
+
 # 2026-10-22 DSH-181：顶部区域与卡片胶囊深色模式适配（0.8.117 / build 228）
 
 - 顶栏按钮（`toolbarButton` / `toolbarItem`）、来源切换、状态胶囊、视图/筛选/排序按钮的硬编码浅色（薄荷绿底 + 深绿图标等）全部改走 `AppColors` 主题感知取色（`UIColor(dynamicProvider:)`），深色下为暗墨绿底 + 亮绿图标，浅色保持原值零回归。

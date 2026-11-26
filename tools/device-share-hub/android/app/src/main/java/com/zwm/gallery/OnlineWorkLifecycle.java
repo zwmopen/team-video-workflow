@@ -13,12 +13,11 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 负责在线作品在手机端的生命周期管理（完全遵循手机端设置的时间规则）：
- * 1. 首次点击分享并使用时记录 firstSharedAtMs；
- * 2. 达到手机设置的 moveAfterMs（例如 1 小时）后，自动从在线活跃列表移入手机本地回收站；
- * 3. 达到手机设置的 deleteAfterMs（例如 24 小时）后，从手机回收站彻底清除；
- * 4. 手动在手机端点击【删除】立即直接移入手机本地回收站（不用等 1 小时）；
- * 5. 在线版没有单独的垃圾箱，共用手机本地回收站，支持恢复与清空。
+ * 负责在线作品在手机端的使用记录与回收站状态：
+ * 1. 点击分享只记录使用次数，不按分享时间自动隐藏在线作品；
+ * 2. 手动在手机端点击【删除】后移入手机本地回收站；
+ * 3. 自动彻底删除可在设置中选择计时，默认手动；
+ * 4. 在线作品与本地作品共用手机回收站，支持恢复与清空。
  */
 public final class OnlineWorkLifecycle {
     private static final String PREF_NAME = "online_work_lifecycle";
@@ -239,7 +238,7 @@ public final class OnlineWorkLifecycle {
         return trashed;
     }
 
-    /** 判断某作品在手机端是否应被移入回收站（包含 1 小时自动到期或手动删除） */
+    /** 判断某作品是否由用户手动放入手机回收站 */
     public static synchronized boolean shouldBeInTrash(Context context, String workId, long nowMs, long moveAfterMs) {
         if (MEMORY_CACHE == null) loadAll(context);
         Item it = ITEM_MAP.get(workId);
@@ -265,7 +264,7 @@ public final class OnlineWorkLifecycle {
     /**
      * 获取「已发送过但仍需继续保留在在线相册顶部」的本地副本：
      * 电脑端会把用过的作品物理移走到对应文件夹，但手机端已同步到本地，
-     * 因此必须继续展示并置顶（标记「已发送N次」），直到倒计时结束才自动移入回收站。
+     * 因此继续展示并置顶（标记「已发送N次」），直到用户手动删除。
      */
     public static synchronized List<Item> getActiveUsedItems(Context context, long nowMs, long moveAfterMs) {
         List<Item> list = loadAll(context);

@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>实况图加工工坊 · 纯本地零成本微动引擎</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --card: #1c222b;
+    --border: #2d3542;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --brand: #3fb950;
+    --brand-hover: #4ac85d;
+    --accent: #58a6ff;
+    --warn: #d29922;
+    --danger: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .title-box h1 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .title-box p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(63, 185, 80, 0.14);
+    color: var(--brand);
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid rgba(63, 185, 80, 0.35);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 20px;
+  }
+  @media (max-width: 860px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 28px 16px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(88, 166, 255, 0.09);
+  }
+  .dropzone strong {
+    display: block;
+    font-size: 15px;
+    margin-bottom: 6px;
+  }
+  .dropzone span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .queue-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 14px 0 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .queue-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .thumb-item {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .thumb-item img {
+    width: 100%;
+    height: 112px;
+    object-fit: cover;
+    display: block;
+  }
+  .thumb-item .name {
+    padding: 5px 6px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--muted);
+  }
+  .thumb-item .remove-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 22px;
+  }
+  .presets {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .preset-btn {
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .preset-btn:hover { border-color: var(--accent); }
+  .preset-btn.active {
+    border-color: var(--brand);
+    background: rgba(63, 185, 80, 0.14);
+  }
+  .preset-btn .p-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .preset-btn .p-desc {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .slider-row {
+    margin-bottom: 14px;
+  }
+  .slider-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .slider-head b { color: var(--accent); }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--brand);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  button.primary, button.secondary {
+    flex: 1 1 200px;
+    padding: 11px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  button.primary {
+    background: var(--brand);
+    color: #08120b;
+  }
+  button.primary:hover:not(:disabled) { background: var(--brand-hover); }
+  button.secondary {
+    background: var(--card);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  button.secondary:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .small-btn {
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .status-banner {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--muted);
+    display: none;
+  }
+  .status-banner.show { display: block; }
+  .results-panel {
+    margin-top: 20px;
+  }
+  .results-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .result-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 14px;
+  }
+  .result-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .result-card video {
+    width: 100%;
+    height: 240px;
+    background: #000;
+    object-fit: contain;
+  }
+  .result-card .meta {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  .result-card .meta strong {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dl-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .dl-link {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 7px;
+    background: rgba(88, 166, 255, 0.14);
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="title-box">
+      <h1>🎬 实况图加工工坊</h1>
+      <p>纯本机离线 FFmpeg 微动渲染 · 0 积分 0 排队 · 自动输出安卓 Motion Photo + 苹果 Live 双端成品，与手机端“分享自动转实况”共用默认风格</p>
+    </div>
+    <div class="badge" id="serverBadge">● 本地引擎连接中…</div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>
+        <span>1. 拖入静态图片</span>
+        <button class="small-btn" id="clearQueueBtn" type="button">清空队列</button>
+      </h2>
+      <div class="dropzone" id="dropzone">
+        <strong>把图片直接拖到这里，或点击选择文件</strong>
+        <span>支持多张批量加工（JPG / PNG / WebP，单批最多 20 张，每张不超过 25 MB）</span>
+        <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden />
+      </div>
+      <div class="queue-bar">
+        <span id="queueCount">已选择 0 张图片</span>
+        <span>原比例导出，自动保持首帧清晰对齐</span>
+      </div>
+      <div class="queue-grid" id="queueGrid"></div>
+    </div>
+
+    <div class="panel">
+      <h2>2. 选择微动运镜与参数</h2>
+      <div class="presets" id="presetGrid"></div>
+
+      <div class="slider-row">
+        <div class="slider-head">
+          <span>镜头微动幅度</span>
+          <b id="ratioVal">1.06x（微动 6%）</b>
+        </div>
+        <input id="ratioSlider" type="range" min="1.03" max="1.12" step="0.01" value="1.06" />
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-head">
+          <span>实况播放时长</span>
+          <b id="durationVal">2.5 秒</b>
+        </div>
+        <input id="durationSlider" type="range" min="1.5" max="3.5" step="0.1" value="2.5" />
+      </div>
+
+      <div class="actions">
+        <button class="secondary" id="saveDefaultBtn" type="button">设为手机自动转实况默认风格</button>
+        <button class="primary" id="processBtn" type="button">一键本地加工导出</button>
+      </div>
+      <div class="status-banner" id="statusBanner"></div>
+    </div>
+  </div>
+
+  <div class="panel results-panel" id="resultsPanel" style="display:none;">
+    <div class="results-head">
+      <div>
+        <h2 style="margin:0;">3. 加工结果预览与导出</h2>
+        <div id="exportPathText" style="font-size:12px;color:var(--muted);margin-top:4px;"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="secondary" id="openExportDirBtn" type="button" style="flex:0 0 auto;padding:8px 12px;font-size:13px;">打开本地导出目录</button>
+        <a class="primary" id="downloadZipLink" href="#" style="flex:0 0 auto;padding:8px 14px;font-size:13px;text-decoration:none;border-radius:10px;">打包下载全部 (ZIP)</a>
+      </div>
+    </div>
+    <div class="result-grid" id="resultGrid"></div>
+  </div>
+</div>
+
+<script>
+const DEFAULT_PRESETS = [
+  { id: "zoom_in", label: "呼吸微推（默认）", desc: "镜头缓慢平滑向前推近，自然百搭" },
+  { id: "zoom_out", label: "呼吸微拉", desc: "镜头由近及远缓慢舒展，适合风景全貌" },
+  { id: "pan_up", label: "微幅上移", desc: "画面从下方轻轻上抬，突出建筑/人像层次" },
+  { id: "pan_down", label: "微幅下移", desc: "画面从上方柔和下沉，适合打卡氛围图" },
+  { id: "pan_left", label: "左移轻摇", desc: "水平向右向左平稳滑轨横移" },
+  { id: "pan_right", label: "右移轻摇", desc: "水平向左向右平稳滑轨横移" },
+  { id: "handheld", label: "手持微晃", desc: "模拟真手拿着手机拍摄的轻微呼吸晃动" }
+];
+
+const state = {
+  files: [],
+  mode: "zoom_in",
+  ratio: 1.06,
+  duration: 2.5,
+  presets: DEFAULT_PRESETS,
+  currentJobId: "",
+  currentExportDir: ""
+};
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const queueGrid = document.getElementById("queueGrid");
+const queueCount = document.getElementById("queueCount");
+const presetGrid = document.getElementById("presetGrid");
+const ratioSlider = document.getElementById("ratioSlider");
+const ratioVal = document.getElementById("ratioVal");
+const durationSlider = document.getElementById("durationSlider");
+const durationVal = document.getElementById("durationVal");
+const saveDefaultBtn = document.getElementById("saveDefaultBtn");
+const processBtn = document.getElementById("processBtn");
+const statusBanner = document.getElementById("statusBanner");
+const resultsPanel = document.getElementById("resultsPanel");
+const resultGrid = document.getElementById("resultGrid");
+const exportPathText = document.getElementById("exportPathText");
+const downloadZipLink = document.getElementById("downloadZipLink");
+const openExportDirBtn = document.getElementById("openExportDirBtn");
+const serverBadge = document.getElementById("serverBadge");
+
+function showStatus(msg, color) {
+  statusBanner.textContent = msg;
+  statusBanner.style.color = color || "var(--text)";
+  statusBanner.classList.add("show");
+}
+
+function renderPresets() {
+  presetGrid.innerHTML = "";
+  for (const p of state.presets) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "preset-btn" + (state.mode === p.id ? " active" : "");
+    btn.innerHTML = `<span class="p-title">${p.label}</span><span class="p-desc">${p.desc}</span>`;
+    btn.onclick = () => {
+      state.mode = p.id;
+      renderPresets();
+    };
+    presetGrid.appendChild(btn);
+  }
+}
+
+function updateSlidersUI() {
+  ratioSlider.value = String(state.ratio);
+  const pct = Math.round((state.ratio - 1) * 100);
+  ratioVal.textContent = `${state.ratio.toFixed(2)}x（微动 ${pct}%）`;
+  durationSlider.value = String(state.duration);
+  durationVal.textContent = `${state.duration.toFixed(1)} 秒`;
+}
+
+function renderQueue() {
+  queueCount.textContent = `已选择 ${state.files.length} 张图片`;
+  queueGrid.innerHTML = "";
+  state.files.forEach((f, idx) => {
+    const card = document.createElement("div");
+    card.className = "thumb-item";
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(f);
+    img.onload = () => URL.revokeObjectURL(img.src);
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "remove-btn";
+    rm.textContent = "×";
+    rm.onclick = () => {
+      state.files.splice(idx, 1);
+      renderQueue();
+    };
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = f.name;
+    card.appendChild(img);
+    card.appendChild(rm);
+    card.appendChild(name);
+    queueGrid.appendChild(card);
+  });
+}
+
+function addFiles(fileList) {
+  for (const f of fileList) {
+    if (!f.type.startsWith("image/") && !/\.(jpg|jpeg|png|webp)$/i.test(f.name)) continue;
+    if (f.size > 25 * 1024 * 1024) {
+      showStatus(`文件 ${f.name} 超过 25 MB 上限，已跳过`, "var(--warn)");
+      continue;
+    }
+    if (state.files.length >= 20) {
+      showStatus("单批最多支持 20 张图片", "var(--warn)");
+      break;
+    }
+    state.files.push(f);
+  }
+  renderQueue();
+}
+
+dropzone.onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  addFiles(fileInput.files);
+  fileInput.value = "";
+};
+dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add("dragover"); };
+dropzone.ondragleave = () => dropzone.classList.remove("dragover");
+dropzone.ondrop = (e) => {
+  e.preventDefault();
+  dropzone.classList.remove("dragover");
+  if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+};
+document.getElementById("clearQueueBtn").onclick = () => {
+  state.files = [];
+  renderQueue();
+};
+
+ratioSlider.oninput = () => {
+  state.ratio = parseFloat(ratioSlider.value);
+  updateSlidersUI();
+};
+durationSlider.oninput = () => {
+  state.duration = parseFloat(durationSlider.value);
+  updateSlidersUI();
+};
+
+async function loadConfig() {
+  try {
+    const resp = await fetch("/api/online/live-config");
+    const data = await resp.json();
+    if (data.ok && data.config) {
+      state.mode = data.config.mode || "zoom_in";
+      state.ratio = Number(data.config.ratio || 1.06);
+      state.duration = Number(data.config.duration || 2.5);
+      if (Array.isArray(data.presets) && data.presets.length) state.presets = data.presets;
+      serverBadge.textContent = "● 电脑本地引擎就绪 (45835)";
+    }
+  } catch (err) {
+    serverBadge.textContent = "● 未连接本地服务";
+    serverBadge.style.color = "var(--danger)";
+  }
+  renderPresets();
+  updateSlidersUI();
+}
+
+saveDefaultBtn.onclick = async () => {
+  saveDefaultBtn.disabled = true;
+  try {
+    const resp = await fetch("/api/online/live-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: state.mode, ratio: state.ratio, duration: state.duration })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "保存失败");
+    showStatus("✅ 已保存！手机相册打开「分享时静图自动转实况」开关后将立即按此微动风格现烤。", "var(--brand)");
+  } catch (err) {
+    showStatus("❌ 保存默认风格失败：" + err.message, "var(--danger)");
+  } finally {
+    saveDefaultBtn.disabled = false;
+  }
+};
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const str = String(reader.result || "");
+      const idx = str.indexOf(",");
+      resolve(idx >= 0 ? str.slice(idx + 1) : str);
+    };
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+processBtn.onclick = async () => {
+  if (!state.files.length) {
+    showStatus("请先拖入或选择至少 1 张图片", "var(--warn)");
+    return;
+  }
+  processBtn.disabled = true;
+  saveDefaultBtn.disabled = true;
+  showStatus(`正在使用本地 FFmpeg 渲染 ${state.files.length} 张实况图（无云端排队）…`, "var(--accent)");
+  try {
+    const payloadImages = [];
+    for (const f of state.files) {
+      payloadImages.push({ name: f.name, dataBase64: await readFileAsBase64(f) });
+    }
+    const resp = await fetch("/api/online/live-process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: state.mode,
+        ratio: state.ratio,
+        duration: state.duration,
+        saveToDisk: true,
+        images: payloadImages
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "加工失败");
+
+    state.currentJobId = data.jobId || "";
+    state.currentExportDir = data.exportDir || "";
+    resultsPanel.style.display = "block";
+    exportPathText.textContent = data.exportDir
+      ? `已自动落盘到：${data.exportDir}（${data.items.length} 组双端实况成品）`
+      : `已完成 ${data.items.length} 组实况加工`;
+    downloadZipLink.href = `/api/online/live-export?job=${encodeURIComponent(state.currentJobId)}`;
+
+    resultGrid.innerHTML = "";
+    for (const item of data.items) {
+      const card = document.createElement("div");
+      card.className = "result-card";
+      const movUrl = `/api/online/live-export?job=${encodeURIComponent(state.currentJobId)}&file=${encodeURIComponent(item.appleMovName)}`;
+      const jpgUrl = `/api/online/live-export?job=${encodeURIComponent(state.currentJobId)}&file=${encodeURIComponent(item.appleJpgName)}`;
+      const motionUrl = `/api/online/live-export?job=${encodeURIComponent(state.currentJobId)}&file=${encodeURIComponent(item.motionJpgName)}`;
+      card.innerHTML = `
+        <video src="${movUrl}" controls loop muted autoplay playsinline></video>
+        <div class="meta">
+          <strong title="${item.stem}">${item.stem}</strong>
+          <div style="color:var(--muted);">${item.cached ? "命中缓存秒出" : "本地渲染完成"} · ${data.config.mode} · ${data.config.duration}s</div>
+          <div class="dl-row">
+            <a class="dl-link" href="${motionUrl}" download="${item.motionJpgName}">安卓 Motion JPG</a>
+            <a class="dl-link" href="${jpgUrl}" download="${item.appleJpgName}">苹果 JPG</a>
+            <a class="dl-link" href="${movUrl}" download="${item.appleMovName}">苹果 MOV</a>
+          </div>
+        </div>`;
+      resultGrid.appendChild(card);
+    }
+    showStatus(`🎉 加工完成！共生成 ${data.items.length} 套双端实况成品，可直接预览、下载或打开文件夹。`, "var(--brand)");
+  } catch (err) {
+    showStatus("❌ 本地加工失败：" + err.message, "var(--danger)");
+  } finally {
+    processBtn.disabled = false;
+    saveDefaultBtn.disabled = false;
+  }
+};
+
+openExportDirBtn.onclick = async () => {
+  if (!state.currentExportDir) return;
+  try {
+    const resp = await fetch("/api/online/live-open-dir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: state.currentJobId, dir: state.currentExportDir })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "无法打开目录");
+  } catch (err) {
+    showStatus("打开目录失败：" + err.message, "var(--warn)");
+  }
+};
+
+loadConfig();
+</script>
+</body>
+</html>

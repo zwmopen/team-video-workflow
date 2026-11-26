@@ -1,3 +1,31 @@
+# 2026-11-26 全本地实况微动工坊与「分享自动转实况」开关（服务端 1.2.6 / Android 0.8.135(246) / iOS 0.8.135(246)）
+
+## 手机上看得到的变化
+
+- 手机设置页新增「**分享时静图自动转实况**」开关（默认关闭）。开启后，分享普通静图作品时会自动由电脑后台本地现烤微动实况图并缓存（二次秒出）：安卓生成标准 Motion Photo 单文件 `.jpg` 拉起分享，iPhone 写入原生实况相册。作品目录已有精做实况源时继续优先使用精做版。
+- 电脑端同步上线「**实况图加工工坊**」（`http://127.0.0.1:45835/live-studio` 及桌面快捷方式），支持多图拖入、7 种纯本地离线微动预设（呼吸微推[默认] / 呼吸微拉 / 微幅上移 / 微幅下移 / 左移轻摇 / 右移轻摇 / 手持微晃）、幅度与时长调节、一键导出双端实况（含安卓 Motion JPG 与苹果 JPG+MOV 及 ZIP 打包）以及设为手机默认风格。
+- 影响文档：`docs/ALBUM_WORKFLOW_DESIGN.md`、`README.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`。
+- 本轮验证：服务端 `1.2.6` 已常驻 `45835`（`live-studio` HTTP 200）；`pytest` 23/23 通过（含真实 FFmpeg 渲染、工坊加工与 `?auto_live=1` 路由）；5 项 JS 守卫全部通过；Android `0.8.135/246` 单测/Lint/Release/v2+v3 验签通过（SHA-256 `e6345ddb26b78c4915d1d2e69d3ad256b3e3f62a416a18cb750814a3d03ea940`）并挂载局域网 `/latest.json`；iOS `0.8.135/246` 为源码候选（待 macOS CI 构建）；双端实机现场验收待进行。
+
+# 2026-11-26 跨端实况照片支持（服务端 1.2.5 / Android 0.8.134(245) / iOS 0.8.134(245) 候选）
+
+## 手机上看得到的变化
+
+- 电脑作品库中含同名 `.mov`/`.mp4` 伴生视频或已封包 Motion Photo 的图片，作品卡片图数展示会标记实况数量（如 `8图(8实况)`）。
+- 安卓相册点平台按钮「复制并分享」时，电脑自动将对应图片与配套动态视频合流为标准 Google Camera Motion Photo 单文件 `.jpg`，写入系统媒体库并调起小红书/抖音，无需手动 USB 或扫码。
+- iPhone 相册点平台按钮「复制并分享」时，自动拉取无损原图（完整保留 Apple MakerNote）及配套动态视频，通过系统只写相册授权自动合体为 Apple 原生实况照片写入相册（拒绝权限时自动回退系统分享面板）。
+- 影响文档：`docs/ALBUM_WORKFLOW_DESIGN.md`、`README.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/闭环清单.md`。
+- 本轮交付与验证边界：服务端 `1.2.5` 已重启常驻 45835；Android `0.8.134/245` 本地 Gradle 单测、Lint、Release 构建及 v2/v3 验签通过（SHA-256 `2c6f81b9e8faa3bf1ef4e8f6604fe8ac4a481bac3583644913c5465bea0188fa`）并写入局域网更新索引；iOS `0.8.134/245` 为源码候选（待 macOS 构建签名）；全链路实机尚未连接双端真机现场验收，未提交推送远端或发布 GitHub Release。
+
+# 2026-11-25 手机清理改为默认手动（Android/iPhone 0.8.133 / 244 源码候选）
+
+- 手机「自动移入回收站」「自动彻底删除」默认改为手动；新版首次启动把旧版默认的一小时设置迁移为手动，用户之后仍可在设置里选计时规则。
+- 在线作品分享仅记录使用次数，不再由手机按一小时倒计时隐藏或移入回收站。iPhone 本地乐观状态、分享请求参数和本地列表合并不再生成一小时过期时间；Android 在线列表也忽略历史过期时间。手动放入回收站的作品默认不会自动清除。
+- 修复“作品不在在线搜索结果，也没出现在回收站”的空档：Android/iOS 在线列表都存在本地到期过滤，但过滤路径没有可靠地写入手机回收站；Android 归档机制关闭后尤其会出现“隐藏但不入回收站”。更新后未手动删除的在线作品重新保留在列表。
+- 版本提升 Android `0.8.133 / versionCode 244`、iOS `0.8.133 / build 244`；Windows 和服务端版本不变。
+- 影响文档：`docs/ALBUM_WORKFLOW_DESIGN.md`、`README.md`、`ios/README.md`、`docs/BUG_LEDGER.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/闭环清单.md`、`ios/CHANGELOG.md`。
+- 当前仅源码候选：未构建、未运行测试、未安装手机、未提交/推送、未发布或改动更新索引；需后续完成构建签名与设备验收后才会改变手机行为。
+
 # 2026-11-24 团建工作相册视频作品（Android 0.8.132 / iOS 0.8.132 候选）
 
 ## 手机上看得到的变化
@@ -7,6 +35,13 @@
 - 影响文档：ALBUM_WORKFLOW_DESIGN.md、README.md、BUG_LEDGER.md、MAINTAINER_HANDOFF.md、闭环清单。
 
 - 相册检查更新时优先读取本地 APK，GitHub 清单在后台刷新。
+
+# 2026-11-18 本地货架维护工具默认根路径修正
+
+- `scripts/cross_shelf_linker.py` 的手动 CLI 默认成品库根从旧项目目录改为 `D:\江湖有旅人\03-生产车间\05-成品库`；在线相册服务继续使用显式传入的根路径，不受此变更影响。
+- `scripts/split_24_shelves.py` 默认根也改为新成品库；默认只读预演，显式 `--apply` 加人工输入 `APPLY` 才执行。失败关闭检查重解析点、整批冲突、目录树变化和跨卷移动；apply 对每个作品执行前后内容哈希校验，普通异常及 Ctrl+C 会尽力逆序回退。隔离测试覆盖预演绑定、目标身份、内容变化、失败回退和 Ctrl+C 回退。脚本没有持久事务日志，强制结束/断电仍可能留下部分移动；直接 Python 调用者可主动提供确认参数。正式成品库只读计划为 0 项、0 冲突、0 警告，真实拆分未执行。
+- 影响设计文档：无（未改变在线相册工作流、架构或通信协议）；影响用户/维护文档：`README.md`、`docs/MAINTAINER_HANDOFF.md`、`docs/TEST_PLAYBOOK.md`、`docs/BUG_LEDGER.md`、`docs/闭环清单.md`。
+- 应用版本不变；自动回归见 `scripts/tests/test_junction_linking.py` 与 `scripts/tests/test_split_24_shelves_safety.py`，未发布、未重启服务。
 
 # 2026-11-14 Windows V4.3.35：中控内增加 iPhone 签名技能入口（候选，未构建/发布）
 

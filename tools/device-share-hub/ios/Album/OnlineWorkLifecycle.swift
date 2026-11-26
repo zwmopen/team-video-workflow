@@ -109,23 +109,19 @@ public final class OnlineWorkLifecycle {
     }
 
     public static func getTrashItems(nowMs: Double = Date().timeIntervalSince1970 * 1000,
-                                     moveAfterMs: Double = 3600 * 1000,
-                                     deleteAfterMs: Double = 24 * 3600 * 1000) -> [Item] {
+                                     deleteAfterMs: Double? = nil) -> [Item] {
         lock.lock()
         defer { lock.unlock() }
+        let effectiveDeleteAfterMs = deleteAfterMs
+            ?? Double(CleanupPreferences.deleteHours) * 3_600_000
         let list = loadAll()
         var changed = false
         var activeTrash: [Item] = []
 
         var filtered: [Item] = []
-        for var item in list {
-            // 检查自动超时移入回收站
-            if item.trashedAtMs <= 0 && item.firstSharedAtMs > 0 && (nowMs - item.firstSharedAtMs >= moveAfterMs) {
-                item.trashedAtMs = nowMs
-                changed = true
-            }
+        for item in list {
             // 检查自动超时彻底删除
-            if item.trashedAtMs > 0 && (nowMs - item.trashedAtMs >= deleteAfterMs) {
+            if effectiveDeleteAfterMs >= 0 && item.trashedAtMs > 0 && (nowMs - item.trashedAtMs >= effectiveDeleteAfterMs) {
                 changed = true
                 continue // 彻底移除
             }
@@ -172,8 +168,7 @@ public final class OnlineWorkLifecycle {
     }
 
     public static func filterActiveOnlineWorks(works: [OnlineWorkEntry],
-                                               nowMs: Double = Date().timeIntervalSince1970 * 1000,
-                                               moveAfterMs: Double = 3600 * 1000) -> [OnlineWorkEntry] {
+                                               nowMs: Double = Date().timeIntervalSince1970 * 1000) -> [OnlineWorkEntry] {
         lock.lock()
         let list = loadAll()
         lock.unlock()
@@ -182,14 +177,9 @@ public final class OnlineWorkLifecycle {
         for item in list {
             if item.trashedAtMs > 0 {
                 trashedIds.insert(item.id)
-            } else if item.firstSharedAtMs > 0 && (nowMs - item.firstSharedAtMs >= moveAfterMs) {
-                trashedIds.insert(item.id)
             }
         }
         return works.filter { entry in
-            if entry.expireAtMs > 0 && nowMs >= entry.expireAtMs {
-                return false
-            }
             return !trashedIds.contains(entry.id)
         }
     }

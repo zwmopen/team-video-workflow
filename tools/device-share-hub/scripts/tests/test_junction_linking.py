@@ -27,6 +27,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from cross_shelf_linker import (
+    DEFAULT_GALLERY_ROOT,
     create_junction,
     unlink_junction,
     is_junction_or_symlink,
@@ -41,6 +42,12 @@ from online_gallery_service import WorkScanner, ThreadingHTTPServer, OnlineGalle
 PNG_1PX = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
            b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00"
            b"\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+
+
+class TestGalleryRootDefault(unittest.TestCase):
+    def test_default_root_is_the_current_project_finished_shelf(self):
+        expected = os.path.normpath(r"D:\江湖有旅人\03-生产车间\05-成品库")
+        self.assertEqual(os.path.normcase(DEFAULT_GALLERY_ROOT), os.path.normcase(expected))
 
 
 class TestJunctionLinking(unittest.TestCase):

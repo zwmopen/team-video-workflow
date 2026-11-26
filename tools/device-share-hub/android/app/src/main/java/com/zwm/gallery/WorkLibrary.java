@@ -296,7 +296,7 @@ public final class WorkLibrary {
 
     /** Records the user's tap immediately. Chooser callbacks never control this counter. */
     public synchronized WorkEntry markShareAttempt(String id, long nowMs) throws IOException {
-        return markPlatformShareAttempt(id, "legacy", nowMs, 3_600_000L);
+        return markPlatformShareAttempt(id, "legacy", nowMs, -1L);
     }
 
     /** Records one platform button tap; the work lifecycle remains shared by both platforms. */
@@ -312,8 +312,9 @@ public final class WorkLibrary {
         if (parseLong(meta.getProperty("firstUsedAtMs", "0")) <= 0) {
             meta.setProperty("firstUsedAtMs", Long.toString(nowMs));
         }
-        if (parseLong(meta.getProperty("deleteScheduledAtMs", "0")) <= 0
-                && deleteAfterMs >= 0) {
+        if (deleteAfterMs < 0) {
+            meta.remove("deleteScheduledAtMs");
+        } else if (parseLong(meta.getProperty("deleteScheduledAtMs", "0")) <= 0) {
             meta.setProperty("deleteScheduledAtMs", Long.toString(nowMs + deleteAfterMs));
         }
         int count = parseCount(meta.getProperty("shareCount", "0"));

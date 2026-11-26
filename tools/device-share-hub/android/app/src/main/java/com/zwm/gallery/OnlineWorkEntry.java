@@ -4,7 +4,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Represents a work item residing on the PC workspace (Online Mode).
@@ -22,6 +25,11 @@ public final class OnlineWorkEntry {
     public final List<String> images;
     public final int imageCount;
     public String videoFilename = "";
+    public Map<String, String> livePhotos = Collections.emptyMap();
+
+    public boolean hasLivePhotos() {
+        return livePhotos != null && !livePhotos.isEmpty();
+    }
     public final String copyText;
     public final boolean hasCopyText;
     public final List<String> dispatchedTo;
@@ -327,6 +335,21 @@ public final class OnlineWorkEntry {
                 season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
                 pipelineBadge, formattedDate, imageCountText);
         entry.videoFilename = json.optString("videoFilename", "");
+        JSONObject liveObj = json.optJSONObject("livePhotos");
+        if (liveObj != null && liveObj.length() > 0) {
+            Map<String, String> liveMap = new LinkedHashMap<>();
+            Iterator<String> keys = liveObj.keys();
+            while (keys.hasNext()) {
+                String k = keys.next();
+                String v = liveObj.optString(k, "").trim();
+                if (k != null && !k.isEmpty() && !v.isEmpty()) {
+                    liveMap.put(k, v);
+                }
+            }
+            if (!liveMap.isEmpty()) {
+                entry.livePhotos = Collections.unmodifiableMap(liveMap);
+            }
+        }
         return entry;
     }
 }

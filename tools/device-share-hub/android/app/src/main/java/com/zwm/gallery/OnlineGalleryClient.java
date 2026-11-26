@@ -1601,13 +1601,57 @@ public final class OnlineGalleryClient {
     }
 
     /**
+     * 判断指定图片是否具备服务端实况伴生源（按全路径或 basename 匹配）
+     */
+    public static boolean isLiveImage(java.util.Map<String, String> livePhotos, String fileName) {
+        if (livePhotos == null || livePhotos.isEmpty() || fileName == null || fileName.isEmpty()) {
+            return false;
+        }
+        if (livePhotos.containsKey(fileName)) return true;
+        String norm = fileName.replace('\\', '/');
+        if (livePhotos.containsKey(norm)) return true;
+        int slash = norm.lastIndexOf('/');
+        String bn = slash >= 0 ? norm.substring(slash + 1) : norm;
+        for (String key : livePhotos.keySet()) {
+            if (key == null) continue;
+            String kNorm = key.replace('\\', '/');
+            int kSlash = kNorm.lastIndexOf('/');
+            String kBn = kSlash >= 0 ? kNorm.substring(kSlash + 1) : kNorm;
+            if (bn.equals(kBn)) return true;
+        }
+        return false;
+    }
+
+    private static java.io.File resolveLocalImageCacheFile(java.io.File targetDir, String fileName, boolean isLive, boolean autoLive) {
+        if (!isLive && !autoLive) {
+            return new java.io.File(targetDir, fileName);
+        }
+        String base = fileName;
+        int slash = Math.max(fileName.lastIndexOf('/'), fileName.lastIndexOf('\\'));
+        int dot = fileName.lastIndexOf('.');
+        if (dot > slash) {
+            base = fileName.substring(0, dot);
+        }
+        return new java.io.File(targetDir, base + (isLive ? ".live.jpg" : ".autolive.jpg"));
+    }
+
+    private static java.io.File resolveLocalImageCacheFile(java.io.File targetDir, String fileName, boolean isLive) {
+        return resolveLocalImageCacheFile(targetDir, fileName, isLive, false);
+    }
+
+    /**
      * DSH-136: 极速检测本地是否已 100% 缓存该作品所有图片
      */
     public boolean areAllWorkImagesCachedLocally(String workId, List<String> fileNames) {
+        return areAllWorkImagesCachedLocally(workId, fileNames, null);
+    }
+
+    public boolean areAllWorkImagesCachedLocally(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos) {
         if (fileNames == null || fileNames.isEmpty()) return true;
         java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
         for (String fileName : fileNames) {
-            java.io.File localFile = new java.io.File(targetDir, fileName);
+            boolean isLive = isLiveImage(livePhotos, fileName);
+            java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive);
             if (!localFile.exists() || localFile.length() <= 0) {
                 return false;
             }
@@ -1619,11 +1663,16 @@ public final class OnlineGalleryClient {
      * DSH-136: 获取本地已完整缓存的文件列表（用于 0 弹窗直接秒开系统分享）
      */
     public List<java.io.File> getCachedLocalWorkImages(String workId, List<String> fileNames) {
+        return getCachedLocalWorkImages(workId, fileNames, null);
+    }
+
+    public List<java.io.File> getCachedLocalWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos) {
         List<java.io.File> result = new ArrayList<>();
         if (fileNames == null || fileNames.isEmpty()) return result;
         java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
         for (String fileName : fileNames) {
-            java.io.File localFile = new java.io.File(targetDir, fileName);
+            boolean isLive = isLiveImage(livePhotos, fileName);
+            java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive);
             if (localFile.exists() && localFile.length() > 0) {
                 result.add(localFile);
             }
@@ -1683,6 +1732,14 @@ public final class OnlineGalleryClient {
     }
 
     public void downloadWorkImages(String workId, List<String> fileNames, DownloadProgressCallback callback) {
+        downloadWorkImages(workId, fileNames, null, callback);
+    }
+
+    public void downloadWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos, DownloadProgressCallback callback) {
+        downloadWorkImages(workId, fileNames, livePhotos, false, callback);
+    }
+
+    public void downloadWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos, boolean autoLive, DownloadProgressCallback callback) {
         executor.execute(() -> {
             // DSH-099：记录循环中文件名，catch 块能定位到具体哪个 fileName 出错
             final String[] currentFileName = { null };
@@ -1703,7 +1760,8 @@ public final class OnlineGalleryClient {
                         final int progStart = count;
                         final String curName = fileName;
                         mainHandler.post(() -> callback.onProgress(progStart, total, curName));
-                        java.io.File f = downloadOneImageToFile(baseUrl, targetDir, workId, fileName);
+                        boolean isLive = isLiveImage(livePhotos, fileName);
+                        java.io.File f = downloadOneImageToFile(baseUrl, targetDir, workId, fileName, isLive, autoLive);
                         result.add(f);
                         count++;
                         final int progDone = count;
@@ -1727,20 +1785,26 @@ public final class OnlineGalleryClient {
      * DSH-185：单张原图下载（原子落盘 + 64KB 缓冲，去掉逐张 fsync）。返回最终文件。
      * 与旧串行循环体等价，但抽成独立方法供并发池调用；原子 rename 口径不变（DSH-118）。
      */
-    private java.io.File downloadOneImageToFile(String baseUrl, java.io.File targetDir, String workId, String fileName) throws Exception {
-        java.io.File localFile = new java.io.File(targetDir, fileName);
+    private java.io.File downloadOneImageToFile(String baseUrl, java.io.File targetDir, String workId, String fileName, boolean isLive, boolean autoLive) throws Exception {
+        boolean isAutoSynth = autoLive && !isLive;
+        java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive, isAutoSynth);
         // DSH-100：图在 产出素材/ 子目录时返回「成品库根相对路径」，必须先建中间子目录。
         java.io.File parent = localFile.getParentFile();
         if (parent != null && !parent.exists()) parent.mkdirs();
-        if (localFile.exists() && localFile.length() > 0) {
-            return localFile;   // 已缓存直接复用
+        if (!isAutoSynth && localFile.exists() && localFile.length() > 0) {
+            return localFile;   // 已缓存直接复用（autoLive 现烤每次回电脑核对最新风格缓存）
         }
         String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
-                + "&file=" + URLEncoder.encode(fileName, "UTF-8");
+                + "&file=" + URLEncoder.encode(fileName, "UTF-8")
+                + ((isLive || isAutoSynth) ? "&live=motion" : "")
+                + (isAutoSynth ? "&auto_live=1" : "");
         URL url = new URL(uStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS * 3);
+        conn.setReadTimeout(isAutoSynth ? Math.max(TIMEOUT_MS * 6, 90000) : TIMEOUT_MS * 3);
+        if (isLive || isAutoSynth) {
+            conn.setRequestProperty("X-Client-Platform", "android");
+        }
         int httpCode = conn.getResponseCode();
         if (httpCode != 200) {
             Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);

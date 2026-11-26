@@ -14,6 +14,12 @@
 
 归档 manifest 使用 workType=video 和 videoFilename 标记目录内的原始 MP4。列表仍返回封面、分析图和文案。视频通过 GET /api/online/video?id=<workId> 读取，响应类型为 video/mp4，下载长度须与响应头一致。Android 和 iOS 视频作品的封面入口播放原片，复制并分享入口把 MP4 交给系统菜单，分享点击按既有规则计数。普通图文仍按原来的图片流程处理。
 
+### 在线实况照片（Live Photo / Motion Photo）与本地微动工坊
+
+作品图片在同目录存在同名 `.mov`/`.mp4` 伴生视频（排除已被 `videoFilename` 占用的整片视频），或图片本身已包含 Google Motion Photo XMP + 尾部 MP4 载荷时，服务端 `WorkScanner` 会在作品元数据中暴露 `livePhotos`（`图片路径 -> 伴生文件名或 "__embedded__"`）、`hasLivePhotos`、`liveCount`，并在 `imageCountText` 中纯文本追加实况计数（如 `8图(8实况)`）。`thumb=1` 与 `w>0` 预览请求始终只下发纯缩略图/缩放图，不附带视频流；原图拉取时，Android 端（`live=motion` 或 Android User-Agent）由 `scripts/motion_photo.py` 封装为兼容 Google Camera V1/V2 XMP 规范的单文件 Motion Photo `.jpg`（响应头 `X-Live-Format: motion-photo`）写入系统 MediaStore；iPhone 端（`live=raw`）保持原始字节并通过 `GET /api/online/live-video?id=<workId>&file=<图片路径>` 拉取伴生视频后，经 `NSPhotoLibraryAddUsageDescription` 只写授权调用 `PHAssetCreationRequest` 合体写入 iPhone 原生实况相册（不引入读取权限，拒绝授权或低版本系统自动回退系统分享）。
+
+当手机设置页开启「**分享时静图自动转实况**」且目标图片没有现成精做伴生实况源时，客户端自动附带 `auto_live=1` 请求 `/api/online/image` 与 `/api/online/live-video`：电脑端按共享配置 `D:\AICode\运行数据\江湖有旅人\live_motion_config.json`（由电脑端「实况图加工工坊」`GET /live-studio`、`GET/POST /api/online/live-config`、`POST /api/online/live-process`、`GET /api/online/live-export` 管理，支持 `zoom_in`/`zoom_out`/`pan_up`/`pan_down`/`pan_left`/`pan_right`/`handheld` 共 7 种本地 FFmpeg 微动预设及幅度/时长调节）实时合成带 Apple `ContentIdentifier` UUID 与 Google Motion Photo 封包的双端缓存产物并返回（`X-Live-Synthesized: 1`），优先保障已有精做实况源不被覆盖。
+
 | 端 | 显示名 | 包 / Bundle ID | 版本 | 出处 |
 |---|---|---|---|---|
 | Android | 相册 | `com.zwm.gallery` | **0.8.101 候选**（versionCode 212；本地 Release/APK 构建通过；已安装到 Vivo 并完成关键页面真机回归） | `android/app/build.gradle.kts:13-14` |
@@ -224,6 +230,12 @@ copy_missing = not copy_text                      # 文案.txt 没读出实质�
 `SORT_KEYS = ("default", "time_asc", "time_desc", "name_asc", "name_desc", "size_desc", "size_asc")`
 
 排序层级：**一级固定 `useCount` 降序**（已用置顶，DSH-104），**二级由 `sort_key` 决定**。
+
+### 5.3 手机端作品清理
+
+- Android 与 iPhone 的「自动移入回收站」「自动彻底删除」默认均为手动；新版首次启动会把此前默认的一小时偏好迁移为手动。用户仍可在设置中主动选择计时规则。
+- 在线作品分享只记录使用次数，不启动一小时隐藏或回收倒计时。手机端手动删除才写入本地在线回收站；默认手动清理下，作品会保留到用户手动恢复或彻底删除。
+- 电脑端归档仍由电脑端负责，手机发送动作不触发电脑目录搬迁。
 
 ---
 

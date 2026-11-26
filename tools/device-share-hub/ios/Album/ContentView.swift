@@ -1,6 +1,7 @@
 import UIKit
 import ImageIO
 import AVKit
+import Photos
 
 enum LocalDispatchedStore {
     private static var recentSavedAtMs: [String: Double] = [:]
@@ -1162,7 +1163,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             switch result {
             case .success(let works):
                 self.autoDiscoverRetryDelay = 15
-                // DSH-135 & DSH-137: 本地状态合并（State Merge）与生命周期未到期作品统一置顶
+                // DSH-135 & DSH-137: 本地状态合并（State Merge）与已使用作品统一置顶
                 let now = Date().timeIntervalSince1970 * 1000
                 var mergedWorks: [OnlineWorkEntry] = []
                 for w in works {
@@ -1184,13 +1185,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     }
                     let rec = OnlineWorkLifecycle.getRecord(id: w.id)
                     let usedCount = max(w.useCount, rec?.useCount ?? 0, mergedVers.count)
-                    var expireAt = w.expireAtMs
+                    let expireAt = 0.0
                     var firstShared = w.firstSharedAtMs
                     if firstShared <= 0, let r = rec, r.firstSharedAtMs > 0 {
                         firstShared = r.firstSharedAtMs
-                    }
-                    if expireAt <= 0 && firstShared > 0 {
-                        expireAt = firstShared + 3600000
                     }
                     let updated = OnlineWorkEntry(
                         id: w.id, title: w.title, destination: w.destination, stage: w.stage,
@@ -1206,7 +1204,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         sourceImages: w.sourceImages, sourceNames: w.sourceNames,
                         hasSourceCompare: w.hasSourceCompare, maxSimilarity: w.maxSimilarity,
                         similarityTag: w.similarityTag,
-                        videoFilename: w.videoFilename
+                        videoFilename: w.videoFilename,
+                        livePhotos: w.livePhotos
                     )
                     mergedWorks.append(updated)
                 }
@@ -1651,7 +1650,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let newCount = old.useCount + 1
         let remaining = max(0, old.remainingUses - 1)
         let firstShared = old.firstSharedAtMs > 0 ? old.firstSharedAtMs : now
-        let expireAt = old.expireAtMs > 0 ? old.expireAtMs : (firstShared + 3600000)
+        let expireAt = 0.0
 
         let updated = OnlineWorkEntry(
             id: old.id, title: old.title, destination: old.destination, stage: old.stage,
@@ -1667,7 +1666,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             sourceImages: old.sourceImages, sourceNames: old.sourceNames,
             hasSourceCompare: old.hasSourceCompare, maxSimilarity: old.maxSimilarity,
             similarityTag: old.similarityTag,
-            videoFilename: old.videoFilename
+            videoFilename: old.videoFilename,
+            livePhotos: old.livePhotos
         )
 
         // DSH-130-A: 0ms 内存置顶
@@ -1705,7 +1705,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         OnlineGalleryClient.shared.recordUse(
             workId: entry.id,
             platform: item.buttonLabel,
-            retentionDurationMs: 3600000,
+            retentionDurationMs: 0,
             versionTag: item.buttonLabel
         ) { [weak self] result in
             DispatchQueue.main.async {
@@ -1717,6 +1717,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         OnlineWorkLifecycle.markUsed(work: entry)
         if !entry.videoFilename.isEmpty {
             openOrShareOnlineVideo(entry: entry, shareSource: source)
+            return
+        }
+        let autoLive = AutoLivePreferences.isEnabled
+        if entry.hasLivePhotos || autoLive {
+            shareOnlineLivePhotos(entry: entry, item: item, source: source, autoLive: autoLive)
             return
         }
 
@@ -1851,6 +1856,95 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         step(0)
     }
 
+    private func shareOnlineLivePhotos(entry: OnlineWorkEntry, item: AvailableCopyPlatform, source: UIView?, autoLive: Bool = false) {
+        let total = entry.images.count
+        let progressVC = PullProgressViewController(total: total)
+        present(progressVC, animated: true)
+
+        let ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak progressVC] _ in
+            progressVC?.tick()
+        }
+        RunLoop.main.add(ticker, forMode: .common)
+
+        OnlineGalleryClient.shared.downloadWorkLiveAssets(entry: entry, autoLive: autoLive, onProgress: { done, count, name in
+            progressVC.note(done: done, total: count, name: name)
+        }, completion: { [weak self, weak progressVC] result in
+            ticker.invalidate()
+            guard let self = self else { return }
+            let handleResult: (Result<OnlineGalleryClient.LiveAssetsDownloadResult, Error>) -> Void = { res in
+                switch res {
+                case .failure(let error):
+                    self.showToast("实况素材拉取失败：\(error.localizedDescription)；文案已在剪贴板")
+                case .success(let bundle):
+                    self.saveOrShareLiveAssets(bundle, entry: entry, source: source)
+                }
+            }
+            if let vc = progressVC {
+                vc.dismiss(animated: true) { handleResult(result) }
+            } else {
+                handleResult(result)
+            }
+        })
+    }
+
+    private func saveOrShareLiveAssets(
+        _ bundle: OnlineGalleryClient.LiveAssetsDownloadResult,
+        entry: OnlineWorkEntry,
+        source: UIView?
+    ) {
+        let fallbackShare: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            var shareURLs: [URL] = []
+            for asset in bundle.assets {
+                shareURLs.append(asset.imageURL)
+                if let vid = asset.videoURL { shareURLs.append(vid) }
+            }
+            guard !shareURLs.isEmpty else {
+                try? FileManager.default.removeItem(at: bundle.directory)
+                self.showToast("实况文件为空；文案已在剪贴板")
+                return
+            }
+            let activity = UIActivityViewController(activityItems: shareURLs.map { $0 as NSURL },
+                                                    applicationActivities: nil)
+            activity.popoverPresentationController?.sourceView = source ?? self.view
+            activity.completionWithItemsHandler = { [weak self] _, _, _, _ in
+                try? FileManager.default.removeItem(at: bundle.directory)
+                self?.loadOnlineData(silent: true)
+            }
+            self.present(activity, animated: true)
+        }
+
+        if #available(iOS 14, *) {
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                guard status == .authorized || status == .limited else {
+                    DispatchQueue.main.async { fallbackShare() }
+                    return
+                }
+                PHPhotoLibrary.shared().performChanges({
+                    for asset in bundle.assets {
+                        let req = PHAssetCreationRequest.forAsset()
+                        req.addResource(with: .photo, fileURL: asset.imageURL, options: nil)
+                        if let vid = asset.videoURL {
+                            req.addResource(with: .pairedVideo, fileURL: vid, options: nil)
+                        }
+                    }
+                }) { success, _ in
+                    DispatchQueue.main.async { [weak self] in
+                        if success {
+                            try? FileManager.default.removeItem(at: bundle.directory)
+                            self?.showToast("✅ 已保存 \(bundle.assets.count) 张实况图到系统相册，文案已复制")
+                            self?.loadOnlineData(silent: true)
+                        } else {
+                            fallbackShare()
+                        }
+                    }
+                }
+            }
+        } else {
+            fallbackShare()
+        }
+    }
+
     private func openOrShareOnlineVideo(entry: OnlineWorkEntry, shareSource: UIView? = nil) {
         showToast("正在从电脑读取视频…")
         OnlineGalleryClient.shared.downloadWorkVideo(entry: entry) { [weak self] result in
@@ -1939,7 +2033,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     hasSourceCompare: w.hasSourceCompare,
                     maxSimilarity: w.maxSimilarity,
                     similarityTag: w.similarityTag,
-                    videoFilename: w.videoFilename
+                    videoFilename: w.videoFilename,
+                    livePhotos: w.livePhotos
                 )
                 break
             }
@@ -3347,17 +3442,6 @@ private final class WorkCell: UICollectionViewCell {
         let onlineDate = WorkCell.cardDateSuffix(entry.id, entry.title)
         let onlineDatePart = onlineDate.isEmpty ? "" : " · " + onlineDate
 
-        // DSH-135: 统一生命周期倒计时药丸展示
-        let now = Date().timeIntervalSince1970 * 1000
-        var expireAt = entry.expireAtMs
-        var firstShared = entry.firstSharedAtMs
-        if firstShared <= 0, let r = record, r.firstSharedAtMs > 0 {
-            firstShared = r.firstSharedAtMs
-        }
-        if expireAt <= 0 && firstShared > 0 {
-            expireAt = firstShared + 3600000
-        }
-
         // DSH-170: 纯文字 3 标签（产线 · 图数 · 时间），绝对无 Emoji，单行排布不折行
         var onlineDetail = "\(entry.pipelineBadge) · \(entry.imageCountText) · \(entry.formattedDate)"
 
@@ -4098,7 +4182,8 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
                     hasSourceCompare: self.entry.hasSourceCompare,
                     maxSimilarity: self.entry.maxSimilarity,
                     similarityTag: self.entry.similarityTag,
-                    videoFilename: self.entry.videoFilename
+                    videoFilename: self.entry.videoFilename,
+                    livePhotos: self.entry.livePhotos
                 )
                 self.onImageDeleted?(wid, newImages)
 

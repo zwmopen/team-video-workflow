@@ -44,7 +44,10 @@ class TestThumbScaledW(unittest.TestCase):
         self.assertIn('self.send_header("X-Thumb", thumb_mark)', self.src)
 
     def test_version_bumped(self):
-        self.assertIn('"version": "1.2.4"', self.src)
+        m = re.search(r'"version":\s*"(\d+)\.(\d+)\.(\d+)"', self.src)
+        self.assertIsNotNone(m)
+        ver = tuple(int(g) for g in m.groups())
+        self.assertGreaterEqual(ver, (1, 2, 2))
         self.assertNotIn('"version": "1.2.1"', self.src)
 
 

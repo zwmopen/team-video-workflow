@@ -202,9 +202,9 @@ final class ExternalTrashManager {
         Result result = moveTrashedSources(resolver, tree, legacyRoot, library);
         if (!result.failures.isEmpty()) return result;
         for (WorkLibrary.WorkEntry entry : library.listTrash()) {
-            boolean due = entry.deleteScheduledAtMs > 0
+            boolean due = deleteAfterMs >= 0 && (entry.deleteScheduledAtMs > 0
                     ? nowMs >= entry.deleteScheduledAtMs
-                    : RetentionPolicy.shouldPurge(entry.firstSharedAtMs, nowMs, deleteAfterMs);
+                    : RetentionPolicy.shouldPurge(entry.firstSharedAtMs, nowMs, deleteAfterMs));
             if (!due) continue;
             try {
                 deleteExternalEntry(resolver, tree, legacyRoot, library, entry, result);

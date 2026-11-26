@@ -28,8 +28,8 @@ targets:
         # via CFBundleDisplayName, avoiding IPA ZIP filename encoding failures.
         PRODUCT_NAME: Album
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 243
-        MARKETING_VERSION: 0.8.132
+        CURRENT_PROJECT_VERSION: 246
+        MARKETING_VERSION: 0.8.135
         SWIFT_OBJC_BRIDGING_HEADER: Album/Album-Bridging-Header.h
         OTHER_LDFLAGS: "$(inherited) -lz"
     info:
@@ -44,6 +44,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSLocalNetworkUsageDescription: 用于让同一 Wi-Fi 的素材投送中控自动发现这台 iPhone，并把文件直接传入所选作品文件夹。
+        NSPhotoLibraryAddUsageDescription: 用于将实况照片（照片与配套动态视频）保存为 iPhone 原生实况图。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSAllowsArbitraryLoads: true

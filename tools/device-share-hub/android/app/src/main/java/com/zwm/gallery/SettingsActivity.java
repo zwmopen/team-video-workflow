@@ -104,15 +104,25 @@ public final class SettingsActivity extends Activity {
             OnlineService.setClipboardSyncEnabled(this, enabled);
             toast(enabled ? "剪贴板同步已打开" : "剪贴板同步已关闭");
         });
-        root.addView(clipboardSyncSwitch, settingMargins(dp(20)));
+        root.addView(clipboardSyncSwitch, settingMargins(dp(10)));
+
+        SettingSwitchRow autoLiveSwitch = settingSwitch(
+                "分享时静图自动转实况",
+                "开启后点分享自动由电脑本地现烤微动实况图；可在电脑实况工坊调整微动风格",
+                OnlineService.isAutoLiveOnShareEnabled(this));
+        autoLiveSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            OnlineService.setAutoLiveOnShareEnabled(this, enabled);
+            toast(enabled ? "已开启：分享静图时由电脑自动现烤实况" : "已关闭分享自动转实况");
+        });
+        root.addView(autoLiveSwitch, settingMargins(dp(20)));
 
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
-        LinearLayout moveRow = cleanupRow("自动移入回收站", cleanup.moveMinutes / 60);
+        LinearLayout moveRow = cleanupRow("自动移入回收站", cleanup.moveHours());
         moveAfterText = (TextView) moveRow.getChildAt(1);
         moveRow.setOnClickListener(v -> showCleanupPicker(true));
         root.addView(moveRow, settingMargins(dp(8)));
-        LinearLayout deleteRow = cleanupRow("自动彻底删除", cleanup.deleteMinutes / 60);
+        LinearLayout deleteRow = cleanupRow("自动彻底删除", cleanup.deleteHours());
         deleteAfterText = (TextView) deleteRow.getChildAt(1);
         deleteRow.setOnClickListener(v -> showCleanupPicker(false));
         root.addView(deleteRow, settingMargins(dp(20)));
@@ -214,9 +224,9 @@ public final class SettingsActivity extends Activity {
 
     private void showCleanupPicker(boolean editingMove) {
         CleanupSettings.Values current = CleanupSettings.read(this);
-        int currentHours = (editingMove ? current.moveMinutes : current.deleteMinutes) / 60;
-        int[] hours = {0, 1, 3, 6, 24};
-        String[] labels = {"立刻", "1 小时后", "3 小时后", "6 小时后", "24 小时后", "自定义…"};
+        int currentHours = editingMove ? current.moveHours() : current.deleteHours();
+        int[] hours = {CleanupSettings.MANUAL, 0, 1, 3, 6, 24};
+        String[] labels = {"手动", "立刻", "1 小时后", "3 小时后", "6 小时后", "24 小时后", "自定义…"};
         int checked = -1;
         for (int index = 0; index < hours.length; index++) {
             if (hours[index] == currentHours) checked = index;
@@ -235,7 +245,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showCustomCleanupHours(boolean editingMove, int currentHours) {
-        EditText input = numberField(Integer.toString(currentHours));
+        EditText input = numberField(Integer.toString(currentHours >= 0 ? currentHours : 1));
         input.setSelectAllOnFocus(true);
         LinearLayout holder = new LinearLayout(this);
         holder.setPadding(dp(22), dp(4), dp(22), 0);
@@ -256,18 +266,21 @@ public final class SettingsActivity extends Activity {
     }
 
     private void saveCleanupHours(boolean editingMove, int hours) {
-        if (hours < 0 || hours > 720) {
+        if (hours < CleanupSettings.MANUAL || hours > 720) {
             toast("请输入 0～720 的整数小时");
             return;
         }
         CleanupSettings.Values current = CleanupSettings.read(this);
-        int moveHours = editingMove ? hours : current.moveMinutes / 60;
-        int deleteHours = editingMove ? Math.max(hours, current.deleteMinutes / 60) : hours;
-        if (deleteHours < moveHours) {
+        int moveHours = editingMove ? hours : current.moveHours();
+        int deleteHours = editingMove
+                ? (hours >= 0 && current.deleteHours() >= 0
+                    ? Math.max(hours, current.deleteHours()) : current.deleteHours())
+                : hours;
+        if (moveHours >= 0 && deleteHours >= 0 && deleteHours < moveHours) {
             toast("彻底删除时间不能早于移入回收站");
             return;
         }
-        if (!CleanupSettings.save(this, moveHours * 60, deleteHours * 60)) {
+        if (!CleanupSettings.save(this, toStoredMinutes(moveHours), toStoredMinutes(deleteHours))) {
             toast("自动整理时间没有保存");
             return;
         }
@@ -365,7 +378,7 @@ public final class SettingsActivity extends Activity {
                 + "核心场景\n"
                 + "从电脑拖入文件、ZIP 或整个文件夹，手机自动接收并保留原目录结构；含图片和 TXT 的目录会被识别为作品，普通文件也可以继续传送、预览和分享。\n\n"
                 + "作品工作流\n"
-                + "点一次“复制并分享”，应用会立即记录一次，文案自动进入剪贴板，作品图片交给系统分享面板。再次分享会先提醒，避免误发同一个作品。默认 1 小时后进入回收站并从文件管理中彻底删除，时间可在设置中调整。\n\n"
+                + "点一次“复制并分享”，应用会立即记录一次，文案自动进入剪贴板，作品图片交给系统分享面板。再次分享会先提醒，避免误发同一个作品。自动移入回收站和彻底删除默认均为手动，可在设置中选择处理时间。\n\n"
                 + "跨设备传送\n"
                 + "电脑、Android 和 iPhone 在同一 Wi‑Fi 下自动发现。选择设备和文件即可传送，过程带有进度、完整性校验和结果提示。\n\n"
                 + "隐私与权限\n"
@@ -484,8 +497,13 @@ public final class SettingsActivity extends Activity {
     }
 
     private String cleanupTimingText(int hours) {
-        String timing = hours == 0 ? "立刻" : hours + " 小时后";
+        String timing = hours == CleanupSettings.MANUAL ? "手动"
+                : hours == 0 ? "立刻" : hours + " 小时后";
         return timing + "  ›";
+    }
+
+    private int toStoredMinutes(int hours) {
+        return hours == CleanupSettings.MANUAL ? CleanupSettings.MANUAL : hours * 60;
     }
 
     private SettingSwitchRow settingSwitch(String title, String detail, boolean checked) {
