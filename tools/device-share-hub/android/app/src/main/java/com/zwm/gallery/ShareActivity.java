@@ -118,9 +118,30 @@ public final class ShareActivity extends Activity {
                     throw new IllegalStateException("文案读取失败");
                 }
                 ArrayList<String> requested = getIntent().getStringArrayListExtra(EXTRA_IMAGE_NAMES);
-                GalleryShareBridge.PreparedShare prepared = requested == null || requested.isEmpty()
-                        ? GalleryShareBridge.prepare(this, work)
-                        : GalleryShareBridge.prepare(this, work, requested);
+                java.util.List<String> sourceNames = (requested == null || requested.isEmpty()) ? work.images : requested;
+                GalleryShareBridge.PreparedShare prepared;
+                if (OnlineService.isAutoLiveOnShareEnabled(this)) {
+                    String mode = OnlineService.getAutoLiveMotionMode(this);
+                    float ratio = OnlineService.getAutoLiveRatio(this);
+                    float duration = OnlineService.getAutoLiveDuration(this);
+                    boolean skipExisting = OnlineService.isAutoLiveSkipExisting(this);
+                    java.io.File cacheRoot = new java.io.File(getCacheDir(), "local_work_live/" + work.id);
+                    ArrayList<Uri> liveUris = new ArrayList<>();
+                    for (String imageName : sourceNames) {
+                        if (!work.images.contains(imageName)) continue;
+                        java.io.File srcFile = new java.io.File(work.directory, imageName);
+                        java.io.File outFile = new java.io.File(cacheRoot, mode + "_" + imageName + ".live.jpg");
+                        java.io.File finalFile = LiveLocalConverter.convertFileToFile(
+                                this, srcFile, outFile, mode, ratio, duration, skipExisting);
+                        liveUris.add(GalleryShareBridge.publish(this, finalFile, finalFile.getName()));
+                    }
+                    GalleryShareBridge.remember(this, liveUris, System.currentTimeMillis());
+                    prepared = new GalleryShareBridge.PreparedShare(liveUris, "media_store_local_live", "");
+                } else {
+                    prepared = requested == null || requested.isEmpty()
+                            ? GalleryShareBridge.prepare(this, work)
+                            : GalleryShareBridge.prepare(this, work, requested);
+                }
                 runOnUiThread(() -> {
                     try {
                         launchShare(work, prepared, parsed.text, selectedPlatform);

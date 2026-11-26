@@ -186,9 +186,10 @@ final class SettingsViewController: UITableViewController {
     }
 
     private func showAutoLiveModeChoices() {
+        let pct = (AutoLivePreferences.motionRatio - 1.0) * 100.0
         let alert = UIAlertController(
-            title: "选择实况动态效果",
-            message: "默认推荐「自然手持微动」或「几乎静止」，更接近真机实拍",
+            title: "实况动态效果",
+            message: String(format: "手机本地 1440P 硬件实时渲染（%.1f%% · %.1f 秒）", pct, AutoLivePreferences.motionDuration),
             preferredStyle: .actionSheet
         )
         let current = AutoLivePreferences.motionMode
@@ -197,6 +198,36 @@ final class SettingsViewController: UITableViewController {
             alert.addAction(UIAlertAction(title: mode.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
                 AutoLivePreferences.motionMode = mode
                 OnlineGalleryClient.shared.syncLiveMotionMode(mode.rawValue)
+                self?.tableView.reloadData()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "调整微动幅度与时长…", style: .default) { [weak self] _ in
+            self?.showAutoLiveStrengthChoices()
+        })
+        alert.addAction(UIAlertAction(title: "跳过已是实况的照片：\(AutoLivePreferences.skipExistingLive ? "已开启" : "已关闭")", style: .default) { [weak self] _ in
+            AutoLivePreferences.skipExistingLive.toggle()
+            self?.tableView.reloadData()
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
+    }
+
+    private func showAutoLiveStrengthChoices() {
+        let options: [(String, Double, Double)] = [
+            ("极微自然（1.0% · 1.3秒）", 1.010, 1.3),
+            ("标准推荐（1.8% · 1.6秒）", 1.018, 1.6),
+            ("轻柔明显（3.2% · 2.2秒）", 1.032, 2.2)
+        ]
+        let alert = UIAlertController(title: "微动幅度与时长", message: nil, preferredStyle: .actionSheet)
+        for (label, ratio, dur) in options {
+            let isCur = abs(AutoLivePreferences.motionRatio - ratio) < 0.002
+            alert.addAction(UIAlertAction(title: label + (isCur ? "  ✓" : ""), style: .default) { [weak self] _ in
+                AutoLivePreferences.motionRatio = ratio
+                AutoLivePreferences.motionDuration = dur
                 self?.tableView.reloadData()
             })
         }

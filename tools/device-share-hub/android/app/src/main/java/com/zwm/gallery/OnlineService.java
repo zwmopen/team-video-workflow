@@ -99,6 +99,9 @@ public final class OnlineService extends Service {
     public static final String PREF_CLIPBOARD_SYNC_ENABLED = "clipboardSyncEnabled";
     public static final String PREF_AUTO_LIVE_ON_SHARE_ENABLED = "autoLiveOnShareEnabled";
     public static final String PREF_AUTO_LIVE_MOTION_MODE = "autoLiveMotionMode";
+    public static final String PREF_AUTO_LIVE_RATIO = "autoLiveRatio";
+    public static final String PREF_AUTO_LIVE_DURATION = "autoLiveDuration";
+    public static final String PREF_AUTO_LIVE_SKIP_EXISTING = "autoLiveSkipExisting";
     public static final String DEFAULT_AUTO_LIVE_MOTION_MODE = "natural_hold";
     public static final String[] AUTO_LIVE_MODE_IDS = {
             "natural_hold", "subtle_still", "zoom_in", "zoom_out",
@@ -386,6 +389,49 @@ public final class OnlineService extends Service {
             if (AUTO_LIVE_MODE_IDS[i].equals(mode)) return AUTO_LIVE_MODE_TITLES[i];
         }
         return AUTO_LIVE_MODE_TITLES[0];
+    }
+
+    public static float getAutoLiveRatio(Context context) {
+        if (context == null) return LiveMotionPreset.DEFAULT_RATIO;
+        float v = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getFloat(PREF_AUTO_LIVE_RATIO, LiveMotionPreset.DEFAULT_RATIO);
+        return LiveMotionPreset.clampRatio(v);
+    }
+
+    public static void setAutoLiveRatio(Context context, float ratio) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putFloat(PREF_AUTO_LIVE_RATIO, LiveMotionPreset.clampRatio(ratio))
+                .apply();
+    }
+
+    public static float getAutoLiveDuration(Context context) {
+        if (context == null) return LiveMotionPreset.DEFAULT_DURATION_SEC;
+        float v = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getFloat(PREF_AUTO_LIVE_DURATION, LiveMotionPreset.DEFAULT_DURATION_SEC);
+        return LiveMotionPreset.clampDuration(v);
+    }
+
+    public static void setAutoLiveDuration(Context context, float durationSec) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putFloat(PREF_AUTO_LIVE_DURATION, LiveMotionPreset.clampDuration(durationSec))
+                .apply();
+    }
+
+    public static boolean isAutoLiveSkipExisting(Context context) {
+        return context == null || context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_AUTO_LIVE_SKIP_EXISTING, true);
+    }
+
+    public static void setAutoLiveSkipExisting(Context context, boolean skip) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_AUTO_LIVE_SKIP_EXISTING, skip)
+                .apply();
     }
 
     static String currentNetworkType(Context context) {

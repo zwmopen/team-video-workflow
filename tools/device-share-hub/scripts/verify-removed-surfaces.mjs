@@ -29,9 +29,7 @@ const rules = [
       "getPrimaryClip",
       "addPrimaryClipChangedListener",
       "OnPrimaryClipChangedListener",
-      "READ_MEDIA_IMAGES",
       "READ_MEDIA_VIDEO",
-      "READ_MEDIA_VISUAL_USER_SELECTED",
     ],
   },
   {
@@ -41,7 +39,6 @@ const rules = [
   {
     directory: join(projectRoot, "ios", "project.yml"),
     forbidden: [
-      "NSPhotoLibraryUsageDescription",
       "NSScreenCaptureUsageDescription",
     ],
   },

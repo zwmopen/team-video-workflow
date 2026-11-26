@@ -1622,7 +1622,7 @@ public final class OnlineGalleryClient {
         return false;
     }
 
-    private static java.io.File resolveLocalImageCacheFile(java.io.File targetDir, String fileName, boolean isLive, boolean autoLive) {
+    private static java.io.File resolveLocalImageCacheFile(java.io.File targetDir, String fileName, boolean isLive, boolean autoLive, String liveMode) {
         if (!isLive && !autoLive) {
             return new java.io.File(targetDir, fileName);
         }
@@ -1632,11 +1632,19 @@ public final class OnlineGalleryClient {
         if (dot > slash) {
             base = fileName.substring(0, dot);
         }
-        return new java.io.File(targetDir, base + (isLive ? ".live.jpg" : ".autolive.jpg"));
+        if (isLive) {
+            return new java.io.File(targetDir, base + ".live.jpg");
+        }
+        String safeMode = LiveMotionPreset.normalizeMode(liveMode);
+        return new java.io.File(targetDir, base + ".autolive." + safeMode + ".jpg");
+    }
+
+    private static java.io.File resolveLocalImageCacheFile(java.io.File targetDir, String fileName, boolean isLive, boolean autoLive) {
+        return resolveLocalImageCacheFile(targetDir, fileName, isLive, autoLive, null);
     }
 
     private static java.io.File resolveLocalImageCacheFile(java.io.File targetDir, String fileName, boolean isLive) {
-        return resolveLocalImageCacheFile(targetDir, fileName, isLive, false);
+        return resolveLocalImageCacheFile(targetDir, fileName, isLive, false, null);
     }
 
     /**
@@ -1647,11 +1655,16 @@ public final class OnlineGalleryClient {
     }
 
     public boolean areAllWorkImagesCachedLocally(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos) {
+        return areAllWorkImagesCachedLocally(workId, fileNames, livePhotos, false, null);
+    }
+
+    public boolean areAllWorkImagesCachedLocally(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos, boolean autoLive, String liveMode) {
         if (fileNames == null || fileNames.isEmpty()) return true;
         java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
         for (String fileName : fileNames) {
             boolean isLive = isLiveImage(livePhotos, fileName);
-            java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive);
+            boolean isAutoSynth = autoLive && !isLive;
+            java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive, isAutoSynth, liveMode);
             if (!localFile.exists() || localFile.length() <= 0) {
                 return false;
             }
@@ -1663,16 +1676,21 @@ public final class OnlineGalleryClient {
      * DSH-136: 获取本地已完整缓存的文件列表（用于 0 弹窗直接秒开系统分享）
      */
     public List<java.io.File> getCachedLocalWorkImages(String workId, List<String> fileNames) {
-        return getCachedLocalWorkImages(workId, fileNames, null);
+        return getCachedLocalWorkImages(workId, fileNames, null, false, null);
     }
 
     public List<java.io.File> getCachedLocalWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos) {
+        return getCachedLocalWorkImages(workId, fileNames, livePhotos, false, null);
+    }
+
+    public List<java.io.File> getCachedLocalWorkImages(String workId, List<String> fileNames, java.util.Map<String, String> livePhotos, boolean autoLive, String liveMode) {
         List<java.io.File> result = new ArrayList<>();
         if (fileNames == null || fileNames.isEmpty()) return result;
         java.io.File targetDir = new java.io.File(context.getFilesDir(), "work-library/online/" + workId);
         for (String fileName : fileNames) {
             boolean isLive = isLiveImage(livePhotos, fileName);
-            java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive);
+            boolean isAutoSynth = autoLive && !isLive;
+            java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive, isAutoSynth, liveMode);
             if (localFile.exists() && localFile.length() > 0) {
                 result.add(localFile);
             }
@@ -1791,25 +1809,30 @@ public final class OnlineGalleryClient {
      */
     private java.io.File downloadOneImageToFile(String baseUrl, java.io.File targetDir, String workId, String fileName, boolean isLive, boolean autoLive, String liveMode) throws Exception {
         boolean isAutoSynth = autoLive && !isLive;
-        java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive, isAutoSynth);
+        if (isAutoSynth) {
+            String safeMode = LiveMotionPreset.normalizeMode(liveMode);
+            java.io.File rawFile = downloadOneImageToFile(baseUrl, targetDir, workId, fileName, false, false, null);
+            java.io.File liveOut = resolveLocalImageCacheFile(targetDir, fileName, false, true, safeMode);
+            float ratio = OnlineService.getAutoLiveRatio(context);
+            float dur = OnlineService.getAutoLiveDuration(context);
+            boolean skipExisting = OnlineService.isAutoLiveSkipExisting(context);
+            return LiveLocalConverter.convertFileToFile(context, rawFile, liveOut, safeMode, ratio, dur, skipExisting);
+        }
+        java.io.File localFile = resolveLocalImageCacheFile(targetDir, fileName, isLive, false, liveMode);
         // DSH-100：图在 产出素材/ 子目录时返回「成品库根相对路径」，必须先建中间子目录。
         java.io.File parent = localFile.getParentFile();
         if (parent != null && !parent.exists()) parent.mkdirs();
-        if (!isAutoSynth && localFile.exists() && localFile.length() > 0) {
-            return localFile;   // 已缓存直接复用（autoLive 每次回电脑核对最新风格缓存）
+        if (localFile.exists() && localFile.length() > 0) {
+            return localFile;   // 已缓存直接复用
         }
         String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
                 + "&file=" + URLEncoder.encode(fileName, "UTF-8")
-                + ((isLive || isAutoSynth) ? "&live=motion" : "")
-                + (isAutoSynth ? "&auto_live=1" : "")
-                + ((isAutoSynth && liveMode != null && !liveMode.trim().isEmpty())
-                        ? "&live_mode=" + URLEncoder.encode(liveMode.trim(), "UTF-8")
-                        : "");
+                + (isLive ? "&live=motion" : "");
         URL url = new URL(uStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(isAutoSynth ? Math.max(TIMEOUT_MS * 6, 90000) : TIMEOUT_MS * 3);
-        if (isLive || isAutoSynth) {
+        conn.setReadTimeout(TIMEOUT_MS * 3);
+        if (isLive) {
             conn.setRequestProperty("X-Client-Platform", "android");
         }
         int httpCode = conn.getResponseCode();

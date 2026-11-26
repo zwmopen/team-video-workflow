@@ -56,19 +56,30 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var filterButtons: [String: UIButton] = [:]
     private let onlineStatusLabel = UILabel()
 
-    // MARK: - 在线相册状态
-    private var isOnlineMode: Bool = false
+    // MARK: - 来源 3 模式（电脑在线 / 手机本地库 / 手机相册）
+    private enum SourceTab: String {
+        case online
+        case localWork
+        case phoneGallery
+    }
+    private var activeSourceTab: SourceTab = .localWork
+    private var isOnlineMode: Bool { activeSourceTab == .online }
     private var onlineWorks: [OnlineWorkEntry] = []
     private var onlineCategories: [OnlineCategoryItem] = []
     private var onlineStages: [OnlineCategoryItem] = []
     private var selectedOnlineCategory: String = "全部"
-    private var modeButton: UIButton!
+    private var pcModeButton: UIButton!
+    private var phoneModeButton: UIButton!
+    private var galleryModeButton: UIButton!
+    private var folderToolbarButton: UIButton!
     private var folderItem: UIBarButtonItem?
+    private lazy var phoneGalleryVC = PhoneGalleryViewController()
     /// 顶部状态条的短暂过程文案。成功同步后清空，统一回到“已同步…共 N 套”。
     private var onlineStatusOverride: String?
     /// Only the most recently started online refresh may update this screen.
     private var onlineLoadGeneration = 0
     private let prefOnlineModeKey = "pref_is_online_mode"
+    private let prefSourceTabKey = "pref_source_tab_v2"
     /// 自动发现失败后按 15/30/60/120 秒退避；成功同步列表后恢复初始间隔。
     private var autoDiscovering = false
     private var lastAutoDiscoverAt: Date = .distantPast
@@ -247,7 +258,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        isOnlineMode = UserDefaults.standard.bool(forKey: prefOnlineModeKey)
+        if let rawTab = UserDefaults.standard.string(forKey: prefSourceTabKey),
+           let savedTab = SourceTab(rawValue: rawTab) {
+            activeSourceTab = savedTab
+        } else {
+            activeSourceTab = UserDefaults.standard.bool(forKey: prefOnlineModeKey) ? .online : .localWork
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(handleAppWillEnterForeground),
                                                name: UIApplication.willEnterForegroundNotification, object: nil)
         view.backgroundColor = AppColors.background
@@ -255,8 +271,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         configureFilterBar()
         configureCollection()
         configureEmptyView()
+        configurePhoneGalleryChild()
         library.onChange = { [weak self] in
-            guard let self = self, !self.isOnlineMode else { return }
+            guard let self = self, self.activeSourceTab == .localWork else { return }
             self.render()
         }
 
@@ -268,12 +285,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             self.applyViewMode(remoteMode, syncToServer: false, remoteSource: state.updatedBy)
         }
 
-        if isOnlineMode {
+        if activeSourceTab == .phoneGallery {
+            applyPhoneGallerySurface(true)
+            phoneGalleryVC.onShown()
+        } else if isOnlineMode {
+            applyPhoneGallerySurface(false)
             // 【体感加速】先读本地快照进内存（几十毫秒级），再后台拉最新；
             // 最新列表请求统一由 viewWillAppear 发起，避免首屏重复请求。
             primeOnlineDataFromSnapshot()
             LanDiscovery.shared.probeBeacon { _ in }
         } else {
+            applyPhoneGallerySurface(false)
             render()
         }
     }
@@ -348,7 +370,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if isOnlineMode {
+        if activeSourceTab == .phoneGallery {
+            phoneGalleryVC.onShown()
+        } else if isOnlineMode {
             LanDiscovery.shared.probeBeacon { _ in }
             loadOnlineData(silent: true)
             startOnlineAutoRefresh()   // DSH-111：前台期间周期探测，有新作品自动出现
@@ -364,12 +388,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if !isOnlineMode {
+        if activeSourceTab == .localWork {
             showInitialFolderPromptIfNeeded()
         }
     }
     @objc private func handleAppWillEnterForeground() {
-        if isOnlineMode {
+        if activeSourceTab == .phoneGallery {
+            phoneGalleryVC.onShown()
+        } else if isOnlineMode {
             loadOnlineData(silent: true)
         }
     }
@@ -378,52 +404,84 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         NotificationCenter.default.removeObserver(self)
     }
 
+    private func configurePhoneGalleryChild() {
+        addChild(phoneGalleryVC)
+        phoneGalleryVC.view.translatesAutoresizingMaskIntoConstraints = false
+        phoneGalleryVC.view.isHidden = true
+        view.addSubview(phoneGalleryVC.view)
+        NSLayoutConstraint.activate([
+            phoneGalleryVC.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            phoneGalleryVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            phoneGalleryVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            phoneGalleryVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        phoneGalleryVC.didMove(toParent: self)
+    }
+
+    private func makePillIconButton(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIButton {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.layer.cornerRadius = 15
+        btn.imageView?.contentMode = .scaleAspectFit
+        btn.accessibilityLabel = label
+        btn.addTarget(self, action: action, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            btn.widthAnchor.constraint(equalToConstant: 30),
+            btn.heightAnchor.constraint(equalToConstant: 30)
+        ])
+        return btn
+    }
 
     private func configureNavigation() {
         navigationItem.backBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)
         navigationItem.titleView = nil
 
-        modeButton = UIButton(type: .system)
-        modeButton.frame = CGRect(x: 0, y: 0, width: 34, height: 34)
-        modeButton.layer.cornerRadius = 11
-        modeButton.imageView?.contentMode = .scaleAspectFit
-        modeButton.addTarget(self, action: #selector(toggleMode), for: .touchUpInside)
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(configureServerUrl))
-        modeButton.addGestureRecognizer(longPress)
+        // 顶部左侧 3 模式直切胶囊：💻 电脑在线 | 📱 手机本地库 | 🖼️ 手机相册
+        pcModeButton = makePillIconButton(.computer, label: "电脑在线作品（长按配服务器）", action: #selector(selectOnlineModeTapped))
+        let pcLongPress = UILongPressGestureRecognizer(target: self, action: #selector(configureServerUrl))
+        pcModeButton.addGestureRecognizer(pcLongPress)
+
+        phoneModeButton = makePillIconButton(.phone, label: "手机本地作品库", action: #selector(selectLocalWorkModeTapped))
+        galleryModeButton = makePillIconButton(.gallery, label: "手机相册（本地图片与实况工坊）", action: #selector(selectPhoneGalleryModeTapped))
+
+        let pillStack = UIStackView(arrangedSubviews: [pcModeButton, phoneModeButton, galleryModeButton])
+        pillStack.axis = .horizontal
+        pillStack.spacing = 2
+        pillStack.alignment = .center
+        pillStack.isLayoutMarginsRelativeArrangement = true
+        pillStack.layoutMargins = UIEdgeInsets(top: 3, left: 4, bottom: 3, right: 4)
+        pillStack.backgroundColor = AppColors.secondaryBackground
+        pillStack.layer.cornerRadius = 18
+        if #available(iOS 13.0, *) {
+            pillStack.layer.borderWidth = 0.5
+            pillStack.layer.borderColor = AppColors.separator.cgColor
+        }
         updateModeButtonStyle()
 
-        // 顶栏右侧：与安卓严格一致，从左到右依次为
-        // 传送文件 → 来源模式(手机本地/电脑在线) → 刷新作品 → 回收站 → 设置
-        // 这里用 UIStackView 显式排布，而不是 rightBarButtonItems 数组 ——
-        // 后者「数组顺序 ↔ 屏幕左右顺序」的语义容易搞反，无法在本机验证 iOS 渲染，
-        // 用 StackView 可以确保与安卓逐像素对齐。
-        modeButton.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            modeButton.widthAnchor.constraint(equalToConstant: 34),
-            modeButton.heightAnchor.constraint(equalToConstant: 34)
-        ])
+        folderToolbarButton = toolbarButton(.folder, label: "文件浏览", action: #selector(openFiles))
+        let trashBtn = toolbarButton(.trash, label: "回收站", action: #selector(openTrash))
+        folderItem = UIBarButtonItem(customView: folderToolbarButton)
         let rightRow = UIStackView(arrangedSubviews: [
+            folderToolbarButton,
             toolbarButton(.plane, label: "传送文件", action: #selector(openTransfer)),
-            modeButton,
             toolbarButton(.refresh, label: "刷新作品", action: #selector(refreshCurrent)),
-            toolbarButton(.trash, label: "回收站", action: #selector(openTrash)),
+            trashBtn,
             toolbarButton(.settings, label: "设置", action: #selector(openSettings))
         ])
         rightRow.axis = .horizontal
-        rightRow.spacing = 8
+        rightRow.spacing = 5
         rightRow.alignment = .center
         rightRow.distribution = .fill
 
-        let folderItem = toolbarItem(.folder, label: "切换到文件浏览", action: #selector(openFiles))
-        self.folderItem = folderItem
-        navigationItem.leftBarButtonItem = folderItem
+        navigationItem.leftBarButtonItem = UIBarButtonItem(customView: pillStack)
         navigationItem.rightBarButtonItem = UIBarButtonItem(customView: rightRow)
         updateFolderItemVisibility()
     }
 
-    /// DSH-097：folderItem 双模式可见 —— 本地模式进本地文件分发，在线模式进回收站（_已发送 + _垃圾作品 = DSH-095 统一入口）。
+    /// DSH-097：folderItem 双模式可见 —— 本地模式进本地文件分发，在线模式进回收站，手机相册隐藏。
     private func updateFolderItemVisibility() {
-        folderItem?.customView?.isHidden = false
+        let hideInGallery = (activeSourceTab == .phoneGallery)
+        folderToolbarButton?.isHidden = hideInGallery
         folderItem?.accessibilityLabel = isOnlineMode
             ? "在线模式：打开电脑端回收站（_已发送 + _垃圾作品）"
             : "本地模式：打开本地文件浏览"
@@ -440,56 +498,123 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 38),
-            button.heightAnchor.constraint(equalToConstant: 38)
+            button.widthAnchor.constraint(equalToConstant: 36),
+            button.heightAnchor.constraint(equalToConstant: 36)
         ])
         return button
     }
 
     private func updateModeButtonStyle() {
-        // 与安卓严格一致：contentDescription 既说「当前状态」也说「点击会发生什么」
-        if !isOnlineMode {
-            let fg = AppColors.brandLightText
-            let bg = AppColors.brandLightBg
-            modeButton.backgroundColor = bg
-            modeButton.setImage(AlbumToolbarIcon.image(.phone, color: fg), for: .normal)
-            modeButton.accessibilityLabel = "当前：手机本地作品 (点击切换到电脑在线)"
+        let muted = AppColors.secondaryText
+        if activeSourceTab == .online {
+            pcModeButton.backgroundColor = AppColors.onlineBlueBg
+            pcModeButton.setImage(AlbumToolbarIcon.image(.computer, color: AppColors.onlineBlueText), for: .normal)
         } else {
-            let fg = AppColors.onlineBlueText
-            let bg = AppColors.onlineBlueBg
-            modeButton.backgroundColor = bg
-            modeButton.setImage(AlbumToolbarIcon.image(.computer, color: fg), for: .normal)
-            modeButton.accessibilityLabel = "当前：电脑在线作品 (点击切换到手机本地)"
+            pcModeButton.backgroundColor = .clear
+            pcModeButton.setImage(AlbumToolbarIcon.image(.computer, color: muted), for: .normal)
+        }
+        if activeSourceTab == .localWork {
+            phoneModeButton.backgroundColor = AppColors.brandLightBg
+            phoneModeButton.setImage(AlbumToolbarIcon.image(.phone, color: AppColors.brandLightText), for: .normal)
+        } else {
+            phoneModeButton.backgroundColor = .clear
+            phoneModeButton.setImage(AlbumToolbarIcon.image(.phone, color: muted), for: .normal)
+        }
+        if activeSourceTab == .phoneGallery {
+            galleryModeButton.backgroundColor = AppColors.statusWarningBg
+            galleryModeButton.setImage(AlbumToolbarIcon.image(.gallery, color: AppColors.statusWarningText), for: .normal)
+        } else {
+            galleryModeButton.backgroundColor = .clear
+            galleryModeButton.setImage(AlbumToolbarIcon.image(.gallery, color: muted), for: .normal)
         }
     }
 
+    @objc private func selectOnlineModeTapped() {
+        switchSourceTab(.online)
+    }
+
+    @objc private func selectLocalWorkModeTapped() {
+        switchSourceTab(.localWork)
+    }
+
+    @objc private func selectPhoneGalleryModeTapped() {
+        switchSourceTab(.phoneGallery)
+    }
+
     @objc private func toggleMode() {
-        isOnlineMode.toggle()
+        switchSourceTab(isOnlineMode ? .localWork : .online)
+    }
+
+    private func applyPhoneGallerySurface(_ galleryActive: Bool) {
+        phoneGalleryVC.view.isHidden = !galleryActive
+        onlineStatusLabel.isHidden = galleryActive
+        filterScrollView.isHidden = galleryActive
+        workSearchBar.isHidden = galleryActive
+        onlineViewModeButton.isHidden = galleryActive
+        onlineFilterButton.isHidden = galleryActive
+        onlineSortButton.isHidden = galleryActive
+        if galleryActive {
+            collectionView.isHidden = true
+            emptyStack.isHidden = true
+            view.bringSubviewToFront(phoneGalleryVC.view)
+        }
+    }
+
+    private func switchSourceTab(_ tab: SourceTab) {
+        if tab == activeSourceTab {
+            if tab == .online {
+                showToast("正在刷新电脑在线作品…")
+                loadOnlineData(silent: false)
+            } else if tab == .phoneGallery {
+                phoneGalleryVC.refreshGallery()
+            }
+            return
+        }
+        activeSourceTab = tab
+        UserDefaults.standard.set(tab.rawValue, forKey: prefSourceTabKey)
         UserDefaults.standard.set(isOnlineMode, forKey: prefOnlineModeKey)
         updateModeButtonStyle()
         updateFolderItemVisibility()
-        if isOnlineMode {
+
+        switch tab {
+        case .online:
+            applyPhoneGallerySurface(false)
             primeOnlineDataFromSnapshot()
             onlineStatusOverride = "正在同步电脑在线作品…"
             updateOnlineStatusHint()
             renderOnlineUI()
             showToast("已切换到：💻 电脑在线相册")
             loadOnlineData()
-        } else {
+            startOnlineAutoRefresh()
+        case .localWork:
+            stopOnlineAutoRefresh()
+            applyPhoneGallerySurface(false)
             onlineLoadGeneration += 1
             collectionView.refreshControl?.endRefreshing()
             onlineStatusOverride = nil
-            showToast("已切换到：📱 手机本地相册")
+            showToast("已切换到：📱 手机本地作品库")
             render()
+        case .phoneGallery:
+            stopOnlineAutoRefresh()
+            onlineLoadGeneration += 1
+            collectionView.refreshControl?.endRefreshing()
+            onlineStatusOverride = nil
+            applyPhoneGallerySurface(true)
+            phoneGalleryVC.onShown()
+            showToast("已切换到：🖼️ 手机相册（本地图片与实况工坊）")
         }
     }
 
-    /// 与安卓一致：顶栏「刷新作品」按钮 —— 在线模式触发在线刷新，本地模式触发本地重扫。
+    /// 顶栏「刷新」按钮 —— 按当前 3 模式分流。
     @objc private func refreshCurrent() {
-        if isOnlineMode {
+        switch activeSourceTab {
+        case .phoneGallery:
+            showToast("正在刷新本机相册")
+            phoneGalleryVC.refreshGallery()
+        case .online:
             showToast("正在刷新电脑作品…")
             loadOnlineData(silent: false)
-        } else {
+        case .localWork:
             showToast("正在刷新作品")
             library.refresh(showConfirmation: true)
         }
@@ -1406,7 +1531,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     // MARK: - 本地模式渲染
     private func render() {
-        guard isViewLoaded, !isOnlineMode else { return }
+        guard isViewLoaded, activeSourceTab == .localWork else { return }
         updateFilterTitles()
         collectionView.reloadData()
         collectionView.refreshControl?.endRefreshing()
@@ -1857,6 +1982,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func shareOnlineLivePhotos(entry: OnlineWorkEntry, item: AvailableCopyPlatform, source: UIView?, autoLive: Bool = false) {
+        if autoLive && !entry.hasLivePhotos {
+            shareOnlineWithLocalLiveEngine(entry: entry, source: source)
+            return
+        }
         let total = entry.images.count
         let progressVC = PullProgressViewController(total: total)
         present(progressVC, animated: true)
@@ -1867,7 +1996,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         RunLoop.main.add(ticker, forMode: .common)
 
         let selectedMode = AutoLivePreferences.motionMode.rawValue
-        OnlineGalleryClient.shared.downloadWorkLiveAssets(entry: entry, autoLive: autoLive, liveMode: selectedMode, onProgress: { done, count, name in
+        OnlineGalleryClient.shared.downloadWorkLiveAssets(entry: entry, autoLive: false, liveMode: selectedMode, onProgress: { done, count, name in
             progressVC.note(done: done, total: count, name: name)
         }, completion: { [weak self, weak progressVC] result in
             ticker.invalidate()
@@ -1884,6 +2013,84 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 vc.dismiss(animated: true) { handleResult(result) }
             } else {
                 handleResult(result)
+            }
+        })
+    }
+
+    private func shareOnlineWithLocalLiveEngine(entry: OnlineWorkEntry, source: UIView?) {
+        let total = entry.images.count
+        let mode = AutoLivePreferences.motionMode
+        let ratio = AutoLivePreferences.motionRatio
+        let duration = AutoLivePreferences.motionDuration
+
+        let convertLocally: ([URL]) -> Void = { [weak self] imageURLs in
+            guard let self = self, !imageURLs.isEmpty else {
+                self?.showToast("原图为空，文案已在剪贴板")
+                return
+            }
+            let loading = UIAlertController(title: "正在手机本地 1440P 生成实况图", message: "请稍候…", preferredStyle: .alert)
+            self.present(loading, animated: true)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let stageDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("online-locallive-\(UUID().uuidString)", isDirectory: true)
+                var assets: [OnlineGalleryClient.DownloadedLiveAsset] = []
+                var firstErr: Error?
+                for url in imageURLs {
+                    do {
+                        let pair = try OnDeviceLivePhotoEngine.shared.convertFileToLivePair(
+                            imageURL: url, preset: mode, ratio: ratio, duration: duration
+                        )
+                        assets.append(OnlineGalleryClient.DownloadedLiveAsset(imageURL: pair.imageURL, videoURL: pair.videoURL))
+                    } catch {
+                        firstErr = error
+                        break
+                    }
+                }
+                DispatchQueue.main.async {
+                    loading.dismiss(animated: true) {
+                        if let err = firstErr, assets.isEmpty {
+                            self.showToast("本地生成实况失败：\(err.localizedDescription)；文案已在剪贴板")
+                            return
+                        }
+                        let bundle = OnlineGalleryClient.LiveAssetsDownloadResult(directory: stageDir, assets: assets)
+                        self.saveOrShareLiveAssets(bundle, entry: entry, source: source)
+                    }
+                }
+            }
+        }
+
+        if OnlineGalleryClient.shared.areAllWorkImagesCachedLocally(entry) {
+            let cachedURLs = OnlineGalleryClient.shared.getCachedLocalWorkImages(entry)
+            if !cachedURLs.isEmpty {
+                convertLocally(cachedURLs)
+                return
+            }
+        }
+
+        let progressVC = PullProgressViewController(total: total)
+        present(progressVC, animated: true)
+        let ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak progressVC] _ in
+            progressVC?.tick()
+        }
+        RunLoop.main.add(ticker, forMode: .common)
+
+        OnlineGalleryClient.shared.downloadWorkImages(entry: entry, onProgress: { done, count, name in
+            progressVC.note(done: done, total: count, name: name)
+        }, completion: { [weak self, weak progressVC] result in
+            ticker.invalidate()
+            guard let self = self else { return }
+            let nextStep: () -> Void = {
+                switch result {
+                case .success(let urls):
+                    convertLocally(urls)
+                case .failure(let error):
+                    self.showToast("原图拉取失败：\(error.localizedDescription)；文案已在剪贴板")
+                }
+            }
+            if let vc = progressVC {
+                vc.dismiss(animated: true) { nextStep() }
+            } else {
+                nextStep()
             }
         })
     }
@@ -2121,11 +2328,51 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func share(_ work: WorkItem, item: AvailableCopyPlatform, source: UIView?) {
         do {
-            let controller = UIActivityViewController(activityItems: try library.prepareShare(
-                work, images: work.imageURLs, platform: item.platform, copyText: item.copyText),
-                                                      applicationActivities: nil)
-            controller.popoverPresentationController?.sourceView = source
-            present(controller, animated: true)
+            let preparedItems = try library.prepareShare(
+                work, images: work.imageURLs, platform: item.platform, copyText: item.copyText)
+            if !AutoLivePreferences.isEnabled {
+                let controller = UIActivityViewController(activityItems: preparedItems, applicationActivities: nil)
+                controller.popoverPresentationController?.sourceView = source
+                present(controller, animated: true)
+                return
+            }
+            let mode = AutoLivePreferences.motionMode
+            let ratio = AutoLivePreferences.motionRatio
+            let duration = AutoLivePreferences.motionDuration
+            let urls = work.imageURLs
+            let loading = UIAlertController(title: "正在手机本地 1440P 生成实况图", message: "请稍候…", preferredStyle: .alert)
+            present(loading, animated: true)
+            DispatchQueue.global(qos: .userInitiated).async {
+                var shareItems: [NSURL] = []
+                var firstErr: Error?
+                for url in urls {
+                    do {
+                        let pair = try OnDeviceLivePhotoEngine.shared.convertFileToLivePair(
+                            imageURL: url, preset: mode, ratio: ratio, duration: duration
+                        )
+                        shareItems.append(pair.imageURL as NSURL)
+                        shareItems.append(pair.videoURL as NSURL)
+                    } catch {
+                        firstErr = error
+                        break
+                    }
+                }
+                DispatchQueue.main.async { [weak self] in
+                    loading.dismiss(animated: true) {
+                        guard let self = self else { return }
+                        if let err = firstErr {
+                            self.showToast("实况转换失败：\(err.localizedDescription)，改为原图分享")
+                            let fallback = UIActivityViewController(activityItems: preparedItems, applicationActivities: nil)
+                            fallback.popoverPresentationController?.sourceView = source
+                            self.present(fallback, animated: true)
+                            return
+                        }
+                        let controller = UIActivityViewController(activityItems: shareItems, applicationActivities: nil)
+                        controller.popoverPresentationController?.sourceView = source
+                        self.present(controller, animated: true)
+                    }
+                }
+            }
         } catch {
             render()
             showError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
@@ -2444,7 +2691,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 }
 
-enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder, phone, computer }
+enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder, phone, computer, gallery }
 
 enum AlbumToolbarIcon {
     static func image(_ symbol: AlbumToolbarSymbol, color: UIColor) -> UIImage {
@@ -2528,6 +2775,16 @@ enum AlbumToolbarIcon {
             stand.stroke()
             let base = UIBezierPath(roundedRect: CGRect(x: 7.5, y: 18.5, width: 8, height: 1.8), cornerRadius: 0.9)
             base.fill()
+        case .gallery:
+            let frame = UIBezierPath(roundedRect: CGRect(x: 3, y: 4, width: 17, height: 15), cornerRadius: 2.2)
+            frame.lineWidth = 1.7
+            frame.stroke()
+            let sun = UIBezierPath(ovalIn: CGRect(x: 6.5, y: 7, width: 2.8, height: 2.8))
+            sun.fill()
+            path.move(to: CGPoint(x: 4.5, y: 17.5))
+            path.addLine(to: CGPoint(x: 11.5, y: 11))
+            path.addLine(to: CGPoint(x: 19, y: 17.5))
+            path.stroke()
         }
         return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
@@ -4206,6 +4463,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
     }
 
     private func showToast(_ text: String) {
+        toastView?.removeFromSuperview()
         let toast = UILabel()
         toast.text = text
         toast.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
@@ -4216,16 +4474,19 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
         toast.clipsToBounds = true
         toast.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(toast)
+        toastView = toast
         NSLayoutConstraint.activate([
             toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toast.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            toast.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -86),
             toast.heightAnchor.constraint(equalToConstant: 32),
-            toast.widthAnchor.constraint(greaterThanOrEqualToConstant: 120)
+            toast.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
+            toast.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -36)
         ])
         UIView.animate(withDuration: 0.3, delay: 1.5, options: .curveEaseOut, animations: {
             toast.alpha = 0
-        }, completion: { _ in
+        }, completion: { [weak self] _ in
             toast.removeFromSuperview()
+            if self?.toastView === toast { self?.toastView = nil }
         })
     }
 

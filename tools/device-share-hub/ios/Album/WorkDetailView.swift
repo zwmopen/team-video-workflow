@@ -290,17 +290,57 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
     private func executeShare(images: [URL]) {
         do {
             let items = try library.prepareShare(work, images: images)
-            let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
-            controller.popoverPresentationController?.sourceView = actions
-            controller.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                guard let self = self else { return }
-                if completed { self.showToast("🚀 分享完成") }
-                self.render()
+            if !AutoLivePreferences.isEnabled {
+                presentDetailShareSheet(items: items)
+                return
             }
-            present(controller, animated: true)
+            let mode = AutoLivePreferences.motionMode
+            let ratio = AutoLivePreferences.motionRatio
+            let duration = AutoLivePreferences.motionDuration
+            let loading = UIAlertController(title: "正在手机本地 1440P 生成实况图", message: "请稍候…", preferredStyle: .alert)
+            present(loading, animated: true)
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                var shareURLs: [NSURL] = []
+                var firstErr: Error?
+                for url in images {
+                    do {
+                        let pair = try OnDeviceLivePhotoEngine.shared.convertFileToLivePair(
+                            imageURL: url, preset: mode, ratio: ratio, duration: duration
+                        )
+                        shareURLs.append(pair.imageURL as NSURL)
+                        shareURLs.append(pair.videoURL as NSURL)
+                    } catch {
+                        firstErr = error
+                        break
+                    }
+                }
+                DispatchQueue.main.async { [weak self] in
+                    loading.dismiss(animated: true) {
+                        guard let self = self else { return }
+                        if let err = firstErr {
+                            self.showToast("实况转换失败：\(err.localizedDescription)，改为原图分享")
+                            self.presentDetailShareSheet(items: items)
+                            return
+                        }
+                        self.presentDetailShareSheet(items: shareURLs)
+                    }
+                }
+            }
         } catch {
             showToast(error.localizedDescription)
         }
+    }
+
+    private func presentDetailShareSheet(items: [Any]) {
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        controller.popoverPresentationController?.sourceView = actions
+        controller.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            guard let self = self else { return }
+            if completed { self.showToast("🚀 分享完成") }
+            self.render()
+        }
+        present(controller, animated: true)
     }
 
     @objc private func sendImages() {
@@ -382,7 +422,7 @@ final class WorkDetailViewController: UIViewController, UICollectionViewDataSour
         view.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -70),
             label.heightAnchor.constraint(equalToConstant: 38),
             label.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
             label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40)

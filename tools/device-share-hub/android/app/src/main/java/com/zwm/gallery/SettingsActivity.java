@@ -108,8 +108,9 @@ public final class SettingsActivity extends Activity {
 
         SettingSwitchRow autoLiveSwitch = settingSwitch(
                 "分享时静图自动转实况",
-                "当前效果：" + OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(this)) + " · 点文字切换效果",
+                "",
                 OnlineService.isAutoLiveOnShareEnabled(this));
+        updateAutoLiveRowDetail(autoLiveSwitch);
         autoLiveSwitch.setOnCheckedChangeListener((button, enabled) -> {
             OnlineService.setAutoLiveOnShareEnabled(this, enabled);
             toast(enabled ? "已开启：分享静图时自动转为实况图" : "已关闭分享自动转实况");
@@ -228,13 +229,52 @@ public final class SettingsActivity extends Activity {
                     String chosenId = OnlineService.AUTO_LIVE_MODE_IDS[which];
                     String chosenTitle = OnlineService.AUTO_LIVE_MODE_TITLES[which];
                     OnlineService.setAutoLiveMotionMode(this, chosenId);
-                    row.setDetail("当前效果：" + chosenTitle + " · 点文字切换效果");
+                    updateAutoLiveRowDetail(row);
                     new OnlineGalleryClient(this).syncLiveMotionModeAsync(chosenId);
                     toast("已切换为：" + chosenTitle);
                     dialog.dismiss();
                 })
+                .setNeutralButton("幅度与选项", (dialog, which) -> showAutoLiveStrengthDialog(row))
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    private void showAutoLiveStrengthDialog(SettingSwitchRow row) {
+        String[] items = {
+                "极微自然（1.0% · 1.3 秒）",
+                "标准推荐（1.8% · 1.6 秒）",
+                "轻柔明显（3.2% · 2.2 秒）",
+                "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(this) ? "已开启" : "已关闭")
+        };
+        float r = OnlineService.getAutoLiveRatio(this);
+        int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("微动幅度与选项")
+                .setSingleChoiceItems(items, checked, (dialog, which) -> {
+                    if (which == 3) {
+                        boolean next = !OnlineService.isAutoLiveSkipExisting(this);
+                        OnlineService.setAutoLiveSkipExisting(this, next);
+                        toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一按当前效果重新生成");
+                    } else {
+                        float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
+                        float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
+                        OnlineService.setAutoLiveRatio(this, newRatio);
+                        OnlineService.setAutoLiveDuration(this, newDur);
+                        updateAutoLiveRowDetail(row);
+                        toast("已调整为：" + items[which]);
+                    }
+                    dialog.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void updateAutoLiveRowDetail(SettingSwitchRow row) {
+        String title = OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(this));
+        float pct = (OnlineService.getAutoLiveRatio(this) - 1.0f) * 100f;
+        row.setDetail(String.format(java.util.Locale.US,
+                "当前效果：%s（%.1f%% · %.1f秒）· 点文字切换效果",
+                title, pct, OnlineService.getAutoLiveDuration(this)));
     }
 
     private void saveName() {

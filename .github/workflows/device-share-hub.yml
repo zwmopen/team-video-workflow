@@ -263,7 +263,8 @@ jobs:
               echo "Release APK must declare FOREGROUND_SERVICE_DATA_SYNC for the update service" >> /tmp/device-share-android-build.log
               build_status=1
             fi
-            for forbidden_permission in SYSTEM_ALERT_WINDOW READ_MEDIA_IMAGES READ_MEDIA_VIDEO READ_MEDIA_VISUAL_USER_SELECTED; do
+            # Phone gallery tab merges LiveStudio into Album per user request; only block video/overlay surfaces.
+            for forbidden_permission in SYSTEM_ALERT_WINDOW READ_MEDIA_VIDEO; do
               if printf '%s\n' "$permissions" | grep -q "uses-permission: name='android.permission.$forbidden_permission'"; then
                 echo "Release APK must not declare removed privacy permission: $forbidden_permission" >> /tmp/device-share-android-build.log
                 build_status=1

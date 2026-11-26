@@ -120,6 +120,10 @@ public final class MainActivity extends Activity {
     private static final String PREF_TREE_URI = "libraryTreeUri";
     private static final String PREF_TREE_NAME = "libraryTreeName";
     private static final String PREF_IS_ONLINE_MODE = "is_online_mode";
+    private static final String PREF_SOURCE_MODE = "active_source_mode_v2";
+    private static final int SOURCE_LOCAL = 0;
+    private static final int SOURCE_ONLINE = 1;
+    private static final int SOURCE_GALLERY = 2;
     // DSH-109：在线相册列表排序键（与 services/online_gallery_service.py SORT_KEYS 对齐）
     private static final String PREF_ONLINE_SORT_KEY = "online_sort_key";
     private static final String DEFAULT_ONLINE_SORT = "time_desc";
@@ -218,8 +222,13 @@ public final class MainActivity extends Activity {
     private String searchQuery = "";
     private OnlineGalleryClient onlineClient;
     private boolean isOnlineMode = false;
+    private int activeSourceMode = SOURCE_LOCAL;
     private boolean enteredTrashFromOnline = false;
     private ImageButton sourceModeButton;
+    private ImageButton modePcBtn;
+    private ImageButton modePhoneBtn;
+    private ImageButton modeGalleryBtn;
+    private PhoneGalleryPane phoneGalleryPane;
     private OnlineGalleryClient.CategoriesResult lastCategoriesResult;
     /** 当前 onlineWorks 是否来自磁盘快照（用于状态栏标注「本地快照」） */
     private boolean onlineListFromSnapshot = false;
@@ -327,12 +336,22 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         ThemePalette.applySystemBarAppearance(this);
         android.os.StrictMode.setThreadPolicy(new android.os.StrictMode.ThreadPolicy.Builder().permitAll().build());
-        isOnlineMode = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_IS_ONLINE_MODE, false);
+        SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (sp.contains(PREF_SOURCE_MODE)) {
+            activeSourceMode = sp.getInt(PREF_SOURCE_MODE, SOURCE_LOCAL);
+        } else {
+            activeSourceMode = sp.getBoolean(PREF_IS_ONLINE_MODE, false) ? SOURCE_ONLINE : SOURCE_LOCAL;
+        }
+        isOnlineMode = (activeSourceMode == SOURCE_ONLINE);
         onlineClient = new OnlineGalleryClient(this);
         ensureDeviceId();
         setContentView(ScreenInsets.protect(buildUi()));
         // 恢复上次的在线模式时，立刻开始接收电脑端信标（无需扫描即可拿到地址）
-        if (isOnlineMode) startOnlineBeaconListener();
+        if (activeSourceMode == SOURCE_GALLERY) {
+            applyPhoneGallerySurface(true);
+        } else if (isOnlineMode) {
+            startOnlineBeaconListener();
+        }
         startReceiver();
         requestLegacyStoragePermission();
         if (Build.VERSION.SDK_INT >= 33) Api33Back.register(this);
@@ -342,7 +361,9 @@ public final class MainActivity extends Activity {
         // 本地读取在线列表快照；网络列表请求只在在线页面可见时发起，避免冷启动重复请求。
         primeOnlineWorksInBackground();
         getWindow().getDecorView().post(() -> {
-            showInitialFolderPromptIfNeeded();
+            if (activeSourceMode == SOURCE_LOCAL) {
+                showInitialFolderPromptIfNeeded();
+            }
         });
     }
 
@@ -356,7 +377,9 @@ public final class MainActivity extends Activity {
         filter.addAction(UpdateDownloadReceiver.ACTION_UPDATE_READY);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerLegacyReceiver(filter);
-        if (isOnlineMode) {
+        if (activeSourceMode == SOURCE_GALLERY) {
+            if (phoneGalleryPane != null) phoneGalleryPane.onShown();
+        } else if (isOnlineMode) {
             startOnlineBeaconListener();   // 回到前台重新开始接收电脑信标
             refreshOnlineWorks(false);
             startOnlineAutoRefresh();      // DSH-111：前台期间周期探测，有新作品自动出现
@@ -384,6 +407,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         onlineClient.stopBeaconListener();
+        if (phoneGalleryPane != null) phoneGalleryPane.destroy();
         worker.shutdownNow();
         super.onDestroy();
     }
@@ -395,6 +419,11 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (activeSourceMode == SOURCE_GALLERY) {
+            if (phoneGalleryPane != null && phoneGalleryPane.handleBack()) return;
+            switchToLocalMode();
+            return;
+        }
         if (searchQuery != null && !searchQuery.isEmpty()) {
             if (searchInput != null) {
                 searchInput.setText("");
@@ -459,14 +488,14 @@ public final class MainActivity extends Activity {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        titleRow.setPadding(dp(12), dp(18), dp(12), dp(10));
+        titleRow.setPadding(dp(10), dp(14), dp(10), dp(8));
         titleRow.setBackgroundColor(ThemePalette.getBgPrimary(this));
         LinearLayout titleCluster = new LinearLayout(this);
         titleCluster.setOrientation(LinearLayout.HORIZONTAL);
         titleCluster.setGravity(Gravity.CENTER_VERTICAL);
-        headingText = text("", 20, true);
+        headingText = text("", 16, true);
         headingText.setSingleLine(true);
-        headingText.setAutoSizeTextTypeUniformWithConfiguration(18, 23, 1,
+        headingText.setAutoSizeTextTypeUniformWithConfiguration(13, 18, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP);
         titleCluster.addView(headingText, new LinearLayout.LayoutParams(-2, -2));
         scannedCountText = text("", 12, true);
@@ -476,9 +505,41 @@ public final class MainActivity extends Activity {
         scannedCountText.setBackground(round(ThemePalette.getBrandLightBg(this), 14));
         scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
         scannedCountText.setVisibility(View.GONE);
-        modeButton = iconButton(R.drawable.ic_file_folder, "切换到文件浏览");
-        // DSH-097：folderItem 双模式分发 —— 本地模式 toggle fileMode（与历史一致），
-        // 在线模式直接调 showTrash() 跳到回收站（与 iOS ContentView.openFiles 模式分流对齐）。
+
+        // 顶部 3 模式直切胶囊：💻 电脑在线 | 📱 手机本地库 | 🖼️ 手机相册
+        LinearLayout modeSwitcherPill = new LinearLayout(this);
+        modeSwitcherPill.setOrientation(LinearLayout.HORIZONTAL);
+        modeSwitcherPill.setGravity(Gravity.CENTER_VERTICAL);
+        modeSwitcherPill.setPadding(dp(3), dp(3), dp(3), dp(3));
+        modeSwitcherPill.setBackground(roundWithStroke(ThemePalette.getPillBg(this), 21, ThemePalette.getCardStroke(this)));
+
+        modePcBtn = pillModeButton(R.drawable.ic_mode_pc, "电脑在线作品（长按配服务器）");
+        modePcBtn.setOnClickListener(v -> selectSourceMode(SOURCE_ONLINE));
+        modePcBtn.setOnLongClickListener(v -> {
+            showOnlineStatusOrConfigDialog();
+            return true;
+        });
+
+        modePhoneBtn = pillModeButton(R.drawable.ic_mode_phone, "手机本地作品库");
+        modePhoneBtn.setOnClickListener(v -> selectSourceMode(SOURCE_LOCAL));
+        sourceModeButton = modePhoneBtn;
+
+        modeGalleryBtn = pillModeButton(R.drawable.ic_mode_gallery, "手机相册（本地图片与实况工坊）");
+        modeGalleryBtn.setOnClickListener(v -> selectSourceMode(SOURCE_GALLERY));
+
+        LinearLayout.LayoutParams pmLp1 = new LinearLayout.LayoutParams(dp(34), dp(32));
+        LinearLayout.LayoutParams pmLp2 = new LinearLayout.LayoutParams(dp(34), dp(32));
+        pmLp2.setMargins(dp(2), 0, dp(2), 0);
+        LinearLayout.LayoutParams pmLp3 = new LinearLayout.LayoutParams(dp(34), dp(32));
+        modeSwitcherPill.addView(modePcBtn, pmLp1);
+        modeSwitcherPill.addView(modePhoneBtn, pmLp2);
+        modeSwitcherPill.addView(modeGalleryBtn, pmLp3);
+        updateSourceModeButtonStyle();
+        titleRow.addView(modeSwitcherPill, new LinearLayout.LayoutParams(-2, -2));
+
+        titleRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+
+        modeButton = compactToolbarButton(R.drawable.ic_file_folder, "切换到文件浏览");
         modeButton.setOnClickListener(v -> {
             if (isOnlineMode) {
                 showTrash();
@@ -488,29 +549,21 @@ public final class MainActivity extends Activity {
                 showFileMode();
             }
         });
-        // DSH-097：folderItem 双模式可见 —— 删 isOnlineMode 隐藏，与 iOS folderItem.isHidden = false 对齐。
-        titleRow.addView(modeButton, iconParams(false));
-        titleRow.addView(titleCluster, new LinearLayout.LayoutParams(0, -2, 1));
-        ImageButton transfer = iconButton(R.drawable.ic_album_transfer, "传送文件");
+        titleRow.addView(modeButton, compactIconParams(false));
+        ImageButton transfer = compactToolbarButton(R.drawable.ic_album_transfer, "传送文件");
         transfer.setOnClickListener(v -> {
             toast("文件传输");
             startActivity(new Intent(this, TransferActivity.class));
         });
-        titleRow.addView(transfer, iconParams(true));
+        titleRow.addView(transfer, compactIconParams(true));
 
-        sourceModeButton = iconButton(R.drawable.ic_mode_phone, "当前：手机本地作品 (点击切换到电脑在线)");
-        sourceModeButton.setOnClickListener(v -> toggleSourceMode());
-        sourceModeButton.setOnLongClickListener(v -> {
-            showOnlineStatusOrConfigDialog();
-            return true;
-        });
-        updateSourceModeButtonStyle();
-        titleRow.addView(sourceModeButton, iconParams(true));
-
-        leftModeButton = iconButton(R.drawable.ic_album_refresh, "刷新作品");
+        leftModeButton = compactToolbarButton(R.drawable.ic_album_refresh, "刷新作品");
         leftModeButton.setVisibility(View.GONE);
         leftModeButton.setOnClickListener(v -> {
-            if (fileMode) {
+            if (activeSourceMode == SOURCE_GALLERY) {
+                if (phoneGalleryPane != null) phoneGalleryPane.refresh();
+                toast("正在刷新本机相册");
+            } else if (fileMode) {
                 refreshFiles();
                 toast("正在刷新文件");
             } else if (showingOnlineRecycle || showingTrash) {
@@ -523,8 +576,8 @@ public final class MainActivity extends Activity {
                 importSelectedTree(true);
             }
         });
-        titleRow.addView(leftModeButton, iconParams(true));
-        rightModeButton = iconButton(R.drawable.ic_album_trash, "回收站");
+        titleRow.addView(leftModeButton, compactIconParams(true));
+        rightModeButton = compactToolbarButton(R.drawable.ic_album_trash, "回收站");
         rightModeButton.setVisibility(View.VISIBLE);
         rightModeButton.setOnClickListener(v -> {
             if (fileMode) {
@@ -537,7 +590,6 @@ public final class MainActivity extends Activity {
             } else if (showingTrash) {
                 confirmClearTrash();
             } else if (isOnlineMode) {
-                // 【直达在线回收站】在线相册模式下一键直达电脑端「_已发送」与「_垃圾作品」
                 toast("电脑端回收站（_已发送）");
                 showOnlineRecycle("sent");
             } else {
@@ -545,13 +597,13 @@ public final class MainActivity extends Activity {
                 showTrash();
             }
         });
-        titleRow.addView(rightModeButton, iconParams(true));
-        ImageButton settings = iconButton(R.drawable.ic_album_settings, "设置");
+        titleRow.addView(rightModeButton, compactIconParams(true));
+        ImageButton settings = compactToolbarButton(R.drawable.ic_album_settings, "设置");
         settings.setOnClickListener(v -> {
             toast("设置");
             startActivity(new Intent(this, SettingsActivity.class));
         });
-        titleRow.addView(settings, iconParams(true));
+        titleRow.addView(settings, compactIconParams(true));
         categoryBar = new LinearLayout(this);
         categoryBar.setOrientation(LinearLayout.HORIZONTAL);
         categoryBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -809,10 +861,16 @@ public final class MainActivity extends Activity {
         refreshParams.setMargins(0, dp(6), 0, 0);
         contentFrame.addView(refreshIndicator, refreshParams);
         contentFrame.addView(contentScroll, new FrameLayout.LayoutParams(-1, -1));
+        phoneGalleryPane = new PhoneGalleryPane(this);
+        phoneGalleryPane.getView().setVisibility(View.GONE);
+        contentFrame.addView(phoneGalleryPane.getView(), new FrameLayout.LayoutParams(-1, -1));
         LinearLayout frozenLayout = new LinearLayout(this);
         frozenLayout.setOrientation(LinearLayout.VERTICAL);
         frozenLayout.setBackgroundColor(ThemePalette.getBgPrimary(this));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams subTitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subTitleParams.setMargins(dp(12), dp(2), dp(12), dp(2));
+        frozenLayout.addView(titleCluster, subTitleParams);
         // 【0.8.43 修】把 statusText 提到顶栏下方做 sticky 状态栏：不再被作品列表推到底部屏幕外。
         // 文案里始终带「💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）」，离线时也保留 snapshot 年龄。
         LinearLayout.LayoutParams statusBarParams = new LinearLayout.LayoutParams(-1, -2);
@@ -2728,6 +2786,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PhoneGalleryPane.REQ_DELETE_MEDIA) {
+            if (phoneGalleryPane != null) phoneGalleryPane.onActivityResult(requestCode, resultCode);
+            return;
+        }
         if (requestCode != REQUEST_TREE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri tree = data.getData();
         try {
@@ -3041,6 +3103,10 @@ public final class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PhoneGalleryPane.REQ_MEDIA_PERMS) {
+            if (phoneGalleryPane != null) phoneGalleryPane.onRequestPermissionsResult(requestCode);
+            return;
+        }
         if (requestCode != REQUEST_LEGACY_STORAGE) return;
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             DiagnosticLog.write(this, "legacy_storage_granted", "Android 10 Huawei hidden-folder fallback enabled");
@@ -3315,10 +3381,36 @@ public final class MainActivity extends Activity {
         return params;
     }
 
+    private ImageButton pillModeButton(int imageResource, String description) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(imageResource);
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setPadding(dp(7), dp(7), dp(7), dp(7));
+        button.setContentDescription(description);
+        return button;
+    }
+
+    private ImageButton compactToolbarButton(int imageResource, String description) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(imageResource);
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setImageTintList(ColorStateList.valueOf(ThemePalette.getBrandLightText(this)));
+        button.setBackground(round(ThemePalette.getBrandLightBg(this), 19));
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        button.setContentDescription(description);
+        return button;
+    }
+
+    private LinearLayout.LayoutParams compactIconParams(boolean withLeftMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(38), dp(38));
+        if (withLeftMargin) params.setMargins(dp(4), 0, 0, 0);
+        return params;
+    }
+
     private void toast(String value) {
         try {
             Toast t = Toast.makeText(this, value, Toast.LENGTH_SHORT);
-            t.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, dp(120));
+            t.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, dp(96));
             t.show();
         } catch (Exception e) {
             Toast.makeText(this, value, Toast.LENGTH_SHORT).show();
@@ -3332,42 +3424,131 @@ public final class MainActivity extends Activity {
     // ==========================================
 
     private void updateSourceModeButtonStyle() {
-        if (sourceModeButton == null) return;
         if (searchInput != null) {
             searchInput.setHint(isOnlineMode ? "搜索标题/地点" : "搜索标题/文件夹");
         }
-        if (!isOnlineMode) {
-            sourceModeButton.setImageResource(R.drawable.ic_mode_phone);
-            sourceModeButton.setImageTintList(ColorStateList.valueOf(ThemePalette.getBrandLightText(this)));
-            sourceModeButton.setBackground(round(ThemePalette.getBrandLightBg(this), 21));
-            sourceModeButton.setContentDescription("当前：手机本地作品 (点击切换到电脑在线)");
+        boolean darkModeNow = ThemePalette.isDarkMode(this);
+        int mutedTint = ThemePalette.getPillText(this);
+        if (modePcBtn != null) {
+            boolean active = (activeSourceMode == SOURCE_ONLINE);
+            modePcBtn.setImageTintList(ColorStateList.valueOf(
+                    active ? (darkModeNow ? Color.rgb(86, 190, 240) : Color.rgb(2, 132, 199)) : mutedTint));
+            modePcBtn.setBackground(active
+                    ? round(darkModeNow ? Color.rgb(11, 54, 80) : Color.rgb(224, 242, 254), 17)
+                    : null);
+        }
+        if (modePhoneBtn != null) {
+            boolean active = (activeSourceMode == SOURCE_LOCAL);
+            modePhoneBtn.setImageTintList(ColorStateList.valueOf(
+                    active ? ThemePalette.getBrandLightText(this) : mutedTint));
+            modePhoneBtn.setBackground(active
+                    ? round(ThemePalette.getBrandLightBg(this), 17)
+                    : null);
+        }
+        if (modeGalleryBtn != null) {
+            boolean active = (activeSourceMode == SOURCE_GALLERY);
+            int galleryFg = darkModeNow ? Color.rgb(255, 205, 112) : Color.rgb(180, 83, 9);
+            int galleryBg = darkModeNow ? Color.rgb(66, 48, 13) : Color.rgb(254, 243, 199);
+            modeGalleryBtn.setImageTintList(ColorStateList.valueOf(active ? galleryFg : mutedTint));
+            modeGalleryBtn.setBackground(active ? round(galleryBg, 17) : null);
+        }
+    }
+
+    private void selectSourceMode(int targetMode) {
+        if (targetMode == activeSourceMode && !showingTrash && !showingOnlineRecycle && !fileMode) {
+            if (targetMode == SOURCE_ONLINE) {
+                toast("正在刷新电脑在线相册…");
+                refreshOnlineWorks(true);
+            } else if (targetMode == SOURCE_GALLERY && phoneGalleryPane != null) {
+                phoneGalleryPane.refresh();
+            }
+            return;
+        }
+        if (fileMode) leaveFileMode();
+        if (showingTrash) {
+            showingTrash = false;
+            enteredTrashFromOnline = false;
+        }
+        if (showingOnlineRecycle) {
+            showingOnlineRecycle = false;
+        }
+        if (targetMode == SOURCE_ONLINE) {
+            switchToOnlineMode();
+        } else if (targetMode == SOURCE_GALLERY) {
+            switchToPhoneGalleryMode();
         } else {
-            sourceModeButton.setImageResource(R.drawable.ic_mode_pc);
-            boolean darkModeNow = ThemePalette.isDarkMode(this);
-            sourceModeButton.setImageTintList(ColorStateList.valueOf(darkModeNow ? Color.rgb(86, 190, 240) : Color.rgb(2, 132, 199)));
-            sourceModeButton.setBackground(round(darkModeNow ? Color.rgb(11, 54, 80) : Color.rgb(224, 242, 254), 21));
-            sourceModeButton.setContentDescription("当前：电脑在线作品 (点击切换到手机本地)");
+            switchToLocalMode();
         }
     }
 
     private void toggleSourceMode() {
-        if (fileMode) leaveFileMode();
-        if (showingTrash) {
-            showingTrash = false;
-            // An explicit source switch from phone recycle must not restore its previous online source.
-            enteredTrashFromOnline = false;
-        }
-        if (isOnlineMode) {
-            switchToLocalMode();
+        if (activeSourceMode == SOURCE_ONLINE) {
+            selectSourceMode(SOURCE_LOCAL);
         } else {
-            switchToOnlineMode();
+            selectSourceMode(SOURCE_ONLINE);
         }
     }
 
-    private void switchToLocalMode() {
+    private void applyPhoneGallerySurface(boolean galleryActive) {
+        if (phoneGalleryPane != null) {
+            phoneGalleryPane.getView().setVisibility(galleryActive ? View.VISIBLE : View.GONE);
+        }
+        if (contentScroll != null) {
+            contentScroll.setVisibility(galleryActive ? View.GONE : View.VISIBLE);
+        }
+        if (galleryActive) {
+            if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
+            if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
+            if (categorySelector != null) categorySelector.setVisibility(View.GONE);
+            if (searchBar != null) searchBar.setVisibility(View.GONE);
+            if (statusText != null) statusText.setVisibility(View.GONE);
+            if (quickTrashButton != null) quickTrashButton.setVisibility(View.GONE);
+            if (headingText != null) headingText.setText("");
+            if (scannedCountText != null) scannedCountText.setVisibility(View.GONE);
+            if (modeButton != null) modeButton.setVisibility(View.GONE);
+            if (leftModeButton != null) {
+                leftModeButton.setImageResource(R.drawable.ic_album_refresh);
+                leftModeButton.setContentDescription("刷新本机相册");
+                leftModeButton.setVisibility(View.VISIBLE);
+            }
+            if (rightModeButton != null) rightModeButton.setVisibility(View.GONE);
+        } else {
+            if (statusText != null) statusText.setVisibility(View.VISIBLE);
+            if (categorySelector != null) categorySelector.setVisibility(View.VISIBLE);
+            if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void switchToPhoneGalleryMode() {
+        activeSourceMode = SOURCE_GALLERY;
         isOnlineMode = false;
+        stopOnlineAutoRefresh();
+        onlineClient.stopBeaconListener();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(PREF_SOURCE_MODE, SOURCE_GALLERY)
+                .putBoolean(PREF_IS_ONLINE_MODE, false)
+                .apply();
+        selectedWorkIds.clear();
+        showingTrash = false;
+        showingOnlineRecycle = false;
+        updateSourceModeButtonStyle();
+        applyPhoneGallerySurface(true);
+        if (phoneGalleryPane != null) {
+            phoneGalleryPane.onShown();
+        }
+        toast("已切换至：🖼️ 手机相册（本地图片与实况工坊）");
+    }
+
+    private void switchToLocalMode() {
+        activeSourceMode = SOURCE_LOCAL;
+        isOnlineMode = false;
+        stopOnlineAutoRefresh();
         onlineClient.stopBeaconListener();   // 退出在线模式即停掉信标监听，避免后台耗电
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_IS_ONLINE_MODE, false).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(PREF_SOURCE_MODE, SOURCE_LOCAL)
+                .putBoolean(PREF_IS_ONLINE_MODE, false)
+                .apply();
+        applyPhoneGallerySurface(false);
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
@@ -3377,13 +3558,18 @@ public final class MainActivity extends Activity {
         footerNote.setText("📱 手机本地作品：点击文案复制并唤起分享；长按文案按钮可全屏预览。");
         worksContainer.removeAllViews();
         showWorks();
-        toast("已切换至：📱 手机本地作品");
+        toast("已切换至：📱 手机本地作品库");
     }
 
     private void switchToOnlineMode() {
+        activeSourceMode = SOURCE_ONLINE;
         isOnlineMode = true;
+        applyPhoneGallerySurface(false);
         startOnlineBeaconListener();
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_IS_ONLINE_MODE, true).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(PREF_SOURCE_MODE, SOURCE_ONLINE)
+                .putBoolean(PREF_IS_ONLINE_MODE, true)
+                .apply();
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
@@ -6821,10 +7007,11 @@ public final class MainActivity extends Activity {
         }
 
         final boolean autoLive = OnlineService.isAutoLiveOnShareEnabled(this);
+        final String liveMode = OnlineService.getAutoLiveMotionMode(this);
 
         // ==================== DSH-136: 本地命中 0 弹窗秒呼系统分享 ====================
-        if (!autoLive && onlineClient.areAllWorkImagesCachedLocally(work.id, work.images, work.livePhotos)) {
-            List<java.io.File> cachedFiles = onlineClient.getCachedLocalWorkImages(work.id, work.images, work.livePhotos);
+        if (onlineClient.areAllWorkImagesCachedLocally(work.id, work.images, work.livePhotos, autoLive, liveMode)) {
+            List<java.io.File> cachedFiles = onlineClient.getCachedLocalWorkImages(work.id, work.images, work.livePhotos, autoLive, liveMode);
             launchOnlineShare(work, cachedFiles, copyText, platformCode);
             return;
         }
@@ -6840,10 +7027,10 @@ public final class MainActivity extends Activity {
         boolean isLiveWork = work.hasLivePhotos();
         String titleStr = isLiveWork
                 ? "正在从电脑同步实况原图到手机…"
-                : (autoLive ? "正在生成实况图…" : "正在从电脑同步原图到手机…");
+                : (autoLive ? "正在手机本地 1440P 生成实况图…" : "正在从电脑同步原图到手机…");
         String statusStr = isLiveWork
                 ? "准备连接电脑拉取 " + work.images.size() + " 张实况原图…"
-                : (autoLive ? "正在准备 " + work.images.size() + " 张实况图…" : "准备连接电脑拉取 " + work.images.size() + " 张原图…");
+                : (autoLive ? "正准备 " + work.images.size() + " 张实况图（本地硬件渲染）…" : "准备连接电脑拉取 " + work.images.size() + " 张原图…");
         TextView dlTitle = text(titleStr, 15, true);
         dlTitle.setTextColor(ThemePalette.getTextPrimary(this));
         dlLayout.addView(dlTitle);
@@ -6868,7 +7055,6 @@ public final class MainActivity extends Activity {
         AlertDialog dlDialog = builder.create();
         dlDialog.show();
 
-        String liveMode = OnlineService.getAutoLiveMotionMode(this);
         onlineClient.downloadWorkImages(work.id, work.images, work.livePhotos, autoLive, liveMode, new OnlineGalleryClient.DownloadProgressCallback() {
             @Override
             public void onProgress(int downloaded, int total, String currentFileName) {
