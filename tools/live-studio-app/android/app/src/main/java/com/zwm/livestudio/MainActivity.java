@@ -1,8 +1,10 @@
 package com.zwm.livestudio;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.ContentUris;
@@ -23,10 +25,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
-import android.text.TextUtils;
 import android.util.LruCache;
 import android.util.Size;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
@@ -39,6 +41,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -53,26 +56,29 @@ public final class MainActivity extends Activity {
     private static final String KEY_MODE = "motion_mode";
     private static final String KEY_RATIO = "motion_ratio";
     private static final String KEY_DURATION = "motion_duration";
+    private static final String KEY_SKIP_EXISTING_LIVE = "skip_existing_live";
     private static final int REQ_MEDIA_PERMS = 101;
-    private static final int REQ_PICK_IMAGES = 102;
+    private static final int REQ_DELETE_MEDIA = 103;
     private static final int MAX_SELECT = 18;
 
     private static final class GalleryPhoto {
         final long id;
         final Uri uri;
         final String bucket;
+        final boolean looksLive;
 
-        GalleryPhoto(long id, Uri uri, String bucket) {
+        GalleryPhoto(long id, Uri uri, String bucket, boolean looksLive) {
             this.id = id;
             this.uri = uri;
             this.bucket = bucket;
+            this.looksLive = looksLive;
         }
     }
 
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService thumbExecutor = Executors.newFixedThreadPool(3);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final LruCache<Long, Bitmap> thumbCache = new LruCache<Long, Bitmap>(16 * 1024) {
+    private final LruCache<Long, Bitmap> thumbCache = new LruCache<Long, Bitmap>(20 * 1024) {
         @Override
         protected int sizeOf(Long key, Bitmap value) {
             return Math.max(1, value.getByteCount() / 1024);
@@ -83,17 +89,26 @@ public final class MainActivity extends Activity {
     private final List<GalleryPhoto> visiblePhotos = new ArrayList<>();
     private final List<Uri> selectedUris = new ArrayList<>();
     private String activeBucket = "";
+    private boolean selectionMode = false;
+    private volatile boolean isConverting = false;
 
     private boolean isDark;
+    private TextView titleView;
     private TextView albumChip;
-    private TextView effectTitleView;
-    private TextView selectedCountView;
-    private Button saveOnlyBtn;
-    private Button shareBtn;
+    private TextView rightActionBtn;
     private LinearLayout permissionCard;
     private TextView permissionTitle;
     private GridView gridView;
     private PhotoGridAdapter adapter;
+    private LinearLayout bottomBar;
+    private Button deleteBtn;
+    private Button saveOnlyBtn;
+    private Button shareBtn;
+
+    private AlertDialog activePreviewDialog;
+    private Runnable pendingDeleteCallback;
+    private int pendingDeleteCount = 0;
+    private Object backInvokedCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -102,9 +117,17 @@ public final class MainActivity extends Activity {
         isDark = night == Configuration.UI_MODE_NIGHT_YES;
         applySystemBars();
         setContentView(buildUi());
-        refreshEffectLabel();
+        updateChrome();
         loadGalleryIfPermitted();
         handleIncomingShareIntent(getIntent());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (!isConverting && hasFullOrPartialGalleryPermission()) {
+            loadGalleryIfPermitted();
+        }
     }
 
     @Override
@@ -115,6 +138,33 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    @SuppressWarnings("deprecation")
+    @SuppressLint("GestureBackNavigation")
+    public void onBackPressed() {
+        if (selectionMode) {
+            exitSelectionMode();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    private void syncBackGestureCallback() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (selectionMode) {
+            if (backInvokedCallback == null) {
+                android.window.OnBackInvokedCallback cb = this::exitSelectionMode;
+                getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                        android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb);
+                backInvokedCallback = cb;
+            }
+        } else if (backInvokedCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(
+                    (android.window.OnBackInvokedCallback) backInvokedCallback);
+            backInvokedCallback = null;
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         ioExecutor.shutdownNow();
         thumbExecutor.shutdownNow();
@@ -122,7 +172,7 @@ public final class MainActivity extends Activity {
     }
 
     private void applySystemBars() {
-        int bg = isDark ? Color.rgb(16, 18, 22) : Color.rgb(245, 247, 250);
+        int bg = isDark ? Color.rgb(14, 16, 20) : Color.rgb(246, 248, 250);
         getWindow().setStatusBarColor(bg);
         getWindow().setNavigationBarColor(bg);
         if (!isDark && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -141,136 +191,199 @@ public final class MainActivity extends Activity {
         root.setFitsSystemWindows(true);
         root.setBackgroundColor(bgPrimary());
 
-        // Top Bar
+        // Top Bar: clean native gallery header
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(16), dp(12), dp(14), dp(8));
+        topBar.setPadding(dp(16), dp(10), dp(14), dp(10));
 
-        TextView title = label("实况工坊", 22, true, textPrimary());
-        topBar.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        titleView = label("实况工坊", 22, true, textPrimary());
+        titleView.setOnClickListener(v -> {
+            if (selectionMode) exitSelectionMode();
+        });
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-2, -2);
+        titleLp.setMargins(0, 0, dp(10), 0);
+        topBar.addView(titleView, titleLp);
 
         albumChip = chipButton("全部照片 ▾");
         albumChip.setOnClickListener(v -> showBucketDialog());
-        LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(-2, -2);
-        chipLp.setMargins(0, 0, dp(8), 0);
-        topBar.addView(albumChip, chipLp);
+        topBar.addView(albumChip, new LinearLayout.LayoutParams(-2, -2));
 
-        TextView sysPick = chipButton("系统选图");
-        sysPick.setOnClickListener(v -> openSystemPicker());
-        topBar.addView(sysPick);
+        topBar.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+
+        rightActionBtn = chipButton("设置");
+        rightActionBtn.setOnClickListener(v -> {
+            if (selectionMode) {
+                toggleSelectAll();
+            } else {
+                showSettingsDialog();
+            }
+        });
+        topBar.addView(rightActionBtn, new LinearLayout.LayoutParams(-2, -2));
         root.addView(topBar);
-
-        // Effect Pill Bar
-        LinearLayout effectCard = new LinearLayout(this);
-        effectCard.setOrientation(LinearLayout.HORIZONTAL);
-        effectCard.setGravity(Gravity.CENTER_VERTICAL);
-        effectCard.setPadding(dp(14), dp(10), dp(14), dp(10));
-        effectCard.setBackground(roundRect(cardBg(), 12));
-        effectCard.setOnClickListener(v -> showEffectPickerDialog());
-
-        effectTitleView = label("", 13, false, textPrimary());
-        effectTitleView.setSingleLine(true);
-        effectTitleView.setEllipsize(TextUtils.TruncateAt.END);
-        effectCard.addView(effectTitleView, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        TextView switchHint = label("切换 ›", 13, true, brandGreen());
-        switchHint.setPadding(dp(10), 0, 0, 0);
-        effectCard.addView(switchHint);
-
-        LinearLayout.LayoutParams effectLp = new LinearLayout.LayoutParams(-1, -2);
-        effectLp.setMargins(dp(14), dp(2), dp(14), dp(8));
-        root.addView(effectCard, effectLp);
 
         // Permission Card (hidden once granted)
         permissionCard = new LinearLayout(this);
         permissionCard.setOrientation(LinearLayout.VERTICAL);
         permissionCard.setPadding(dp(18), dp(22), dp(18), dp(22));
         permissionCard.setBackground(roundRect(cardBg(), 16));
-        permissionTitle = label("授权读取手机相册，像相册一样直接选图", 15, true, textPrimary());
-        TextView permDesc = label("纯手机离线 GPU 生成动态实况图，不上传云端。也可不授权直接点右上角「系统选图」。", 12, false, textSecondary());
-        LinearLayout permBtns = new LinearLayout(this);
-        permBtns.setOrientation(LinearLayout.HORIZONTAL);
-
-        Button grantBtn = actionBtn("读取本地相册", true);
+        permissionTitle = label("授权读取手机相册", 16, true, textPrimary());
+        TextView permDesc = label("像系统相册一样浏览本地照片，点开看大图、长按多选，离线转为动态实况并分享或删除。", 13, false, textSecondary());
+        Button grantBtn = actionBtn("允许读取相册", true);
         grantBtn.setOnClickListener(v -> requestGalleryPermission());
-        LinearLayout.LayoutParams b1 = new LinearLayout.LayoutParams(0, dp(44), 1f);
-        b1.setMargins(0, 0, dp(8), 0);
-        permBtns.addView(grantBtn, b1);
-
-        Button pickBtn = actionBtn("系统选图", false);
-        pickBtn.setOnClickListener(v -> openSystemPicker());
-        LinearLayout.LayoutParams b2 = new LinearLayout.LayoutParams(0, dp(44), 1f);
-        permBtns.addView(pickBtn, b2);
 
         permissionCard.addView(permissionTitle);
         LinearLayout.LayoutParams pdLp = new LinearLayout.LayoutParams(-1, -2);
         pdLp.setMargins(0, dp(6), 0, dp(14));
         permissionCard.addView(permDesc, pdLp);
-        permissionCard.addView(permBtns);
+        permissionCard.addView(grantBtn, new LinearLayout.LayoutParams(-1, dp(46)));
 
         LinearLayout.LayoutParams pcLp = new LinearLayout.LayoutParams(-1, -2);
-        pcLp.setMargins(dp(14), dp(8), dp(14), dp(8));
+        pcLp.setMargins(dp(16), dp(24), dp(16), dp(8));
         root.addView(permissionCard, pcLp);
 
-        // Photo Grid
+        // 3-column Local Photo Grid
         gridView = new GridView(this);
         gridView.setNumColumns(3);
-        gridView.setHorizontalSpacing(dp(3));
-        gridView.setVerticalSpacing(dp(3));
-        gridView.setPadding(dp(3), 0, dp(3), dp(3));
+        gridView.setHorizontalSpacing(dp(2));
+        gridView.setVerticalSpacing(dp(2));
+        gridView.setPadding(dp(2), 0, dp(2), dp(2));
         gridView.setClipToPadding(false);
         adapter = new PhotoGridAdapter();
         gridView.setAdapter(adapter);
-        gridView.setOnItemClickListener((parent, view, position, id) -> toggleSelection(visiblePhotos.get(position).uri));
+        gridView.setOnItemClickListener((parent, view, position, id) -> {
+            if (position < 0 || position >= visiblePhotos.size()) return;
+            GalleryPhoto photo = visiblePhotos.get(position);
+            if (selectionMode) {
+                toggleSelection(photo.uri);
+            } else {
+                showPhotoPreviewDialog(position);
+            }
+        });
         gridView.setOnItemLongClickListener((parent, view, position, id) -> {
-            showPhotoPreviewDialog(visiblePhotos.get(position).uri);
+            if (position < 0 || position >= visiblePhotos.size()) return false;
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            enterSelectionWith(visiblePhotos.get(position).uri);
             return true;
         });
         root.addView(gridView, new LinearLayout.LayoutParams(-1, 0, 1f));
 
-        // Sticky Bottom Bar
-        LinearLayout bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.VERTICAL);
+        // Sticky Bottom Action Bar (shown ONLY during multi-select mode)
+        bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setBackgroundColor(cardBg());
-        bottomBar.setPadding(dp(14), dp(10), dp(14), dp(12));
+        bottomBar.setPadding(dp(12), dp(10), dp(12), dp(12));
+        bottomBar.setVisibility(View.GONE);
 
-        LinearLayout statusRow = new LinearLayout(this);
-        statusRow.setOrientation(LinearLayout.HORIZONTAL);
-        statusRow.setGravity(Gravity.CENTER_VERTICAL);
-        selectedCountView = label("点击上方照片多选，转换后直接分享就是动态实况图", 12, false, textSecondary());
-        statusRow.addView(selectedCountView, new LinearLayout.LayoutParams(0, -2, 1f));
+        deleteBtn = actionBtn("删除", false);
+        deleteBtn.setTextColor(Color.rgb(220, 38, 38));
+        deleteBtn.setOnClickListener(v -> requestDeletePhotos(new ArrayList<>(selectedUris), this::exitSelectionMode));
+        LinearLayout.LayoutParams dLp = new LinearLayout.LayoutParams(0, dp(46), 0.9f);
+        dLp.setMargins(0, 0, dp(8), 0);
+        bottomBar.addView(deleteBtn, dLp);
 
-        TextView clearBtn = label("清空", 12, true, brandGreen());
-        clearBtn.setPadding(dp(12), dp(4), dp(4), dp(4));
-        clearBtn.setOnClickListener(v -> {
-            selectedUris.clear();
-            updateBottomBar();
-            adapter.notifyDataSetChanged();
-        });
-        statusRow.addView(clearBtn);
-        LinearLayout.LayoutParams srLp = new LinearLayout.LayoutParams(-1, -2);
-        srLp.setMargins(0, 0, 0, dp(8));
-        bottomBar.addView(statusRow, srLp);
-
-        LinearLayout btnRow = new LinearLayout(this);
-        btnRow.setOrientation(LinearLayout.HORIZONTAL);
-
-        saveOnlyBtn = actionBtn("仅存相册", false);
+        saveOnlyBtn = actionBtn("存实况", false);
         saveOnlyBtn.setOnClickListener(v -> startBatchConvert(new ArrayList<>(selectedUris), false));
-        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(0, dp(46), 1.0f);
         sLp.setMargins(0, 0, dp(8), 0);
-        btnRow.addView(saveOnlyBtn, sLp);
+        bottomBar.addView(saveOnlyBtn, sLp);
 
-        shareBtn = actionBtn("转实况并分享", true);
+        shareBtn = actionBtn("分享实况", true);
         shareBtn.setOnClickListener(v -> startBatchConvert(new ArrayList<>(selectedUris), true));
-        LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(0, dp(46), 1.6f);
-        btnRow.addView(shareBtn, shLp);
+        LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(0, dp(46), 1.4f);
+        bottomBar.addView(shareBtn, shLp);
 
-        bottomBar.addView(btnRow);
         root.addView(bottomBar);
-        updateBottomBar();
         return root;
+    }
+
+    private void enterSelectionWith(Uri firstUri) {
+        selectionMode = true;
+        if (firstUri != null && !selectedUris.contains(firstUri)) {
+            if (selectedUris.size() < MAX_SELECT) {
+                selectedUris.add(firstUri);
+            }
+        }
+        updateChrome();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void exitSelectionMode() {
+        selectionMode = false;
+        selectedUris.clear();
+        updateChrome();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void toggleSelection(Uri uri) {
+        if (uri == null) return;
+        if (selectedUris.contains(uri)) {
+            selectedUris.remove(uri);
+            if (selectedUris.isEmpty()) {
+                selectionMode = false;
+            }
+        } else {
+            if (selectedUris.size() >= MAX_SELECT) {
+                toast("单次最多选择 " + MAX_SELECT + " 张");
+                return;
+            }
+            selectionMode = true;
+            selectedUris.add(uri);
+        }
+        updateChrome();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void toggleSelectAll() {
+        int cap = Math.min(MAX_SELECT, visiblePhotos.size());
+        if (selectedUris.size() >= cap && cap > 0) {
+            selectedUris.clear();
+        } else {
+            selectedUris.clear();
+            for (int i = 0; i < cap; i++) {
+                selectedUris.add(visiblePhotos.get(i).uri);
+            }
+            if (visiblePhotos.size() > MAX_SELECT) {
+                toast("单次最多全选前 " + MAX_SELECT + " 张");
+            }
+        }
+        updateChrome();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void updateChrome() {
+        syncBackGestureCallback();
+        if (selectionMode) {
+            int count = selectedUris.size();
+            titleView.setText("取消");
+            titleView.setTextSize(16);
+            titleView.setTextColor(brandGreen());
+            albumChip.setVisibility(View.VISIBLE);
+            albumChip.setBackground(null);
+            albumChip.setText("已选 " + count + " 张");
+            int cap = Math.min(MAX_SELECT, visiblePhotos.size());
+            rightActionBtn.setText(count >= cap && cap > 0 ? "取消全选" : "全选");
+
+            bottomBar.setVisibility(View.VISIBLE);
+            boolean hasAny = count > 0;
+            deleteBtn.setEnabled(hasAny);
+            saveOnlyBtn.setEnabled(hasAny);
+            shareBtn.setEnabled(hasAny);
+            float alpha = hasAny ? 1f : 0.45f;
+            deleteBtn.setAlpha(alpha);
+            saveOnlyBtn.setAlpha(alpha);
+            shareBtn.setAlpha(alpha);
+            shareBtn.setText(hasAny ? "分享实况 (" + count + ")" : "分享实况");
+        } else {
+            titleView.setText("实况工坊");
+            titleView.setTextSize(22);
+            titleView.setTextColor(textPrimary());
+            albumChip.setVisibility(View.VISIBLE);
+            albumChip.setBackground(roundRect(cardBg(), 18));
+            albumChip.setText((activeBucket.isEmpty() ? "全部照片" : activeBucket) + " ▾");
+            rightActionBtn.setText("设置");
+            bottomBar.setVisibility(View.GONE);
+        }
     }
 
     private boolean hasFullOrPartialGalleryPermission() {
@@ -283,12 +396,6 @@ public final class MainActivity extends Activity {
             return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED;
         }
         return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private boolean isPartialPermissionOnly() {
-        return Build.VERSION.SDK_INT >= 34
-                && checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED
-                && checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void requestGalleryPermission() {
@@ -318,12 +425,7 @@ public final class MainActivity extends Activity {
             gridView.setVisibility(View.GONE);
             return;
         }
-        if (isPartialPermissionOnly()) {
-            permissionTitle.setText("当前仅授权部分照片（点击下方按钮可随时增选照片）");
-            permissionCard.setVisibility(View.VISIBLE);
-        } else {
-            permissionCard.setVisibility(View.GONE);
-        }
+        permissionCard.setVisibility(View.GONE);
         gridView.setVisibility(View.VISIBLE);
 
         ioExecutor.execute(() -> {
@@ -341,7 +443,7 @@ public final class MainActivity extends Activity {
         String[] projection = {
                 MediaStore.Images.Media._ID,
                 MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-                MediaStore.Images.Media.MIME_TYPE
+                MediaStore.Images.Media.DISPLAY_NAME
         };
         String sortOrder = MediaStore.Images.Media.DATE_MODIFIED + " DESC";
         try (Cursor cursor = getContentResolver().query(
@@ -354,13 +456,17 @@ public final class MainActivity extends Activity {
             if (cursor == null) return list;
             int idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
             int bucketCol = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME);
-            int limit = 600;
+            int nameCol = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME);
+            int limit = 800;
             while (cursor.moveToNext() && list.size() < limit) {
                 long id = cursor.getLong(idCol);
                 String bucket = bucketCol >= 0 ? cursor.getString(bucketCol) : "";
                 if (bucket == null || bucket.trim().isEmpty()) bucket = "其他";
+                String disp = nameCol >= 0 ? cursor.getString(nameCol) : "";
+                if (disp == null) disp = "";
+                boolean liveHint = disp.startsWith("MVIMG_") || disp.startsWith("LIVE_") || "实况工坊".equals(bucket);
                 Uri contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-                list.add(new GalleryPhoto(id, contentUri, bucket));
+                list.add(new GalleryPhoto(id, contentUri, bucket, liveHint));
             }
         } catch (Exception ignored) {
         }
@@ -374,11 +480,12 @@ public final class MainActivity extends Activity {
                 visiblePhotos.add(p);
             }
         }
-        albumChip.setText((activeBucket.isEmpty() ? "全部照片" : activeBucket) + " ▾");
+        updateChrome();
         adapter.notifyDataSetChanged();
     }
 
     private void showBucketDialog() {
+        if (selectionMode) return;
         Map<String, Integer> counts = new LinkedHashMap<>();
         counts.put("", allPhotos.size());
         for (GalleryPhoto p : allPhotos) {
@@ -394,7 +501,7 @@ public final class MainActivity extends Activity {
             labels[i] = (k.isEmpty() ? "全部照片" : k) + "（" + counts.get(k) + "）";
         }
         new AlertDialog.Builder(this)
-                .setTitle("选择本地相册目录")
+                .setTitle("选择相册")
                 .setSingleChoiceItems(labels, checked, (d, which) -> {
                     activeBucket = keys.get(which);
                     applyBucketFilter();
@@ -404,21 +511,213 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
-    private void openSystemPicker() {
-        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-        intent.setType("image/*");
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(Intent.createChooser(intent, "选择图片转为实况"), REQ_PICK_IMAGES);
+    private void showPhotoPreviewDialog(int initialPos) {
+        if (visiblePhotos.isEmpty()) return;
+        final int[] pos = {Math.max(0, Math.min(initialPos, visiblePhotos.size() - 1))};
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setBackgroundColor(Color.BLACK);
+
+        // Viewer top bar
+        LinearLayout vTop = new LinearLayout(this);
+        vTop.setOrientation(LinearLayout.HORIZONTAL);
+        vTop.setGravity(Gravity.CENTER_VERTICAL);
+        vTop.setPadding(dp(14), dp(12), dp(14), dp(10));
+
+        TextView counterView = label("", 14, true, Color.WHITE);
+        vTop.addView(counterView, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        TextView closeBtn = label("✕", 18, true, Color.WHITE);
+        closeBtn.setPadding(dp(12), dp(4), dp(4), dp(4));
+        vTop.addView(closeBtn);
+        container.addView(vTop);
+
+        // Large image area + floating prev/next controls
+        FrameLayout stage = new FrameLayout(this);
+        ImageView bigImage = new ImageView(this);
+        bigImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        stage.addView(bigImage, new FrameLayout.LayoutParams(-1, -1));
+
+        TextView prevBtn = navArrow("‹", Gravity.START | Gravity.CENTER_VERTICAL);
+        TextView nextBtn = navArrow("›", Gravity.END | Gravity.CENTER_VERTICAL);
+        stage.addView(prevBtn);
+        stage.addView(nextBtn);
+        container.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        // Viewer bottom bar: 删除 | 存实况 | 分享实况
+        LinearLayout vBottom = new LinearLayout(this);
+        vBottom.setOrientation(LinearLayout.HORIZONTAL);
+        vBottom.setBackgroundColor(Color.rgb(20, 22, 26));
+        vBottom.setPadding(dp(12), dp(10), dp(12), dp(14));
+
+        Button vDelete = actionBtn("删除", false);
+        vDelete.setBackground(roundRect(Color.rgb(42, 46, 54), 10));
+        vDelete.setTextColor(Color.rgb(248, 113, 113));
+        LinearLayout.LayoutParams vdLp = new LinearLayout.LayoutParams(0, dp(44), 0.9f);
+        vdLp.setMargins(0, 0, dp(8), 0);
+        vBottom.addView(vDelete, vdLp);
+
+        Button vSave = actionBtn("存实况", false);
+        vSave.setBackground(roundRect(Color.rgb(42, 46, 54), 10));
+        vSave.setTextColor(Color.WHITE);
+        LinearLayout.LayoutParams vsLp = new LinearLayout.LayoutParams(0, dp(44), 1.0f);
+        vsLp.setMargins(0, 0, dp(8), 0);
+        vBottom.addView(vSave, vsLp);
+
+        Button vShare = actionBtn("分享实况", true);
+        LinearLayout.LayoutParams vshLp = new LinearLayout.LayoutParams(0, dp(44), 1.4f);
+        vBottom.addView(vShare, vshLp);
+
+        container.addView(vBottom);
+
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+                .setView(container)
+                .create();
+        activePreviewDialog = dialog;
+
+        Runnable renderCurrent = () -> {
+            if (visiblePhotos.isEmpty()) {
+                dialog.dismiss();
+                return;
+            }
+            if (pos[0] >= visiblePhotos.size()) pos[0] = visiblePhotos.size() - 1;
+            GalleryPhoto cur = visiblePhotos.get(pos[0]);
+            counterView.setText((pos[0] + 1) + " / " + visiblePhotos.size() + (cur.looksLive ? " · 实况" : ""));
+            prevBtn.setVisibility(pos[0] > 0 ? View.VISIBLE : View.INVISIBLE);
+            nextBtn.setVisibility(pos[0] < visiblePhotos.size() - 1 ? View.VISIBLE : View.INVISIBLE);
+            final Uri targetUri = cur.uri;
+            ioExecutor.execute(() -> {
+                Bitmap bmp = decodeScaledBitmap(getContentResolver(), targetUri, 1600);
+                if (bmp != null) {
+                    mainHandler.post(() -> {
+                        if (dialog.isShowing() && pos[0] < visiblePhotos.size()
+                                && targetUri.equals(visiblePhotos.get(pos[0]).uri)) {
+                            bigImage.setImageBitmap(bmp);
+                        }
+                    });
+                }
+            });
+        };
+
+        closeBtn.setOnClickListener(v -> dialog.dismiss());
+        prevBtn.setOnClickListener(v -> {
+            if (pos[0] > 0) {
+                pos[0]--;
+                renderCurrent.run();
+            }
+        });
+        nextBtn.setOnClickListener(v -> {
+            if (pos[0] < visiblePhotos.size() - 1) {
+                pos[0]++;
+                renderCurrent.run();
+            }
+        });
+        bigImage.setOnLongClickListener(v -> {
+            if (pos[0] < visiblePhotos.size()) {
+                Uri u = visiblePhotos.get(pos[0]).uri;
+                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                dialog.dismiss();
+                enterSelectionWith(u);
+                return true;
+            }
+            return false;
+        });
+
+        vSave.setOnClickListener(v -> {
+            if (pos[0] < visiblePhotos.size()) {
+                List<Uri> single = new ArrayList<>();
+                single.add(visiblePhotos.get(pos[0]).uri);
+                dialog.dismiss();
+                startBatchConvert(single, false);
+            }
+        });
+        vShare.setOnClickListener(v -> {
+            if (pos[0] < visiblePhotos.size()) {
+                List<Uri> single = new ArrayList<>();
+                single.add(visiblePhotos.get(pos[0]).uri);
+                dialog.dismiss();
+                startBatchConvert(single, true);
+            }
+        });
+        vDelete.setOnClickListener(v -> {
+            if (pos[0] < visiblePhotos.size()) {
+                List<Uri> single = new ArrayList<>();
+                single.add(visiblePhotos.get(pos[0]).uri);
+                requestDeletePhotos(single, () -> {
+                    if (activePreviewDialog != null && activePreviewDialog.isShowing()) {
+                        activePreviewDialog.dismiss();
+                    }
+                });
+            }
+        });
+
+        renderCurrent.run();
+        dialog.show();
+    }
+
+    private TextView navArrow(String symbol, int gravity) {
+        TextView tv = label(symbol, 28, true, Color.WHITE);
+        tv.setGravity(Gravity.CENTER);
+        tv.setBackground(roundRect(0x55000000, 20));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(40), dp(64), gravity);
+        lp.setMargins(dp(8), 0, dp(8), 0);
+        tv.setLayoutParams(lp);
+        return tv;
+    }
+
+    private void requestDeletePhotos(List<Uri> targets, Runnable onDone) {
+        if (targets == null || targets.isEmpty()) return;
+        pendingDeleteCallback = onDone;
+        pendingDeleteCount = targets.size();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                PendingIntent pi = MediaStore.createDeleteRequest(getContentResolver(), targets);
+                startIntentSenderForResult(pi.getIntentSender(), REQ_DELETE_MEDIA, null, 0, 0, 0);
+            } catch (Exception e) {
+                pendingDeleteCallback = null;
+                toast("无法发起删除：" + e.getMessage());
+            }
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("删除确认")
+                .setMessage("确定从手机相册删除选中的 " + targets.size() + " 张照片吗？")
+                .setNegativeButton("取消", (d, w) -> pendingDeleteCallback = null)
+                .setPositiveButton("删除", (d, w) -> {
+                    ioExecutor.execute(() -> {
+                        int deleted = 0;
+                        for (Uri u : targets) {
+                            try {
+                                deleted += getContentResolver().delete(u, null, null);
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        final int finalDeleted = deleted;
+                        mainHandler.post(() -> {
+                            toast("已删除 " + finalDeleted + " 张照片");
+                            Runnable cb = pendingDeleteCallback;
+                            pendingDeleteCallback = null;
+                            if (cb != null) cb.run();
+                            loadGalleryIfPermitted();
+                        });
+                    });
+                })
+                .show();
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_PICK_IMAGES && resultCode == RESULT_OK && data != null) {
-            List<Uri> picked = extractUrisFromIntent(data);
-            if (!picked.isEmpty()) {
-                promptPickedConversion(picked);
+        if (requestCode == REQ_DELETE_MEDIA) {
+            Runnable cb = pendingDeleteCallback;
+            pendingDeleteCallback = null;
+            if (resultCode == RESULT_OK) {
+                toast("已删除 " + pendingDeleteCount + " 张照片");
+                if (cb != null) cb.run();
+                loadGalleryIfPermitted();
             }
         }
     }
@@ -430,7 +729,14 @@ public final class MainActivity extends Activity {
         List<Uri> incoming = extractUrisFromIntent(intent);
         if (!incoming.isEmpty()) {
             intent.setAction("");
-            promptPickedConversion(incoming);
+            MotionPreset.PresetInfo info = MotionPreset.findById(currentMode());
+            new AlertDialog.Builder(this)
+                    .setTitle("已收到 " + incoming.size() + " 张图片")
+                    .setMessage("当前实况效果：" + info.title + "\n转换后存入系统相册「实况工坊」，可直接发给其他应用。")
+                    .setNeutralButton("换效果", (d, w) -> showEffectPickerDialog())
+                    .setNegativeButton("仅存实况", (d, w) -> startBatchConvert(incoming, false))
+                    .setPositiveButton("分享实况", (d, w) -> startBatchConvert(incoming, true))
+                    .show();
         }
     }
 
@@ -444,9 +750,7 @@ public final class MainActivity extends Activity {
             }
         }
         Uri single = data.getData();
-        if (single != null && !uris.contains(single)) {
-            uris.add(single);
-        }
+        if (single != null && !uris.contains(single)) uris.add(single);
         if (Build.VERSION.SDK_INT >= 33) {
             ArrayList<Uri> extras = data.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri.class);
             if (extras != null) {
@@ -471,57 +775,13 @@ public final class MainActivity extends Activity {
         return uris;
     }
 
-    private void promptPickedConversion(List<Uri> uris) {
-        MotionPreset.PresetInfo info = MotionPreset.findById(currentMode());
-        new AlertDialog.Builder(this)
-                .setTitle("已选择 " + uris.size() + " 张图片")
-                .setMessage("当前动态效果：" + info.title + "\n转换后将写入系统相册「实况工坊」文件夹，可直接分享为动态图。")
-                .setNeutralButton("换效果", (d, w) -> {
-                    showEffectPickerDialog();
-                })
-                .setNegativeButton("仅存相册", (d, w) -> startBatchConvert(uris, false))
-                .setPositiveButton("转实况并分享", (d, w) -> startBatchConvert(uris, true))
-                .show();
-    }
-
-    private void toggleSelection(Uri uri) {
-        if (selectedUris.contains(uri)) {
-            selectedUris.remove(uri);
-        } else {
-            if (selectedUris.size() >= MAX_SELECT) {
-                toast("单次最多选择 " + MAX_SELECT + " 张");
-                return;
-            }
-            selectedUris.add(uri);
-        }
-        updateBottomBar();
-        adapter.notifyDataSetChanged();
-    }
-
-    private void updateBottomBar() {
-        int count = selectedUris.size();
-        if (count == 0) {
-            selectedCountView.setText("点击照片多选，转成实况后可直接发小红书 / 抖音 / 微信");
-            saveOnlyBtn.setEnabled(false);
-            shareBtn.setEnabled(false);
-            shareBtn.setText("转实况并分享");
-            saveOnlyBtn.setAlpha(0.45f);
-            shareBtn.setAlpha(0.45f);
-        } else {
-            selectedCountView.setText("已选 " + count + " 张静图（离线转换，不走云端）");
-            saveOnlyBtn.setEnabled(true);
-            shareBtn.setEnabled(true);
-            shareBtn.setText("转实况并分享 (" + count + ")");
-            saveOnlyBtn.setAlpha(1f);
-            shareBtn.setAlpha(1f);
-        }
-    }
-
     private void startBatchConvert(List<Uri> inputs, boolean shareAfter) {
-        if (inputs.isEmpty()) return;
+        if (inputs == null || inputs.isEmpty()) return;
+        isConverting = true;
         final String mode = currentMode();
         final float ratio = currentRatio();
         final float duration = currentDuration();
+        final boolean skipExisting = isSkipExistingLive();
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -556,10 +816,10 @@ public final class MainActivity extends Activity {
                     }
                 });
                 try {
-                    Uri saved = LivePhotoConverter.convertAndSave(
-                            MainActivity.this, inputs.get(i), mode, ratio, duration, step
+                    Uri out = LivePhotoConverter.convertOrPassthrough(
+                            MainActivity.this, inputs.get(i), mode, ratio, duration, step, skipExisting
                     );
-                    outputs.add(saved);
+                    outputs.add(out);
                 } catch (Exception e) {
                     failure = e;
                     break;
@@ -567,6 +827,7 @@ public final class MainActivity extends Activity {
             }
             final Exception err = failure;
             mainHandler.post(() -> {
+                isConverting = false;
                 if (progressDialog.isShowing()) progressDialog.dismiss();
                 if (err != null) {
                     new AlertDialog.Builder(MainActivity.this)
@@ -576,13 +837,12 @@ public final class MainActivity extends Activity {
                             .show();
                     return;
                 }
-                selectedUris.clear();
-                updateBottomBar();
+                exitSelectionMode();
                 loadGalleryIfPermitted();
                 if (shareAfter) {
                     launchSystemShare(outputs);
                 } else {
-                    toast("已将 " + outputs.size() + " 张实况图保存到相册「实况工坊」");
+                    toast("已保存 " + outputs.size() + " 张实况图到相册「实况工坊」");
                 }
             });
         });
@@ -609,6 +869,59 @@ public final class MainActivity extends Activity {
         startActivity(Intent.createChooser(share, "分享动态实况图"));
     }
 
+    private void showSettingsDialog() {
+        MotionPreset.PresetInfo cur = MotionPreset.findById(currentMode());
+        float pct = (currentRatio() - 1.0f) * 100f;
+        String[] rows = {
+                "实况动态效果：" + cur.title,
+                String.format(Locale.US, "微动幅度与时长：%.1f%% · %.1f 秒", pct, currentDuration()),
+                "跳过已是实况的照片：" + (isSkipExistingLive() ? "已开启" : "已关闭"),
+                "清理临时缓存",
+                "关于实况工坊 (v1.0.1)"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("设置")
+                .setItems(rows, (d, which) -> {
+                    if (which == 0) {
+                        showEffectPickerDialog();
+                    } else if (which == 1) {
+                        showStrengthDialog();
+                    } else if (which == 2) {
+                        boolean next = !isSkipExistingLive();
+                        prefs().edit().putBoolean(KEY_SKIP_EXISTING_LIVE, next).apply();
+                        toast(next ? "已开启：已有实况照片直接直通分享" : "已关闭：统一按当前效果重新生成");
+                    } else if (which == 3) {
+                        long freedKb = clearScratchCacheKb();
+                        toast("已清理临时缓存 " + freedKb + " KB");
+                    } else {
+                        new AlertDialog.Builder(this)
+                                .setTitle("实况工坊 v1.0.1")
+                                .setMessage("· 纯手机端离线硬件 GPU + MediaCodec 渲染，无需连电脑\n"
+                                        + "· 浏览模式：点击查看大图，长按或点右上角圆圈进入多选\n"
+                                        + "· 多选/大图均可一键删除、存实况、分享实况\n"
+                                        + "· 生成的实况图统一保存在系统相册「Pictures/实况工坊」")
+                                .setPositiveButton("知道了", null)
+                                .show();
+                    }
+                })
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    private long clearScratchCacheKb() {
+        long bytes = 0;
+        File[] files = getCacheDir().listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.isFile()) {
+                    long len = f.length();
+                    if (f.delete()) bytes += len;
+                }
+            }
+        }
+        return bytes / 1024;
+    }
+
     private void showEffectPickerDialog() {
         String[] titles = new String[MotionPreset.PRESETS.length];
         String curMode = currentMode();
@@ -618,13 +931,12 @@ public final class MainActivity extends Activity {
             titles[i] = MotionPreset.PRESETS[i].title + "\n" + MotionPreset.PRESETS[i].desc;
         }
         new AlertDialog.Builder(this)
-                .setTitle("选择实况动态效果")
+                .setTitle("实况动态效果")
                 .setSingleChoiceItems(titles, checked, (d, which) -> {
                     prefs().edit().putString(KEY_MODE, MotionPreset.PRESETS[which].id).apply();
-                    refreshEffectLabel();
+                    toast("已设为：" + MotionPreset.PRESETS[which].title);
                     d.dismiss();
                 })
-                .setNeutralButton("调幅度与时长", (d, w) -> showStrengthDialog())
                 .setNegativeButton("取消", null)
                 .show();
     }
@@ -638,35 +950,15 @@ public final class MainActivity extends Activity {
         float r = currentRatio();
         int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
         new AlertDialog.Builder(this)
-                .setTitle("调整微动幅度与时长")
+                .setTitle("微动幅度与时长")
                 .setSingleChoiceItems(items, checked, (d, which) -> {
                     float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
                     float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
                     prefs().edit().putFloat(KEY_RATIO, newRatio).putFloat(KEY_DURATION, newDur).apply();
-                    refreshEffectLabel();
+                    toast("已调整为：" + items[which]);
                     d.dismiss();
                 })
                 .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private void showPhotoPreviewDialog(Uri uri) {
-        ImageView iv = new ImageView(this);
-        iv.setAdjustViewBounds(true);
-        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        iv.setMinimumHeight(dp(260));
-        ioExecutor.execute(() -> {
-            Bitmap bmp = decodeScaledBitmap(getContentResolver(), uri, 1200);
-            if (bmp != null) {
-                mainHandler.post(() -> iv.setImageBitmap(bmp));
-            }
-        });
-        new AlertDialog.Builder(this)
-                .setView(iv)
-                .setNegativeButton("关闭", null)
-                .setPositiveButton("选中这张", (d, w) -> {
-                    if (!selectedUris.contains(uri)) toggleSelection(uri);
-                })
                 .show();
     }
 
@@ -679,15 +971,28 @@ public final class MainActivity extends Activity {
             int sample = 1;
             int max = Math.max(bo.outWidth, bo.outHeight);
             while (max / sample > maxSide) sample *= 2;
+            byte[] raw;
             try (InputStream is2 = resolver.openInputStream(uri)) {
                 if (is2 == null) return null;
-                BitmapFactory.Options o = new BitmapFactory.Options();
-                o.inSampleSize = sample;
-                return BitmapFactory.decodeStream(is2, null, o);
+                raw = readStreamBytes(is2);
             }
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inSampleSize = sample;
+            Bitmap bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length, o);
+            if (bmp == null) return null;
+            int orient = ExifOrientationReader.readJpegOrientation(raw);
+            return ExifOrientationReader.applyOrientation(bmp, orient);
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static byte[] readStreamBytes(InputStream is) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[32 * 1024];
+        int n;
+        while ((n = is.read(buf)) >= 0) out.write(buf, 0, n);
+        return out.toByteArray();
     }
 
     private SharedPreferences prefs() {
@@ -706,11 +1011,8 @@ public final class MainActivity extends Activity {
         return MotionPreset.clampDuration(prefs().getFloat(KEY_DURATION, MotionPreset.DEFAULT_DURATION_SEC));
     }
 
-    private void refreshEffectLabel() {
-        MotionPreset.PresetInfo info = MotionPreset.findById(currentMode());
-        float pct = (currentRatio() - 1.0f) * 100f;
-        effectTitleView.setText(String.format(Locale.US, "效果：%s · %.1f%% · %.1f秒",
-                info.title, pct, currentDuration()));
+    private boolean isSkipExistingLive() {
+        return prefs().getBoolean(KEY_SKIP_EXISTING_LIVE, true);
     }
 
     private final class PhotoGridAdapter extends BaseAdapter {
@@ -734,9 +1036,10 @@ public final class MainActivity extends Activity {
             FrameLayout cell;
             ImageView img;
             TextView badge;
+            TextView liveBadge;
             View border;
             if (convertView == null) {
-                int cellSize = Math.max(100, (getResources().getDisplayMetrics().widthPixels - dp(12)) / 3);
+                int cellSize = Math.max(100, (getResources().getDisplayMetrics().widthPixels - dp(8)) / 3);
                 cell = new FrameLayout(MainActivity.this);
                 cell.setLayoutParams(new GridView.LayoutParams(cellSize, cellSize));
 
@@ -757,15 +1060,22 @@ public final class MainActivity extends Activity {
                 badge.setTextSize(11);
                 badge.setTypeface(Typeface.DEFAULT_BOLD);
                 badge.setGravity(Gravity.CENTER);
-                GradientDrawable bg = new GradientDrawable();
-                bg.setShape(GradientDrawable.OVAL);
-                bg.setColor(brandGreen());
-                badge.setBackground(bg);
                 FrameLayout.LayoutParams bLp = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP | Gravity.END);
-                bLp.setMargins(0, dp(6), dp(6), 0);
+                bLp.setMargins(0, dp(5), dp(5), 0);
                 cell.addView(badge, bLp);
 
-                cell.setTag(new ViewHolder(img, badge, border));
+                liveBadge = new TextView(MainActivity.this);
+                liveBadge.setText("LIVE");
+                liveBadge.setTextColor(Color.WHITE);
+                liveBadge.setTextSize(9);
+                liveBadge.setTypeface(Typeface.DEFAULT_BOLD);
+                liveBadge.setPadding(dp(5), dp(2), dp(5), dp(2));
+                liveBadge.setBackground(roundRect(0x88000000, 6));
+                FrameLayout.LayoutParams lLp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
+                lLp.setMargins(dp(5), 0, 0, dp(5));
+                cell.addView(liveBadge, lLp);
+
+                cell.setTag(new ViewHolder(img, badge, liveBadge, border));
             } else {
                 cell = (FrameLayout) convertView;
             }
@@ -775,11 +1085,23 @@ public final class MainActivity extends Activity {
             if (selIdx >= 0) {
                 vh.badge.setVisibility(View.VISIBLE);
                 vh.badge.setText(String.valueOf(selIdx + 1));
+                GradientDrawable filled = new GradientDrawable();
+                filled.setShape(GradientDrawable.OVAL);
+                filled.setColor(brandGreen());
+                vh.badge.setBackground(filled);
                 vh.border.setVisibility(View.VISIBLE);
             } else {
-                vh.badge.setVisibility(View.GONE);
+                vh.badge.setVisibility(View.VISIBLE);
+                vh.badge.setText("");
+                GradientDrawable hollow = new GradientDrawable();
+                hollow.setShape(GradientDrawable.OVAL);
+                hollow.setColor(0x38000000);
+                hollow.setStroke(dp(1), 0xCCFFFFFF);
+                vh.badge.setBackground(hollow);
                 vh.border.setVisibility(View.GONE);
             }
+            vh.badge.setOnClickListener(v -> toggleSelection(photo.uri));
+            vh.liveBadge.setVisibility(photo.looksLive ? View.VISIBLE : View.GONE);
 
             vh.photoId = photo.id;
             Bitmap cached = thumbCache.get(photo.id);
@@ -807,12 +1129,14 @@ public final class MainActivity extends Activity {
     private static final class ViewHolder {
         final ImageView img;
         final TextView badge;
+        final TextView liveBadge;
         final View border;
         long photoId;
 
-        ViewHolder(ImageView img, TextView badge, View border) {
+        ViewHolder(ImageView img, TextView badge, TextView liveBadge, View border) {
             this.img = img;
             this.badge = badge;
+            this.liveBadge = liveBadge;
             this.border = border;
         }
     }
@@ -832,7 +1156,7 @@ public final class MainActivity extends Activity {
     }
 
     private int bgPrimary() {
-        return isDark ? Color.rgb(16, 18, 22) : Color.rgb(245, 247, 250);
+        return isDark ? Color.rgb(14, 16, 20) : Color.rgb(246, 248, 250);
     }
 
     private int cardBg() {

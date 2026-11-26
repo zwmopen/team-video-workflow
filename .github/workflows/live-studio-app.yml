@@ -44,15 +44,19 @@ jobs:
           curl -fsSL https://services.gradle.org/distributions/gradle-9.4.1-bin.zip -o /tmp/gradle-9.4.1-bin.zip
           unzip -q /tmp/gradle-9.4.1-bin.zip -d /tmp/gradle
       - name: Test, build and lint release APK
+        id: and_meta
+        shell: bash
         run: |
           set -euo pipefail
           /tmp/gradle/gradle-9.4.1/bin/gradle :app:testDebugUnitTest :app:assembleRelease :app:lintRelease --stacktrace
+          ver=$(awk -F'"' '/versionName/ {print $2; exit}' app/build.gradle.kts)
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/LiveStudio-Android-v1.0.0.apk
-          (cd out && sha256sum LiveStudio-Android-v1.0.0.apk > SHA256SUMS.txt)
+          cp app/build/outputs/apk/release/app-release.apk "out/LiveStudio-Android-v${ver}.apk"
+          (cd out && sha256sum "LiveStudio-Android-v${ver}.apk" > SHA256SUMS.txt)
+          echo "artifact_name=live-studio-android-v${ver}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: live-studio-android-v1.0.0
+          name: ${{ steps.and_meta.outputs.artifact_name }}
           path: tools/live-studio-app/android/out/
 
   ios-altstore-build:
@@ -80,28 +84,32 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
       - name: Package AltStore IPA
+        id: ios_meta
         run: |
           set -euo pipefail
+          ver=$(awk -F': *' '/^[[:space:]]*MARKETING_VERSION:/ {print $2; exit}' project.yml | tr -d '"' | tr -d "'" | xargs)
           app_path="build/Build/Products/Release-iphoneos/LiveStudio.app"
           test -d "$app_path"
-          ipa_name="LiveStudio-iOS-v1.0.0-altstore.ipa"
+          ipa_name="LiveStudio-iOS-v${ver}-altstore.ipa"
           rm -rf package
           mkdir -p package/Payload
           ditto "$app_path" "package/Payload/LiveStudio.app"
           (cd package && /usr/bin/zip -qry "../$ipa_name" Payload)
-          python3 - <<'PY'
-          import plistlib, zipfile
-          with zipfile.ZipFile("LiveStudio-iOS-v1.0.0-altstore.ipa") as z:
+          EXPECTED_VER="$ver" python3 - <<'PY'
+          import os, plistlib, zipfile
+          ver = os.environ["EXPECTED_VER"]
+          with zipfile.ZipFile(f"LiveStudio-iOS-v{ver}-altstore.ipa") as z:
               info = plistlib.loads(z.read("Payload/LiveStudio.app/Info.plist"))
               assert info["CFBundleExecutable"] == "LiveStudio"
               assert info["CFBundleDisplayName"] == "实况工坊"
-              assert info["CFBundleShortVersionString"] == "1.0.0"
-          print("LiveStudio IPA verified")
+              assert info["CFBundleShortVersionString"] == ver
+          print("LiveStudio IPA verified:", ver)
           PY
           shasum -a 256 "$ipa_name" > "${ipa_name}.sha256"
+          echo "artifact_name=live-studio-ios-altstore-v${ver}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: live-studio-ios-altstore-v1.0.0
+          name: ${{ steps.ios_meta.outputs.artifact_name }}
           path: |
-            tools/live-studio-app/ios/LiveStudio-iOS-v1.0.0-altstore.ipa
-            tools/live-studio-app/ios/LiveStudio-iOS-v1.0.0-altstore.ipa.sha256
+            tools/live-studio-app/ios/LiveStudio-iOS-v*-altstore.ipa
+            tools/live-studio-app/ios/LiveStudio-iOS-v*-altstore.ipa.sha256

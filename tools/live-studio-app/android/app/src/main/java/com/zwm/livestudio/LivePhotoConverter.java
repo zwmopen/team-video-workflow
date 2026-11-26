@@ -32,6 +32,31 @@ public final class LivePhotoConverter {
     private LivePhotoConverter() {
     }
 
+    public static boolean isAlreadyMotionPhoto(ContentResolver resolver, Uri uri) {
+        if (resolver == null || uri == null) return false;
+        try {
+            byte[] data = readAllBytes(resolver, uri);
+            return MotionPhotoPacker.isMotionPhoto(data);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    public static Uri convertOrPassthrough(
+            Context context,
+            Uri sourceUri,
+            String modeId,
+            float ratio,
+            float durationSec,
+            int index,
+            boolean skipExistingLive
+    ) throws IOException {
+        if (skipExistingLive && isAlreadyMotionPhoto(context.getContentResolver(), sourceUri)) {
+            return sourceUri;
+        }
+        return convertAndSave(context, sourceUri, modeId, ratio, durationSec, index);
+    }
+
     public static Uri convertAndSave(
             Context context,
             Uri sourceUri,
