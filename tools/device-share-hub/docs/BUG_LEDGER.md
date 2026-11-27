@@ -1,3 +1,19 @@
+# DSH-201：FlClash 玻璃滑块/底部悬浮底座重构、紧凑菜单与 iOS 12 兼容修复（2026-11-27 · 已验证并合入候选分支）
+
+- **问题与交互反馈（6 项）**：
+  1. `LiveQuickMenu.swift` 首轮 CI (`46004319221` / `ios-altstore-build`) 因部署目标 `iOS 12.0` 下直接引用 `.systemThickMaterial` / `.separator` / `.label` / `.tertiarySystemFill` 编译失败；同时双端菜单尺寸（`264dp`/`268pt`）视觉偏高偏宽。
+  2. 顶部 3 模式切换栏（`电脑 / 手机 / 相册`）缺少跟手滑动药丸指示，分类筛选容器 `dp(36)` 对部分 ROM/按钮高度存在底部轻微裁切。
+  3. 团队工作相册默认 `AUTO_LIVE` 开关为关闭，需首次进入即可用 `● LIVE 开`；设置页缺少 FlClash 玻璃全局主题切换入口。
+  4. `相册模式` 顶栏仍显示 `效果：...` 而非统一可点按/长按的 `● LIVE 开/关` 胶囊；矩形 `bottomBar` 视觉偏生硬且操作命名未统一。
+  5. 多选时角标点按区仅 `24dp` 易误触进大图，`horizontalDrag` `1.15f` 倾角阈值导致斜滑不易触发连续框选。
+  6. `LiveStudio` 底部多选栏同样为固定矩形底栏，尚未统一升级为悬浮椭圆半透明玻璃底座。
+- **修复与重构**：
+  - 新增共享 `SlidingGlassBar`（Android `tools/live-photo-core/android/.../SlidingGlassBar.java` & iOS `12.0+` `SlidingGlassBar.swift`），支持点击与连续水平滑选、气泡缩放动效、`CLOCK_TICK` 触感及底部底座上滑撤出取消。
+  - `LiveQuickMenu.java` / `LiveQuickMenu.swift` 收紧至紧凑浮窗（`224dp/228pt × max 276`，行最小高 `38dp/38pt`）并补全 `#available(iOS 13.0, *)` 降级分支。
+  - `ThemePalette.java` / `SettingsActivity.java` / `ActivitySheet.swift` / `SettingsView.swift` 新增「主题风格：FlClash 玻璃（推荐）/ 经典标准」；`OnlineService` 与 `AutoLivePreferences` 默认开启 `LIVE`。
+  - `MainActivity.java` / `ContentView.swift` 顶部三模式接入 `SlidingGlassBar`，分类筛选框提高至 `dp(42)` + `setClipChildren(false)`；`PhoneGalleryPane` / `PhoneGalleryView` 与 `LiveStudio` 全量接入统一 `● LIVE` 胶囊、`42dp/44pt` 角标热区、`0.55f` 滑动框选及悬浮椭圆玻璃底座（`删除 · 保存实况 · 原图 · 分享实况`）。
+- **验证证据**：`pytest` (`13/13`)、`parity_ios_android.py` (`52/52`)、`TestDSH197SendArchive` (`28/28`)、`check-cpp-test-assertions.py`、5 项 JS 守卫、`Gradle 9.4.1` 双包单测/Lint/Release 构建与 `apksigner` 验签、Xiaomi 15 (`24129PN74C`) 浅深色+滑块录屏+悬浮底座多选真机验收全部通过（`logcat` 零崩溃）；`test_android_dark_theme.py` 5 项过 4 项（未改动文件 `ShareImportActivity.java` 存在历史顺序告警）。
+
 # DSH-200：候选分支 feature/live-push-drift-20261127 审计缺陷与真机闭环修复（2026-11-27 · 已在候选分支修复并过小米15测试）
 
 - **问题与审计发现（5 项）**：

@@ -224,6 +224,7 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedSeasons = new HashSet<>();
     private final Set<String> selectedFlowTypes = new HashSet<>();
     private int lastThemeMode = -1;
+    private int lastThemeStyle = -1;
     private long lastRemoteViewStateUpdatedAt = 0L;
     // DSH-111：在线相册自动刷新（页面可见时周期探测，服务端有变化才真刷列表）
     private Runnable onlineAutoRefreshRunnable;
@@ -234,10 +235,7 @@ public final class MainActivity extends Activity {
     private boolean isOnlineMode = false;
     private int activeSourceMode = SOURCE_LOCAL;
     private boolean enteredTrashFromOnline = false;
-    private ImageButton sourceModeButton;
-    private ImageButton modePcBtn;
-    private ImageButton modePhoneBtn;
-    private ImageButton modeGalleryBtn;
+    private com.zwm.livecore.SlidingGlassBar modeSlidingBar;
     private PhoneGalleryPane phoneGalleryPane;
     private OnlineGalleryClient.CategoriesResult lastCategoriesResult;
     /** 当前 onlineWorks 是否来自磁盘快照（用于状态栏标注「本地快照」） */
@@ -531,36 +529,27 @@ public final class MainActivity extends Activity {
         scannedCountText.setPadding(dp(5), dp(5), dp(5), dp(5));
         scannedCountText.setVisibility(View.GONE);
 
-        // 顶部 3 模式直切胶囊：💻 电脑在线 | 📱 手机本地库 | 🖼️ 手机相册
-        LinearLayout modeSwitcherPill = new LinearLayout(this);
-        modeSwitcherPill.setOrientation(LinearLayout.HORIZONTAL);
-        modeSwitcherPill.setGravity(Gravity.CENTER_VERTICAL);
-        modeSwitcherPill.setPadding(dp(3), dp(3), dp(3), dp(3));
-        modeSwitcherPill.setBackground(roundWithStroke(ThemePalette.getPillBg(this), 21, ThemePalette.getCardStroke(this)));
-
-        modePcBtn = pillModeButton(R.drawable.ic_mode_pc, "电脑在线作品（长按配服务器）");
-        modePcBtn.setOnClickListener(v -> selectSourceMode(SOURCE_ONLINE));
-        modePcBtn.setOnLongClickListener(v -> {
-            showOnlineStatusOrConfigDialog();
-            return true;
+        // 顶部 3 模式直切滑块胶囊（FlClash 玻璃滑块，支持点击与左右滑动）：💻 电脑在线 | 📱 手机本地库 | 🖼️ 手机相册
+        modeSlidingBar = new com.zwm.livecore.SlidingGlassBar(this, false);
+        modeSlidingBar.setSegments(new com.zwm.livecore.SlidingGlassBar.Segment[]{
+                new com.zwm.livecore.SlidingGlassBar.Segment("", "电脑在线作品（长按配服务器）", getDrawable(R.drawable.ic_mode_pc), false, false),
+                new com.zwm.livecore.SlidingGlassBar.Segment("", "手机本地作品库", getDrawable(R.drawable.ic_mode_phone), false, false),
+                new com.zwm.livecore.SlidingGlassBar.Segment("", "手机相册（本地图片与实况工坊）", getDrawable(R.drawable.ic_mode_gallery), false, false)
+        }, activeSourceMode == SOURCE_ONLINE ? 0 : (activeSourceMode == SOURCE_GALLERY ? 2 : 1));
+        modeSlidingBar.setOnSegmentSelectedListener((idx, fromScrub) -> {
+            int nextMode = idx == 0 ? SOURCE_ONLINE : (idx == 2 ? SOURCE_GALLERY : SOURCE_LOCAL);
+            if (fromScrub && nextMode == activeSourceMode) return;
+            selectSourceMode(nextMode);
         });
-
-        modePhoneBtn = pillModeButton(R.drawable.ic_mode_phone, "手机本地作品库");
-        modePhoneBtn.setOnClickListener(v -> selectSourceMode(SOURCE_LOCAL));
-        sourceModeButton = modePhoneBtn;
-
-        modeGalleryBtn = pillModeButton(R.drawable.ic_mode_gallery, "手机相册（本地图片与实况工坊）");
-        modeGalleryBtn.setOnClickListener(v -> selectSourceMode(SOURCE_GALLERY));
-
-        LinearLayout.LayoutParams pmLp1 = new LinearLayout.LayoutParams(dp(34), dp(32));
-        LinearLayout.LayoutParams pmLp2 = new LinearLayout.LayoutParams(dp(34), dp(32));
-        pmLp2.setMargins(dp(2), 0, dp(2), 0);
-        LinearLayout.LayoutParams pmLp3 = new LinearLayout.LayoutParams(dp(34), dp(32));
-        modeSwitcherPill.addView(modePcBtn, pmLp1);
-        modeSwitcherPill.addView(modePhoneBtn, pmLp2);
-        modeSwitcherPill.addView(modeGalleryBtn, pmLp3);
+        modeSlidingBar.setOnSegmentLongPressListener(idx -> {
+            if (idx == 0) {
+                showOnlineStatusOrConfigDialog();
+                return true;
+            }
+            return false;
+        });
         updateSourceModeButtonStyle();
-        titleRow.addView(modeSwitcherPill, new LinearLayout.LayoutParams(-2, -2));
+        titleRow.addView(modeSlidingBar, new LinearLayout.LayoutParams(-2, dp(40)));
 
         titleRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
@@ -632,16 +621,23 @@ public final class MainActivity extends Activity {
         categoryBar = new LinearLayout(this);
         categoryBar.setOrientation(LinearLayout.HORIZONTAL);
         categoryBar.setGravity(Gravity.CENTER_VERTICAL);
-        categoryBar.setPadding(dp(3), dp(3), dp(3), dp(3));
+        categoryBar.setClipChildren(false);
+        categoryBar.setPadding(dp(4), dp(4), dp(4), dp(4));
 
         categoryScrollView = new HorizontalScrollView(this);
         categoryScrollView.setHorizontalScrollBarEnabled(false);
         categoryScrollView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        categoryScrollView.setClipChildren(false);
+        categoryScrollView.setClipToPadding(false);
         categoryScrollView.addView(categoryBar, new FrameLayout.LayoutParams(-2, -1));
 
         categorySelector = new FrameLayout(this);
-        categorySelector.setBackground(round(ThemePalette.isDarkMode(this) ? Color.rgb(28, 28, 30) : Color.rgb(232, 234, 233), 11));
-        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(36)));
+        categorySelector.setClipChildren(false);
+        categorySelector.setClipToPadding(false);
+        categorySelector.setBackground(ThemePalette.isFlClashGlassStyle(this)
+                ? roundWithStroke(ThemePalette.getGlassTrackBg(this), 13, ThemePalette.getGlassTrackStroke(this))
+                : round(ThemePalette.isDarkMode(this) ? Color.rgb(28, 28, 30) : Color.rgb(232, 234, 233), 13));
+        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(42)));
 
         searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -821,6 +817,7 @@ public final class MainActivity extends Activity {
             boolean next = !OnlineService.isAutoLiveOnShareEnabled(MainActivity.this);
             OnlineService.setAutoLiveOnShareEnabled(MainActivity.this, next);
             refreshWorkLiveBadge();
+        if (phoneGalleryPane != null) phoneGalleryPane.refreshLiveChip();
             toast(next
                     ? ("已开启分享自动转实况 · " + OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(MainActivity.this)))
                     : "已关闭分享自动转实况（将按原静图分享）");
@@ -836,6 +833,7 @@ public final class MainActivity extends Activity {
         livePillParams.setMargins(dp(6), 0, 0, 0);
         statusRow.addView(liveStatusPill, livePillParams);
         refreshWorkLiveBadge();
+        if (phoneGalleryPane != null) phoneGalleryPane.refreshLiveChip();
         // 【0.8.43 修】statusText 不再 add 到滚动 root 末尾（之前会被作品列表推到底部屏幕外），
         // 改为由 buildUi() 末尾的 frozenLayout.addView 统一加到 titleRow 之下，
         // 做真正的 sticky 顶部状态栏。
@@ -996,6 +994,7 @@ public final class MainActivity extends Activity {
             if (which == labels.length - 1) {
                 OnlineService.setAutoLiveOnShareEnabled(this, false);
                 refreshWorkLiveBadge();
+        if (phoneGalleryPane != null) phoneGalleryPane.refreshLiveChip();
                 toast("已关闭分享自动转实况");
                 return;
             }
@@ -1003,6 +1002,7 @@ public final class MainActivity extends Activity {
             OnlineService.setAutoLiveMotionMode(this, chosen);
             OnlineService.setAutoLiveOnShareEnabled(this, true);
             refreshWorkLiveBadge();
+        if (phoneGalleryPane != null) phoneGalleryPane.refreshLiveChip();
             toast("已启用：" + OnlineService.getAutoLiveMotionTitle(chosen));
         });
     }
@@ -2419,8 +2419,9 @@ public final class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(12);
         button.setMinHeight(dp(34));
+        button.setMinimumHeight(dp(34));
         button.setMinimumWidth(dp(48));
-        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setPadding(dp(12), dp(2), dp(12), dp(2));
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
         applyCategoryButtonStyle(button, isSelected);
@@ -3203,14 +3204,19 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         int currentThemeMode = ThemePalette.getThemeMode(this);
-        if (lastThemeMode != -1 && lastThemeMode != currentThemeMode) {
+        int currentThemeStyle = ThemePalette.getThemeStyle(this);
+        if ((lastThemeMode != -1 && lastThemeMode != currentThemeMode)
+                || (lastThemeStyle != -1 && lastThemeStyle != currentThemeStyle)) {
             lastThemeMode = currentThemeMode;
+            lastThemeStyle = currentThemeStyle;
             recreate();
             return;
         }
         lastThemeMode = currentThemeMode;
+        lastThemeStyle = currentThemeStyle;
         ThemePalette.applySystemBarAppearance(this);
         refreshWorkLiveBadge();
+        if (phoneGalleryPane != null) phoneGalleryPane.refreshLiveChip();
         UpdateChecker.checkOnResume(this);
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
@@ -3622,30 +3628,20 @@ public final class MainActivity extends Activity {
         if (searchInput != null) {
             searchInput.setHint(isOnlineMode ? "搜索标题/地点" : "搜索标题/文件夹");
         }
-        boolean darkModeNow = ThemePalette.isDarkMode(this);
-        int mutedTint = ThemePalette.getPillText(this);
-        if (modePcBtn != null) {
-            boolean active = (activeSourceMode == SOURCE_ONLINE);
-            modePcBtn.setImageTintList(ColorStateList.valueOf(
-                    active ? (darkModeNow ? Color.rgb(86, 190, 240) : Color.rgb(2, 132, 199)) : mutedTint));
-            modePcBtn.setBackground(active
-                    ? round(darkModeNow ? Color.rgb(11, 54, 80) : Color.rgb(224, 242, 254), 17)
-                    : null);
-        }
-        if (modePhoneBtn != null) {
-            boolean active = (activeSourceMode == SOURCE_LOCAL);
-            modePhoneBtn.setImageTintList(ColorStateList.valueOf(
-                    active ? ThemePalette.getBrandLightText(this) : mutedTint));
-            modePhoneBtn.setBackground(active
-                    ? round(ThemePalette.getBrandLightBg(this), 17)
-                    : null);
-        }
-        if (modeGalleryBtn != null) {
-            boolean active = (activeSourceMode == SOURCE_GALLERY);
-            int galleryFg = darkModeNow ? Color.rgb(255, 205, 112) : Color.rgb(180, 83, 9);
-            int galleryBg = darkModeNow ? Color.rgb(66, 48, 13) : Color.rgb(254, 243, 199);
-            modeGalleryBtn.setImageTintList(ColorStateList.valueOf(active ? galleryFg : mutedTint));
-            modeGalleryBtn.setBackground(active ? round(galleryBg, 17) : null);
+        if (modeSlidingBar != null) {
+            boolean darkModeNow = ThemePalette.isDarkMode(this);
+            boolean glassStyle = ThemePalette.isFlClashGlassStyle(this);
+            int idx = activeSourceMode == SOURCE_ONLINE ? 0 : (activeSourceMode == SOURCE_GALLERY ? 2 : 1);
+            int accent;
+            if (activeSourceMode == SOURCE_ONLINE) {
+                accent = darkModeNow ? Color.rgb(86, 190, 240) : Color.rgb(2, 132, 199);
+            } else if (activeSourceMode == SOURCE_GALLERY) {
+                accent = darkModeNow ? Color.rgb(255, 205, 112) : Color.rgb(180, 83, 9);
+            } else {
+                accent = ThemePalette.getBrandLightText(this);
+            }
+            modeSlidingBar.setSelectedIndex(idx, true);
+            modeSlidingBar.applyAppearance(darkModeNow, glassStyle, accent);
         }
     }
 
@@ -3716,6 +3712,7 @@ public final class MainActivity extends Activity {
             if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
             setWorkHeaderCollapsed(false, false);
             refreshWorkLiveBadge();
+        if (phoneGalleryPane != null) phoneGalleryPane.refreshLiveChip();
         }
     }
 
@@ -4356,8 +4353,9 @@ public final class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(12);
         button.setMinHeight(dp(34));
+        button.setMinimumHeight(dp(34));
         button.setMinimumWidth(dp(48));
-        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setPadding(dp(12), dp(2), dp(12), dp(2));
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
         applyOnlineCategoryButtonStyle(button, isSelected, isPinned);

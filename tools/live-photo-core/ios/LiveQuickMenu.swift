@@ -71,14 +71,19 @@ final class LiveQuickMenu: NSObject {
         cover.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
         cover.accessibilityViewIsModal = true
 
-        let safe = window.bounds.inset(by: window.safeAreaInsets).insetBy(dx: 8, dy: 8)
+        let safe: CGRect
+        if #available(iOS 11.0, *) {
+            safe = window.bounds.inset(by: window.safeAreaInsets).insetBy(dx: 8, dy: 8)
+        } else {
+            safe = window.bounds.insetBy(dx: 8, dy: 24)
+        }
         let rect = target.convert(target.bounds, to: window)
         let below = rect.maxY + 6, above = rect.minY - 6
-        let width = min(268, safe.width)
+        let width = min(228, safe.width)
         guard safe.width > 80 else { selection = nil; return }
 
         let font = UIFont.preferredFont(forTextStyle: .subheadline)
-        let textMaxW = max(60, width - 35)
+        let textMaxW = max(60, width - 34)
         var rowHeights: [CGFloat] = []
         for label in labels {
             let text = label + "  ✓"
@@ -88,21 +93,39 @@ final class LiveQuickMenu: NSObject {
                 attributes: [.font: font],
                 context: nil
             ).height
-            rowHeights.append(max(44, ceil(measured) + 16))
+            rowHeights.append(max(38, ceil(measured) + 12))
         }
         let desired = rowHeights.reduce(12, +)
         let down = safe.maxY - below >= min(desired, above - safe.minY)
         let available = down ? (safe.maxY - below) : (above - safe.minY)
-        guard available >= 88 else { selection = nil; return }
-        let height = min(desired, available)
+        guard available >= 84 else { selection = nil; return }
+        let height = min(desired, min(available, 276))
         let x = max(safe.minX, min(safe.maxX - width, rect.maxX - width))
         let y = down ? below : (above - height)
 
-        let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterial))
+        let blurStyle: UIBlurEffect.Style
+        let separatorColor: UIColor
+        let labelColor: UIColor
+        let selectedRowColor: UIColor
+        if #available(iOS 13.0, *) {
+            let isDark = window.traitCollection.userInterfaceStyle == .dark
+            blurStyle = .systemThickMaterial
+            separatorColor = UIColor.separator
+            labelColor = UIColor.label
+            selectedRowColor = UIColor.tertiarySystemFill
+            _ = isDark
+        } else {
+            blurStyle = .extraLight
+            separatorColor = UIColor(white: 0.78, alpha: 0.5)
+            labelColor = .darkText
+            selectedRowColor = UIColor(white: 0.5, alpha: 0.14)
+        }
+
+        let glass = UIVisualEffectView(effect: UIBlurEffect(style: blurStyle))
         glass.frame = CGRect(x: x, y: y, width: width, height: height)
-        glass.layer.cornerRadius = 24
+        glass.layer.cornerRadius = 22
         glass.layer.borderWidth = 0.5
-        glass.layer.borderColor = UIColor.separator.cgColor
+        glass.layer.borderColor = separatorColor.cgColor
         glass.clipsToBounds = true
 
         let sc = UIScrollView(frame: glass.bounds)
@@ -112,7 +135,7 @@ final class LiveQuickMenu: NSObject {
 
         let platter = UIView()
         platter.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.17)
-        platter.layer.cornerRadius = 14
+        platter.layer.cornerRadius = 13
         platter.isUserInteractionEnabled = false
         platter.alpha = 0
         sc.addSubview(platter)
@@ -128,11 +151,11 @@ final class LiveQuickMenu: NSObject {
             row.setTitle(label + (i == selected ? "  ✓" : ""), for: .normal)
             row.titleLabel?.font = font
             row.titleLabel?.numberOfLines = 2
-            row.setTitleColor(.label, for: .normal)
+            row.setTitleColor(labelColor, for: .normal)
             row.contentHorizontalAlignment = .left
-            row.contentEdgeInsets = UIEdgeInsets(top: 6, left: 13, bottom: 6, right: 10)
-            row.layer.cornerRadius = 14
-            row.backgroundColor = (i == selected) ? UIColor.tertiarySystemFill : .clear
+            row.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 10)
+            row.layer.cornerRadius = 13
+            row.backgroundColor = (i == selected) ? selectedRowColor : .clear
             row.accessibilityLabel = label
             if i == selected { row.accessibilityTraits.insert(.selected) }
             row.addTarget(self, action: #selector(rowTapped(_:)), for: .touchUpInside)

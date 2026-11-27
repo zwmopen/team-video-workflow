@@ -351,7 +351,7 @@ public final class OnlineService extends Service {
     public static boolean isAutoLiveOnShareEnabled(Context context) {
         return context != null && context
                 .getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_AUTO_LIVE_ON_SHARE_ENABLED, false);
+                .getBoolean(PREF_AUTO_LIVE_ON_SHARE_ENABLED, true);
     }
 
     public static void setAutoLiveOnShareEnabled(Context context, boolean enabled) {

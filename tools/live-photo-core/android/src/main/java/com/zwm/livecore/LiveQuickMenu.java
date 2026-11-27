@@ -167,7 +167,7 @@ public final class LiveQuickMenu {
         int minY = Math.max(dp(8), visible.top - r[1] + dp(8));
         int maxX = Math.min(root.getWidth() - dp(8), visible.right - r[0] - dp(8));
         int maxY = Math.min(root.getHeight() - dp(8), visible.bottom - r[1] - dp(8));
-        int width = Math.min(dp(264), maxX - minX);
+        int width = Math.min(dp(224), maxX - minX);
         if (width < dp(80)) return;
 
         current = selected; selection = onSelect;
@@ -193,13 +193,13 @@ public final class LiveQuickMenu {
         currentPlatter = new View(activity);
         currentPlatter.setBackground(shape(night ? 0xFF383C47 : 0xFFEBEEF4, 14, 0));
         currentPlatter.setVisibility(View.GONE);
-        listHolder.addView(currentPlatter, new FrameLayout.LayoutParams(rowW, dp(44)));
+        listHolder.addView(currentPlatter, new FrameLayout.LayoutParams(rowW, dp(38)));
 
         hoverPlatter = new View(activity);
         hoverPlatter.setBackground(shape(night ? 0xFF4D5870 : 0xFFD9E6F7, 14, night ? 0x33FFFFFF : 0x223B72C8));
         hoverPlatter.setVisibility(View.GONE);
         hoverPlatter.setAlpha(0f);
-        listHolder.addView(hoverPlatter, new FrameLayout.LayoutParams(rowW, dp(44)));
+        listHolder.addView(hoverPlatter, new FrameLayout.LayoutParams(rowW, dp(38)));
 
         LinearLayout list = new LinearLayout(activity);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -209,10 +209,10 @@ public final class LiveQuickMenu {
             final int n = i;
             TextView row = new TextView(activity);
             row.setText(labels[i] + (i == selected ? "  ✓" : ""));
-            row.setTextSize(14);
+            row.setTextSize(13.5f);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setMinHeight(dp(44));
-            row.setPadding(dp(13), dp(8), dp(12), dp(8));
+            row.setMinHeight(dp(38));
+            row.setPadding(dp(12), dp(6), dp(10), dp(6));
             row.setSingleLine(false);
             row.setMaxLines(2);
             row.setTextColor(night ? Color.WHITE : 0xFF1F2329);
@@ -229,13 +229,13 @@ public final class LiveQuickMenu {
                 View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         );
-        int desiredHeight = Math.max(dp(44) + pad * 2, list.getMeasuredHeight());
+        int desiredHeight = Math.max(dp(38) + pad * 2, list.getMeasuredHeight());
         int below = a[1] - r[1] + target.getHeight() + dp(6);
         int above = a[1] - r[1] - dp(6);
         boolean openBelow = (maxY - below) >= Math.min(desiredHeight, above - minY);
         int available = openBelow ? (maxY - below) : (above - minY);
-        if (available < dp(88)) { close(); return; }
-        int height = Math.min(desiredHeight, available);
+        if (available < dp(84)) { close(); return; }
+        int height = Math.min(desiredHeight, Math.min(available, dp(276)));
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.LEFT);
         lp.leftMargin = Math.max(minX, Math.min(maxX - width, a[0] - r[0] + target.getWidth() - width));

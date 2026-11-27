@@ -80,9 +80,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var onlineCategories: [OnlineCategoryItem] = []
     private var onlineStages: [OnlineCategoryItem] = []
     private var selectedOnlineCategory: String = "全部"
-    private var pcModeButton: UIButton!
-    private var phoneModeButton: UIButton!
-    private var galleryModeButton: UIButton!
+    private let modeSlidingBar = SlidingGlassBar(dockMode: false)
     private var folderToolbarButton: UIButton!
     private var folderItem: UIBarButtonItem?
     private lazy var phoneGalleryVC = PhoneGalleryViewController()
@@ -278,6 +276,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
         NotificationCenter.default.addObserver(self, selector: #selector(handleAppWillEnterForeground),
                                                name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleThemeStyleDidChange),
+                                               name: NSNotification.Name("AppThemeStyleDidChange"), object: nil)
         view.backgroundColor = AppColors.background
         configureNavigation()
         configureFilterBar()
@@ -450,26 +450,31 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         navigationItem.backBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)
         navigationItem.titleView = nil
 
-        // 顶部左侧 3 模式直切胶囊：💻 电脑在线 | 📱 手机本地库 | 🖼️ 手机相册
-        pcModeButton = makePillIconButton(.computer, label: "电脑在线作品（长按配服务器）", action: #selector(selectOnlineModeTapped))
-        let pcLongPress = UILongPressGestureRecognizer(target: self, action: #selector(configureServerUrl))
-        pcModeButton.addGestureRecognizer(pcLongPress)
-
-        phoneModeButton = makePillIconButton(.phone, label: "手机本地作品库", action: #selector(selectLocalWorkModeTapped))
-        galleryModeButton = makePillIconButton(.gallery, label: "手机相册（本地图片与实况工坊）", action: #selector(selectPhoneGalleryModeTapped))
-
-        let pillStack = UIStackView(arrangedSubviews: [pcModeButton, phoneModeButton, galleryModeButton])
-        pillStack.axis = .horizontal
-        pillStack.spacing = 2
-        pillStack.alignment = .center
-        pillStack.isLayoutMarginsRelativeArrangement = true
-        pillStack.layoutMargins = UIEdgeInsets(top: 3, left: 4, bottom: 3, right: 4)
-        pillStack.backgroundColor = AppColors.secondaryBackground
-        pillStack.layer.cornerRadius = 18
-        if #available(iOS 13.0, *) {
-            pillStack.layer.borderWidth = 0.5
-            pillStack.layer.borderColor = AppColors.separator.cgColor
+        // 顶部左侧 3 模式直切滑块胶囊（FlClash 玻璃滑块，支持点击与连续滑动）：💻 电脑在线 | 📱 手机本地库 | 🖼️ 手机相册
+        modeSlidingBar.translatesAutoresizingMaskIntoConstraints = false
+        modeSlidingBar.setSegments([
+            SlidingGlassBar.Segment(title: "", accessibilityLabel: "电脑在线作品（长按配服务器）",
+                                    image: AlbumToolbarIcon.image(.computer, color: .black)),
+            SlidingGlassBar.Segment(title: "", accessibilityLabel: "手机本地作品库",
+                                    image: AlbumToolbarIcon.image(.phone, color: .black)),
+            SlidingGlassBar.Segment(title: "", accessibilityLabel: "手机相册（本地图片与实况工坊）",
+                                    image: AlbumToolbarIcon.image(.gallery, color: .black))
+        ], selected: activeSourceTab == .online ? 0 : (activeSourceTab == .phoneGallery ? 2 : 1))
+        modeSlidingBar.onSelect = { [weak self] idx, fromScrub in
+            guard let self = self else { return }
+            let target: SourceTab = idx == 0 ? .online : (idx == 2 ? .phoneGallery : .localWork)
+            if fromScrub && target == self.activeSourceTab { return }
+            self.switchSourceTab(target)
         }
+        modeSlidingBar.onLongPress = { [weak self] idx in
+            guard idx == 0 else { return false }
+            self?.configureServerUrl()
+            return true
+        }
+        NSLayoutConstraint.activate([
+            modeSlidingBar.widthAnchor.constraint(equalToConstant: 118),
+            modeSlidingBar.heightAnchor.constraint(equalToConstant: 34)
+        ])
         updateModeButtonStyle()
 
         folderToolbarButton = toolbarButton(.folder, label: "文件浏览", action: #selector(openFiles))
@@ -487,7 +492,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         rightRow.alignment = .center
         rightRow.distribution = .fill
 
-        navigationItem.leftBarButtonItem = UIBarButtonItem(customView: pillStack)
+        navigationItem.leftBarButtonItem = UIBarButtonItem(customView: modeSlidingBar)
         navigationItem.rightBarButtonItem = UIBarButtonItem(customView: rightRow)
         updateFolderItemVisibility()
     }
@@ -518,29 +523,33 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         return button
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateModeButtonStyle()
+        phoneGalleryVC.refreshAppearance()
+    }
+
+    @objc private func handleThemeStyleDidChange() {
+        updateModeButtonStyle()
+        phoneGalleryVC.refreshAppearance()
+    }
+
     private func updateModeButtonStyle() {
-        let muted = AppColors.secondaryText
-        if activeSourceTab == .online {
-            pcModeButton.backgroundColor = AppColors.onlineBlueBg
-            pcModeButton.setImage(AlbumToolbarIcon.image(.computer, color: AppColors.onlineBlueText), for: .normal)
+        let isDark: Bool
+        if #available(iOS 12.0, *) {
+            isDark = traitCollection.userInterfaceStyle == .dark
         } else {
-            pcModeButton.backgroundColor = .clear
-            pcModeButton.setImage(AlbumToolbarIcon.image(.computer, color: muted), for: .normal)
+            isDark = false
         }
-        if activeSourceTab == .localWork {
-            phoneModeButton.backgroundColor = AppColors.brandLightBg
-            phoneModeButton.setImage(AlbumToolbarIcon.image(.phone, color: AppColors.brandLightText), for: .normal)
-        } else {
-            phoneModeButton.backgroundColor = .clear
-            phoneModeButton.setImage(AlbumToolbarIcon.image(.phone, color: muted), for: .normal)
+        let idx = activeSourceTab == .online ? 0 : (activeSourceTab == .phoneGallery ? 2 : 1)
+        let accent: UIColor
+        switch activeSourceTab {
+        case .online: accent = AppColors.onlineBlueText
+        case .phoneGallery: accent = AppColors.statusWarningText
+        case .localWork: accent = AppColors.brandLightText
         }
-        if activeSourceTab == .phoneGallery {
-            galleryModeButton.backgroundColor = AppColors.statusWarningBg
-            galleryModeButton.setImage(AlbumToolbarIcon.image(.gallery, color: AppColors.statusWarningText), for: .normal)
-        } else {
-            galleryModeButton.backgroundColor = .clear
-            galleryModeButton.setImage(AlbumToolbarIcon.image(.gallery, color: muted), for: .normal)
-        }
+        modeSlidingBar.setSelectedIndex(idx, animated: true)
+        modeSlidingBar.applyAppearance(darkMode: isDark, glassStyle: AppThemePreferences.isFlClashGlass, accentColor: accent)
     }
 
     @objc private func selectOnlineModeTapped() {

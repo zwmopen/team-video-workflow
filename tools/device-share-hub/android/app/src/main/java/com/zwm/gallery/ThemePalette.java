@@ -19,10 +19,14 @@ import android.view.WindowInsetsController;
 public final class ThemePalette {
     private static final String PREFS_NAME = "device_share";
     public static final String PREF_THEME_MODE = "pref_theme_mode";
+    public static final String PREF_THEME_STYLE = "pref_theme_style";
 
     public static final int THEME_MODE_SYSTEM = 0; // 跟随系统
     public static final int THEME_MODE_LIGHT = 1;  // 浅色模式
     public static final int THEME_MODE_DARK = 2;   // 深色模式
+
+    public static final int THEME_STYLE_CLASSIC = 0;       // 经典标准
+    public static final int THEME_STYLE_FLCLASH_GLASS = 1; // FlClash 玻璃（默认）
 
     private ThemePalette() {}
 
@@ -36,6 +40,54 @@ public final class ThemePalette {
         if (context == null) return;
         SharedPreferences sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         sp.edit().putInt(PREF_THEME_MODE, mode).apply();
+    }
+
+    public static int getThemeStyle(Context context) {
+        if (context == null) return THEME_STYLE_FLCLASH_GLASS;
+        SharedPreferences sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return sp.getInt(PREF_THEME_STYLE, THEME_STYLE_FLCLASH_GLASS);
+    }
+
+    public static void setThemeStyle(Context context, int style) {
+        if (context == null) return;
+        SharedPreferences sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        sp.edit().putInt(PREF_THEME_STYLE, style).apply();
+    }
+
+    public static boolean isFlClashGlassStyle(Context context) {
+        return getThemeStyle(context) == THEME_STYLE_FLCLASH_GLASS;
+    }
+
+    public static int getGlassTrackBg(Context c) {
+        if (!isFlClashGlassStyle(c)) {
+            return isDarkMode(c) ? Color.rgb(34, 36, 40) : Color.rgb(234, 236, 239);
+        }
+        return isDarkMode(c) ? Color.argb(196, 30, 34, 42) : Color.argb(214, 236, 240, 244);
+    }
+
+    public static int getGlassTrackStroke(Context c) {
+        if (!isFlClashGlassStyle(c)) {
+            return isDarkMode(c) ? Color.argb(45, 255, 255, 255) : Color.argb(30, 0, 0, 0);
+        }
+        return isDarkMode(c) ? Color.argb(46, 255, 255, 255) : Color.argb(28, 0, 0, 0);
+    }
+
+    public static int getGlassPlatterBg(Context c) {
+        if (!isFlClashGlassStyle(c)) {
+            return isDarkMode(c) ? Color.rgb(52, 56, 64) : Color.WHITE;
+        }
+        return isDarkMode(c) ? Color.argb(222, 55, 61, 74) : Color.argb(252, 255, 255, 255);
+    }
+
+    public static int getGlassDockBg(Context c) {
+        if (!isFlClashGlassStyle(c)) {
+            return isDarkMode(c) ? Color.rgb(34, 36, 40) : Color.WHITE;
+        }
+        return isDarkMode(c) ? Color.argb(232, 34, 38, 48) : Color.argb(242, 255, 255, 255);
+    }
+
+    public static int getGlassDockStroke(Context c) {
+        return isDarkMode(c) ? Color.argb(58, 255, 255, 255) : Color.argb(38, 0, 0, 0);
     }
 
     public static boolean isDarkMode(Context context) {

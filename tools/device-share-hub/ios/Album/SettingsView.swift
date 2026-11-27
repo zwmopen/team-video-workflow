@@ -20,7 +20,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [8, 2, 2, 2, 1, 5][section]
+        return [8, 2, 2, 2, 2, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -113,6 +113,11 @@ final class SettingsViewController: UITableViewController {
             toggle.addTarget(self, action: #selector(vibrationSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
         case (4, 0):
+            cell.textLabel?.text = "主题风格"
+            cell.detailTextLabel?.text = AppThemePreferences.currentStyle.title
+            cell.textLabel?.textColor = view.tintColor
+            cell.selectionStyle = .default
+        case (4, 1):
             cell.textLabel?.text = "外观风格"
             cell.detailTextLabel?.text = AppThemePreferences.currentMode.title
             cell.textLabel?.textColor = view.tintColor
@@ -169,6 +174,8 @@ final class SettingsViewController: UITableViewController {
             }
         } else if indexPath.section == 2 {
             showCleanupChoices(editingMove: indexPath.row == 0)
+        } else if indexPath.section == 4 && indexPath.row == 0 {
+            showThemeStyleChoices()
         } else if indexPath.section == 4 {
             showThemeModeChoices()
         } else if indexPath.section == 5 && indexPath.row == 2 {
@@ -247,6 +254,28 @@ final class SettingsViewController: UITableViewController {
                 alert.message = summary
             }
         }
+    }
+
+    private func showThemeStyleChoices() {
+        let alert = UIAlertController(title: "主题风格", message: "选择全局交互质感与玻璃效果", preferredStyle: .actionSheet)
+        let current = AppThemePreferences.currentStyle
+        let options: [(AppThemeStyle, String)] = [
+            (.classic, "经典标准"),
+            (.flclashGlass, "FlClash 玻璃（推荐）")
+        ]
+        options.forEach { (style, label) in
+            let isCurrent = style == current
+            alert.addAction(UIAlertAction(title: label + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
+                AppThemePreferences.currentStyle = style
+                self?.tableView.reloadData()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
     }
 
     private func showThemeModeChoices() {

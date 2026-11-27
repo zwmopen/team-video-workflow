@@ -160,8 +160,13 @@ public final class SettingsActivity extends Activity {
         });
         root.addView(vibrationSwitch, settingMargins(dp(20)));
 
-        // ---- 新增：外观风格（深色模式） ----
+        // ---- 新增：外观风格（深色模式 + FlClash 玻璃视觉风格） ----
         root.addView(label("外观"));
+        String currentStyleText = ThemePalette.isFlClashGlassStyle(this) ? "FlClash 玻璃（推荐）" : "经典标准";
+        LinearLayout styleRow = choiceRow("主题风格", currentStyleText);
+        styleRow.setOnClickListener(v -> showThemeStyleDialog());
+        root.addView(styleRow, settingMargins(dp(10)));
+
         int currentThemeMode = ThemePalette.getThemeMode(this);
         String currentModeText = currentThemeMode == ThemePalette.THEME_MODE_LIGHT ? "浅色模式"
                 : (currentThemeMode == ThemePalette.THEME_MODE_DARK ? "深色模式" : "跟随系统");
@@ -216,6 +221,23 @@ public final class SettingsActivity extends Activity {
         SpringScrollView scroll = new SpringScrollView(this);
         scroll.addView(root);
         return scroll;
+    }
+
+    private void showThemeStyleDialog() {
+        String[] options = {"经典标准", "FlClash 玻璃（推荐）"};
+        int current = ThemePalette.getThemeStyle(this) == ThemePalette.THEME_STYLE_FLCLASH_GLASS ? 1 : 0;
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("主题风格")
+                .setSingleChoiceItems(options, current, (dialog, which) -> {
+                    ThemePalette.setThemeStyle(this, which == 1
+                            ? ThemePalette.THEME_STYLE_FLCLASH_GLASS
+                            : ThemePalette.THEME_STYLE_CLASSIC);
+                    dialog.dismiss();
+                    toast("已切换为：" + options[which]);
+                    recreate();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void showThemeModeDialog() {

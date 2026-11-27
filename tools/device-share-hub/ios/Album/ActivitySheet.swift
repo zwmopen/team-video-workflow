@@ -277,7 +277,19 @@ enum AppColors {
     }
 }
 
-// MARK: - 主题外观模式（跟随系统、浅色模式、深色模式）
+// MARK: - 主题外观模式（跟随系统、浅色模式、深色模式）与 FlClash 玻璃视觉风格
+enum AppThemeStyle: Int {
+    case classic = 0
+    case flclashGlass = 1
+
+    var title: String {
+        switch self {
+        case .classic: return "经典标准"
+        case .flclashGlass: return "FlClash 玻璃（推荐）"
+        }
+    }
+}
+
 enum AppThemeMode: Int {
     case system = 0
     case light = 1
@@ -294,6 +306,25 @@ enum AppThemeMode: Int {
 
 enum AppThemePreferences {
     private static let key = "appThemeMode"
+    private static let styleKey = "appThemeStyle"
+
+    static var currentStyle: AppThemeStyle {
+        get {
+            if UserDefaults.standard.object(forKey: styleKey) == nil {
+                return .flclashGlass
+            }
+            let val = UserDefaults.standard.integer(forKey: styleKey)
+            return AppThemeStyle(rawValue: val) ?? .flclashGlass
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: styleKey)
+            NotificationCenter.default.post(name: NSNotification.Name("AppThemeStyleDidChange"), object: nil)
+        }
+    }
+
+    static var isFlClashGlass: Bool {
+        return currentStyle == .flclashGlass
+    }
 
     static var currentMode: AppThemeMode {
         get {

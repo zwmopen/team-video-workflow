@@ -28,7 +28,7 @@ final class PhoneGalleryViewController: UIViewController,
     private let cancelSelButton = UIButton(type: .system)
     private let bucketButton = UIButton(type: .system)
     private let statusChipLabel = UILabel()
-    private let effectButton = UIButton(type: .system)
+    private let liveStatusButton = UIButton(type: .system)
     private let multiSelectButton = UIButton(type: .system)
     private let liveQuickMenu = LiveQuickMenu()
 
@@ -36,13 +36,7 @@ final class PhoneGalleryViewController: UIViewController,
     private var hideDatePillWorkItem: DispatchWorkItem?
 
     private let permissionCard = UIView()
-    private let bottomBar = UIView()
-    private let deleteButton = UIButton(type: .system)
-    private let rawButton = UIButton(type: .system)
-    private let saveButton = UIButton(type: .system)
-    private let shareButton = UIButton(type: .system)
-    private var collectionBottomToView: NSLayoutConstraint!
-    private var collectionBottomToBar: NSLayoutConstraint!
+    private let bottomDock = SlidingGlassBar(dockMode: true)
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -66,8 +60,8 @@ final class PhoneGalleryViewController: UIViewController,
         setupLayout()
 
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        longPress.minimumPressDuration = 0.30
-        longPress.allowableMovement = 14
+        longPress.minimumPressDuration = 0.26
+        longPress.allowableMovement = 18
         collectionView.addGestureRecognizer(longPress)
 
         panSelectGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
@@ -78,13 +72,33 @@ final class PhoneGalleryViewController: UIViewController,
     }
 
     func onShown() {
-        updateEffectButtonTitle()
+        refreshAppearance()
         loadGallery()
     }
 
     func refreshGallery() {
-        updateEffectButtonTitle()
+        refreshAppearance()
         loadGallery()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        refreshAppearance()
+    }
+
+    func refreshAppearance() {
+        updateLiveButtonTitle()
+        let isDark: Bool
+        if #available(iOS 12.0, *) {
+            isDark = traitCollection.userInterfaceStyle == .dark
+        } else {
+            isDark = false
+        }
+        bottomDock.applyAppearance(
+            darkMode: isDark,
+            glassStyle: AppThemePreferences.isFlClashGlass,
+            accentColor: AppColors.brandLightText
+        )
     }
 
     private func setupLayout() {
@@ -110,14 +124,16 @@ final class PhoneGalleryViewController: UIViewController,
         bucketButton.setTitle("全部照片 ▾", for: .normal)
         bucketButton.addTarget(self, action: #selector(showBucketPicker), for: .touchUpInside)
 
-        effectButton.translatesAutoresizingMaskIntoConstraints = false
-        effectButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
-        effectButton.setTitleColor(AppColors.text, for: .normal)
-        effectButton.backgroundColor = AppColors.secondaryBackground
-        effectButton.layer.cornerRadius = 13
-        effectButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
-        effectButton.addTarget(self, action: #selector(showEffectPicker), for: .touchUpInside)
-        updateEffectButtonTitle()
+        liveStatusButton.translatesAutoresizingMaskIntoConstraints = false
+        liveStatusButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+        liveStatusButton.layer.cornerRadius = 13
+        liveStatusButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        liveStatusButton.accessibilityLabel = "实况直出开关，点击切换开关，长按滑选效果"
+        liveStatusButton.addTarget(self, action: #selector(liveStatusTapped), for: .touchUpInside)
+        let liveHold = UILongPressGestureRecognizer(target: self, action: #selector(liveStatusLongPressed(_:)))
+        liveHold.minimumPressDuration = 0.35
+        liveStatusButton.addGestureRecognizer(liveHold)
+        updateLiveButtonTitle()
 
         multiSelectButton.translatesAutoresizingMaskIntoConstraints = false
         multiSelectButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -140,7 +156,7 @@ final class PhoneGalleryViewController: UIViewController,
         headerBar.addSubview(cancelSelButton)
         headerBar.addSubview(bucketButton)
         headerBar.addSubview(statusChipLabel)
-        headerBar.addSubview(effectButton)
+        headerBar.addSubview(liveStatusButton)
         headerBar.addSubview(multiSelectButton)
 
         // Permission Card
@@ -175,57 +191,32 @@ final class PhoneGalleryViewController: UIViewController,
         permissionCard.addSubview(permDesc)
         permissionCard.addSubview(grantBtn)
 
-        // Sticky Bottom Bar
-        bottomBar.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.backgroundColor = AppColors.secondaryBackground
-        bottomBar.isHidden = true
-
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.setTitle("删除", for: .normal)
-        deleteButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-        deleteButton.backgroundColor = AppColors.sharedBackground
-        deleteButton.setTitleColor(.systemRed, for: .normal)
-        deleteButton.layer.cornerRadius = 10
-        deleteButton.addTarget(self, action: #selector(deleteSelectedTapped), for: .touchUpInside)
-
-        rawButton.translatesAutoresizingMaskIntoConstraints = false
-        rawButton.setTitle("原图", for: .normal)
-        rawButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-        rawButton.backgroundColor = AppColors.sharedBackground
-        rawButton.setTitleColor(AppColors.text, for: .normal)
-        rawButton.layer.cornerRadius = 10
-        rawButton.addTarget(self, action: #selector(shareRawTapped), for: .touchUpInside)
-
-        saveButton.translatesAutoresizingMaskIntoConstraints = false
-        saveButton.setTitle("存实况", for: .normal)
-        saveButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-        saveButton.backgroundColor = AppColors.sharedBackground
-        saveButton.setTitleColor(AppColors.text, for: .normal)
-        saveButton.layer.cornerRadius = 10
-        saveButton.addTarget(self, action: #selector(saveOnlyTapped), for: .touchUpInside)
-
-        shareButton.translatesAutoresizingMaskIntoConstraints = false
-        shareButton.setTitle("分享实况", for: .normal)
-        shareButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-        shareButton.backgroundColor = AppColors.brandLightText
-        shareButton.setTitleColor(.white, for: .normal)
-        shareButton.layer.cornerRadius = 10
-        shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        // Floating Elliptical Translucent Glass Dock (FlClash style)
+        bottomDock.translatesAutoresizingMaskIntoConstraints = false
+        bottomDock.setSegments([
+            SlidingGlassBar.Segment(title: "删除", accessibilityLabel: "删除选中照片", isDestructive: true),
+            SlidingGlassBar.Segment(title: "保存实况", accessibilityLabel: "保存实况到相册"),
+            SlidingGlassBar.Segment(title: "原图", accessibilityLabel: "分享原图"),
+            SlidingGlassBar.Segment(title: "分享实况", accessibilityLabel: "转换并分享实况", isAccent: true)
+        ], selected: 3)
+        bottomDock.onSelect = { [weak self] idx, _ in
+            guard let self = self, !self.selectedIds.isEmpty else { return }
+            switch idx {
+            case 0: self.deleteSelectedTapped()
+            case 1: self.saveOnlyTapped()
+            case 2: self.shareRawTapped()
+            case 3: self.shareTapped()
+            default: break
+            }
+        }
+        bottomDock.isHidden = true
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.addSubview(deleteButton)
-        bottomBar.addSubview(rawButton)
-        bottomBar.addSubview(saveButton)
-        bottomBar.addSubview(shareButton)
-
         view.addSubview(headerBar)
         view.addSubview(collectionView)
         view.addSubview(scrollDatePill)
         view.addSubview(permissionCard)
-        view.addSubview(bottomBar)
-
-        collectionBottomToView = collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        collectionBottomToBar = collectionView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor)
+        view.addSubview(bottomDock)
 
         NSLayoutConstraint.activate([
             headerBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
@@ -238,7 +229,7 @@ final class PhoneGalleryViewController: UIViewController,
 
             bucketButton.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor),
             bucketButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-            bucketButton.trailingAnchor.constraint(lessThanOrEqualTo: effectButton.leadingAnchor, constant: -6),
+            bucketButton.trailingAnchor.constraint(lessThanOrEqualTo: liveStatusButton.leadingAnchor, constant: -6),
 
             statusChipLabel.leadingAnchor.constraint(equalTo: cancelSelButton.trailingAnchor, constant: 8),
             statusChipLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
@@ -246,8 +237,8 @@ final class PhoneGalleryViewController: UIViewController,
             multiSelectButton.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor),
             multiSelectButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
-            effectButton.trailingAnchor.constraint(equalTo: multiSelectButton.leadingAnchor, constant: -6),
-            effectButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            liveStatusButton.trailingAnchor.constraint(equalTo: multiSelectButton.leadingAnchor, constant: -6),
+            liveStatusButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
             scrollDatePill.topAnchor.constraint(equalTo: collectionView.topAnchor, constant: 8),
             scrollDatePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -275,45 +266,39 @@ final class PhoneGalleryViewController: UIViewController,
             collectionView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 4),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionBottomToView,
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            deleteButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 10),
-            deleteButton.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 10),
-            deleteButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            deleteButton.heightAnchor.constraint(equalToConstant: 44),
-            deleteButton.widthAnchor.constraint(equalTo: rawButton.widthAnchor),
-
-            rawButton.topAnchor.constraint(equalTo: deleteButton.topAnchor),
-            rawButton.leadingAnchor.constraint(equalTo: deleteButton.trailingAnchor, constant: 6),
-            rawButton.bottomAnchor.constraint(equalTo: deleteButton.bottomAnchor),
-            rawButton.heightAnchor.constraint(equalToConstant: 44),
-            rawButton.widthAnchor.constraint(equalTo: saveButton.widthAnchor, multiplier: 0.85),
-
-            saveButton.topAnchor.constraint(equalTo: deleteButton.topAnchor),
-            saveButton.leadingAnchor.constraint(equalTo: rawButton.trailingAnchor, constant: 6),
-            saveButton.bottomAnchor.constraint(equalTo: deleteButton.bottomAnchor),
-            saveButton.heightAnchor.constraint(equalToConstant: 44),
-            saveButton.widthAnchor.constraint(equalTo: shareButton.widthAnchor, multiplier: 0.72),
-
-            shareButton.topAnchor.constraint(equalTo: deleteButton.topAnchor),
-            shareButton.leadingAnchor.constraint(equalTo: saveButton.trailingAnchor, constant: 6),
-            shareButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -10),
-            shareButton.bottomAnchor.constraint(equalTo: deleteButton.bottomAnchor),
-            shareButton.heightAnchor.constraint(equalToConstant: 44)
+            bottomDock.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            bottomDock.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            bottomDock.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            bottomDock.heightAnchor.constraint(equalToConstant: 52)
         ])
     }
 
-    private func updateEffectButtonTitle() {
-        let title = AutoLivePreferences.motionMode.title
-        let short = title.components(separatedBy: "（").first ?? title
-        effectButton.setTitle("效果：\(short)", for: .normal)
+    private func updateLiveButtonTitle() {
+        if AutoLivePreferences.isEnabled {
+            liveStatusButton.setTitle("● LIVE 开", for: .normal)
+            liveStatusButton.setTitleColor(AppColors.brandLightText, for: .normal)
+            liveStatusButton.backgroundColor = AppColors.brandLightBg
+        } else {
+            liveStatusButton.setTitle("LIVE 关", for: .normal)
+            liveStatusButton.setTitleColor(AppColors.secondaryText, for: .normal)
+            liveStatusButton.backgroundColor = AppColors.secondaryBackground
+        }
     }
 
     private func updateChrome() {
+        let isDark: Bool
+        if #available(iOS 12.0, *) {
+            isDark = traitCollection.userInterfaceStyle == .dark
+        } else {
+            isDark = false
+        }
+        bottomDock.applyAppearance(
+            darkMode: isDark,
+            glassStyle: AppThemePreferences.isFlClashGlass,
+            accentColor: AppColors.brandLightText
+        )
         if selectionMode {
             let count = selectedIds.count
             cancelSelButton.isHidden = false
@@ -321,16 +306,11 @@ final class PhoneGalleryViewController: UIViewController,
             statusChipLabel.isHidden = false
             statusChipLabel.text = "已选 \(count) 张"
             multiSelectButton.setTitle((count >= assets.count && !assets.isEmpty) ? "取消全选" : "全选", for: .normal)
-            bottomBar.isHidden = false
-            collectionBottomToView.isActive = false
-            collectionBottomToBar.isActive = true
+            bottomDock.isHidden = false
+            collectionView.contentInset.bottom = 84
+            collectionView.scrollIndicatorInsets.bottom = 84
             let enabled = count > 0
-            [deleteButton, rawButton, saveButton, shareButton].forEach {
-                $0.isEnabled = enabled
-                $0.alpha = enabled ? 1.0 : 0.45
-            }
-            deleteButton.setTitle(count > 0 ? "删除 (\(count))" : "删除", for: .normal)
-            shareButton.setTitle(count > 0 ? "分享实况 (\(count))" : "分享实况", for: .normal)
+            for idx in 0..<4 { bottomDock.setSegmentEnabled(idx, enabled: enabled) }
         } else {
             cancelSelButton.isHidden = true
             bucketButton.isHidden = false
@@ -338,9 +318,9 @@ final class PhoneGalleryViewController: UIViewController,
             let countSuffix = assets.isEmpty ? "" : " (\(assets.count))"
             bucketButton.setTitle("\(selectedCollectionTitle)\(countSuffix) ▾", for: .normal)
             multiSelectButton.setTitle("多选", for: .normal)
-            bottomBar.isHidden = true
-            collectionBottomToBar.isActive = false
-            collectionBottomToView.isActive = true
+            bottomDock.isHidden = true
+            collectionView.contentInset.bottom = 8
+            collectionView.scrollIndicatorInsets.bottom = 8
         }
     }
 
@@ -370,7 +350,7 @@ final class PhoneGalleryViewController: UIViewController,
         if gestureRecognizer === panSelectGesture {
             guard selectionMode else { return false }
             let vel = panSelectGesture.velocity(in: collectionView)
-            return abs(vel.x) > abs(vel.y) * 1.15
+            return abs(vel.x) > abs(vel.y) * 0.55
         }
         return true
     }
@@ -659,19 +639,29 @@ final class PhoneGalleryViewController: UIViewController,
         super.viewWillDisappear(animated)
     }
 
-    @objc private func showEffectPicker() {
+    @objc private func liveStatusTapped() {
+        AutoLivePreferences.isEnabled.toggle()
+        updateLiveButtonTitle()
+    }
+
+    @objc private func liveStatusLongPressed(_ gesture: UILongPressGestureRecognizer) {
         let modes = AutoLiveMotionMode.allCases
         let curTier = AutoLivePreferences.qualityTier
-        let labels = modes.map { $0.title } + ["动态视频画质：\(curTier.shortLabel)…", "调整微动幅度与时长…"]
-        liveQuickMenu.show(anchor: effectButton, labels: labels, selected: modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) { [weak self] which in
+        let labels = modes.map { $0.title } + ["动态视频画质：\(curTier.shortLabel)…", "调整微动幅度与时长…", "关闭实况直出"]
+        let selected = AutoLivePreferences.isEnabled ? (modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) : (modes.count + 2)
+        liveQuickMenu.handle(gesture, labels: labels, selected: selected) { [weak self] which in
             guard let self = self else { return }
             if which < modes.count {
                 AutoLivePreferences.motionMode = modes[which]
-                self.updateEffectButtonTitle()
+                AutoLivePreferences.isEnabled = true
+                self.updateLiveButtonTitle()
             } else if which == modes.count {
                 self.showQualityTierPicker()
-            } else {
+            } else if which == modes.count + 1 {
                 self.showStrengthPicker()
+            } else {
+                AutoLivePreferences.isEnabled = false
+                self.updateLiveButtonTitle()
             }
         }
     }
@@ -691,8 +681,8 @@ final class PhoneGalleryViewController: UIViewController,
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         if let pop = alert.popoverPresentationController {
-            pop.sourceView = effectButton
-            pop.sourceRect = effectButton.bounds
+            pop.sourceView = liveStatusButton
+            pop.sourceRect = liveStatusButton.bounds
         }
         present(alert, animated: true)
     }
@@ -717,8 +707,8 @@ final class PhoneGalleryViewController: UIViewController,
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         if let pop = alert.popoverPresentationController {
-            pop.sourceView = effectButton
-            pop.sourceRect = effectButton.bounds
+            pop.sourceView = liveStatusButton
+            pop.sourceRect = liveStatusButton.bounds
         }
         present(alert, animated: true)
     }
@@ -1497,7 +1487,8 @@ private final class GalleryPreviewPageCell: UICollectionViewCell, UIScrollViewDe
 
 private final class GalleryThumbCell: UICollectionViewCell {
     let imageView = UIImageView()
-    private let badgeBtn = UIButton(type: .custom)
+    private let badgeHitBtn = UIButton(type: .custom)
+    private let badgeLabel = UILabel()
     private let liveLabel = UILabel()
     var onBadgeTap: (() -> Void)?
 
@@ -1508,12 +1499,19 @@ private final class GalleryThumbCell: UICollectionViewCell {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(imageView)
 
-        badgeBtn.translatesAutoresizingMaskIntoConstraints = false
-        badgeBtn.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
-        badgeBtn.layer.cornerRadius = 12
-        badgeBtn.clipsToBounds = true
-        badgeBtn.addTarget(self, action: #selector(badgeTapped), for: .touchUpInside)
-        contentView.addSubview(badgeBtn)
+        badgeHitBtn.translatesAutoresizingMaskIntoConstraints = false
+        badgeHitBtn.backgroundColor = .clear
+        badgeHitBtn.accessibilityLabel = "选中照片"
+        badgeHitBtn.addTarget(self, action: #selector(badgeTapped), for: .touchUpInside)
+
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        badgeLabel.font = .systemFont(ofSize: 11.5, weight: .bold)
+        badgeLabel.textAlignment = .center
+        badgeLabel.layer.cornerRadius = 11.5
+        badgeLabel.clipsToBounds = true
+        badgeLabel.isUserInteractionEnabled = false
+        badgeHitBtn.addSubview(badgeLabel)
+        contentView.addSubview(badgeHitBtn)
 
         liveLabel.translatesAutoresizingMaskIntoConstraints = false
         liveLabel.text = " LIVE "
@@ -1530,10 +1528,15 @@ private final class GalleryThumbCell: UICollectionViewCell {
             imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
-            badgeBtn.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
-            badgeBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -5),
-            badgeBtn.widthAnchor.constraint(equalToConstant: 24),
-            badgeBtn.heightAnchor.constraint(equalToConstant: 24),
+            badgeHitBtn.topAnchor.constraint(equalTo: contentView.topAnchor),
+            badgeHitBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            badgeHitBtn.widthAnchor.constraint(equalToConstant: 44),
+            badgeHitBtn.heightAnchor.constraint(equalToConstant: 44),
+
+            badgeLabel.topAnchor.constraint(equalTo: badgeHitBtn.topAnchor, constant: 5),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeHitBtn.trailingAnchor, constant: -5),
+            badgeLabel.widthAnchor.constraint(equalToConstant: 23),
+            badgeLabel.heightAnchor.constraint(equalToConstant: 23),
 
             liveLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 5),
             liveLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5)
@@ -1547,17 +1550,17 @@ private final class GalleryThumbCell: UICollectionViewCell {
     func configure(index: Int?, isLive: Bool) {
         liveLabel.isHidden = !isLive
         if let idx = index {
-            badgeBtn.setTitle("\(idx)", for: .normal)
-            badgeBtn.setTitleColor(.white, for: .normal)
-            badgeBtn.backgroundColor = AppColors.brandLightText
-            badgeBtn.layer.borderWidth = 0
+            badgeLabel.text = "\(idx)"
+            badgeLabel.textColor = .white
+            badgeLabel.backgroundColor = AppColors.brandLightText
+            badgeLabel.layer.borderWidth = 0
             contentView.layer.borderWidth = 2.5
             contentView.layer.borderColor = AppColors.brandLightText.cgColor
         } else {
-            badgeBtn.setTitle("", for: .normal)
-            badgeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.22)
-            badgeBtn.layer.borderWidth = 1.2
-            badgeBtn.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
+            badgeLabel.text = ""
+            badgeLabel.backgroundColor = UIColor.black.withAlphaComponent(0.22)
+            badgeLabel.layer.borderWidth = 1.2
+            badgeLabel.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
             contentView.layer.borderWidth = 0
         }
     }

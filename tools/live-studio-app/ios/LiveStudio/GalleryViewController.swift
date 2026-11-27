@@ -70,12 +70,7 @@ final class GalleryViewController: UIViewController,
     private let liveQuickMenu = LiveQuickMenu()
     private let liveModeButton = UIButton(type: .system)
     private lazy var liveModeItem = UIBarButtonItem(customView: liveModeButton)
-    private let bottomBar = UIView()
-    private let deleteButton = UIButton(type: .system)
-    private let saveButton = UIButton(type: .system)
-    private let shareButton = UIButton(type: .system)
-    private var collectionBottomToView: NSLayoutConstraint!
-    private var collectionBottomToBar: NSLayoutConstraint!
+    private let bottomDock = SlidingGlassBar(dockMode: true)
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -103,8 +98,8 @@ final class GalleryViewController: UIViewController,
         liveHold.minimumPressDuration = 0.35
         liveModeButton.addGestureRecognizer(liveHold)
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        longPress.minimumPressDuration = 0.30
-        longPress.allowableMovement = 14
+        longPress.minimumPressDuration = 0.26
+        longPress.allowableMovement = 18
         collectionView.addGestureRecognizer(longPress)
 
         panSelectGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
@@ -116,75 +111,45 @@ final class GalleryViewController: UIViewController,
     }
 
     private func setupLayout() {
-        bottomBar.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.backgroundColor = .secondarySystemBackground
-        bottomBar.isHidden = true
-
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.setTitle("删除", for: .normal)
-        deleteButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        deleteButton.backgroundColor = .tertiarySystemFill
-        deleteButton.setTitleColor(.systemRed, for: .normal)
-        deleteButton.layer.cornerRadius = 10
-        deleteButton.addTarget(self, action: #selector(deleteSelectedTapped), for: .touchUpInside)
-
-        saveButton.translatesAutoresizingMaskIntoConstraints = false
-        saveButton.setTitle("存实况", for: .normal)
-        saveButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        saveButton.backgroundColor = .tertiarySystemFill
-        saveButton.setTitleColor(.label, for: .normal)
-        saveButton.layer.cornerRadius = 10
-        saveButton.addTarget(self, action: #selector(saveOnlyTapped), for: .touchUpInside)
-
-        shareButton.translatesAutoresizingMaskIntoConstraints = false
-        shareButton.setTitle("分享实况", for: .normal)
-        shareButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        shareButton.backgroundColor = .systemGreen
-        shareButton.setTitleColor(.white, for: .normal)
-        shareButton.layer.cornerRadius = 10
-        shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        bottomDock.translatesAutoresizingMaskIntoConstraints = false
+        bottomDock.setSegments([
+            SlidingGlassBar.Segment(title: "删除", accessibilityLabel: "删除选中照片", isDestructive: true),
+            SlidingGlassBar.Segment(title: "保存实况", accessibilityLabel: "保存实况到相册"),
+            SlidingGlassBar.Segment(title: "原图", accessibilityLabel: "分享原图"),
+            SlidingGlassBar.Segment(title: "分享实况", accessibilityLabel: "转换并分享实况", isAccent: true)
+        ], selected: 3)
+        bottomDock.onSelect = { [weak self] idx, _ in
+            guard let self = self, !self.selectedIds.isEmpty else { return }
+            switch idx {
+            case 0: self.deleteSelectedTapped()
+            case 1: self.saveOnlyTapped()
+            case 2: self.shareRawTapped()
+            case 3: self.shareTapped()
+            default: break
+            }
+        }
+        bottomDock.isHidden = true
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.addSubview(deleteButton)
-        bottomBar.addSubview(saveButton)
-        bottomBar.addSubview(shareButton)
         view.addSubview(collectionView)
-        view.addSubview(bottomBar)
-
-        collectionBottomToView = collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        collectionBottomToBar = collectionView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor)
+        view.addSubview(bottomDock)
 
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionBottomToView,
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            deleteButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 10),
-            deleteButton.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 12),
-            deleteButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            deleteButton.heightAnchor.constraint(equalToConstant: 44),
-            deleteButton.widthAnchor.constraint(equalTo: saveButton.widthAnchor, multiplier: 0.85),
-
-            saveButton.topAnchor.constraint(equalTo: deleteButton.topAnchor),
-            saveButton.leadingAnchor.constraint(equalTo: deleteButton.trailingAnchor, constant: 8),
-            saveButton.bottomAnchor.constraint(equalTo: deleteButton.bottomAnchor),
-            saveButton.heightAnchor.constraint(equalToConstant: 44),
-            saveButton.widthAnchor.constraint(equalTo: shareButton.widthAnchor, multiplier: 0.72),
-
-            shareButton.topAnchor.constraint(equalTo: deleteButton.topAnchor),
-            shareButton.leadingAnchor.constraint(equalTo: saveButton.trailingAnchor, constant: 8),
-            shareButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -12),
-            shareButton.bottomAnchor.constraint(equalTo: deleteButton.bottomAnchor),
-            shareButton.heightAnchor.constraint(equalToConstant: 44)
+            bottomDock.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            bottomDock.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            bottomDock.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            bottomDock.heightAnchor.constraint(equalToConstant: 52)
         ])
     }
 
     private func updateChrome() {
+        let isDark = traitCollection.userInterfaceStyle == .dark
+        bottomDock.applyAppearance(darkMode: isDark, glassStyle: true, accentColor: .systemGreen)
         if selectionMode {
             let count = selectedIds.count
             title = "已选 \(count) 张"
@@ -202,15 +167,11 @@ final class GalleryViewController: UIViewController,
                 action: #selector(toggleSelectAllTapped)
             )
             if let action = navigationItem.rightBarButtonItem { navigationItem.rightBarButtonItems = [action, liveModeItem] }
-            bottomBar.isHidden = false
-            collectionBottomToView.isActive = false
-            collectionBottomToBar.isActive = true
+            bottomDock.isHidden = false
+            collectionView.contentInset.bottom = 84
+            collectionView.scrollIndicatorInsets.bottom = 84
             let enabled = count > 0
-            [deleteButton, saveButton, shareButton].forEach {
-                $0.isEnabled = enabled
-                $0.alpha = enabled ? 1.0 : 0.45
-            }
-            shareButton.setTitle(count > 0 ? "分享实况 (\(count))" : "分享实况", for: .normal)
+            for idx in 0..<4 { bottomDock.setSegmentEnabled(idx, enabled: enabled) }
         } else {
             title = "实况工坊"
             navigationItem.leftBarButtonItem = nil
@@ -221,9 +182,9 @@ final class GalleryViewController: UIViewController,
                 action: #selector(showSettings)
             )
             if let action = navigationItem.rightBarButtonItem { navigationItem.rightBarButtonItems = [action, liveModeItem] }
-            bottomBar.isHidden = true
-            collectionBottomToBar.isActive = false
-            collectionBottomToView.isActive = true
+            bottomDock.isHidden = true
+            collectionView.contentInset.bottom = 8
+            collectionView.scrollIndicatorInsets.bottom = 8
         }
     }
 
@@ -249,7 +210,7 @@ final class GalleryViewController: UIViewController,
         if gestureRecognizer === panSelectGesture {
             guard selectionMode else { return false }
             let vel = panSelectGesture.velocity(in: collectionView)
-            return abs(vel.x) > abs(vel.y) * 1.15
+            return abs(vel.x) > abs(vel.y) * 0.55
         }
         return true
     }
@@ -581,6 +542,18 @@ final class GalleryViewController: UIViewController,
         convertSelectedAssets(targets, shareAfter: false)
     }
 
+    @objc private func shareRawTapped() {
+        let targets = assets.filter { selectedIds.contains($0.localIdentifier) }
+        guard !targets.isEmpty else { return }
+        requestRawDatas(for: targets) { [weak self] resolved, _ in
+            guard let self = self else { return }
+            let items = resolved.compactMap { UIImage(data: $0.1) }
+            guard !items.isEmpty else { return }
+            let ac = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            self.present(ac, animated: true)
+        }
+    }
+
     @objc private func shareTapped() {
         let targets = assets.filter { selectedIds.contains($0.localIdentifier) }
         convertSelectedAssets(targets, shareAfter: true)
@@ -861,7 +834,8 @@ private final class PhotoPreviewViewController: UIViewController {
 
 private final class PhotoCell: UICollectionViewCell {
     let imageView = UIImageView()
-    private let badgeBtn = UIButton(type: .custom)
+    private let badgeHitBtn = UIButton(type: .custom)
+    private let badgeLabel = UILabel()
     private let liveLabel = UILabel()
     var onBadgeTap: (() -> Void)?
 
@@ -872,12 +846,19 @@ private final class PhotoCell: UICollectionViewCell {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(imageView)
 
-        badgeBtn.translatesAutoresizingMaskIntoConstraints = false
-        badgeBtn.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
-        badgeBtn.layer.cornerRadius = 12
-        badgeBtn.clipsToBounds = true
-        badgeBtn.addTarget(self, action: #selector(badgeTapped), for: .touchUpInside)
-        contentView.addSubview(badgeBtn)
+        badgeHitBtn.translatesAutoresizingMaskIntoConstraints = false
+        badgeHitBtn.backgroundColor = .clear
+        badgeHitBtn.accessibilityLabel = "选中照片"
+        badgeHitBtn.addTarget(self, action: #selector(badgeTapped), for: .touchUpInside)
+
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        badgeLabel.font = .systemFont(ofSize: 11.5, weight: .bold)
+        badgeLabel.textAlignment = .center
+        badgeLabel.layer.cornerRadius = 11.5
+        badgeLabel.clipsToBounds = true
+        badgeLabel.isUserInteractionEnabled = false
+        badgeHitBtn.addSubview(badgeLabel)
+        contentView.addSubview(badgeHitBtn)
 
         liveLabel.translatesAutoresizingMaskIntoConstraints = false
         liveLabel.text = " LIVE "
@@ -894,10 +875,15 @@ private final class PhotoCell: UICollectionViewCell {
             imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
-            badgeBtn.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
-            badgeBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -5),
-            badgeBtn.widthAnchor.constraint(equalToConstant: 24),
-            badgeBtn.heightAnchor.constraint(equalToConstant: 24),
+            badgeHitBtn.topAnchor.constraint(equalTo: contentView.topAnchor),
+            badgeHitBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            badgeHitBtn.widthAnchor.constraint(equalToConstant: 44),
+            badgeHitBtn.heightAnchor.constraint(equalToConstant: 44),
+
+            badgeLabel.topAnchor.constraint(equalTo: badgeHitBtn.topAnchor, constant: 5),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeHitBtn.trailingAnchor, constant: -5),
+            badgeLabel.widthAnchor.constraint(equalToConstant: 23),
+            badgeLabel.heightAnchor.constraint(equalToConstant: 23),
 
             liveLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 5),
             liveLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5)
@@ -911,17 +897,17 @@ private final class PhotoCell: UICollectionViewCell {
     func configure(index: Int?, isLive: Bool) {
         liveLabel.isHidden = !isLive
         if let idx = index {
-            badgeBtn.setTitle("\(idx)", for: .normal)
-            badgeBtn.setTitleColor(.white, for: .normal)
-            badgeBtn.backgroundColor = .systemGreen
-            badgeBtn.layer.borderWidth = 0
+            badgeLabel.text = "\(idx)"
+            badgeLabel.textColor = .white
+            badgeLabel.backgroundColor = .systemGreen
+            badgeLabel.layer.borderWidth = 0
             contentView.layer.borderWidth = 2.5
             contentView.layer.borderColor = UIColor.systemGreen.cgColor
         } else {
-            badgeBtn.setTitle("", for: .normal)
-            badgeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.22)
-            badgeBtn.layer.borderWidth = 1.2
-            badgeBtn.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
+            badgeLabel.text = ""
+            badgeLabel.backgroundColor = UIColor.black.withAlphaComponent(0.22)
+            badgeLabel.layer.borderWidth = 1.2
+            badgeLabel.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
             contentView.layer.borderWidth = 0
         }
     }

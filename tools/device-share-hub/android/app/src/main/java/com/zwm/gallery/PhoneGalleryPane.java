@@ -131,18 +131,14 @@ final class PhoneGalleryPane {
     private final LinearLayout root;
     private final TextView leftCtrlBtn;
     private final TextView bucketChip;
-    private final TextView effectChip;
+    private final TextView liveStatusChip;
     private final TextView rightCtrlBtn;
     private final com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private final LinearLayout permissionCard;
     private final GridView gridView;
     private final TextView scrollDatePill;
     private final PhotoGridAdapter adapter = new PhotoGridAdapter();
-    private final LinearLayout bottomBar;
-    private final Button deleteBtn;
-    private final Button shareRawBtn;
-    private final Button saveLiveBtn;
-    private final Button shareLiveBtn;
+    private final com.zwm.livecore.SlidingGlassBar bottomDock;
 
     private AlertDialog activePreviewDialog;
     private ValueAnimator activeLiveAnimator;
@@ -216,12 +212,13 @@ final class PhoneGalleryPane {
         subHeader.addView(new View(activity), new LinearLayout.LayoutParams(0, 1, 1f));
 
         liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(activity);
-        effectChip = chip("效果：" + shortModeName(OnlineService.getAutoLiveMotionMode(activity)));
-        effectChip.setOnClickListener(v -> showEffectDialog());
-        liveQuickMenu.attach(effectChip, this::showEffectDialog);
+        liveStatusChip = chip("● LIVE 开");
+        liveStatusChip.setOnClickListener(v -> toggleLiveEnabled());
+        liveQuickMenu.attach(liveStatusChip, this::showEffectDialog);
+        refreshLiveChip();
         LinearLayout.LayoutParams ecLp = new LinearLayout.LayoutParams(-2, -2);
         ecLp.setMargins(0, 0, dp(6), 0);
-        subHeader.addView(effectChip, ecLp);
+        subHeader.addView(liveStatusChip, ecLp);
 
         rightCtrlBtn = chip("多选");
         rightCtrlBtn.setOnClickListener(v -> {
@@ -303,41 +300,34 @@ final class PhoneGalleryPane {
         });
         root.addView(gridContainer, new LinearLayout.LayoutParams(-1, 0, 1f));
 
-        // Sticky bottom multi-select bar
-        bottomBar = new LinearLayout(activity);
-        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setBackgroundColor(ThemePalette.getCardBg(activity));
-        bottomBar.setPadding(dp(10), dp(10), dp(10), dp(10));
-        bottomBar.setVisibility(View.GONE);
+        // Floating elliptical translucent glass multi-select dock (FlClash style)
+        bottomDock = new com.zwm.livecore.SlidingGlassBar(activity, true);
+        bottomDock.setSegments(new com.zwm.livecore.SlidingGlassBar.Segment[]{
+                new com.zwm.livecore.SlidingGlassBar.Segment("删除", "删除选中照片", null, false, true),
+                new com.zwm.livecore.SlidingGlassBar.Segment("保存实况", "保存实况到相册", null, false, false),
+                new com.zwm.livecore.SlidingGlassBar.Segment("原图", "分享原图", null, false, false),
+                new com.zwm.livecore.SlidingGlassBar.Segment("分享实况", "转换并分享实况", null, true, false)
+        }, 3);
+        bottomDock.setOnSegmentSelectedListener((idx, fromScrub) -> {
+            if (selectedUris.isEmpty()) return;
+            if (idx == 0) {
+                requestDeletePhotos(new ArrayList<>(selectedUris), this::exitSelectionMode);
+            } else if (idx == 1) {
+                confirmWithinShareLimit(new ArrayList<>(selectedUris), "保存实况",
+                        chosen -> startBatchConvert(chosen, false));
+            } else if (idx == 2) {
+                confirmWithinShareLimit(new ArrayList<>(selectedUris), "分享原图",
+                        chosen -> launchSystemShare(chosen, "分享原图"));
+            } else if (idx == 3) {
+                confirmWithinShareLimit(new ArrayList<>(selectedUris), "分享实况",
+                        chosen -> startBatchConvert(chosen, true));
+            }
+        });
+        bottomDock.setVisibility(View.GONE);
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(-1, dp(54), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        dockLp.setMargins(dp(14), 0, dp(14), dp(14));
+        gridContainer.addView(bottomDock, dockLp);
 
-        deleteBtn = actionBtn("删除", false);
-        deleteBtn.setTextColor(Color.rgb(220, 38, 38));
-        deleteBtn.setOnClickListener(v -> requestDeletePhotos(new ArrayList<>(selectedUris), this::exitSelectionMode));
-        LinearLayout.LayoutParams dLp = new LinearLayout.LayoutParams(0, dp(44), 0.78f);
-        dLp.setMargins(0, 0, dp(6), 0);
-        bottomBar.addView(deleteBtn, dLp);
-
-        shareRawBtn = actionBtn("原图", false);
-        shareRawBtn.setOnClickListener(v -> confirmWithinShareLimit(new ArrayList<>(selectedUris), "分享原图",
-                chosen -> launchSystemShare(chosen, "分享原图")));
-        LinearLayout.LayoutParams rLp = new LinearLayout.LayoutParams(0, dp(44), 0.78f);
-        rLp.setMargins(0, 0, dp(6), 0);
-        bottomBar.addView(shareRawBtn, rLp);
-
-        saveLiveBtn = actionBtn("存实况", false);
-        saveLiveBtn.setOnClickListener(v -> confirmWithinShareLimit(new ArrayList<>(selectedUris), "保存实况",
-                chosen -> startBatchConvert(chosen, false)));
-        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(0, dp(44), 0.92f);
-        sLp.setMargins(0, 0, dp(6), 0);
-        bottomBar.addView(saveLiveBtn, sLp);
-
-        shareLiveBtn = actionBtn("分享实况", true);
-        shareLiveBtn.setOnClickListener(v -> confirmWithinShareLimit(new ArrayList<>(selectedUris), "分享实况",
-                chosen -> startBatchConvert(chosen, true)));
-        LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(0, dp(44), 1.32f);
-        bottomBar.addView(shareLiveBtn, shLp);
-
-        root.addView(bottomBar);
         updateChrome();
     }
 
@@ -345,13 +335,39 @@ final class PhoneGalleryPane {
         return root;
     }
 
+    void refreshLiveChip() {
+        if (liveStatusChip == null) return;
+        boolean enabled = OnlineService.isAutoLiveOnShareEnabled(activity);
+        if (enabled) {
+            liveStatusChip.setText("● LIVE 开");
+            liveStatusChip.setTextColor(ThemePalette.getBrandLightText(activity));
+            liveStatusChip.setBackground(roundWithStroke(
+                    ThemePalette.getBrandLightBg(activity), 16, ThemePalette.getBrandSoftStroke(activity)));
+        } else {
+            liveStatusChip.setText("LIVE 关");
+            liveStatusChip.setTextColor(ThemePalette.getTextMuted(activity));
+            liveStatusChip.setBackground(roundWithStroke(
+                    ThemePalette.getPillBg(activity), 16, ThemePalette.getCardStroke(activity)));
+        }
+    }
+
+    private void toggleLiveEnabled() {
+        boolean next = !OnlineService.isAutoLiveOnShareEnabled(activity);
+        OnlineService.setAutoLiveOnShareEnabled(activity, next);
+        refreshLiveChip();
+        String modeTitle = OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(activity));
+        toast(next ? "已开启实况直出 · " + modeTitle + "（长按滑选效果）" : "已关闭实况直出（长按滑选可快速开启）");
+    }
+
     void onShown() {
-        effectChip.setText("效果：" + shortModeName(OnlineService.getAutoLiveMotionMode(activity)));
+        refreshLiveChip();
+        updateChrome();
         loadGalleryIfPermitted();
     }
 
     void refresh() {
-        effectChip.setText("效果：" + shortModeName(OnlineService.getAutoLiveMotionMode(activity)));
+        refreshLiveChip();
+        updateChrome();
         loadGalleryIfPermitted();
     }
 
@@ -449,7 +465,8 @@ final class PhoneGalleryPane {
                     float dy = Math.abs(dragLastY - dragDownY);
                     if (Math.max(dx, dy) > touchSlop) {
                         horizontalDragArmed = false;
-                        if (dx > dy * 1.15f && dragDownPos >= 0 && dragDownPos < visiblePhotos.size()) {
+                        // Relax angle threshold so smooth diagonal/horizontal drags enter Apple Photos-like range selection.
+                        if (dx > dy * 0.55f && dragDownPos >= 0 && dragDownPos < visiblePhotos.size()) {
                             gridView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
                             boolean alreadySel = selectedUris.contains(visiblePhotos.get(dragDownPos).uri);
                             startDragSelect(dragDownPos, !alreadySel);
@@ -630,6 +647,10 @@ final class PhoneGalleryPane {
     }
 
     private void updateChrome() {
+        bottomDock.applyAppearance(
+                ThemePalette.isDarkMode(activity),
+                ThemePalette.isFlClashGlassStyle(activity),
+                ThemePalette.getBrandLightText(activity));
         if (selectionMode) {
             int count = selectedUris.size();
             leftCtrlBtn.setVisibility(View.VISIBLE);
@@ -637,21 +658,19 @@ final class PhoneGalleryPane {
             bucketChip.setText("已选 " + count + " 张");
             rightCtrlBtn.setText(count >= visiblePhotos.size() && !visiblePhotos.isEmpty() ? "取消全选" : "全选");
 
-            bottomBar.setVisibility(View.VISIBLE);
+            bottomDock.setVisibility(View.VISIBLE);
+            gridView.setPadding(dp(2), 0, dp(2), dp(86));
             boolean hasAny = count > 0;
-            float alpha = hasAny ? 1f : 0.45f;
-            for (Button b : new Button[]{deleteBtn, shareRawBtn, saveLiveBtn, shareLiveBtn}) {
-                b.setEnabled(hasAny);
-                b.setAlpha(alpha);
+            for (int i = 0; i < 4; i++) {
+                bottomDock.setSegmentEnabled(i, hasAny);
             }
-            deleteBtn.setText(hasAny ? "删除 (" + count + ")" : "删除");
-            shareLiveBtn.setText(hasAny ? "分享实况 (" + count + ")" : "分享实况");
         } else {
             leftCtrlBtn.setVisibility(View.GONE);
             bucketChip.setBackground(roundWithStroke(ThemePalette.getCardBg(activity), 16, ThemePalette.getCardStroke(activity)));
             bucketChip.setText((activeBucket.isEmpty() ? "全部照片" : activeBucket) + " ▾");
             rightCtrlBtn.setText("多选");
-            bottomBar.setVisibility(View.GONE);
+            bottomDock.setVisibility(View.GONE);
+            gridView.setPadding(dp(2), 0, dp(2), dp(6));
         }
     }
 
@@ -796,23 +815,32 @@ final class PhoneGalleryPane {
 
     private void showEffectDialog() {
         String current = OnlineService.getAutoLiveMotionMode(activity);
+        boolean enabled = OnlineService.isAutoLiveOnShareEnabled(activity);
         int count = OnlineService.AUTO_LIVE_MODE_IDS.length;
-        int checked = 0;
-        String[] labels = new String[count + 1];
+        int checked = enabled ? 0 : (count + 1);
+        String[] labels = new String[count + 2];
         for (int i = 0; i < count; i++) {
-            if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(current)) checked = i;
+            if (enabled && OnlineService.AUTO_LIVE_MODE_IDS[i].equals(current)) checked = i;
             labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i];
         }
         labels[count] = "幅度、画质与选项…";
-        liveQuickMenu.show(effectChip, labels, checked, which -> {
+        labels[count + 1] = "关闭实况直出";
+        liveQuickMenu.show(liveStatusChip, labels, checked, which -> {
             if (which == count) {
                 showStrengthDialog();
                 return;
             }
+            if (which == count + 1) {
+                OnlineService.setAutoLiveOnShareEnabled(activity, false);
+                refreshLiveChip();
+                toast("已关闭实况直出");
+                return;
+            }
             String chosenId = OnlineService.AUTO_LIVE_MODE_IDS[which];
             OnlineService.setAutoLiveMotionMode(activity, chosenId);
-            effectChip.setText("效果：" + shortModeName(chosenId));
-            toast("已设为：" + OnlineService.AUTO_LIVE_MODE_TITLES[which]);
+            OnlineService.setAutoLiveOnShareEnabled(activity, true);
+            refreshLiveChip();
+            toast("已启用：" + OnlineService.AUTO_LIVE_MODE_TITLES[which]);
         });
     }
 
@@ -1620,14 +1648,18 @@ final class PhoneGalleryPane {
                 border.setBackground(bd);
                 cell.addView(border, new FrameLayout.LayoutParams(-1, -1));
 
+                FrameLayout badgeWrap = new FrameLayout(activity);
+                badgeWrap.setContentDescription("选中照片");
+                FrameLayout.LayoutParams wrapLp = new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP | Gravity.END);
                 TextView badge = new TextView(activity);
                 badge.setTextColor(Color.WHITE);
                 badge.setTextSize(11);
                 badge.setTypeface(Typeface.DEFAULT_BOLD);
                 badge.setGravity(Gravity.CENTER);
-                FrameLayout.LayoutParams bLp = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP | Gravity.END);
+                FrameLayout.LayoutParams bLp = new FrameLayout.LayoutParams(dp(23), dp(23), Gravity.TOP | Gravity.END);
                 bLp.setMargins(0, dp(5), dp(5), 0);
-                cell.addView(badge, bLp);
+                badgeWrap.addView(badge, bLp);
+                cell.addView(badgeWrap, wrapLp);
 
                 TextView liveBadge = new TextView(activity);
                 liveBadge.setText("LIVE");
@@ -1640,14 +1672,14 @@ final class PhoneGalleryPane {
                 lLp.setMargins(dp(5), 0, 0, dp(5));
                 cell.addView(liveBadge, lLp);
 
-                cell.setTag(new ViewHolder(img, badge, liveBadge, border));
+                cell.setTag(new ViewHolder(img, badgeWrap, badge, liveBadge, border));
             } else {
                 cell = (FrameLayout) convertView;
             }
             ViewHolder vh = (ViewHolder) cell.getTag();
             GalleryPhoto photo = visiblePhotos.get(position);
             bindSelectionVisual(vh, photo.uri);
-            vh.badge.setOnClickListener(v -> toggleSelection(photo.uri));
+            vh.badgeWrap.setOnClickListener(v -> toggleSelection(photo.uri));
             vh.liveBadge.setVisibility(photo.looksLive ? View.VISIBLE : View.GONE);
 
             vh.photoId = photo.id;
@@ -1696,13 +1728,15 @@ final class PhoneGalleryPane {
 
     private static final class ViewHolder {
         final ImageView img;
+        final FrameLayout badgeWrap;
         final TextView badge;
         final TextView liveBadge;
         final View border;
         long photoId;
 
-        ViewHolder(ImageView img, TextView badge, TextView liveBadge, View border) {
+        ViewHolder(ImageView img, FrameLayout badgeWrap, TextView badge, TextView liveBadge, View border) {
             this.img = img;
+            this.badgeWrap = badgeWrap;
             this.badge = badge;
             this.liveBadge = liveBadge;
             this.border = border;

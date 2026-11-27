@@ -1,3 +1,12 @@
+# 2026-11-27 V2：FlClash 全局玻璃风格、滑块交互、相册悬浮底座与 iOS 12 兼容收口（feature/live-push-drift-20261127）
+
+- **新增 UI 与交互重构**：
+  1. **共享滑块玻璃组件 `SlidingGlassBar`**：Android (`tools/live-photo-core/android/src/main/java/com/zwm/livecore/SlidingGlassBar.java`) 与 iOS `12.0+` (`tools/live-photo-core/ios/SlidingGlassBar.swift`) 同步落地，双模式支持顶部 3 模式图标连续滑动+长按配服务，以及多选悬浮椭圆玻璃底座（横向滑动高亮切项 + 纵向拖出 38dp 自动取消防误触 + 触感反馈）。
+  2. **全球统一主题风格 & 默认值**：设置页（Android `SettingsActivity` / iOS `SettingsView`）新增「主题风格：FlClash 玻璃（推荐）/ 经典标准」；默认开启 `isAutoLiveOnShareEnabled` / `AutoLivePreferences.isEnabled` (`● LIVE 开`)；修复顶部分类筛选栏垂直裁剪（`dp(42)` + `setClipChildren(false)` + `setMinimumHeight(dp(34))`）。
+  3. **相册模式 & 实况工坊对齐**：`PhoneGalleryPane.java` / `PhoneGalleryView.swift` 顶栏统一为 `● LIVE 开/关` 胶囊（轻触切换开关、长按展开紧凑型 `LiveQuickMenu`）；照片角标热区扩大至 `42dp`/`44pt`、横斜向连选阈值放宽至 `0.55f`；`PhoneGallery` 与 `LiveStudio`（双端）底部操作栏统一为悬浮椭圆玻璃底座（`删除` · `保存实况` · `原图` · `分享实况`）。
+  4. **iOS 12.0 编译与紧凑菜单修复**：`LiveQuickMenu.java/swift` 收窄至 `224dp/228pt × max 276`、行高 `38` 并为 iOS 12.0 补齐 `.systemThickMaterial` / `.separator` / `.label` / `.tertiarySystemFill` 可用性降级。
+- **V2 验证证据**：`pytest` `13/13`、`parity_ios_android.py` `52/52`、`test_dsh195_server_directory_fallback.py` `28/28`、`check-cpp-test-assertions.py`、5 项 `verify-*.mjs` 全过；双端 Android APK (`DSH 0.8.139/250` + `LiveStudio 1.1.0/4`) 通过 Gradle 构建、`lintRelease` 与 `apksigner` 验签，并在 Xiaomi 15 (`24129PN74C`) 完成顶栏滑块录屏、浅深色紧凑菜单、设置主题行、相册角标/滑动框选、悬浮椭圆底座及实况工坊底座实拍截图与零崩溃核验。
+
 # 2026-11-27 实况工坊 × 团队工作相册接管审计、FlClash式滑选升级与小米15真机验收（feature/live-push-drift-20261127）
 
 - **接管与合并情况**：基于 `main` (`2e409c3`) 安全建立备份分支 `backup/main-2e409c3` 并检出远端候选分支 `feature/live-push-drift-20261127`（起始 `9ad9c4e`，5 个候选提交无冲突）；未改正式版本号与 `gallery-updates`（前序主线 CI `45968037353` 已全绿并完成 Windows `V4.3.35.exe` 下载校验，SHA-256 `71D9627C53A2AFA46B5A19DAE3C192444A25014C873A3B2009742D3B72D2FA38`）。

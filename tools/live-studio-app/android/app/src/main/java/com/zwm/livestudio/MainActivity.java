@@ -149,10 +149,7 @@ public final class MainActivity extends Activity {
     private TextView permissionTitle;
     private GridView gridView;
     private PhotoGridAdapter adapter;
-    private LinearLayout bottomBar;
-    private Button deleteBtn;
-    private Button saveOnlyBtn;
-    private Button shareBtn;
+    private com.zwm.livecore.SlidingGlassBar bottomDock;
 
     private AlertDialog activePreviewDialog;
     private Runnable pendingDeleteCallback;
@@ -311,44 +308,45 @@ public final class MainActivity extends Activity {
         pcLp.setMargins(dp(16), dp(24), dp(16), dp(8));
         root.addView(permissionCard, pcLp);
 
-        // 3-column Local Photo Grid
+        // 3-column Local Photo Grid inside FrameLayout + floating elliptical glass dock
+        FrameLayout gridContainer = new FrameLayout(this);
         gridView = new GridView(this);
         gridView.setNumColumns(3);
         gridView.setHorizontalSpacing(dp(2));
         gridView.setVerticalSpacing(dp(2));
-        gridView.setPadding(dp(2), 0, dp(2), dp(2));
+        gridView.setPadding(dp(2), 0, dp(2), dp(6));
         gridView.setClipToPadding(false);
         adapter = new PhotoGridAdapter();
         gridView.setAdapter(adapter);
         setupGridInteractions();
-        root.addView(gridView, new LinearLayout.LayoutParams(-1, 0, 1f));
+        gridContainer.addView(gridView, new FrameLayout.LayoutParams(-1, -1));
 
-        // Sticky Bottom Action Bar (shown ONLY during multi-select mode)
-        bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setBackgroundColor(cardBg());
-        bottomBar.setPadding(dp(12), dp(10), dp(12), dp(12));
-        bottomBar.setVisibility(View.GONE);
-
-        deleteBtn = actionBtn("删除", false);
-        deleteBtn.setTextColor(Color.rgb(220, 38, 38));
-        deleteBtn.setOnClickListener(v -> requestDeletePhotos(new ArrayList<>(selectedUris), this::exitSelectionMode));
-        LinearLayout.LayoutParams dLp = new LinearLayout.LayoutParams(0, dp(46), 0.9f);
-        dLp.setMargins(0, 0, dp(8), 0);
-        bottomBar.addView(deleteBtn, dLp);
-
-        saveOnlyBtn = actionBtn("存实况", false);
-        saveOnlyBtn.setOnClickListener(v -> startBatchConvert(new ArrayList<>(selectedUris), false));
-        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(0, dp(46), 1.0f);
-        sLp.setMargins(0, 0, dp(8), 0);
-        bottomBar.addView(saveOnlyBtn, sLp);
-
-        shareBtn = actionBtn("分享实况", true);
-        shareBtn.setOnClickListener(v -> startBatchConvert(new ArrayList<>(selectedUris), true));
-        LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(0, dp(46), 1.4f);
-        bottomBar.addView(shareBtn, shLp);
-
-        root.addView(bottomBar);
+        // Floating Elliptical Translucent Glass Action Dock (shown ONLY during multi-select mode)
+        bottomDock = new com.zwm.livecore.SlidingGlassBar(this, true);
+        bottomDock.setSegments(new com.zwm.livecore.SlidingGlassBar.Segment[]{
+                new com.zwm.livecore.SlidingGlassBar.Segment("删除", "删除选中照片", null, false, true),
+                new com.zwm.livecore.SlidingGlassBar.Segment("保存实况", "保存实况到相册", null, false, false),
+                new com.zwm.livecore.SlidingGlassBar.Segment("原图", "分享原图", null, false, false),
+                new com.zwm.livecore.SlidingGlassBar.Segment("分享实况", "转换并分享实况", null, true, false)
+        }, 3);
+        bottomDock.applyAppearance(isDark, true, brandGreen());
+        bottomDock.setOnSegmentSelectedListener((idx, fromScrub) -> {
+            if (selectedUris.isEmpty()) return;
+            if (idx == 0) {
+                requestDeletePhotos(new ArrayList<>(selectedUris), this::exitSelectionMode);
+            } else if (idx == 1) {
+                startBatchConvert(new ArrayList<>(selectedUris), false);
+            } else if (idx == 2) {
+                launchSystemShare(new ArrayList<>(selectedUris));
+            } else if (idx == 3) {
+                startBatchConvert(new ArrayList<>(selectedUris), true);
+            }
+        });
+        bottomDock.setVisibility(View.GONE);
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(-1, dp(54), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        dockLp.setMargins(dp(14), 0, dp(14), dp(14));
+        gridContainer.addView(bottomDock, dockLp);
+        root.addView(gridContainer, new LinearLayout.LayoutParams(-1, 0, 1f));
         return root;
     }
 
@@ -393,7 +391,7 @@ public final class MainActivity extends Activity {
                     float dy = Math.abs(dragLastY - dragDownY);
                     if (Math.max(dx, dy) > touchSlop) {
                         horizontalDragArmed = false;
-                        if (dx > dy * 1.15f && dragDownPos >= 0 && dragDownPos < visiblePhotos.size()) {
+                        if (dx > dy * 0.55f && dragDownPos >= 0 && dragDownPos < visiblePhotos.size()) {
                             gridView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
                             boolean alreadySel = selectedUris.contains(visiblePhotos.get(dragDownPos).uri);
                             startDragSelect(dragDownPos, !alreadySel);
@@ -602,16 +600,13 @@ public final class MainActivity extends Activity {
             int cap = Math.min(MAX_SELECT, visiblePhotos.size());
             rightActionBtn.setText(count >= cap && cap > 0 ? "取消全选" : "全选");
 
-            bottomBar.setVisibility(View.VISIBLE);
+            bottomDock.applyAppearance(isDark, true, brandGreen());
+            bottomDock.setVisibility(View.VISIBLE);
+            gridView.setPadding(dp(2), 0, dp(2), dp(86));
             boolean hasAny = count > 0;
-            deleteBtn.setEnabled(hasAny);
-            saveOnlyBtn.setEnabled(hasAny);
-            shareBtn.setEnabled(hasAny);
-            float alpha = hasAny ? 1f : 0.45f;
-            deleteBtn.setAlpha(alpha);
-            saveOnlyBtn.setAlpha(alpha);
-            shareBtn.setAlpha(alpha);
-            shareBtn.setText(hasAny ? "分享实况 (" + count + ")" : "分享实况");
+            for (int i = 0; i < 4; i++) {
+                bottomDock.setSegmentEnabled(i, hasAny);
+            }
         } else {
             titleView.setText("实况工坊");
             titleView.setTextSize(22);
@@ -620,7 +615,8 @@ public final class MainActivity extends Activity {
             albumChip.setBackground(roundRect(cardBg(), 18));
             albumChip.setText((activeBucket.isEmpty() ? "全部照片" : activeBucket) + " ▾");
             rightActionBtn.setText("设置");
-            bottomBar.setVisibility(View.GONE);
+            bottomDock.setVisibility(View.GONE);
+            gridView.setPadding(dp(2), 0, dp(2), dp(6));
         }
     }
 
@@ -1378,14 +1374,18 @@ public final class MainActivity extends Activity {
                 border.setBackground(bd);
                 cell.addView(border, new FrameLayout.LayoutParams(-1, -1));
 
+                FrameLayout badgeWrap = new FrameLayout(MainActivity.this);
+                badgeWrap.setContentDescription("选中照片");
+                FrameLayout.LayoutParams wrapLp = new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP | Gravity.END);
                 badge = new TextView(MainActivity.this);
                 badge.setTextColor(Color.WHITE);
                 badge.setTextSize(11);
                 badge.setTypeface(Typeface.DEFAULT_BOLD);
                 badge.setGravity(Gravity.CENTER);
-                FrameLayout.LayoutParams bLp = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP | Gravity.END);
+                FrameLayout.LayoutParams bLp = new FrameLayout.LayoutParams(dp(23), dp(23), Gravity.TOP | Gravity.END);
                 bLp.setMargins(0, dp(5), dp(5), 0);
-                cell.addView(badge, bLp);
+                badgeWrap.addView(badge, bLp);
+                cell.addView(badgeWrap, wrapLp);
 
                 liveBadge = new TextView(MainActivity.this);
                 liveBadge.setText("LIVE");
@@ -1398,14 +1398,14 @@ public final class MainActivity extends Activity {
                 lLp.setMargins(dp(5), 0, 0, dp(5));
                 cell.addView(liveBadge, lLp);
 
-                cell.setTag(new ViewHolder(img, badge, liveBadge, border));
+                cell.setTag(new ViewHolder(img, badgeWrap, badge, liveBadge, border));
             } else {
                 cell = (FrameLayout) convertView;
             }
             ViewHolder vh = (ViewHolder) cell.getTag();
             GalleryPhoto photo = visiblePhotos.get(position);
             bindSelectionVisual(vh, photo.uri);
-            vh.badge.setOnClickListener(v -> toggleSelection(photo.uri));
+            vh.badgeWrap.setOnClickListener(v -> toggleSelection(photo.uri));
             vh.liveBadge.setVisibility(photo.looksLive ? View.VISIBLE : View.GONE);
 
             vh.photoId = photo.id;
@@ -1454,13 +1454,15 @@ public final class MainActivity extends Activity {
 
     private static final class ViewHolder {
         final ImageView img;
+        final FrameLayout badgeWrap;
         final TextView badge;
         final TextView liveBadge;
         final View border;
         long photoId;
 
-        ViewHolder(ImageView img, TextView badge, TextView liveBadge, View border) {
+        ViewHolder(ImageView img, FrameLayout badgeWrap, TextView badge, TextView liveBadge, View border) {
             this.img = img;
+            this.badgeWrap = badgeWrap;
             this.badge = badge;
             this.liveBadge = liveBadge;
             this.border = border;

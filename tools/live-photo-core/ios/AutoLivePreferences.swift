@@ -151,7 +151,7 @@ enum AutoLivePreferences {
     static var isEnabled: Bool {
         get {
             if UserDefaults.standard.object(forKey: autoLiveKey) == nil {
-                return false
+                return true
             }
             return UserDefaults.standard.bool(forKey: autoLiveKey)
         }
