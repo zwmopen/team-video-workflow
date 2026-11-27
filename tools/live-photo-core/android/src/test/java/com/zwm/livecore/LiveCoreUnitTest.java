@@ -109,6 +109,14 @@ public class LiveCoreUnitTest {
         assertEquals(1.1159f, end.zoom, 0.0003f);
         assertTrue(end.offsetX > 0.75f && end.offsetX < 0.80f);
         assertTrue(end.offsetY > 0.48f && end.offsetY < 0.50f);
+        for (float pushRatio : new float[]{1.058f, 1.116f, 1.120f}) {
+            for (int f = 0; f < 60; f++) {
+                LiveMotionPreset.FrameTransform tf = LiveMotionPreset.computeFrame("handheld_push_drift_v1", pushRatio, f, 60);
+                assertTrue(tf.zoom >= 1.0f && tf.zoom <= 1.121f);
+                assertTrue(tf.offsetX >= 0f && tf.offsetX <= 1f);
+                assertTrue(tf.offsetY >= 0f && tf.offsetY <= 1f);
+            }
+        }
         for (LiveMotionPreset.PresetInfo preset : LiveMotionPreset.PRESETS) {
             for (int f = 0; f < 48; f++) {
                 LiveMotionPreset.FrameTransform tf = LiveMotionPreset.computeFrame(preset.id, 1.018f, f, 48);

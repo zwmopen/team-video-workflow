@@ -1,7 +1,22 @@
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace as NS
 import numpy as np
-from live_lab import transform, prepare, frame, request_zhipu, boxes, MODEL
+from live_lab import (
+    DEFAULT_LIVE_PROMPT,
+    MODEL,
+    SCENE_PROMPTS,
+    boxes,
+    frame,
+    prepare,
+    prepare_external_video,
+    render,
+    request_zhipu,
+    resolve_bin,
+    transform,
+    wrap_external_video_with_cover,
+)
 
 class Tests(unittest.TestCase):
     def test_paths_and_bounds(self):
@@ -48,5 +63,30 @@ class Tests(unittest.TestCase):
         def sleep(s):t[0]+=s
         with self.assertRaises(TimeoutError):request_zhipu('data:image/jpeg;base64,a','prompt',allow_network=True,client=f,timeout=3,poll=1,clock=lambda:t[0],sleep=sleep)
         self.assertEqual(f.n,1)
+
+    def test_scene_prompts_and_cover_pairing(self):
+        self.assertEqual(len(SCENE_PROMPTS), 15)
+        self.assertIn("民宿别墅", SCENE_PROMPTS)
+        self.assertTrue(DEFAULT_LIVE_PROMPT.startswith("将上传的静态照片"))
+        self.assertTrue(bool(resolve_bin("ffmpeg")))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            img = np.zeros((160, 120, 3), dtype=np.uint8)
+            img[20:140, 20:100] = (40, 180, 90)
+            cover = tdir / "cover.jpg"
+            cv_ok = __import__("cv2").imwrite(str(cover), img, [int(__import__("cv2").IMWRITE_JPEG_QUALITY), 96])
+            self.assertTrue(cv_ok)
+            raw_vid = tdir / "raw.mp4"
+            render(cover, raw_vid, rows=2, cols=2, confirmed_no_title=True, duration=1.5, fps=30)
+            clip = tdir / "clip.mp4"
+            prepare_external_video(raw_vid, clip, start=0.0, duration=1.2, fps=30)
+            out_live = tdir / "out_live.jpg"
+            wrap_external_video_with_cover(cover, clip, out_live)
+            payload = out_live.read_bytes()
+            self.assertIn(b"GCamera:MotionPhoto=\"1\"", payload)
+            self.assertIn(b"MicroVideoOffset", payload)
+
+if __name__=='__main__':unittest.main()
 
 if __name__=='__main__':unittest.main()

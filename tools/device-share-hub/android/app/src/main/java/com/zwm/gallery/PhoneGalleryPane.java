@@ -133,6 +133,7 @@ final class PhoneGalleryPane {
     private final TextView bucketChip;
     private final TextView effectChip;
     private final TextView rightCtrlBtn;
+    private final com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private final LinearLayout permissionCard;
     private final GridView gridView;
     private final TextView scrollDatePill;
@@ -214,8 +215,10 @@ final class PhoneGalleryPane {
 
         subHeader.addView(new View(activity), new LinearLayout.LayoutParams(0, 1, 1f));
 
+        liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(activity);
         effectChip = chip("效果：" + shortModeName(OnlineService.getAutoLiveMotionMode(activity)));
         effectChip.setOnClickListener(v -> showEffectDialog());
+        liveQuickMenu.attach(effectChip, this::showEffectDialog);
         LinearLayout.LayoutParams ecLp = new LinearLayout.LayoutParams(-2, -2);
         ecLp.setMargins(0, 0, dp(6), 0);
         subHeader.addView(effectChip, ecLp);
@@ -353,6 +356,9 @@ final class PhoneGalleryPane {
     }
 
     boolean handleBack() {
+        if (liveQuickMenu != null && liveQuickMenu.close()) {
+            return true;
+        }
         if (selectionMode) {
             exitSelectionMode();
             return true;
@@ -790,38 +796,39 @@ final class PhoneGalleryPane {
 
     private void showEffectDialog() {
         String current = OnlineService.getAutoLiveMotionMode(activity);
+        int count = OnlineService.AUTO_LIVE_MODE_IDS.length;
         int checked = 0;
-        String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length];
-        for (int i = 0; i < OnlineService.AUTO_LIVE_MODE_IDS.length; i++) {
+        String[] labels = new String[count + 1];
+        for (int i = 0; i < count; i++) {
             if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(current)) checked = i;
-            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i] + "\n" + OnlineService.AUTO_LIVE_MODE_DESCS[i];
+            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i];
         }
-        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
-                .setTitle("实况效果（与工作区共用）")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    String chosenId = OnlineService.AUTO_LIVE_MODE_IDS[which];
-                    OnlineService.setAutoLiveMotionMode(activity, chosenId);
-                    effectChip.setText("效果：" + shortModeName(chosenId));
-                    toast("已设为：" + OnlineService.AUTO_LIVE_MODE_TITLES[which]);
-                    d.dismiss();
-                })
-                .setNeutralButton("幅度与选项", (d, w) -> showStrengthDialog())
-                .setNegativeButton("取消", null)
-                .show();
+        labels[count] = "幅度、画质与选项…";
+        liveQuickMenu.show(effectChip, labels, checked, which -> {
+            if (which == count) {
+                showStrengthDialog();
+                return;
+            }
+            String chosenId = OnlineService.AUTO_LIVE_MODE_IDS[which];
+            OnlineService.setAutoLiveMotionMode(activity, chosenId);
+            effectChip.setText("效果：" + shortModeName(chosenId));
+            toast("已设为：" + OnlineService.AUTO_LIVE_MODE_TITLES[which]);
+        });
     }
 
     private void showStrengthDialog() {
+        boolean push = "handheld_push_drift_v1".equals(OnlineService.getAutoLiveMotionMode(activity));
         com.zwm.livecore.LiveQualityTier curTier =
                 com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(activity));
         String[] items = {
-                "极微自然（1.0% · 1.3 秒）",
-                "标准推荐（1.8% · 1.6 秒）",
-                "轻柔明显（3.2% · 2.2 秒）",
+                push ? "柔和（5.8% · 2.0 秒）" : "极微自然（1.0% · 1.3 秒）",
+                push ? "参考原版（11.6% · 2.0 秒）" : "标准推荐（1.8% · 1.6 秒）",
+                push ? "明显（12.0% · 2.2 秒）" : "轻柔明显（3.2% · 2.2 秒）",
                 "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(activity) ? "已开启" : "已关闭"),
                 "动态视频画质：" + curTier.title + "（静态无损）"
         };
         float r = OnlineService.getAutoLiveRatio(activity);
-        int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
+        int checked = push ? (r < 1.087f ? 0 : (r > 1.118f ? 2 : 1)) : (r < 1.013f ? 0 : (r > 1.024f ? 2 : 1));
         new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
                 .setTitle("微动幅度、画质与选项")
                 .setSingleChoiceItems(items, checked, (d, which) -> {
@@ -832,8 +839,8 @@ final class PhoneGalleryPane {
                     } else if (which == 4) {
                         showQualityTierDialog();
                     } else {
-                        float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
-                        float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
+                        float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
+                        float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
                         OnlineService.setAutoLiveRatio(activity, newRatio);
                         OnlineService.setAutoLiveDuration(activity, newDur);
                         toast("已调整为：" + items[which]);

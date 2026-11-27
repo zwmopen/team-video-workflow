@@ -30,6 +30,7 @@ final class PhoneGalleryViewController: UIViewController,
     private let statusChipLabel = UILabel()
     private let effectButton = UIButton(type: .system)
     private let multiSelectButton = UIButton(type: .system)
+    private let liveQuickMenu = LiveQuickMenu()
 
     private let scrollDatePill = UILabel()
     private var hideDatePillWorkItem: DispatchWorkItem?
@@ -653,33 +654,26 @@ final class PhoneGalleryViewController: UIViewController,
     }
 
     // MARK: - Effects & Actions
+    override func viewWillDisappear(_ animated: Bool) {
+        liveQuickMenu.dismiss()
+        super.viewWillDisappear(animated)
+    }
+
     @objc private func showEffectPicker() {
-        let pct = (AutoLivePreferences.motionRatio - 1.0) * 100.0
+        let modes = AutoLiveMotionMode.allCases
         let curTier = AutoLivePreferences.qualityTier
-        let alert = UIAlertController(
-            title: "实况效果与画质（与工作区共用）",
-            message: String(format: "静态原画无损 · %@ · 幅度 %.1f%% · %.1f 秒", curTier.shortLabel, pct, AutoLivePreferences.motionDuration),
-            preferredStyle: .actionSheet
-        )
-        let cur = AutoLivePreferences.motionMode
-        for mode in AutoLiveMotionMode.allCases {
-            alert.addAction(UIAlertAction(title: mode.title + (mode == cur ? "  ✓" : ""), style: .default) { [weak self] _ in
-                AutoLivePreferences.motionMode = mode
-                self?.updateEffectButtonTitle()
-            })
+        let labels = modes.map { $0.title } + ["动态视频画质：\(curTier.shortLabel)…", "调整微动幅度与时长…"]
+        liveQuickMenu.show(anchor: effectButton, labels: labels, selected: modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) { [weak self] which in
+            guard let self = self else { return }
+            if which < modes.count {
+                AutoLivePreferences.motionMode = modes[which]
+                self.updateEffectButtonTitle()
+            } else if which == modes.count {
+                self.showQualityTierPicker()
+            } else {
+                self.showStrengthPicker()
+            }
         }
-        alert.addAction(UIAlertAction(title: "动态视频画质：\(curTier.shortLabel)…", style: .default) { [weak self] _ in
-            self?.showQualityTierPicker()
-        })
-        alert.addAction(UIAlertAction(title: "调整微动幅度与时长…", style: .default) { [weak self] _ in
-            self?.showStrengthPicker()
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = alert.popoverPresentationController {
-            pop.sourceView = effectButton
-            pop.sourceRect = effectButton.bounds
-        }
-        present(alert, animated: true)
     }
 
     private func showQualityTierPicker() {
@@ -704,7 +698,11 @@ final class PhoneGalleryViewController: UIViewController,
     }
 
     private func showStrengthPicker() {
-        let options: [(String, Double, Double)] = [
+        let options: [(String, Double, Double)] = AutoLivePreferences.motionMode == .pushDrift ? [
+            ("柔和（5.8% · 2.0秒）", 1.058, 2.0),
+            ("参考原版（11.6% · 2.0秒）", 1.116, 2.0),
+            ("明显（12.0% · 2.2秒）", 1.120, 2.2)
+        ] : [
             ("极微自然（1.0% · 1.3秒）", 1.010, 1.3),
             ("标准推荐（1.8% · 1.6秒）", 1.018, 1.6),
             ("轻柔明显（3.2% · 2.2秒）", 1.032, 2.2)

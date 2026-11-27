@@ -1,16 +1,60 @@
-"""Experimental desktop renderer; not a native Live Photo packer."""
+"""Experimental desktop renderer and external clip / provider bridge.
+Not a standalone replacement for mobile on-device encoders; external cover pairing
+explicitly reuses lossless JPEG XMP+MP4 injection when available.
+"""
 import math
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
 import cv2
 import numpy as np
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 MODEL = 'cogvideox-flash'
+
+DEFAULT_LIVE_PROMPT = (
+    "将上传的静态照片转换为具有自然手机实况照片质感的短视频。"
+    "严格保持原始照片的构图、拍摄角度、人物身份、建筑结构、场地设施、空间布局、物品位置、光线和色彩。"
+    "根据画面实际内容，仅产生符合真实物理规律的细微动态，镜头基本固定，允许极轻微的自然手持变化。"
+    "不要明显推拉镜头，不要大幅度缩放，不要改变场景，不要新增或删除物体，不要改变人物容貌，不要生成夸张动作。"
+    "不要出现鬼影、物体变形、闪烁、电影特效或过度运镜。保持原始比例，高清画质，无转场，无新增文字。"
+)
+
+SCENE_PROMPTS = {
+    "自然风景": DEFAULT_LIVE_PROMPT + " 仅树叶、草木或远景氛围产生极轻微自然微风拂动。",
+    "森林徒步": DEFAULT_LIVE_PROMPT + " 仅林间树叶与光斑产生轻微风动感，人物保持自然微呼吸与姿态稳定。",
+    "民宿别墅": DEFAULT_LIVE_PROMPT + " 严格保持建筑外观、院落、家具结构不变，仅窗帘、绿植或水面波光细微活动。",
+    "海边湖泊": DEFAULT_LIVE_PROMPT + " 仅水面产生克制的自然微澜波纹与倒影波动，岸线和建筑固定不变。",
+    "瀑布溪流": DEFAULT_LIVE_PROMPT + " 仅水流顺应重力自然连续流动与水雾微动，岩石山体完全稳定。",
+    "露营草坪": DEFAULT_LIVE_PROMPT + " 仅天幕布料、草叶与周围旗帜微动，帐篷与场地结构不变。",
+    "围炉煮茶": DEFAULT_LIVE_PROMPT + " 仅茶壶升起极淡的细微热气，炭火轻微暖光闪烁，器皿位置完全固定。",
+    "篝火晚会": DEFAULT_LIVE_PROMPT + " 仅火焰与零星火星轻微自然跳动，人群和周围环境维持稳定。",
+    "温泉私汤": DEFAULT_LIVE_PROMPT + " 仅池面微澜与少量温热白雾轻缓升腾，泡池建筑完全不变。",
+    "滑雪雪景": DEFAULT_LIVE_PROMPT + " 仅细微雪粒飘落或远处树梢轻动，雪道结构与人物姿势不扭曲。",
+    "美食聚餐": DEFAULT_LIVE_PROMPT + " 仅热菜上方极轻微热气或桌面光影呼吸，食物摆盘与餐具不变形。",
+    "人物合照": DEFAULT_LIVE_PROMPT + " 仅人物轻微眨眼或自然呼吸稳态，保持所有五官与衣着完全一致不扭曲。",
+    "户外团队活动": DEFAULT_LIVE_PROMPT + " 保持队形和人员面貌一致，仅发丝、衣角与环境绿植极轻微呼吸微动。",
+    "室内空间": DEFAULT_LIVE_PROMPT + " 保持墙面、家具与灯具直线结构稳固，仅窗外树影或室内光影轻微变化。",
+    "静物摆拍": DEFAULT_LIVE_PROMPT + " 仅柔和环境光线与极轻微自然手持稳态，主体静物形态完全稳定。",
+}
+
+
+def resolve_bin(name):
+    """Find ffmpeg/ffprobe without breaking on missing PATH shims on Windows."""
+    if os.name == "nt":
+        win_candidate = Path(r"C:\ffmpeg\bin") / f"{name}.exe"
+        if win_candidate.is_file():
+            return str(win_candidate)
+    found = shutil.which(name)
+    return found or name
 # Different paths, phases, envelopes and directions; values are fractions of cell size.
 TRACKS = ((.052, .00, 'push', -.35, .12), (.042, .13, 'left', .68, -.10),
           (.046, .08, 'pull', -.22, .25), (.036, .19, 'right', -.72, -.13))
@@ -96,7 +140,7 @@ def render(image, output, rows=2, cols=2, mask_path=None, confirmed_no_title=Fal
     count=round(duration*fps)
     with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
         dest=Path(tmp)/'motion.mp4'
-        cmd=['ffmpeg','-v','error','-f','rawvideo','-pix_fmt','bgr24','-s',f'{w}x{h}','-r',str(fps),'-i','-','-an','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-movflags','+faststart',str(dest)]
+        cmd=[resolve_bin('ffmpeg'),'-v','error','-f','rawvideo','-pix_fmt','bgr24','-s',f'{w}x{h}','-r',str(fps),'-i','-','-an','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-movflags','+faststart',str(dest)]
         proc=subprocess.Popen(cmd,stdin=subprocess.PIPE)
         try:
             for i in range(count):
@@ -125,17 +169,38 @@ def prepare_external_video(video, output, *, start=0., duration=2., fps=30):
         raise FileExistsError(output)
     if not math.isfinite(start) or start<0 or not 1<=duration<=3.5 or fps not in (24,30):
         raise ValueError('Invalid clip parameters')
-    info=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=duration,width,height','-of','json',str(video)],timeout=20))
+    info=json.loads(subprocess.check_output([resolve_bin('ffprobe'),'-v','error','-select_streams','v:0','-show_entries','stream=duration,width,height','-of','json',str(video)],timeout=20))
     streams=info.get('streams',[])
     if not streams or float(streams[0].get('duration',0))+.001<start+duration:
         raise ValueError('Source video missing or shorter than requested segment')
     output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
         dest=Path(tmp)/'clip.mp4'
-        subprocess.run(['ffmpeg','-v','error','-ss',str(start),'-i',str(video),'-t',str(duration),'-map','0:v:0','-an','-vf',f'fps={fps},scale=trunc(iw/2)*2:trunc(ih/2)*2','-c:v','libx264','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(dest)],check=True,timeout=120)
+        subprocess.run([resolve_bin('ffmpeg'),'-v','error','-ss',str(start),'-i',str(video),'-t',str(duration),'-map','0:v:0','-an','-vf',f'fps={fps},scale=trunc(iw/2)*2:trunc(ih/2)*2','-c:v','libx264','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',str(dest)],check=True,timeout=120)
         with output.open('xb') as fp:
             fp.write(dest.read_bytes())
     return output
+
+
+def wrap_external_video_with_cover(cover_image, video_mp4, output_jpg):
+    """Pair a prepared external MP4 with an untouched HD static JPEG cover (lossless XMP+MP4 Motion Photo)."""
+    cover_image, video_mp4, output_jpg = Path(cover_image), Path(video_mp4), Path(output_jpg)
+    if not cover_image.is_file() or not video_mp4.is_file():
+        raise FileNotFoundError("Missing cover_image or video_mp4")
+    if output_jpg.exists() or output_jpg.resolve() == cover_image.resolve():
+        raise FileExistsError(output_jpg)
+    scripts_dir = Path(__file__).resolve().parents[3] / "device-share-hub" / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import motion_photo  # type: ignore
+
+    with tempfile.TemporaryDirectory(dir=output_jpg.parent) as tmp:
+        tmp_out = Path(tmp) / "paired.jpg"
+        motion_photo.build_motion_photo_file(str(cover_image), str(video_mp4), str(tmp_out), cache_dir=tmp)
+        output_jpg.parent.mkdir(parents=True, exist_ok=True)
+        with output_jpg.open("xb") as fp:
+            fp.write(tmp_out.read_bytes())
+    return output_jpg
 
 
 def request_zhipu(image_data_url, prompt, *, allow_network=False, client=None, timeout=180, poll=5, clock=time.monotonic, sleep=time.sleep):

@@ -270,7 +270,7 @@ public final class MainActivity extends Activity {
 
         topBar.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        liveModeChip = chipButton("LIVE ▾");
+        liveModeChip = chipButton(formatLiveChipText(currentMode()));
         liveModeChip.setContentDescription("实况效果，点击或长按滑动选择");
         liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
         liveModeChip.setOnClickListener(v -> showEffectPickerDialog());
@@ -278,6 +278,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams liveChipLp = new LinearLayout.LayoutParams(-2, -2);
         liveChipLp.setMargins(dp(4), 0, dp(4), 0);
         topBar.addView(liveModeChip, liveChipLp);
+        refreshLiveModeChip();
 
         rightActionBtn = chipButton("设置");
         rightActionBtn.setOnClickListener(v -> {
@@ -1221,8 +1222,36 @@ public final class MainActivity extends Activity {
                       .putFloat(KEY_DURATION, "handheld_push_drift_v1".equals(selected) ? 2.0f : MotionPreset.DEFAULT_DURATION_SEC);
             }
             editor.apply();
+            refreshLiveModeChip();
             toast("已设为：" + MotionPreset.PRESETS[which].title);
         });
+    }
+
+    private static String shortModeTag(String modeId) {
+        if ("handheld_push_drift_v1".equals(modeId)) return "推近";
+        if ("subtle_still".equals(modeId)) return "静止";
+        if ("natural_hold".equals(modeId)) return "手持";
+        if ("zoom_in".equals(modeId)) return "拉近";
+        if ("zoom_out".equals(modeId)) return "拉远";
+        if ("pan_up".equals(modeId)) return "上移";
+        if ("pan_down".equals(modeId)) return "下移";
+        if ("pan_left".equals(modeId)) return "左移";
+        if ("pan_right".equals(modeId)) return "右移";
+        if ("handheld".equals(modeId)) return "轻晃";
+        return "自然";
+    }
+
+    private static String formatLiveChipText(String modeId) {
+        return "● LIVE " + shortModeTag(modeId) + " ▾";
+    }
+
+    private void refreshLiveModeChip() {
+        if (liveModeChip == null) return;
+        String modeId = currentMode();
+        liveModeChip.setText(formatLiveChipText(modeId));
+        liveModeChip.setTextColor(brandGreen());
+        int pillBg = isDark ? Color.argb(60, 15, 169, 104) : Color.rgb(226, 244, 236);
+        liveModeChip.setBackground(roundRect(pillBg, 14));
     }
 
     private void showStrengthDialog() {

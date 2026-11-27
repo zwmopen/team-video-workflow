@@ -189,11 +189,14 @@ def test_mobile_clients_live_photo_contracts():
     assert "getAutoLiveMotionMode" in and_svc
     assert "分享时静图自动转实况" in and_set
     assert "showAutoLiveModeDialog" in and_set
-    assert "&auto_live=1" in and_client
+    assert "LiveLocalConverter.convertFileToFile" in and_client
     assert "syncLiveMotionModeAsync" in and_client
     assert "isAutoLiveOnShareEnabled" in and_main
 
-    ios_pref = (HUB_ROOT / "ios/Album/AutoLivePreferences.swift").read_text(encoding="utf-8")
+    ios_pref_path = HUB_ROOT.parent / "live-photo-core/ios/AutoLivePreferences.swift"
+    if not ios_pref_path.exists():
+        ios_pref_path = HUB_ROOT / "ios/Album/AutoLivePreferences.swift"
+    ios_pref = ios_pref_path.read_text(encoding="utf-8")
     ios_set = (HUB_ROOT / "ios/Album/SettingsView.swift").read_text(encoding="utf-8")
     assert "album.autoLiveOnShareEnabled.v1" in ios_pref
     assert "album.autoLiveMotionMode.v1" in ios_pref

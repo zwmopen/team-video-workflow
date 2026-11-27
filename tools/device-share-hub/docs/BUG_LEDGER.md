@@ -1,3 +1,14 @@
+# DSH-200：候选分支 feature/live-push-drift-20261127 审计缺陷与真机闭环修复（2026-11-27 · 已在候选分支修复并过小米15测试）
+
+- **问题与审计发现（5 项）**：
+  1. Android `LiveMotionPreset.java` `handheld_push_drift_v1` 未对 `ox`/`oy` 做 `[0.0, 1.0]` 限幅（iOS 与 Python 均已限幅），边界插值偏移存在纹理边缘拉伸风险。
+  2. `LiveQuickMenu.java` 固定行高 `dp(44)` 会在系统大字号或双行长文案（如“动态视频画质：高清模式（推荐）（静态原画无损）”）下裁剪；原离散行背景切换缺少 FlClash 式连续滑动跟手悬浮滑块；退后台/预测返回未在每页接管。
+  3. 团队工作相册内嵌手机相册 `PhoneGalleryPane.java` 与 iOS `PhoneGalleryView.swift` 遗漏未接入 `LiveQuickMenu`，仍弹出全宽 `AlertDialog/UIAlertController`，且强度弹窗缺少 `handheld_push_drift_v1` 专属 3 档（5.8% / 11.6% / 12.0%）。
+  4. 实况工坊 `LIVE ▾` 胶囊不会随所选预设实时刷新标签，用户无法一眼辨别当前处于「手持」「推近」还是「静止」。
+  5. `tools/live-studio-app/experiments/live_lab/live_lab.py` 直接调用 `'ffmpeg'`/`'ffprobe'`，在 Windows PATH 无完整版 FFmpeg 时受阻；`test_online_live_photo.py` 两处旧断言未随 v0.8.137 端侧无损转换与共享目录重构更新。
+- **修复与增强**：逐项修复 `[0,1]` clamp、FlClash 式渐变平移悬浮滑块 `hoverPlatter` + 自适应行高 + API 33+ `PRIORITY_OVERLAY` 返回拦截、双端 `PhoneGallery` 对齐升级、实况工坊 `● LIVE <标签> ▾` 动态指示器、`live_lab.py` 15 场景提示词与无损封面配对封装。
+- **验证证据**：`pytest` `13/13`、`parity_ios_android.py` `52/52`、`TestDSH197SendArchive` `7/7`、C++ 门禁、5 项 JS 守卫、双端 `:live-core` / `:app` Gradle 单测/Lint/APK 构建验签、`ffprobe` 7 组样片及 Xiaomi 15 浅深色+录屏真机验收全部通过。iOS 真机、智谱真实 API 与小红书发布留待下一步现场确认。
+
 # DSH-199：跨网远程中继恢复、R2 复用优化与静图原画无损实况升级（已落地 · 2026-11-27 · 服务端 1.2.8 / Android 0.8.139(250) / iOS 0.8.139(250) / LiveStudio 1.1.0(4)）
 
 - **业务需求与痛点**：

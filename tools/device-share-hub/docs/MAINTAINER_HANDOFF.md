@@ -1,3 +1,17 @@
+# 2026-11-27 实况工坊 × 团队工作相册接管审计、FlClash式滑选升级与小米15真机验收（feature/live-push-drift-20261127）
+
+- **接管与合并情况**：基于 `main` (`2e409c3`) 安全建立备份分支 `backup/main-2e409c3` 并检出远端候选分支 `feature/live-push-drift-20261127`（起始 `9ad9c4e`，5 个候选提交无冲突）；未改正式版本号与 `gallery-updates`（前序主线 CI `45968037353` 已全绿并完成 Windows `V4.3.35.exe` 下载校验，SHA-256 `71D9627C53A2AFA46B5A19DAE3C192444A25014C873A3B2009742D3B72D2FA38`）。
+- **审计修复与升级**：
+  1. 修复 Android `LiveMotionPreset.java` `handheld_push_drift_v1` 缺失的 `ox/oy` `[0,1]` 边界 clamp，并补充 3 档强度全 60 帧单测；核对 Android OpenGL / iOS CoreGraphics / Python FFmpeg 三引擎坐标方向一致。
+  2. 为 `LiveQuickMenu.java` 与 `LiveQuickMenu.swift` 补齐 FlClash 式连续滑选悬浮滑块动画（`hoverPlatter` + `currentPlatter`）、大字号自适应折行高度（`minHeight=44dp` + `WRAP_CONTENT`）、Android API 33+ `PRIORITY_OVERLAY` 返回手势接管及 iOS 退后台自动收起。
+  3. 补齐 `PhoneGalleryPane.java` 与 `PhoneGalleryView.swift`（原遗漏仍弹旧版 AlertDialog/ActionSheet 且缺第 10 种运镜三档强度），使双端全页面效果/设置/引擎偏好交互一致；为 `LiveStudio` 顶部 `LIVE` 胶囊增加实时状态标签（`● LIVE 推近 ▾` 等）。
+  4. 为 `experiments/live_lab/live_lab.py` 增加 `resolve_bin`（兼容 `C:\ffmpeg\bin`）、`DEFAULT_LIVE_PROMPT` + 15 场景提示词表、`wrap_external_video_with_cover`（外源 MP4 无损匹配原画质封面封装 Motion Photo）及 `test_live_lab.py` 扩展；同步修复 `test_online_live_photo.py` 对新本地转换路径与共享 core 路径的断言。
+- **验证与实机证据**：
+  - `pytest` `13/13`、`parity_ios_android.py` `52/52`、`TestDSH197SendArchive` `7/7`、`check-cpp-test-assertions.py`、5 项 JS 守卫全部通过。
+  - 双端 Android 候选（`DSH 0.8.139/250` + `LiveStudio 1.1.0/4` 候选编译）通过 `:live-core:testDebugUnitTest :app:testDebugUnitTest :app:assembleRelease :app:lintRelease` 与 `apksigner` 验签，7 组对比样片（原推荐、第10预设三档、四宫格静止、四宫格错峰、外源剪辑封面无损配对）经 `ffprobe` 与零黑边校验通过（均 `1080x1440 / 30fps`）。
+  - 小米 15（`24129PN74C`）真机安装启动 0 崩溃，已留存浅/深色截图与 2 份操作录屏，覆盖 `LIVE` 点切、350ms 长按连续滑选、滑出取消、返回键收起及设置/引擎三选一弹层。
+- **未验/阻塞**：智谱 `cogvideox-flash` 未配置本地 `ZHIPUAI_API_KEY`（未发起真实计费或免费联网调用）；Google Flow 消费端积分与 Gemini/Vertex API 计费独立，暂推荐「手动下载 MP4 → `live_lab.wrap_external_video_with_cover` 配对原图」；iPhone 真机侧载与小红书/抖音实发图仍待实体 iPhone/人工验收。
+
 # 2026-11-27 LIVE 快捷设置与处理引擎偏好（源码候选）
 
 - 两个 App 的主要效果选择入口改为共享轻量原生菜单；团队相册第三位几乎静止保持原顺序，关闭项单列末尾，设置页同步轻量选择器。独立工坊设置主菜单也复用，次级幅度/画质等系统弹层待后续统一。

@@ -35,6 +35,7 @@ final class GalleryViewController: UIViewController,
                 if newValue == .pushDrift { activeRatio = 1.116; activeDuration = 2.0 }
                 else if previous == .pushDrift { activeRatio = MotionPreset.defaultRatio; activeDuration = MotionPreset.defaultDuration }
             }
+            refreshLiveModeButton()
         }
     }
     private var activeTier: LiveQualityTier {
@@ -92,12 +93,11 @@ final class GalleryViewController: UIViewController,
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         setupLayout()
-        liveModeButton.setTitle("LIVE ▾", for: .normal)
-        liveModeButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
-        liveModeButton.backgroundColor = .tertiarySystemFill
+        liveModeButton.titleLabel?.font = .systemFont(ofSize: 12.5, weight: .semibold)
         liveModeButton.layer.cornerRadius = 14
-        liveModeButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 9, bottom: 5, right: 9)
+        liveModeButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
         liveModeButton.accessibilityLabel = "实况效果，点击或长按滑动选择"
+        refreshLiveModeButton()
         liveModeButton.addTarget(self, action: #selector(showEffectPicker), for: .touchUpInside)
         let liveHold = UILongPressGestureRecognizer(target: self, action: #selector(liveModeHeld(_:)))
         liveHold.minimumPressDuration = 0.35
@@ -511,6 +511,26 @@ final class GalleryViewController: UIViewController,
                              selected: modes.firstIndex(of: activeMode) ?? 0) { [weak self] i in
             self?.activeMode = modes[i]
         }
+    }
+
+    private func refreshLiveModeButton() {
+        let tag: String
+        switch activeMode {
+        case .pushDrift: tag = "推近"
+        case .subtleStill: tag = "静止"
+        case .naturalHold: tag = "手持"
+        case .zoomIn: tag = "拉近"
+        case .zoomOut: tag = "拉远"
+        case .panUp: tag = "上移"
+        case .panDown: tag = "下移"
+        case .panLeft: tag = "左移"
+        case .panRight: tag = "右移"
+        case .handheld: tag = "轻晃"
+        }
+        liveModeButton.setTitle("● LIVE \(tag) ▾", for: .normal)
+        liveModeButton.setTitleColor(UIColor(red: 15/255, green: 135/255, blue: 88/255, alpha: 1), for: .normal)
+        liveModeButton.backgroundColor = UIColor(red: 15/255, green: 169/255, blue: 104/255, alpha: 0.14)
+        liveModeButton.sizeToFit()
     }
 
     private func showStrengthPicker() {

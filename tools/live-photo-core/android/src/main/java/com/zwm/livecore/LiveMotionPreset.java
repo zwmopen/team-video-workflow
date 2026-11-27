@@ -115,8 +115,8 @@ public final class LiveMotionPreset {
                 double gain = (ratio - 1.0) / 0.115503;
                 double delta = sample(PUSH_Z, p) * gain;
                 if (delta < 1e-9) return new FrameTransform(1f, 0.5f, 0.5f);
-                double ox = 0.5 - sample(PUSH_X, p) * gain / delta;
-                double oy = 0.5 - sample(PUSH_Y, p) * gain / delta;
+                double ox = Math.max(0.0, Math.min(1.0, 0.5 - sample(PUSH_X, p) * gain / delta));
+                double oy = Math.max(0.0, Math.min(1.0, 0.5 - sample(PUSH_Y, p) * gain / delta));
                 return new FrameTransform((float) (1.0 + delta), (float) ox, (float) oy);
             }
             case "natural_hold": {
