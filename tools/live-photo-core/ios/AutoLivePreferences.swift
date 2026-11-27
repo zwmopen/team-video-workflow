@@ -80,12 +80,15 @@ enum AutoLiveMotionMode: String, CaseIterable {
     }
 }
 
+typealias MotionPreset = AutoLiveMotionMode
+
 enum AutoLivePreferences {
     private static let autoLiveKey = "album.autoLiveOnShareEnabled.v1"
     private static let autoLiveModeKey = "album.autoLiveMotionMode.v1"
     private static let autoLiveRatioKey = "album.autoLiveRatio.v1"
     private static let autoLiveDurationKey = "album.autoLiveDuration.v1"
     private static let autoLiveSkipExistingKey = "album.autoLiveSkipExisting.v1"
+    private static let autoLiveQualityTierKey = "album.autoLiveQualityTier.v1"
 
     static let defaultRatio: Double = 1.018
     static let defaultDuration: Double = 1.6
@@ -121,6 +124,19 @@ enum AutoLivePreferences {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: autoLiveModeKey)
+        }
+    }
+
+    static var qualityTier: LiveQualityTier {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: autoLiveQualityTierKey),
+               let parsed = LiveQualityTier(rawValue: raw) {
+                return parsed
+            }
+            return .hd
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: autoLiveQualityTierKey)
         }
     }
 

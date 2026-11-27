@@ -1,3 +1,16 @@
+# 2026-11-27 跨网络作品传输、Cloudflare R2 复用与原画质无损实况升级（服务端 1.2.8 / Android 0.8.139(250) / iOS 0.8.139(250) / 独立实况工坊 1.1.0(4)）
+
+## 手机与电脑看得到的变化
+
+- **跨网传输策略、R2 复用与受控远程在线相册**：
+  - Cloudflare Worker + DO + R2（`zwm-device-share-relay`）升级多目标 R2 对象单次上传引用计数复用、HTTP `Range` 206 断点续传、`/v1/stats` 流量与 R2 免费额度/预估成本监控，以及严格仅限已授权设备证书访问的远程在线相册 `/v1/catalog/*`（目录、缩略图 LRU 上限 1200、按需无损原图拉取且 `ACK` 后立即删 R2 临时文件）。
+  - 电脑端 `online_gallery_service.py`（`1.2.8`）集成 `RemoteCatalogBridge`，同一 Wi-Fi 下自动为手机签发 ES256 成员凭证（`/api/online/remote-enroll`）并暴露 `/api/online/transfer-stats`。
+  - Windows 中控与 Android / iOS 设置页新增 **5 种传输策略**（自动选择 / USB 优先 / 局域网优先 / P2P 优先 / R2 云端优先），并向手机端提供 **流量与 R2 统计面板**（含 R2 出站下载免费提示与估算免责声明）；Android 纯 Java 恢复并升级跨网 Cloudflare 中继接收与断点续传，同时在离线脱离局域网时自动切换远程在线相册浏览与按需拉取原图。
+- **双端统一无损静态封面实况核心 + 3 档动态画质**：
+  - 抽取统一共享实况核心模块 `tools/live-photo-core/`（Android `:live-core` / iOS 共享 Swift 源码），同时服务于「团队工作相册（`0.8.139`）」与「独立实况工坊（`1.1.0`）」。
+  - JPEG（Android/iOS）与 HEIC（iOS）静态封面改为元数据无损封装（不解码重压缩、不缩放裁剪、完整保留原分辨率与 EXIF 方向/ICC）；非 JPEG/HEIC（如 PNG/WebP）回退全分辨率 `q=98` 高质量编码并标注 `reencodeReason`。
+  - 动态视频新增 3 档画质（流畅 `1080P` / 高清 `1440P` [默认] / 原画 `2048P`）及编码器自动降级（`ORIGINAL -> HD -> SMOOTH`），保持 9 种微动预设（默认 `natural_hold` / `1.018` / `1.6s` / `30fps`），决不强行放大低清原图；批量转换支持单张失败重试与无损结果提示。
+
 # 2026-11-27 团队工作相册体验深度打磨：大图原生手势/实况预览、无限删选与顶部自动折叠（Android 0.8.138(249) / iOS 0.8.138(249)）
 
 ## 手机上看得到的变化

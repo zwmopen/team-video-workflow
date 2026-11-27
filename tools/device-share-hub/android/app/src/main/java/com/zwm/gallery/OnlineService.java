@@ -102,6 +102,7 @@ public final class OnlineService extends Service {
     public static final String PREF_AUTO_LIVE_RATIO = "autoLiveRatio";
     public static final String PREF_AUTO_LIVE_DURATION = "autoLiveDuration";
     public static final String PREF_AUTO_LIVE_SKIP_EXISTING = "autoLiveSkipExisting";
+    public static final String PREF_AUTO_LIVE_QUALITY_TIER = "autoLiveQualityTier";
     public static final String DEFAULT_AUTO_LIVE_MOTION_MODE = "natural_hold";
     public static final String[] AUTO_LIVE_MODE_IDS = {
             "natural_hold", "subtle_still", "zoom_in", "zoom_out",
@@ -190,6 +191,7 @@ public final class OnlineService extends Service {
     private PowerManager.WakeLock transferWakeLock;
     private WifiManager.WifiLock transferWifiLock;
     private volatile String lastNotifiedStatus = "";
+    private RemoteRelayPresence remoteRelayPresence;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private static volatile long lastClipboardSyncId = 0L;
 
@@ -434,6 +436,22 @@ public final class OnlineService extends Service {
                 .apply();
     }
 
+    public static String getAutoLiveQualityTier(Context context) {
+        if (context == null) return com.zwm.livecore.LiveQualityTier.HD.id;
+        String raw = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_AUTO_LIVE_QUALITY_TIER, com.zwm.livecore.LiveQualityTier.HD.id);
+        return com.zwm.livecore.LiveQualityTier.fromId(raw).id;
+    }
+
+    public static void setAutoLiveQualityTier(Context context, String tierId) {
+        if (context == null) return;
+        String safe = com.zwm.livecore.LiveQualityTier.fromId(tierId).id;
+        context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_AUTO_LIVE_QUALITY_TIER, safe)
+                .apply();
+    }
+
     static String currentNetworkType(Context context) {
         try {
             android.net.ConnectivityManager cm =
@@ -530,6 +548,7 @@ public final class OnlineService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        if (remoteRelayPresence != null) remoteRelayPresence.stop();
         releaseTransferWakeLock();
         closeSockets();
         releaseMulticastLock();
@@ -593,6 +612,7 @@ public final class OnlineService extends Service {
 
     private void stopReceiver() {
         running = false;
+        if (remoteRelayPresence != null) remoteRelayPresence.stop();
         closeSockets();
         releaseMulticastLock();
         stopForeground(STOP_FOREGROUND_REMOVE);
@@ -647,6 +667,10 @@ public final class OnlineService extends Service {
             discoveryLoopActive = true;
             serviceExecutor.execute(this::discoveryLoop);
         }
+        if (remoteRelayPresence == null) {
+            remoteRelayPresence = new RemoteRelayPresence(this);
+        }
+        remoteRelayPresence.start();
     }
 
     private void closeSockets() {
@@ -799,6 +823,10 @@ public final class OnlineService extends Service {
                 }
                 if ("GET".equals(request.method) && "/v2/clipboard".equals(request.path)) {
                     clipboardStatus(output);
+                    return;
+                }
+                if ("POST".equals(request.method) && "/v2/remote-profile".equals(request.path)) {
+                    saveRemoteProfile(request, input, output);
                     return;
                 }
                 writeText(output, 404, "Not Found");
@@ -1650,7 +1678,16 @@ public final class OnlineService extends Service {
                 .put("workCount", prefs.getInt(PREF_WORK_COUNT, -1))
                 .put("network", currentNetworkType(this))
                 .put("taskId", currentTaskId);
-        info.put("relayEnabled", false);
+        info.put("relayEnabled", RemoteRelayProfile.isEnrolled(this));
+        try {
+            RemoteIdentity id = RemoteIdentity.loadOrCreate(this);
+            info.put("relaySigningX", id.x);
+            info.put("relaySigningY", id.y);
+            info.put("relayAgreementX", id.x);
+            info.put("relayAgreementY", id.y);
+        } catch (Exception ignored) {
+            // Best-effort key advertisement
+        }
         if (workCounts != null) info.put("workCounts", workCounts);
         return info;
     }
@@ -2547,5 +2584,42 @@ public final class OnlineService extends Service {
             super(message);
             this.code = code;
         }
+    }
+
+    boolean isServiceRunning() {
+        return running;
+    }
+
+    JSONObject buildPublicDeviceInfo() throws Exception {
+        return deviceInfo();
+    }
+
+    void updateRemoteStatus(String message) {
+        notifyStatus(message);
+    }
+
+    boolean hasCommittedTaskReceipt(String key) {
+        return readCommittedTask(key) != null;
+    }
+
+    void rememberExternalCommittedTask(String key, JSONObject receipt) {
+        rememberCommittedTask(key, receipt);
+    }
+
+    void stageExternalUpdateApk(File apkFile) throws Exception {
+        stageIncomingUpdatePackage(apkFile);
+    }
+
+    private void saveRemoteProfile(HttpRequest request, InputStream input, OutputStream output) throws Exception {
+        if (request.contentLength <= 0 || request.contentLength > MAX_JSON_BYTES) {
+            throw new HttpError(400, "远程配置内容无效");
+        }
+        String raw = new String(readExact(input, request.contentLength), StandardCharsets.UTF_8);
+        RemoteRelayProfile.save(this, raw);
+        RemoteRelayClient.invalidateSession();
+        if (remoteRelayPresence == null) remoteRelayPresence = new RemoteRelayPresence(this);
+        remoteRelayPresence.start();
+        DiagnosticLog.write(this, "remote_profile_saved", "endpoint=" + RemoteRelayProfile.DEFAULT_ENDPOINT);
+        writeJson(output, 200, new JSONObject().put("ok", true));
     }
 }

@@ -1,3 +1,15 @@
+# DSH-199：跨网远程中继恢复、R2 复用优化与静图原画无损实况升级（已落地 · 2026-11-27 · 服务端 1.2.8 / Android 0.8.139(250) / iOS 0.8.139(250) / LiveStudio 1.1.0(4)）
+
+- **业务需求与痛点**：
+  1. Android 在 `1541566` 后缺失跨网 Cloudflare 中继模块，`online_gallery_service` 也仅支持同局域网在线浏览，外出 4G/5G 或跨 Wi-Fi 时无法接收与直接翻看电脑成品库；多机分发同套作品缺少 R2 单份上传引用计数复用。
+  2. 原实况转换链对静图做解码/重编码且限制 3072px，真库中部分实际为 PNG 的 `.jpg` 作品在 `q=92` 重压缩后 PSNR 跌至 `32.8~36.6 dB`，影响拼图/小字标题清晰度。
+  3. 实机调测发现 Python `urllib` 默认 `Python-urllib/3.11` User-Agent 会被 Cloudflare 边缘 WAF 拦截并返回 `HTTP 403 / Error 1010`。
+- **修复与架构升级**：
+  - **共享无损实况核心 (`tools/live-photo-core/`)**：JPEG/HEIC 静态封面仅做 XMP / ContentIdentifier 元数据无损封装（SOS..EOI 逐字节不变、不缩尺寸、保留 EXIF 方向/ICC）；PNG/WebP 全分辨率 `q=98` 保真转换并记录 `reencodeReason`；动态视频新增流畅 `1080P` / 高清 `1440P` / 原画 `2048P` 与硬件编码自动降级（决不放大低清原图）。
+  - **Cloudflare Worker (`zwm-device-share-relay` `0f66dbdc-96f9-47aa-b993-2eab57ca3274`) & PC 桥接 (`1.2.8`)**：新增 `/v1/transfers/batch` R2 对象复用、HTTP `Range` 206 断点续传、`/v1/stats` 流量与 R2 免费额度/预估成本、认证远程在线相册 `/v1/catalog/*`（按需拉取原图 ACK 即删 R2）；`remote_catalog_bridge.py` 与 Android `RemoteRelayClient.java` 显式设置 `User-Agent` 消除 Cloudflare 1010。
+  - **双端与 Windows**：Windows 中控、Android（纯 Java 恢复中继与远程相册兜底）与 iOS 新增 5 种传输策略及流量/R2 配额统计面板。
+- **验证与证据边界**：Worker `16/16` 单测 + 线上 E2E + R2 `0 B`；画质基准 JPEG SOS 一致、真库 PSNR 提至 `44.21~45.84 dB`、3 档 MP4 实测通过；5 项 JS 守卫与 `pytest` 相关套件通过；双 Android APK 构建验签且已装 Xiaomi 15 启动无崩溃；iOS IPA 与异地 4G/5G、小红书/抖音真机发布尚待后续 CI/现场验收。
+
 # DSH-198：分享满一小时后在线作品搜索不到、回收站也没有（源码候选 · 2026-11-25）
 
 - **用户反馈**：手机按标题关键词或作品编号搜索不到已分享作品，手机回收站也没有；要求以后手机端自动清理均改为手动。

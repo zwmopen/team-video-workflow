@@ -131,7 +131,34 @@ final class RemoteRelayClient {
         return transfer
     }
 
-    /// Streams one ordinary public object to disk, verifies it, then atomically moves it.
+    private static var cachedSession: Session?
+    private static let sessionLock = NSLock()
+
+    static func ensureSession() throws -> Session {
+        guard let profile = RemoteRelayProfile.load() else {
+            throw RemoteRelayError.invalidCertificate
+        }
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        if let existing = cachedSession,
+           !existing.expired,
+           existing.endpoint == profile.endpoint {
+            return existing
+        }
+        let session = try createSession(endpoint: profile.endpoint,
+                                          certificate: profile.certificate,
+                                          certificateSignature: profile.certificateSignature)
+        cachedSession = session
+        return session
+    }
+
+    static func invalidateCachedSession() {
+        sessionLock.lock()
+        cachedSession = nil
+        sessionLock.unlock()
+    }
+
+    /// Streams one ordinary public object to disk with HTTP Range 206 resume & SHA-256 verification.
     static func downloadObject(_ session: Session, transferId: String, index: Int,
                                destination: URL, expectedBytes: Int64,
                                expectedSha256: String) throws {
@@ -139,61 +166,197 @@ final class RemoteRelayClient {
               expectedSha256.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil else {
             throw RemoteRelayError.invalidTask
         }
-        guard let url = URL(string: "\(session.endpoint)/v1/transfers/\(transferId)/objects/\(index)") else {
+        try downloadWithRangeAndVerify(
+            urlString: "\(session.endpoint)/v1/transfers/\(transferId)/objects/\(index)",
+            session: session,
+            destination: destination,
+            expectedBytes: expectedBytes,
+            expectedSha256: expectedSha256
+        )
+    }
+
+    static func downloadWithRangeAndVerify(urlString: String, session: Session,
+                                           destination: URL, expectedBytes: Int64,
+                                           expectedSha256: String?) throws {
+        guard let url = URL(string: urlString) else {
             throw RemoteRelayError.invalidURL
         }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
-                                 timeoutInterval: objectTimeout)
-        request.httpMethod = "GET"
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        request.setValue(session.workspaceId, forHTTPHeaderField: "X-Workspace-Id")
         let parent = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let temporary = destination.appendingPathExtension("part")
-        try? FileManager.default.removeItem(at: temporary)
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var downloadedURL: URL?
-        var responseStatus = 0
-        var responseError: Error?
-        let task = urlSession.downloadTask(with: request) { url, response, error in
-            downloadedURL = url
-            responseStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
-            responseError = error
-            semaphore.signal()
-        }
-        task.resume()
-        let waitDeadline: DispatchTime = .now() + objectTimeout + 15
-        // 【DSH-118】原本是 `semaphore.wait()` 无超时：只要回调因为任何原因不来
-        // （网络栈卡死 / 进程被挂起 / 后台任务被系统回收），这个线程就永久挂住，
-        // 界面停在「正在下载…」转圈，既不报错也不超时，只能杀 App。
-        // 给一个比 HTTP 资源超时略宽的兜底窗口，超时即取消任务并显式抛错。
-        if semaphore.wait(timeout: waitDeadline) == .timedOut {
-            task.cancel()
-            throw RemoteRelayError.remote("远程对象下载超时（\(Int(objectTimeout) + 15) 秒无响应）")
-        }
-        if let error = responseError { throw error }
-        guard (200..<300).contains(responseStatus), let source = downloadedURL else {
-            throw RemoteRelayError.remote("远程文件下载失败 \(responseStatus)")
-        }
-        do {
-            let values = try source.resourceValues(forKeys: [.fileSizeKey])
-            guard let size = values.fileSize, Int64(size) == expectedBytes else {
-                throw RemoteRelayError.remote("远程文件大小校验失败")
+        for attempt in 1...3 {
+            var existingLen: Int64 = 0
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: temporary.path),
+               let sz = attrs[.size] as? NSNumber {
+                existingLen = sz.int64Value
             }
-            let actual = try SHA256.fileHex(source)
-            guard actual.caseInsensitiveCompare(expectedSha256) == .orderedSame else {
-                throw RemoteRelayError.remote("远程文件 SHA-256 校验失败")
+            if expectedBytes > 0 && existingLen > expectedBytes {
+                try? FileManager.default.removeItem(at: temporary)
+                existingLen = 0
             }
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: source, to: temporary)
-            try FileManager.default.moveItem(at: temporary, to: destination)
-        } catch {
-            try? FileManager.default.removeItem(at: source)
-            try? FileManager.default.removeItem(at: temporary)
-            throw error
+
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
+                                     timeoutInterval: objectTimeout)
+            request.httpMethod = "GET"
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+            request.setValue(session.workspaceId, forHTTPHeaderField: "X-Workspace-Id")
+            if existingLen > 0 {
+                request.setValue("bytes=\(existingLen)-", forHTTPHeaderField: "Range")
+            }
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var downloadedURL: URL?
+            var responseStatus = 0
+            var responseHeaderSha: String?
+            var responseError: Error?
+            let task = urlSession.downloadTask(with: request) { fileURL, response, error in
+                downloadedURL = fileURL
+                if let http = response as? HTTPURLResponse {
+                    responseStatus = http.statusCode
+                    responseHeaderSha = http.allHeaderFields["X-Object-Sha256"] as? String
+                        ?? http.allHeaderFields["x-object-sha256"] as? String
+                }
+                responseError = error
+                semaphore.signal()
+            }
+            task.resume()
+            if semaphore.wait(timeout: .now() + objectTimeout + 15) == .timedOut {
+                task.cancel()
+                if attempt < 3 { continue }
+                throw RemoteRelayError.remote("远程对象下载超时")
+            }
+            if responseStatus == 416 {
+                try? FileManager.default.removeItem(at: temporary)
+                continue
+            }
+            if let error = responseError {
+                if attempt < 3 {
+                    Thread.sleep(forTimeInterval: 0.6 * Double(attempt))
+                    continue
+                }
+                throw error
+            }
+            guard (200..<300).contains(responseStatus), let source = downloadedURL else {
+                if attempt < 3 && (responseStatus >= 500 || responseStatus == 0) {
+                    Thread.sleep(forTimeInterval: 0.6 * Double(attempt))
+                    continue
+                }
+                throw RemoteRelayError.remote("远程文件下载失败 \(responseStatus)")
+            }
+
+            do {
+                if responseStatus == 206 && existingLen > 0 {
+                    let handle = try FileHandle(forUpdating: temporary)
+                    handle.seekToEndOfFile()
+                    let chunk = try Data(contentsOf: source)
+                    handle.write(chunk)
+                    handle.closeFile()
+                    try? FileManager.default.removeItem(at: source)
+                } else {
+                    try? FileManager.default.removeItem(at: temporary)
+                    try FileManager.default.moveItem(at: source, to: temporary)
+                }
+                let values = try temporary.resourceValues(forKeys: [.fileSizeKey])
+                if expectedBytes > 0 {
+                    guard let size = values.fileSize, Int64(size) == expectedBytes else {
+                        if attempt < 3 { continue }
+                        throw RemoteRelayError.remote("远程文件大小校验失败")
+                    }
+                }
+                let wantSha = (expectedSha256?.isEmpty == false ? expectedSha256 : responseHeaderSha) ?? ""
+                if !wantSha.isEmpty {
+                    let actual = try SHA256.fileHex(temporary)
+                    guard actual.caseInsensitiveCompare(wantSha) == .orderedSame else {
+                        try? FileManager.default.removeItem(at: temporary)
+                        throw RemoteRelayError.remote("远程文件 SHA-256 校验失败")
+                    }
+                }
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: temporary, to: destination)
+                return
+            } catch {
+                try? FileManager.default.removeItem(at: source)
+                if attempt >= 3 {
+                    try? FileManager.default.removeItem(at: temporary)
+                    throw error
+                }
+            }
         }
+    }
+
+    static func fetchStats(_ session: Session) throws -> [String: Any] {
+        return try requestJSON(url: "\(session.endpoint)/v1/stats", method: "GET",
+                               token: session.token, body: nil, workspaceId: session.workspaceId)
+    }
+
+    static func fetchCatalogManifest(_ session: Session) throws -> [String: Any] {
+        return try requestJSON(url: "\(session.endpoint)/v1/catalog", method: "GET",
+                               token: session.token, body: nil, workspaceId: session.workspaceId)
+    }
+
+    static func downloadCatalogThumb(_ session: Session, thumbKey: String) throws -> Data {
+        guard let url = URL(string: "\(session.endpoint)/v1/catalog/thumbs/\(thumbKey)") else {
+            throw RemoteRelayError.invalidURL
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: readTimeout)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(session.workspaceId, forHTTPHeaderField: "X-Workspace-Id")
+        let sem = DispatchSemaphore(value: 0)
+        var outData: Data?
+        var status = 0
+        urlSession.dataTask(with: request) { data, response, _ in
+            outData = data
+            status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            sem.signal()
+        }.resume()
+        if sem.wait(timeout: .now() + readTimeout + 5) == .timedOut || !(200..<300).contains(status) {
+            throw RemoteRelayError.remote("远程缩略图拉取失败 HTTP \(status)")
+        }
+        guard let data = outData, !data.isEmpty else {
+            throw RemoteRelayError.invalidResponse
+        }
+        return data
+    }
+
+    static func pullCatalogOriginal(_ session: Session, workId: String, fileName: String, destination: URL) throws {
+        let created = try requestJSON(url: "\(session.endpoint)/v1/catalog/pull", method: "POST",
+                                      token: session.token,
+                                      body: ["workId": workId, "fileName": fileName],
+                                      workspaceId: session.workspaceId)
+        guard let pull = created["pull"] as? [String: Any],
+              let pullId = pull["pullId"] as? String else {
+            throw RemoteRelayError.invalidResponse
+        }
+        let fileURLString = "\(session.endpoint)/v1/catalog/pulls/\(pullId)/file"
+        let deadline = Date().addingTimeInterval(45)
+        var lastErr: Error?
+        var succeeded = false
+        while Date() < deadline {
+            do {
+                try downloadWithRangeAndVerify(urlString: fileURLString, session: session,
+                                               destination: destination, expectedBytes: -1, expectedSha256: nil)
+                succeeded = true
+                break
+            } catch {
+                lastErr = error
+                Thread.sleep(forTimeInterval: 0.65)
+            }
+        }
+        guard succeeded else {
+            throw lastErr ?? RemoteRelayError.remote("等待电脑上传高清原图超时")
+        }
+        _ = try? requestJSON(url: "\(session.endpoint)/v1/catalog/pulls/\(pullId)/ack",
+                             method: "POST", token: session.token, body: [:],
+                             workspaceId: session.workspaceId)
+    }
+
+    static func recordCatalogWorkUsed(_ session: Session, workId: String) throws {
+        _ = try requestJSON(url: "\(session.endpoint)/v1/catalog/use-work", method: "POST",
+                            token: session.token, body: ["workId": workId],
+                            workspaceId: session.workspaceId)
     }
 
     static func ack(_ session: Session, transferId: String) throws {

@@ -1,0 +1,211 @@
+{
+  "ok": true,
+  "generatedAt": "2026-11-27T16:03:24+08:00",
+  "realSampleCount": 3,
+  "staticCoverComparisons": [
+    {
+      "sample": "real_sample_1",
+      "sourceFormat": "PNG",
+      "origResolution": "1086x1448",
+      "origExifOrientation": 1,
+      "origBytes": 2804705,
+      "oldPipeline": {
+        "resolution": "1086x1448",
+        "staticBytes": 544622,
+        "psnrDb": 36.61,
+        "ssim": 0.999464,
+        "elapsedMs": 16
+      },
+      "newPipeline": {
+        "resolution": "1086x1448",
+        "packedExifOrientation": 1,
+        "staticCoverBytes": 1382844,
+        "packedTotalBytes": 1393737,
+        "jpegSosBitIdentical": false,
+        "reencodeReason": "source_not_jpeg_converted_q98_fullres",
+        "psnrDb": 45.84,
+        "ssim": 0.999896,
+        "elapsedMs": 27
+      }
+    },
+    {
+      "sample": "real_sample_2",
+      "sourceFormat": "PNG",
+      "origResolution": "1086x1448",
+      "origExifOrientation": 1,
+      "origBytes": 3427815,
+      "oldPipeline": {
+        "resolution": "1086x1448",
+        "staticBytes": 715850,
+        "psnrDb": 33.22,
+        "ssim": 0.999312,
+        "elapsedMs": 14
+      },
+      "newPipeline": {
+        "resolution": "1086x1448",
+        "packedExifOrientation": 1,
+        "staticCoverBytes": 1841699,
+        "packedTotalBytes": 1852592,
+        "jpegSosBitIdentical": false,
+        "reencodeReason": "source_not_jpeg_converted_q98_fullres",
+        "psnrDb": 44.54,
+        "ssim": 0.999913,
+        "elapsedMs": 30
+      }
+    },
+    {
+      "sample": "real_sample_3",
+      "sourceFormat": "PNG",
+      "origResolution": "1086x1448",
+      "origExifOrientation": 1,
+      "origBytes": 3945541,
+      "oldPipeline": {
+        "resolution": "1086x1448",
+        "staticBytes": 857648,
+        "psnrDb": 32.84,
+        "ssim": 0.998957,
+        "elapsedMs": 16
+      },
+      "newPipeline": {
+        "resolution": "1086x1448",
+        "packedExifOrientation": 1,
+        "staticCoverBytes": 2087829,
+        "packedTotalBytes": 2098722,
+        "jpegSosBitIdentical": false,
+        "reencodeReason": "source_not_jpeg_converted_q98_fullres",
+        "psnrDb": 44.21,
+        "ssim": 0.999878,
+        "elapsedMs": 37
+      }
+    },
+    {
+      "sample": "synth_over_3072_3x4",
+      "sourceFormat": "JPEG",
+      "origResolution": "3600x4800",
+      "origExifOrientation": 1,
+      "origBytes": 1839398,
+      "oldPipeline": {
+        "resolution": "2304x3072",
+        "staticBytes": 436509,
+        "psnrDb": 37.62,
+        "ssim": 0.989591,
+        "elapsedMs": 523
+      },
+      "newPipeline": {
+        "resolution": "3600x4800",
+        "packedExifOrientation": 1,
+        "staticCoverBytes": 1840254,
+        "packedTotalBytes": 1850291,
+        "jpegSosBitIdentical": true,
+        "reencodeReason": "none_lossless_bitstream",
+        "psnrDb": "INF_LOSSLESS",
+        "ssim": 1.0,
+        "elapsedMs": 5
+      }
+    },
+    {
+      "sample": "synth_exif_rot6",
+      "sourceFormat": "JPEG",
+      "origResolution": "3200x2400",
+      "origExifOrientation": 6,
+      "origBytes": 130692,
+      "oldPipeline": {
+        "resolution": "3072x2304",
+        "staticBytes": 117120,
+        "psnrDb": 59.65,
+        "ssim": 0.999996,
+        "elapsedMs": 413
+      },
+      "newPipeline": {
+        "resolution": "3200x2400",
+        "packedExifOrientation": 6,
+        "staticCoverBytes": 131548,
+        "packedTotalBytes": 141585,
+        "jpegSosBitIdentical": true,
+        "reencodeReason": "none_lossless_bitstream",
+        "psnrDb": "INF_LOSSLESS",
+        "ssim": 1.0,
+        "elapsedMs": 0
+      }
+    },
+    {
+      "sample": "synth_4grid_small_text",
+      "sourceFormat": "JPEG",
+      "origResolution": "2160x2880",
+      "origExifOrientation": 1,
+      "origBytes": 346100,
+      "oldPipeline": {
+        "resolution": "2160x2880",
+        "staticBytes": 222469,
+        "psnrDb": 45.34,
+        "ssim": 0.999984,
+        "elapsedMs": 38
+      },
+      "newPipeline": {
+        "resolution": "2160x2880",
+        "packedExifOrientation": 1,
+        "staticCoverBytes": 346956,
+        "packedTotalBytes": 356993,
+        "jpegSosBitIdentical": true,
+        "reencodeReason": "none_lossless_bitstream",
+        "psnrDb": "INF_LOSSLESS",
+        "ssim": 1.0,
+        "elapsedMs": 1
+      }
+    },
+    {
+      "sample": "synth_lossless_source",
+      "sourceFormat": "PNG",
+      "origResolution": "2400x3200",
+      "origExifOrientation": 1,
+      "origBytes": 37020,
+      "oldPipeline": {
+        "resolution": "2304x3072",
+        "staticBytes": 120847,
+        "psnrDb": 51.38,
+        "ssim": 0.998503,
+        "elapsedMs": 260
+      },
+      "newPipeline": {
+        "resolution": "2400x3200",
+        "packedExifOrientation": 1,
+        "staticCoverBytes": 226107,
+        "packedTotalBytes": 237000,
+        "jpegSosBitIdentical": false,
+        "reencodeReason": "source_not_jpeg_converted_q98_fullres",
+        "psnrDb": 52.88,
+        "ssim": 0.999987,
+        "elapsedMs": 92
+      }
+    }
+  ],
+  "dynamicVideoTiers": {
+    "smooth": {
+      "ok": true,
+      "videoWidth": 810,
+      "videoHeight": 1080,
+      "upscaled": false,
+      "videoBytes": 8062,
+      "targetBitrate": 3000000,
+      "elapsedMs": 953
+    },
+    "hd": {
+      "ok": true,
+      "videoWidth": 1080,
+      "videoHeight": 1440,
+      "upscaled": false,
+      "videoBytes": 10037,
+      "targetBitrate": 8000000,
+      "elapsedMs": 992
+    },
+    "original": {
+      "ok": true,
+      "videoWidth": 1536,
+      "videoHeight": 2048,
+      "upscaled": false,
+      "videoBytes": 15595,
+      "targetBitrate": 16000000,
+      "elapsedMs": 1324
+    }
+  }
+}

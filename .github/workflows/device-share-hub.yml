@@ -15,6 +15,7 @@ on:
     branches: [main]
     paths:
       - 'tools/device-share-hub/**'
+      - 'tools/live-photo-core/**'
       - '.github/workflows/device-share-hub.yml'
       # 纯文档/忽略规则的改动不触发五连构建与产物发布：
       # 既省跑批，也避免仅改文档就把别人刚发出去的同一版本产物 --clobber 覆盖掉。
@@ -25,6 +26,7 @@ on:
     branches: [main]
     paths:
       - 'tools/device-share-hub/**'
+      - 'tools/live-photo-core/**'
       - '.github/workflows/device-share-hub.yml'
       - '!tools/device-share-hub/*.md'
       - '!tools/device-share-hub/**/*.md'

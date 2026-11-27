@@ -106,6 +106,7 @@ constexpr int IDC_SETTINGS_PHONES_SYNC = 424;
 constexpr int IDC_SETTINGS_SHORTCUTS = 425;
 constexpr int IDC_SETTINGS_ONLINE_LOG = 426;
 constexpr int IDC_SETTINGS_IOS_SIGNING_SKILL = 427;
+constexpr int IDC_SETTINGS_TRANSPORT_STRATEGY = 428;
 // 探测结果回传消息：探测走后台线程，探完 PostMessage 回 UI 线程
 constexpr UINT WM_ONLINE_PROBE_DONE = WM_APP + 11;
 // 在线手机面板的结果回传（扫描 / 同步都在后台线程，回来再 PostMessage）
@@ -271,6 +272,7 @@ HWND gSettingsAutoRestockCheck = nullptr;
 HWND gSettingsThresholdEdit = nullptr;
 HWND gSettingsAutoStartCheck = nullptr;
 HWND gSettingsDarkModeCheck = nullptr;
+            gSettingsStrategyButton = nullptr;
 // 在线相册服务：状态每 5 秒在后台线程探一次，探测回来再 PostMessage 回 UI 线程
 HWND gSettingsOnlineHeadline = nullptr;
 HWND gSettingsOnlineDetail = nullptr;
@@ -278,6 +280,12 @@ HWND gSettingsOnlineAddress = nullptr;
 HWND gSettingsOnlinePythonPath = nullptr;
 HWND gSettingsOnlineScriptPath = nullptr;
 HWND gSettingsOnlineAutoStartCheck = nullptr;
+HWND gSettingsStrategyButton = nullptr;
+
+remote_relay::TransportStrategy CurrentTransportStrategy() {
+    if (!gContentStore) return remote_relay::TransportStrategy::Auto;
+    return remote_relay::ParseTransportStrategy(gContentStore->GetSetting(L"transport_strategy"));
+}
 HWND gSettingsLogSizeLabel = nullptr;
 online_service::Config gOnlineConfig;
 online_service::ProbeResult gOnlineStatus;
@@ -2456,11 +2464,13 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         }
     };
     auto sendRemote = [&]() {
-        PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”…");
+        const auto strategy = CurrentTransportStrategy();
+        PostStatus(L"正在发送到 “" + device.name + L"”…");
         std::string transferId;
         std::string relayError;
         std::string p2pError;
-        if (remote_relay::TryP2PTransfer(
+        if (strategy != remote_relay::TransportStrategy::R2First &&
+            remote_relay::TryP2PTransfer(
                 DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
                 androidUpdate ? "android-update" : "work",
                 [&](uintmax_t done, uintmax_t total) {
@@ -2469,15 +2479,33 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                     PostProgress(percent, true);
                     PostStatus(L"正在 P2P 直传到 “" + device.name + L"”：" + std::to_wstring(percent) + L"%");
                 }, transferId, p2pError)) {
+            uint64_t totalP2pBytes = 0;
+            for (const auto& f : files) {
+                std::error_code ec;
+                totalP2pBytes += std::filesystem::file_size(f, ec);
+            }
+            std::filesystem::path stateDir = DiagnosticLogPath().parent_path();
+            size_t fileCnt = files.size();
+            std::thread([stateDir, totalP2pBytes, fileCnt]() {
+                remote_relay::RecordChannelStatsBestEffort(stateDir, "p2p", totalP2pBytes, fileCnt, 1);
+            }).detach();
             RecordSuccessfulTransfers(device, fingerprints, L"P2P直传");
             WriteDiagnosticLog(L"p2p_upload_done", device.name + L" transfer=" + Utf8ToWide(transferId));
             PostShellTransferNotice(L"已通过 P2P 直传到“" + device.name + L"”。", true);
             PostProgress(100, true);
-            PostStatus(L"已通过 P2P 直传到 “" + device.name + L"”");
+            PostStatus(L"已收到（P2P 直传）：" + device.name);
             return true;
         }
-        WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
-        PostStatus(L"P2P 直传未成功，自动切换远程中继…");
+        if (strategy != remote_relay::TransportStrategy::R2First) {
+            WriteDiagnosticLog(L"p2p_upload_failed", device.name + L" " + Utf8ToWide(p2pError));
+            std::filesystem::path stateDir = DiagnosticLogPath().parent_path();
+            std::thread([stateDir]() {
+                remote_relay::RecordChannelStatsBestEffort(stateDir, "r2Fallback", 0, 0, 1);
+            }).detach();
+            PostStatus(L"已切换至云端中转，正在发送到 “" + device.name + L"”…");
+        } else {
+            PostStatus(L"按策略已选择 R2 云端中转，正在发送…");
+        }
         const bool sent = remote_relay::SendPlainTransfer(
             DiagnosticLogPath().parent_path(), WideToUtf8(device.id), files,
             androidUpdate ? "android-update" : "work",
@@ -2485,16 +2513,16 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                 if (gCancelRequested) throw std::runtime_error("传送已取消");
                 int percent = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
                 PostProgress(percent, true);
-                PostStatus(L"正在通过远程中继发送到 “" + device.name + L"”："
+                PostStatus(L"正在通过云端中转发送给 “" + device.name + L"”："
                            + std::to_wstring(percent) + L"%");
             }, transferId, relayError);
-        if (!sent) throw std::runtime_error(relayError.empty() ? "远程中继发送失败" : relayError);
+        if (!sent) throw std::runtime_error(relayError.empty() ? "发送失败，点击重试" : relayError);
         RecordSuccessfulTransfers(device, fingerprints, L"远程中继");
         WriteDiagnosticLog(L"remote_relay_upload_committed", device.name
                            + L" transfer=" + Utf8ToWide(transferId));
-        PostShellTransferNotice(L"已提交到远程中继，手机收到后会自动写入作品库。", true);
+        PostShellTransferNotice(L"已切换至云端中转，手机收到后会自动写入作品库。", true);
         PostProgress(100, true);
-        PostStatus(L"已通过远程中继发送到 “" + device.name + L"”，等待手机确认");
+        PostStatus(L"已通过云端中转发送给 “" + device.name + L"”，等待手机确认");
         return true;
     };
     try {
@@ -2515,7 +2543,20 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
         // USB currently places files in the shared Lark folder but does not
         // invoke Android's validated update staging flow. Never report an APK
         // update as delivered through USB; use Wi-Fi/P2P/relay instead.
-        if (device.usbReady && device.usbAllowed && !androidUpdate) {
+        const auto activeStrategy = CurrentTransportStrategy();
+        const bool lanLive = IsLiveWifiDevice(device, std::chrono::steady_clock::now());
+        if ((activeStrategy == remote_relay::TransportStrategy::P2pFirst ||
+             activeStrategy == remote_relay::TransportStrategy::R2First) &&
+            device.remoteAllowed && device.remoteConnected &&
+            (activeStrategy == remote_relay::TransportStrategy::R2First || !lanLive)) {
+            prepareTransferFiles();
+            attemptedRemote = true;
+            sendRemote();
+            finishRemoteSuccess();
+            return true;
+        }
+        const bool tryUsbFirst = (activeStrategy != remote_relay::TransportStrategy::LanFirst) || !lanLive;
+        if (tryUsbFirst && device.usbReady && device.usbAllowed && !androidUpdate) {
             try {
                 WriteDiagnosticLog(L"usb_upload_start",
                         device.name + L" items=" + std::to_wstring(files.size()));
@@ -2526,6 +2567,18 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
                             std::min<uint64_t>(100, sent * 100 / total));
                         PostProgress(percent, true);
                     });
+                {
+                    uint64_t usbBytes = 0;
+                    for (const auto& f : files) {
+                        std::error_code ec;
+                        usbBytes += std::filesystem::file_size(f, ec);
+                    }
+                    std::filesystem::path stateDir = DiagnosticLogPath().parent_path();
+                    size_t cnt = files.size();
+                    std::thread([stateDir, usbBytes, cnt]() {
+                        remote_relay::RecordChannelStatsBestEffort(stateDir, "usb", usbBytes, cnt, 1);
+                    }).detach();
+                }
                 RecordSuccessfulTransfers(device, fingerprints, L"USB");
                 WriteDiagnosticLog(L"usb_upload_done", device.name);
                 PostShellTransferNotice(L"已通过 USB 传送到“" + device.name + L"”。", true);
@@ -2600,6 +2653,13 @@ bool UploadToDevice(Device device, std::vector<std::filesystem::path> files, std
             WriteDiagnosticLog(L"file_done", fileName + L" sha256=" + sha);
         }
         client.PostEmpty(L"/v2/tasks/" + taskId + L"/commit");
+        {
+            std::filesystem::path stateDir = DiagnosticLogPath().parent_path();
+            size_t cnt = files.size();
+            std::thread([stateDir, totalBytes, cnt]() {
+                remote_relay::RecordChannelStatsBestEffort(stateDir, "lan", totalBytes, cnt, 1);
+            }).detach();
+        }
         RecordSuccessfulTransfers(device, fingerprints, L"Wi-Fi");
         transferSucceeded = true;
         WriteDiagnosticLog(L"upload_commit", taskId);
@@ -4177,6 +4237,9 @@ void RefreshSettingsWindow() {
                  IsAutoStartEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(gSettingsDarkModeCheck, BM_SETCHECK,
                  gDarkMode ? BST_CHECKED : BST_UNCHECKED, 0);
+    if (gSettingsStrategyButton) {
+        SetWindowTextW(gSettingsStrategyButton, (L"传输策略：" + remote_relay::TransportStrategyLabel(CurrentTransportStrategy())).c_str());
+    }
     RefreshOnlineServiceSection();
     StartOnlineProbe();
 }
@@ -4686,8 +4749,11 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             AddSettingsButton(window, L"iPhone 签名技能说明", IDC_SETTINGS_IOS_SIGNING_SKILL,
                               40, 970, 210, 32);
             AddSettingsText(window,
-                L"查看签名安装、版本核验与续签流程。",
-                264, 976, 440, 24);
+                L"跨网传输优先通道切换。",
+                264, 976, 210, 24);
+            gSettingsStrategyButton = AddSettingsButton(window,
+                L"传输策略：自动选择（推荐）", IDC_SETTINGS_TRANSPORT_STRATEGY,
+                480, 968, 224, 34);
 
             AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 1034, 120, 38);
             // 配置（端口 / 解释器 / 脚本）存在 HKCU 里，第一次打开会自动探测并落盘
@@ -4788,6 +4854,16 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             }
             if (id == IDC_SETTINGS_IOS_SIGNING_SKILL) {
                 OpenIosSigningSkill(window);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_TRANSPORT_STRATEGY) {
+                int nextIdx = (static_cast<int>(CurrentTransportStrategy()) + 1) % 5;
+                auto nextStrategy = static_cast<remote_relay::TransportStrategy>(nextIdx);
+                if (gContentStore) {
+                    gContentStore->SetSetting(L"transport_strategy", remote_relay::TransportStrategyKey(nextStrategy));
+                }
+                RefreshSettingsWindow();
+                PostStatus(L"已切换传输策略为：" + remote_relay::TransportStrategyLabel(nextStrategy));
                 return 0;
             }
             if (id == IDC_SETTINGS_ONLINE_PYTHON) { ChooseOnlinePython(window); return 0; }
@@ -5020,11 +5096,57 @@ void SendSelectedLibraryItem() {
     gQueueIndex = 0;
     std::thread([devices = std::move(devices), files = std::move(files)]() mutable {
         bool anySucceeded = false;
-        for (size_t i = 0; i < devices.size(); ++i) {
+        std::vector<Device> directDevices;
+        std::vector<Device> remoteOnlyDevices;
+        const auto nowPoint = std::chrono::steady_clock::now();
+        for (const auto& d : devices) {
+            bool localReady = (d.usbReady && d.usbAllowed) || IsLiveWifiDevice(d, nowPoint);
+            if (!localReady && d.remoteAllowed && d.remoteConnected) {
+                remoteOnlyDevices.push_back(d);
+            } else {
+                directDevices.push_back(d);
+            }
+        }
+        if (remoteOnlyDevices.size() > 1) {
+            std::vector<std::filesystem::path> preparedFiles = files;
+            std::vector<std::filesystem::path> tempZips;
+            for (size_t fi = 0; fi < preparedFiles.size(); ++fi) {
+                if (std::filesystem::is_directory(preparedFiles[fi])) {
+                    preparedFiles[fi] = CreateFolderZip(preparedFiles[fi], L"batch-" + NewTaskId() + L"-" + std::to_wstring(fi));
+                    tempZips.push_back(preparedFiles[fi]);
+                }
+            }
+            std::vector<std::string> recipientIds;
+            for (const auto& d : remoteOnlyDevices) recipientIds.push_back(WideToUtf8(d.id));
+            std::string batchId, batchErr;
+            PostStatus(L"正在复用云端中转发送给 " + std::to_wstring(remoteOnlyDevices.size()) + L" 台远程设备…");
+            if (remote_relay::SendBatchPlainTransfer(
+                    DiagnosticLogPath().parent_path(), recipientIds, preparedFiles, "work",
+                    [&](uintmax_t done, uintmax_t total) {
+                        int pct = total == 0 ? 100 : static_cast<int>(std::min<uintmax_t>(100, done * 100 / total));
+                        PostProgress(pct, true);
+                    }, batchId, batchErr)) {
+                anySucceeded = true;
+                for (const auto& d : remoteOnlyDevices) {
+                    auto fps = CheckTransferHistory(d, files);
+                    RecordSuccessfulTransfers(d, fps, L"云端批量复用");
+                }
+                WriteDiagnosticLog(L"remote_batch_done", L"batch=" + Utf8ToWide(batchId) + L" count=" + std::to_wstring(remoteOnlyDevices.size()));
+            } else {
+                for (const auto& d : remoteOnlyDevices) directDevices.push_back(d);
+            }
+            for (const auto& z : tempZips) {
+                std::error_code ec;
+                std::filesystem::remove(z, ec);
+            }
+        } else {
+            for (const auto& d : remoteOnlyDevices) directDevices.push_back(d);
+        }
+        for (size_t i = 0; i < directDevices.size(); ++i) {
             gQueueIndex = i + 1;
-            PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(devices.size())
-                       + L"：正在发送到“" + devices[i].name + L"”…");
-            if (UploadToDevice(devices[i], files, std::wstring(), true, false, false)) anySucceeded = true;
+            PostStatus(L"批量传送 " + std::to_wstring(i + 1) + L"/" + std::to_wstring(directDevices.size())
+                       + L"：正在发送到“" + directDevices[i].name + L"”…");
+            if (UploadToDevice(directDevices[i], files, std::wstring(), true, false, false)) anySucceeded = true;
         }
         gQueueTotal = 0;
         gQueueIndex = 0;

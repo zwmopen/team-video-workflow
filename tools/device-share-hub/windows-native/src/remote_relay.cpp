@@ -878,4 +878,121 @@ bool ListDevices(const std::filesystem::path& stateDirectory,
     }
 }
 
+std::wstring TransportStrategyKey(TransportStrategy strategy) {
+    switch (strategy) {
+        case TransportStrategy::UsbFirst: return L"usb_first";
+        case TransportStrategy::LanFirst: return L"lan_first";
+        case TransportStrategy::P2pFirst: return L"p2p_first";
+        case TransportStrategy::R2First: return L"r2_first";
+        default: return L"auto";
+    }
+}
+
+TransportStrategy ParseTransportStrategy(const std::wstring& key) {
+    if (key == L"usb_first") return TransportStrategy::UsbFirst;
+    if (key == L"lan_first") return TransportStrategy::LanFirst;
+    if (key == L"p2p_first") return TransportStrategy::P2pFirst;
+    if (key == L"r2_first") return TransportStrategy::R2First;
+    return TransportStrategy::Auto;
+}
+
+std::wstring TransportStrategyLabel(TransportStrategy strategy) {
+    switch (strategy) {
+        case TransportStrategy::UsbFirst: return L"USB 优先";
+        case TransportStrategy::LanFirst: return L"局域网优先";
+        case TransportStrategy::P2pFirst: return L"P2P 优先（失败自动切 R2）";
+        case TransportStrategy::R2First: return L"R2 云端优先";
+        default: return L"自动选择（推荐）";
+    }
+}
+
+bool SendBatchPlainTransfer(const std::filesystem::path& stateDirectory,
+                            const std::vector<std::string>& recipientDeviceIds,
+                            const std::vector<std::filesystem::path>& files,
+                            const std::string& contentKind,
+                            const ProgressCallback& progress,
+                            std::string& batchId,
+                            std::string& error) {
+    batchId.clear();
+    try {
+        if (recipientDeviceIds.empty() || files.empty()) {
+            throw std::runtime_error("批量远程传送缺少接收设备或文件");
+        }
+        auto identity = LoadOrCreateIdentity(stateDirectory);
+        const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
+        RelayHttp http(stateDirectory);
+        http.SetWorkspace(identity.workspaceId);
+        const auto token = RegisterAndSession(http, identity, adminCertificate);
+
+        std::string recipientsJson = "[";
+        for (size_t i = 0; i < recipientDeviceIds.size(); ++i) {
+            if (i) recipientsJson += ",";
+            recipientsJson += "\"" + JsonEscape(recipientDeviceIds[i]) + "\"";
+        }
+        recipientsJson += "]";
+
+        std::string objects = "[";
+        uint64_t totalBytes = 0;
+        std::vector<std::string> hashes;
+        for (size_t index = 0; index < files.size(); ++index) {
+            auto size = std::filesystem::file_size(files[index]);
+            if (size == 0 || totalBytes + size > kMaxTransferBytes) {
+                throw std::runtime_error("远程作品大小无效或超过限制");
+            }
+            auto hash = Hex(Sha256File(files[index]));
+            hashes.push_back(hash);
+            if (index) objects += ",";
+            auto name = files[index].filename().u8string();
+            objects += "{\"index\":" + std::to_string(index) + ",\"bytes\":" + std::to_string(size)
+                + ",\"sha256\":\"" + hash + "\",\"name\":\"" + JsonEscape(name)
+                + "\",\"mime\":\"application/octet-stream\"}";
+            totalBytes += size;
+        }
+        objects += "]";
+
+        std::string created = http.Json(L"POST", L"/v1/transfers/batch",
+            "{\"mode\":\"plain\",\"contentKind\":\"" + JsonEscape(contentKind)
+            + "\",\"recipientDeviceIds\":" + recipientsJson
+            + ",\"objects\":" + objects + "}", token);
+        batchId = JsonValue(created, "batchId");
+        auto paths = JsonPaths(created);
+        if (batchId.empty() || paths.size() != files.size()) {
+            throw std::runtime_error("中继批量任务响应无效");
+        }
+        uintmax_t sent = 0;
+        for (size_t index = 0; index < files.size(); ++index) {
+            http.Put(std::wstring(paths[index].begin(), paths[index].end()), files[index], token,
+                     hashes[index], progress, sent, totalBytes);
+            sent += std::filesystem::file_size(files[index]);
+        }
+        http.Json(L"POST", std::wstring(L"/v1/batches/") +
+                  std::wstring(batchId.begin(), batchId.end()) + L"/commit", "{}", token);
+        return true;
+    } catch (const std::exception& exception) {
+        batchId.clear();
+        error = exception.what();
+        return false;
+    }
+}
+
+void RecordChannelStatsBestEffort(const std::filesystem::path& stateDirectory,
+                                  const std::string& channel,
+                                  uint64_t bytes,
+                                  size_t objects,
+                                  size_t transfers) {
+    try {
+        auto identity = LoadOrCreateIdentity(stateDirectory);
+        const auto adminCertificate = AdminCertificate(identity, "windows-admin", "素材投送中控");
+        RelayHttp http(stateDirectory);
+        http.SetWorkspace(identity.workspaceId);
+        const auto token = RegisterAndSession(http, identity, adminCertificate);
+        http.Json(L"POST", L"/v1/stats/channel",
+            "{\"channel\":\"" + JsonEscape(channel)
+            + "\",\"bytes\":" + std::to_string(bytes)
+            + ",\"objects\":" + std::to_string(objects)
+            + ",\"transfers\":" + std::to_string(transfers) + "}", token);
+    } catch (...) {
+    }
+}
+
 }  // namespace remote_relay

@@ -1,6 +1,8 @@
 # 实况工坊（LiveStudio）独立手机应用
 
-纯本地离线、零 FFmpeg 体积膨胀的独立实况照片制作与分享应用（Android `com.zwm.livestudio` / iOS `com.zwm.livestudio`，v1.0.0）。
+纯本地离线、零 FFmpeg 体积膨胀的独立实况照片制作与分享应用（Android `com.zwm.livestudio` / iOS `com.zwm.livestudio`，v1.1.0），与「团队工作相册」共用 `tools/live-photo-core/` 原画无损静态实况核心：
+- 静态封面采用纯元数据封装（JPEG/HEIC 零解码重压缩、零尺寸缩水、完整保留 EXIF 方向与 ICC），PNG/WebP 全分辨率高质量保真转换；
+- 动态视频支持 3 档画质（流畅 `1080P` / 高清 `1440P` 默认 / 原画 `2048P`）与硬件编码器自动降级，支持单张失败重试与无损状态报告。
 
 ## 核心能力
 - **本地相册式选图**：直接读取手机本地相册网格浏览、按目录筛选、多选或通过系统分享把图片送入「实况工坊」。

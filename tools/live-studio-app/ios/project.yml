@@ -14,12 +14,13 @@ targets:
     platform: iOS
     sources:
       - path: LiveStudio
+      - path: ../../live-photo-core/ios
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zwm.livestudio
         PRODUCT_NAME: LiveStudio
-        CURRENT_PROJECT_VERSION: 3
-        MARKETING_VERSION: 1.0.2
+        CURRENT_PROJECT_VERSION: 4
+        MARKETING_VERSION: 1.1.0
     info:
       path: LiveStudio/Info.plist
       properties:

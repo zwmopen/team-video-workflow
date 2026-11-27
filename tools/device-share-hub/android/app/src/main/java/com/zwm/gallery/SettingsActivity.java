@@ -118,6 +118,18 @@ public final class SettingsActivity extends Activity {
         autoLiveSwitch.setOnRowBodyClickListener(v -> showAutoLiveModeDialog(autoLiveSwitch));
         root.addView(autoLiveSwitch, settingMargins(dp(20)));
 
+        root.addView(label("跨网传输与统计"));
+        LinearLayout strategyRow = choiceRow(
+                "传输策略",
+                RemoteRelayProfile.getStrategy(this).title);
+        strategyRow.setOnClickListener(v -> showTransportStrategyDialog((TextView) strategyRow.getChildAt(1)));
+        root.addView(strategyRow, settingMargins(dp(10)));
+        Button statsBtn = button(
+                RemoteRelayProfile.isEnrolled(this) ? "流量与 R2 统计（云端已授权）" : "流量与 R2 统计",
+                false);
+        statsBtn.setOnClickListener(v -> showTransferStatsDialog());
+        root.addView(statsBtn, margins(0, 0, 0, dp(20)));
+
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
         LinearLayout moveRow = cleanupRow("自动移入回收站", cleanup.moveHours());
@@ -244,17 +256,20 @@ public final class SettingsActivity extends Activity {
                 "极微自然（1.0% · 1.3 秒）",
                 "标准推荐（1.8% · 1.6 秒）",
                 "轻柔明显（3.2% · 2.2 秒）",
-                "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(this) ? "已开启" : "已关闭")
+                "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(this) ? "已开启" : "已关闭"),
+                "动态视频画质：" + com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(this)).title
         };
         float r = OnlineService.getAutoLiveRatio(this);
         int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
         new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("微动幅度与选项")
+                .setTitle("微动幅度、画质与选项")
                 .setSingleChoiceItems(items, checked, (dialog, which) -> {
                     if (which == 3) {
                         boolean next = !OnlineService.isAutoLiveSkipExisting(this);
                         OnlineService.setAutoLiveSkipExisting(this, next);
                         toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一按当前效果重新生成");
+                    } else if (which == 4) {
+                        showAutoLiveQualityTierDialog(row);
                     } else {
                         float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
                         float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
@@ -269,12 +284,82 @@ public final class SettingsActivity extends Activity {
                 .show();
     }
 
+    private void showTransportStrategyDialog(TextView valueText) {
+        RemoteRelayProfile.TransportStrategy current = RemoteRelayProfile.getStrategy(this);
+        RemoteRelayProfile.TransportStrategy[] all = RemoteRelayProfile.TransportStrategy.values();
+        String[] labels = new String[all.length];
+        int checked = 0;
+        for (int i = 0; i < all.length; i++) {
+            if (all[i] == current) checked = i;
+            labels[i] = all[i].title + "\n" + all[i].detail;
+        }
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("跨网传输策略")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    RemoteRelayProfile.TransportStrategy chosen = all[which];
+                    RemoteRelayProfile.setStrategy(this, chosen);
+                    valueText.setText(chosen.title);
+                    toast("传输策略已设为：" + chosen.title);
+                    dialog.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showTransferStatsDialog() {
+        String initial = TransferStatsStore.formatHumanSummary(this, null);
+        AlertDialog dialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("传输流量与 R2 额度统计")
+                .setMessage(initial + "\n正在向云端刷新团队工作区用量…")
+                .setPositiveButton("确定", null)
+                .show();
+        new Thread(() -> {
+            org.json.JSONObject remoteStats = null;
+            try {
+                if (RemoteRelayProfile.isEnrolled(this)) {
+                    RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(this);
+                    remoteStats = RemoteRelayClient.fetchStats(session);
+                }
+            } catch (Exception ignored) {
+            }
+            final String updated = TransferStatsStore.formatHumanSummary(this, remoteStats);
+            runOnUiThread(() -> {
+                if (dialog.isShowing()) dialog.setMessage(updated);
+            });
+        }, "fetch-transfer-stats").start();
+    }
+
+    private void showAutoLiveQualityTierDialog(SettingSwitchRow row) {
+        com.zwm.livecore.LiveQualityTier cur =
+                com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(this));
+        com.zwm.livecore.LiveQualityTier[] tiers = com.zwm.livecore.LiveQualityTier.values();
+        String[] labels = new String[tiers.length];
+        int checked = 0;
+        for (int i = 0; i < tiers.length; i++) {
+            if (tiers[i] == cur) checked = i;
+            labels[i] = tiers[i].title + "\n" + tiers[i].summary;
+        }
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("动态视频画质档位（静态封面原画无损）")
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    com.zwm.livecore.LiveQualityTier chosen = tiers[which];
+                    OnlineService.setAutoLiveQualityTier(this, chosen.id);
+                    updateAutoLiveRowDetail(row);
+                    toast("动态画质已设为：" + chosen.title + "（静态封面保持原图画质）");
+                    d.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
     private void updateAutoLiveRowDetail(SettingSwitchRow row) {
         String title = OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(this));
+        com.zwm.livecore.LiveQualityTier tier =
+                com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(this));
         float pct = (OnlineService.getAutoLiveRatio(this) - 1.0f) * 100f;
         row.setDetail(String.format(java.util.Locale.US,
-                "当前效果：%s（%.1f%% · %.1f秒）· 点文字切换效果",
-                title, pct, OnlineService.getAutoLiveDuration(this)));
+                "%s（%.1f%% · %.1f秒）· %s · 静态无损",
+                title, pct, OnlineService.getAutoLiveDuration(this), tier.title));
     }
 
     private void saveName() {

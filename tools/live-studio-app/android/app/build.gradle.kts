@@ -10,8 +10,8 @@ android {
         applicationId = "com.zwm.livestudio"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -51,5 +51,6 @@ android {
 }
 
 dependencies {
+    implementation(project(":live-core"))
     testImplementation("junit:junit:4.13.2")
 }

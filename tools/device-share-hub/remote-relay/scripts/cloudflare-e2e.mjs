@@ -187,11 +187,46 @@ if (updateAck.status !== "completed" || updateAck.objectsDeleted !== true) {
   throw new Error("android-update ACK 没有完成清理");
 }
 
+// Catalog pull + immediate R2 delete + Range check + stats check
+const origPayload = new TextEncoder().encode("remote-catalog-original-jpeg-e2e-payload-123456");
+const origSha = await sha256(origPayload);
+const pullCreated = await request("/v1/catalog/pull", "POST", memberSession.token, {
+  workId: "e2e_work_01",
+  fileName: "01.jpg",
+}, 201);
+const pullId = pullCreated.pull.pullId;
+const pullPut = await fetch(`${endpoint}/v1/catalog/pulls/${pullId}/file`, {
+  method: "PUT",
+  headers: {
+    Authorization: `Bearer ${adminSession.token}`,
+    "X-Workspace-Id": workspaceHeader,
+    "X-Object-Sha256": origSha,
+    "Content-Type": "application/octet-stream",
+  },
+  body: Buffer.from(origPayload),
+});
+if (!pullPut.ok) throw new Error(`Catalog pull PUT failed HTTP ${pullPut.status}`);
+const pullRange = await fetch(`${endpoint}/v1/catalog/pulls/${pullId}/file`, {
+  headers: {
+    Authorization: `Bearer ${memberSession.token}`,
+    "X-Workspace-Id": workspaceHeader,
+    Range: "bytes=0-15",
+  },
+});
+if (pullRange.status !== 206) throw new Error(`Expected 206 Partial Content, got ${pullRange.status}`);
+await pullRange.arrayBuffer();
+const pullAck = await request(`/v1/catalog/pulls/${pullId}/ack`, "POST", memberSession.token, {});
+if (!pullAck.r2Deleted) throw new Error("Catalog pull ACK did not delete R2");
+const stats = await request("/v1/stats", "GET", adminSession.token);
+if (!stats.r2 || stats.r2.activeBytes !== 0) {
+  throw new Error(`Expected activeBytes=0 after cleanup, got ${JSON.stringify(stats.r2)}`);
+}
+
 console.log(JSON.stringify({
   ok: true, endpoint, protocol: "plain",
   workspaceId: workspace, transferId: created.transferId,
   stages: ["health", "workspace-register", "admin-session", "member-session",
     "presence", "p2p-offer", "p2p-answer", "p2p-close", "inbox", "r2-upload",
     "commit", "download-sha256", "ack", "r2-delete", "android-update-p2p",
-    "android-update-inbox", "android-update-ack"],
+    "android-update-inbox", "android-update-ack", "catalog-pull-range206", "stats-zero"],
 }, null, 2));

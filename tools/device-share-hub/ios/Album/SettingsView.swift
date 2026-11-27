@@ -19,7 +19,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [5, 2, 2, 2, 1, 5][section]
+        return [7, 2, 2, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -35,7 +35,7 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let usesSubtitle = indexPath.section == 3 || indexPath.section == 5 || (indexPath.section == 0 && (indexPath.row == 3 || indexPath.row == 4))
+        let usesSubtitle = indexPath.section == 3 || indexPath.section == 5 || (indexPath.section == 0 && indexPath.row >= 3)
         let cell = UITableViewCell(style: usesSubtitle ? .subtitle : .value1, reuseIdentifier: nil)
         cell.textLabel?.numberOfLines = 0
         cell.detailTextLabel?.numberOfLines = 0
@@ -68,6 +68,14 @@ final class SettingsViewController: UITableViewController {
             toggle.isOn = AutoLivePreferences.isEnabled
             toggle.addTarget(self, action: #selector(autoLiveSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
+        case (0, 5):
+            cell.textLabel?.text = "跨网传输策略"
+            cell.detailTextLabel?.text = RemoteRelayProfile.transportStrategy.title
+            cell.selectionStyle = .default
+        case (0, 6):
+            cell.textLabel?.text = "流量与 R2 统计"
+            cell.detailTextLabel?.text = RemoteRelayProfile.load() != nil ? "已授权云端中转 · 点击查看配额与流量" : "查看本机与 R2 免费额度估算"
+            cell.selectionStyle = .default
         case (1, 0):
             cell.textLabel?.text = "当前文件夹"
             cell.detailTextLabel?.text = library.rootDescription
@@ -132,6 +140,10 @@ final class SettingsViewController: UITableViewController {
             promptForDeviceName()
         } else if indexPath.section == 0 && indexPath.row == 4 {
             showAutoLiveModeChoices()
+        } else if indexPath.section == 0 && indexPath.row == 5 {
+            showTransportStrategyChoices()
+        } else if indexPath.section == 0 && indexPath.row == 6 {
+            showTransferStatsAlert()
         } else if indexPath.section == 1 && indexPath.row == 1 {
             if library.supportsExternalFolderSelection {
                 guard #available(iOS 13.0, *) else { return }
@@ -162,6 +174,72 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
+    private func showTransportStrategyChoices() {
+        let alert = UIAlertController(
+            title: "跨网传输策略",
+            message: "决定电脑与手机在不同网络时的传输通道优先级",
+            preferredStyle: .actionSheet
+        )
+        let current = RemoteRelayProfile.transportStrategy
+        RemoteTransportStrategy.allCases.forEach { strategy in
+            let isCurrent = strategy == current
+            alert.addAction(UIAlertAction(title: strategy.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
+                RemoteRelayProfile.transportStrategy = strategy
+                self?.tableView.reloadData()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
+    }
+
+    private func showTransferStatsAlert() {
+        let enrolled = RemoteRelayProfile.load() != nil
+        let initialMsg = enrolled
+            ? "正在向 Cloudflare 工作区拉取本月用量与 R2 额度估算…"
+            : "当前尚未获取云端工作区凭证（与电脑同一 Wi-Fi 后将自动授权）。\n\n提示：Cloudflare R2 出站下载流量免费，临时中转文件在接收确认后会自动删除。"
+        let alert = UIAlertController(title: "传输流量与 R2 统计", message: initialMsg, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        present(alert, animated: true)
+
+        guard enrolled else { return }
+        DispatchQueue.global(qos: .utility).async {
+            var summary = "拉取云端统计失败（当前可能离线）。"
+            if let session = try? RemoteRelayClient.ensureSession(),
+               let stats = try? RemoteRelayClient.fetchStats(session) {
+                let today = stats["today"] as? [String: Any] ?? [:]
+                let month = stats["month"] as? [String: Any] ?? [:]
+                let r2 = stats["r2"] as? [String: Any] ?? [:]
+                let quotas = r2["quotas"] as? [String: Any] ?? [:]
+                let fmt: (Any?) -> String = { raw in
+                    let b = (raw as? NSNumber)?.doubleValue ?? 0
+                    if b < 1024 { return "\(Int(b)) B" }
+                    if b < 1048576 { return String(format: "%.1f KB", b / 1024.0) }
+                    if b < 1073741824 { return String(format: "%.1f MB", b / 1048576.0) }
+                    return String(format: "%.2f GB", b / 1073741824.0)
+                }
+                let sPct = ((quotas["storageUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
+                let aPct = ((quotas["classAUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
+                let bPct = ((quotas["classBUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
+                let usd = (r2["estimatedCostUsd"] as? NSNumber)?.doubleValue ?? 0
+                let note = (r2["billingNote"] as? String) ?? "预估费用仅供参考，实际账单以 Cloudflare 控制台为准"
+                summary = String(
+                    format: "今日团队流量：%@（R2 %@ / LAN %@）\n本月总流量：%@\nR2 当前驻留：%@（%d 个对象）\n免费额度占用：存储 %.2f%% · A类 %.2f%% · B类 %.2f%%\n预估超额费用：$%.4f USD（R2 出站下载流量免费）\n%@",
+                    fmt(today["bytes"]), fmt(today["r2Bytes"]), fmt(today["lanBytes"]),
+                    fmt(month["bytes"]),
+                    fmt(r2["activeBytes"]), (r2["activeObjects"] as? Int) ?? 0,
+                    sPct, aPct, bPct, usd, note
+                )
+            }
+            DispatchQueue.main.async {
+                alert.message = summary
+            }
+        }
+    }
+
     private func showThemeModeChoices() {
         let alert = UIAlertController(title: "外观风格", message: "选择深色或浅色模式", preferredStyle: .actionSheet)
         let current = AppThemePreferences.currentMode
@@ -187,9 +265,10 @@ final class SettingsViewController: UITableViewController {
 
     private func showAutoLiveModeChoices() {
         let pct = (AutoLivePreferences.motionRatio - 1.0) * 100.0
+        let curTier = AutoLivePreferences.qualityTier
         let alert = UIAlertController(
-            title: "实况动态效果",
-            message: String(format: "手机本地 1440P 硬件实时渲染（%.1f%% · %.1f 秒）", pct, AutoLivePreferences.motionDuration),
+            title: "实况动态效果与画质",
+            message: String(format: "静态原画无损 · %@（%.1f%% · %.1f 秒）", curTier.shortLabel, pct, AutoLivePreferences.motionDuration),
             preferredStyle: .actionSheet
         )
         let current = AutoLivePreferences.motionMode
@@ -201,6 +280,9 @@ final class SettingsViewController: UITableViewController {
                 self?.tableView.reloadData()
             })
         }
+        alert.addAction(UIAlertAction(title: "动态视频画质：\(curTier.shortLabel)…", style: .default) { [weak self] _ in
+            self?.showAutoLiveQualityTierChoices()
+        })
         alert.addAction(UIAlertAction(title: "调整微动幅度与时长…", style: .default) { [weak self] _ in
             self?.showAutoLiveStrengthChoices()
         })
@@ -208,6 +290,28 @@ final class SettingsViewController: UITableViewController {
             AutoLivePreferences.skipExistingLive.toggle()
             self?.tableView.reloadData()
         })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
+        }
+        present(alert, animated: true)
+    }
+
+    private func showAutoLiveQualityTierChoices() {
+        let cur = AutoLivePreferences.qualityTier
+        let alert = UIAlertController(
+            title: "动态视频画质档位",
+            message: "静态封面图保持 JPEG/HEIC 原画无损直出；此设置仅决定动态视频渲染规格。",
+            preferredStyle: .actionSheet
+        )
+        for tier in LiveQualityTier.allCases {
+            let mark = (tier == cur) ? "  ✓" : ""
+            alert.addAction(UIAlertAction(title: "\(tier.title)（\(tier.shortLabel)）\(mark)", style: .default) { [weak self] _ in
+                AutoLivePreferences.qualityTier = tier
+                self?.tableView.reloadData()
+            })
+        }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         if let popover = alert.popoverPresentationController {
             popover.sourceView = view

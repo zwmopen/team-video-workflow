@@ -1,3 +1,19 @@
+import {
+  MAX_BATCH_RECIPIENTS,
+  CATALOG_PULL_TTL_MS,
+  MAX_CATALOG_THUMBS,
+  materializeR2WithRange,
+  batchObjectKey,
+  catalogManifestKey,
+  catalogThumbKey,
+  catalogPullKey,
+  safeThumbKey,
+  safeFileName,
+  bumpStats,
+  adjustR2Active,
+  buildStatsPayload,
+} from "./extensions.js";
+
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -29,7 +45,7 @@ export default {
     }
 
     let response = await forwardToWorkspace(env.WORKSPACES.getByName(workspaceId), request);
-    response = await materializeRelayResponse(response, env);
+    response = await materializeR2WithRange(response, env, request);
     console.log(JSON.stringify({ level: "info", event: "relay_request", requestId,
       method: request.method, path: url.pathname, status: response.status,
       durationMs: Date.now() - startedAt }));
@@ -49,26 +65,6 @@ async function forwardToWorkspace(workspace, request) {
     workspace.fetch(forwarded),
   ]);
   return response;
-}
-
-async function materializeRelayResponse(response, env) {
-  const key = response.headers.get("X-Relay-R2-Key");
-  if (!key) return response;
-  const object = await env.REMOTE_OBJECTS.get(key);
-  if (!object) return problem(410, "object_expired", "远程临时文件已过期");
-  return new Response(object.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(object.size),
-      "X-Object-Sha256": response.headers.get("X-Object-Sha256") ||
-        response.headers.get("X-Cipher-Sha256") || "",
-      // Keep the old header for already-built clients during the migration.
-      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") ||
-        response.headers.get("X-Object-Sha256") || "",
-      "Cache-Control": "private, no-store",
-    },
-  });
 }
 
 export class WorkspaceRelayCore {
@@ -144,6 +140,61 @@ export class WorkspaceRelayCore {
       }
       if (method === "POST" && url.pathname === "/v1/transfers") {
         return await this.createTransfer(request, session);
+      }
+      if (method === "POST" && url.pathname === "/v1/transfers/batch") {
+        return await this.createBatchTransfer(request, session);
+      }
+
+      const batchObjMatch = url.pathname.match(/^\/v1\/batches\/([A-Za-z0-9_-]+)\/objects\/(\d+)$/);
+      if (batchObjMatch && method === "PUT") {
+        return await this.uploadBatchObject(request, session, batchObjMatch[1], Number(batchObjMatch[2]));
+      }
+      const batchCommitMatch = url.pathname.match(/^\/v1\/batches\/([A-Za-z0-9_-]+)\/commit$/);
+      if (batchCommitMatch && method === "POST") {
+        await discardRequestBody(request);
+        return await this.commitBatchTransfer(session, batchCommitMatch[1]);
+      }
+
+      if (method === "GET" && url.pathname === "/v1/stats") {
+        return await this.getStats();
+      }
+      if (method === "POST" && url.pathname === "/v1/stats/channel") {
+        return await this.recordChannelStats(request, session);
+      }
+
+      if (url.pathname === "/v1/catalog") {
+        if (method === "PUT") return await this.putCatalogManifest(request, session);
+        if (method === "GET") return await this.getCatalogManifest(session);
+      }
+      const thumbMatch = url.pathname.match(/^\/v1\/catalog\/thumbs\/([A-Za-z0-9._-]+)$/);
+      if (thumbMatch) {
+        if (method === "PUT") return await this.putCatalogThumb(request, session, thumbMatch[1]);
+        if (method === "GET") return await this.getCatalogThumb(session, thumbMatch[1]);
+      }
+      if (method === "POST" && url.pathname === "/v1/catalog/pull") {
+        return await this.requestCatalogPull(request, session);
+      }
+      if (method === "GET" && url.pathname === "/v1/catalog/pulls/pending") {
+        return await this.listPendingCatalogPulls(session);
+      }
+      const pullMatch = url.pathname.match(/^\/v1\/catalog\/pulls\/([A-Za-z0-9_-]+)\/(file|ack)$/);
+      if (pullMatch) {
+        if (pullMatch[2] === "file" && method === "PUT") {
+          return await this.uploadCatalogPullFile(request, session, pullMatch[1]);
+        }
+        if (pullMatch[2] === "file" && method === "GET") {
+          return await this.downloadCatalogPullFile(session, pullMatch[1]);
+        }
+        if (pullMatch[2] === "ack" && method === "POST") {
+          await discardRequestBody(request);
+          return await this.ackCatalogPull(session, pullMatch[1]);
+        }
+      }
+      if (method === "POST" && url.pathname === "/v1/catalog/use-work") {
+        return await this.recordCatalogWorkUsed(request, session);
+      }
+      if (method === "GET" && url.pathname === "/v1/catalog/events") {
+        return await this.listCatalogEvents(session);
       }
 
       const objectMatch = url.pathname.match(/^\/v1\/transfers\/([A-Za-z0-9_-]+)\/objects\/(\d+)$/);
@@ -471,6 +522,7 @@ export class WorkspaceRelayCore {
       expiresAt: now + P2P_SESSION_TTL_MS,
     };
     await this.ctx.storage.put(`p2p:${p2p.sessionId}`, p2p);
+    await bumpStats(this.ctx, { p2pAttempts: 1, classAOps: 1 });
     await this.scheduleCleanup(p2p.expiresAt);
     this.sendToDevice(recipientDeviceId, {
       type: "p2p-session-ready",
@@ -533,6 +585,11 @@ export class WorkspaceRelayCore {
     p2p.signals.push(signal);
     p2p.state = nextP2PState(p2p.state, signalType);
     await this.ctx.storage.put(`p2p:${sessionId}`, p2p);
+    if (signalType === "connected") {
+      await bumpStats(this.ctx, { p2pConnected: 1 });
+    } else if (signalType === "failed") {
+      await bumpStats(this.ctx, { r2FallbackCount: 1 });
+    }
     const target = session.deviceId === p2p.initiatorDeviceId
       ? p2p.responderDeviceId : p2p.initiatorDeviceId;
     this.sendToDevice(target, { type: "p2p-signal", sessionId, signal });
@@ -711,6 +768,13 @@ export class WorkspaceRelayCore {
     );
   }
 
+  r2KeyForTransferObject(transfer, index) {
+    if (transfer.batchId) {
+      return batchObjectKey(transfer.workspaceId, transfer.batchId, index);
+    }
+    return objectKey(transfer.workspaceId, transfer.transferId, index);
+  }
+
   async uploadObject(request, session, transferId, index) {
     const transfer = await this.getStored(`transfer:${transferId}`);
     if (!transfer || transfer.senderDeviceId !== session.deviceId || transfer.status !== "uploading") {
@@ -722,7 +786,7 @@ export class WorkspaceRelayCore {
     if (!Number.isSafeInteger(contentLength) || contentLength !== objectBytes(expected)) {
       return problem(400, "size_mismatch", "对象大小与传送清单不一致");
     }
-    const key = objectKey(transfer.workspaceId, transferId, index);
+    const key = this.r2KeyForTransferObject(transfer, index);
     const previous = /** @type {{bytes: number, sha256: string} | undefined} */ (
       await this.ctx.storage.get(uploadKey(transferId, index))
     );
@@ -737,6 +801,7 @@ export class WorkspaceRelayCore {
         existing.size === objectBytes(expected) &&
         existing.customMetadata?.objectSha256 === objectSha256(expected)
       ) {
+        await bumpStats(this.ctx, { classBOps: 1 });
         return json({ ok: true, index, reused: true });
       }
     }
@@ -764,6 +829,13 @@ export class WorkspaceRelayCore {
       sha256: objectSha256(expected),
       uploadedAt: Date.now(),
     });
+    await bumpStats(this.ctx, {
+      classAOps: 1,
+      objects: 1,
+      bytes: objectBytes(expected),
+      r2Bytes: objectBytes(expected),
+    });
+    await adjustR2Active(this.ctx, 1, objectBytes(expected));
     return json({ ok: true, index });
   }
 
@@ -786,6 +858,7 @@ export class WorkspaceRelayCore {
     transfer.status = "ready";
     transfer.committedAt = Date.now();
     await this.ctx.storage.put(`transfer:${transferId}`, transfer);
+    await bumpStats(this.ctx, { transfers: 1 });
     this.sendToDevice(transfer.recipientDeviceId, {
       type: "transfer-ready",
       transferId,
@@ -817,10 +890,11 @@ export class WorkspaceRelayCore {
     }
     const expected = transfer.objects.find((item) => item.index === index);
     if (!expected) return problem(404, "object_missing", "文件不在传送清单中");
+    await bumpStats(this.ctx, { classBOps: 1 });
     return new Response(null, {
       status: 204,
       headers: {
-        "X-Relay-R2-Key": objectKey(transfer.workspaceId, transferId, index),
+        "X-Relay-R2-Key": this.r2KeyForTransferObject(transfer, index),
         "X-Object-Sha256": objectSha256(expected),
         ...(transfer.mode === "encrypted" ? { "X-Cipher-Sha256": expected.cipherSha256 } : {}),
       },
@@ -905,6 +979,25 @@ export class WorkspaceRelayCore {
         nextExpiry = nextExpiry === null ? transfer.expiresAt : Math.min(nextExpiry, transfer.expiresAt);
       }
     }
+
+    const pulls = await this.listStored("pull:");
+    for (const [key, pull] of pulls) {
+      if (pull.expiresAt <= now && !["completed", "expired"].includes(pull.status)) {
+        if (pull.uploadedSize > 0) {
+          await this.env.REMOTE_OBJECTS.delete(catalogPullKey(pull.workspaceId, pull.pullId));
+          await adjustR2Active(this.ctx, -1, -pull.uploadedSize);
+        }
+        pull.status = "expired";
+        pull.expiredAt = now;
+        await this.ctx.storage.put(key, pull);
+        this.sendToDevice(pull.requesterDeviceId, {
+          type: "catalog-pull-expired",
+          pullId: pull.pullId,
+        });
+      } else if (pull.expiresAt > now && !["completed", "expired"].includes(pull.status)) {
+        nextExpiry = nextExpiry === null ? pull.expiresAt : Math.min(nextExpiry, pull.expiresAt);
+      }
+    }
     if (nextExpiry !== null) await this.ctx.storage.setAlarm(nextExpiry);
   }
 
@@ -968,16 +1061,549 @@ export class WorkspaceRelayCore {
   }
 
   async deleteTransferObjects(transfer) {
-    await this.env.REMOTE_OBJECTS.delete(
-      transfer.objects.map((item) =>
-        objectKey(transfer.workspaceId, transfer.transferId, item.index),
-      ),
-    );
     const uploaded = await this.listStored(`upload:${transfer.transferId}:`);
     const keys = [...uploaded.keys()];
     for (let index = 0; index < keys.length; index += 128) {
       await this.ctx.storage.delete(keys.slice(index, index + 128));
     }
+
+    if (transfer.batchId) {
+      const batchKey = `batch:${transfer.batchId}`;
+      const batch = await this.getStored(batchKey);
+      if (batch) {
+        batch.activeTransferIds = (batch.activeTransferIds || []).filter(
+          (id) => id !== transfer.transferId,
+        );
+        if (batch.activeTransferIds.length === 0 && !batch.objectsDeleted) {
+          batch.objectsDeleted = true;
+          batch.deletedAt = Date.now();
+          await this.ctx.storage.put(batchKey, batch);
+          await this.env.REMOTE_OBJECTS.delete(
+            batch.objects.map((item) =>
+              batchObjectKey(batch.workspaceId, batch.batchId, item.index),
+            ),
+          );
+          await adjustR2Active(this.ctx, -batch.objects.length, -batch.totalBytes);
+          await bumpStats(this.ctx, { classAOps: batch.objects.length });
+        } else {
+          await this.ctx.storage.put(batchKey, batch);
+        }
+      }
+      return;
+    }
+
+    if (!transfer.objectsDeleted) {
+      transfer.objectsDeleted = true;
+      await this.env.REMOTE_OBJECTS.delete(
+        transfer.objects.map((item) =>
+          objectKey(transfer.workspaceId, transfer.transferId, item.index),
+        ),
+      );
+      await adjustR2Active(this.ctx, -transfer.objects.length, -transfer.totalBytes);
+      await bumpStats(this.ctx, { classAOps: transfer.objects.length });
+    }
+  }
+
+  async sendToAdmins(payload) {
+    const members = await this.listStored("member:");
+    for (const member of members.values()) {
+      if (!member.revokedAt && member.certificate?.role === "admin") {
+        this.sendToDevice(member.certificate.deviceId, payload);
+      }
+    }
+  }
+
+  async createBatchTransfer(request, session) {
+    const body = await readJson(request);
+    const recipientIds = Array.isArray(body?.recipientDeviceIds)
+      ? [...new Set(body.recipientDeviceIds.filter((id) => typeof id === "string" && id !== session.deviceId))]
+      : [];
+    if (recipientIds.length === 0 || recipientIds.length > MAX_BATCH_RECIPIENTS) {
+      return problem(400, "invalid_recipients", `批量目标设备数量必须在 1-${MAX_BATCH_RECIPIENTS} 台之间`);
+    }
+    const recipients = [];
+    for (const rid of recipientIds) {
+      const member = await this.getStored(`member:${rid}`);
+      if (!member || member.revokedAt || member.channels?.remote === false) {
+        return problem(409, "recipient_unavailable", `接收设备 ${rid} 未登记、已撤销或关闭了远程传送`);
+      }
+      recipients.push(member);
+    }
+    const mode = body?.mode === "plain" ? "plain" : "encrypted";
+    const contentKind = body?.contentKind || "work";
+    if (!["work", "android-update"].includes(contentKind)) {
+      return problem(400, "invalid_content_kind", "传送内容类型无效");
+    }
+    const objects = normalizeObjects(body?.objects, mode);
+    if (!objects) {
+      return problem(400, "invalid_objects", "文件清单无效或超过远程传送限制");
+    }
+    if (mode === "encrypted") {
+      const keyPackages = body?.encryptedKeyPackages;
+      if (!keyPackages || typeof keyPackages !== "object") {
+        return problem(400, "missing_key_package", "缺少各接收设备专用的密钥包");
+      }
+      for (const rid of recipientIds) {
+        const pkg = keyPackages[rid];
+        if (!pkg || typeof pkg !== "object" || canonicalize(pkg).length > 16_384) {
+          return problem(400, "missing_key_package", `缺少接收设备 ${rid} 的密钥包`);
+        }
+      }
+    }
+
+    const batchId = randomId(18);
+    const now = Date.now();
+    const requestedExpiry = Number(body?.expiresAt) || now + MAX_TRANSFER_TTL_MS;
+    const expiresAt = Math.min(requestedExpiry, now + MAX_TRANSFER_TTL_MS);
+    const totalBytes = objects.reduce((sum, item) => sum + objectBytes(item), 0);
+    const totalCipherBytes = mode === "encrypted"
+      ? objects.reduce((sum, item) => sum + item.cipherBytes, 0)
+      : undefined;
+
+    const transferMappings = [];
+    for (const recipient of recipients) {
+      const transferId = randomId(18);
+      const rid = recipient.certificate.deviceId;
+      const transfer = {
+        version: 1,
+        transferId,
+        batchId,
+        workspaceId: session.workspaceId,
+        senderDeviceId: session.deviceId,
+        recipientDeviceId: rid,
+        mode,
+        contentKind,
+        encryptedKeyPackage: mode === "encrypted" ? body.encryptedKeyPackages[rid] : null,
+        objects,
+        totalBytes,
+        ...(totalCipherBytes === undefined ? {} : { totalCipherBytes }),
+        status: "uploading",
+        createdAt: now,
+        expiresAt,
+      };
+      await this.ctx.storage.put(`transfer:${transferId}`, transfer);
+      transferMappings.push({ recipientDeviceId: rid, transferId });
+    }
+
+    const batch = {
+      batchId,
+      workspaceId: session.workspaceId,
+      senderDeviceId: session.deviceId,
+      mode,
+      contentKind,
+      objects,
+      totalBytes,
+      ...(totalCipherBytes === undefined ? {} : { totalCipherBytes }),
+      transferIds: transferMappings.map((item) => item.transferId),
+      activeTransferIds: transferMappings.map((item) => item.transferId),
+      status: "uploading",
+      createdAt: now,
+      expiresAt,
+    };
+    await this.ctx.storage.put(`batch:${batchId}`, batch);
+    await this.scheduleCleanup(expiresAt);
+    return json(
+      {
+        batchId,
+        expiresAt,
+        recipients: transferMappings,
+        uploads: objects.map((item) => ({
+          index: item.index,
+          path: `/v1/batches/${batchId}/objects/${item.index}`,
+        })),
+      },
+      201,
+    );
+  }
+
+  async uploadBatchObject(request, session, batchId, index) {
+    const batch = await this.getStored(`batch:${batchId}`);
+    if (!batch || batch.senderDeviceId !== session.deviceId || batch.status !== "uploading") {
+      return problem(409, "transfer_not_uploading", "批量传送任务不存在或已停止上传");
+    }
+    const expected = batch.objects.find((item) => item.index === index);
+    if (!expected) return problem(404, "object_missing", "文件不在批量清单中");
+    const contentLength = Number(request.headers.get("Content-Length"));
+    if (!Number.isSafeInteger(contentLength) || contentLength !== objectBytes(expected)) {
+      return problem(400, "size_mismatch", "对象大小与批量清单不一致");
+    }
+    const key = batchObjectKey(batch.workspaceId, batchId, index);
+    const existing = await this.env.REMOTE_OBJECTS.head(key);
+    const uploadedAt = Date.now();
+    let reused = false;
+    if (
+      existing &&
+      existing.size === objectBytes(expected) &&
+      existing.customMetadata?.objectSha256 === objectSha256(expected)
+    ) {
+      reused = true;
+      await bumpStats(this.ctx, { classBOps: 1 });
+    } else {
+      const options = {
+        customMetadata: {
+          objectSha256: objectSha256(expected),
+          senderDeviceId: session.deviceId,
+          batchId,
+        },
+      };
+      if (request.body && typeof FixedLengthStream !== "undefined") {
+        const { readable, writable } = new FixedLengthStream(contentLength);
+        await Promise.all([
+          request.body.pipeTo(writable),
+          this.env.REMOTE_OBJECTS.put(key, readable, options),
+        ]);
+      } else {
+        await this.env.REMOTE_OBJECTS.put(key, request.body, options);
+      }
+      await bumpStats(this.ctx, {
+        classAOps: 1,
+        objects: 1,
+        bytes: objectBytes(expected),
+        r2Bytes: objectBytes(expected),
+      });
+      await adjustR2Active(this.ctx, 1, objectBytes(expected));
+    }
+    for (const transferId of batch.transferIds) {
+      await this.ctx.storage.put(uploadKey(transferId, index), {
+        bytes: objectBytes(expected),
+        sha256: objectSha256(expected),
+        uploadedAt,
+      });
+    }
+    return json({ ok: true, index, reused });
+  }
+
+  async commitBatchTransfer(session, batchId) {
+    const batch = await this.getStored(`batch:${batchId}`);
+    if (!batch || batch.senderDeviceId !== session.deviceId || batch.status !== "uploading") {
+      return problem(409, "transfer_not_uploading", "批量传送任务不存在或已提交");
+    }
+    const firstTransferId = batch.transferIds[0];
+    const uploaded = await this.listStored(`upload:${firstTransferId}:`);
+    for (const expected of batch.objects) {
+      const stored = uploaded.get(uploadKey(firstTransferId, expected.index));
+      if (
+        !stored ||
+        stored.bytes !== objectBytes(expected) ||
+        stored.sha256 !== objectSha256(expected)
+      ) {
+        return problem(409, "upload_incomplete", `第 ${expected.index + 1} 个批量文件尚未完整上传`);
+      }
+    }
+    batch.status = "ready";
+    batch.committedAt = Date.now();
+    await this.ctx.storage.put(`batch:${batchId}`, batch);
+    await bumpStats(this.ctx, { transfers: batch.transferIds.length });
+    for (const transferId of batch.transferIds) {
+      const transfer = await this.getStored(`transfer:${transferId}`);
+      if (!transfer || transfer.status !== "uploading") continue;
+      transfer.status = "ready";
+      transfer.committedAt = batch.committedAt;
+      await this.ctx.storage.put(`transfer:${transferId}`, transfer);
+      this.sendToDevice(transfer.recipientDeviceId, {
+        type: "transfer-ready",
+        transferId,
+        batchId,
+        senderDeviceId: transfer.senderDeviceId,
+        objectCount: transfer.objects.length,
+        totalBytes: transfer.totalBytes,
+        ...(transfer.totalCipherBytes === undefined ? {} : { totalCipherBytes: transfer.totalCipherBytes }),
+        expiresAt: transfer.expiresAt,
+      });
+    }
+    return json({ ok: true, status: "ready", batchId, recipientCount: batch.transferIds.length });
+  }
+
+  async getStats() {
+    const stats = await buildStatsPayload(this.ctx);
+    return json({ ok: true, ...stats });
+  }
+
+  async recordChannelStats(request, session) {
+    const body = await readJson(request);
+    const channel = String(body?.channel || "");
+    const bytes = Math.max(0, Math.min(20 * 1024 * 1024 * 1024, Math.floor(Number(body?.bytes) || 0)));
+    const objects = Math.max(0, Math.min(100_000, Math.floor(Number(body?.objects) || 0)));
+    const transfers = Math.max(0, Math.min(10_000, Math.floor(Number(body?.transfers) || 0)));
+    const delta = { bytes, objects, transfers };
+    if (channel === "lan") delta.lanBytes = bytes;
+    else if (channel === "usb") delta.usbBytes = bytes;
+    else if (channel === "p2p") delta.p2pBytes = bytes;
+    else if (channel === "r2Fallback") delta.r2FallbackCount = Math.max(1, transfers);
+    else return problem(400, "invalid_channel", "统计通道名称无效");
+    await bumpStats(this.ctx, delta);
+    return json({ ok: true, recordedBy: session.deviceId });
+  }
+
+  async putCatalogManifest(request, session) {
+    if (session.role !== "admin") {
+      return problem(403, "admin_required", "仅管理电脑可同步远程相册目录");
+    }
+    const rawText = await request.text();
+    if (!rawText || rawText.length > 4 * 1024 * 1024) {
+      return problem(400, "invalid_catalog", "远程相册目录过大或为空");
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      return problem(400, "invalid_catalog", "远程相册目录 JSON 格式无效");
+    }
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.works)) {
+      return problem(400, "invalid_catalog", "远程相册目录缺少 works 列表");
+    }
+    const bytes = new TextEncoder().encode(rawText);
+    const prevMeta = await this.getStored("catalog:meta");
+    const revision = Number(prevMeta?.revision || 0) + 1;
+    const updatedAt = Date.now();
+    await this.env.REMOTE_OBJECTS.put(catalogManifestKey(session.workspaceId), bytes, {
+      httpMetadata: { contentType: "application/json; charset=utf-8" },
+      customMetadata: { revision: String(revision), updatedAt: String(updatedAt) },
+    });
+    const meta = {
+      revision,
+      updatedAt,
+      sizeBytes: bytes.byteLength,
+      workCount: parsed.works.length,
+    };
+    await this.ctx.storage.put("catalog:meta", meta);
+    await bumpStats(this.ctx, { classAOps: 1 });
+    this.broadcast({ type: "catalog-updated", ...meta }, session.deviceId);
+    return json({ ok: true, ...meta });
+  }
+
+  async getCatalogManifest(session) {
+    const meta = await this.getStored("catalog:meta");
+    if (!meta) {
+      return json({ ok: true, empty: true, revision: 0, works: [] });
+    }
+    await bumpStats(this.ctx, { classBOps: 1 });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "X-Relay-R2-Key": catalogManifestKey(session.workspaceId),
+        "X-Relay-Content-Type": "application/json; charset=utf-8",
+        "X-Catalog-Revision": String(meta.revision || 0),
+        "X-Catalog-Updated-At": String(meta.updatedAt || 0),
+      },
+    });
+  }
+
+  async putCatalogThumb(request, session, rawKey) {
+    if (session.role !== "admin") {
+      return problem(403, "admin_required", "仅管理电脑可上传远程缩略图");
+    }
+    const thumbKey = safeThumbKey(rawKey);
+    if (!thumbKey) {
+      return problem(400, "invalid_thumb_key", "缩略图键名无效");
+    }
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > 1024 * 1024) {
+      return problem(400, "invalid_thumb_size", "缩略图大小超出 1MB 限制");
+    }
+    const r2Key = catalogThumbKey(session.workspaceId, thumbKey);
+    await this.env.REMOTE_OBJECTS.put(r2Key, bytes, {
+      httpMetadata: { contentType: "image/jpeg" },
+    });
+    const lru = /** @type {Array<{key: string, size: number, at: number}>} */ (
+      (await this.getStored("catalog:thumbLru")) || []
+    );
+    const existingIdx = lru.findIndex((item) => item.key === thumbKey);
+    let bytesDelta = bytes.byteLength;
+    let objDelta = 1;
+    if (existingIdx >= 0) {
+      bytesDelta -= Number(lru[existingIdx].size || 0);
+      objDelta = 0;
+      lru.splice(existingIdx, 1);
+    }
+    lru.push({ key: thumbKey, size: bytes.byteLength, at: Date.now() });
+    const evictedKeys = [];
+    while (lru.length > MAX_CATALOG_THUMBS) {
+      const oldest = lru.shift();
+      if (!oldest) break;
+      evictedKeys.push(catalogThumbKey(session.workspaceId, oldest.key));
+      bytesDelta -= Number(oldest.size || 0);
+      objDelta -= 1;
+    }
+    if (evictedKeys.length > 0) {
+      await this.env.REMOTE_OBJECTS.delete(evictedKeys);
+      await bumpStats(this.ctx, { classAOps: evictedKeys.length });
+    }
+    await this.ctx.storage.put("catalog:thumbLru", lru);
+    await bumpStats(this.ctx, { classAOps: 1 });
+    await adjustR2Active(this.ctx, objDelta, bytesDelta);
+    return json({ ok: true, key: thumbKey, size: bytes.byteLength, evicted: evictedKeys.length });
+  }
+
+  async getCatalogThumb(session, rawKey) {
+    const thumbKey = safeThumbKey(rawKey);
+    if (!thumbKey) return problem(400, "invalid_thumb_key", "缩略图键名无效");
+    await bumpStats(this.ctx, { classBOps: 1 });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "X-Relay-R2-Key": catalogThumbKey(session.workspaceId, thumbKey),
+        "X-Relay-Content-Type": "image/jpeg",
+      },
+    });
+  }
+
+  async requestCatalogPull(request, session) {
+    const body = await readJson(request);
+    const workId = typeof body?.workId === "string" ? body.workId.trim() : "";
+    const fileName = safeFileName(body?.fileName ?? body?.filename);
+    if (!workId || workId.length > 180 || !fileName) {
+      return problem(400, "invalid_pull_request", "拉取原图参数无效");
+    }
+    const now = Date.now();
+    const pullId = randomId(16);
+    const pull = {
+      pullId,
+      workspaceId: session.workspaceId,
+      requesterDeviceId: session.deviceId,
+      requesterName: session.deviceName || session.deviceId,
+      workId,
+      fileName,
+      filename: fileName,
+      status: "requested",
+      uploadedSize: 0,
+      sha256: "",
+      createdAt: now,
+      expiresAt: now + CATALOG_PULL_TTL_MS,
+    };
+    await this.ctx.storage.put(`pull:${pullId}`, pull);
+    await this.scheduleCleanup(pull.expiresAt);
+    await this.sendToAdmins({ type: "catalog-pull-requested", pull });
+    return json({ ok: true, pull }, 201);
+  }
+
+  async listPendingCatalogPulls(session) {
+    if (session.role !== "admin") {
+      return problem(403, "admin_required", "仅管理电脑可拉取待响应原图请求");
+    }
+    const now = Date.now();
+    const pulls = await this.listStored("pull:");
+    const pending = [...pulls.values()]
+      .filter((item) => item.status === "requested" && item.expiresAt > now)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(0, 64);
+    return json({ ok: true, pulls: pending });
+  }
+
+  async uploadCatalogPullFile(request, session, pullId) {
+    if (session.role !== "admin") {
+      return problem(403, "admin_required", "仅管理电脑可上传按需原图");
+    }
+    const pull = await this.getStored(`pull:${pullId}`);
+    if (!pull || pull.expiresAt <= Date.now() || ["completed", "expired"].includes(pull.status)) {
+      return problem(409, "pull_unavailable", "原图按需拉取任务已失效");
+    }
+    const contentLength = Number(request.headers.get("Content-Length"));
+    if (!Number.isSafeInteger(contentLength) || contentLength <= 0 || contentLength > 200 * 1024 * 1024) {
+      return problem(400, "invalid_pull_size", "按需原图大小无效（限制 200MB）");
+    }
+    const shaHeader = String(request.headers.get("X-Object-Sha256") || "").trim().toLowerCase();
+    const r2Key = catalogPullKey(pull.workspaceId, pullId);
+    const options = {
+      customMetadata: {
+        pullId,
+        workId: pull.workId,
+        objectSha256: shaHeader,
+      },
+    };
+    if (request.body && typeof FixedLengthStream !== "undefined") {
+      const { readable, writable } = new FixedLengthStream(contentLength);
+      await Promise.all([
+        request.body.pipeTo(writable),
+        this.env.REMOTE_OBJECTS.put(r2Key, readable, options),
+      ]);
+    } else {
+      await this.env.REMOTE_OBJECTS.put(r2Key, request.body, options);
+    }
+    pull.status = "ready";
+    pull.uploadedSize = contentLength;
+    pull.sha256 = /^[0-9a-f]{64}$/.test(shaHeader) ? shaHeader : "";
+    pull.readyAt = Date.now();
+    await this.ctx.storage.put(`pull:${pullId}`, pull);
+    await bumpStats(this.ctx, { classAOps: 1, objects: 1, bytes: contentLength, r2Bytes: contentLength });
+    await adjustR2Active(this.ctx, 1, contentLength);
+    this.sendToDevice(pull.requesterDeviceId, { type: "catalog-pull-ready", pullId, size: contentLength, sha256: pull.sha256 });
+    return json({ ok: true, pullId, status: "ready", size: contentLength });
+  }
+
+  async downloadCatalogPullFile(session, pullId) {
+    const pull = await this.getStored(`pull:${pullId}`);
+    if (
+      !pull ||
+      pull.workspaceId !== session.workspaceId ||
+      (pull.requesterDeviceId !== session.deviceId && session.role !== "admin") ||
+      pull.status !== "ready"
+    ) {
+      return problem(404, "pull_not_ready", "按需原图尚在电脑上传中或不存在");
+    }
+    await bumpStats(this.ctx, { classBOps: 1 });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "X-Relay-R2-Key": catalogPullKey(pull.workspaceId, pullId),
+        "X-Object-Sha256": pull.sha256 || "",
+      },
+    });
+  }
+
+  async ackCatalogPull(session, pullId) {
+    const pull = await this.getStored(`pull:${pullId}`);
+    if (!pull || (pull.requesterDeviceId !== session.deviceId && session.role !== "admin")) {
+      return problem(404, "pull_missing", "按需原图任务不存在");
+    }
+    if (!pull.deletedFromR2 && pull.uploadedSize > 0) {
+      await this.env.REMOTE_OBJECTS.delete(catalogPullKey(pull.workspaceId, pullId));
+      await adjustR2Active(this.ctx, -1, -pull.uploadedSize);
+      await bumpStats(this.ctx, { classAOps: 1 });
+      pull.deletedFromR2 = true;
+    }
+    pull.status = "completed";
+    pull.completedAt = Date.now();
+    await this.ctx.storage.put(`pull:${pullId}`, pull);
+    return json({ ok: true, pullId, status: "completed", r2Deleted: true });
+  }
+
+  async recordCatalogWorkUsed(request, session) {
+    const body = await readJson(request);
+    const workId = typeof body?.workId === "string" ? body.workId.trim() : "";
+    if (!workId || workId.length > 180) {
+      return problem(400, "invalid_work_id", "作品标识无效");
+    }
+    const event = {
+      eventId: randomId(12),
+      type: "work-used",
+      workId,
+      deviceId: session.deviceId,
+      deviceName: session.deviceName || session.deviceId,
+      usedAt: Date.now(),
+    };
+    await this.ctx.storage.put(`use-event:${event.usedAt}:${event.eventId}`, event);
+    await this.sendToAdmins({ type: "catalog-work-used", event });
+    return json({ ok: true, eventId: event.eventId });
+  }
+
+  async listCatalogEvents(session) {
+    if (session.role !== "admin") {
+      return problem(403, "admin_required", "仅管理电脑可拉取远程使用回执");
+    }
+    const map = await this.listStored("use-event:");
+    const events = [];
+    const keysToDelete = [];
+    for (const [key, value] of map) {
+      events.push(value);
+      keysToDelete.push(key);
+    }
+    if (keysToDelete.length > 0) {
+      for (let i = 0; i < keysToDelete.length; i += 128) {
+        await this.ctx.storage.delete(keysToDelete.slice(i, i + 128));
+      }
+    }
+    return json({ ok: true, events });
   }
 
   async transferSnapshot(transfer) {

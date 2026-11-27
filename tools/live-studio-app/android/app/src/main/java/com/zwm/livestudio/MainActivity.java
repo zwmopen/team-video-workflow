@@ -60,6 +60,7 @@ public final class MainActivity extends Activity {
     private static final String KEY_RATIO = "motion_ratio";
     private static final String KEY_DURATION = "motion_duration";
     private static final String KEY_SKIP_EXISTING_LIVE = "skip_existing_live";
+    private static final String KEY_QUALITY_TIER = "quality_tier";
     private static final int REQ_MEDIA_PERMS = 101;
     private static final int REQ_DELETE_MEDIA = 103;
     private static final int MAX_SELECT = 18;
@@ -996,6 +997,7 @@ public final class MainActivity extends Activity {
         if (inputs == null || inputs.isEmpty()) return;
         isConverting = true;
         final String mode = currentMode();
+        final com.zwm.livecore.LiveQualityTier tier = currentQualityTier();
         final float ratio = currentRatio();
         final float duration = currentDuration();
         final boolean skipExisting = isSkipExistingLive();
@@ -1003,7 +1005,7 @@ public final class MainActivity extends Activity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(dp(20), dp(18), dp(20), dp(16));
-        TextView title = label("正在手机本地生成动态实况图…", 15, true, textPrimary());
+        TextView title = label("正在手机本地生成实况（静态无损 · " + tier.title + "）", 14, true, textPrimary());
         TextView status = label("准备处理第 1 / " + inputs.size() + " 张", 12, false, textSecondary());
         ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(inputs.size());
@@ -1022,7 +1024,10 @@ public final class MainActivity extends Activity {
 
         ioExecutor.execute(() -> {
             List<Uri> outputs = new ArrayList<>();
-            Exception failure = null;
+            List<Uri> failedInputs = new ArrayList<>();
+            int losslessCount = 0;
+            String firstErrMsg = null;
+            com.zwm.livecore.LiveQualityTier effectiveTierSeen = tier;
             for (int i = 0; i < inputs.size(); i++) {
                 final int step = i + 1;
                 final int doneIdx = i;
@@ -1032,34 +1037,51 @@ public final class MainActivity extends Activity {
                         bar.setProgress(doneIdx);
                     }
                 });
+                Uri src = inputs.get(i);
                 try {
-                    Uri out = LivePhotoConverter.convertOrPassthrough(
-                            MainActivity.this, inputs.get(i), mode, ratio, duration, step, skipExisting
+                    com.zwm.livecore.LiveConvertResult res = LivePhotoConverter.convertOrPassthroughDetailed(
+                            MainActivity.this, src, mode, tier, ratio, duration, step, skipExisting
                     );
-                    outputs.add(out);
+                    outputs.add(res.outputUri);
+                    if (res.isLosslessCover()) losslessCount++;
+                    if (res.effectiveTier != null) effectiveTierSeen = res.effectiveTier;
                 } catch (Exception e) {
-                    failure = e;
-                    break;
+                    failedInputs.add(src);
+                    if (firstErrMsg == null) firstErrMsg = e.getMessage();
                 }
             }
-            final Exception err = failure;
+            final int finalLossless = losslessCount;
+            final String errText = firstErrMsg;
+            final com.zwm.livecore.LiveQualityTier finalTier = effectiveTierSeen;
             mainHandler.post(() -> {
                 isConverting = false;
                 if (progressDialog.isShowing()) progressDialog.dismiss();
-                if (err != null) {
-                    new AlertDialog.Builder(MainActivity.this)
-                            .setTitle("转换中断")
-                            .setMessage("失败原因：" + err.getMessage())
-                            .setPositiveButton("知道了", null)
-                            .show();
+                if (!outputs.isEmpty()) {
+                    loadGalleryIfPermitted();
+                }
+                if (!failedInputs.isEmpty()) {
+                    String summary = "成功 " + outputs.size() + " 张，失败 " + failedInputs.size() + " 张"
+                            + (errText != null ? ("\n原因：" + errText) : "");
+                    AlertDialog.Builder b = new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("部分照片转换失败")
+                            .setMessage(summary)
+                            .setPositiveButton("重试失败的 " + failedInputs.size() + " 张",
+                                    (d, w) -> startBatchConvert(failedInputs, shareAfter))
+                            .setNegativeButton("取消", null);
+                    if (shareAfter && !outputs.isEmpty()) {
+                        b.setNeutralButton("先分享已成功 " + outputs.size() + " 张",
+                                (d, w) -> launchSystemShare(outputs));
+                    }
+                    b.show();
                     return;
                 }
                 exitSelectionMode();
-                loadGalleryIfPermitted();
                 if (shareAfter) {
                     launchSystemShare(outputs);
                 } else {
-                    toast("已保存 " + outputs.size() + " 张实况图到相册「实况工坊」");
+                    String tag = finalLossless == outputs.size() ? "静态原画无损" : "高质量保留";
+                    String tierMsg = finalTier != null ? finalTier.title : tier.title;
+                    toast("已保存 " + outputs.size() + " 张实况（" + tag + " · " + tierMsg + "）");
                 }
             });
         });
@@ -1088,13 +1110,15 @@ public final class MainActivity extends Activity {
 
     private void showSettingsDialog() {
         MotionPreset.PresetInfo cur = MotionPreset.findById(currentMode());
+        com.zwm.livecore.LiveQualityTier curTier = currentQualityTier();
         float pct = (currentRatio() - 1.0f) * 100f;
         String[] rows = {
                 "实况动态效果：" + cur.title,
+                "动态视频画质：" + curTier.title + "（静态原画无损）",
                 String.format(Locale.US, "微动幅度与时长：%.1f%% · %.1f 秒", pct, currentDuration()),
                 "跳过已是实况的照片：" + (isSkipExistingLive() ? "已开启" : "已关闭"),
                 "清理临时缓存",
-                "关于实况工坊 (v1.0.2)"
+                "关于实况工坊 (v1.1.0)"
         };
         new AlertDialog.Builder(this)
                 .setTitle("设置")
@@ -1102,26 +1126,49 @@ public final class MainActivity extends Activity {
                     if (which == 0) {
                         showEffectPickerDialog();
                     } else if (which == 1) {
-                        showStrengthDialog();
+                        showQualityTierDialog();
                     } else if (which == 2) {
+                        showStrengthDialog();
+                    } else if (which == 3) {
                         boolean next = !isSkipExistingLive();
                         prefs().edit().putBoolean(KEY_SKIP_EXISTING_LIVE, next).apply();
                         toast(next ? "已开启：已有实况照片直接直通分享" : "已关闭：统一按当前效果重新生成");
-                    } else if (which == 3) {
+                    } else if (which == 4) {
                         long freedKb = clearScratchCacheKb();
                         toast("已清理临时缓存 " + freedKb + " KB");
                     } else {
                         new AlertDialog.Builder(this)
-                                .setTitle("实况工坊 v1.0.2")
-                                .setMessage("· 纯手机端离线硬件 GPU + MediaCodec 渲染，无需连电脑\n"
-                                        + "· 浏览模式：点击查看大图，长按不松手直接滑动连选，多选时横向滑动也可连选\n"
-                                        + "· 多选/大图均可一键删除、存实况、分享实况\n"
-                                        + "· 生成的实况图统一保存在系统相册「Pictures/实况工坊」")
+                                .setTitle("实况工坊 v1.1.0")
+                                .setMessage("· 静态封面直接保留 JPEG 原图数据、分辨率与 EXIF/ICC 色彩，无二次有损压缩\n"
+                                        + "· 动态视频独立渲染，支持 流畅 1080P / 高清 1440P / 原画 2048P 三档切换\n"
+                                        + "· 离线硬件 GPU + MediaCodec 渲染，长按/横划连选，失败项支持单批重试\n"
+                                        + "· 生成结果统一保存在系统相册「Pictures/实况工坊」")
                                 .setPositiveButton("知道了", null)
                                 .show();
                     }
                 })
                 .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    private void showQualityTierDialog() {
+        com.zwm.livecore.LiveQualityTier cur = currentQualityTier();
+        com.zwm.livecore.LiveQualityTier[] tiers = com.zwm.livecore.LiveQualityTier.values();
+        String[] labels = new String[tiers.length];
+        int checked = 0;
+        for (int i = 0; i < tiers.length; i++) {
+            if (tiers[i] == cur) checked = i;
+            labels[i] = tiers[i].title + "\n" + tiers[i].summary;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("动态视频画质档位（静态封面无损）")
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    com.zwm.livecore.LiveQualityTier chosen = tiers[which];
+                    prefs().edit().putString(KEY_QUALITY_TIER, chosen.id).apply();
+                    toast("动态画质已设为：" + chosen.title + "（静态原画无损）");
+                    d.dismiss();
+                })
+                .setNegativeButton("取消", null)
                 .show();
     }
 
@@ -1230,6 +1277,11 @@ public final class MainActivity extends Activity {
 
     private boolean isSkipExistingLive() {
         return prefs().getBoolean(KEY_SKIP_EXISTING_LIVE, true);
+    }
+
+    private com.zwm.livecore.LiveQualityTier currentQualityTier() {
+        return com.zwm.livecore.LiveQualityTier.fromId(
+                prefs().getString(KEY_QUALITY_TIER, com.zwm.livecore.LiveQualityTier.HD.id));
     }
 
     private final class PhotoGridAdapter extends BaseAdapter {

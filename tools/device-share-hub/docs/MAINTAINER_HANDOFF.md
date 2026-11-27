@@ -1,3 +1,14 @@
+# 2026-11-27 跨网络作品传输与原画质无损实况升级（服务端 1.2.8 / Android 0.8.139(250) / iOS 0.8.139(250) / 独立实况工坊 1.1.0(4)）
+
+- **核心落地**：
+  - 新增共享核心 `tools/live-photo-core/`（Android `:live-core` Java + OpenGL ES / MediaCodec，iOS Swift CoreGraphics / ImageIO / AVAssetWriter），取消静态封面 3072px 限制与 JPEG 二次有损重编码，JPEG/HEIC 通过纯元数据注入保留原始码流与 EXIF/ICC，PNG/WebP 全分辨率 `q=98` 保真转换，支持 3 档动态画质与 `ORIGINAL -> HD -> SMOOTH` 自动回退；`device-share-hub` 与 `live-studio-app` 双端已接入并支持批量单张重试与画质选择。
+  - `remote-relay`（`https://zwm-device-share-relay.zwmrpg.workers.dev`，部署版本 `0f66dbdc-96f9-47aa-b993-2eab57ca3274`）升级 `/v1/transfers/batch`（多机复用单份 R2 对象、全员 ACK 后删除）、`Range` 206 断点续传、`/v1/stats` 流量/R2 配额估算、以及严格设备证书鉴权的远程在线相册 `/v1/catalog/*`（原图拉取 ACK 后立即删 R2，DO Alarm 过期兜底清理）。
+  - 服务端 `online_gallery_service.py` 升至 `1.2.8` 并启用 `RemoteCatalogBridge`（`POST /api/online/remote-enroll`、`GET /api/online/transfer-stats`）；Windows 中控接入 `TransportStrategy` 与批量共享 R2 上传；Android 纯 Java 恢复并升级跨网中继与远程相册兜底；iOS 新增 `Range` 206 断点续传、策略切换、远程相册兜底与流量面板。
+- **验证与实测证据**：
+  - Worker `npm run check && npm run typecheck && npm test` `16/16` 全过；`npx wrangler deploy` 上线 + `cloudflare-e2e.mjs` 线上全链路通过 + `wrangler r2 bucket info` 确认 R2 零残留（`0 B`）。
+  - 隔离画质基准 `scripts/benchmark_live_quality.py`（只读拷贝成品库样本 3 份 + 4 类合成极限样本）实测：JPEG 原图静态封面 SOS..EOI 逐字节完全一致（PSNR 无穷大、SSIM `1.0`），真库 PNG-in-JPG 样本相对旧 `q=92` 方案 PSNR 由 `32.84~36.61 dB` 提升至 `44.21~45.84 dB`；三档动态 MP4（`1080P/1440P/2048P`）实际生成成功。
+  - 5 项 JS 守卫全部通过；Android 双包 `:live-core:testDebugUnitTest`（4/4）+ `:app:testDebugUnitTest` + `:app:assembleRelease` + `:app:lintRelease` + `apksigner` 验签通过；Xiaomi 15（无线 ADB `24129PN74C`）已完成双包 `0.8.139(250)` 与 `1.1.0(4)` 安装启动无崩溃。
+
 # 2026-11-26 实况动态自然度精调与手机端效果直选（服务端 1.2.7 / Android 0.8.136(247) / iOS 0.8.136(247)）
 
 - **核心落地**：

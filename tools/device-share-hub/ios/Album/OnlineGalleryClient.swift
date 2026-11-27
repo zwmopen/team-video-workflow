@@ -396,6 +396,8 @@ public final class OnlineGalleryClient {
     private var latestWorksRequestID: UInt64 = 0
     private var lastAppliedWorksScanRevision: Int = -1
     private var lastObservedServerScanRevision: Int = -1
+    public private(set) var isUsingRemoteCatalog: Bool = false
+    private var lastRemoteCategoriesResult: OnlineCategoriesResult?
     // Cache reads and UIImage decoding must stay off the main thread during list rendering.
     private let imageIOQueue = DispatchQueue(label: "com.zwm.album.onlineImageIO", qos: .userInitiated, attributes: .concurrent)
     private let imageCache = NSCache<NSString, UIImage>()
@@ -829,6 +831,41 @@ public final class OnlineGalleryClient {
         }.resume()
     }
 
+    private static func remoteCatalogThumbKey(workId: String, fileName: String) -> String {
+        var state = SHA256.State()
+        state.update(Data("\(workId)/\(fileName)".utf8))
+        let hex = state.finalize().map { String(format: "%02x", $0) }.joined()
+        return "th_" + String(hex.prefix(20))
+    }
+
+    private func fetchRemoteCatalogWorks() throws -> [OnlineWorkEntry] {
+        let session = try RemoteRelayClient.ensureSession()
+        let manifest = try RemoteRelayClient.fetchCatalogManifest(session)
+        let rawWorks = (manifest["works"] as? [[String: Any]]) ?? []
+        var entries: [OnlineWorkEntry] = []
+        var catCounts: [String: Int] = [:]
+        for w in rawWorks {
+            guard let id = w["id"] as? String, !id.isEmpty else { continue }
+            let cat = (w["category"] as? String) ?? "其他"
+            var norm = w
+            if norm["title"] == nil, let name = w["name"] as? String { norm["title"] = name }
+            if norm["destination"] == nil { norm["destination"] = cat }
+            norm["stage"] = "已发送0次（云端浏览）"
+            if let entry = OnlineWorkEntry.from(dict: norm) {
+                entries.append(entry)
+                catCounts[cat, default: 0] += 1
+            }
+        }
+        let cats = catCounts.map { OnlineCategoryItem(name: $0.key, count: $0.value) }
+        lastRemoteCategoriesResult = OnlineCategoriesResult(categories: cats, stages: [], total: entries.count)
+        return entries
+    }
+
+    private static func queryParam(_ name: String, from url: URL) -> String? {
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return nil }
+        return items.first(where: { $0.name == name })?.value
+    }
+
     public func fetchCategories(refresh: Bool = false, completion: @escaping (Result<OnlineCategoriesResult, Error>) -> Void) {
         let requestID = beginCategoriesRequest()
         let baseUrl = resolveBaseUrl()
@@ -837,8 +874,12 @@ public final class OnlineGalleryClient {
             completion(.failure(NSError(domain: "OnlineGallery", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的服务器地址"])))
             return
         }
-        session.dataTask(with: url) { data, _, error in
+        session.dataTask(with: url) { [weak self] data, _, error in
             if let error = error {
+                if let cached = self?.lastRemoteCategoriesResult {
+                    DispatchQueue.main.async { completion(.success(cached)) }
+                    return
+                }
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
             }
@@ -907,6 +948,17 @@ public final class OnlineGalleryClient {
 
         session.dataTask(with: url) { [weak self] data, _, error in
             if let error = error {
+                if RemoteRelayProfile.load() != nil, let self = self {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        if let remoteWorks = try? self.fetchRemoteCatalogWorks() {
+                            self.isUsingRemoteCatalog = true
+                            DispatchQueue.main.async { completion(.success(remoteWorks)) }
+                            return
+                        }
+                        DispatchQueue.main.async { completion(.failure(error)) }
+                    }
+                    return
+                }
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
             }
@@ -934,6 +986,8 @@ public final class OnlineGalleryClient {
                 }
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.isLatestWorksRequest(requestID) else { return }
+                    self.isUsingRemoteCatalog = false
+                    RemoteRelayProfile.enrollViaLanBestEffort(pcBaseURL: baseUrl)
                     if let viewState = viewState {
                         self.consumeRemoteViewState(viewState)
                     }
@@ -1107,6 +1161,46 @@ public final class OnlineGalleryClient {
             NSLog("%@", message)
 
             guard shouldRetry else {
+                if RemoteRelayProfile.load() != nil,
+                   let wid = Self.queryParam("id", from: url),
+                   let file = Self.queryParam("file", from: url),
+                   !file.hasPrefix("__src__:") {
+                    self.imageIOQueue.async { [weak self] in
+                        guard let self = self, !request.isCancelled else { return }
+                        if let relaySession = try? RemoteRelayClient.ensureSession() {
+                            if isThumbnail {
+                                let tkey = Self.remoteCatalogThumbKey(workId: wid, fileName: file)
+                                if let jpg = try? RemoteRelayClient.downloadCatalogThumb(relaySession, thumbKey: tkey),
+                                   let img = UIImage(data: jpg) {
+                                    self.imageCache.setObject(img, forKey: cacheKey)
+                                    try? jpg.write(to: diskURL)
+                                    DispatchQueue.main.async {
+                                        guard !request.isCancelled else { return }
+                                        onProgress?(100)
+                                        completion(img)
+                                    }
+                                    return
+                                }
+                            } else {
+                                if (try? RemoteRelayClient.pullCatalogOriginal(relaySession, workId: wid, fileName: file, destination: diskURL)) != nil,
+                                   let img = UIImage(contentsOfFile: diskURL.path) {
+                                    self.imageCache.setObject(img, forKey: cacheKey)
+                                    DispatchQueue.main.async {
+                                        guard !request.isCancelled else { return }
+                                        onProgress?(100)
+                                        completion(img)
+                                    }
+                                    return
+                                }
+                            }
+                        }
+                        DispatchQueue.main.async {
+                            guard !request.isCancelled else { return }
+                            completion(nil)
+                        }
+                    }
+                    return
+                }
                 DispatchQueue.main.async {
                     guard !request.isCancelled else { return }
                     completion(nil)
@@ -1246,6 +1340,19 @@ public final class OnlineGalleryClient {
                     let delay = self.originalRetryDelay * Double(attempt)
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.downloadSingleImageAttempt(url: url, diskURL: diskURL, attempt: attempt + 1, maxAttempts: maxAttempts, completion: completion)
+                    }
+                    return
+                }
+                if RemoteRelayProfile.load() != nil,
+                   let wid = Self.queryParam("id", from: url),
+                   let file = Self.queryParam("file", from: url) {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        if let relaySession = try? RemoteRelayClient.ensureSession(),
+                           (try? RemoteRelayClient.pullCatalogOriginal(relaySession, workId: wid, fileName: file, destination: diskURL)) != nil {
+                            completion(.success(()))
+                            return
+                        }
+                        completion(.failure(error))
                     }
                     return
                 }
@@ -1624,6 +1731,22 @@ public final class OnlineGalleryClient {
                 }
                 return
             }
+            if error != nil && RemoteRelayProfile.load() != nil {
+                DispatchQueue.global(qos: .utility).async {
+                    if let session = try? RemoteRelayClient.ensureSession(),
+                       (try? RemoteRelayClient.recordCatalogWorkUsed(session, workId: workId)) != nil {
+                        let res = OnlineUseResult(ok: true, workId: workId, useCount: 1, remainingUses: 1,
+                                                  moved: false, message: "已通过云端中转记录使用（待电脑同步写入标签）",
+                                                  firstSharedAtMs: 0, expireAtMs: 0, originDevice: "")
+                        DispatchQueue.main.async { completion?(res) }
+                        return
+                    }
+                    DispatchQueue.main.async {
+                        completion?(OnlineUseResult(ok: false, workId: workId, useCount: 0, remainingUses: 0, moved: false, message: "请求失败"))
+                    }
+                }
+                return
+            }
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 DispatchQueue.main.async {
@@ -1817,8 +1940,12 @@ public final class OnlineGalleryClient {
                                         userInfo: [NSLocalizedDescriptionKey: "URL 构造失败"])))
             return
         }
-        session.dataTask(with: url) { data, _, error in
+        session.dataTask(with: url) { [weak self] data, _, error in
             if let error = error {
+                if let cached = self?.lastRemoteCategoriesResult {
+                    DispatchQueue.main.async { completion(.success(cached)) }
+                    return
+                }
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
             }

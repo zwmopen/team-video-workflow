@@ -72,6 +72,12 @@ public final class OnlineGalleryClient {
     private final AtomicLong worksRequestSequence = new AtomicLong();
     private volatile long lastAppliedWorksScanRevision = -1L;
     private volatile long lastObservedServerScanRevision = -1L;
+    private volatile boolean remoteCatalogActive = false;
+    private volatile CategoriesResult lastRemoteCategoriesResult = null;
+
+    public boolean isRemoteCatalogActive() {
+        return remoteCatalogActive;
+    }
     /**
      * 缩略图专用线程池（2026-09-20 新增）：
      * 旧实现把缩略图与列表/分类/操作请求塞进同一个 4 线程池，几百张缩略图一进来，
@@ -851,6 +857,21 @@ public final class OnlineGalleryClient {
                 OnlineListCache.saveCategories(context, resp);
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
+                if (RemoteRelayProfile.isEnrolled(context)) {
+                    try {
+                        CategoriesResult cached = lastRemoteCategoriesResult;
+                        if (cached == null) {
+                            fetchRemoteCatalogSnapshot();
+                            cached = lastRemoteCategoriesResult;
+                        }
+                        if (cached != null) {
+                            CategoriesResult finalCat = cached;
+                            mainHandler.post(() -> callback.onSuccess(finalCat));
+                            return;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
                 Log.w(TAG, "fetchCategories failed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " reason=" + diagnosticErrorKind(e));
@@ -898,6 +919,8 @@ public final class OnlineGalleryClient {
                 if (requestSequence == worksRequestSequence.get()) {
                     lastAppliedWorksScanRevision = scanRevision;
                 }
+                remoteCatalogActive = false;
+                RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
                 Log.i(TAG, "fetchWorks parsed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " fullList=" + fullList + " works=" + list.size());
@@ -906,6 +929,18 @@ public final class OnlineGalleryClient {
                 if (fullList) OnlineListCache.saveWorks(context, resp);
                 mainHandler.post(() -> callback.onSuccess(list));
             } catch (Exception e) {
+                if (RemoteRelayProfile.isEnrolled(context)) {
+                    try {
+                        List<OnlineWorkEntry> remoteList = fetchRemoteCatalogSnapshot();
+                        if (remoteList != null) {
+                            remoteCatalogActive = true;
+                            mainHandler.post(() -> callback.onSuccess(remoteList));
+                            return;
+                        }
+                    } catch (Exception remoteErr) {
+                        Log.w(TAG, "Remote catalog fallback failed: " + remoteErr.getMessage());
+                    }
+                }
                 Log.w(TAG, "fetchWorks failed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " fullList=" + fullList + " reason=" + diagnosticErrorKind(e));
@@ -1114,6 +1149,27 @@ public final class OnlineGalleryClient {
             }
         } catch (Exception e) {
             if (tempFile.exists()) tempFile.delete();
+            if (RemoteRelayProfile.isEnrolled(context)) {
+                try {
+                    RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                    String thumbKey = catalogThumbKey(workId, fileName);
+                    byte[] jpg = RemoteRelayClient.downloadCatalogThumb(session, thumbKey);
+                    if (jpg != null && jpg.length > 0 && jpg.length <= THUMB_MAX_BYTES) {
+                        File dir = tempFile.getParentFile();
+                        if (dir != null && !dir.exists()) dir.mkdirs();
+                        try (FileOutputStream out = new FileOutputStream(tempFile)) {
+                            out.write(jpg);
+                            out.flush();
+                        }
+                        if (diskFile.exists()) diskFile.delete();
+                        if (tempFile.renameTo(diskFile)) {
+                            return true;
+                        }
+                    }
+                } catch (Exception ignored) {
+                    if (tempFile.exists()) tempFile.delete();
+                }
+            }
             Log.w(TAG, "downloadThumb failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()
                     + " | " + workId + "/" + fileName, e);
             DiagnosticLog.write(context, "thumb_failed", workId + "/" + fileName + " | "
@@ -1264,6 +1320,25 @@ public final class OnlineGalleryClient {
                 mainHandler.post(() -> callback.onSuccess(bmp));
             } catch (Exception e) {
                 if (tempFile.exists()) tempFile.delete();
+                if (RemoteRelayProfile.isEnrolled(context)) {
+                    try {
+                        RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                        RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, diskFile);
+                        TransferStatsStore.record(context, "r2", diskFile.length(), 1);
+                        BitmapFactory.Options opts = new BitmapFactory.Options();
+                        opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                        Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
+                        if (bmp != null) {
+                            if (callback instanceof ProgressCallback) {
+                                mainHandler.post(() -> ((ProgressCallback<Bitmap>) callback).onProgress(100));
+                            }
+                            mainHandler.post(() -> callback.onSuccess(bmp));
+                            return;
+                        }
+                    } catch (Exception remoteErr) {
+                        Log.w(TAG, "Remote catalog full image failed: " + remoteErr.getMessage());
+                    }
+                }
                 Log.w(TAG, "loadFullImage failed for " + workId + " / " + fileName + ": " + e.getMessage(), e);
                 DiagnosticLog.write(context, "full_image_failed", workId + "/" + fileName
                         + " | " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -1308,6 +1383,17 @@ public final class OnlineGalleryClient {
                 );
                 mainHandler.post(() -> callback.onSuccess(res));
             } catch (Exception e) {
+                if (RemoteRelayProfile.isEnrolled(context)) {
+                    try {
+                        RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                        RemoteRelayClient.recordCatalogWorkUsed(session, workId);
+                        UseResult res = new UseResult(true, workId, 1, 1, false,
+                                "已通过云端中转记录使用（待电脑同步写入标签）", 0L, 0L, "");
+                        mainHandler.post(() -> callback.onSuccess(res));
+                        return;
+                    } catch (Exception ignored) {
+                    }
+                }
                 mainHandler.post(() -> callback.onError(e));
             }
         });
@@ -1828,73 +1914,125 @@ public final class OnlineGalleryClient {
         String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
                 + "&file=" + URLEncoder.encode(fileName, "UTF-8")
                 + (isLive ? "&live=motion" : "");
-        URL url = new URL(uStr);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS * 3);
-        if (isLive) {
-            conn.setRequestProperty("X-Client-Platform", "android");
-        }
-        int httpCode = conn.getResponseCode();
-        if (httpCode != 200) {
-            Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);
-            DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName
-                    + " | HTTP " + httpCode);
-            throw new Exception("HTTP " + httpCode + " 下载 " + fileName + " 失败");
-        }
-        InputStream in = new BufferedInputStream(conn.getInputStream());
-        // 【DSH-118】临时文件 + 原子 rename，残缺文件不会被当成成品复用。
-        java.io.File partFile = new java.io.File(localFile.getAbsolutePath() + ".part");
-        if (partFile.exists() && !partFile.delete()) {
-            Log.w(TAG, "残留临时文件清理失败: " + partFile.getName());
-        }
-        java.io.FileOutputStream out = new java.io.FileOutputStream(partFile);
-        byte[] buf = new byte[65536];   // DSH-185：8KB → 64KB，2.7MB 原图系统调用少 8 倍
-        int len;
-        long writtenBytes = 0L;
         try {
-            while ((len = in.read(buf)) != -1) {
-                out.write(buf, 0, len);
-                writtenBytes += len;
+            URL url = new URL(uStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(TIMEOUT_MS);
+            conn.setReadTimeout(TIMEOUT_MS * 3);
+            if (isLive) {
+                conn.setRequestProperty("X-Client-Platform", "android");
             }
-            out.flush();
-            // DSH-185：去掉 getFD().sync()。renameTo 本身就是原子提交，逐张 fsync 只换来
-            // 几十毫秒×N 的刷盘开销，对「点文案→分享」链路的耗时拖累远大于断电兜底收益。
-        } finally {
-            try { out.close(); } catch (Throwable ignored) { }
-            try { in.close(); } catch (Throwable ignored) { }
-        }
-        conn.disconnect();
-        if (writtenBytes <= 0) {
-            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
-            Log.w(TAG, "downloadWorkImages 空文件 | " + workId + "/" + fileName);
-            DiagnosticLog.write(context, "download_work_empty",
-                    workId + "/" + fileName + " | written=0");
-            throw new Exception("下载内容为空：" + fileName);
-        }
-        if (localFile.exists() && !localFile.delete()) {
-            Log.w(TAG, "旧文件删除失败: " + localFile.getName());
-        }
-        if (!partFile.renameTo(localFile)) {
-            // 跨分区 / 部分 ROM 上 renameTo 返回 false：退化成显式拷贝，仍保证原子。
-            String detail = "renameTo failed: " + partFile + " -> " + localFile;
-            Log.w(TAG, detail);
-            DiagnosticLog.write(context, "download_work_rename_failed",
-                    workId + "/" + fileName + " | " + detail);
-            java.io.FileInputStream fin = new java.io.FileInputStream(partFile);
-            java.io.FileOutputStream fout = new java.io.FileOutputStream(localFile);
+            int httpCode = conn.getResponseCode();
+            if (httpCode != 200) {
+                Log.w(TAG, "downloadWorkImages HTTP " + httpCode + " | " + workId + "/" + fileName);
+                DiagnosticLog.write(context, "download_work_http_error", workId + "/" + fileName
+                        + " | HTTP " + httpCode);
+                throw new Exception("HTTP " + httpCode + " 下载 " + fileName + " 失败");
+            }
+            InputStream in = new BufferedInputStream(conn.getInputStream());
+            // 【DSH-118】临时文件 + 原子 rename，残缺文件不会被当成成品复用。
+            java.io.File partFile = new java.io.File(localFile.getAbsolutePath() + ".part");
+            if (partFile.exists() && !partFile.delete()) {
+                Log.w(TAG, "残留临时文件清理失败: " + partFile.getName());
+            }
+            java.io.FileOutputStream out = new java.io.FileOutputStream(partFile);
+            byte[] buf = new byte[65536];   // DSH-185：8KB → 64KB，2.7MB 原图系统调用少 8 倍
+            int len;
+            long writtenBytes = 0L;
             try {
-                byte[] cb = new byte[65536];
-                int cl;
-                while ((cl = fin.read(cb)) != -1) fout.write(cb, 0, cl);
-                fout.flush();
+                while ((len = in.read(buf)) != -1) {
+                    out.write(buf, 0, len);
+                    writtenBytes += len;
+                }
+                out.flush();
             } finally {
-                try { fout.close(); } catch (Throwable ignored) { }
-                try { fin.close(); } catch (Throwable ignored) { }
+                try { out.close(); } catch (Throwable ignored) { }
+                try { in.close(); } catch (Throwable ignored) { }
             }
-            if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+            conn.disconnect();
+            if (writtenBytes <= 0) {
+                if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+                Log.w(TAG, "downloadWorkImages 空文件 | " + workId + "/" + fileName);
+                DiagnosticLog.write(context, "download_work_empty",
+                        workId + "/" + fileName + " | written=0");
+                throw new Exception("下载内容为空：" + fileName);
+            }
+            TransferStatsStore.record(context, "lan", writtenBytes, 1);
+            if (localFile.exists() && !localFile.delete()) {
+                Log.w(TAG, "旧文件删除失败: " + localFile.getName());
+            }
+            if (!partFile.renameTo(localFile)) {
+                String detail = "renameTo failed: " + partFile + " -> " + localFile;
+                Log.w(TAG, detail);
+                DiagnosticLog.write(context, "download_work_rename_failed",
+                        workId + "/" + fileName + " | " + detail);
+                java.io.FileInputStream fin = new java.io.FileInputStream(partFile);
+                java.io.FileOutputStream fout = new java.io.FileOutputStream(localFile);
+                try {
+                    byte[] cb = new byte[65536];
+                    int cl;
+                    while ((cl = fin.read(cb)) != -1) fout.write(cb, 0, cl);
+                    fout.flush();
+                } finally {
+                    try { fout.close(); } catch (Throwable ignored) { }
+                    try { fin.close(); } catch (Throwable ignored) { }
+                }
+                if (partFile.exists() && !partFile.delete()) { /* ignore */ }
+            }
+            return localFile;
+        } catch (Exception lanErr) {
+            if (!isLive && RemoteRelayProfile.isEnrolled(context)) {
+                RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, localFile);
+                TransferStatsStore.record(context, "r2", localFile.length(), 1);
+                return localFile;
+            }
+            throw lanErr;
         }
-        return localFile;
+    }
+
+    private static String catalogThumbKey(String workId, String fileName) throws Exception {
+        String hex = RemoteProtocol.sha256Hex((workId + "/" + fileName).getBytes(StandardCharsets.UTF_8));
+        return "th_" + hex.substring(0, 20);
+    }
+
+    private List<OnlineWorkEntry> fetchRemoteCatalogSnapshot() throws Exception {
+        RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+        JSONObject manifest = RemoteRelayClient.fetchCatalogManifest(session);
+        JSONArray rawWorks = manifest.optJSONArray("works");
+        JSONArray normWorks = new JSONArray();
+        java.util.Map<String, Integer> catCounts = new java.util.LinkedHashMap<>();
+        if (rawWorks != null) {
+            for (int i = 0; i < rawWorks.length(); i++) {
+                JSONObject w = rawWorks.optJSONObject(i);
+                if (w == null) continue;
+                JSONObject item = new JSONObject();
+                String id = w.optString("id", "");
+                if (id.isEmpty()) continue;
+                String cat = w.optString("category", "其他");
+                item.put("id", id);
+                item.put("title", w.optString("name", id));
+                item.put("destination", cat);
+                item.put("stage", "已发送0次（云端浏览）");
+                item.put("useCount", w.optInt("useCount", 0));
+                item.put("maxUses", 2);
+                item.put("used", w.optInt("useCount", 0) > 0);
+                item.put("images", w.optJSONArray("images") != null ? w.optJSONArray("images") : new JSONArray());
+                item.put("copyText", w.optString("copyText", ""));
+                item.put("updatedAt", w.optLong("updatedAt", 0L));
+                item.put("videoFilename", w.optString("videoFilename", ""));
+                if (w.has("livePhotos")) item.put("livePhotos", w.opt("livePhotos"));
+                normWorks.put(item);
+                catCounts.put(cat, catCounts.containsKey(cat) ? catCounts.get(cat) + 1 : 1);
+            }
+        }
+        List<OnlineWorkEntry> parsedWorks = parseWorks(new JSONObject().put("works", normWorks).toString());
+        List<CategoryItem> cats = new ArrayList<>();
+        for (java.util.Map.Entry<String, Integer> entry : catCounts.entrySet()) {
+            cats.add(new CategoryItem(entry.getKey(), entry.getValue()));
+        }
+        lastRemoteCategoriesResult = new CategoriesResult(cats, Collections.emptyList(), parsedWorks.size(), "{}");
+        return parsedWorks;
     }
 
 

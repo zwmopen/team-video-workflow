@@ -4029,8 +4029,11 @@ public final class MainActivity extends Activity {
                     updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
                 }
                 applyOnlineCategoryFilter(selectedOnlineCategory);
-                statusText.setText("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
-                finishVisibleRefresh("已刷新电脑在线作品 " + onlineWorks.size() + " 套");
+                String modeBanner = onlineClient.isRemoteCatalogActive()
+                        ? ("☁️ 云端在线相册 · 共 " + onlineWorks.size() + " 套")
+                        : ("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
+                statusText.setText(modeBanner);
+                finishVisibleRefresh(modeBanner);
                 refreshOnlineCategoriesAfterWorks(userInitiated);
             }
 

@@ -65,6 +65,34 @@ bool ListDevices(const std::filesystem::path& stateDirectory,
                  std::vector<RelayDevice>& devices,
                  std::string& error);
 
+enum class TransportStrategy {
+    Auto = 0,
+    UsbFirst = 1,
+    LanFirst = 2,
+    P2pFirst = 3,
+    R2First = 4,
+};
+
+std::wstring TransportStrategyKey(TransportStrategy strategy);
+TransportStrategy ParseTransportStrategy(const std::wstring& key);
+std::wstring TransportStrategyLabel(TransportStrategy strategy);
+
+// Uploads a batch plain transfer to the deployed relay so multiple remote
+// recipients share one R2 object copy (deleted only after all recipients ACK).
+bool SendBatchPlainTransfer(const std::filesystem::path& stateDirectory,
+                            const std::vector<std::string>& recipientDeviceIds,
+                            const std::vector<std::filesystem::path>& files,
+                            const std::string& contentKind,
+                            const ProgressCallback& progress,
+                            std::string& batchId,
+                            std::string& error);
+
+void RecordChannelStatsBestEffort(const std::filesystem::path& stateDirectory,
+                                  const std::string& channel,
+                                  uint64_t bytes,
+                                  size_t objects,
+                                  size_t transfers);
+
 const char* Endpoint();
 
 }  // namespace remote_relay

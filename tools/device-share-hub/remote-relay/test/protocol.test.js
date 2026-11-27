@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canonicalize, validCertificate, WorkspaceRelayCore } from "../src/relay-core.js";
+import { materializeR2WithRange } from "../src/extensions.js";
 
 function base64Url(bytes) {
   return Buffer.from(bytes).toString("base64url");
@@ -72,15 +73,24 @@ class MemoryBucket {
     const value = this.values.get(key);
     return value ? { size: value.bytes.byteLength, customMetadata: value.customMetadata } : null;
   }
-  async get(key) {
+  async get(key, options) {
     const value = this.values.get(key);
-    return value
-      ? {
-          body: value.bytes,
-          size: value.bytes.byteLength,
-          customMetadata: value.customMetadata,
-        }
-      : null;
+    if (!value) return null;
+    if (options?.range) {
+      const offset = Number(options.range.offset || 0);
+      const length = Number(options.range.length ?? value.bytes.byteLength - offset);
+      const slice = value.bytes.slice(offset, offset + length);
+      return {
+        body: slice,
+        size: slice.byteLength,
+        customMetadata: value.customMetadata,
+      };
+    }
+    return {
+      body: value.bytes,
+      size: value.bytes.byteLength,
+      customMetadata: value.customMetadata,
+    };
   }
   async delete(key) {
     for (const item of Array.isArray(key) ? key : [key]) this.values.delete(item);
@@ -694,4 +704,203 @@ test("expired transfers are removed by the alarm", async () => {
   await state.relay.alarm();
   assert.equal(state.bucket.values.size, 0);
   assert.equal((await state.storage.get(`transfer:${transfer.transferId}`)).status, "expired");
+});
+
+test("batch multi-recipient transfer reuses one R2 blob and deletes only after all recipients ACK", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const workspaceId = state.adminCertificate.workspaceId;
+  const member2 = await generateIdentity();
+  const now = Date.now();
+  const member2Cert = {
+    version: 1,
+    workspaceId,
+    deviceId: "android_member_02",
+    deviceName: "测试接收手机 2",
+    role: "member",
+    signingPublicKey: member2.publicKey,
+    agreementPublicKey: member2.publicKey,
+    serial: 2,
+    issuedAt: now,
+    expiresAt: now + 365 * 24 * 60 * 60 * 1000,
+  };
+  const member2CertSig = await sign(state.admin.pair.privateKey, member2Cert);
+  let res = await state.relay.fetch(await jsonRequest("/v1/challenges", {
+    workspaceId,
+    deviceId: member2Cert.deviceId,
+  }));
+  assert.equal(res.status, 201);
+  const challenge = await res.json();
+  res = await state.relay.fetch(await jsonRequest("/v1/sessions", {
+    certificate: member2Cert,
+    certificateSignature: member2CertSig,
+    challengeId: challenge.challengeId,
+    challengeSignature: await sign(member2.pair.privateKey, challenge),
+  }));
+  assert.equal(res.status, 201);
+  const member2Token = (await res.json()).token;
+
+  const payload = crypto.getRandomValues(new Uint8Array(64));
+  const sha = Buffer.from(await crypto.subtle.digest("SHA-256", payload)).toString("hex");
+  res = await state.relay.fetch(await jsonRequest("/v1/transfers/batch", {
+    mode: "plain",
+    contentKind: "work",
+    recipientDeviceIds: [state.memberCertificate.deviceId, member2Cert.deviceId],
+    objects: [{ index: 0, bytes: 64, sha256: sha, name: "hd.jpg", mime: "image/jpeg" }],
+  }, adminToken));
+  assert.equal(res.status, 201);
+  const batch = await res.json();
+  assert.equal(batch.recipients.length, 2);
+
+  res = await state.relay.fetch(new Request(`https://relay.test${batch.uploads[0].path}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${adminToken}`, "Content-Length": "64" },
+    body: payload,
+    duplex: "half",
+  }));
+  assert.equal(res.status, 200);
+  assert.equal(state.bucket.values.size, 1);
+
+  res = await state.relay.fetch(await jsonRequest(`/v1/batches/${batch.batchId}/commit`, {}, adminToken));
+  assert.equal(res.status, 200);
+
+  const t1 = batch.recipients.find((r) => r.recipientDeviceId === state.memberCertificate.deviceId).transferId;
+  const t2 = batch.recipients.find((r) => r.recipientDeviceId === member2Cert.deviceId).transferId;
+
+  const dlReq1 = new Request(`https://relay.test/v1/transfers/${t1}/objects/0`, {
+    headers: { Authorization: `Bearer ${state.token}`, Range: "bytes=16-47" },
+  });
+  let dlRes1 = await state.relay.fetch(dlReq1);
+  dlRes1 = await materializeR2WithRange(dlRes1, { REMOTE_OBJECTS: state.bucket }, dlReq1);
+  assert.equal(dlRes1.status, 206);
+  assert.equal(dlRes1.headers.get("Content-Range"), "bytes 16-47/64");
+  const slice = new Uint8Array(await dlRes1.arrayBuffer());
+  assert.deepEqual(slice, payload.slice(16, 48));
+
+  // First recipient ACKs -> shared R2 object MUST remain for recipient 2!
+  res = await state.relay.fetch(await jsonRequest(`/v1/transfers/${t1}/ack`, {}, state.token));
+  assert.equal(res.status, 200);
+  assert.equal(state.bucket.values.size, 1);
+
+  // Second recipient downloads full object and ACKs -> now R2 object is deleted!
+  let dlRes2 = await state.relay.fetch(new Request(`https://relay.test/v1/transfers/${t2}/objects/0`, {
+    headers: { Authorization: `Bearer ${member2Token}` },
+  }));
+  dlRes2 = await materializeR2WithRange(dlRes2, { REMOTE_OBJECTS: state.bucket });
+  assert.equal(dlRes2.status, 200);
+  assert.deepEqual(new Uint8Array(await dlRes2.arrayBuffer()), payload);
+
+  res = await state.relay.fetch(await jsonRequest(`/v1/transfers/${t2}/ack`, {}, member2Token));
+  assert.equal(res.status, 200);
+  assert.equal(state.bucket.values.size, 0);
+
+  res = await state.relay.fetch(await jsonRequest("/v1/stats/channel", {
+    channel: "lan",
+    bytes: 2048,
+    objects: 2,
+    transfers: 1,
+  }, adminToken));
+  assert.equal(res.status, 200);
+
+  res = await state.relay.fetch(new Request("https://relay.test/v1/stats", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  }));
+  assert.equal(res.status, 200);
+  const stats = await res.json();
+  assert.equal(stats.r2.activeBytes, 0);
+  assert.equal(stats.today.lanBytes, 2048);
+  assert.equal(stats.today.r2Bytes, 64);
+  assert.equal(stats.r2.isEstimate, true);
+});
+
+test("authenticated remote online album enforces device roles, serves thumbs/manifest, pulls HD original, and cleans R2 on ACK/alarm", async () => {
+  const state = await bootstrap();
+  const adminToken = await createAdminSession(state);
+  const workspaceId = state.adminCertificate.workspaceId;
+
+  let res = await state.relay.fetch(new Request("https://relay.test/v1/catalog", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ works: [] }),
+  }));
+  assert.equal(res.status, 403);
+
+  res = await state.relay.fetch(new Request("https://relay.test/v1/catalog", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      generatedAt: Date.now(),
+      works: [{ workId: "w_01", title: "西溪团建", thumbKey: "thumb_w_01", files: ["01.jpg"] }],
+    }),
+  }));
+  assert.equal(res.status, 200);
+
+  const thumbBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  res = await state.relay.fetch(new Request("https://relay.test/v1/catalog/thumbs/thumb_w_01", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${adminToken}`, "Content-Length": String(thumbBytes.byteLength) },
+    body: thumbBytes,
+    duplex: "half",
+  }));
+  assert.equal(res.status, 200);
+
+  let manRes = await state.relay.fetch(new Request("https://relay.test/v1/catalog", {
+    headers: { Authorization: `Bearer ${state.token}` },
+  }));
+  manRes = await materializeR2WithRange(manRes, { REMOTE_OBJECTS: state.bucket });
+  assert.equal(manRes.status, 200);
+  const manifest = await manRes.json();
+  assert.equal(manifest.works[0].workId, "w_01");
+
+  let thRes = await state.relay.fetch(new Request("https://relay.test/v1/catalog/thumbs/thumb_w_01", {
+    headers: { Authorization: `Bearer ${state.token}` },
+  }));
+  thRes = await materializeR2WithRange(thRes, { REMOTE_OBJECTS: state.bucket });
+  assert.equal(thRes.status, 200);
+  assert.deepEqual(new Uint8Array(await thRes.arrayBuffer()), thumbBytes);
+
+  res = await state.relay.fetch(await jsonRequest("/v1/catalog/pull", {
+    workId: "w_01",
+    fileName: "01.jpg",
+  }, state.token));
+  assert.equal(res.status, 201);
+  const { pull } = await res.json();
+
+  res = await state.relay.fetch(new Request("https://relay.test/v1/catalog/pulls/pending", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  }));
+  assert.equal((await res.json()).pulls.length, 1);
+
+  const origBytes = crypto.getRandomValues(new Uint8Array(128));
+  const origSha = Buffer.from(await crypto.subtle.digest("SHA-256", origBytes)).toString("hex");
+  res = await state.relay.fetch(new Request(`https://relay.test/v1/catalog/pulls/${pull.pullId}/file`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Length": String(origBytes.byteLength),
+      "X-Object-Sha256": origSha,
+    },
+    body: origBytes,
+    duplex: "half",
+  }));
+  assert.equal(res.status, 200);
+
+  let pullDl = await state.relay.fetch(new Request(`https://relay.test/v1/catalog/pulls/${pull.pullId}/file`, {
+    headers: { Authorization: `Bearer ${state.token}` },
+  }));
+  pullDl = await materializeR2WithRange(pullDl, { REMOTE_OBJECTS: state.bucket });
+  assert.equal(pullDl.status, 200);
+  assert.equal(pullDl.headers.get("X-Object-Sha256"), origSha);
+  assert.deepEqual(new Uint8Array(await pullDl.arrayBuffer()), origBytes);
+
+  res = await state.relay.fetch(await jsonRequest(`/v1/catalog/pulls/${pull.pullId}/ack`, {}, state.token));
+  assert.equal(res.status, 200);
+  assert.equal(await state.bucket.head(`${workspaceId}/pulls/${pull.pullId}.bin`), null);
+
+  res = await state.relay.fetch(await jsonRequest("/v1/catalog/use-work", { workId: "w_01" }, state.token));
+  assert.equal(res.status, 200);
+  res = await state.relay.fetch(new Request("https://relay.test/v1/catalog/events", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  }));
+  assert.equal((await res.json()).events.length, 1);
 });

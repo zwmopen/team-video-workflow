@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'tools/live-studio-app/**'
+      - 'tools/live-photo-core/**'
       - '.github/workflows/live-studio-app.yml'
       - '!tools/live-studio-app/**/*.md'
 

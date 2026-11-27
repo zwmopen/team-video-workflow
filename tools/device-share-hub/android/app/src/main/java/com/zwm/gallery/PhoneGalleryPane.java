@@ -811,21 +811,26 @@ final class PhoneGalleryPane {
     }
 
     private void showStrengthDialog() {
+        com.zwm.livecore.LiveQualityTier curTier =
+                com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(activity));
         String[] items = {
                 "极微自然（1.0% · 1.3 秒）",
                 "标准推荐（1.8% · 1.6 秒）",
                 "轻柔明显（3.2% · 2.2 秒）",
-                "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(activity) ? "已开启" : "已关闭")
+                "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(activity) ? "已开启" : "已关闭"),
+                "动态视频画质：" + curTier.title + "（静态无损）"
         };
         float r = OnlineService.getAutoLiveRatio(activity);
         int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
         new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
-                .setTitle("微动幅度与选项")
+                .setTitle("微动幅度、画质与选项")
                 .setSingleChoiceItems(items, checked, (d, which) -> {
                     if (which == 3) {
                         boolean next = !OnlineService.isAutoLiveSkipExisting(activity);
                         OnlineService.setAutoLiveSkipExisting(activity, next);
                         toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一重新生成");
+                    } else if (which == 4) {
+                        showQualityTierDialog();
                     } else {
                         float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
                         float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
@@ -833,6 +838,28 @@ final class PhoneGalleryPane {
                         OnlineService.setAutoLiveDuration(activity, newDur);
                         toast("已调整为：" + items[which]);
                     }
+                    d.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showQualityTierDialog() {
+        com.zwm.livecore.LiveQualityTier cur =
+                com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(activity));
+        com.zwm.livecore.LiveQualityTier[] tiers = com.zwm.livecore.LiveQualityTier.values();
+        String[] labels = new String[tiers.length];
+        int checked = 0;
+        for (int i = 0; i < tiers.length; i++) {
+            if (tiers[i] == cur) checked = i;
+            labels[i] = tiers[i].title + "\n" + tiers[i].summary;
+        }
+        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
+                .setTitle("动态视频画质档位（静态原画无损）")
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    com.zwm.livecore.LiveQualityTier chosen = tiers[which];
+                    OnlineService.setAutoLiveQualityTier(activity, chosen.id);
+                    toast("动态画质已设为：" + chosen.title + "（静态封面保持原图无损）");
                     d.dismiss();
                 })
                 .setNegativeButton("取消", null)
@@ -1405,6 +1432,8 @@ final class PhoneGalleryPane {
         if (inputs == null || inputs.isEmpty()) return;
         isConverting = true;
         final String mode = OnlineService.getAutoLiveMotionMode(activity);
+        final com.zwm.livecore.LiveQualityTier tier =
+                com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(activity));
         final float ratio = OnlineService.getAutoLiveRatio(activity);
         final float duration = OnlineService.getAutoLiveDuration(activity);
         final boolean skipExisting = OnlineService.isAutoLiveSkipExisting(activity);
@@ -1412,7 +1441,7 @@ final class PhoneGalleryPane {
         LinearLayout layout = new LinearLayout(activity);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(dp(20), dp(18), dp(20), dp(16));
-        TextView title = text("正在手机本地 1440P 渲染动态实况图…", 15, true, ThemePalette.getTextPrimary(activity));
+        TextView title = text("正在手机本地生成实况（静态无损 · " + tier.title + "）", 14, true, ThemePalette.getTextPrimary(activity));
         TextView status = text("准备处理第 1 / " + inputs.size() + " 张", 12, false, ThemePalette.getTextSecondary(activity));
         ProgressBar bar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(inputs.size());
@@ -1431,7 +1460,10 @@ final class PhoneGalleryPane {
 
         ioExecutor.execute(() -> {
             List<Uri> outputs = new ArrayList<>();
-            Exception failure = null;
+            List<Uri> failedInputs = new ArrayList<>();
+            int losslessCount = 0;
+            String firstErrMsg = null;
+            com.zwm.livecore.LiveQualityTier effectiveTierSeen = tier;
             for (int i = 0; i < inputs.size(); i++) {
                 final int step = i + 1;
                 final int doneIdx = i;
@@ -1441,34 +1473,51 @@ final class PhoneGalleryPane {
                         bar.setProgress(doneIdx);
                     }
                 });
+                Uri src = inputs.get(i);
                 try {
-                    Uri out = LiveLocalConverter.convertUriOrPassthrough(
-                            activity, inputs.get(i), mode, ratio, duration, step, skipExisting
+                    com.zwm.livecore.LiveConvertResult res = LiveLocalConverter.convertUriDetailed(
+                            activity, src, mode, tier, ratio, duration, step, skipExisting
                     );
-                    outputs.add(out);
+                    outputs.add(res.outputUri);
+                    if (res.isLosslessCover()) losslessCount++;
+                    if (res.effectiveTier != null) effectiveTierSeen = res.effectiveTier;
                 } catch (Exception e) {
-                    failure = e;
-                    break;
+                    failedInputs.add(src);
+                    if (firstErrMsg == null) firstErrMsg = e.getMessage();
                 }
             }
-            final Exception err = failure;
+            final int finalLossless = losslessCount;
+            final String errText = firstErrMsg;
+            final com.zwm.livecore.LiveQualityTier finalTier = effectiveTierSeen;
             mainHandler.post(() -> {
                 isConverting = false;
                 if (progressDialog.isShowing()) progressDialog.dismiss();
-                if (err != null) {
-                    new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
-                            .setTitle("转换中断")
-                            .setMessage("失败原因：" + err.getMessage())
-                            .setPositiveButton("知道了", null)
-                            .show();
+                if (!outputs.isEmpty()) {
+                    loadGalleryIfPermitted();
+                }
+                if (!failedInputs.isEmpty()) {
+                    String summary = "成功 " + outputs.size() + " 张，失败 " + failedInputs.size() + " 张"
+                            + (errText != null ? ("\n原因：" + errText) : "");
+                    AlertDialog.Builder b = new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
+                            .setTitle("部分照片转换失败")
+                            .setMessage(summary)
+                            .setPositiveButton("重试失败的 " + failedInputs.size() + " 张",
+                                    (d, w) -> startBatchConvert(failedInputs, shareAfter))
+                            .setNegativeButton("取消", null);
+                    if (shareAfter && !outputs.isEmpty()) {
+                        b.setNeutralButton("先分享已成功 " + outputs.size() + " 张",
+                                (d, w) -> launchSystemShare(outputs, "分享动态实况图"));
+                    }
+                    b.show();
                     return;
                 }
                 exitSelectionMode();
-                loadGalleryIfPermitted();
                 if (shareAfter) {
                     launchSystemShare(outputs, "分享动态实况图");
                 } else {
-                    toast("已保存 " + outputs.size() + " 张实况图到相册「实况工坊」");
+                    String tag = finalLossless == outputs.size() ? "静态原画无损" : "高质量保留";
+                    String tierMsg = finalTier != null ? finalTier.title : tier.title;
+                    toast("已保存 " + outputs.size() + " 张实况（" + tag + " · " + tierMsg + "）");
                 }
             });
         });

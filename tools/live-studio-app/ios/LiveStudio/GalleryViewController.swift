@@ -25,10 +25,17 @@ final class GalleryViewController: UIViewController,
 
     private var activeMode: MotionPreset {
         get {
-            let raw = UserDefaults.standard.string(forKey: "livestudio.mode") ?? MotionPreset.naturalHold.rawValue
-            return MotionPreset(rawValue: raw) ?? .naturalHold
+            let raw = UserDefaults.standard.string(forKey: "livestudio.mode") ?? AutoLiveMotionMode.naturalHold.rawValue
+            return AutoLiveMotionMode(rawValue: raw) ?? .naturalHold
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "livestudio.mode") }
+    }
+    private var activeTier: LiveQualityTier {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "livestudio.tier") ?? LiveQualityTier.hd.rawValue
+            return LiveQualityTier(rawValue: raw) ?? .hd
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "livestudio.tier") }
     }
     private var activeRatio: Double {
         get {
@@ -424,9 +431,12 @@ final class GalleryViewController: UIViewController,
 
     @objc private func showSettings() {
         let pct = (activeRatio - 1.0) * 100.0
-        let sheet = UIAlertController(title: "设置", message: nil, preferredStyle: .actionSheet)
+        let sheet = UIAlertController(title: "设置", message: "静态封面图保持 JPEG/HEIC 原画无损直出", preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "实况动态效果：\(activeMode.title)", style: .default) { [weak self] _ in
             self?.showEffectPicker()
+        })
+        sheet.addAction(UIAlertAction(title: "动态视频画质：\(activeTier.shortLabel)", style: .default) { [weak self] _ in
+            self?.showQualityTierPicker()
         })
         sheet.addAction(UIAlertAction(title: String(format: "微动幅度与时长：%.1f%% · %.1f 秒", pct, activeDuration), style: .default) { [weak self] _ in
             self?.showStrengthPicker()
@@ -436,7 +446,29 @@ final class GalleryViewController: UIViewController,
             self.skipExistingLive = !self.skipExistingLive
         })
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let pop = sheet.popoverPresentationController {
+            pop.barButtonItem = navigationItem.rightBarButtonItem
+        }
         present(sheet, animated: true)
+    }
+
+    private func showQualityTierPicker() {
+        let alert = UIAlertController(
+            title: "动态视频画质档位",
+            message: "静态封面图保持原图无损；仅控制动态视频渲染规格。",
+            preferredStyle: .actionSheet
+        )
+        for tier in LiveQualityTier.allCases {
+            let mark = (tier == activeTier) ? "  ✓" : ""
+            alert.addAction(UIAlertAction(title: "\(tier.title)（\(tier.shortLabel)）\(mark)", style: .default) { [weak self] _ in
+                self?.activeTier = tier
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let pop = alert.popoverPresentationController {
+            pop.barButtonItem = navigationItem.rightBarButtonItem
+        }
+        present(alert, animated: true)
     }
 
     private func showEffectPicker() {
@@ -506,99 +538,112 @@ final class GalleryViewController: UIViewController,
         let liveTargets = skip ? targets.filter { $0.mediaSubtypes.contains(.photoLive) } : []
         let staticTargets = skip ? targets.filter { !$0.mediaSubtypes.contains(.photoLive) } : targets
 
-        let opts = PHImageRequestOptions()
-        opts.deliveryMode = .highQualityFormat
-        opts.isNetworkAccessAllowed = true
-        opts.isSynchronous = false
-
-        var images: [UIImage] = []
-        let group = DispatchGroup()
-        for asset in staticTargets {
-            group.enter()
-            imageManager.requestImage(
-                for: asset,
-                targetSize: CGSize(width: 2400, height: 2400),
-                contentMode: .aspectFit,
-                options: opts
-            ) { img, _ in
-                if let img = img { images.append(img) }
-                group.leave()
-            }
+        if staticTargets.isEmpty && !liveTargets.isEmpty && !shareAfter {
+            let a = UIAlertController(title: "无需重复转换", message: "所选照片已是实况照片。", preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "好的", style: .default))
+            present(a, animated: true)
+            return
         }
-        if staticTargets.isEmpty && !liveTargets.isEmpty && shareAfter {
-            for asset in liveTargets {
-                group.enter()
-                imageManager.requestImage(
-                    for: asset,
-                    targetSize: CGSize(width: 2400, height: 2400),
-                    contentMode: .aspectFit,
-                    options: opts
-                ) { img, _ in
-                    if let img = img { images.append(img) }
-                    group.leave()
+
+        let workTargets = staticTargets.isEmpty ? liveTargets : staticTargets
+        let mode = activeMode
+        let tier = activeTier
+        let ratio = activeRatio
+        let dur = activeDuration
+        let loading = UIAlertController(title: "正在手机本地生成实况", message: "静态原画无损 · \(tier.shortLabel)…", preferredStyle: .alert)
+        present(loading, animated: true)
+
+        requestRawDatas(for: workTargets) { [weak self] resolved, failedDataAssets in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var results: [LiveConvertResult] = []
+                var failedAssets: [PHAsset] = failedDataAssets
+                var firstErr: Error?
+                for (asset, data) in resolved {
+                    do {
+                        let res = try OnDeviceLivePhotoEngine.shared.convertAndSaveDataToPhotos(
+                            sourceData: data,
+                            preset: mode,
+                            qualityTier: tier,
+                            ratio: ratio,
+                            duration: dur
+                        )
+                        results.append(res)
+                    } catch {
+                        failedAssets.append(asset)
+                        if firstErr == nil { firstErr = error }
+                    }
+                }
+                DispatchQueue.main.async { [weak self] in
+                    loading.dismiss(animated: true) {
+                        guard let self = self else { return }
+                        if !results.isEmpty {
+                            self.fetchPhotoAssets()
+                        }
+                        if !failedAssets.isEmpty {
+                            let msg = "成功 \(results.count) 张，失败 \(failedAssets.count) 张"
+                                + (firstErr != nil ? "\n原因：\(firstErr!.localizedDescription)" : "")
+                            let a = UIAlertController(title: "部分照片转换失败", message: msg, preferredStyle: .alert)
+                            a.addAction(UIAlertAction(title: "重试失败的 \(failedAssets.count) 张", style: .default) { _ in
+                                self.convertSelectedAssets(failedAssets, shareAfter: shareAfter)
+                            })
+                            if shareAfter && !results.isEmpty {
+                                a.addAction(UIAlertAction(title: "先分享已成功 \(results.count) 张", style: .default) { _ in
+                                    let urls = results.flatMap { [$0.pair.imageURL, $0.pair.videoURL] }
+                                    let ac = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                                    self.present(ac, animated: true)
+                                })
+                            }
+                            a.addAction(UIAlertAction(title: "取消", style: .cancel))
+                            self.present(a, animated: true)
+                            return
+                        }
+                        self.exitSelectionTapped()
+                        if shareAfter {
+                            let urls = results.flatMap { [$0.pair.imageURL, $0.pair.videoURL] }
+                            let ac = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                            self.present(ac, animated: true)
+                        } else {
+                            let losslessCount = results.filter { $0.coverMode == .losslessCopy }.count
+                            let covLabel = losslessCount == results.count ? "静态原画无损" : "高质量保留"
+                            let effTier = results.last?.effectiveTier.shortLabel ?? tier.shortLabel
+                            let a = UIAlertController(
+                                title: "已保存到相册",
+                                message: "共 \(results.count) 张实况已写入系统相册（\(covLabel) · \(effTier)）。",
+                                preferredStyle: .alert
+                            )
+                            a.addAction(UIAlertAction(title: "好的", style: .default))
+                            self.present(a, animated: true)
+                        }
+                    }
                 }
             }
-        }
-
-        group.notify(queue: .main) { [weak self] in
-            guard let self = self else { return }
-            if staticTargets.isEmpty && !liveTargets.isEmpty && !shareAfter {
-                let a = UIAlertController(title: "无需重复转换", message: "所选照片已是实况照片。", preferredStyle: .alert)
-                a.addAction(UIAlertAction(title: "好的", style: .default))
-                self.present(a, animated: true)
-                return
-            }
-            self.convertImages(images, shareAfter: shareAfter)
         }
     }
 
-    private func convertImages(_ images: [UIImage], shareAfter: Bool) {
-        guard !images.isEmpty else { return }
-        let mode = activeMode
-        let ratio = activeRatio
-        let dur = activeDuration
-        let loading = UIAlertController(title: "正在手机本地生成实况", message: "请稍候…", preferredStyle: .alert)
-        present(loading, animated: true)
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            var pairs: [LivePhotoPair] = []
-            var firstErr: Error?
-            for img in images {
-                do {
-                    let pair = try LivePhotoEngine.shared.convertAndSaveToPhotos(
-                        image: img,
-                        preset: mode,
-                        ratio: ratio,
-                        duration: dur
-                    )
-                    pairs.append(pair)
-                } catch {
-                    firstErr = error
-                    break
+    private func requestRawDatas(
+        for targets: [PHAsset],
+        completion: @escaping ([(PHAsset, Data)], [PHAsset]) -> Void
+    ) {
+        var pairs: [(Int, PHAsset, Data)] = []
+        var failed: [PHAsset] = []
+        let lock = NSLock()
+        let group = DispatchGroup()
+        for (idx, asset) in targets.enumerated() {
+            group.enter()
+            OnDeviceLivePhotoEngine.shared.requestOriginalPhotoData(for: asset) { data in
+                lock.lock()
+                if let d = data, !d.isEmpty {
+                    pairs.append((idx, asset, d))
+                } else {
+                    failed.append(asset)
                 }
+                lock.unlock()
+                group.leave()
             }
-            DispatchQueue.main.async { [weak self] in
-                loading.dismiss(animated: true) {
-                    guard let self = self else { return }
-                    if let err = firstErr {
-                        let a = UIAlertController(title: "转换失败", message: err.localizedDescription, preferredStyle: .alert)
-                        a.addAction(UIAlertAction(title: "知道了", style: .default))
-                        self.present(a, animated: true)
-                        return
-                    }
-                    self.exitSelectionTapped()
-                    self.fetchPhotoAssets()
-                    if shareAfter {
-                        let urls = pairs.flatMap { [$0.imageURL, $0.videoURL] }
-                        let ac = UIActivityViewController(activityItems: urls, applicationActivities: nil)
-                        self.present(ac, animated: true)
-                    } else {
-                        let a = UIAlertController(title: "已保存到相册", message: "共 \(pairs.count) 张实况照片已写入系统相册。", preferredStyle: .alert)
-                        a.addAction(UIAlertAction(title: "好的", style: .default))
-                        self.present(a, animated: true)
-                    }
-                }
-            }
+        }
+        group.notify(queue: .main) {
+            let sorted = pairs.sorted { $0.0 < $1.0 }.map { ($0.1, $0.2) }
+            completion(sorted, failed)
         }
     }
 

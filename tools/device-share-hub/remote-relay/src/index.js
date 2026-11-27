@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { WorkspaceRelayCore } from "./relay-core.js";
+import { materializeR2WithRange } from "./extensions.js";
 
 export * from "./relay-core.js";
 
@@ -24,7 +25,7 @@ export default {
     }
 
     let response = await forwardToWorkspace(env.WORKSPACES.getByName(workspaceId), request);
-    response = await materializeRelayResponse(response, env);
+    response = await materializeR2WithRange(response, env, request);
     console.log(JSON.stringify({ level: "info", event: "relay_request", requestId,
       method: request.method, path: url.pathname, status: response.status,
       durationMs: Date.now() - startedAt }));
@@ -44,22 +45,6 @@ async function forwardToWorkspace(workspace, request) {
     workspace.fetch(forwarded),
   ]);
   return response;
-}
-
-async function materializeRelayResponse(response, env) {
-  const key = response.headers.get("X-Relay-R2-Key");
-  if (!key) return response;
-  const object = await env.REMOTE_OBJECTS.get(key);
-  if (!object) return problem(410, "object_expired", "远程临时文件已过期");
-  return new Response(object.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(object.size),
-      "X-Cipher-Sha256": response.headers.get("X-Cipher-Sha256") || "",
-      "Cache-Control": "private, no-store",
-    },
-  });
 }
 
 export class WorkspaceRelay extends DurableObject {
@@ -92,7 +77,8 @@ function validId(value) {
 }
 
 async function workspaceIdFromJson(request) {
-  if (request.method !== "POST" || !request.headers.get("Content-Type")?.includes("application/json")) {
+  if (!["POST", "PUT", "PATCH"].includes(request.method.toUpperCase()) ||
+      !request.headers.get("Content-Type")?.includes("application/json")) {
     return null;
   }
   try {

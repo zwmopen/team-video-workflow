@@ -247,6 +247,14 @@ except ImportError:
     )
 
 try:
+    from remote_catalog_bridge import RemoteCatalogBridge
+except ImportError:
+    try:
+        from .remote_catalog_bridge import RemoteCatalogBridge  # type: ignore
+    except ImportError:
+        RemoteCatalogBridge = None  # type: ignore
+
+try:
     from PIL import Image
     HAS_PIL = True
 except ImportError:
@@ -1903,7 +1911,7 @@ def is_shelf_folder(name: str) -> bool:
             return False
     if name.endswith(("成品", "作品", "合集", "制作")):
         return True
-    if name in ("大合集素人号", "综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
+    if name in ("GPT API", "大合集素人号", "综合与其它城市", "已发送0次（抖音小红书可发）") or name.startswith("已发送0次"):
         return True
     extra = os.environ.get("DSH_EXTRA_SHELVES", "")
     if extra:
@@ -2906,6 +2914,9 @@ class WorkScanner:
             priority_topics = ["中秋", "国庆", "中秋国庆", "团建游戏"]
             categories = []
             seen_cats = set()
+            if os.path.isdir(os.path.join(self.root, "GPT API")):
+                categories.append({"name": "GPT API", "count": counts.get("GPT API", 0)})
+                seen_cats.add("GPT API")
             for topic in priority_topics:
                 if topic in counts and counts[topic] > 0:
                     categories.append({"name": topic, "count": counts[topic]})
@@ -4541,6 +4552,7 @@ def is_same_as_last_synced_clipboard(text: str) -> bool:
 class OnlineGalleryHandler(BaseHTTPRequestHandler):
     timeout = 15.0  # 15秒 socket 读写超时，防手机息屏/脱网后 socket 挂在 CLOSE_WAIT 耗尽工作线程
     scanner: WorkScanner = None
+    bridge: Any = None
     # 手机在线发现缓存（30s TTL）：面板与「顺手回读」共用，避免每次请求都全量扫网段
     phone_cache = phone_sync.DiscoverCache()
     # 「顺手回读」每台手机的冷却时间，防止手机每次轮询都触发一次同步
@@ -4955,7 +4967,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.7",
+                "version": "1.2.8",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -4975,7 +4987,16 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     "livePhoto",          # 跨端实况照片（Android Motion Photo + iOS 原生 Live Photo）
                     "autoLiveOnShare",    # 手机端「分享时静图自动转实况」开关 + 电脑端本地自动转实况
                     "liveStudio",         # 电脑端「实况图加工工坊」(/live-studio)
+                    "remoteCatalog",      # 跨网受控远程在线相册（设备证书鉴权 + 按需高清拉取）
+                    "transferStats",      # 传输通道统计与 R2 免费额度/预估成本面板
+                    "remoteEnroll",       # 局域网自动签发远程工作区设备凭证
                 ],
+                "remoteCatalogStatus": {
+                    "enabled": bool(OnlineGalleryHandler.bridge is not None),
+                    "workspaceId": OnlineGalleryHandler.bridge.workspace_id if OnlineGalleryHandler.bridge else "",
+                    "endpoint": OnlineGalleryHandler.bridge.endpoint if OnlineGalleryHandler.bridge else "",
+                    "lastError": getattr(OnlineGalleryHandler.bridge, "_last_error", "") if OnlineGalleryHandler.bridge else "",
+                },
                 "viewState": get_gallery_view_state(),
                 "liveConfig": _get_live_config_payload(),
                 "phoneSyncApi": "/api/online/sync-phone-counts",
@@ -5015,6 +5036,13 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
 
         if path == "/api/online/view-state":
             self.send_json(200, {"ok": True, **get_gallery_view_state()})
+            return
+
+        if path == "/api/online/transfer-stats":
+            if OnlineGalleryHandler.bridge is not None:
+                self.send_json(200, OnlineGalleryHandler.bridge.get_combined_transfer_stats())
+            else:
+                self.send_json(200, {"ok": False, "error": "RemoteCatalogBridge 未启动"})
             return
 
         if path == "/api/online/live-config":
@@ -5162,6 +5190,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             priority_topics = ["中秋", "国庆", "中秋国庆", "团建游戏"]
             categories = []
             seen_cats = set()
+            if os.path.isdir(os.path.join(self.scanner.root, "GPT API")):
+                categories.append({"name": "GPT API", "count": counts.get("GPT API", 0)})
+                seen_cats.add("GPT API")
             for topic in priority_topics:
                 if topic in counts and counts[topic] > 0:
                     categories.append({"name": topic, "count": counts[topic]})
@@ -5755,6 +5786,14 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                     try:
                         dt = max(time.time() - serve_t0, 1e-6)
                         mb = len(data) / 1048576.0
+                        if OnlineGalleryHandler.bridge is not None and sent_bytes > 0:
+                            OnlineGalleryHandler.bridge.stats_store.record(
+                                "lan",
+                                bytes_count=sent_bytes,
+                                objects=1,
+                                success=serve_ok,
+                                duration_ms=int(dt * 1000),
+                            )
                         print(
                             f"[Image-serve] ip={self.client_address[0]} file={os.path.basename(img_path)}"
                             f" bytes={len(data)} sent={sent_bytes} ms={int(dt*1000)}"
@@ -6410,6 +6449,27 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/online/remote-enroll":
+            if OnlineGalleryHandler.bridge is None:
+                self.send_json(503, {"ok": False, "error": "远程中继桥接未启动"})
+                return
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            try:
+                req = json.loads(raw_body) if raw_body.strip() else {}
+                enrolled = OnlineGalleryHandler.bridge.enroll_mobile_device(
+                    device_id=str(req.get("deviceId") or "").strip(),
+                    device_name=str(req.get("deviceName") or "手机相册").strip(),
+                    signing_pub_jwk=req.get("signingPublicKey"),
+                    agreement_pub_jwk=req.get("agreementPublicKey"),
+                )
+                self.send_json(200, enrolled)
+            except ValueError as ve:
+                self.send_json(400, {"ok": False, "error": str(ve)})
+            except Exception as exc:
+                self.send_json(500, {"ok": False, "error": str(exc)})
+            return
 
         if path == "/api/online/clipboard":
             content_length = int(self.headers.get("Content-Length", 0))
@@ -7863,6 +7923,94 @@ def start_clipboard_watcher(port: int = DEFAULT_PORT):
 
 _service_mutex = None
 
+def record_work_usage_event(
+    scanner: WorkScanner,
+    work_id: str,
+    device_name: str = "远程设备",
+    platform: str = "小红书/抖音",
+    version_tag: str = "",
+    force_move: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Shared work-usage recorder for LAN HTTP /api/online/use-work and Cloudflare remote catalog events."""
+    target_work = scanner.get_work(work_id)
+    if not target_work:
+        return None
+    dir_path = target_work["path"]
+    is_link = target_work.get("is_symlink", False) or is_junction_or_symlink(dir_path)
+    if is_link:
+        source_p = target_work.get("source_path") or resolve_junction_source(dir_path)
+        if source_p and os.path.isdir(source_p):
+            dir_path = source_p
+
+    tag_file = os.path.join(dir_path, "作品标签.json")
+    tag_data: Dict[str, Any] = {}
+    if os.path.exists(tag_file):
+        try:
+            with open(tag_file, "r", encoding="utf-8-sig") as fp:
+                tag_data = json.load(fp)
+        except Exception:
+            pass
+    dist = tag_data.setdefault("distribution", {})
+    current_count = int(dist.get("useCount", target_work.get("useCount", 0)))
+    new_count = current_count + 1
+    dist["useCount"] = new_count
+
+    eff_tag = version_tag or platform
+    dispatched_versions = dist.get("dispatchedVersions", [])
+    if eff_tag and eff_tag not in dispatched_versions:
+        dispatched_versions.append(eff_tag)
+    dist["dispatchedVersions"] = dispatched_versions
+
+    dispatched_list = dist.get("dispatchedTo", [])
+    record_str = f"{device_name} ({platform} @ {time.strftime('%Y-%m-%d %H:%M:%S')})"
+    if record_str not in dispatched_list:
+        dispatched_list.append(record_str)
+    dist["dispatchedTo"] = dispatched_list
+    dist["lastDispatchedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    dist["status"] = f"已使用{new_count}次"
+    dist["lastUsedAtMs"] = int(time.time() * 1000)
+
+    try:
+        atomic_write_json(tag_file, tag_data, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Warn] Failed to write tag file: {e}")
+
+    manifest_file = os.path.join(dir_path, "manifest.json")
+    if os.path.exists(manifest_file):
+        try:
+            with open(manifest_file, "r", encoding="utf-8-sig") as mfp:
+                m_data = json.load(mfp)
+            m_data["distribution"] = dist
+            m_data["used"] = True
+            atomic_write_json(manifest_file, m_data, ensure_ascii=False, indent=2)
+        except Exception as _me:
+            print(f"[Warn] Failed to sync manifest.json: {_me}")
+
+    log_file = _get_device_usage_log_file(scanner.root)
+    try:
+        exists = os.path.exists(log_file)
+        with open(log_file, "a", encoding="utf-8") as fp:
+            if not exists:
+                fp.write("时间,设备名,源作品,使用次数,平台,操作\n")
+            fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{device_name},{work_id},{new_count},{platform},手机在线直用打标\n")
+    except Exception as e:
+        print(f"[Warn] Failed to write usage log: {e}")
+
+    moved = False
+    target_dest_path = ""
+    max_u = int(target_work.get("maxUses") or 2)
+    should_move = bool(force_move or new_count >= max_u)
+    if should_move and new_count >= 1:
+        moved, target_dest_path, _ = OnlineGalleryHandler._move_work_to_stage1(None, target_work, device_name, "use_auto_dispatched") if False else (False, "", "")
+    return {
+        "target_work": target_work,
+        "dir_path": dir_path,
+        "new_count": new_count,
+        "dist": dist,
+        "should_move": should_move,
+    }
+
+
 def _acquire_service_instance_mutex():
     global _service_mutex
     if os.name == "nt":
@@ -7947,6 +8095,41 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     works = scanner.scan(force=True)
     print(f"✨ 初始加载完成，共发现 {len(works)} 套存量成品作品")
 
+    bridge = None
+    if RemoteCatalogBridge is not None:
+        try:
+            state_dir = Path(os.environ.get("LOCALAPPDATA", os.path.dirname(os.path.abspath(__file__)))) / "DeviceShareHub" / "remote_catalog"
+
+            def _bridge_get_works():
+                rev = int(getattr(scanner, "_scan_revision", 0))
+                cur = scanner.scan(force=False)
+                return rev, cur, scanner.root
+
+            def _bridge_get_thumb(work_id: str, image_name: str):
+                w_item = scanner.get_work(work_id)
+                if not w_item:
+                    return None
+                img_path = scanner.resolve_image_for_work(w_item, image_name)
+                if not img_path or not os.path.isfile(img_path):
+                    return None
+                return build_thumbnail_bytes(img_path, os.path.getmtime(img_path))
+
+            def _bridge_mark_used(work_id: str, platform: str):
+                record_work_usage_event(scanner, work_id, device_name="远程相册", platform=platform)
+                scanner.scan(force=True)
+
+            bridge = RemoteCatalogBridge(
+                state_dir=state_dir,
+                get_works_fn=_bridge_get_works,
+                get_thumb_fn=_bridge_get_thumb,
+                mark_work_used_fn=_bridge_mark_used,
+            )
+            OnlineGalleryHandler.bridge = bridge
+            bridge.start()
+            print(f"[RemoteCatalog] 已启动受控远程在线相册桥接 workspaceId={bridge.workspace_id}")
+        except Exception as _be:
+            print(f"[RemoteCatalog] 启动失败（仅影响跨网远程目录，不影响局域网）: {_be}")
+
     # DSH-110：启动文件系统轮询线程（无第三方依赖，60 秒/次）
     scanner._start_watchdog_loop()
 
@@ -7960,6 +8143,11 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
         with open(os.path.join(os.path.dirname(__file__), "crash.log"), "w", encoding="utf-8") as fp:
             fp.write(traceback.format_exc())
     finally:
+        if bridge is not None:
+            try:
+                bridge.stop()
+            except Exception:
+                pass
         scanner.stop_watchdog()
         try:
             server.shutdown()

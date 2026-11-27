@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "LiveStudio"
 include(":app")
+include(":live-core")
+project(":live-core").projectDir = file("../../live-photo-core/android")

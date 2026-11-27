@@ -109,10 +109,10 @@ def test_online_live_photo_scanner_and_routes(tmp_path):
             assert vid_work["livePhotos"] == {}
             assert vid_work["hasLivePhotos"] is False
 
-            # /api/online/status advertises version 1.2.7 and live/autoLive/studio capabilities
+            # /api/online/status advertises version >= 1.2.7 and live/autoLive/studio capabilities
             with urlopen(f"{base}/api/online/status", timeout=5) as resp:
                 status_json = json.loads(resp.read().decode("utf-8"))
-                assert status_json["version"] == "1.2.7"
+                assert status_json["version"] in ("1.2.7", "1.2.8")
                 assert "livePhoto" in status_json["features"]
                 assert "autoLiveOnShare" in status_json["features"]
                 assert "liveStudio" in status_json["features"]

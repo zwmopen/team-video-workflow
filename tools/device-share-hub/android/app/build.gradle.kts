@@ -10,8 +10,8 @@ android {
         applicationId = "com.zwm.gallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 249
-        versionName = "0.8.138"
+        versionCode = 250
+        versionName = "0.8.139"
     }
 
     signingConfigs {
@@ -54,6 +54,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":live-core"))
     testImplementation("junit:junit:4.13.2")
     // Android's platform org.json methods are not executable in local JVM tests.
     testImplementation("org.json:json:20240303")

@@ -16,6 +16,7 @@
   },
   "include": [
     "src/index.js",
-    "src/relay-core.js"
+    "src/relay-core.js",
+    "src/extensions.js"
   ]
 }
