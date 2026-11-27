@@ -66,6 +66,9 @@ final class GalleryViewController: UIViewController,
         set { UserDefaults.standard.set(newValue, forKey: "livestudio.skipExistingLive") }
     }
 
+    private let liveQuickMenu = LiveQuickMenu()
+    private let liveModeButton = UIButton(type: .system)
+    private lazy var liveModeItem = UIBarButtonItem(customView: liveModeButton)
     private let bottomBar = UIView()
     private let deleteButton = UIButton(type: .system)
     private let saveButton = UIButton(type: .system)
@@ -89,6 +92,16 @@ final class GalleryViewController: UIViewController,
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         setupLayout()
+        liveModeButton.setTitle("LIVE ▾", for: .normal)
+        liveModeButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        liveModeButton.backgroundColor = .tertiarySystemFill
+        liveModeButton.layer.cornerRadius = 14
+        liveModeButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 9, bottom: 5, right: 9)
+        liveModeButton.accessibilityLabel = "实况效果，点击或长按滑动选择"
+        liveModeButton.addTarget(self, action: #selector(showEffectPicker), for: .touchUpInside)
+        let liveHold = UILongPressGestureRecognizer(target: self, action: #selector(liveModeHeld(_:)))
+        liveHold.minimumPressDuration = 0.35
+        liveModeButton.addGestureRecognizer(liveHold)
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.30
         longPress.allowableMovement = 14
@@ -188,6 +201,7 @@ final class GalleryViewController: UIViewController,
                 target: self,
                 action: #selector(toggleSelectAllTapped)
             )
+            if let action = navigationItem.rightBarButtonItem { navigationItem.rightBarButtonItems = [action, liveModeItem] }
             bottomBar.isHidden = false
             collectionBottomToView.isActive = false
             collectionBottomToBar.isActive = true
@@ -206,6 +220,7 @@ final class GalleryViewController: UIViewController,
                 target: self,
                 action: #selector(showSettings)
             )
+            if let action = navigationItem.rightBarButtonItem { navigationItem.rightBarButtonItems = [action, liveModeItem] }
             bottomBar.isHidden = true
             collectionBottomToBar.isActive = false
             collectionBottomToView.isActive = true
@@ -478,16 +493,20 @@ final class GalleryViewController: UIViewController,
         present(alert, animated: true)
     }
 
-    private func showEffectPicker() {
-        let alert = UIAlertController(title: "实况动态效果", message: nil, preferredStyle: .actionSheet)
-        for mode in MotionPreset.allCases {
-            let mark = (mode == activeMode) ? "  ✓" : ""
-            alert.addAction(UIAlertAction(title: mode.title + mark, style: .default) { [weak self] _ in
-                self?.activeMode = mode
-            })
+    @objc private func showEffectPicker() {
+        let modes = MotionPreset.allCases
+        liveQuickMenu.show(anchor: liveModeButton, labels: modes.map { $0.title },
+                           selected: modes.firstIndex(of: activeMode) ?? 0) { [weak self] i in
+            self?.activeMode = modes[i]
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(alert, animated: true)
+    }
+
+    @objc private func liveModeHeld(_ gesture: UILongPressGestureRecognizer) {
+        let modes = MotionPreset.allCases
+        liveQuickMenu.handle(gesture, labels: modes.map { $0.title },
+                             selected: modes.firstIndex(of: activeMode) ?? 0) { [weak self] i in
+            self?.activeMode = modes[i]
+        }
     }
 
     private func showStrengthPicker() {

@@ -143,6 +143,8 @@ public final class MainActivity extends Activity {
     private TextView titleView;
     private TextView albumChip;
     private TextView rightActionBtn;
+    private TextView liveModeChip;
+    private com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private LinearLayout permissionCard;
     private TextView permissionTitle;
     private GridView gridView;
@@ -189,6 +191,7 @@ public final class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     @SuppressLint("GestureBackNavigation")
     public void onBackPressed() {
+        if (liveQuickMenu != null && liveQuickMenu.close()) return;
         if (selectionMode) {
             exitSelectionMode();
             return;
@@ -214,6 +217,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (liveQuickMenu != null) liveQuickMenu.close();
         mainHandler.removeCallbacks(autoScrollRunnable);
         ioExecutor.shutdownNow();
         thumbExecutor.shutdownNow();
@@ -259,6 +263,15 @@ public final class MainActivity extends Activity {
         topBar.addView(albumChip, new LinearLayout.LayoutParams(-2, -2));
 
         topBar.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+
+        liveModeChip = chipButton("LIVE ▾");
+        liveModeChip.setContentDescription("实况效果，点击或长按滑动选择");
+        liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
+        liveModeChip.setOnClickListener(v -> showEffectPickerDialog());
+        liveQuickMenu.attach(liveModeChip, this::showEffectPickerDialog);
+        LinearLayout.LayoutParams liveChipLp = new LinearLayout.LayoutParams(-2, -2);
+        liveChipLp.setMargins(dp(4), 0, dp(4), 0);
+        topBar.addView(liveModeChip, liveChipLp);
 
         rightActionBtn = chipButton("设置");
         rightActionBtn.setOnClickListener(v -> {
@@ -1187,28 +1200,24 @@ public final class MainActivity extends Activity {
     }
 
     private void showEffectPickerDialog() {
-        String[] titles = new String[MotionPreset.PRESETS.length];
+        if (liveQuickMenu == null || liveModeChip == null) return;
+        String[] labels = new String[MotionPreset.PRESETS.length];
         String curMode = currentMode();
         int checked = 0;
-        for (int i = 0; i < MotionPreset.PRESETS.length; i++) {
+        for (int i=0;i<labels.length;i++) {
+            labels[i] = MotionPreset.PRESETS[i].title;
             if (MotionPreset.PRESETS[i].id.equals(curMode)) checked = i;
-            titles[i] = MotionPreset.PRESETS[i].title + "\n" + MotionPreset.PRESETS[i].desc;
         }
-        new AlertDialog.Builder(this)
-                .setTitle("实况动态效果")
-                .setSingleChoiceItems(titles, checked, (d, which) -> {
-                    String selected = MotionPreset.PRESETS[which].id;
-                    android.content.SharedPreferences.Editor editor = prefs().edit().putString(KEY_MODE, selected);
-                    if (!curMode.equals(selected) && ("handheld_push_drift_v1".equals(selected) || "handheld_push_drift_v1".equals(curMode))) {
-                        editor.putFloat(KEY_RATIO, "handheld_push_drift_v1".equals(selected) ? 1.116f : MotionPreset.DEFAULT_RATIO)
-                              .putFloat(KEY_DURATION, "handheld_push_drift_v1".equals(selected) ? 2.0f : MotionPreset.DEFAULT_DURATION_SEC);
-                    }
-                    editor.apply();
-                    toast("已设为：" + MotionPreset.PRESETS[which].title);
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(liveModeChip, labels, checked, which -> {
+            String selected = MotionPreset.PRESETS[which].id;
+            android.content.SharedPreferences.Editor editor = prefs().edit().putString(KEY_MODE, selected);
+            if (!curMode.equals(selected) && ("handheld_push_drift_v1".equals(selected) || "handheld_push_drift_v1".equals(curMode))) {
+                editor.putFloat(KEY_RATIO, "handheld_push_drift_v1".equals(selected) ? 1.116f : MotionPreset.DEFAULT_RATIO)
+                      .putFloat(KEY_DURATION, "handheld_push_drift_v1".equals(selected) ? 2.0f : MotionPreset.DEFAULT_DURATION_SEC);
+            }
+            editor.apply();
+            toast("已设为：" + MotionPreset.PRESETS[which].title);
+        });
     }
 
     private void showStrengthDialog() {

@@ -177,6 +177,7 @@ public final class MainActivity extends Activity {
     private LinearLayout statusRow;
     private TextView statusText;
     private TextView liveStatusPill;
+    private com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private LinearLayout collapsibleHeader;
     private int collapsibleHeaderExpandedHeight = 0;
     private boolean workHeaderCollapsed = false;
@@ -415,6 +416,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (liveQuickMenu != null) liveQuickMenu.close();
         if (workHeaderAnimator != null) {
             workHeaderAnimator.cancel();
             workHeaderAnimator = null;
@@ -432,6 +434,7 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (liveQuickMenu != null && liveQuickMenu.close()) return;
         if (activeSourceMode == SOURCE_GALLERY) {
             if (phoneGalleryPane != null && phoneGalleryPane.handleBack()) return;
             switchToLocalMode();
@@ -821,10 +824,8 @@ public final class MainActivity extends Activity {
                     ? ("已开启分享自动转实况 · " + OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(MainActivity.this)))
                     : "已关闭分享自动转实况（将按原静图分享）");
         });
-        liveStatusPill.setOnLongClickListener(v -> {
-            showQuickLiveModeDialog();
-            return true;
-        });
+        if (liveQuickMenu == null) liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
+        liveQuickMenu.attach(liveStatusPill, this::showQuickLiveModeDialog);
 
         statusRow = new LinearLayout(this);
         statusRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -983,23 +984,26 @@ public final class MainActivity extends Activity {
 
     private void showQuickLiveModeDialog() {
         String curMode = OnlineService.getAutoLiveMotionMode(this);
-        int checked = 0;
-        String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length];
+        int checked = OnlineService.isAutoLiveOnShareEnabled(this) ? -1 : 0;
+        String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length + 1];
+        labels[0] = "关闭自动实况";
         for (int i = 0; i < OnlineService.AUTO_LIVE_MODE_IDS.length; i++) {
-            if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(curMode)) checked = i;
-            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i] + "\n" + OnlineService.AUTO_LIVE_MODE_DESCS[i];
+            if (OnlineService.isAutoLiveOnShareEnabled(this) && OnlineService.AUTO_LIVE_MODE_IDS[i].equals(curMode)) checked = i + 1;
+            labels[i + 1] = OnlineService.AUTO_LIVE_MODE_TITLES[i];
         }
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("选择分享自动转实况效果")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    OnlineService.setAutoLiveMotionMode(this, OnlineService.AUTO_LIVE_MODE_IDS[which]);
-                    OnlineService.setAutoLiveOnShareEnabled(this, true);
-                    refreshWorkLiveBadge();
-                    toast("已启用：" + OnlineService.AUTO_LIVE_MODE_TITLES[which]);
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(liveStatusPill, labels, checked, which -> {
+            if (which == 0) {
+                OnlineService.setAutoLiveOnShareEnabled(this, false);
+                refreshWorkLiveBadge();
+                toast("已关闭分享自动转实况");
+                return;
+            }
+            String chosen = OnlineService.AUTO_LIVE_MODE_IDS[which - 1];
+            OnlineService.setAutoLiveMotionMode(this, chosen);
+            OnlineService.setAutoLiveOnShareEnabled(this, true);
+            refreshWorkLiveBadge();
+            toast("已启用：" + OnlineService.getAutoLiveMotionTitle(chosen));
+        });
     }
 
     private void handleWorkScrollHeader(int scrollY, int oldScrollY) {

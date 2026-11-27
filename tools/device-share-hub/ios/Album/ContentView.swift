@@ -57,6 +57,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var filterButtons: [String: UIButton] = [:]
     private let onlineStatusLabel = UILabel()
     private let liveStatusButton = UIButton(type: .system)
+    private let liveQuickMenu = LiveQuickMenu()
     private let searchRowContainer = UIView()
     private var filterTopConstraint: NSLayoutConstraint!
     private var filterHeightConstraint: NSLayoutConstraint!
@@ -703,7 +704,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         liveStatusButton.translatesAutoresizingMaskIntoConstraints = false
         liveStatusButton.titleLabel?.font = .systemFont(ofSize: 11.5, weight: .bold)
-        liveStatusButton.layer.cornerRadius = 8
+        liveStatusButton.layer.cornerRadius = 14
         liveStatusButton.clipsToBounds = true
         liveStatusButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
         liveStatusButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -791,25 +792,23 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func liveStatusLongPressed(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began else { return }
-        if #available(iOS 10.0, *) { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-        let sheet = UIAlertController(title: "选择分享自动转实况效果", message: nil, preferredStyle: .actionSheet)
-        let cur = AutoLivePreferences.motionMode
-        for mode in AutoLiveMotionMode.allCases {
-            let label = mode.title + (mode == cur && AutoLivePreferences.isEnabled ? "  ✓" : "")
-            sheet.addAction(UIAlertAction(title: label, style: .default) { [weak self] _ in
-                AutoLivePreferences.motionMode = mode
-                AutoLivePreferences.isEnabled = true
-                self?.updateLiveStatusButton()
-                self?.showToast("已启用：\(mode.title)")
-            })
+        let modes = AutoLiveMotionMode.allCases
+        let labels = ["关闭自动实况"] + modes.map { $0.title }
+        let selected = AutoLivePreferences.isEnabled ? (modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) + 1 : 0
+        liveQuickMenu.handle(gesture, labels: labels, selected: selected) { [weak self] index in
+            guard let self = self else { return }
+            if index == 0 {
+                AutoLivePreferences.isEnabled = false
+                self.updateLiveStatusButton()
+                self.showToast("已关闭分享自动转实况")
+                return
+            }
+            let mode = modes[index - 1]
+            AutoLivePreferences.motionMode = mode
+            AutoLivePreferences.isEnabled = true
+            self.updateLiveStatusButton()
+            self.showToast("已启用：\(mode.title)")
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = sheet.popoverPresentationController {
-            pop.sourceView = liveStatusButton
-            pop.sourceRect = liveStatusButton.bounds
-        }
-        present(sheet, animated: true)
     }
 
     private func updateOnlineStatusHint() {
