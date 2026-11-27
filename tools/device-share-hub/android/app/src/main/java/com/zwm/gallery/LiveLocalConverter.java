@@ -52,6 +52,14 @@ public final class LiveLocalConverter {
         return convertUriDetailed(context, sourceUri, modeId, tier, ratio, durationSec, index, skipExistingLive).outputUri;
     }
 
+    public static LiveConvertResult saveExternalMotionPhoto(
+            Context context,
+            byte[] motionPhotoBytes,
+            int index
+    ) throws IOException {
+        return LiveMotionPhotoConverter.savePackedMotionPhotoToGallery(context, motionPhotoBytes, index);
+    }
+
     public static LiveConvertResult convertFileToFileDetailed(
             Context context,
             File sourceFile,

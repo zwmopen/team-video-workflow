@@ -640,6 +640,275 @@ def set_gallery_view_state(view_mode: str, updated_by: str = "unknown") -> Dict[
 _LIVE_STUDIO_LOCK = threading.Lock()
 _LIVE_STUDIO_JOBS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _LIVE_STUDIO_JOB_LIMIT = 30
+_LIVE_ENGINE_CACHE_LOCK = threading.Lock()
+_LIVE_ENGINE_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+
+
+def _zhipu_key_file_path() -> Path:
+    local_app = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    return Path(local_app) / "zwm-device-share-hub" / "zhipu_api_key.txt"
+
+
+def _get_zhipu_api_key() -> str:
+    env_key = os.environ.get("ZHIPUAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    p = _zhipu_key_file_path()
+    try:
+        if p.is_file():
+            return p.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _save_zhipu_api_key(raw_key: str) -> None:
+    cleaned = (raw_key or "").strip()
+    p = _zhipu_key_file_path()
+    if not cleaned:
+        try:
+            if p.exists():
+                p.unlink()
+        except OSError:
+            pass
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(cleaned, encoding="utf-8")
+    with _LIVE_ENGINE_CACHE_LOCK:
+        _LIVE_ENGINE_CACHE["ts"] = 0.0
+        _LIVE_ENGINE_CACHE["data"] = None
+
+
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "*" * len(key)
+    return key[:4] + "..." + key[-4:]
+
+
+def _load_live_lab():
+    lab_dir = Path(__file__).resolve().parents[2] / "live-studio-app" / "experiments" / "live_lab"
+    if lab_dir.is_dir() and str(lab_dir) not in sys.path:
+        sys.path.insert(0, str(lab_dir))
+    import live_lab  # type: ignore
+    return live_lab
+
+
+def _find_gflow_executable() -> Optional[str]:
+    for candidate in (
+        shutil.which("gflow"),
+        os.path.join(os.path.expanduser("~"), ".local", "bin", "gflow.EXE"),
+        os.path.join(os.path.expanduser("~"), ".local", "bin", "gflow.exe"),
+        os.path.join(os.path.expanduser("~"), ".local", "bin", "gflow"),
+    ):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _gflow_subprocess_env() -> Dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    if not (env.get("GFLOW_CLI_BROWSER_PROXY") or env.get("HTTPS_PROXY") or env.get("HTTP_PROXY")):
+        default_proxy = "http://127.0.0.1:17897"
+        env["GFLOW_CLI_BROWSER_PROXY"] = default_proxy
+        env["HTTP_PROXY"] = default_proxy
+        env["HTTPS_PROXY"] = default_proxy
+    return env
+
+
+def _probe_live_engines(force: bool = False) -> Dict[str, Any]:
+    now = time.monotonic()
+    with _LIVE_ENGINE_CACHE_LOCK:
+        cached = _LIVE_ENGINE_CACHE.get("data")
+        ttl = 300.0 if (cached and cached.get("google_flow", {}).get("ready")) else 60.0
+        if not force and cached is not None and (now - float(_LIVE_ENGINE_CACHE.get("ts") or 0.0)) < ttl:
+            return dict(cached)
+
+    zhipu_key = _get_zhipu_api_key()
+    zhipu_info: Dict[str, Any] = {
+        "ready": bool(zhipu_key),
+        "hasKey": bool(zhipu_key),
+        "model": "cogvideox-flash",
+        "keyMasked": _mask_key(zhipu_key),
+    }
+
+    gflow_cmd = _find_gflow_executable()
+    flow_info: Dict[str, Any] = {
+        "ready": False,
+        "installed": bool(gflow_cmd),
+        "command": gflow_cmd or "",
+        "credits": None,
+        "reason": "未安装 gflow CLI" if not gflow_cmd else "",
+    }
+    if gflow_cmd:
+        try:
+            proc = subprocess.run(
+                [gflow_cmd, "credits", "list"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=_gflow_subprocess_env(),
+                timeout=30,
+                check=False,
+            )
+            combined = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+            m = re.search(r"Total credits:\s*(\d+)", combined)
+            if proc.returncode == 0 and m:
+                credits = int(m.group(1))
+                flow_info["credits"] = credits
+                flow_info["ready"] = credits > 0
+                flow_info["reason"] = "" if credits > 0 else "Google Flow 积分为 0"
+            else:
+                auth_proc = subprocess.run(
+                    [gflow_cmd, "auth", "status"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=_gflow_subprocess_env(),
+                    timeout=30,
+                    check=False,
+                )
+                auth_out = ((auth_proc.stdout or "") + " " + (auth_proc.stderr or "")).lower()
+                if auth_proc.returncode == 0 and "not" not in auth_out and "expired" not in auth_out:
+                    flow_info["ready"] = True
+                    flow_info["reason"] = ""
+                else:
+                    flow_info["reason"] = (combined or auth_out or "Google Flow 未登录或网络不可达")[:160]
+        except Exception as exc:
+            flow_info["reason"] = str(exc)[:160]
+
+    result = {
+        "local": {"ready": True},
+        "zhipu": zhipu_info,
+        "google_flow": flow_info,
+    }
+    with _LIVE_ENGINE_CACHE_LOCK:
+        _LIVE_ENGINE_CACHE["ts"] = now
+        _LIVE_ENGINE_CACHE["data"] = result
+    return dict(result)
+
+
+class _UrllibZhipuVideos:
+    """Zero-dependency fallback when zhipuai SDK package is absent."""
+
+    def __init__(self, api_key: str, timeout: int = 25):
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def _req(self, url: str, body: Optional[Dict[str, Any]] = None) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST" if data is not None else "GET",
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def generations(self, model: str, image_url: str, prompt: str):
+        obj = self._req(
+            "https://open.bigmodel.cn/api/paas/v4/videos/generations",
+            {"model": model, "image_url": image_url, "prompt": prompt},
+        )
+        return type("Task", (), {"id": obj.get("id")})()
+
+    def retrieve_videos_result(self, id: str):
+        obj = self._req(f"https://open.bigmodel.cn/api/paas/v4/async-result/{id}")
+        vids = [type("Vid", (), {"url": v.get("url", "")})() for v in (obj.get("video_result") or []) if isinstance(v, dict)]
+        return type("Res", (), {"task_status": obj.get("task_status", ""), "video_result": vids})()
+
+
+def _normalize_ai_clip_mp4(raw_mp4: Path, out_mp4: Path, target_duration: float = 2.2) -> Path:
+    ffmpeg_bin = motion_photo.find_ffmpeg() if motion_photo else shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        shutil.copyfile(raw_mp4, out_mp4)
+        return out_mp4
+    dur = max(1.2, min(3.0, float(target_duration or 2.2)))
+    subprocess.run(
+        [
+            ffmpeg_bin,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(raw_mp4),
+            "-t",
+            f"{dur:.2f}",
+            "-an",
+            "-vf",
+            "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(out_mp4),
+        ],
+        check=True,
+        timeout=90,
+    )
+    return out_mp4
+
+
+def _run_gflow_i2v(in_path: Path, out_mp4: Path, aspect: str, prompt: str, timeout: int = 180) -> Path:
+    gflow_cmd = _find_gflow_executable()
+    if not gflow_cmd:
+        raise RuntimeError("电脑端未安装 gflow CLI")
+    proc = subprocess.run(
+        [
+            gflow_cmd,
+            "video",
+            "i2v",
+            prompt,
+            "--initial-frame",
+            str(in_path),
+            "--aspect",
+            aspect,
+            "--out-file",
+            str(out_mp4),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=_gflow_subprocess_env(),
+        timeout=timeout,
+        check=False,
+    )
+    if proc.returncode != 0 or not out_mp4.is_file() or out_mp4.stat().st_size < 1024:
+        err_msg = ((proc.stderr or "") or (proc.stdout or "")).strip() or f"gflow exit {proc.returncode}"
+        raise RuntimeError(err_msg[:200])
+    return out_mp4
+
+
+def _run_zhipu_i2v(raw_bytes: bytes, ext: str, out_mp4: Path, prompt: str, timeout: int = 180) -> Path:
+    api_key = _get_zhipu_api_key()
+    if not api_key:
+        raise RuntimeError("尚未配置智谱 API Key")
+    lab = _load_live_lab()
+    mime = "image/png" if ext.lower() == ".png" else "image/jpeg"
+    data_url = f"data:{mime};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
+    try:
+        from zhipuai import ZhipuAI  # type: ignore
+        client = ZhipuAI(api_key=api_key, timeout=20, max_retries=0)
+    except ImportError:
+        client = type("FallbackClient", (), {"videos": _UrllibZhipuVideos(api_key)})()
+    video_url = lab.request_zhipu(data_url, prompt, allow_network=True, client=client, timeout=timeout, poll=4)
+    req = urllib.request.Request(video_url, headers={"User-Agent": "DeviceShareHub/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        out_mp4.write_bytes(resp.read())
+    return out_mp4
 
 
 def _get_live_config_payload() -> Dict[str, Any]:
@@ -5052,6 +5321,11 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, **_get_live_config_payload()})
             return
 
+        if path == "/api/online/live-engine-status":
+            force = query.get("refresh", [""])[0] in ("1", "true", "yes")
+            self.send_json(200, {"ok": True, "engines": _probe_live_engines(force=force)})
+            return
+
         if path == "/api/online/live-export":
             return self._handle_live_export_get(query)
 
@@ -6701,6 +6975,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/api/online/live-config":
             return self._handle_live_config_post()
 
+        if path == "/api/online/live-engine-config":
+            return self._handle_live_engine_config_post()
+
+        if path == "/api/online/live-generate":
+            return self._handle_live_generate_post()
+
         if path == "/api/online/live-process":
             return self._handle_live_process_post()
 
@@ -7504,6 +7784,110 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
         motion_photo.save_live_config(req)
         self.send_json(200, {"ok": True, **_get_live_config_payload()})
+
+    def _is_trusted_lan_client(self) -> bool:
+        try:
+            host = (self.client_address[0] if self.client_address else "").strip()
+            if not host:
+                return False
+            if host in ("127.0.0.1", "::1", "localhost"):
+                return True
+            import ipaddress
+            ip = ipaddress.ip_address(host)
+            return ip.is_loopback or ip.is_private
+        except Exception:
+            return False
+
+    def _handle_live_engine_config_post(self) -> None:
+        if not self._is_trusted_lan_client():
+            self.send_json(403, {"ok": False, "error": "仅允许本机或局域网受信任设备修改引擎凭证"})
+            return
+        req = self._read_json_body()
+        if req is None:
+            return
+        if "zhipuApiKey" in req:
+            _save_zhipu_api_key(str(req.get("zhipuApiKey") or ""))
+        self.send_json(200, {"ok": True, "engines": _probe_live_engines(force=True)})
+
+    def _handle_live_generate_post(self) -> None:
+        if motion_photo is None:
+            self.send_json(200, {"ok": False, "fallback": "local", "reason": "motion_photo 模块未加载"})
+            return
+        req = self._read_json_body()
+        if req is None:
+            return
+        engine = str(req.get("engine") or "").strip().lower()
+        if engine not in ("flow_first", "zhipu_first"):
+            self.send_json(200, {"ok": False, "fallback": "local", "reason": "当前偏好为本地处理"})
+            return
+        b64_data = str(req.get("imageBase64") or "").strip()
+        if not b64_data:
+            self.send_json(400, {"ok": False, "fallback": "local", "reason": "缺少图片数据"})
+            return
+        try:
+            raw_bytes = base64.b64decode(b64_data, validate=False)
+        except Exception:
+            self.send_json(400, {"ok": False, "fallback": "local", "reason": "图片 Base64 解码失败"})
+            return
+        if not raw_bytes or len(raw_bytes) > 25 * 1024 * 1024:
+            self.send_json(400, {"ok": False, "fallback": "local", "reason": "图片大小超过 25 MB 限制"})
+            return
+
+        lab = _load_live_lab()
+        prompt = str(req.get("prompt") or "").strip() or lab.DEFAULT_LIVE_PROMPT
+        raw_name = os.path.basename(str(req.get("name") or "photo.jpg"))
+        ext = os.path.splitext(raw_name)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png"):
+            ext = ".jpg"
+        try:
+            duration = float(req.get("duration") or 2.2)
+        except Exception:
+            duration = 2.2
+
+        with tempfile.TemporaryDirectory(prefix="zwm_live_ai_") as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            in_path = tmpdir / f"cover{ext}"
+            in_path.write_bytes(raw_bytes)
+
+            # Convert PNG to clean JPEG cover if needed for lossless Motion Photo embedding
+            cover_path = in_path
+            aspect = "9:16"
+            try:
+                from PIL import Image  # type: ignore
+                with Image.open(in_path) as im:
+                    aspect = "9:16" if im.height >= im.width else "16:9"
+                    if ext == ".png":
+                        cover_path = tmpdir / "cover_conv.jpg"
+                        im.convert("RGB").save(cover_path, format="JPEG", quality=98)
+            except Exception:
+                pass
+
+            raw_mp4 = tmpdir / "raw_ai.mp4"
+            norm_mp4 = tmpdir / "norm_ai.mp4"
+            motion_out = tmpdir / "motion.jpg"
+            try:
+                if engine == "flow_first":
+                    _run_gflow_i2v(cover_path, raw_mp4, aspect=aspect, prompt=prompt)
+                    provider = "google_flow"
+                else:
+                    _run_zhipu_i2v(raw_bytes, ext, raw_mp4, prompt=prompt)
+                    provider = "zhipu"
+                _normalize_ai_clip_mp4(raw_mp4, norm_mp4, target_duration=duration)
+                lab.wrap_external_video_with_cover(cover_path, norm_mp4, motion_out)
+                motion_b64 = base64.b64encode(motion_out.read_bytes()).decode("ascii")
+                mp4_b64 = base64.b64encode(norm_mp4.read_bytes()).decode("ascii")
+                self.send_json(200, {
+                    "ok": True,
+                    "provider": provider,
+                    "motionJpegBase64": motion_b64,
+                    "mp4Base64": mp4_b64,
+                })
+            except Exception as exc:
+                self.send_json(200, {
+                    "ok": False,
+                    "fallback": "local",
+                    "reason": str(exc)[:200],
+                })
 
     def _handle_live_process_post(self) -> None:
         if motion_photo is None:

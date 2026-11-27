@@ -38,11 +38,7 @@ public final class LiveQuickMenu {
     private float downX, downY;
     private boolean tracking, held, moved;
     private int highlighted = -1, current = -1;
-    private final Runnable hold = () -> {
-        if (!tracking || anchor == null || !anchor.isAttachedToWindow()) return;
-        held = true;
-        anchor.performLongClick();
-    };
+    private Runnable activeHold;
 
     public LiveQuickMenu(Activity activity) { this.activity = activity; }
     private int dp(float value) { return Math.round(value * activity.getResources().getDisplayMetrics().density); }
@@ -63,9 +59,23 @@ public final class LiveQuickMenu {
         if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(false);
     }
 
+    /** Opens menu immediately on tap AND tracks continuous slide when held and dragged. */
+    public void attachTapAndHold(View target, Runnable open) {
+        if (target == null || open == null) return;
+        target.setOnClickListener(v -> {
+            if (!isOpen()) open.run();
+        });
+        attach(target, open);
+    }
+
     /** The anchor keeps its ordinary click and accessibility long-click actions. */
     public void attach(View target, Runnable open) {
-        anchor = target;
+        final Runnable localHold = () -> {
+            if (!tracking || !target.isAttachedToWindow()) return;
+            held = true;
+            if (target.getParent() != null) target.getParent().requestDisallowInterceptTouchEvent(true);
+            target.performLongClick();
+        };
         target.setOnLongClickListener(v -> {
             if (!isOpen()) {
                 v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -77,25 +87,28 @@ public final class LiveQuickMenu {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     close();
+                    anchor = target;
+                    if (activeHold != null) handler.removeCallbacks(activeHold);
+                    activeHold = localHold;
                     downX = event.getRawX(); downY = event.getRawY();
                     tracking = true; held = false; moved = false;
                     v.setPressed(true);
-                    if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
-                    handler.postDelayed(hold, 350);
+                    handler.postDelayed(localHold, 350);
                     return true;
                 case MotionEvent.ACTION_MOVE:
-                    if (!tracking) return true;
+                    if (!tracking) return false;
                     float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
                     if (!held && Math.hypot(dx, dy) > ViewConfiguration.get(activity).getScaledTouchSlop()) {
-                        handler.removeCallbacks(hold);
+                        handler.removeCallbacks(localHold);
                         tracking = false; v.setPressed(false); releaseParent(v);
+                        return false;
                     } else if (held && isOpen()) {
                         if (Math.hypot(dx, dy) > dp(8)) moved = true;
                         if (moved) updateHighlight(event.getRawX(), event.getRawY());
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
-                    handler.removeCallbacks(hold);
+                    handler.removeCallbacks(localHold);
                     v.setPressed(false); releaseParent(v);
                     if (tracking) {
                         if (held && isOpen() && moved) {
@@ -108,16 +121,16 @@ public final class LiveQuickMenu {
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                 case MotionEvent.ACTION_POINTER_DOWN:
-                    handler.removeCallbacks(hold);
+                    handler.removeCallbacks(localHold);
                     tracking = false; v.setPressed(false); releaseParent(v);
-                    close(); return true;
-                default: return true;
+                    close(); return false;
+                default: return false;
             }
         });
         target.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override public void onViewAttachedToWindow(View v) {}
             @Override public void onViewDetachedFromWindow(View v) {
-                handler.removeCallbacks(hold); tracking = false; close();
+                handler.removeCallbacks(localHold); tracking = false; close();
             }
         });
     }

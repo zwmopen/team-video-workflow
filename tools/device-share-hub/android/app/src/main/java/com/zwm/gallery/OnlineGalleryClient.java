@@ -174,6 +174,17 @@ public final class OnlineGalleryClient {
         }
     }
 
+    private static volatile OnlineGalleryClient instance;
+
+    public static synchronized OnlineGalleryClient getInstance(Context context) {
+        if (instance == null) {
+            instance = new OnlineGalleryClient(context);
+        }
+        return instance;
+    }
+
+    private volatile RemoteRelayProfile.TransportStrategy lastResolvedStrategy = null;
+
     public OnlineGalleryClient(Context context) {
         this.context = context.getApplicationContext();
         // DSH-194：缩略图按「实际显示长边像素」向服务端要图。
@@ -200,10 +211,23 @@ public final class OnlineGalleryClient {
      * 4) 回环 127.0.0.1（最后兜底，只有 ADB reverse 隧道才有效）
      */
     public String resolveBaseUrl() {
+        RemoteRelayProfile.TransportStrategy strategy = RemoteRelayProfile.getStrategy(context);
+        if (strategy != lastResolvedStrategy) {
+            lastResolvedStrategy = strategy;
+            cachedBaseUrl = null;
+        }
         if (cachedBaseUrl != null && !cachedBaseUrl.isEmpty()) {
             return cachedBaseUrl;
         }
+        if (strategy == RemoteRelayProfile.TransportStrategy.USB_FIRST) {
+            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+            cachedBaseUrl = loopback;
+            return loopback;
+        }
+        return resolveLanBaseUrl();
+    }
 
+    private String resolveLanBaseUrl() {
         SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
 
         // 1) 用户在设置里手填的地址：优先级最高，明确表达意图
@@ -238,6 +262,30 @@ public final class OnlineGalleryClient {
         String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
         cachedBaseUrl = loopback;
         return loopback;
+    }
+
+    public boolean shouldTryRemoteFirst() {
+        return RemoteRelayProfile.getStrategy(context) == RemoteRelayProfile.TransportStrategy.R2_FIRST
+                && RemoteRelayProfile.isEnrolled(context);
+    }
+
+    private static List<OnlineWorkEntry> filterRemoteWorks(List<OnlineWorkEntry> works, String category, String query) {
+        if (works == null) return Collections.emptyList();
+        boolean hasCat = category != null && !category.trim().isEmpty();
+        boolean hasQuery = query != null && !query.trim().isEmpty();
+        if (!hasCat && !hasQuery) return works;
+        String qLower = hasQuery ? query.trim().toLowerCase(java.util.Locale.ROOT) : "";
+        List<OnlineWorkEntry> out = new ArrayList<>();
+        for (OnlineWorkEntry w : works) {
+            if (hasCat && !category.equals(w.destination)) continue;
+            if (hasQuery) {
+                String haystack = ((w.title == null ? "" : w.title) + " " + (w.copyText == null ? "" : w.copyText) + " " + (w.destination == null ? "" : w.destination))
+                        .toLowerCase(java.util.Locale.ROOT);
+                if (!haystack.contains(qLower)) continue;
+            }
+            out.add(w);
+        }
+        return out;
     }
 
     /** 自动发现或信标命中的地址（非用户手填，允许被更新的信标覆盖） */
@@ -305,10 +353,15 @@ public final class OnlineGalleryClient {
         executor.execute(() -> {
             SharedPreferences prefs = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
             java.util.LinkedHashSet<String> candidates = new java.util.LinkedHashSet<>();
+            if (RemoteRelayProfile.getStrategy(context) == RemoteRelayProfile.TransportStrategy.USB_FIRST) {
+                candidates.add("http://127.0.0.1:" + DEFAULT_PC_PORT);
+            }
             candidates.add(resolveBaseUrl());
 
             String beacon = prefs.getString("beaconPcServerUrl", "").trim();
             if (!beacon.isEmpty()) candidates.add(beacon);
+            String customUrl = prefs.getString("customPcServerUrl", "").trim();
+            if (!customUrl.isEmpty()) candidates.add(customUrl);
             String lastGood = prefs.getString("lastGoodPcServerUrl", "").trim();
             if (!lastGood.isEmpty()) candidates.add(lastGood);
             candidates.add("http://127.0.0.1:" + DEFAULT_PC_PORT);
@@ -845,6 +898,19 @@ public final class OnlineGalleryClient {
         final long queuedAt = SystemClock.elapsedRealtime();
         executor.execute(() -> {
             final long startedAt = SystemClock.elapsedRealtime();
+            if (shouldTryRemoteFirst()) {
+                try {
+                    fetchRemoteCatalogSnapshot();
+                    CategoriesResult cached = lastRemoteCategoriesResult;
+                    if (cached != null) {
+                        remoteCatalogActive = true;
+                        CategoriesResult finalCat = cached;
+                        mainHandler.post(() -> callback.onSuccess(finalCat));
+                        return;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
             try {
                 String baseUrl = resolveBaseUrl();
                 URL url = new URL(baseUrl + "/api/online/categories" + (refresh ? "?refresh=1" : ""));
@@ -896,6 +962,16 @@ public final class OnlineGalleryClient {
         final long queuedAt = SystemClock.elapsedRealtime();
         executor.execute(() -> {
             final long startedAt = SystemClock.elapsedRealtime();
+            if (shouldTryRemoteFirst()) {
+                try {
+                    List<OnlineWorkEntry> remoteList = filterRemoteWorks(fetchRemoteCatalogSnapshot(), category, query);
+                    remoteCatalogActive = true;
+                    mainHandler.post(() -> callback.onSuccess(remoteList));
+                    return;
+                } catch (Exception remoteErr) {
+                    Log.w(TAG, "R2_FIRST fetchWorks failed, falling back to LAN: " + remoteErr.getMessage());
+                }
+            }
             try {
                 String baseUrl = resolveBaseUrl();
                 StringBuilder sb = new StringBuilder(baseUrl).append("/api/online/works?");
@@ -1083,7 +1159,35 @@ public final class OnlineGalleryClient {
      * - 返回 boolean：true = 磁盘缓存已就绪，false = 失败（已 Log.w + DiagnosticLog 双写）
      * - 错误路径必须 Log.w（堆栈）+ DiagnosticLog.write（持久化）双写
      */
+    private boolean downloadThumbViaRemoteRelay(String workId, String fileName, File diskFile) {
+        if (fileName != null && fileName.startsWith("__src__:")) return false;
+        File tempFile = new File(diskFile.getParentFile(), diskFile.getName() + ".r2.tmp");
+        try {
+            RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+            String thumbKey = catalogThumbKey(workId, fileName);
+            byte[] jpg = RemoteRelayClient.downloadCatalogThumb(session, thumbKey);
+            if (jpg != null && jpg.length > 0 && jpg.length <= THUMB_MAX_BYTES) {
+                File dir = tempFile.getParentFile();
+                if (dir != null && !dir.exists()) dir.mkdirs();
+                try (FileOutputStream out = new FileOutputStream(tempFile)) {
+                    out.write(jpg);
+                    out.flush();
+                }
+                if (diskFile.exists()) diskFile.delete();
+                if (tempFile.renameTo(diskFile)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+            if (tempFile.exists()) tempFile.delete();
+        }
+        return false;
+    }
+
     private boolean downloadThumb(String workId, String fileName, File diskFile) throws Exception {
+        if (shouldTryRemoteFirst() && downloadThumbViaRemoteRelay(workId, fileName, diskFile)) {
+            return true;
+        }
         HttpURLConnection conn = null;
         File tempFile = new File(diskFile.getParentFile(), diskFile.getName() + ".tmp");
         try {
@@ -1268,7 +1372,27 @@ public final class OnlineGalleryClient {
                 } catch (Throwable ignored) {}
             }
 
-            // 2. 本地无缓存或损坏，从电脑在线服务拉取并原子安全落盘
+            // 2. 本地无缓存或损坏，优先按传输策略拉取并原子安全落盘
+            if (shouldTryRemoteFirst()) {
+                try {
+                    RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                    RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, diskFile);
+                    TransferStatsStore.record(context, "r2", diskFile.length(), 1);
+                    BitmapFactory.Options opts = new BitmapFactory.Options();
+                    opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                    Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
+                    if (bmp != null) {
+                        if (callback instanceof ProgressCallback) {
+                            mainHandler.post(() -> ((ProgressCallback<Bitmap>) callback).onProgress(100));
+                        }
+                        mainHandler.post(() -> callback.onSuccess(bmp));
+                        return;
+                    }
+                } catch (Exception remoteErr) {
+                    Log.w(TAG, "R2_FIRST full image failed, falling back to LAN: " + remoteErr.getMessage());
+                }
+            }
+
             HttpURLConnection conn = null;
             File tempFile = new File(cacheDir, getDiskCacheKey(workId, fileName) + ".tmp");
             try {
@@ -1357,6 +1481,17 @@ public final class OnlineGalleryClient {
 
     public void recordUse(String workId, String deviceName, String platform, long retentionDurationMs, String versionTag, Callback<UseResult> callback) {
         executor.execute(() -> {
+            if (shouldTryRemoteFirst()) {
+                try {
+                    RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                    RemoteRelayClient.recordCatalogWorkUsed(session, workId);
+                    UseResult res = new UseResult(true, workId, 1, 1, false,
+                            "已通过 R2 云端中转记录使用（待电脑同步写入标签）", 0L, 0L, "");
+                    mainHandler.post(() -> callback.onSuccess(res));
+                    return;
+                } catch (Exception ignored) {
+                }
+            }
             try {
                 String baseUrl = resolveBaseUrl();
                 URL url = new URL(baseUrl + "/api/online/use-work");
@@ -1911,6 +2046,16 @@ public final class OnlineGalleryClient {
         if (localFile.exists() && localFile.length() > 0) {
             return localFile;   // 已缓存直接复用
         }
+        if (!isLive && shouldTryRemoteFirst()) {
+            try {
+                RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
+                RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, localFile);
+                TransferStatsStore.record(context, "r2", localFile.length(), 1);
+                return localFile;
+            } catch (Exception remoteErr) {
+                Log.w(TAG, "R2_FIRST downloadOneImageToFile failed, falling back to LAN: " + remoteErr.getMessage());
+            }
+        }
         String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
                 + "&file=" + URLEncoder.encode(fileName, "UTF-8")
                 + (isLive ? "&live=motion" : "");
@@ -2049,6 +2194,16 @@ public final class OnlineGalleryClient {
                     cachedBaseUrl = loopback;
                     return res;
                 } catch (Exception ignored) {}
+            } else {
+                String lan = resolveLanBaseUrl();
+                if (!lan.equals(loopback)) {
+                    try {
+                        String fallback = uStr.replaceFirst("^https?://[^/]+", lan);
+                        String res = rawHttpGet(new URL(fallback));
+                        cachedBaseUrl = lan;
+                        return res;
+                    } catch (Exception ignored) {}
+                }
             }
             throw e;
         }
@@ -2146,6 +2301,16 @@ public final class OnlineGalleryClient {
                     cachedBaseUrl = loopback;
                     return res;
                 } catch (Exception ignored) {}
+            } else {
+                String lan = resolveLanBaseUrl();
+                if (!lan.equals(loopback)) {
+                    try {
+                        String fallback = uStr.replaceFirst("^https?://[^/]+", lan);
+                        String res = rawHttpPost(new URL(fallback), jsonBody);
+                        cachedBaseUrl = lan;
+                        return res;
+                    } catch (Exception ignored) {}
+                }
             }
             throw e;
         }
@@ -2278,5 +2443,181 @@ public final class OnlineGalleryClient {
             } catch (Exception ignored) {
             }
         });
+    }
+
+    public static final class LiveEngineStatus {
+        public final boolean reachable;
+        public final boolean zhipuReady;
+        public final String zhipuMasked;
+        public final boolean flowReady;
+        public final int flowCredits;
+        public final String flowReason;
+
+        LiveEngineStatus(boolean reachable, boolean zhipuReady, String zhipuMasked,
+                         boolean flowReady, int flowCredits, String flowReason) {
+            this.reachable = reachable;
+            this.zhipuReady = zhipuReady;
+            this.zhipuMasked = zhipuMasked != null ? zhipuMasked : "";
+            this.flowReady = flowReady;
+            this.flowCredits = flowCredits;
+            this.flowReason = flowReason != null ? flowReason : "";
+        }
+
+        public static LiveEngineStatus offline() {
+            return new LiveEngineStatus(false, false, "", false, 0, "未连接电脑服务端");
+        }
+    }
+
+    private String rawHttpGetWithLoopbackFallback(String pathAndQuery, int connectMs, int readMs) throws Exception {
+        String primary = resolveBaseUrl();
+        try {
+            return rawHttpGet(new URL(primary + pathAndQuery), connectMs, readMs);
+        } catch (Exception primaryErr) {
+            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+            String alt = isLoopbackUrl(primary) ? resolveLanBaseUrl() : loopback;
+            if (!alt.equals(primary)) {
+                try {
+                    return rawHttpGet(new URL(alt + pathAndQuery), connectMs, readMs);
+                } catch (Exception ignored) {}
+            }
+            throw primaryErr;
+        }
+    }
+
+    private String rawHttpPostWithLoopbackFallback(String path, String jsonBody, int connectMs, int readMs) throws Exception {
+        String primary = resolveBaseUrl();
+        try {
+            return rawHttpPostWithTimeout(new URL(primary + path), jsonBody, connectMs, readMs);
+        } catch (Exception primaryErr) {
+            String loopback = "http://127.0.0.1:" + DEFAULT_PC_PORT;
+            String alt = isLoopbackUrl(primary) ? resolveLanBaseUrl() : loopback;
+            if (!alt.equals(primary)) {
+                try {
+                    return rawHttpPostWithTimeout(new URL(alt + path), jsonBody, connectMs, readMs);
+                } catch (Exception ignored) {}
+            }
+            throw primaryErr;
+        }
+    }
+
+    public LiveEngineStatus probeLiveEngineStatusSync(boolean forceRefresh) {
+        try {
+            String pathAndQuery = "/api/online/live-engine-status" + (forceRefresh ? "?refresh=1" : "");
+            String raw = rawHttpGetWithLoopbackFallback(pathAndQuery, 3500, 35000);
+            JSONObject root = new JSONObject(raw);
+            JSONObject engines = root.optJSONObject("engines");
+            if (engines == null) return LiveEngineStatus.offline();
+            JSONObject zp = engines.optJSONObject("zhipu");
+            JSONObject fl = engines.optJSONObject("google_flow");
+            boolean zpReady = zp != null && zp.optBoolean("ready", false);
+            String zpMasked = zp != null ? zp.optString("keyMasked", "") : "";
+            boolean flReady = fl != null && fl.optBoolean("ready", false);
+            int flCredits = (fl != null && !fl.isNull("credits")) ? fl.optInt("credits", 0) : 0;
+            String flReason = fl != null ? fl.optString("reason", "") : "";
+            return new LiveEngineStatus(true, zpReady, zpMasked, flReady, flCredits, flReason);
+        } catch (Exception e) {
+            return LiveEngineStatus.offline();
+        }
+    }
+
+    public void fetchLiveEngineStatus(boolean forceRefresh, Callback<LiveEngineStatus> callback) {
+        executor.execute(() -> {
+            final LiveEngineStatus status = probeLiveEngineStatusSync(forceRefresh);
+            mainHandler.post(() -> callback.onSuccess(status));
+        });
+    }
+
+    public void saveZhipuApiKey(String apiKey, Callback<LiveEngineStatus> callback) {
+        executor.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("zhipuApiKey", apiKey == null ? "" : apiKey.trim());
+                String raw = rawHttpPostWithLoopbackFallback("/api/online/live-engine-config", body.toString(), 6000, 15000);
+                JSONObject root = new JSONObject(raw);
+                JSONObject engines = root.optJSONObject("engines");
+                if (engines == null) throw new Exception("返回数据缺少 engines");
+                JSONObject zp = engines.optJSONObject("zhipu");
+                JSONObject fl = engines.optJSONObject("google_flow");
+                LiveEngineStatus st = new LiveEngineStatus(
+                        true,
+                        zp != null && zp.optBoolean("ready", false),
+                        zp != null ? zp.optString("keyMasked", "") : "",
+                        fl != null && fl.optBoolean("ready", false),
+                        (fl != null && !fl.isNull("credits")) ? fl.optInt("credits", 0) : 0,
+                        fl != null ? fl.optString("reason", "") : ""
+                );
+                mainHandler.post(() -> callback.onSuccess(st));
+            } catch (Exception e) {
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
+    }
+
+    /**
+     * Requests PC AI gateway to synthesize a motion video and pack a lossless Motion Photo JPEG.
+     * Returns null when PC recommends fallback ("local") or is unreachable.
+     */
+    public byte[] requestPcAiLiveConvertSync(
+            byte[] imageBytes,
+            String fileName,
+            com.zwm.livecore.LiveEnginePreference pref,
+            String mode,
+            float durationSec
+    ) {
+        if (imageBytes == null || imageBytes.length == 0
+                || pref == null || pref == com.zwm.livecore.LiveEnginePreference.LOCAL_ONLY) {
+            return null;
+        }
+        try {
+            JSONObject body = new JSONObject();
+            body.put("engine", pref.id);
+            body.put("imageBase64", android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP));
+            body.put("name", fileName != null ? fileName : "photo.jpg");
+            if (mode != null) body.put("mode", mode);
+            body.put("duration", durationSec);
+            String raw = rawHttpPostWithLoopbackFallback("/api/online/live-generate", body.toString(), 6000, 185000);
+            JSONObject json = new JSONObject(raw);
+            if (!json.optBoolean("ok", false)) {
+                Log.i(TAG, "PC AI gateway fallback: " + json.optString("reason", "unavailable"));
+                return null;
+            }
+            String motionB64 = json.optString("motionJpegBase64", "");
+            if (motionB64.isEmpty()) return null;
+            return android.util.Base64.decode(motionB64, android.util.Base64.DEFAULT);
+        } catch (Exception e) {
+            Log.w(TAG, "requestPcAiLiveConvertSync failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static String rawHttpPostWithTimeout(URL url, String jsonBody, int connectTimeoutMs, int readTimeoutMs) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(connectTimeoutMs);
+        conn.setReadTimeout(readTimeoutMs);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        byte[] data = jsonBody.getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream out = conn.getOutputStream()) {
+            out.write(data);
+            out.flush();
+        }
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            conn.disconnect();
+            throw new Exception("HTTP " + code + " " + conn.getResponseMessage());
+        }
+        try (InputStream in = new BufferedInputStream(conn.getInputStream());
+             ByteArrayOutputStream respOut = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) != -1) {
+                respOut.write(buf, 0, len);
+            }
+            return respOut.toString(StandardCharsets.UTF_8.name());
+        } finally {
+            conn.disconnect();
+        }
     }
 }

@@ -262,7 +262,6 @@ public final class MainActivity extends Activity {
         topBar.addView(titleView, titleLp);
 
         albumChip = chipButton("全部照片 ▾");
-        albumChip.setOnClickListener(v -> showBucketDialog());
         topBar.addView(albumChip, new LinearLayout.LayoutParams(-2, -2));
 
         topBar.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
@@ -270,8 +269,8 @@ public final class MainActivity extends Activity {
         liveModeChip = chipButton(formatLiveChipText(currentMode()));
         liveModeChip.setContentDescription("实况效果，点击或长按滑动选择");
         liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
-        liveModeChip.setOnClickListener(v -> showEffectPickerDialog());
-        liveQuickMenu.attach(liveModeChip, this::showEffectPickerDialog);
+        liveQuickMenu.attachTapAndHold(albumChip, this::showBucketDialog);
+        liveQuickMenu.attachTapAndHold(liveModeChip, this::showEffectPickerDialog);
         LinearLayout.LayoutParams liveChipLp = new LinearLayout.LayoutParams(-2, -2);
         liveChipLp.setMargins(dp(4), 0, dp(4), 0);
         topBar.addView(liveModeChip, liveChipLp);
@@ -734,15 +733,10 @@ public final class MainActivity extends Activity {
             if (k.equals(activeBucket)) checked = i;
             labels[i] = (k.isEmpty() ? "全部照片" : k) + "（" + counts.get(k) + "）";
         }
-        new AlertDialog.Builder(this)
-                .setTitle("选择相册")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    activeBucket = keys.get(which);
-                    applyBucketFilter();
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(albumChip, labels, checked, which -> {
+            activeBucket = keys.get(which);
+            applyBucketFilter();
+        });
     }
 
     private void showPhotoPreviewDialog(int initialPos) {
@@ -1173,18 +1167,13 @@ public final class MainActivity extends Activity {
         int checked = 0;
         for (int i = 0; i < tiers.length; i++) {
             if (tiers[i] == cur) checked = i;
-            labels[i] = tiers[i].title + "\n" + tiers[i].summary;
+            labels[i] = tiers[i].title + " · " + tiers[i].summary;
         }
-        new AlertDialog.Builder(this)
-                .setTitle("动态视频画质档位（静态封面无损）")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    com.zwm.livecore.LiveQualityTier chosen = tiers[which];
-                    prefs().edit().putString(KEY_QUALITY_TIER, chosen.id).apply();
-                    toast("动态画质已设为：" + chosen.title + "（静态原画无损）");
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(rightActionBtn, labels, checked, which -> {
+            com.zwm.livecore.LiveQualityTier chosen = tiers[which];
+            prefs().edit().putString(KEY_QUALITY_TIER, chosen.id).apply();
+            toast("动态画质已设为：" + chosen.title + "（静态原画无损）");
+        });
     }
 
     private long clearScratchCacheKb() {
@@ -1263,17 +1252,12 @@ public final class MainActivity extends Activity {
         };
         float r = currentRatio();
         int checked = push ? (r < 1.087f ? 0 : (r > 1.118f ? 2 : 1)) : (r < 1.013f ? 0 : (r > 1.024f ? 2 : 1));
-        new AlertDialog.Builder(this)
-                .setTitle("微动幅度与时长")
-                .setSingleChoiceItems(items, checked, (d, which) -> {
-                    float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
-                    float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
-                    prefs().edit().putFloat(KEY_RATIO, newRatio).putFloat(KEY_DURATION, newDur).apply();
-                    toast("已调整为：" + items[which]);
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(rightActionBtn, items, checked, which -> {
+            float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
+            float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
+            prefs().edit().putFloat(KEY_RATIO, newRatio).putFloat(KEY_DURATION, newDur).apply();
+            toast("已调整为：" + items[which]);
+        });
     }
 
     private static Bitmap decodeScaledBitmap(ContentResolver resolver, Uri uri, int maxSide) {

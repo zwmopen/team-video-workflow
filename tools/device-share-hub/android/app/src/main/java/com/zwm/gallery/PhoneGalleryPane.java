@@ -212,6 +212,7 @@ final class PhoneGalleryPane {
         subHeader.addView(new View(activity), new LinearLayout.LayoutParams(0, 1, 1f));
 
         liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(activity);
+        liveQuickMenu.attachTapAndHold(bucketChip, this::showBucketDialog);
         liveStatusChip = chip("● LIVE 开");
         liveStatusChip.setOnClickListener(v -> toggleLiveEnabled());
         liveQuickMenu.attach(liveStatusChip, this::showEffectDialog);
@@ -802,15 +803,10 @@ final class PhoneGalleryPane {
             if (k.equals(activeBucket)) checked = i;
             labels[i] = (k.isEmpty() ? "全部照片" : k) + "（" + counts.get(k) + "）";
         }
-        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
-                .setTitle("选择手机相册")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    activeBucket = keys.get(which);
-                    applyBucketFilter();
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(bucketChip, labels, checked, which -> {
+            activeBucket = keys.get(which);
+            applyBucketFilter();
+        });
     }
 
     private void showEffectDialog() {
@@ -857,26 +853,21 @@ final class PhoneGalleryPane {
         };
         float r = OnlineService.getAutoLiveRatio(activity);
         int checked = push ? (r < 1.087f ? 0 : (r > 1.118f ? 2 : 1)) : (r < 1.013f ? 0 : (r > 1.024f ? 2 : 1));
-        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
-                .setTitle("微动幅度、画质与选项")
-                .setSingleChoiceItems(items, checked, (d, which) -> {
-                    if (which == 3) {
-                        boolean next = !OnlineService.isAutoLiveSkipExisting(activity);
-                        OnlineService.setAutoLiveSkipExisting(activity, next);
-                        toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一重新生成");
-                    } else if (which == 4) {
-                        showQualityTierDialog();
-                    } else {
-                        float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
-                        float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
-                        OnlineService.setAutoLiveRatio(activity, newRatio);
-                        OnlineService.setAutoLiveDuration(activity, newDur);
-                        toast("已调整为：" + items[which]);
-                    }
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(liveStatusChip, items, checked, which -> {
+            if (which == 3) {
+                boolean next = !OnlineService.isAutoLiveSkipExisting(activity);
+                OnlineService.setAutoLiveSkipExisting(activity, next);
+                toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一重新生成");
+            } else if (which == 4) {
+                showQualityTierDialog();
+            } else {
+                float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
+                float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
+                OnlineService.setAutoLiveRatio(activity, newRatio);
+                OnlineService.setAutoLiveDuration(activity, newDur);
+                toast("已调整为：" + items[which]);
+            }
+        });
     }
 
     private void showQualityTierDialog() {
@@ -887,18 +878,13 @@ final class PhoneGalleryPane {
         int checked = 0;
         for (int i = 0; i < tiers.length; i++) {
             if (tiers[i] == cur) checked = i;
-            labels[i] = tiers[i].title + "\n" + tiers[i].summary;
+            labels[i] = tiers[i].title + " · " + tiers[i].summary;
         }
-        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
-                .setTitle("动态视频画质档位（静态原画无损）")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    com.zwm.livecore.LiveQualityTier chosen = tiers[which];
-                    OnlineService.setAutoLiveQualityTier(activity, chosen.id);
-                    toast("动态画质已设为：" + chosen.title + "（静态封面保持原图无损）");
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(liveStatusChip, labels, checked, which -> {
+            com.zwm.livecore.LiveQualityTier chosen = tiers[which];
+            OnlineService.setAutoLiveQualityTier(activity, chosen.id);
+            toast("动态画质已设为：" + chosen.title + "（静态封面保持原图无损）");
+        });
     }
 
     private void showPhotoPreviewDialog(int initialPos) {
@@ -1466,6 +1452,7 @@ final class PhoneGalleryPane {
     private void startBatchConvert(List<Uri> inputs, boolean shareAfter) {
         if (inputs == null || inputs.isEmpty()) return;
         isConverting = true;
+        final com.zwm.livecore.LiveEnginePreference enginePref = com.zwm.livecore.LiveEngineSettings.get(activity);
         final String mode = OnlineService.getAutoLiveMotionMode(activity);
         final com.zwm.livecore.LiveQualityTier tier =
                 com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(activity));
@@ -1476,7 +1463,10 @@ final class PhoneGalleryPane {
         LinearLayout layout = new LinearLayout(activity);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(dp(20), dp(18), dp(20), dp(16));
-        TextView title = text("正在手机本地生成实况（静态无损 · " + tier.title + "）", 14, true, ThemePalette.getTextPrimary(activity));
+        String titleBanner = enginePref == com.zwm.livecore.LiveEnginePreference.LOCAL_ONLY
+                ? ("正在手机本地生成实况（静态无损 · " + tier.title + "）")
+                : ("正在准备实况生成（" + enginePref.title + "）");
+        TextView title = text(titleBanner, 14, true, ThemePalette.getTextPrimary(activity));
         TextView status = text("准备处理第 1 / " + inputs.size() + " 张", 12, false, ThemePalette.getTextSecondary(activity));
         ProgressBar bar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(inputs.size());
@@ -1497,22 +1487,55 @@ final class PhoneGalleryPane {
             List<Uri> outputs = new ArrayList<>();
             List<Uri> failedInputs = new ArrayList<>();
             int losslessCount = 0;
+            int aiSuccessCount = 0;
             String firstErrMsg = null;
             com.zwm.livecore.LiveQualityTier effectiveTierSeen = tier;
+
+            OnlineGalleryClient client = OnlineGalleryClient.getInstance(activity);
+            boolean usePcAi = false;
+            String aiLabel = "本地无损";
+            if (enginePref != com.zwm.livecore.LiveEnginePreference.LOCAL_ONLY) {
+                OnlineGalleryClient.LiveEngineStatus pcSt = client.probeLiveEngineStatusSync(false);
+                if (enginePref == com.zwm.livecore.LiveEnginePreference.FLOW_FIRST && pcSt.reachable && pcSt.flowReady) {
+                    usePcAi = true;
+                    aiLabel = "Google Flow AI";
+                } else if (enginePref == com.zwm.livecore.LiveEnginePreference.ZHIPU_FIRST && pcSt.reachable && pcSt.zhipuReady) {
+                    usePcAi = true;
+                    aiLabel = "智谱 AI";
+                }
+            }
+
+            final boolean finalUseAi = usePcAi;
+            final String finalAiLabel = aiLabel;
             for (int i = 0; i < inputs.size(); i++) {
                 final int step = i + 1;
                 final int doneIdx = i;
                 mainHandler.post(() -> {
                     if (progressDialog.isShowing()) {
-                        status.setText("正在离线硬件渲染第 " + step + " / " + inputs.size() + " 张…");
+                        status.setText((finalUseAi ? ("正在通过电脑 " + finalAiLabel + " 生成第 ") : "正在离线硬件渲染第 ")
+                                + step + " / " + inputs.size() + " 张…");
                         bar.setProgress(doneIdx);
                     }
                 });
                 Uri src = inputs.get(i);
                 try {
-                    com.zwm.livecore.LiveConvertResult res = LiveLocalConverter.convertUriDetailed(
-                            activity, src, mode, tier, ratio, duration, step, skipExisting
-                    );
+                    com.zwm.livecore.LiveConvertResult res = null;
+                    if (finalUseAi && !(skipExisting && LiveLocalConverter.isAlreadyMotionPhoto(activity.getContentResolver(), src))) {
+                        byte[] rawBytes = readUriBytesForAi(src);
+                        if (rawBytes != null && rawBytes.length > 0 && rawBytes.length <= 20 * 1024 * 1024) {
+                            byte[] motionBytes = client.requestPcAiLiveConvertSync(
+                                    rawBytes, "photo_" + step + ".jpg", enginePref, mode, duration);
+                            if (motionBytes != null && motionBytes.length > 0) {
+                                res = LiveLocalConverter.saveExternalMotionPhoto(activity, motionBytes, step);
+                                aiSuccessCount++;
+                            }
+                        }
+                    }
+                    if (res == null) {
+                        res = LiveLocalConverter.convertUriDetailed(
+                                activity, src, mode, tier, ratio, duration, step, skipExisting
+                        );
+                    }
                     outputs.add(res.outputUri);
                     if (res.isLosslessCover()) losslessCount++;
                     if (res.effectiveTier != null) effectiveTierSeen = res.effectiveTier;
@@ -1522,6 +1545,7 @@ final class PhoneGalleryPane {
                 }
             }
             final int finalLossless = losslessCount;
+            final int finalAiCount = aiSuccessCount;
             final String errText = firstErrMsg;
             final com.zwm.livecore.LiveQualityTier finalTier = effectiveTierSeen;
             mainHandler.post(() -> {
@@ -1552,10 +1576,27 @@ final class PhoneGalleryPane {
                 } else {
                     String tag = finalLossless == outputs.size() ? "静态原画无损" : "高质量保留";
                     String tierMsg = finalTier != null ? finalTier.title : tier.title;
-                    toast("已保存 " + outputs.size() + " 张实况（" + tag + " · " + tierMsg + "）");
+                    String sourceTag = finalAiCount > 0 ? (finalAiLabel + " · ") : "";
+                    toast("已保存 " + outputs.size() + " 张实况（" + sourceTag + tag + " · " + tierMsg + "）");
                 }
             });
         });
+    }
+
+    private byte[] readUriBytesForAi(Uri uri) {
+        if (uri == null) return null;
+        try (java.io.InputStream in = activity.getContentResolver().openInputStream(uri);
+             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+            if (in == null) return null;
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                bos.write(buf, 0, n);
+            }
+            return bos.toByteArray();
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private void launchSystemShare(List<Uri> uris, String chooserTitle) {

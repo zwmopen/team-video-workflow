@@ -34,6 +34,14 @@ public final class LivePhotoConverter {
                 context, sourceUri, modeId, tier, ratio, durationSec, index, skipExistingLive);
     }
 
+    public static LiveConvertResult saveExternalMotionPhoto(
+            Context context,
+            byte[] motionPhotoBytes,
+            int index
+    ) throws IOException {
+        return LiveMotionPhotoConverter.savePackedMotionPhotoToGallery(context, motionPhotoBytes, index);
+    }
+
     public static Uri convertOrPassthrough(
             Context context,
             Uri sourceUri,

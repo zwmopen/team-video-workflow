@@ -44,6 +44,15 @@ public final class SettingsActivity extends Activity {
     private TextView moveAfterText;
     private TextView deleteAfterText;
     private SettingSwitchRow autoReceiveSwitch;
+    private TextView engineValueText;
+    private SettingSwitchRow autoLiveSwitchRef;
+    private LinearLayout strategyRowView;
+    private TextView strategyValueText;
+    private LinearLayout moveRowView;
+    private LinearLayout deleteRowView;
+    private LinearLayout styleRowView;
+    private LinearLayout themeRowView;
+    private volatile OnlineGalleryClient.LiveEngineStatus cachedEngineStatus = OnlineGalleryClient.LiveEngineStatus.offline();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +60,7 @@ public final class SettingsActivity extends Activity {
         liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
         ThemePalette.applySystemBarAppearance(this);
         setContentView(ScreenInsets.protect(buildUi()));
+        refreshLiveEngineStatus(false);
     }
 
     private SpringScrollView buildUi() {
@@ -112,6 +122,7 @@ public final class SettingsActivity extends Activity {
                 "分享时静图自动转实况",
                 "",
                 OnlineService.isAutoLiveOnShareEnabled(this));
+        autoLiveSwitchRef = autoLiveSwitch;
         updateAutoLiveRowDetail(autoLiveSwitch);
         autoLiveSwitch.setOnCheckedChangeListener((button, enabled) -> {
             OnlineService.setAutoLiveOnShareEnabled(this, enabled);
@@ -119,33 +130,34 @@ public final class SettingsActivity extends Activity {
         });
         autoLiveSwitch.setOnRowBodyClickListener(v -> showAutoLiveModeDialog(autoLiveSwitch));
         root.addView(autoLiveSwitch, settingMargins(dp(10)));
-        LinearLayout engineRow = choiceRow("处理引擎偏好", com.zwm.livecore.LiveEngineSettings.summary(this));
-        engineRow.setOnClickListener(v -> com.zwm.livecore.LiveEngineSettings.show(this,liveQuickMenu,engineRow,
-                () -> ((TextView)engineRow.getChildAt(1)).setText(com.zwm.livecore.LiveEngineSettings.summary(this))));
+        LinearLayout engineRow = choiceRow("处理引擎偏好", formatEngineSummaryText());
+        engineValueText = (TextView) engineRow.getChildAt(1);
+        liveQuickMenu.attachTapAndHold(engineRow, () -> showLiveEngineMenu(engineRow));
         root.addView(engineRow, settingMargins(dp(20)));
 
         root.addView(label("跨网传输与统计"));
-        LinearLayout strategyRow = choiceRow(
+        strategyRowView = choiceRow(
                 "传输策略",
                 RemoteRelayProfile.getStrategy(this).title);
-        strategyRow.setOnClickListener(v -> showTransportStrategyDialog((TextView) strategyRow.getChildAt(1)));
-        root.addView(strategyRow, settingMargins(dp(10)));
-        Button statsBtn = button(
-                RemoteRelayProfile.isEnrolled(this) ? "流量与 R2 统计（云端已授权）" : "流量与 R2 统计",
-                false);
-        statsBtn.setOnClickListener(v -> showTransferStatsDialog());
-        root.addView(statsBtn, margins(0, 0, 0, dp(20)));
+        strategyValueText = (TextView) strategyRowView.getChildAt(1);
+        liveQuickMenu.attachTapAndHold(strategyRowView, this::showTransportStrategyDialog);
+        root.addView(strategyRowView, settingMargins(dp(10)));
+        LinearLayout statsRow = choiceRow(
+                "云端额度与流量",
+                RemoteRelayProfile.isEnrolled(this) ? "已授权 · 查看 R2 额度" : "查看本机与 R2 估算");
+        statsRow.setOnClickListener(v -> showTransferStatsDialog());
+        root.addView(statsRow, settingMargins(dp(20)));
 
         root.addView(label("自动整理"));
         CleanupSettings.Values cleanup = CleanupSettings.read(this);
-        LinearLayout moveRow = cleanupRow("自动移入回收站", cleanup.moveHours());
-        moveAfterText = (TextView) moveRow.getChildAt(1);
-        moveRow.setOnClickListener(v -> showCleanupPicker(true));
-        root.addView(moveRow, settingMargins(dp(8)));
-        LinearLayout deleteRow = cleanupRow("自动彻底删除", cleanup.deleteHours());
-        deleteAfterText = (TextView) deleteRow.getChildAt(1);
-        deleteRow.setOnClickListener(v -> showCleanupPicker(false));
-        root.addView(deleteRow, settingMargins(dp(20)));
+        moveRowView = cleanupRow("自动移入回收站", cleanup.moveHours());
+        moveAfterText = (TextView) moveRowView.getChildAt(1);
+        liveQuickMenu.attachTapAndHold(moveRowView, () -> showCleanupPicker(true));
+        root.addView(moveRowView, settingMargins(dp(8)));
+        deleteRowView = cleanupRow("自动彻底删除", cleanup.deleteHours());
+        deleteAfterText = (TextView) deleteRowView.getChildAt(1);
+        liveQuickMenu.attachTapAndHold(deleteRowView, () -> showCleanupPicker(false));
+        root.addView(deleteRowView, settingMargins(dp(20)));
 
         root.addView(label("提醒"));
         soundSwitch = settingSwitch("声音通知", "收到文件时显示通知并响铃",
@@ -160,19 +172,19 @@ public final class SettingsActivity extends Activity {
         });
         root.addView(vibrationSwitch, settingMargins(dp(20)));
 
-        // ---- 新增：外观风格（深色模式 + FlClash 玻璃视觉风格） ----
+        // ---- 外观风格（深色模式 + 全局玻璃视觉风格） ----
         root.addView(label("外观"));
-        String currentStyleText = ThemePalette.isFlClashGlassStyle(this) ? "FlClash 玻璃（推荐）" : "经典标准";
-        LinearLayout styleRow = choiceRow("主题风格", currentStyleText);
-        styleRow.setOnClickListener(v -> showThemeStyleDialog());
-        root.addView(styleRow, settingMargins(dp(10)));
+        String currentStyleText = ThemePalette.isFlClashGlassStyle(this) ? "通透玻璃（推荐）" : "经典纯色";
+        styleRowView = choiceRow("主题风格", currentStyleText);
+        liveQuickMenu.attachTapAndHold(styleRowView, this::showThemeStyleDialog);
+        root.addView(styleRowView, settingMargins(dp(10)));
 
         int currentThemeMode = ThemePalette.getThemeMode(this);
         String currentModeText = currentThemeMode == ThemePalette.THEME_MODE_LIGHT ? "浅色模式"
                 : (currentThemeMode == ThemePalette.THEME_MODE_DARK ? "深色模式" : "跟随系统");
-        LinearLayout themeRow = choiceRow("外观风格", currentModeText);
-        themeRow.setOnClickListener(v -> showThemeModeDialog());
-        root.addView(themeRow, settingMargins(dp(20)));
+        themeRowView = choiceRow("外观风格", currentModeText);
+        liveQuickMenu.attachTapAndHold(themeRowView, this::showThemeModeDialog);
+        root.addView(themeRowView, settingMargins(dp(20)));
 
         root.addView(label("软件"));
         SettingSwitchRow autoUpdateSwitch = settingSwitch(
@@ -224,35 +236,25 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showThemeStyleDialog() {
-        String[] options = {"经典标准", "FlClash 玻璃（推荐）"};
+        String[] options = {"经典纯色", "通透玻璃（推荐）"};
         int current = ThemePalette.getThemeStyle(this) == ThemePalette.THEME_STYLE_FLCLASH_GLASS ? 1 : 0;
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("主题风格")
-                .setSingleChoiceItems(options, current, (dialog, which) -> {
-                    ThemePalette.setThemeStyle(this, which == 1
-                            ? ThemePalette.THEME_STYLE_FLCLASH_GLASS
-                            : ThemePalette.THEME_STYLE_CLASSIC);
-                    dialog.dismiss();
-                    toast("已切换为：" + options[which]);
-                    recreate();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(styleRowView, options, current, which -> {
+            ThemePalette.setThemeStyle(this, which == 1
+                    ? ThemePalette.THEME_STYLE_FLCLASH_GLASS
+                    : ThemePalette.THEME_STYLE_CLASSIC);
+            toast("已切换为：" + options[which]);
+            recreate();
+        });
     }
 
     private void showThemeModeDialog() {
         String[] options = {"跟随系统", "浅色模式", "深色模式"};
         int current = ThemePalette.getThemeMode(this);
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("外观风格")
-                .setSingleChoiceItems(options, current, (dialog, which) -> {
-                    ThemePalette.setThemeMode(this, which);
-                    ThemePalette.applySystemBarAppearance(this);
-                    dialog.dismiss();
-                    recreate();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(themeRowView, options, current, which -> {
+            ThemePalette.setThemeMode(this, which);
+            ThemePalette.applySystemBarAppearance(this);
+            recreate();
+        });
     }
 
     @Override public void onBackPressed() {
@@ -296,49 +298,43 @@ public final class SettingsActivity extends Activity {
         };
         float r = OnlineService.getAutoLiveRatio(this);
         int checked = push ? (r < 1.087f ? 0 : (r > 1.118f ? 2 : 1)) : (r < 1.013f ? 0 : (r > 1.024f ? 2 : 1));
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("微动幅度、画质与选项")
-                .setSingleChoiceItems(items, checked, (dialog, which) -> {
-                    if (which == 3) {
-                        boolean next = !OnlineService.isAutoLiveSkipExisting(this);
-                        OnlineService.setAutoLiveSkipExisting(this, next);
-                        toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一按当前效果重新生成");
-                    } else if (which == 4) {
-                        showAutoLiveQualityTierDialog(row);
-                    } else {
-                        float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
-                        float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
-                        OnlineService.setAutoLiveRatio(this, newRatio);
-                        OnlineService.setAutoLiveDuration(this, newDur);
-                        updateAutoLiveRowDetail(row);
-                        toast("已调整为：" + items[which]);
-                    }
-                    dialog.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(row, items, checked, which -> {
+            if (which == 3) {
+                boolean next = !OnlineService.isAutoLiveSkipExisting(this);
+                OnlineService.setAutoLiveSkipExisting(this, next);
+                toast(next ? "已开启：已有实况照片直接直通" : "已关闭：统一按当前效果重新生成");
+            } else if (which == 4) {
+                showAutoLiveQualityTierDialog(row);
+            } else {
+                float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
+                float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
+                OnlineService.setAutoLiveRatio(this, newRatio);
+                OnlineService.setAutoLiveDuration(this, newDur);
+                updateAutoLiveRowDetail(row);
+                toast("已调整为：" + items[which]);
+            }
+        });
     }
 
-    private void showTransportStrategyDialog(TextView valueText) {
+    private void showTransportStrategyDialog() {
         RemoteRelayProfile.TransportStrategy current = RemoteRelayProfile.getStrategy(this);
         RemoteRelayProfile.TransportStrategy[] all = RemoteRelayProfile.TransportStrategy.values();
         String[] labels = new String[all.length];
         int checked = 0;
         for (int i = 0; i < all.length; i++) {
             if (all[i] == current) checked = i;
-            labels[i] = all[i].title + "\n" + all[i].detail;
+            labels[i] = all[i].title;
         }
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("跨网传输策略")
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    RemoteRelayProfile.TransportStrategy chosen = all[which];
-                    RemoteRelayProfile.setStrategy(this, chosen);
-                    valueText.setText(chosen.title);
-                    toast("传输策略已设为：" + chosen.title);
-                    dialog.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(strategyRowView, labels, checked, which -> {
+            RemoteRelayProfile.TransportStrategy chosen = all[which];
+            RemoteRelayProfile.setStrategy(this, chosen);
+            OnlineGalleryClient.getInstance(this).invalidateBaseUrl();
+            String mappedChannel = chosen == RemoteRelayProfile.TransportStrategy.USB_FIRST ? "usb"
+                    : (chosen == RemoteRelayProfile.TransportStrategy.LAN_FIRST ? "lan" : "auto");
+            getSharedPreferences("album_prefs", MODE_PRIVATE).edit().putString("transferChannel", mappedChannel).apply();
+            if (strategyValueText != null) strategyValueText.setText(chosen.title);
+            toast("传输策略已设为：" + chosen.title + "（" + chosen.detail + "）");
+        });
     }
 
     private void showTransferStatsDialog() {
@@ -364,6 +360,106 @@ public final class SettingsActivity extends Activity {
         }, "fetch-transfer-stats").start();
     }
 
+    private void updateLiveEngineSummary() {
+        if (engineValueText != null) {
+            engineValueText.setText(formatEngineSummaryText());
+        }
+    }
+
+    private String formatEngineSummaryText() {
+        com.zwm.livecore.LiveEnginePreference pref = com.zwm.livecore.LiveEngineSettings.get(this);
+        OnlineGalleryClient.LiveEngineStatus st = cachedEngineStatus;
+        if (pref == com.zwm.livecore.LiveEnginePreference.LOCAL_ONLY) {
+            return "仅本地硬件无损渲染";
+        }
+        if (pref == com.zwm.livecore.LiveEnginePreference.FLOW_FIRST) {
+            if (!st.reachable) return "Google Flow · 电脑离线将自动切本地";
+            return st.flowReady ? ("Google Flow · 已就绪（" + st.flowCredits + " 积分）")
+                    : "Google Flow · 暂不可用（将走本地）";
+        }
+        if (!st.reachable) return "智谱免费优先 · 电脑离线将自动切本地";
+        return st.zhipuReady ? "智谱 CogVideoX-Flash · 已就绪" : "智谱优先 · 待配置免费 Key";
+    }
+
+    private void refreshLiveEngineStatus(boolean forceRefresh) {
+        OnlineGalleryClient.getInstance(this).fetchLiveEngineStatus(forceRefresh, new OnlineGalleryClient.Callback<OnlineGalleryClient.LiveEngineStatus>() {
+            @Override public void onSuccess(OnlineGalleryClient.LiveEngineStatus data) {
+                cachedEngineStatus = data != null ? data : OnlineGalleryClient.LiveEngineStatus.offline();
+                if (!isFinishing()) updateLiveEngineSummary();
+            }
+            @Override public void onError(Exception error) {}
+        });
+    }
+
+    private void showLiveEngineMenu(LinearLayout anchor) {
+        OnlineGalleryClient.LiveEngineStatus st = cachedEngineStatus;
+        com.zwm.livecore.LiveEnginePreference cur = com.zwm.livecore.LiveEngineSettings.get(this);
+        String zhipuLabel = st.reachable
+                ? (st.zhipuReady ? "智谱 CogVideoX-Flash（免费 AI · 已就绪）" : "智谱 CogVideoX-Flash（免费 AI · 待配 Key）")
+                : "智谱 CogVideoX-Flash（免费 AI · 连电脑可用）";
+        String localLabel = "仅手机本地无损渲染（0 流量 · 极速）";
+        String flowLabel = st.reachable
+                ? (st.flowReady ? ("Google Flow 电脑联动（已就绪 · " + st.flowCredits + " 积分）") : "Google Flow 电脑联动（未就绪）")
+                : "Google Flow 电脑联动（连电脑可用）";
+        String[] labels = new String[]{zhipuLabel, localLabel, flowLabel, "配置电脑端智谱免费 API Key…"};
+        int checked = cur == com.zwm.livecore.LiveEnginePreference.LOCAL_ONLY ? 1
+                : (cur == com.zwm.livecore.LiveEnginePreference.FLOW_FIRST ? 2 : 0);
+        com.zwm.livecore.LiveEnginePreference[] prefs = new com.zwm.livecore.LiveEnginePreference[]{
+                com.zwm.livecore.LiveEnginePreference.ZHIPU_FIRST,
+                com.zwm.livecore.LiveEnginePreference.LOCAL_ONLY,
+                com.zwm.livecore.LiveEnginePreference.FLOW_FIRST
+        };
+        liveQuickMenu.show(anchor, labels, checked, which -> {
+            if (which == 3) {
+                showZhipuKeyConfigDialog();
+                return;
+            }
+            com.zwm.livecore.LiveEnginePreference chosen = prefs[which];
+            getSharedPreferences("live_engine_preferences", MODE_PRIVATE).edit()
+                    .putString("preferred_engine_v1", chosen.id).apply();
+            updateLiveEngineSummary();
+            if (chosen == com.zwm.livecore.LiveEnginePreference.ZHIPU_FIRST && st.reachable && !st.zhipuReady) {
+                toast("已设为智谱优先；请点下一项填入智谱免费 API Key，未配前将自动使用本地无损渲染");
+            } else {
+                toast("处理引擎已设为：" + formatEngineSummaryText());
+            }
+            refreshLiveEngineStatus(true);
+        });
+    }
+
+    private void showZhipuKeyConfigDialog() {
+        EditText input = new EditText(this);
+        input.setHint("粘贴智谱开放平台 API Key（cogvideox-flash 免费）");
+        input.setSingleLine(true);
+        input.setTextColor(ThemePalette.getTextPrimary(this));
+        input.setHintTextColor(ThemePalette.getTextMuted(this));
+        LinearLayout holder = new LinearLayout(this);
+        holder.setPadding(dp(22), dp(8), dp(22), 0);
+        holder.addView(input, new LinearLayout.LayoutParams(-1, dp(52)));
+        String existingHint = cachedEngineStatus.zhipuReady
+                ? ("当前电脑已配置 Key（" + cachedEngineStatus.zhipuMasked + "）；留空保存可清除。")
+                : "前往 bigmodel.cn 免费注册并创建 API Key，粘贴后直接存入电脑本机，无需重装手机端。";
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("配置电脑端智谱免费 API Key")
+                .setMessage(existingHint)
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存到电脑", (d, w) -> {
+                    String key = input.getText().toString().trim();
+                    OnlineGalleryClient.getInstance(this).saveZhipuApiKey(key, new OnlineGalleryClient.Callback<OnlineGalleryClient.LiveEngineStatus>() {
+                        @Override public void onSuccess(OnlineGalleryClient.LiveEngineStatus data) {
+                            cachedEngineStatus = data;
+                            updateLiveEngineSummary();
+                            toast(data.zhipuReady ? "智谱免费 Key 已保存到电脑并生效" : "已清除电脑端智谱 Key");
+                        }
+                        @Override public void onError(Exception error) {
+                            toast("保存失败：请先确保手机与电脑已连通（" + error.getMessage() + "）");
+                        }
+                    });
+                })
+                .show();
+    }
+
     private void showAutoLiveQualityTierDialog(SettingSwitchRow row) {
         com.zwm.livecore.LiveQualityTier cur =
                 com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(this));
@@ -372,19 +468,14 @@ public final class SettingsActivity extends Activity {
         int checked = 0;
         for (int i = 0; i < tiers.length; i++) {
             if (tiers[i] == cur) checked = i;
-            labels[i] = tiers[i].title + "\n" + tiers[i].summary;
+            labels[i] = tiers[i].title + " · " + tiers[i].summary;
         }
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("动态视频画质档位（静态封面原画无损）")
-                .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    com.zwm.livecore.LiveQualityTier chosen = tiers[which];
-                    OnlineService.setAutoLiveQualityTier(this, chosen.id);
-                    updateAutoLiveRowDetail(row);
-                    toast("动态画质已设为：" + chosen.title + "（静态封面保持原图画质）");
-                    d.dismiss();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(row, labels, checked, which -> {
+            com.zwm.livecore.LiveQualityTier chosen = tiers[which];
+            OnlineService.setAutoLiveQualityTier(this, chosen.id);
+            updateAutoLiveRowDetail(row);
+            toast("动态画质已设为：" + chosen.title + "（静态封面保持原图画质）");
+        });
     }
 
     private void updateAutoLiveRowDetail(SettingSwitchRow row) {
@@ -415,17 +506,11 @@ public final class SettingsActivity extends Activity {
         for (int index = 0; index < hours.length; index++) {
             if (hours[index] == currentHours) checked = index;
         }
-        AlertDialog dialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle(editingMove ? "自动移入回收站" : "自动彻底删除")
-                .setSingleChoiceItems(labels, checked, null)
-                .setNegativeButton("取消", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getListView().setOnItemClickListener((parent, view, position, id) -> {
-            dialog.dismiss();
+        View anchor = editingMove ? moveRowView : deleteRowView;
+        liveQuickMenu.show(anchor, labels, checked, position -> {
             if (position == hours.length) showCustomCleanupHours(editingMove, currentHours);
             else saveCleanupHours(editingMove, hours[position]);
-        }));
-        dialog.show();
+        });
     }
 
     private void showCustomCleanupHours(boolean editingMove, int currentHours) {
@@ -672,11 +757,16 @@ public final class SettingsActivity extends Activity {
         row.setClickable(true);
         row.setFocusable(true);
         TextView titleView = text(title, 15, false);
+        titleView.setSingleLine(true);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-2, -2);
+        titleLp.rightMargin = dp(12);
         TextView valueView = text(value, 13, false);
         valueView.setTextColor(ThemePalette.getTextSecondary(this));
         valueView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        row.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
-        row.addView(valueView, new LinearLayout.LayoutParams(-2, -2));
+        valueView.setMaxLines(2);
+        valueView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(titleView, titleLp);
+        row.addView(valueView, new LinearLayout.LayoutParams(0, -2, 1));
         return row;
     }
 

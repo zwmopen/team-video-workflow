@@ -352,6 +352,7 @@ public final class MainActivity extends Activity {
         }
         isOnlineMode = (activeSourceMode == SOURCE_ONLINE);
         onlineClient = new OnlineGalleryClient(this);
+        liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
         ensureDeviceId();
         setContentView(ScreenInsets.protect(buildUi()));
         // 恢复上次的在线模式时，立刻开始接收电脑端信标（无需扫描即可拿到地址）
@@ -642,13 +643,14 @@ public final class MainActivity extends Activity {
         searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
         searchBar.setGravity(Gravity.CENTER_VERTICAL);
+        searchBar.setMinimumHeight(dp(38));
         searchBar.setBackground(roundWithStroke(ThemePalette.getCardBg(this), 12, ThemePalette.getCardStroke(this)));
-        searchBar.setPadding(dp(10), 0, dp(6), 0);
+        searchBar.setPadding(dp(10), dp(4), dp(6), dp(4));
 
         ImageView searchIcon = new ImageView(this);
         searchIcon.setImageResource(R.drawable.ic_album_search);
         searchIcon.setImageTintList(ColorStateList.valueOf(ThemePalette.getTextSecondary(this)));
-        LinearLayout.LayoutParams sIconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+        LinearLayout.LayoutParams sIconParams = new LinearLayout.LayoutParams(dp(16), dp(16));
         sIconParams.setMargins(0, 0, dp(6), 0);
         searchBar.addView(searchIcon, sIconParams);
 
@@ -656,12 +658,13 @@ public final class MainActivity extends Activity {
         searchInput.setHint(isOnlineMode ? "搜索标题/地点" : "搜索标题/文件夹");
         searchInput.setHintTextColor(ThemePalette.getTextMuted(this));
         searchInput.setTextColor(ThemePalette.getTextPrimary(this));
-        searchInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        searchInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
         searchInput.setBackground(null);
         searchInput.setSingleLine(true);
         searchInput.setEllipsize(TextUtils.TruncateAt.END);
         searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        searchInput.setPadding(0, dp(4), 0, dp(4));
+        searchInput.setIncludeFontPadding(false);
+        searchInput.setPadding(0, dp(2), 0, dp(2));
         searchInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -718,48 +721,38 @@ public final class MainActivity extends Activity {
                 .getStringSet(PREF_ONLINE_FILTER_FLOWS, null);
         if (savedFlows != null) selectedFlowTypes.addAll(savedFlows);
 
-        // ---- 1. 视图切换按钮（固定二字「视图▾」，点击选 图标/列表/对比） ----
+        // ---- 1. 视图切换按钮（紧凑嵌入式，支持点击与长按滑选） ----
         currentViewMode = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(PREF_ONLINE_VIEW_MODE, DEFAULT_ONLINE_VIEW_MODE);
         viewModeButton = new Button(this);
-        viewModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         viewModeButton.setContentDescription("视图切换 (图标/列表/对比)");
         updateViewModeButtonStyle();
         LinearLayout.LayoutParams sViewModeParams = new LinearLayout.LayoutParams(
-                dp(48), dp(30));
-        sViewModeParams.setMargins(dp(2), 0, dp(1), 0);
-        viewModeButton.setPadding(0, 0, 0, 0);
-        viewModeButton.setOnClickListener(v -> showViewModeMenu());
-        viewModeButton.setOnLongClickListener(v -> {
-            cycleViewMode();
-            return true;
-        });
+                dp(44), dp(25));
+        sViewModeParams.setMargins(dp(2), 0, dp(2), 0);
+        liveQuickMenu.attachTapAndHold(viewModeButton, this::showViewModeMenu);
         searchBar.addView(viewModeButton, sViewModeParams);
 
         // ---- 2. 筛选按钮（春夏秋冬季节 + 流量场景多选，选中显示「筛选(N)」且翡翠绿高亮） ----
         filterButton = new Button(this);
-        filterButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         filterButton.setContentDescription("作品标签筛选 (春夏秋冬/流量场景)");
         updateFilterButtonStyle();
         LinearLayout.LayoutParams sFilterParams = new LinearLayout.LayoutParams(
-                dp(48), dp(30));
-        sFilterParams.setMargins(dp(1), 0, dp(1), 0);
-        filterButton.setPadding(0, 0, 0, 0);
+                dp(46), dp(25));
+        sFilterParams.setMargins(dp(1), 0, dp(2), 0);
         filterButton.setOnClickListener(v -> showOnlineFilterDialog());
         searchBar.addView(filterButton, sFilterParams);
 
-        // ---- 3. 排序按钮（固定二字「排序▾」，点击选 6 种排序方式） ----
+        // ---- 3. 排序按钮（紧凑嵌入式，支持点击与长按滑选） ----
         currentSortKey = getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(PREF_ONLINE_SORT_KEY, DEFAULT_ONLINE_SORT);
         sortKeyButton = new Button(this);
-        sortKeyButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         sortKeyButton.setContentDescription("排序方式（DSH-109）");
         updateSortKeyButtonStyle();
         LinearLayout.LayoutParams sSortParams = new LinearLayout.LayoutParams(
-                dp(48), dp(30));
-        sSortParams.setMargins(dp(1), 0, dp(2), 0);
-        sortKeyButton.setPadding(0, 0, 0, 0);
-        sortKeyButton.setOnClickListener(v -> showSortKeyMenu());
+                dp(44), dp(25));
+        sSortParams.setMargins(dp(1), 0, dp(1), 0);
+        liveQuickMenu.attachTapAndHold(sortKeyButton, this::showSortKeyMenu);
         searchBar.addView(sortKeyButton, sSortParams);
 
         // ---- 在线回收站双 Tab（已发送 / 已标记垃圾）：默认隐藏，点顶栏「回收站」才出现 ----
@@ -1416,26 +1409,19 @@ public final class MainActivity extends Activity {
     }
 
     private void showSortKeyMenu() {
-        android.widget.PopupMenu popup = new android.widget.PopupMenu(new android.view.ContextThemeWrapper(this, ThemePalette.popupThemeRes(this)), sortKeyButton);
-        for (String[] pair : SORT_MENU) {
-            android.view.MenuItem mi = popup.getMenu().add(pair[1]);
-            // 给当前选中的排序打勾（视觉状态显示）
-            if (pair[0].equals(currentSortKey)) {
-                mi.setCheckable(true);
-                mi.setChecked(true);
+        String[] labels = new String[SORT_MENU.length];
+        int checked = 0;
+        for (int i = 0; i < SORT_MENU.length; i++) {
+            labels[i] = SORT_MENU[i][1];
+            if (SORT_MENU[i][0].equals(currentSortKey)) {
+                checked = i;
             }
         }
-        popup.setOnMenuItemClickListener(item -> {
-            CharSequence title = item.getTitle();
-            for (String[] pair : SORT_MENU) {
-                if (pair[1].contentEquals(title)) {
-                    applySortKeyChange(pair[0]);
-                    return true;
-                }
+        liveQuickMenu.show(sortKeyButton, labels, checked, which -> {
+            if (which >= 0 && which < SORT_MENU.length) {
+                applySortKeyChange(SORT_MENU[which][0]);
             }
-            return false;
         });
-        popup.show();
     }
 
     private void sortOnlineWorks(List<OnlineWorkEntry> list, String sortKey) {
@@ -1500,28 +1486,19 @@ public final class MainActivity extends Activity {
     }
 
     private void showViewModeMenu() {
-        android.widget.PopupMenu popup = new android.widget.PopupMenu(new android.view.ContextThemeWrapper(this, ThemePalette.popupThemeRes(this)), viewModeButton);
         // The current renderer keeps one work card per row and enlarges its thumbnail strip.
         // Keep the menu text truthful until a real two-column card layout is implemented.
-        android.view.MenuItem miGrid = popup.getMenu().add("🔲 图标视图（大图缩略图）");
-        android.view.MenuItem miList = popup.getMenu().add("📑 列表视图（单列紧凑清单）");
-        android.view.MenuItem miComp = popup.getMenu().add("🆚 对比视图（素材 vs 成品并排）");
-
-        if ("grid".equals(currentViewMode)) { miGrid.setCheckable(true); miGrid.setChecked(true); }
-        else if ("list".equals(currentViewMode)) { miList.setCheckable(true); miList.setChecked(true); }
-        else if ("compare".equals(currentViewMode)) { miComp.setCheckable(true); miComp.setChecked(true); }
-
-        popup.setOnMenuItemClickListener(item -> {
-            CharSequence title = item.getTitle();
-            if (title != null) {
-                if (title.toString().contains("列表")) applyViewMode("list", false);
-                else if (title.toString().contains("对比")) applyViewMode("compare", false);
-                else applyViewMode("grid", false);
-                return true;
-            }
-            return false;
+        String[] labels = {
+                "🔲 图标视图（大图缩略图）",
+                "📑 列表视图（单列紧凑清单）",
+                "🆚 对比视图（素材 vs 成品并排）"
+        };
+        int checked = "list".equals(currentViewMode) ? 1 : ("compare".equals(currentViewMode) ? 2 : 0);
+        liveQuickMenu.show(viewModeButton, labels, checked, which -> {
+            if (which == 1) applyViewMode("list", false);
+            else if (which == 2) applyViewMode("compare", false);
+            else applyViewMode("grid", false);
         });
-        popup.show();
     }
 
     private void cycleViewMode() {
@@ -1578,48 +1555,50 @@ public final class MainActivity extends Activity {
         return "精准流量团建";
     }
 
+    private void styleCompactSearchPill(Button btn, boolean active) {
+        btn.setStateListAnimator(null);
+        btn.setAllCaps(false);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+        btn.setIncludeFontPadding(false);
+        btn.setMinHeight(0);
+        btn.setMinimumHeight(0);
+        btn.setMinWidth(0);
+        btn.setMinimumWidth(0);
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(dp(4), 0, dp(4), 0);
+        btn.setElevation(0);
+        btn.setSingleLine(true);
+        if (active) {
+            btn.setTextColor(Color.WHITE);
+            btn.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            btn.setBackground(round(ThemePalette.getPillSelectedBg(), 8));
+        } else {
+            boolean dark = ThemePalette.isDarkMode(this);
+            btn.setTextColor(dark ? Color.rgb(184, 190, 200) : Color.rgb(72, 80, 76));
+            btn.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            btn.setBackground(roundWithStroke(
+                    dark ? Color.rgb(42, 44, 50) : Color.rgb(240, 243, 241), 8,
+                    dark ? Color.rgb(60, 64, 72) : Color.rgb(220, 224, 222)));
+        }
+    }
+
     private void updateViewModeButtonStyle() {
         if (viewModeButton == null) return;
         viewModeButton.setText("视图▾");
-        if (!DEFAULT_ONLINE_VIEW_MODE.equals(currentViewMode)) {
-            styleNeumorphicButton(viewModeButton, STYLE_PRIMARY_GREEN);
-        } else {
-            styleNeumorphicButton(viewModeButton, STYLE_MUTED_GRAY);
-        }
-        viewModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        viewModeButton.setMinHeight(0);
-        viewModeButton.setMinimumHeight(0);
-        viewModeButton.setPadding(0, 0, 0, 0);
+        styleCompactSearchPill(viewModeButton, !DEFAULT_ONLINE_VIEW_MODE.equals(currentViewMode));
     }
 
     private void updateSortKeyButtonStyle() {
         if (sortKeyButton == null) return;
         sortKeyButton.setText("排序▾");
-        if (!DEFAULT_ONLINE_SORT.equals(currentSortKey)) {
-            styleNeumorphicButton(sortKeyButton, STYLE_PRIMARY_GREEN);
-        } else {
-            styleNeumorphicButton(sortKeyButton, STYLE_MUTED_GRAY);
-        }
-        sortKeyButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        sortKeyButton.setMinHeight(0);
-        sortKeyButton.setMinimumHeight(0);
-        sortKeyButton.setPadding(0, 0, 0, 0);
+        styleCompactSearchPill(sortKeyButton, !DEFAULT_ONLINE_SORT.equals(currentSortKey));
     }
 
     private void updateFilterButtonStyle() {
         if (filterButton == null) return;
         int activeCount = selectedSeasons.size() + selectedFlowTypes.size();
-        if (activeCount > 0) {
-            filterButton.setText("筛选(" + activeCount + ")");
-            styleNeumorphicButton(filterButton, STYLE_PRIMARY_GREEN);
-        } else {
-            filterButton.setText("筛选▾");
-            styleNeumorphicButton(filterButton, STYLE_MUTED_GRAY);
-        }
-        filterButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        filterButton.setMinHeight(0);
-        filterButton.setMinimumHeight(0);
-        filterButton.setPadding(0, 0, 0, 0);
+        filterButton.setText(activeCount > 0 ? "筛选(" + activeCount + ")" : "筛选▾");
+        styleCompactSearchPill(filterButton, activeCount > 0);
     }
 
     private void updatePillStyle(Button btn, boolean selected) {

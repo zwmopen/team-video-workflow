@@ -347,3 +347,87 @@ def test_nine_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch):
             assert exc.value.code == 404
         finally:
             server.shutdown()
+
+
+def test_pc_live_engine_gateway_and_fallback(tmp_path, monkeypatch):
+    import online_gallery_service as svc
+
+    key_file = tmp_path / "zhipu_api_key.txt"
+    monkeypatch.delenv("ZHIPUAI_API_KEY", raising=False)
+    monkeypatch.setattr(svc, "_zhipu_key_file_path", lambda: key_file)
+    monkeypatch.setattr(svc, "_find_gflow_executable", lambda: "C:\\fake\\gflow.EXE")
+
+    class FakeProc:
+        returncode = 0
+        stdout = "Account: demo\nTotal credits: 50\n"
+        stderr = ""
+
+    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **kw: FakeProc())
+    engines = svc._probe_live_engines(force=True)
+    assert engines["local"]["ready"] is True
+    assert engines["google_flow"]["ready"] is True
+    assert engines["google_flow"]["credits"] == 50
+    assert engines["zhipu"]["ready"] is False
+
+    def fake_run_gflow(in_path, out_mp4, aspect, prompt, timeout=180):
+        out_mp4.write_bytes(_make_fake_mp4_bytes(b"FLOW_AI_VIDEO") * 60)
+        return out_mp4
+
+    def fake_norm(raw_mp4, out_mp4, target_duration=2.2):
+        out_mp4.write_bytes(raw_mp4.read_bytes())
+        return out_mp4
+
+    monkeypatch.setattr(svc, "_run_gflow_i2v", fake_run_gflow)
+    monkeypatch.setattr(svc, "_normalize_ai_clip_mp4", fake_norm)
+
+    class Handler(OnlineGalleryHandler):
+        scanner = WorkScanner(str(tmp_path))
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urlopen(f"{base}/api/online/live-engine-status?refresh=1", timeout=5) as resp:
+                st = json.loads(resp.read().decode("utf-8"))
+                assert st["ok"] is True
+                assert st["engines"]["google_flow"]["credits"] == 50
+
+            cfg_req = Request(
+                f"{base}/api/online/live-engine-config",
+                data=json.dumps({"zhipuApiKey": "zhipu_test_123456789"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(cfg_req, timeout=5) as resp:
+                cfg_res = json.loads(resp.read().decode("utf-8"))
+                assert cfg_res["ok"] is True
+                assert cfg_res["engines"]["zhipu"]["ready"] is True
+                assert key_file.read_text(encoding="utf-8") == "zhipu_test_123456789"
+
+            b64_img = base64.b64encode(_make_jpeg_bytes((100, 140, 200))).decode("ascii")
+            gen_req = Request(
+                f"{base}/api/online/live-generate",
+                data=json.dumps({"engine": "flow_first", "imageBase64": b64_img, "name": "test.jpg"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(gen_req, timeout=15) as resp:
+                gen_res = json.loads(resp.read().decode("utf-8"))
+                assert gen_res["ok"] is True
+                assert gen_res["provider"] == "google_flow"
+                motion_bytes = base64.b64decode(gen_res["motionJpegBase64"])
+                assert motion_photo.is_motion_photo_jpeg(motion_bytes) is True
+
+            # Unsupported / local preference returns graceful local fallback marker
+            fb_req = Request(
+                f"{base}/api/online/live-generate",
+                data=json.dumps({"engine": "local_only", "imageBase64": b64_img}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(fb_req, timeout=5) as resp:
+                fb_res = json.loads(resp.read().decode("utf-8"))
+                assert fb_res["ok"] is False
+                assert fb_res["fallback"] == "local"
+        finally:
+            server.shutdown()

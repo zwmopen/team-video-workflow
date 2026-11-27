@@ -44,6 +44,7 @@ public final class TransferActivity extends Activity {
     private TextView status;
     private ProgressBar progress;
     private Button channelButton;
+    private com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private PeerDevice selected;
     private String selectedChannel;
     private boolean receiverRegistered;
@@ -86,9 +87,15 @@ public final class TransferActivity extends Activity {
     private void registerLegacyReceiver(IntentFilter filter) { registerReceiver(peerReceiver, filter); }
 
     @Override protected void onStop() {
+        if (liveQuickMenu != null) liveQuickMenu.close();
         if (receiverRegistered) { unregisterReceiver(peerReceiver); receiverRegistered = false; }
         refreshHandler.removeCallbacks(refreshPeers);
         super.onStop();
+    }
+
+    @Override public void onBackPressed() {
+        if (liveQuickMenu != null && liveQuickMenu.close()) return;
+        super.onBackPressed();
     }
 
     @Override protected void onDestroy() { worker.shutdownNow(); super.onDestroy(); }
@@ -112,7 +119,8 @@ public final class TransferActivity extends Activity {
         channelButton.setTextSize(14);
         channelButton.setTextColor(ThemePalette.getBrandLightText(this));
         channelButton.setBackground(round(ThemePalette.getCardBg(this), 14));
-        channelButton.setOnClickListener(v -> chooseChannel());
+        liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
+        liveQuickMenu.attachTapAndHold(channelButton, this::chooseChannel);
         updateChannelButton();
 
         Button refreshButton = new Button(this);
@@ -271,24 +279,19 @@ public final class TransferActivity extends Activity {
         String[] values = {CHANNEL_AUTO, CHANNEL_USB, CHANNEL_WIFI};
         int checked = CHANNEL_USB.equals(selectedChannel) ? 1
                 : CHANNEL_WIFI.equals(selectedChannel) ? 2 : 0;
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("传送方式")
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    selectedChannel = values[which];
-                    selected = null;
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                            .putString(PREF_TRANSFER_CHANNEL, selectedChannel).apply();
-                    updateChannelButton();
-                    renderPeers();
-                    dialog.dismiss();
-                    if (CHANNEL_USB.equals(selectedChannel)
-                            && filteredPeers(OnlineService.peers()).isEmpty()) {
-                        Toast.makeText(this, "请打开 USB 网络共享，电脑会自动出现",
-                                Toast.LENGTH_LONG).show();
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        liveQuickMenu.show(channelButton, labels, checked, which -> {
+            selectedChannel = values[which];
+            selected = null;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(PREF_TRANSFER_CHANNEL, selectedChannel).apply();
+            updateChannelButton();
+            renderPeers();
+            if (CHANNEL_USB.equals(selectedChannel)
+                    && filteredPeers(OnlineService.peers()).isEmpty()) {
+                Toast.makeText(this, "请打开 USB 网络共享，电脑会自动出现",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     private void updateChannelButton() {

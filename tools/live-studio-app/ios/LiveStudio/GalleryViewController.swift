@@ -440,22 +440,11 @@ final class GalleryViewController: UIViewController,
     }
 
     private func showQualityTierPicker() {
-        let alert = UIAlertController(
-            title: "动态视频画质档位",
-            message: "静态封面图保持原图无损；仅控制动态视频渲染规格。",
-            preferredStyle: .actionSheet
-        )
-        for tier in LiveQualityTier.allCases {
-            let mark = (tier == activeTier) ? "  ✓" : ""
-            alert.addAction(UIAlertAction(title: "\(tier.title)（\(tier.shortLabel)）\(mark)", style: .default) { [weak self] _ in
-                self?.activeTier = tier
-            })
+        let tiers = LiveQualityTier.allCases
+        let labels = tiers.map { "\($0.title)（\($0.shortLabel)）" }
+        liveQuickMenu.show(anchor: liveModeButton, labels: labels, selected: tiers.firstIndex(of: activeTier) ?? 0) { [weak self] idx in
+            self?.activeTier = tiers[idx]
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = alert.popoverPresentationController {
-            pop.barButtonItem = navigationItem.rightBarButtonItem
-        }
-        present(alert, animated: true)
     }
 
     @objc private func showEffectPicker() {
@@ -504,16 +493,11 @@ final class GalleryViewController: UIViewController,
             ("标准推荐（1.8% · 1.6秒）", 1.018, 1.6),
             ("轻柔明显（3.2% · 2.2秒）", 1.032, 2.2)
         ]
-        let alert = UIAlertController(title: "微动幅度与时长", message: nil, preferredStyle: .actionSheet)
-        for (title, ratio, dur) in options {
-            let isCur = abs(activeRatio - ratio) < 0.002
-            alert.addAction(UIAlertAction(title: title + (isCur ? "  ✓" : ""), style: .default) { [weak self] _ in
-                self?.activeRatio = ratio
-                self?.activeDuration = dur
-            })
+        let selected = options.firstIndex { abs(activeRatio - $0.1) < 0.002 } ?? 1
+        liveQuickMenu.show(anchor: liveModeButton, labels: options.map { $0.0 }, selected: selected) { [weak self] idx in
+            self?.activeRatio = options[idx].1
+            self?.activeDuration = options[idx].2
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(alert, animated: true)
     }
 
     @objc private func deleteSelectedTapped() {

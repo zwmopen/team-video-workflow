@@ -116,6 +116,36 @@ public final class LiveMotionPhotoConverter {
         );
     }
 
+    public static LiveConvertResult savePackedMotionPhotoToGallery(
+            Context context,
+            byte[] motionPhotoBytes,
+            int index
+    ) throws IOException {
+        long t0 = System.currentTimeMillis();
+        if (!LiveMotionPhotoPacker.isMotionPhoto(motionPhotoBytes)) {
+            throw new IOException("电脑返回的实况封装无效");
+        }
+        int[] dims = probeDimensions(motionPhotoBytes);
+        Uri outUri = saveMotionPhotoToGallery(context, motionPhotoBytes, buildOutputName(index));
+        return new LiveConvertResult(
+                outUri,
+                null,
+                LiveConvertResult.CoverMode.LOSSLESS_JPEG_PASSTHROUGH,
+                null,
+                dims[0],
+                dims[1],
+                motionPhotoBytes.length,
+                dims[0],
+                dims[1],
+                0,
+                motionPhotoBytes.length,
+                LiveQualityTier.ORIGINAL,
+                LiveQualityTier.ORIGINAL,
+                null,
+                System.currentTimeMillis() - t0
+        );
+    }
+
     public static LiveConvertResult convertFileToFileDetailed(
             Context context,
             File sourceFile,

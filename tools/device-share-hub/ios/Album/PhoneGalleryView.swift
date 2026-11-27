@@ -667,24 +667,12 @@ final class PhoneGalleryViewController: UIViewController,
     }
 
     private func showQualityTierPicker() {
+        let tiers = LiveQualityTier.allCases
         let cur = AutoLivePreferences.qualityTier
-        let alert = UIAlertController(
-            title: "动态视频画质档位",
-            message: "静态封面图保持 JPEG/HEIC 原画无损直出；此设置仅控制动态视频渲染规格。",
-            preferredStyle: .actionSheet
-        )
-        for tier in LiveQualityTier.allCases {
-            let mark = (tier == cur) ? "  ✓" : ""
-            alert.addAction(UIAlertAction(title: "\(tier.title)（\(tier.shortLabel)）\(mark)", style: .default) { _ in
-                AutoLivePreferences.qualityTier = tier
-            })
+        let labels = tiers.map { "\($0.title)（\($0.shortLabel)）" }
+        liveQuickMenu.show(anchor: liveStatusButton, labels: labels, selected: tiers.firstIndex(of: cur) ?? 0) { idx in
+            AutoLivePreferences.qualityTier = tiers[idx]
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = alert.popoverPresentationController {
-            pop.sourceView = liveStatusButton
-            pop.sourceRect = liveStatusButton.bounds
-        }
-        present(alert, animated: true)
     }
 
     private func showStrengthPicker() {
@@ -697,20 +685,11 @@ final class PhoneGalleryViewController: UIViewController,
             ("标准推荐（1.8% · 1.6秒）", 1.018, 1.6),
             ("轻柔明显（3.2% · 2.2秒）", 1.032, 2.2)
         ]
-        let alert = UIAlertController(title: "微动幅度与时长", message: nil, preferredStyle: .actionSheet)
-        for (title, ratio, dur) in options {
-            let isCur = abs(AutoLivePreferences.motionRatio - ratio) < 0.002
-            alert.addAction(UIAlertAction(title: title + (isCur ? "  ✓" : ""), style: .default) { _ in
-                AutoLivePreferences.motionRatio = ratio
-                AutoLivePreferences.motionDuration = dur
-            })
+        let selected = options.firstIndex { abs(AutoLivePreferences.motionRatio - $0.1) < 0.002 } ?? 1
+        liveQuickMenu.show(anchor: liveStatusButton, labels: options.map { $0.0 }, selected: selected) { idx in
+            AutoLivePreferences.motionRatio = options[idx].1
+            AutoLivePreferences.motionDuration = options[idx].2
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = alert.popoverPresentationController {
-            pop.sourceView = liveStatusButton
-            pop.sourceRect = liveStatusButton.bounds
-        }
-        present(alert, animated: true)
     }
 
     @objc private func deleteSelectedTapped() {
@@ -758,7 +737,7 @@ final class PhoneGalleryViewController: UIViewController,
             self?.requestImages(chosen) { [weak self] images in
                 guard let self = self, !images.isEmpty else { return }
                 let ac = UIActivityViewController(activityItems: images, applicationActivities: nil)
-                ac.popoverPresentationController?.sourceView = self.rawButton
+                ac.popoverPresentationController?.sourceView = self.bottomDock
                 self.present(ac, animated: true)
             }
         }
@@ -835,19 +814,49 @@ final class PhoneGalleryViewController: UIViewController,
 
         requestRawDatas(for: fetchTargets) { [weak self] resolved, failedDataAssets in
             DispatchQueue.global(qos: .userInitiated).async {
+                let enginePref = LiveEnginePreference.preferred
+                var usePcAi = false
+                if enginePref != .localOnly {
+                    let st = OnlineGalleryClient.shared.probeLiveEngineStatusSync(forceRefresh: false)
+                    if enginePref == .flowFirst && st.reachable && st.flowReady {
+                        usePcAi = true
+                    } else if enginePref == .zhipuFirst && st.reachable && st.zhipuReady {
+                        usePcAi = true
+                    }
+                }
                 var results: [LiveConvertResult] = []
                 var failedAssets: [PHAsset] = failedDataAssets
                 var firstErr: Error?
-                for (asset, data) in resolved {
+                for (idx, pair) in resolved.enumerated() {
+                    let asset = pair.0
+                    let data = pair.1
                     do {
-                        let res = try OnDeviceLivePhotoEngine.shared.convertAndSaveDataToPhotos(
-                            sourceData: data,
-                            preset: mode,
-                            qualityTier: tier,
-                            ratio: ratio,
-                            duration: dur
-                        )
-                        results.append(res)
+                        var res: LiveConvertResult?
+                        if usePcAi,
+                           let mp4 = OnlineGalleryClient.shared.requestPcAiLiveConvertSync(
+                               imageData: data,
+                               fileName: "photo_\(idx + 1).jpg",
+                               preference: enginePref,
+                               mode: mode.rawValue,
+                               duration: dur
+                           ) {
+                            res = try OnDeviceLivePhotoEngine.shared.convertWithExternalVideoToPhotos(
+                                sourceData: data,
+                                mp4Data: mp4
+                            )
+                        }
+                        if res == nil {
+                            res = try OnDeviceLivePhotoEngine.shared.convertAndSaveDataToPhotos(
+                                sourceData: data,
+                                preset: mode,
+                                qualityTier: tier,
+                                ratio: ratio,
+                                duration: dur
+                            )
+                        }
+                        if let done = res {
+                            results.append(done)
+                        }
                     } catch {
                         failedAssets.append(asset)
                         if firstErr == nil { firstErr = error }
@@ -870,7 +879,7 @@ final class PhoneGalleryViewController: UIViewController,
                                 a.addAction(UIAlertAction(title: "先分享已成功 \(results.count) 张", style: .default) { _ in
                                     let urls = results.flatMap { [$0.pair.imageURL, $0.pair.videoURL] }
                                     let ac = UIActivityViewController(activityItems: urls, applicationActivities: nil)
-                                    ac.popoverPresentationController?.sourceView = self.shareButton
+                                    ac.popoverPresentationController?.sourceView = self.bottomDock
                                     self.present(ac, animated: true)
                                 })
                             }
@@ -882,7 +891,7 @@ final class PhoneGalleryViewController: UIViewController,
                         if shareAfter {
                             let urls = results.flatMap { [$0.pair.imageURL, $0.pair.videoURL] }
                             let ac = UIActivityViewController(activityItems: urls, applicationActivities: nil)
-                            ac.popoverPresentationController?.sourceView = self.shareButton
+                            ac.popoverPresentationController?.sourceView = self.bottomDock
                             self.present(ac, animated: true)
                         } else {
                             let losslessCount = results.filter { $0.coverMode == .losslessCopy }.count

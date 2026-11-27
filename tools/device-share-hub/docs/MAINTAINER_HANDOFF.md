@@ -1,3 +1,12 @@
+# 2026-11-27 V3：全量圆角浮层、搜索栏对齐、传输策略真路由与电脑 AI 实况网关（feature/live-push-drift-20261127）
+
+- **V3 核心交付**：
+  1. **搜索栏按钮紧凑对齐 & UI 去品牌命名**：`MainActivity.java` 内 `视图▾`/`筛选▾`/`排序▾` 缩至 `25dp` 高并与输入框垂直居中；全量用户可见主题命名去 `"FlClash"` 化，统一为「通透玻璃（推荐）」与「经典纯色」；修复 iOS `PhoneGalleryView.swift` 移除按钮后的 `bottomDock` 锚点编译问题。
+  2. **全量圆角滑选浮层替换 & 真机坑位修复**：双端 `SettingsActivity` / `SettingsView`、`PhoneGalleryPane` / `PhoneGalleryView`、`TransferActivity` 及 `LiveStudio` 全部单选弹出框均切换为支持点按与长按滑选的 `LiveQuickMenu`；同步修复 `MainActivity` `liveQuickMenu` 初始化时序 NPE、`LiveQuickMenu.attach` 多控件锚点复用及竖向滚动拦截、`SettingsActivity.choiceRow` 标题防截断。
+  3. **`TransportStrategy` 运行期真路由**：Android / iOS `OnlineGalleryClient` 均接入策略变更即时失效检查，`USB_FIRST` 优先 `127.0.0.1:45835`（失败切局域网）、`R2_FIRST` 在已授权设备直接优先 `/v1/catalog/*`、策略选择同步 `TransferActivity` 默认通道；说明 R2 超过免费额度后按量计费而非硬停，故保留统计与 80% 预警面板并通过拉取 ACK 清理将常驻占用控近 0 B。
+  4. **电脑 AI 实况网关 (`Google Flow` + 免费 `智谱 CogVideoX-Flash`)**：`online_gallery_service.py` 暴露 `/api/online/live-engine-status`、`/api/online/live-engine-config` 与 `/api/online/live-generate`（无损封装封面，30s 探活缓存），本机实测 `gflow`（50 积分）已就绪；智谱免费 Key 从手机端设置页直接写入电脑 `%LOCALAPPDATA%\zwm-device-share-hub\zhipu_api_key.txt`，离线或无凭证时无感回退端侧硬件无损渲染。
+- **V3 验证证据**：全量 Python/Node 自动化测试（含 `parity_ios_android.py` 52/52、新增电脑 AI 网关单测与路由测试、16/16 中继协议测试）、双端 Android Gradle 9.4.1 单测/Lint/APK 构建与 `apksigner` 验签、PC `/api/online/live-engine-status` 实测与小米 15 V3 实机启动/搜索栏/排序/引擎浮层截图均已通过（正式版号仍保留主线未覆写）。
+
 # 2026-11-27 V2：FlClash 全局玻璃风格、滑块交互、相册悬浮底座与 iOS 12 兼容收口（feature/live-push-drift-20261127）
 
 - **新增 UI 与交互重构**：

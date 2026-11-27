@@ -284,8 +284,8 @@ enum AppThemeStyle: Int {
 
     var title: String {
         switch self {
-        case .classic: return "经典标准"
-        case .flclashGlass: return "FlClash 玻璃（推荐）"
+        case .classic: return "经典纯色"
+        case .flclashGlass: return "通透玻璃（推荐）"
         }
     }
 }

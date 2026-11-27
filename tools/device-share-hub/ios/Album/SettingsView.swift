@@ -4,6 +4,7 @@ import AudioToolbox
 final class SettingsViewController: UITableViewController {
     private let library: WorkLibrary
     private let liveQuickMenu = LiveQuickMenu()
+    private var engineStatus: OnlineGalleryClient.LiveEngineStatusSnapshot = .offline
 
     init(library: WorkLibrary) {
         self.library = library
@@ -16,6 +17,32 @@ final class SettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
+        refreshLiveEngineStatus(force: false)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshLiveEngineStatus(force: false)
+    }
+
+    private func refreshLiveEngineStatus(force: Bool) {
+        OnlineGalleryClient.shared.fetchLiveEngineStatus(forceRefresh: force) { [weak self] snap in
+            self?.engineStatus = snap
+            self?.tableView.reloadData()
+        }
+    }
+
+    private func formattedEngineSummary() -> String {
+        switch LiveEnginePreference.preferred {
+        case .localOnly:
+            return "仅本地硬件无损渲染"
+        case .flowFirst:
+            guard engineStatus.reachable else { return "Google Flow · 电脑离线将自动切本地" }
+            return engineStatus.flowReady ? "Google Flow · 已就绪（\(engineStatus.flowCredits) 积分）" : "Google Flow · 暂不可用（将走本地）"
+        case .zhipuFirst:
+            guard engineStatus.reachable else { return "智谱免费优先 · 电脑离线将自动切本地" }
+            return engineStatus.zhipuReady ? "智谱 CogVideoX-Flash · 已就绪" : "智谱优先 · 待配置免费 Key"
+        }
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
@@ -79,7 +106,7 @@ final class SettingsViewController: UITableViewController {
             cell.selectionStyle = .default
         case (0, 7):
             cell.textLabel?.text = "处理引擎偏好"
-            cell.detailTextLabel?.text = LiveEnginePreference.summary
+            cell.detailTextLabel?.text = formattedEngineSummary()
             cell.selectionStyle = .default
         case (1, 0):
             cell.textLabel?.text = "当前文件夹"
@@ -151,12 +178,13 @@ final class SettingsViewController: UITableViewController {
         } else if indexPath.section == 0 && indexPath.row == 4 {
             if let cell = tableView.cellForRow(at: indexPath) { showAutoLiveModeChoices(anchor: cell) }
         } else if indexPath.section == 0 && indexPath.row == 5 {
-            showTransportStrategyChoices()
+            let anchor = tableView.cellForRow(at: indexPath) ?? tableView
+            showTransportStrategyChoices(anchor: anchor)
         } else if indexPath.section == 0 && indexPath.row == 6 {
             showTransferStatsAlert()
         } else if indexPath.section == 0 && indexPath.row == 7 {
             if let cell = tableView.cellForRow(at: indexPath) {
-                LiveEngineSettings.show(menu: liveQuickMenu, anchor: cell) { [weak self] in self?.tableView.reloadData() }
+                showLiveEngineChoices(anchor: cell)
             }
         } else if indexPath.section == 1 && indexPath.row == 1 {
             if library.supportsExternalFolderSelection {
@@ -173,11 +201,14 @@ final class SettingsViewController: UITableViewController {
                 present(UINavigationController(rootViewController: picker), animated: true)
             }
         } else if indexPath.section == 2 {
-            showCleanupChoices(editingMove: indexPath.row == 0)
+            let anchor = tableView.cellForRow(at: indexPath) ?? tableView
+            showCleanupChoices(editingMove: indexPath.row == 0, anchor: anchor)
         } else if indexPath.section == 4 && indexPath.row == 0 {
-            showThemeStyleChoices()
+            let anchor = tableView.cellForRow(at: indexPath) ?? tableView
+            showThemeStyleChoices(anchor: anchor)
         } else if indexPath.section == 4 {
-            showThemeModeChoices()
+            let anchor = tableView.cellForRow(at: indexPath) ?? tableView
+            showThemeModeChoices(anchor: anchor)
         } else if indexPath.section == 5 && indexPath.row == 2 {
             AlbumUpdateChecker.check(from: self)
         } else if indexPath.section == 5 && indexPath.row == 3 {
@@ -190,25 +221,72 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
-    private func showTransportStrategyChoices() {
-        let alert = UIAlertController(
-            title: "跨网传输策略",
-            message: "决定电脑与手机在不同网络时的传输通道优先级",
-            preferredStyle: .actionSheet
-        )
+    private func showTransportStrategyChoices(anchor: UIView) {
+        let strategies = RemoteTransportStrategy.allCases
         let current = RemoteRelayProfile.transportStrategy
-        RemoteTransportStrategy.allCases.forEach { strategy in
-            let isCurrent = strategy == current
-            alert.addAction(UIAlertAction(title: strategy.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
-                RemoteRelayProfile.transportStrategy = strategy
-                self?.tableView.reloadData()
-            })
+        liveQuickMenu.show(
+            anchor: anchor,
+            labels: strategies.map { $0.title },
+            selected: strategies.firstIndex(of: current) ?? 0
+        ) { [weak self] idx in
+            RemoteRelayProfile.transportStrategy = strategies[idx]
+            OnlineGalleryClient.shared.invalidateBaseUrl()
+            self?.tableView.reloadData()
+        }
+    }
+
+    private func showLiveEngineChoices(anchor: UIView) {
+        let st = engineStatus
+        let zhipuLabel = st.reachable
+            ? (st.zhipuReady ? "智谱 CogVideoX-Flash（免费 AI · 已就绪）" : "智谱 CogVideoX-Flash（免费 AI · 待配 Key）")
+            : "智谱 CogVideoX-Flash（免费 AI · 连电脑可用）"
+        let localLabel = "仅手机本地无损渲染（0 流量 · 极速）"
+        let flowLabel = st.reachable
+            ? (st.flowReady ? "Google Flow 电脑联动（已就绪 · \(st.flowCredits) 积分）" : "Google Flow 电脑联动（未就绪）")
+            : "Google Flow 电脑联动（连电脑可用）"
+        let labels = [zhipuLabel, localLabel, flowLabel, "配置电脑端智谱免费 API Key…"]
+        let options: [LiveEnginePreference] = [.zhipuFirst, .localOnly, .flowFirst]
+        let selected = options.firstIndex(of: LiveEnginePreference.preferred) ?? 0
+        liveQuickMenu.show(anchor: anchor, labels: labels, selected: selected) { [weak self] idx in
+            guard let self = self else { return }
+            if idx == 3 {
+                self.promptForZhipuApiKey()
+                return
+            }
+            LiveEnginePreference.preferred = options[idx]
+            self.tableView.reloadData()
+            self.refreshLiveEngineStatus(force: true)
+        }
+    }
+
+    private func promptForZhipuApiKey() {
+        let alert = UIAlertController(
+            title: "配置电脑端智谱免费 API Key",
+            message: engineStatus.zhipuReady
+                ? "当前电脑已配置 Key（\(engineStatus.zhipuMasked)）；留空保存可清除。"
+                : "前往 bigmodel.cn 免费注册并创建 API Key，保存后直接写入电脑本机，手机端无需重装。",
+            preferredStyle: .alert
+        )
+        alert.addTextField { field in
+            field.placeholder = "粘贴智谱 API Key（cogvideox-flash 免费）"
+            field.clearButtonMode = .whileEditing
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
+        alert.addAction(UIAlertAction(title: "保存到电脑", style: .default) { [weak self, weak alert] _ in
+            let key = alert?.textFields?.first?.text ?? ""
+            OnlineGalleryClient.shared.saveZhipuApiKey(key) { [weak self] res in
+                guard let self = self else { return }
+                switch res {
+                case .success(let snap):
+                    self.engineStatus = snap
+                    self.tableView.reloadData()
+                case .failure(let err):
+                    let errAlert = UIAlertController(title: "保存失败", message: "请先确认手机与电脑已连通（\(err.localizedDescription)）", preferredStyle: .alert)
+                    errAlert.addAction(UIAlertAction(title: "知道了", style: .default))
+                    self.present(errAlert, animated: true)
+                }
+            }
+        })
         present(alert, animated: true)
     }
 
@@ -256,49 +334,29 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
-    private func showThemeStyleChoices() {
-        let alert = UIAlertController(title: "主题风格", message: "选择全局交互质感与玻璃效果", preferredStyle: .actionSheet)
-        let current = AppThemePreferences.currentStyle
+    private func showThemeStyleChoices(anchor: UIView) {
         let options: [(AppThemeStyle, String)] = [
-            (.classic, "经典标准"),
-            (.flclashGlass, "FlClash 玻璃（推荐）")
+            (.classic, "经典纯色"),
+            (.flclashGlass, "通透玻璃（推荐）")
         ]
-        options.forEach { (style, label) in
-            let isCurrent = style == current
-            alert.addAction(UIAlertAction(title: label + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
-                AppThemePreferences.currentStyle = style
-                self?.tableView.reloadData()
-            })
+        let selected = options.firstIndex { $0.0 == AppThemePreferences.currentStyle } ?? 1
+        liveQuickMenu.show(anchor: anchor, labels: options.map { $0.1 }, selected: selected) { [weak self] idx in
+            AppThemePreferences.currentStyle = options[idx].0
+            self?.tableView.reloadData()
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
     }
 
-    private func showThemeModeChoices() {
-        let alert = UIAlertController(title: "外观风格", message: "选择深色或浅色模式", preferredStyle: .actionSheet)
-        let current = AppThemePreferences.currentMode
+    private func showThemeModeChoices(anchor: UIView) {
         let options: [(AppThemeMode, String)] = [
             (.system, "跟随系统"),
             (.light, "浅色模式"),
             (.dark, "深色模式")
         ]
-        options.forEach { (mode, label) in
-            let isCurrent = mode == current
-            alert.addAction(UIAlertAction(title: label + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
-                AppThemePreferences.currentMode = mode
-                self?.tableView.reloadData()
-            })
+        let selected = options.firstIndex { $0.0 == AppThemePreferences.currentMode } ?? 0
+        liveQuickMenu.show(anchor: anchor, labels: options.map { $0.1 }, selected: selected) { [weak self] idx in
+            AppThemePreferences.currentMode = options[idx].0
+            self?.tableView.reloadData()
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -316,9 +374,9 @@ final class SettingsViewController: UITableViewController {
                 OnlineGalleryClient.shared.syncLiveMotionMode(modes[which].rawValue)
                 self.tableView.reloadData()
             } else if which == modes.count {
-                self.showAutoLiveQualityTierChoices()
+                self.showAutoLiveQualityTierChoices(anchor: anchor)
             } else if which == modes.count + 1 {
-                self.showAutoLiveStrengthChoices()
+                self.showAutoLiveStrengthChoices(anchor: anchor)
             } else {
                 AutoLivePreferences.skipExistingLive.toggle()
                 self.tableView.reloadData()
@@ -326,29 +384,20 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
-    private func showAutoLiveQualityTierChoices() {
+    private func showAutoLiveQualityTierChoices(anchor: UIView) {
+        let tiers = LiveQualityTier.allCases
         let cur = AutoLivePreferences.qualityTier
-        let alert = UIAlertController(
-            title: "动态视频画质档位",
-            message: "静态封面图保持 JPEG/HEIC 原画无损直出；此设置仅决定动态视频渲染规格。",
-            preferredStyle: .actionSheet
-        )
-        for tier in LiveQualityTier.allCases {
-            let mark = (tier == cur) ? "  ✓" : ""
-            alert.addAction(UIAlertAction(title: "\(tier.title)（\(tier.shortLabel)）\(mark)", style: .default) { [weak self] _ in
-                AutoLivePreferences.qualityTier = tier
-                self?.tableView.reloadData()
-            })
+        liveQuickMenu.show(
+            anchor: anchor,
+            labels: tiers.map { "\($0.title)（\($0.shortLabel)）" },
+            selected: tiers.firstIndex(of: cur) ?? 0
+        ) { [weak self] idx in
+            AutoLivePreferences.qualityTier = tiers[idx]
+            self?.tableView.reloadData()
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
     }
 
-    private func showAutoLiveStrengthChoices() {
+    private func showAutoLiveStrengthChoices(anchor: UIView) {
         let options: [(String, Double, Double)] = AutoLivePreferences.motionMode == .pushDrift ? [
             ("柔和（5.8% · 2.0秒）", 1.058, 2.0),
             ("参考原版（11.6% · 2.0秒）", 1.116, 2.0),
@@ -358,21 +407,12 @@ final class SettingsViewController: UITableViewController {
             ("标准推荐（1.8% · 1.6秒）", 1.018, 1.6),
             ("轻柔明显（3.2% · 2.2秒）", 1.032, 2.2)
         ]
-        let alert = UIAlertController(title: "微动幅度与时长", message: nil, preferredStyle: .actionSheet)
-        for (label, ratio, dur) in options {
-            let isCur = abs(AutoLivePreferences.motionRatio - ratio) < 0.002
-            alert.addAction(UIAlertAction(title: label + (isCur ? "  ✓" : ""), style: .default) { [weak self] _ in
-                AutoLivePreferences.motionRatio = ratio
-                AutoLivePreferences.motionDuration = dur
-                self?.tableView.reloadData()
-            })
+        let selected = options.firstIndex { abs(AutoLivePreferences.motionRatio - $0.1) < 0.002 } ?? 1
+        liveQuickMenu.show(anchor: anchor, labels: options.map { $0.0 }, selected: selected) { [weak self] idx in
+            AutoLivePreferences.motionRatio = options[idx].1
+            AutoLivePreferences.motionDuration = options[idx].2
+            self?.tableView.reloadData()
         }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
     }
 
     @objc private func clipboardSyncSwitchChanged(_ sender: UISwitch) {
@@ -407,28 +447,26 @@ final class SettingsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    private func showCleanupChoices(editingMove: Bool) {
+    private func showCleanupChoices(editingMove: Bool, anchor: UIView) {
         let current = editingMove ? CleanupPreferences.moveHours : CleanupPreferences.deleteHours
-        let title = editingMove ? "自动移入回收站" : "自动彻底删除"
-        let alert = UIAlertController(title: title, message: "选择后立即保存", preferredStyle: .actionSheet)
-        [(CleanupPreferences.manual, "手动"), (0, "立刻"),
-         (1, "1 小时后"), (3, "3 小时后"),
-         (6, "6 小时后"), (24, "24 小时后")].forEach { preset in
-            let (hours, label) = preset
-            alert.addAction(UIAlertAction(title: label + (hours == current ? "  ✓" : ""),
-                                          style: .default) { [weak self] _ in
-                self?.saveCleanupChoice(hours, editingMove: editingMove)
-            })
+        let presets: [(Int, String)] = [
+            (CleanupPreferences.manual, "手动"),
+            (0, "立刻"),
+            (1, "1 小时后"),
+            (3, "3 小时后"),
+            (6, "6 小时后"),
+            (24, "24 小时后")
+        ]
+        let labels = presets.map { $0.1 } + ["自定义…"]
+        let selected = presets.firstIndex { $0.0 == current } ?? -1
+        liveQuickMenu.show(anchor: anchor, labels: labels, selected: selected) { [weak self] idx in
+            guard let self = self else { return }
+            if idx == presets.count {
+                self.showCustomCleanupHours(editingMove: editingMove, current: current)
+            } else {
+                self.saveCleanupChoice(presets[idx].0, editingMove: editingMove)
+            }
         }
-        alert.addAction(UIAlertAction(title: "自定义…", style: .default) { [weak self] _ in
-            self?.showCustomCleanupHours(editingMove: editingMove, current: current)
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
     }
 
     private func showCustomCleanupHours(editingMove: Bool, current: Int) {

@@ -490,4 +490,87 @@ final class OnDeviceLivePhotoEngine {
             throw LivePhotoEngineError.writerFailed(writer.error?.localizedDescription ?? "MOV 写入失败")
         }
     }
+
+    /// Pairs untouched original still cover with an external MP4 clip (e.g. from PC Google Flow / Zhipu gateway)
+    /// into a native Apple Live Photo and saves it to Photos.
+    func convertWithExternalVideoToPhotos(sourceData: Data, mp4Data: Data) throws -> LiveConvertResult {
+        let t0 = Date()
+        guard let imgSource = CGImageSourceCreateWithData(sourceData as CFData, nil),
+              let srcUti = CGImageSourceGetType(imgSource) as String? else {
+            throw LivePhotoEngineError.invalidImage
+        }
+        let assetId = UUID().uuidString
+        let stageDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("album-ai-live-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: stageDir, withIntermediateDirectories: true)
+
+        let isHeic = srcUti.lowercased().contains("heic") || srcUti.lowercased().contains("heif")
+        let isJpeg = srcUti == (kUTTypeJPEG as String)
+        let coverExt = isHeic ? "heic" : "jpg"
+        let jpgURL = stageDir.appendingPathComponent("live_cover.\(coverExt)")
+        let rawMp4URL = stageDir.appendingPathComponent("raw_ai.mp4")
+        let movURL = stageDir.appendingPathComponent("live_motion.mov")
+
+        let props = CGImageSourceCopyPropertiesAtIndex(imgSource, 0, nil) as? [String: Any]
+        var coverW = props?[kCGImagePropertyPixelWidth as String] as? Int ?? 0
+        var coverH = props?[kCGImagePropertyPixelHeight as String] as? Int ?? 0
+        var coverMode: LiveCoverMode = .transcoded
+        var reencodeReason: String?
+
+        if (isJpeg || isHeic),
+           try writeLosslessCopyCover(source: imgSource, uti: srcUti as CFString, assetId: assetId, destination: jpgURL) {
+            coverMode = .losslessCopy
+        } else {
+            reencodeReason = (isJpeg || isHeic) ? "copy_image_source_rejected" : "non_jpeg_heic_source_transcoded"
+            guard let fullCg = CGImageSourceCreateImageAtIndex(imgSource, 0, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+                throw LivePhotoEngineError.invalidImage
+            }
+            coverW = fullCg.width
+            coverH = fullCg.height
+            let fallbackJpgURL = stageDir.appendingPathComponent("live_cover.jpg")
+            try writeHighQualityCover(cgImage: fullCg, sourceProps: props, assetId: assetId, destination: fallbackJpgURL)
+        }
+        let finalCoverURL = FileManager.default.fileExists(atPath: jpgURL.path)
+            ? jpgURL
+            : stageDir.appendingPathComponent("live_cover.jpg")
+        let coverBytes = (try? Data(contentsOf: finalCoverURL).count) ?? sourceData.count
+
+        try mp4Data.write(to: rawMp4URL)
+        let asset = AVURLAsset(url: rawMp4URL)
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+            throw LivePhotoEngineError.writerFailed("无法包装 AI 视频轨道")
+        }
+        let contentItem = AVMutableMetadataItem()
+        contentItem.key = "com.apple.quicktime.content.identifier" as NSString
+        contentItem.keySpace = .quickTimeMetadata
+        contentItem.value = assetId as NSString
+        contentItem.dataType = kCMMetadataBaseDataType_UTF8 as String
+        export.outputURL = movURL
+        export.outputFileType = .mov
+        export.metadata = [contentItem]
+        let sem = DispatchSemaphore(value: 0)
+        export.exportAsynchronously { sem.signal() }
+        sem.wait()
+        if export.status != .completed {
+            throw LivePhotoEngineError.writerFailed(export.error?.localizedDescription ?? "MOV 包装失败")
+        }
+
+        let res = LiveConvertResult(
+            pair: LivePhotoPair(imageURL: finalCoverURL, videoURL: movURL),
+            coverMode: coverMode,
+            reencodeReason: reencodeReason,
+            coverWidth: coverW,
+            coverHeight: coverH,
+            coverBytes: coverBytes,
+            videoWidth: coverW,
+            videoHeight: coverH,
+            videoBitrateBps: 0,
+            requestedTier: .original,
+            effectiveTier: .original,
+            downgradeReason: nil,
+            elapsedMs: max(1, Int(Date().timeIntervalSince(t0) * 1000.0))
+        )
+        try savePairsToPhotos([res.pair])
+        return res
+    }
 }

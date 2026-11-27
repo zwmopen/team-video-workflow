@@ -546,10 +546,24 @@ public final class OnlineGalleryClient {
     /// 3) 最近一次成功连通的地址
     /// 4) 回环兜底（仅 USB 隧道有效）
     /// 修复：旧版把电脑 IP 写死成 192.168.0.106，换网络后 iPhone 永远读不到在线相册。
+    private var lastResolvedStrategy: RemoteTransportStrategy?
+
     public func resolveBaseUrl() -> String {
+        let strategy = RemoteRelayProfile.transportStrategy
+        if strategy != lastResolvedStrategy {
+            lastResolvedStrategy = strategy
+            cachedBaseUrl = nil
+        }
         if let cached = cachedBaseUrl, !cached.isEmpty, !Self.isLoopback(cached) {
             return cached
         }
+        if strategy == .usbFirst {
+            return "http://127.0.0.1:\(Self.defaultPort)"
+        }
+        return resolveLanBaseUrl()
+    }
+
+    private func resolveLanBaseUrl() -> String {
         // 1) 用户在设置里手工填写的地址：优先级最高
         if let manual = prefs.string(forKey: Self.prefManualUrlKey)?.trimmingCharacters(in: .whitespaces),
            !manual.isEmpty, !Self.isLoopback(manual) {
@@ -579,6 +593,24 @@ public final class OnlineGalleryClient {
         }
         // 4) 最后兜底：回环（仅 USB 隧道有效，不固化缓存，避免 Wi-Fi 下锁死）
         return "http://127.0.0.1:\(Self.defaultPort)"
+    }
+
+    public func shouldTryRemoteFirst() -> Bool {
+        return RemoteRelayProfile.transportStrategy == .r2First && RemoteRelayProfile.load() != nil
+    }
+
+    private func filterRemoteWorks(_ works: [OnlineWorkEntry], category: String?, query: String?) -> [OnlineWorkEntry] {
+        let cat = category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let q = query?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if cat.isEmpty && q.isEmpty { return works }
+        return works.filter { w in
+            if !cat.isEmpty && w.destination != cat { return false }
+            if !q.isEmpty {
+                let hay = "\(w.title) \(w.copyText) \(w.destination)".lowercased()
+                if !hay.contains(q) { return false }
+            }
+            return true
+        }
     }
 
     /// 自动发现命中的地址（允许被更新的信标覆盖）
@@ -874,47 +906,62 @@ public final class OnlineGalleryClient {
             completion(.failure(NSError(domain: "OnlineGallery", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的服务器地址"])))
             return
         }
-        session.dataTask(with: url) { [weak self] data, _, error in
-            if let error = error {
-                if let cached = self?.lastRemoteCategoriesResult {
+        let runLan = { [weak self] in
+            self?.session.dataTask(with: url) { [weak self] data, _, error in
+                if let error = error {
+                    if let cached = self?.lastRemoteCategoriesResult {
+                        DispatchQueue.main.async { completion(.success(cached)) }
+                        return
+                    }
+                    DispatchQueue.main.async { completion(.failure(error)) }
+                    return
+                }
+                guard let data = data else {
+                    DispatchQueue.main.async { completion(.failure(NSError(domain: "OnlineGallery", code: -2, userInfo: [NSLocalizedDescriptionKey: "返回数据为空"]))) }
+                    return
+                }
+                // A slow earlier response must not replace the cache from a newer refresh.
+                self?.saveCategoriesSnapshotIfLatest(data, requestID: requestID)
+                do {
+                    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                    var categories: [OnlineCategoryItem] = []
+                    if let catArr = json["categories"] as? [[String: Any]] {
+                        for item in catArr {
+                            if let name = item["name"] as? String, let count = item["count"] as? Int {
+                                categories.append(OnlineCategoryItem(name: name, count: count))
+                            }
+                        }
+                    }
+                    var stages: [OnlineCategoryItem] = []
+                    if let stageArr = json["stages"] as? [[String: Any]] {
+                        for item in stageArr {
+                            if let name = item["name"] as? String, let count = item["count"] as? Int {
+                                stages.append(OnlineCategoryItem(name: name, count: count))
+                            }
+                        }
+                    }
+                    let total = (json["total"] as? Int) ?? 0
+                    let result = OnlineCategoriesResult(categories: categories, stages: stages, total: total)
+                    DispatchQueue.main.async { completion(.success(result)) }
+                } catch {
+                    NSLog("[OnlineGalleryClient] fetchCategories failed: %@", error.localizedDescription)
+                    DispatchQueue.main.async { completion(.failure(error)) }
+                }
+            }.resume()
+        }
+        if shouldTryRemoteFirst() {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                if let self = self, (try? self.fetchRemoteCatalogWorks()) != nil,
+                   let cached = self.lastRemoteCategoriesResult {
+                    self.isUsingRemoteCatalog = true
                     DispatchQueue.main.async { completion(.success(cached)) }
                     return
                 }
-                DispatchQueue.main.async { completion(.failure(error)) }
-                return
+                runLan()
             }
-            guard let data = data else {
-                DispatchQueue.main.async { completion(.failure(NSError(domain: "OnlineGallery", code: -2, userInfo: [NSLocalizedDescriptionKey: "返回数据为空"]))) }
-                return
-            }
-            // A slow earlier response must not replace the cache from a newer refresh.
-            self?.saveCategoriesSnapshotIfLatest(data, requestID: requestID)
-            do {
-                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-                var categories: [OnlineCategoryItem] = []
-                if let catArr = json["categories"] as? [[String: Any]] {
-                    for item in catArr {
-                        if let name = item["name"] as? String, let count = item["count"] as? Int {
-                            categories.append(OnlineCategoryItem(name: name, count: count))
-                        }
-                    }
-                }
-                var stages: [OnlineCategoryItem] = []
-                if let stageArr = json["stages"] as? [[String: Any]] {
-                    for item in stageArr {
-                        if let name = item["name"] as? String, let count = item["count"] as? Int {
-                            stages.append(OnlineCategoryItem(name: name, count: count))
-                        }
-                    }
-                }
-                let total = (json["total"] as? Int) ?? 0
-                let result = OnlineCategoriesResult(categories: categories, stages: stages, total: total)
-                DispatchQueue.main.async { completion(.success(result)) }
-            } catch {
-                NSLog("[OnlineGalleryClient] fetchCategories failed: %@", error.localizedDescription)
-                DispatchQueue.main.async { completion(.failure(error)) }
-            }
-        }.resume()
+            return
+        }
+        runLan()
     }
 
     public func fetchWorks(category: String? = nil, query: String? = nil,
@@ -946,6 +993,22 @@ public final class OnlineGalleryClient {
             return
         }
 
+        if shouldTryRemoteFirst() {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                if let self = self, let remoteWorks = try? self.fetchRemoteCatalogWorks() {
+                    let filtered = self.filterRemoteWorks(remoteWorks, category: category, query: query)
+                    self.isUsingRemoteCatalog = true
+                    DispatchQueue.main.async { completion(.success(filtered)) }
+                    return
+                }
+                self?.performFetchWorksLanTask(url: url, category: category, query: query, requestID: requestID, baseUrl: baseUrl, completion: completion)
+            }
+            return
+        }
+        performFetchWorksLanTask(url: url, category: category, query: query, requestID: requestID, baseUrl: baseUrl, completion: completion)
+    }
+
+    private func performFetchWorksLanTask(url: URL, category: String?, query: String?, requestID: UInt64, baseUrl: String, completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
         session.dataTask(with: url) { [weak self] data, _, error in
             if let error = error {
                 if RemoteRelayProfile.load() != nil, let self = self {
@@ -1077,6 +1140,36 @@ public final class OnlineGalleryClient {
                 return
             }
             guard !request.isCancelled else { return }
+            if self.shouldTryRemoteFirst(),
+               let wid = Self.queryParam("id", from: url),
+               let file = Self.queryParam("file", from: url),
+               !file.hasPrefix("__src__:") {
+                if let relaySession = try? RemoteRelayClient.ensureSession() {
+                    if isThumbnail {
+                        let tkey = Self.remoteCatalogThumbKey(workId: wid, fileName: file)
+                        if let jpg = try? RemoteRelayClient.downloadCatalogThumb(relaySession, thumbKey: tkey),
+                           let img = UIImage(data: jpg) {
+                            self.imageCache.setObject(img, forKey: cacheKey)
+                            try? jpg.write(to: diskURL)
+                            DispatchQueue.main.async {
+                                guard !request.isCancelled else { return }
+                                onProgress?(100)
+                                completion(img)
+                            }
+                            return
+                        }
+                    } else if (try? RemoteRelayClient.pullCatalogOriginal(relaySession, workId: wid, fileName: file, destination: diskURL)) != nil,
+                              let img = UIImage(contentsOfFile: diskURL.path) {
+                        self.imageCache.setObject(img, forKey: cacheKey)
+                        DispatchQueue.main.async {
+                            guard !request.isCancelled else { return }
+                            onProgress?(100)
+                            completion(img)
+                        }
+                        return
+                    }
+                }
+            }
             self.loadRemoteImageAttempt(
                 url: url,
                 path: path,
@@ -1324,6 +1417,29 @@ public final class OnlineGalleryClient {
 
     /// DSH-170: 并发流式下载原图直接落盘，跳过 UIImage decode 与 jpegData 重编码（速度提升 10 倍）
     private func downloadSingleImageAttempt(
+        url: URL,
+        diskURL: URL,
+        attempt: Int,
+        maxAttempts: Int,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        if attempt == 1 && shouldTryRemoteFirst(),
+           let wid = Self.queryParam("id", from: url),
+           let file = Self.queryParam("file", from: url) {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                if let relaySession = try? RemoteRelayClient.ensureSession(),
+                   (try? RemoteRelayClient.pullCatalogOriginal(relaySession, workId: wid, fileName: file, destination: diskURL)) != nil {
+                    completion(.success(()))
+                    return
+                }
+                self?.performSingleImageLanTask(url: url, diskURL: diskURL, attempt: attempt, maxAttempts: maxAttempts, completion: completion)
+            }
+            return
+        }
+        performSingleImageLanTask(url: url, diskURL: diskURL, attempt: attempt, maxAttempts: maxAttempts, completion: completion)
+    }
+
+    private func performSingleImageLanTask(
         url: URL,
         diskURL: URL,
         attempt: Int,
@@ -1716,6 +1832,20 @@ public final class OnlineGalleryClient {
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
+        if shouldTryRemoteFirst() {
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                if let session = try? RemoteRelayClient.ensureSession(),
+                   (try? RemoteRelayClient.recordCatalogWorkUsed(session, workId: workId)) != nil {
+                    let res = OnlineUseResult(ok: true, workId: workId, useCount: 1, remainingUses: 1,
+                                              moved: false, message: "已通过 R2 云端中转记录使用（待电脑同步写入标签）",
+                                              firstSharedAtMs: 0, expireAtMs: 0, originDevice: "")
+                    DispatchQueue.main.async { completion?(res) }
+                    return
+                }
+                self?.sendRecordUseAttempt(request: request, workId: workId, attempt: 1, maxAttempts: 3, completion: completion)
+            }
+            return
+        }
         sendRecordUseAttempt(request: request, workId: workId, attempt: 1, maxAttempts: 3, completion: completion)
     }
 
@@ -2025,5 +2155,129 @@ public final class OnlineGalleryClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["mode": trimmed])
         session.dataTask(with: request) { _, _, _ in }.resume()
+    }
+
+    public struct LiveEngineStatusSnapshot {
+        public let reachable: Bool
+        public let zhipuReady: Bool
+        public let zhipuMasked: String
+        public let flowReady: Bool
+        public let flowCredits: Int
+        public let flowReason: String
+
+        public static let offline = LiveEngineStatusSnapshot(
+            reachable: false, zhipuReady: false, zhipuMasked: "",
+            flowReady: false, flowCredits: 0, flowReason: "未连接电脑服务端"
+        )
+    }
+
+    public func probeLiveEngineStatusSync(forceRefresh: Bool = false) -> LiveEngineStatusSnapshot {
+        let baseUrl = resolveBaseUrl()
+        let urlStr = "\(baseUrl)/api/online/live-engine-status" + (forceRefresh ? "?refresh=1" : "")
+        guard let url = URL(string: urlStr) else { return .offline }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 35
+        let sem = DispatchSemaphore(value: 0)
+        var out: LiveEngineStatusSnapshot = .offline
+        session.dataTask(with: req) { data, _, _ in
+            defer { sem.signal() }
+            guard let data = data,
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let engines = root["engines"] as? [String: Any] else { return }
+            let zp = engines["zhipu"] as? [String: Any]
+            let fl = engines["google_flow"] as? [String: Any]
+            out = LiveEngineStatusSnapshot(
+                reachable: true,
+                zhipuReady: (zp?["ready"] as? Bool) ?? false,
+                zhipuMasked: (zp?["keyMasked"] as? String) ?? "",
+                flowReady: (fl?["ready"] as? Bool) ?? false,
+                flowCredits: (fl?["credits"] as? Int) ?? 0,
+                flowReason: (fl?["reason"] as? String) ?? ""
+            )
+        }.resume()
+        _ = sem.wait(timeout: .now() + 36)
+        return out
+    }
+
+    public func fetchLiveEngineStatus(forceRefresh: Bool = false, completion: @escaping (LiveEngineStatusSnapshot) -> Void) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let snap = self?.probeLiveEngineStatusSync(forceRefresh: forceRefresh) ?? .offline
+            DispatchQueue.main.async { completion(snap) }
+        }
+    }
+
+    public func saveZhipuApiKey(_ apiKey: String, completion: @escaping (Result<LiveEngineStatusSnapshot, Error>) -> Void) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/live-engine-config") else {
+            completion(.failure(NSError(domain: "OnlineGallery", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效地址"])))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["zhipuApiKey": apiKey.trimmingCharacters(in: .whitespacesAndNewlines)])
+        session.dataTask(with: req) { data, _, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            }
+            guard let data = data,
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (root["ok"] as? Bool) == true,
+                  let engines = root["engines"] as? [String: Any] else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(domain: "OnlineGallery", code: -2, userInfo: [NSLocalizedDescriptionKey: "保存失败"])))
+                }
+                return
+            }
+            let zp = engines["zhipu"] as? [String: Any]
+            let fl = engines["google_flow"] as? [String: Any]
+            let snap = LiveEngineStatusSnapshot(
+                reachable: true,
+                zhipuReady: (zp?["ready"] as? Bool) ?? false,
+                zhipuMasked: (zp?["keyMasked"] as? String) ?? "",
+                flowReady: (fl?["ready"] as? Bool) ?? false,
+                flowCredits: (fl?["credits"] as? Int) ?? 0,
+                flowReason: (fl?["reason"] as? String) ?? ""
+            )
+            DispatchQueue.main.async { completion(.success(snap)) }
+        }.resume()
+    }
+
+    func requestPcAiLiveConvertSync(
+        imageData: Data,
+        fileName: String,
+        preference: LiveEnginePreference,
+        mode: String,
+        duration: Double
+    ) -> Data? {
+        guard preference != .localOnly, !imageData.isEmpty else { return nil }
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/live-generate") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 185
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "engine": preference.rawValue,
+            "imageBase64": imageData.base64EncodedString(),
+            "name": fileName,
+            "mode": mode,
+            "duration": duration
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let sem = DispatchSemaphore(value: 0)
+        var mp4Out: Data?
+        fullImageSession.dataTask(with: req) { data, _, _ in
+            defer { sem.signal() }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (json["ok"] as? Bool) == true,
+                  let b64 = json["mp4Base64"] as? String else { return }
+            mp4Out = Data(base64Encoded: b64)
+        }.resume()
+        _ = sem.wait(timeout: .now() + 190)
+        return mp4Out
     }
 }

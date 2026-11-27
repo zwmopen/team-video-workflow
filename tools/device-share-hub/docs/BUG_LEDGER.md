@@ -1,3 +1,17 @@
+# DSH-202：搜索栏紧凑对齐、全量圆角浮层替换、通用主题命名、传输策略实装与电脑 AI 实况网关（2026-11-27 · 已验证并合入候选分支）
+
+- **问题与反馈（5 项）**：
+  1. 顶部搜索栏右侧 `视图▾` / `筛选▾` / `排序▾` 因共用大按钮 minHeight(`36dp`) 在搜索框内纵向突出错位。
+  2. 设置页、`PhoneGalleryPane`、`TransferActivity`、`LiveStudio` 与 iOS 设置页等多处选项仍弹出系统方形单选小圆点 `AlertDialog`/`UIAlertController`；且主题风格文案仍带有具体外部应用名称 `"FlClash"`；同时修补 iOS `PhoneGalleryView.swift` 遗留引用 `rawButton`/`shareButton` 导致的 CI 编译错误（`46010464007`）。
+  3. 设置页「传输策略」仅读写本地偏好，未真实控制 `OnlineGalleryClient` 与 `TransferActivity` 的运行期路由。
+  4. 「处理引擎偏好」仅为占位提示；本机 `gflow`（Google Flow，50 积分）已登录且 `cogvideox-flash` 可免费接入，缺少从电脑共享网关打通手机直连及动态更新免费 Key 的路径。
+  5. 小米 15 真机实测暴露：`MainActivity.buildUi()` 早于 `liveQuickMenu` 初始化调用 `attachTapAndHold` 触发启动 NPE；`LiveQuickMenu.attach` 单例共享 `anchor`/`hold` 并在 `ACTION_DOWN` 抢占 `requestDisallowInterceptTouchEvent(true)` 影响滚动；`SettingsActivity.choiceRow` 长状态文本挤占左侧标题导致截断。
+- **修复与架构升级**：
+  - **搜索栏 & 全量圆角浮层 & 通用主题命名**：`MainActivity.java` 抽离 `styleCompactSearchPill`（`25dp` 紧凑高、`0` 阴影、居中对齐）；`LiveQuickMenu.java` 新增 `attachTapAndHold` 并改造为局部 `localHold` + 放行滑动滚动；全量 13 处单选弹窗（双端设置、视图/排序、分桶/画质/强度、传送通道等）升级为圆角半透明滑选浮层；全量 UI 主题命名统一为 `通透玻璃（推荐）` / `经典纯色`；`SettingsActivity.choiceRow` 固定标题单行并限制摘要最多两行省略；`PhoneGalleryView.swift` 761/873 行改锚点至 `bottomDock`。
+  - **传输策略端到端路由**：Android/iOS `OnlineGalleryClient` 补全策略切换自动失效 `lastResolvedStrategy`：`USB_FIRST` 优先直连 `127.0.0.1:45835`（失败自动回落局域网）；`R2_FIRST`（已授权设备）优先直连 Cloudflare `/v1/catalog/*` 避免等待局域网超时；`SettingsActivity` 联动更新 `transferChannel`；`OnlineGalleryClient` 为 AI 接口补充 USB 回环 ↔ 局域网双向兜底。
+  - **电脑 AI 实况网关与双端联动**：`online_gallery_service.py` 新增 `GET /api/online/live-engine-status`、`POST /api/online/live-engine-config`（私网校验，免费智谱 Key 独立存放在 `%LOCALAPPDATA%\zwm-device-share-hub\zhipu_api_key.txt`，不入仓库）与 `POST /api/online/live-generate`（调用本机 `gflow video i2v` 或智谱 `cogvideox-flash`，统一裁剪封装无损原画实况封面，异常时结构化回退本地无损引擎）。双端 `SettingsActivity` / `SettingsView` 实时回显积分与就绪状态并支持手机端写入 Key；`PhoneGalleryPane` / `PhoneGalleryView` 批量转实况优先走选定电脑 AI 网关、不可用时自动无缝回退端侧硬件无损转换。
+- **验证证据**：`pytest` (`test_live_lab.py` + `test_online_live_photo.py` + `test_remote_catalog_bridge.py` 14/14)、`parity_ios_android.py` (`52/52`)、`test_dsh195_server_directory_fallback.py` (`28/28`)、`test_ios_dsh195_server_directory.py` (`5/5`)、`check-cpp-test-assertions.py`、5 项 JS 守卫、`remote-relay/test/protocol.test.js` (`16/16`)；PC 本地实测 `/api/online/live-engine-status?refresh=1` 返回 `google_flow.ready=true` (`credits=50`)；Gradle 9.4.1 双项目 `:live-core:testDebugUnitTest :app:testDebugUnitTest :app:assembleRelease :app:lintRelease` 与 `apksigner verify` (v2/v3) 全部通过；小米 15 (`24129PN74C`) 安装启动零崩溃，完成搜索栏、排序浮层及设置页「处理引擎偏好 → Google Flow（50 积分）」V3 实机截图核验。
+
 # DSH-201：FlClash 玻璃滑块/底部悬浮底座重构、紧凑菜单与 iOS 12 兼容修复（2026-11-27 · 已验证并合入候选分支）
 
 - **问题与交互反馈（6 项）**：
