@@ -252,15 +252,16 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showAutoLiveStrengthDialog(SettingSwitchRow row) {
+        boolean push = "handheld_push_drift_v1".equals(OnlineService.getAutoLiveMotionMode(this));
         String[] items = {
-                "极微自然（1.0% · 1.3 秒）",
-                "标准推荐（1.8% · 1.6 秒）",
-                "轻柔明显（3.2% · 2.2 秒）",
+                push ? "柔和（5.8% · 2.0 秒）" : "极微自然（1.0% · 1.3 秒）",
+                push ? "参考原版（11.6% · 2.0 秒）" : "标准推荐（1.8% · 1.6 秒）",
+                push ? "明显（12.0% · 2.2 秒）" : "轻柔明显（3.2% · 2.2 秒）",
                 "跳过已是实况的照片：" + (OnlineService.isAutoLiveSkipExisting(this) ? "已开启" : "已关闭"),
                 "动态视频画质：" + com.zwm.livecore.LiveQualityTier.fromId(OnlineService.getAutoLiveQualityTier(this)).title
         };
         float r = OnlineService.getAutoLiveRatio(this);
-        int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
+        int checked = push ? (r < 1.087f ? 0 : (r > 1.118f ? 2 : 1)) : (r < 1.013f ? 0 : (r > 1.024f ? 2 : 1));
         new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
                 .setTitle("微动幅度、画质与选项")
                 .setSingleChoiceItems(items, checked, (dialog, which) -> {
@@ -271,8 +272,8 @@ public final class SettingsActivity extends Activity {
                     } else if (which == 4) {
                         showAutoLiveQualityTierDialog(row);
                     } else {
-                        float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
-                        float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
+                        float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
+                        float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
                         OnlineService.setAutoLiveRatio(this, newRatio);
                         OnlineService.setAutoLiveDuration(this, newDur);
                         updateAutoLiveRowDetail(row);

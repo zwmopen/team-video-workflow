@@ -1212,18 +1212,23 @@ public final class MainActivity extends Activity {
     }
 
     private void showStrengthDialog() {
-        String[] items = {
+        boolean push = "handheld_push_drift_v1".equals(currentMode());
+        String[] items = push ? new String[] {
+                "柔和（5.8% 幅度 · 2.0 秒）",
+                "参考原版（11.6% 幅度 · 2.0 秒）",
+                "明显（12.0% 幅度 · 2.2 秒）"
+        } : new String[] {
                 "极微自然（1.0% 幅度 · 1.3 秒）",
                 "标准推荐（1.8% 幅度 · 1.6 秒）",
                 "轻柔明显（3.2% 幅度 · 2.2 秒）"
         };
         float r = currentRatio();
-        int checked = r < 1.013f ? 0 : (r > 1.024f ? 2 : 1);
+        int checked = push ? (r < 1.087f ? 0 : (r > 1.118f ? 2 : 1)) : (r < 1.013f ? 0 : (r > 1.024f ? 2 : 1));
         new AlertDialog.Builder(this)
                 .setTitle("微动幅度与时长")
                 .setSingleChoiceItems(items, checked, (d, which) -> {
-                    float newRatio = which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f);
-                    float newDur = which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f);
+                    float newRatio = push ? (which == 0 ? 1.058f : (which == 2 ? 1.120f : 1.116f)) : (which == 0 ? 1.010f : (which == 2 ? 1.032f : 1.018f));
+                    float newDur = push ? (which == 2 ? 2.2f : 2.0f) : (which == 0 ? 1.3f : (which == 2 ? 2.2f : 1.6f));
                     prefs().edit().putFloat(KEY_RATIO, newRatio).putFloat(KEY_DURATION, newDur).apply();
                     toast("已调整为：" + items[which]);
                     d.dismiss();

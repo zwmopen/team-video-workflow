@@ -491,7 +491,11 @@ final class GalleryViewController: UIViewController,
     }
 
     private func showStrengthPicker() {
-        let options: [(String, Double, Double)] = [
+        let options: [(String, Double, Double)] = activeMode == .pushDrift ? [
+            ("柔和（5.8% · 2.0秒）", 1.058, 2.0),
+            ("参考原版（11.6% · 2.0秒）", 1.116, 2.0),
+            ("明显（12.0% · 2.2秒）", 1.120, 2.2)
+        ] : [
             ("极微自然（1.0% · 1.3秒）", 1.010, 1.3),
             ("标准推荐（1.8% · 1.6秒）", 1.018, 1.6),
             ("轻柔明显（3.2% · 2.2秒）", 1.032, 2.2)
