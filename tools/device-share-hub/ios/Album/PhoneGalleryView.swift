@@ -611,7 +611,7 @@ final class PhoneGalleryViewController: UIViewController,
             .smartAlbumFavorites,
             .smartAlbumLivePhotos,
             .smartAlbumScreenshots,
-            .smartAlbumSelfies
+            .smartAlbumSelfPortraits
         ]
         for st in smartSubtypes {
             let fetched = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: st, options: nil)
