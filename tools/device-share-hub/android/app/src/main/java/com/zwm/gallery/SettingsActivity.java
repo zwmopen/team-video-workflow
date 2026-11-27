@@ -34,6 +34,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public final class SettingsActivity extends Activity {
+    private com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private static final String PREFS = "device_share";
     private static final int REQUEST_TREE = 71;
     private static final int REQUEST_NOTIFICATIONS = 72;
@@ -47,6 +48,7 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        liveQuickMenu = new com.zwm.livecore.LiveQuickMenu(this);
         ThemePalette.applySystemBarAppearance(this);
         setContentView(ScreenInsets.protect(buildUi()));
     }
@@ -116,7 +118,11 @@ public final class SettingsActivity extends Activity {
             toast(enabled ? "已开启：分享静图时自动转为实况图" : "已关闭分享自动转实况");
         });
         autoLiveSwitch.setOnRowBodyClickListener(v -> showAutoLiveModeDialog(autoLiveSwitch));
-        root.addView(autoLiveSwitch, settingMargins(dp(20)));
+        root.addView(autoLiveSwitch, settingMargins(dp(10)));
+        LinearLayout engineRow = choiceRow("处理引擎偏好", com.zwm.livecore.LiveEngineSettings.summary(this));
+        engineRow.setOnClickListener(v -> com.zwm.livecore.LiveEngineSettings.show(this,liveQuickMenu,engineRow,
+                () -> ((TextView)engineRow.getChildAt(1)).setText(com.zwm.livecore.LiveEngineSettings.summary(this))));
+        root.addView(engineRow, settingMargins(dp(20)));
 
         root.addView(label("跨网传输与统计"));
         LinearLayout strategyRow = choiceRow(
@@ -227,28 +233,34 @@ public final class SettingsActivity extends Activity {
                 .show();
     }
 
+    @Override public void onBackPressed() {
+        if (liveQuickMenu != null && liveQuickMenu.close()) return;
+        super.onBackPressed();
+    }
+
+    @Override protected void onStop() {
+        if (liveQuickMenu != null) liveQuickMenu.close();
+        super.onStop();
+    }
+
     private void showAutoLiveModeDialog(SettingSwitchRow row) {
         String current = OnlineService.getAutoLiveMotionMode(this);
+        int count = OnlineService.AUTO_LIVE_MODE_IDS.length;
+        String[] labels = new String[count + 1];
         int checked = 0;
-        String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length];
-        for (int i = 0; i < OnlineService.AUTO_LIVE_MODE_IDS.length; i++) {
-            if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(current)) checked = i;
-            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i] + "\n" + OnlineService.AUTO_LIVE_MODE_DESCS[i];
+        for (int i=0;i<count;i++) {
+            labels[i]=OnlineService.AUTO_LIVE_MODE_TITLES[i];
+            if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(current)) checked=i;
         }
-        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("选择实况动态效果")
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    String chosenId = OnlineService.AUTO_LIVE_MODE_IDS[which];
-                    String chosenTitle = OnlineService.AUTO_LIVE_MODE_TITLES[which];
-                    OnlineService.setAutoLiveMotionMode(this, chosenId);
-                    updateAutoLiveRowDetail(row);
-                    new OnlineGalleryClient(this).syncLiveMotionModeAsync(chosenId);
-                    toast("已切换为：" + chosenTitle);
-                    dialog.dismiss();
-                })
-                .setNeutralButton("幅度与选项", (dialog, which) -> showAutoLiveStrengthDialog(row))
-                .setNegativeButton("取消", null)
-                .show();
+        labels[count]="幅度、画质与选项…";
+        liveQuickMenu.show(row, labels, checked, which -> {
+            if (which==count) { showAutoLiveStrengthDialog(row); return; }
+            String chosen=OnlineService.AUTO_LIVE_MODE_IDS[which];
+            OnlineService.setAutoLiveMotionMode(this,chosen);
+            updateAutoLiveRowDetail(row);
+            new OnlineGalleryClient(this).syncLiveMotionModeAsync(chosen);
+            toast("已切换为："+OnlineService.getAutoLiveMotionTitle(chosen));
+        });
     }
 
     private void showAutoLiveStrengthDialog(SettingSwitchRow row) {

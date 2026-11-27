@@ -395,6 +395,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     override func viewWillDisappear(_ animated: Bool) {
+        liveQuickMenu.dismiss()
         super.viewWillDisappear(animated)
         stopOnlineAutoRefresh()        // DSH-111：离开页面立刻停表，不在后台空转耗电
     }
@@ -793,17 +794,17 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     @objc private func liveStatusLongPressed(_ gesture: UILongPressGestureRecognizer) {
         let modes = AutoLiveMotionMode.allCases
-        let labels = ["关闭自动实况"] + modes.map { $0.title }
-        let selected = AutoLivePreferences.isEnabled ? (modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) + 1 : 0
+        let labels = modes.map { $0.title } + ["关闭自动实况"]
+        let selected = AutoLivePreferences.isEnabled ? (modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) : modes.count
         liveQuickMenu.handle(gesture, labels: labels, selected: selected) { [weak self] index in
             guard let self = self else { return }
-            if index == 0 {
+            if index == modes.count {
                 AutoLivePreferences.isEnabled = false
                 self.updateLiveStatusButton()
                 self.showToast("已关闭分享自动转实况")
                 return
             }
-            let mode = modes[index - 1]
+            let mode = modes[index]
             AutoLivePreferences.motionMode = mode
             AutoLivePreferences.isEnabled = true
             self.updateLiveStatusButton()

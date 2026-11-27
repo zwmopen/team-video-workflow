@@ -1,6 +1,7 @@
 # 文件收发中控（最新正式发布：Windows V4.3.33 / Android 0.8.109 / iPhone 0.8.109）
 
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
+> LIVE 菜单及引擎偏好候选设计：[LIVE_QUICK_MENU_ENGINE_DESIGN.md](docs/LIVE_QUICK_MENU_ENGINE_DESIGN.md)，当前仅本地处理，未发布。
 > 2026-11-27 LIVE 胶囊轻量交互为云端源码候选，未发布；长按滑选与普通点击兼容待实机验收。
 > 2026-11-27 源码候选：新增第二位「自然推近·轻晃侧移」，默认1.116×/2秒，完整构建及真机验收待完成；未发布。
 > 2026-11-27 升级交付 **服务端 1.2.8 / Android 0.8.139(250) / iOS 0.8.139(250) / 独立实况工坊 1.1.0(4)**：抽取共享无损实况核心 `tools/live-photo-core/`（JPEG/HEIC 静态封面零重编码无损保留、3 档动态视频画质与自动降级）；升级 Cloudflare Relay 多目标 R2 对象复用、`Range` 206 断点续传、`/v1/stats` 配额与成本统计及认证远程在线相册 `/v1/catalog/*`；Windows、Android 与 iOS 支持 5 种传输策略与跨网远程兜底浏览。

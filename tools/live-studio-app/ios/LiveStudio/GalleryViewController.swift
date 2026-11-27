@@ -451,27 +451,31 @@ final class GalleryViewController: UIViewController,
         self.collectionView.reloadData()
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        liveQuickMenu.dismiss()
+        super.viewWillDisappear(animated)
+    }
+
     @objc private func showSettings() {
         let pct = (activeRatio - 1.0) * 100.0
-        let sheet = UIAlertController(title: "设置", message: "静态封面图保持 JPEG/HEIC 原画无损直出", preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "实况动态效果：\(activeMode.title)", style: .default) { [weak self] _ in
-            self?.showEffectPicker()
-        })
-        sheet.addAction(UIAlertAction(title: "动态视频画质：\(activeTier.shortLabel)", style: .default) { [weak self] _ in
-            self?.showQualityTierPicker()
-        })
-        sheet.addAction(UIAlertAction(title: String(format: "微动幅度与时长：%.1f%% · %.1f 秒", pct, activeDuration), style: .default) { [weak self] _ in
-            self?.showStrengthPicker()
-        })
-        sheet.addAction(UIAlertAction(title: "跳过已是实况的照片：\(skipExistingLive ? "已开启" : "已关闭")", style: .default) { [weak self] _ in
+        let labels = [
+            "实况动态效果：\(activeMode.title)",
+            "动态视频画质：\(activeTier.shortLabel)",
+            String(format:"微动幅度与时长：%.1f%% · %.1f 秒",pct,activeDuration),
+            "跳过已有实况：\(skipExistingLive ? "开" : "关")",
+            "处理引擎偏好："+LiveEnginePreference.summary
+        ]
+        liveQuickMenu.show(anchor:liveModeButton,labels:labels,selected:-1) { [weak self] n in
             guard let self = self else { return }
-            self.skipExistingLive = !self.skipExistingLive
-        })
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = sheet.popoverPresentationController {
-            pop.barButtonItem = navigationItem.rightBarButtonItem
+            switch n {
+            case 0: self.showEffectPicker()
+            case 1: self.showQualityTierPicker()
+            case 2: self.showStrengthPicker()
+            case 3: self.skipExistingLive.toggle()
+            case 4: LiveEngineSettings.show(menu:self.liveQuickMenu,anchor:self.liveModeButton) { }
+            default: break
+            }
         }
-        present(sheet, animated: true)
     }
 
     private func showQualityTierPicker() {

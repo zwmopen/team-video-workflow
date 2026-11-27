@@ -171,7 +171,7 @@ public final class LiveQuickMenu {
         int below=a[1]-r[1]+target.getHeight()+dp(6), above=a[1]-r[1]-dp(6);
         boolean openBelow=(maxY-below)>=Math.min(dp(44*labels.length+12),above-minY);
         int available=openBelow?maxY-below:above-minY;
-        if (available<dp(88)) { close(); return; }
+        if (available<dp(88) || width<dp(80)) { close(); return; }
         int height=Math.min(dp(44*labels.length+12),available);
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(width,height,Gravity.TOP|Gravity.LEFT);
         lp.leftMargin=Math.max(minX,Math.min(maxX-width,a[0]-r[0]+target.getWidth()-width));
@@ -181,9 +181,11 @@ public final class LiveQuickMenu {
         paint(-1);
         panel.setPivotX(width-dp(20));
         panel.setPivotY(openBelow?0:height);
-        panel.setAlpha(0); panel.setScaleX(.94f); panel.setScaleY(.94f);
-        panel.animate().alpha(1).scaleX(1).scaleY(1).setDuration(180)
-                .setInterpolator(new DecelerateInterpolator(1.8f)).start();
+        if (android.os.Build.VERSION.SDK_INT < 26 || android.animation.ValueAnimator.areAnimatorsEnabled()) {
+            panel.setAlpha(0); panel.setScaleX(.94f); panel.setScaleY(.94f);
+            panel.animate().alpha(1).scaleX(1).scaleY(1).setDuration(180)
+                    .setInterpolator(new DecelerateInterpolator(1.8f)).start();
+        }
         if (selected>=0 && selected*dp(44)>height-dp(50))
             scroll.post(() -> { if (scroll!=null && !tracking) scroll.scrollTo(0,selected*dp(44)-dp(44)); });
     }
@@ -197,7 +199,6 @@ public final class LiveQuickMenu {
     }
     private void updateHighlight(float x,float y) {
         if(rows==null || panel==null)return;
-        Rect pr=new Rect(); panel.getGlobalVisibleRect(pr);
         // getLocationOnScreen is also used for row hit testing.
         int[] loc=new int[2]; panel.getLocationOnScreen(loc);
         int hit=-1;

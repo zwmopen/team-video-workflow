@@ -3,6 +3,7 @@ import AudioToolbox
 
 final class SettingsViewController: UITableViewController {
     private let library: WorkLibrary
+    private let liveQuickMenu = LiveQuickMenu()
 
     init(library: WorkLibrary) {
         self.library = library
@@ -19,7 +20,7 @@ final class SettingsViewController: UITableViewController {
 
     override func numberOfSections(in tableView: UITableView) -> Int { return 6 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return [7, 2, 2, 2, 1, 5][section]
+        return [8, 2, 2, 2, 1, 5][section]
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -75,6 +76,10 @@ final class SettingsViewController: UITableViewController {
         case (0, 6):
             cell.textLabel?.text = "流量与 R2 统计"
             cell.detailTextLabel?.text = RemoteRelayProfile.load() != nil ? "已授权云端中转 · 点击查看配额与流量" : "查看本机与 R2 免费额度估算"
+            cell.selectionStyle = .default
+        case (0, 7):
+            cell.textLabel?.text = "处理引擎偏好"
+            cell.detailTextLabel?.text = LiveEnginePreference.summary
             cell.selectionStyle = .default
         case (1, 0):
             cell.textLabel?.text = "当前文件夹"
@@ -139,11 +144,15 @@ final class SettingsViewController: UITableViewController {
         if indexPath.section == 0 && indexPath.row == 1 {
             promptForDeviceName()
         } else if indexPath.section == 0 && indexPath.row == 4 {
-            showAutoLiveModeChoices()
+            if let cell = tableView.cellForRow(at: indexPath) { showAutoLiveModeChoices(anchor: cell) }
         } else if indexPath.section == 0 && indexPath.row == 5 {
             showTransportStrategyChoices()
         } else if indexPath.section == 0 && indexPath.row == 6 {
             showTransferStatsAlert()
+        } else if indexPath.section == 0 && indexPath.row == 7 {
+            if let cell = tableView.cellForRow(at: indexPath) {
+                LiveEngineSettings.show(menu: liveQuickMenu, anchor: cell) { [weak self] in self?.tableView.reloadData() }
+            }
         } else if indexPath.section == 1 && indexPath.row == 1 {
             if library.supportsExternalFolderSelection {
                 guard #available(iOS 13.0, *) else { return }
@@ -263,39 +272,29 @@ final class SettingsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    private func showAutoLiveModeChoices() {
-        let pct = (AutoLivePreferences.motionRatio - 1.0) * 100.0
-        let curTier = AutoLivePreferences.qualityTier
-        let alert = UIAlertController(
-            title: "实况动态效果与画质",
-            message: String(format: "静态原画无损 · %@（%.1f%% · %.1f 秒）", curTier.shortLabel, pct, AutoLivePreferences.motionDuration),
-            preferredStyle: .actionSheet
-        )
-        let current = AutoLivePreferences.motionMode
-        AutoLiveMotionMode.allCases.forEach { mode in
-            let isCurrent = mode == current
-            alert.addAction(UIAlertAction(title: mode.title + (isCurrent ? "  ✓" : ""), style: .default) { [weak self] _ in
-                AutoLivePreferences.motionMode = mode
-                OnlineGalleryClient.shared.syncLiveMotionMode(mode.rawValue)
-                self?.tableView.reloadData()
-            })
+    override func viewWillDisappear(_ animated: Bool) {
+        liveQuickMenu.dismiss()
+        super.viewWillDisappear(animated)
+    }
+
+    private func showAutoLiveModeChoices(anchor: UIView) {
+        let modes = AutoLiveMotionMode.allCases
+        let labels = modes.map { $0.title } + ["动态视频画质…", "微动幅度与时长…", "跳过已有实况："+(AutoLivePreferences.skipExistingLive ? "开" : "关")]
+        liveQuickMenu.show(anchor: anchor, labels: labels, selected: modes.firstIndex(of: AutoLivePreferences.motionMode) ?? 0) { [weak self] which in
+            guard let self = self else { return }
+            if which < modes.count {
+                AutoLivePreferences.motionMode = modes[which]
+                OnlineGalleryClient.shared.syncLiveMotionMode(modes[which].rawValue)
+                self.tableView.reloadData()
+            } else if which == modes.count {
+                self.showAutoLiveQualityTierChoices()
+            } else if which == modes.count + 1 {
+                self.showAutoLiveStrengthChoices()
+            } else {
+                AutoLivePreferences.skipExistingLive.toggle()
+                self.tableView.reloadData()
+            }
         }
-        alert.addAction(UIAlertAction(title: "动态视频画质：\(curTier.shortLabel)…", style: .default) { [weak self] _ in
-            self?.showAutoLiveQualityTierChoices()
-        })
-        alert.addAction(UIAlertAction(title: "调整微动幅度与时长…", style: .default) { [weak self] _ in
-            self?.showAutoLiveStrengthChoices()
-        })
-        alert.addAction(UIAlertAction(title: "跳过已是实况的照片：\(AutoLivePreferences.skipExistingLive ? "已开启" : "已关闭")", style: .default) { [weak self] _ in
-            AutoLivePreferences.skipExistingLive.toggle()
-            self?.tableView.reloadData()
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 20, width: 1, height: 1)
-        }
-        present(alert, animated: true)
     }
 
     private func showAutoLiveQualityTierChoices() {

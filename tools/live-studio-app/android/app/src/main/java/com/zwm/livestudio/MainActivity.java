@@ -173,6 +173,12 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        if (liveQuickMenu != null) liveQuickMenu.close();
+        super.onStop();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         if (!isConverting && hasFullOrPartialGalleryPermission()) {
@@ -203,7 +209,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT < 33) return;
         if (selectionMode) {
             if (backInvokedCallback == null) {
-                android.window.OnBackInvokedCallback cb = this::exitSelectionMode;
+                android.window.OnBackInvokedCallback cb = this::onBackPressed;
                 getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                         android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb);
                 backInvokedCallback = cb;
@@ -1130,12 +1136,11 @@ public final class MainActivity extends Activity {
                 "动态视频画质：" + curTier.title + "（静态原画无损）",
                 String.format(Locale.US, "微动幅度与时长：%.1f%% · %.1f 秒", pct, currentDuration()),
                 "跳过已是实况的照片：" + (isSkipExistingLive() ? "已开启" : "已关闭"),
+                "处理引擎偏好：" + com.zwm.livecore.LiveEngineSettings.summary(this),
                 "清理临时缓存",
                 "关于实况工坊 (v1.1.0)"
         };
-        new AlertDialog.Builder(this)
-                .setTitle("设置")
-                .setItems(rows, (d, which) -> {
+        liveQuickMenu.show(rightActionBtn,rows,-1,which -> {
                     if (which == 0) {
                         showEffectPickerDialog();
                     } else if (which == 1) {
@@ -1147,6 +1152,8 @@ public final class MainActivity extends Activity {
                         prefs().edit().putBoolean(KEY_SKIP_EXISTING_LIVE, next).apply();
                         toast(next ? "已开启：已有实况照片直接直通分享" : "已关闭：统一按当前效果重新生成");
                     } else if (which == 4) {
+                        com.zwm.livecore.LiveEngineSettings.show(this,liveQuickMenu,rightActionBtn,null);
+                    } else if (which == 5) {
                         long freedKb = clearScratchCacheKb();
                         toast("已清理临时缓存 " + freedKb + " KB");
                     } else {
@@ -1159,9 +1166,7 @@ public final class MainActivity extends Activity {
                                 .setPositiveButton("知道了", null)
                                 .show();
                     }
-                })
-                .setNegativeButton("关闭", null)
-                .show();
+                });
     }
 
     private void showQualityTierDialog() {

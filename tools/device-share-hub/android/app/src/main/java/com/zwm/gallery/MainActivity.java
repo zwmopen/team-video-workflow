@@ -407,6 +407,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        if (liveQuickMenu != null) liveQuickMenu.close();
         isVisible = false;
         stopOnlineAutoRefresh();           // DSH-111：退后台立刻停表，不在后台空转耗电
         onlineClient.stopBeaconListener();   // 退到后台停掉信标监听，回到前台会重新开启
@@ -984,21 +985,21 @@ public final class MainActivity extends Activity {
 
     private void showQuickLiveModeDialog() {
         String curMode = OnlineService.getAutoLiveMotionMode(this);
-        int checked = OnlineService.isAutoLiveOnShareEnabled(this) ? -1 : 0;
+        int checked = OnlineService.isAutoLiveOnShareEnabled(this) ? -1 : OnlineService.AUTO_LIVE_MODE_IDS.length;
         String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length + 1];
-        labels[0] = "关闭自动实况";
+        labels[labels.length - 1] = "关闭自动实况";
         for (int i = 0; i < OnlineService.AUTO_LIVE_MODE_IDS.length; i++) {
-            if (OnlineService.isAutoLiveOnShareEnabled(this) && OnlineService.AUTO_LIVE_MODE_IDS[i].equals(curMode)) checked = i + 1;
-            labels[i + 1] = OnlineService.AUTO_LIVE_MODE_TITLES[i];
+            if (OnlineService.isAutoLiveOnShareEnabled(this) && OnlineService.AUTO_LIVE_MODE_IDS[i].equals(curMode)) checked = i;
+            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i];
         }
         liveQuickMenu.show(liveStatusPill, labels, checked, which -> {
-            if (which == 0) {
+            if (which == labels.length - 1) {
                 OnlineService.setAutoLiveOnShareEnabled(this, false);
                 refreshWorkLiveBadge();
                 toast("已关闭分享自动转实况");
                 return;
             }
-            String chosen = OnlineService.AUTO_LIVE_MODE_IDS[which - 1];
+            String chosen = OnlineService.AUTO_LIVE_MODE_IDS[which];
             OnlineService.setAutoLiveMotionMode(this, chosen);
             OnlineService.setAutoLiveOnShareEnabled(this, true);
             refreshWorkLiveBadge();
