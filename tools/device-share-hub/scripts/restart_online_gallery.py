@@ -8,6 +8,9 @@ import json
 import urllib.request
 import psutil
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 def main():
     print("=======================================================")
     print("  🔄 正在执行在线相册服务一键强力重启...")

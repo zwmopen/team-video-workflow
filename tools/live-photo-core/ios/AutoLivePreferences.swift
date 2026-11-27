@@ -40,6 +40,18 @@ enum AutoLiveMotionMode: String, CaseIterable {
         }
     }
 
+    static var defaultRatio: Double { AutoLivePreferences.defaultRatio }
+    static var defaultDuration: Double { AutoLivePreferences.defaultDuration }
+    static var defaultFPS: Int { AutoLivePreferences.defaultFPS }
+
+    static func clampRatio(_ r: Double) -> Double {
+        AutoLivePreferences.clampRatio(r)
+    }
+
+    static func clampDuration(_ d: Double) -> Double {
+        AutoLivePreferences.clampDuration(d)
+    }
+
     func computeFrame(ratio: Double, frameIndex: Int, totalFrames: Int) -> (zoom: Double, offsetX: Double, offsetY: Double) {
         let clampedRatio = AutoLivePreferences.clampRatio(ratio)
         let den = max(1, totalFrames - 1)

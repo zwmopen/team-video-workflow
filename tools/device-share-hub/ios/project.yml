@@ -61,8 +61,7 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: Album
-      - path: ../../live-photo-core/iosTests
+      - path: AlbumTests
     dependencies:
       - target: Album
     settings:

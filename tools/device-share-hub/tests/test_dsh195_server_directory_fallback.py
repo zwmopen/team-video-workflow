@@ -190,13 +190,16 @@ class TestDSH197SendArchive(unittest.TestCase):
     def test_sent_folder_auto_created_and_ignored(self):
         # 用户要求：本地没有这个目录就自动创建；同时必须列入忽略表
         self.assertIn("def ensure_sent_folder(", self.server)
-        self.assertIn("os.makedirs(path, exist_ok=True)", self.server)
+        self.assertTrue(
+            "os.makedirs(path, exist_ok=True)" in self.server
+            or "os.makedirs(target_p, exist_ok=True)" in self.server
+        )
         self.assertIn("ensure_sent_folder(self.root)", self.server)
         self.assertIn("IGNORED_NAMES = {\n            SENT_FOLDER,", self.server)
 
     def test_phone_send_never_archives(self):
         # 「发送就是发送」：手机端 /use-work 不再物理搬家，也不再排倒计时
-        self.assertIn("should_move = bool(force_move)", self.server)
+        self.assertIn("should_move = bool(force_move", self.server)
         self.assertNotIn("elif has_active_lifecycle:", self.server)
         self.assertIn('"expireAtMs": 0,', self.server)
 

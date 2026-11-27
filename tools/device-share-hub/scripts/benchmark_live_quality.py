@@ -18,10 +18,14 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont

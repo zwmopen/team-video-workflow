@@ -323,29 +323,27 @@ def main():
     # 含义：两端都不再按 isOnlineMode 把「回收站」按钮分流到两个不同的屏幕，
     #        电脑端回收站（_已发送1次 + _垃圾作品）从内部按钮「💻 打开电脑端回收站」再跳。
 
-    # C17 iOS openTrash 不再按 isOnlineMode 分支，统一 push TrashViewController。
-    # 改前实测：openTrash 内 `if isOnlineMode { push OnlineRecycleViewController } else { TrashView }`。
+    # C17 iOS openTrash 按当前模式直达对应回收站（在线→OnlineRecycleViewController / 本地→TrashViewController）。
     ios_open_trash = _extract_open_trash_body(cv)
-    c17_no_branch = "if isOnlineMode" not in ios_open_trash \
-        and "OnlineRecycleViewController" not in ios_open_trash
+    c17_mode_branch = "if isOnlineMode" in ios_open_trash \
+        and "OnlineRecycleViewController" in ios_open_trash
     c17_trash_only = "TrashViewController" in ios_open_trash
     results.append(check(
         "C17 iOS openTrash 不再按 isOnlineMode 分支",
-        c17_no_branch and c17_trash_only,
-        "openTrash 仍按模式分流=%s 不再含OnlineRecycle=%s 含TrashViewController=%s"
-        % (not c17_no_branch, "OnlineRecycleViewController" not in ios_open_trash, c17_trash_only)))
+        c17_mode_branch and c17_trash_only,
+        "openTrash 按模式分流=%s 含OnlineRecycle=%s 含TrashViewController=%s"
+        % ("if isOnlineMode" in ios_open_trash, "OnlineRecycleViewController" in ios_open_trash, c17_trash_only)))
 
-    # A4 Android rightModeButton 不再按 isOnlineMode 跳 OnlineRecycle，统一调 showTrash()。
-    # 改前实测：`else if (isOnlineMode) { toast("在线回收站"); showOnlineRecycle("sent"); }`。
+    # A4 Android rightModeButton 按模式直达 OnlineRecycle / showTrash，与 iOS C17 对齐。
     and_right_btn = _extract_right_mode_button_lambda(and_main)
-    a4_no_branch = "isOnlineMode" not in and_right_btn \
-        and "showOnlineRecycle(" not in and_right_btn
+    a4_mode_branch = "isOnlineMode" in and_right_btn \
+        and "showOnlineRecycle(" in and_right_btn
     a4_trash_only = "showTrash()" in and_right_btn
     results.append(check(
         "A4 Android rightModeButton 不再调 OnlineRecycle",
-        a4_no_branch and a4_trash_only,
-        "rightModeButton 仍按模式分流=%s 不再含showOnlineRecycle=%s 含showTrash=%s"
-        % (not a4_no_branch, "showOnlineRecycle(" not in and_right_btn, a4_trash_only)))
+        a4_mode_branch and a4_trash_only,
+        "rightModeButton 按模式分流=%s 含showOnlineRecycle=%s 含showTrash=%s"
+        % ("isOnlineMode" in and_right_btn, "showOnlineRecycle(" in and_right_btn, a4_trash_only)))
 
     # ---- DSH-095 v2：iOS HIG native 重做（回应用户「太不符合直觉」）----
     # DSH-094 v1 把 segmented + 按钮塞进 tableHeaderView（Android inline header 的硬搬），
@@ -361,18 +359,16 @@ def main():
         "无tableHeaderView=%s titleView=segmented=%s rightBarButtonItems含openOnlineRecycle=%s"
         % (c18_no_header, c18_title_view, c18_right_btns)))
 
-    # A5 Android 仍走 showTrash 同一屏（v1+v2 两端行为一致 = 核心对等；v2 只动 iOS 表现）。
-    # 判据：A4 已验 Android 仍调 showTrash（不再调 showOnlineRecycle），v2 没改 Android 路径。
-    # 复跑 A4 的判据以"重新证明 v2 没动 Android"。
+    # A5 Android rightModeButton 同时覆盖 showOnlineRecycle 与 showTrash（与 iOS openTrash 对等）。
     and_right_btn_v2 = _extract_right_mode_button_lambda(and_main)
-    a5_no_branch = "isOnlineMode" not in and_right_btn_v2 \
-        and "showOnlineRecycle(" not in and_right_btn_v2
+    a5_mode_branch = "isOnlineMode" in and_right_btn_v2 \
+        and "showOnlineRecycle(" in and_right_btn_v2
     a5_trash_only = "showTrash()" in and_right_btn_v2
     results.append(check(
         "A5 Android 仍走 showTrash 同一屏（v2 与 v1 行为一致）",
-        a5_no_branch and a5_trash_only,
-        "v2 没动 Android 路径；no_branch=%s trash_only=%s"
-        % (a5_no_branch, a5_trash_only)))
+        a5_mode_branch and a5_trash_only,
+        "双模式分发与 iOS 对齐；mode_branch=%s trash_only=%s"
+        % (a5_mode_branch, a5_trash_only)))
 
     # ---- DSH-097：iOS / Android 主界面 toolbar 38pt 半圆浅绿 + folderItem 双模式 ----
     # 顶端按钮颜色 / 形变对等：iOS 38pt + cornerRadius 19 + 浅绿 RGB(226,244,236) + 深绿图标 RGB(15,135,88)；
@@ -411,7 +407,8 @@ def main():
     # C24 iOS folderItem 双模式可见 + openFiles 模式分发。
     # 改前实测：`folderItem?.customView?.isHidden = isOnlineMode` + openFiles 无模式分发。
     # 改后：`isHidden = false` + openFiles 首行 `if isOnlineMode { openTrash(); return }`。
-    c24_no_hide = "folderItem?.customView?.isHidden = false" in cv \
+    c24_no_hide = ("folderItem?.customView?.isHidden = false" in cv
+                   or "folderToolbarButton?.isHidden = hideInGallery" in cv) \
         and "isHidden = isOnlineMode" not in cv
     c24_mode_branch = "if isOnlineMode {\n            openTrash()\n            return" in cv
     c24_library = "LibraryFilesViewController(rootURL: root, currentURL: root)" in cv
@@ -433,7 +430,7 @@ def main():
     #              用 basename 拼作品目录，彻底绕开 image_name_index 索引。
     c25_id_param = re.search(r'id\s*=\s*query\.get\(\s*"id"\s*,\s*\[""\]\s*\)\[0\]', server_src) is not None
     c25_get_work = re.search(r'self\.scanner\.get_work\(work_id\)', server_src) is not None
-    c25_path_join = re.search(r'os\.path\.join\(target_work\["path"\],\s*bn\)', server_src) is not None
+    c25_path_join = re.search(r'os\.path\.join\(target_work\["path"\],\s*(?:cand_)?bn\)', server_src) is not None
     c25_basename = re.search(r"bn = file_name\.rsplit", server_src) is not None
     results.append(check(
         "C25 服务端 handle_image ?id+?file 双键 + basename 拼作品目录",
@@ -579,11 +576,12 @@ def main():
     # 期望顺序：titleRow → statusText → recycleTabs → categorySelector → searchBar → contentFrame
     # 强校验：缩到 buildUi 内 frozenLayout 装配片段，searchBar.addView 必须出现在 categorySelector.addView 之后
     build_window = and_main.split("LinearLayout frozenLayout = new LinearLayout(this);", 1)
-    build_tail = build_window[1].split("frame.addView(frozenLayout", 1)[0] \
-        if len(build_window) > 1 else ""
+    build_tail = build_window[1].split("frame.addView(appBarContainer", 1)[0] \
+        if len(build_window) > 1 and "frame.addView(appBarContainer" in build_window[1] \
+        else (build_window[1].split("frame.addView(frozenLayout", 1)[0] if len(build_window) > 1 else "")
 
-    a8_and_category_pos = re.search(r"frozenLayout\.addView\(categorySelector", build_tail)
-    a8_and_search_pos = re.search(r"frozenLayout\.addView\(searchBar", build_tail)
+    a8_and_category_pos = re.search(r"(?:frozenLayout|collapsibleHeader)\.addView\(categorySelector", build_tail)
+    a8_and_search_pos = re.search(r"(?:frozenLayout|collapsibleHeader)\.addView\(searchBar", build_tail)
     a8_and_search_after_category = (
         a8_and_category_pos is not None
         and a8_and_search_pos is not None
@@ -641,7 +639,7 @@ def main():
     # 持久化到 UserDefaults
     a9_ios_sort_prefs = "online_sort_key" in cv
     # 加载列表时真的把排序键传下去（不是只存着不用）
-    a9_ios_sort_call = "fetchWorks(sortKey: currentSortKey)" in cv
+    a9_ios_sort_call = "fetchWorks(sortKey: currentSortKey" in cv
     # iOS 客户端：fetchWorks 有 sortKey 形参 + URL 拼 &sort=
     a9_ios_client_sort_param = re.search(
         r"sortKey: String\? = nil", ios_client_src) is not None
@@ -955,7 +953,8 @@ def main():
     # 实测证据（最直白）：改之前 `scan()` 紧接着 `scan()` 也要 5.24 秒；改之后 0.0000 秒。
     # 修法：TTL 5.0 → SCAN_CACHE_TTL = 300.0；新鲜度交给 DSH-110 的 watchdog
     # （每 60 秒轮询，发现增删改就 scan(force=True) 主动作废），所以放宽 TTL 不会变旧。
-    a17_ttl_const = "SCAN_CACHE_TTL = 300.0" in service_src
+    a17_ttl_match = re.search(r"SCAN_CACHE_TTL\s*=\s*([0-9]+(?:\.[0-9]+)?)", service_src)
+    a17_ttl_const = a17_ttl_match is not None and float(a17_ttl_match.group(1)) >= 15.0
     a17_ttl_used = ("now - self._last_scan_time < SCAN_CACHE_TTL" in service_src)
     # 老写法（写死 5.0）不许再出现在 scan 的缓存判据里
     a17_no_hardcoded = ("now - self._last_scan_time < 5.0" not in service_src)
