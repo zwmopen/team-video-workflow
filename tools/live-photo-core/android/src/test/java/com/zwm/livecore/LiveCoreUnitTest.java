@@ -102,6 +102,13 @@ public class LiveCoreUnitTest {
 
     @Test
     public void testMotionPresetsStayWithinBounds() {
+        assertEquals("handheld_push_drift_v1", LiveMotionPreset.PRESETS[1].id);
+        LiveMotionPreset.FrameTransform start = LiveMotionPreset.computeFrame("handheld_push_drift_v1", 1.116f, 0, 60);
+        LiveMotionPreset.FrameTransform end = LiveMotionPreset.computeFrame("handheld_push_drift_v1", 1.116f, 59, 60);
+        assertEquals(1.0f, start.zoom, 0.0001f);
+        assertEquals(1.1159f, end.zoom, 0.0003f);
+        assertTrue(end.offsetX > 0.75f && end.offsetX < 0.80f);
+        assertTrue(end.offsetY > 0.48f && end.offsetY < 0.50f);
         for (LiveMotionPreset.PresetInfo preset : LiveMotionPreset.PRESETS) {
             for (int f = 0; f < 48; f++) {
                 LiveMotionPreset.FrameTransform tf = LiveMotionPreset.computeFrame(preset.id, 1.018f, f, 48);

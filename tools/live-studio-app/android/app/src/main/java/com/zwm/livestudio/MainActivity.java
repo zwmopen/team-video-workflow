@@ -1197,7 +1197,13 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("实况动态效果")
                 .setSingleChoiceItems(titles, checked, (d, which) -> {
-                    prefs().edit().putString(KEY_MODE, MotionPreset.PRESETS[which].id).apply();
+                    String selected = MotionPreset.PRESETS[which].id;
+                    android.content.SharedPreferences.Editor editor = prefs().edit().putString(KEY_MODE, selected);
+                    if (!curMode.equals(selected) && ("handheld_push_drift_v1".equals(selected) || "handheld_push_drift_v1".equals(curMode))) {
+                        editor.putFloat(KEY_RATIO, "handheld_push_drift_v1".equals(selected) ? 1.116f : MotionPreset.DEFAULT_RATIO)
+                              .putFloat(KEY_DURATION, "handheld_push_drift_v1".equals(selected) ? 2.0f : MotionPreset.DEFAULT_DURATION_SEC);
+                    }
+                    editor.apply();
                     toast("已设为：" + MotionPreset.PRESETS[which].title);
                     d.dismiss();
                 })

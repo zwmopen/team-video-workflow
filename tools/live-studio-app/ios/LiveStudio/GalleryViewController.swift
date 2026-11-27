@@ -28,7 +28,14 @@ final class GalleryViewController: UIViewController,
             let raw = UserDefaults.standard.string(forKey: "livestudio.mode") ?? AutoLiveMotionMode.naturalHold.rawValue
             return AutoLiveMotionMode(rawValue: raw) ?? .naturalHold
         }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "livestudio.mode") }
+        set {
+            let previous = activeMode
+            UserDefaults.standard.set(newValue.rawValue, forKey: "livestudio.mode")
+            if previous != newValue {
+                if newValue == .pushDrift { activeRatio = 1.116; activeDuration = 2.0 }
+                else if previous == .pushDrift { activeRatio = MotionPreset.defaultRatio; activeDuration = MotionPreset.defaultDuration }
+            }
+        }
     }
     private var activeTier: LiveQualityTier {
         get {

@@ -105,15 +105,16 @@ public final class OnlineService extends Service {
     public static final String PREF_AUTO_LIVE_QUALITY_TIER = "autoLiveQualityTier";
     public static final String DEFAULT_AUTO_LIVE_MOTION_MODE = "natural_hold";
     public static final String[] AUTO_LIVE_MODE_IDS = {
-            "natural_hold", "subtle_still", "zoom_in", "zoom_out",
+            "natural_hold", "handheld_push_drift_v1", "subtle_still", "zoom_in", "zoom_out",
             "pan_up", "pan_down", "pan_left", "pan_right", "handheld"
     };
     public static final String[] AUTO_LIVE_MODE_TITLES = {
-            "自然手持微动（推荐）", "几乎静止（极微呼吸）", "轻柔推近", "轻柔拉远",
+            "自然手持微动（推荐）", "自然推近·轻晃侧移", "几乎静止（极微呼吸）", "轻柔推近", "轻柔拉远",
             "微幅上移", "微幅下移", "微幅左移", "微幅右移", "温和手持轻晃"
     };
     public static final String[] AUTO_LIVE_MODE_DESCS = {
             "模拟真实持机拍摄的轻微呼吸稳态，最接近真机实拍",
+            "前快后慢推近，后段轻微侧移，参考实况样本曲线",
             "极小幅度变化，几乎不改构图，仅保留实况标识",
             "画面极轻微平滑向前推近（缓入缓出）",
             "画面极轻微平滑向后舒展（缓入缓出）",
@@ -380,10 +381,14 @@ public final class OnlineService extends Service {
                 break;
             }
         }
-        context.getSharedPreferences(PREFS, MODE_PRIVATE)
-                .edit()
-                .putString(PREF_AUTO_LIVE_MOTION_MODE, safe)
-                .apply();
+        String previous = getAutoLiveMotionMode(context);
+        android.content.SharedPreferences.Editor editor = context.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_AUTO_LIVE_MOTION_MODE, safe);
+        if (!previous.equals(safe) && ("handheld_push_drift_v1".equals(safe) || "handheld_push_drift_v1".equals(previous))) {
+            editor.putFloat(PREF_AUTO_LIVE_RATIO, "handheld_push_drift_v1".equals(safe) ? 1.116f : LiveMotionPreset.DEFAULT_RATIO)
+                  .putFloat(PREF_AUTO_LIVE_DURATION, "handheld_push_drift_v1".equals(safe) ? 2.0f : LiveMotionPreset.DEFAULT_DURATION_SEC);
+        }
+        editor.apply();
     }
 
     public static String getAutoLiveMotionTitle(String mode) {

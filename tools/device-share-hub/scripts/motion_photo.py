@@ -50,6 +50,7 @@ DEFAULT_LIVE_CONFIG_FILE = r"D:\AICode\运行数据\江湖有旅人\live_motion_
 
 MOTION_PRESETS: List[Dict[str, str]] = [
     {"id": "natural_hold", "label": "自然手持微动（推荐）", "desc": "模拟真实持机拍摄的轻微呼吸稳态，最接近真机实拍"},
+    {"id": "handheld_push_drift_v1", "label": "自然推近·轻晃侧移", "desc": "前快后慢推近，后段轻微侧移，参考实况样本曲线"},
     {"id": "subtle_still", "label": "几乎静止（极微呼吸）", "desc": "极小幅度变化，几乎不改构图，仅保留实况标识"},
     {"id": "zoom_in", "label": "轻柔推近", "desc": "画面极轻微平滑向前推近（缓入缓出）"},
     {"id": "zoom_out", "label": "轻柔拉远", "desc": "画面极轻微平滑向后舒展（缓入缓出）"},
@@ -90,7 +91,7 @@ def normalize_live_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ratio = float(src.get("ratio", DEFAULT_LIVE_CONFIG["ratio"]))
     except (TypeError, ValueError):
         ratio = DEFAULT_LIVE_CONFIG["ratio"]
-    ratio = round(max(1.005, min(1.10, ratio)), 3)
+    ratio = round(max(1.005, min(1.12 if mode == "handheld_push_drift_v1" else 1.10, ratio)), 3)
 
     try:
         duration = float(src.get("duration", DEFAULT_LIVE_CONFIG["duration"]))
@@ -138,6 +139,11 @@ def save_live_config(updates: Dict[str, Any], config_file: Optional[str] = None)
         except Exception:
             pass
         if isinstance(updates, dict):
+            previous_mode = current.get("mode")
+            new_mode = updates.get("mode", previous_mode)
+            if new_mode != previous_mode and "handheld_push_drift_v1" in (new_mode, previous_mode):
+                current.update({"ratio": 1.116 if new_mode == "handheld_push_drift_v1" else DEFAULT_LIVE_CONFIG["ratio"],
+                                "duration": 2.0 if new_mode == "handheld_push_drift_v1" else DEFAULT_LIVE_CONFIG["duration"]})
             current.update(updates)
         norm = normalize_live_config(current)
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -569,6 +575,36 @@ def _compute_even_output_size(img_path: str, max_long: int = 1440, min_short: in
     return out_w, out_h
 
 
+# Reference relative-scale delta and center translation as fractions of output dimensions.
+_PUSH_Z = (0.000000, 0.005147, 0.010059, 0.015035, 0.020014, 0.024423, 0.029570, 0.034068, 0.038547, 0.043122,
+        0.047424, 0.051740, 0.055742, 0.059774, 0.063531, 0.067648, 0.071081, 0.074225, 0.077471, 0.080498,
+        0.083755, 0.086177, 0.088734, 0.090810, 0.092911, 0.094454, 0.096326, 0.097324, 0.098396, 0.098922,
+        0.099791, 0.099937, 0.100696, 0.101306, 0.102127, 0.103062, 0.103789, 0.104631, 0.105781, 0.106773,
+        0.106803, 0.107560, 0.108322, 0.109408, 0.110110, 0.110823, 0.111166, 0.111724, 0.112540, 0.112768,
+        0.113310, 0.113580, 0.114407, 0.114073, 0.114779, 0.114588, 0.114858, 0.115460, 0.115503, 0.115388)
+_PUSH_X = (0.000000, 0.001051, 0.000706, 0.000370, 0.001428, 0.000721, 0.001817, 0.001116, 0.001828, 0.001107,
+        0.000033, 0.000758, -0.000358, 0.000027, 0.000410, 0.000783, 0.002294, 0.002302, 0.002298, 0.000778,
+        0.000778, 0.000372, 0.000007, -0.000736, 0.000401, 0.001168, 0.001882, 0.002320, 0.002744, 0.001626,
+        0.000460, -0.001149, -0.000786, 0.001178, 0.000026, -0.001123, -0.003840, -0.005091, -0.006197, -0.007365,
+        -0.008945, -0.010121, -0.009741, -0.010887, -0.010531, -0.011712, -0.014800, -0.015999, -0.017265, -0.020384,
+        -0.021461, -0.023100, -0.022755, -0.024382, -0.024274, -0.025846, -0.025574, -0.027083, -0.028628, -0.031778)
+_PUSH_Y = (0.000000, 0.000512, 0.000790, 0.001052, 0.000225, 0.000248, 0.000548, 0.000537, 0.000528, 0.001633,
+        0.001690, 0.001402, 0.001110, 0.000848, 0.000290, 0.000021, 0.000586, -0.000272, 0.000008, 0.001440,
+        0.001696, 0.001703, 0.001715, 0.001769, 0.001436, 0.000857, 0.000588, 0.000006, -0.000558, -0.000250,
+        0.000039, 0.000017, 0.001445, 0.001751, 0.002010, 0.001470, 0.001720, 0.000834, 0.000278, 0.000525,
+        -0.000278, -0.001148, -0.000874, -0.000277, 0.000015, 0.001469, 0.001777, 0.001759, 0.002020, 0.002399,
+        0.001468, 0.000277, 0.000601, -0.000580, -0.000326, -0.000255, -0.000317, -0.000006, 0.001204, 0.001151)
+
+
+def _push_curve_expr(values, p):
+    # Piecewise linear via a sum of clamped ramps; avoids deep nested if expressions.
+    terms = [f"{values[0]:.6f}"]
+    for i in range(1, len(values)):
+        d = values[i] - values[i - 1]
+        terms.append(f"({d:.6f})*clip(({p})*{len(values)-1}-{i-1},0,1)")
+    return "(" + "+".join(terms) + ")"
+
+
 def _build_zoompan_filter(
     mode: str,
     ratio: float,
@@ -583,7 +619,14 @@ def _build_zoompan_filter(
     cx = "max(0,min(iw-iw/zoom,(iw-iw/zoom)/2))"
     cy = "max(0,min(ih-ih/zoom,(ih-ih/zoom)/2))"
 
-    if mode == "natural_hold":
+    if mode == "handheld_push_drift_v1":
+        gain = (max(1.005, min(1.12, ratio)) - 1.0) / 0.115503
+        z_expr = f"1+{gain:.9f}*{_push_curve_expr(_PUSH_Z, p)}"
+        dx = _push_curve_expr(_PUSH_X, p)
+        dy = _push_curve_expr(_PUSH_Y, p)
+        x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)/2-iw*{gain:.9f}*{dx}/zoom))"
+        y_expr = f"max(0,min(ih-ih/zoom,(ih-ih/zoom)/2-ih*{gain:.9f}*{dy}/zoom))"
+    elif mode == "natural_hold":
         delta = max(0.008, ratio - 1.0)
         z_expr = f"1.0+{delta:.4f}*(0.15+0.85*{e})"
         x_expr = f"max(0,min(iw-iw/zoom,(iw-iw/zoom)*(0.5+0.14*sin(PI*{p}))))"

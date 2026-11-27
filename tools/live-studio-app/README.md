@@ -9,7 +9,7 @@
 - **纯硬件离线生成**：
   - Android：OpenGL ES 2.0 亚像素双线性插值 + `MediaCodec` (`video/avc`) + `MediaMuxer` 硬件编码 MP4，纯 Java 封装 Google Motion Photo V1/V2 XMP 写入系统相册 `Pictures/实况工坊`。
   - iOS：`CoreGraphics` + `AVAssetWriter` (H.264 `.mov`) + `ImageIO` (`ContentIdentifier`) + `PHAssetCreationRequest` 保存原生 Live Photo。
-- **9 种自然微动预设**：默认「自然手持微动（推荐）」(`1.018x` / `1.6s`) 与「几乎静止（极微呼吸）」，外加轻柔推近/拉远、四向微移与温和手持轻晃，可在顶部效果栏直接切换。
+- **10 种自然微动预设（第10种为待验收源码候选）**：默认「自然手持微动（推荐）」(`1.018x` / `1.6s`) 与「几乎静止（极微呼吸）」，第二位新增「自然推近·轻晃侧移」（1.116× / 2秒），外加轻柔推近/拉远、四向微移与温和手持轻晃，可在顶部效果栏直接切换。
 - **即转即分享**：一键「转实况并分享」，直接拉起系统分享给小红书、抖音或微信，对方收到即识别为动态实况照片。
 
 ## 本地构建 Android Release

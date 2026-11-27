@@ -659,6 +659,9 @@ def _resolve_live_query_config(query: Dict[str, List[str]]) -> Dict[str, Any]:
     override: Dict[str, Any] = dict(base)
     if query.get("live_mode", [""])[0].strip():
         override["mode"] = query["live_mode"][0].strip()
+        if override["mode"] != base.get("mode") and "handheld_push_drift_v1" in (override["mode"], base.get("mode")):
+            override["ratio"] = 1.116 if override["mode"] == "handheld_push_drift_v1" else 1.018
+            override["duration"] = 2.0 if override["mode"] == "handheld_push_drift_v1" else 1.6
     if query.get("live_ratio", [""])[0].strip():
         override["ratio"] = query["live_ratio"][0].strip()
     if query.get("live_duration", [""])[0].strip():

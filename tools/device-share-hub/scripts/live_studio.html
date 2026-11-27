@@ -385,6 +385,7 @@
 <script>
 const DEFAULT_PRESETS = [
   { id: "natural_hold", label: "自然手持微动（推荐）", desc: "模拟真实持机拍摄的轻微呼吸稳态，最接近真机实拍" },
+  { id: "handheld_push_drift_v1", label: "自然推近·轻晃侧移", desc: "前快后慢推近，后段轻微侧移，参考实况样本曲线" },
   { id: "subtle_still", label: "几乎静止（极微呼吸）", desc: "极小幅度变化，几乎不改构图，仅保留实况标识" },
   { id: "zoom_in", label: "轻柔推近", desc: "画面极轻微平滑向前推近（缓入缓出）" },
   { id: "zoom_out", label: "轻柔拉远", desc: "画面极轻微平滑向后舒展（缓入缓出）" },
@@ -438,7 +439,13 @@ function renderPresets() {
     btn.className = "preset-btn" + (state.mode === p.id ? " active" : "");
     btn.innerHTML = `<span class="p-title">${p.label}</span><span class="p-desc">${p.desc}</span>`;
     btn.onclick = () => {
+      const previous = state.mode;
       state.mode = p.id;
+      if (previous !== p.id && (p.id === "handheld_push_drift_v1" || previous === "handheld_push_drift_v1")) {
+        state.ratio = p.id === "handheld_push_drift_v1" ? 1.116 : 1.018;
+        state.duration = p.id === "handheld_push_drift_v1" ? 2.0 : 1.6;
+      }
+      updateSlidersUI();
       renderPresets();
     };
     presetGrid.appendChild(btn);
@@ -446,6 +453,8 @@ function renderPresets() {
 }
 
 function updateSlidersUI() {
+  ratioSlider.max = state.mode === "handheld_push_drift_v1" ? "1.12" : "1.08";
+  ratioSlider.step = state.mode === "handheld_push_drift_v1" ? "0.001" : "0.002";
   ratioSlider.value = String(state.ratio);
   const pct = ((state.ratio - 1) * 100).toFixed(1);
   ratioVal.textContent = `${state.ratio.toFixed(3)}x（微动 ${pct}%）`;

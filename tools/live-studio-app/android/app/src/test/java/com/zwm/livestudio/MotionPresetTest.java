@@ -9,10 +9,11 @@ public class MotionPresetTest {
         assertEquals("natural_hold", MotionPreset.DEFAULT_MODE);
         assertEquals(1.018f, MotionPreset.DEFAULT_RATIO, 0.0001f);
         assertEquals(1.6f, MotionPreset.DEFAULT_DURATION_SEC, 0.0001f);
-        assertEquals(9, MotionPreset.PRESETS.length);
+        assertEquals(10, MotionPreset.PRESETS.length);
+        assertEquals("handheld_push_drift_v1", MotionPreset.PRESETS[1].id);
 
         assertEquals(1.005f, MotionPreset.clampRatio(0.5f), 0.0001f);
-        assertEquals(1.08f, MotionPreset.clampRatio(2.0f), 0.0001f);
+        assertEquals(1.12f, MotionPreset.clampRatio(2.0f), 0.0001f);
         assertEquals(1.0f, MotionPreset.clampDuration(0.1f), 0.0001f);
         assertEquals(3.0f, MotionPreset.clampDuration(10f), 0.0001f);
     }

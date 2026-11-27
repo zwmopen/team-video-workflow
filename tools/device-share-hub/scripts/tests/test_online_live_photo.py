@@ -209,7 +209,10 @@ def test_nine_motion_presets_ffmpeg_studio_and_auto_live(tmp_path, monkeypatch):
     monkeypatch.setattr(motion_photo, "DEFAULT_LIVE_CONFIG_FILE", str(cfg_path))
 
     # All 9 modes produce valid sub-pixel zoompan filters and clamp ratio/duration safely
-    assert len(motion_photo.MOTION_PRESETS) == 9
+    assert len(motion_photo.MOTION_PRESETS) == 10
+    assert motion_photo.MOTION_PRESETS[1]["id"] == "handheld_push_drift_v1"
+    assert motion_photo.normalize_live_config({"mode": "handheld_push_drift_v1", "ratio": 1.116})["ratio"] == 1.116
+    assert motion_photo.normalize_live_config({"mode": "natural_hold", "ratio": 1.116})["ratio"] == 1.10
     assert motion_photo.DEFAULT_LIVE_CONFIG == {"mode": "natural_hold", "ratio": 1.018, "duration": 1.6, "fps": 30}
     for preset in motion_photo.MOTION_PRESETS:
         flt = motion_photo._build_zoompan_filter(preset["id"], 1.018, 48, 320, 426, 30)
