@@ -2527,6 +2527,46 @@ public final class OnlineGalleryClient {
         });
     }
 
+    public void reportTransferStatsAsync(String channel, long bytes, int objects) {
+        executor.execute(() -> {
+            try {
+                String deviceId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                if (deviceId == null || deviceId.trim().isEmpty()) {
+                    deviceId = android.os.Build.MODEL != null ? android.os.Build.MODEL : "android-device";
+                }
+                SharedPreferences sp = context.getSharedPreferences("device_share", Context.MODE_PRIVATE);
+                String deviceName = sp.getString("deviceName", "").trim();
+                if (deviceName.isEmpty()) {
+                    deviceName = android.os.Build.MODEL != null ? android.os.Build.MODEL : "Android 手机";
+                }
+                JSONObject body = new JSONObject();
+                body.put("deviceId", deviceId);
+                body.put("deviceName", deviceName);
+                body.put("channel", channel != null ? channel : "lan");
+                body.put("bytes", Math.max(0L, bytes));
+                body.put("objects", Math.max(0, objects));
+                rawHttpPostWithLoopbackFallback("/api/online/transfer-stats/report", body.toString(), 2500, 4000);
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
+    public JSONObject fetchPcTransferStatsSync() {
+        try {
+            String raw = rawHttpGetWithLoopbackFallback("/api/online/transfer-stats", 3500, 6000);
+            return new JSONObject(raw);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    public void fetchPcTransferStats(Callback<JSONObject> callback) {
+        executor.execute(() -> {
+            final JSONObject stats = fetchPcTransferStatsSync();
+            mainHandler.post(() -> callback.onSuccess(stats));
+        });
+    }
+
     public void saveZhipuApiKey(String apiKey, Callback<LiveEngineStatus> callback) {
         executor.execute(() -> {
             try {

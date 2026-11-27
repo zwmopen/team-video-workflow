@@ -642,6 +642,23 @@ _LIVE_STUDIO_JOBS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _LIVE_STUDIO_JOB_LIMIT = 30
 _LIVE_ENGINE_CACHE_LOCK = threading.Lock()
 _LIVE_ENGINE_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+_LOCAL_STATS_LOCK = threading.Lock()
+_LOCAL_STATS_FALLBACK = None
+
+
+def _get_active_transfer_stats_store():
+    global _LOCAL_STATS_FALLBACK
+    bridge = getattr(OnlineGalleryHandler, "bridge", None)
+    if bridge is not None and getattr(bridge, "stats_store", None) is not None:
+        return bridge.stats_store
+    with _LOCAL_STATS_LOCK:
+        if _LOCAL_STATS_FALLBACK is None:
+            from remote_catalog_bridge import LocalTransferStatsStore  # type: ignore
+            local_app = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+            _LOCAL_STATS_FALLBACK = LocalTransferStatsStore(
+                Path(local_app) / "zwm-device-share-hub" / "transfer_stats.json"
+            )
+        return _LOCAL_STATS_FALLBACK
 
 
 def _zhipu_key_file_path() -> Path:
@@ -5314,7 +5331,15 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if OnlineGalleryHandler.bridge is not None:
                 self.send_json(200, OnlineGalleryHandler.bridge.get_combined_transfer_stats())
             else:
-                self.send_json(200, {"ok": False, "error": "RemoteCatalogBridge 未启动"})
+                snap = _get_active_transfer_stats_store().snapshot()
+                self.send_json(200, {
+                    "ok": True,
+                    "local": snap,
+                    "cloud": None,
+                    "devices": snap.get("devices") or [],
+                    "warnings": [],
+                    "quotaAlert80": False,
+                })
             return
 
         if path == "/api/online/live-config":
@@ -6981,6 +7006,9 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if path == "/api/online/live-generate":
             return self._handle_live_generate_post()
 
+        if path == "/api/online/transfer-stats/report":
+            return self._handle_transfer_stats_report_post()
+
         if path == "/api/online/live-process":
             return self._handle_live_process_post()
 
@@ -7808,6 +7836,28 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         if "zhipuApiKey" in req:
             _save_zhipu_api_key(str(req.get("zhipuApiKey") or ""))
         self.send_json(200, {"ok": True, "engines": _probe_live_engines(force=True)})
+
+    def _handle_transfer_stats_report_post(self) -> None:
+        if not self._is_trusted_lan_client():
+            self.send_json(403, {"ok": False, "error": "仅允许局域网/本机设备上传统计"})
+            return
+        req = self._read_json_body()
+        if req is None:
+            return
+        channel = str(req.get("channel") or "lan").strip().lower()
+        bytes_count = max(0, int(req.get("bytes") or 0))
+        objects = max(0, int(req.get("objects") or 1))
+        device_id = str(req.get("deviceId") or "").strip()
+        device_name = str(req.get("deviceName") or "").strip()
+        store = _get_active_transfer_stats_store()
+        store.record(
+            channel=channel,
+            bytes_count=bytes_count,
+            objects=objects,
+            device_id=device_id,
+            device_name=device_name,
+        )
+        self.send_json(200, {"ok": True})
 
     def _handle_live_generate_post(self) -> None:
         if motion_photo is None:

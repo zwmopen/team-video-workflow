@@ -45,6 +45,7 @@ public final class SettingsActivity extends Activity {
     private TextView deleteAfterText;
     private SettingSwitchRow autoReceiveSwitch;
     private TextView engineValueText;
+    private TextView statsValueText;
     private SettingSwitchRow autoLiveSwitchRef;
     private LinearLayout strategyRowView;
     private TextView strategyValueText;
@@ -61,6 +62,7 @@ public final class SettingsActivity extends Activity {
         ThemePalette.applySystemBarAppearance(this);
         setContentView(ScreenInsets.protect(buildUi()));
         refreshLiveEngineStatus(false);
+        refreshTransferStatsAlertBadge();
     }
 
     private SpringScrollView buildUi() {
@@ -145,6 +147,7 @@ public final class SettingsActivity extends Activity {
         LinearLayout statsRow = choiceRow(
                 "云端额度与流量",
                 RemoteRelayProfile.isEnrolled(this) ? "已授权 · 查看 R2 额度" : "查看本机与 R2 估算");
+        statsValueText = (TextView) statsRow.getChildAt(1);
         statsRow.setOnClickListener(v -> showTransferStatsDialog());
         root.addView(statsRow, settingMargins(dp(20)));
 
@@ -337,14 +340,33 @@ public final class SettingsActivity extends Activity {
         });
     }
 
+    private void refreshTransferStatsAlertBadge() {
+        OnlineGalleryClient.getInstance(this).fetchPcTransferStats(new OnlineGalleryClient.Callback<org.json.JSONObject>() {
+            @Override public void onSuccess(org.json.JSONObject pcStats) {
+                if (isFinishing() || statsValueText == null || pcStats == null) return;
+                boolean alert80 = pcStats.optBoolean("quotaAlert80", false);
+                org.json.JSONArray devs = pcStats.optJSONArray("devices");
+                int devCount = devs != null ? devs.length() : 0;
+                if (alert80) {
+                    statsValueText.setText("⚠️ 免费额度已达 80%！点击查看");
+                    statsValueText.setTextColor(Color.rgb(217, 72, 15));
+                } else if (devCount > 0) {
+                    statsValueText.setText("已记录 " + devCount + " 台设备 · 点击看明细");
+                }
+            }
+            @Override public void onError(Exception error) {}
+        });
+    }
+
     private void showTransferStatsDialog() {
-        String initial = TransferStatsStore.formatHumanSummary(this, null);
+        String initial = TransferStatsStore.formatHumanSummary(this, null, null);
         AlertDialog dialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("传输流量与 R2 额度统计")
-                .setMessage(initial + "\n正在向云端刷新团队工作区用量…")
+                .setTitle("各设备流量与 R2 额度统计")
+                .setMessage(initial + "\n正在向电脑与云端刷新各设备统计…")
                 .setPositiveButton("确定", null)
                 .show();
         new Thread(() -> {
+            org.json.JSONObject pcStats = OnlineGalleryClient.getInstance(this).fetchPcTransferStatsSync();
             org.json.JSONObject remoteStats = null;
             try {
                 if (RemoteRelayProfile.isEnrolled(this)) {
@@ -353,7 +375,7 @@ public final class SettingsActivity extends Activity {
                 }
             } catch (Exception ignored) {
             }
-            final String updated = TransferStatsStore.formatHumanSummary(this, remoteStats);
+            final String updated = TransferStatsStore.formatHumanSummary(this, remoteStats, pcStats);
             runOnUiThread(() -> {
                 if (dialog.isShowing()) dialog.setMessage(updated);
             });

@@ -834,7 +834,7 @@ export class WorkspaceRelayCore {
       objects: 1,
       bytes: objectBytes(expected),
       r2Bytes: objectBytes(expected),
-    });
+    }, { deviceId: session.deviceId, deviceName: session.deviceName || session.deviceId });
     await adjustR2Active(this.ctx, 1, objectBytes(expected));
     return json({ ok: true, index });
   }
@@ -890,7 +890,7 @@ export class WorkspaceRelayCore {
     }
     const expected = transfer.objects.find((item) => item.index === index);
     if (!expected) return problem(404, "object_missing", "文件不在传送清单中");
-    await bumpStats(this.ctx, { classBOps: 1 });
+    await bumpStats(this.ctx, { classBOps: 1 }, { deviceId: session.deviceId, deviceName: session.deviceName || session.deviceId });
     return new Response(null, {
       status: 204,
       headers: {
@@ -1260,7 +1260,7 @@ export class WorkspaceRelayCore {
         objects: 1,
         bytes: objectBytes(expected),
         r2Bytes: objectBytes(expected),
-      });
+      }, { deviceId: session.deviceId, deviceName: session.deviceName || session.deviceId });
       await adjustR2Active(this.ctx, 1, objectBytes(expected));
     }
     for (const transferId of batch.transferIds) {
@@ -1331,7 +1331,10 @@ export class WorkspaceRelayCore {
     else if (channel === "p2p") delta.p2pBytes = bytes;
     else if (channel === "r2Fallback") delta.r2FallbackCount = Math.max(1, transfers);
     else return problem(400, "invalid_channel", "统计通道名称无效");
-    await bumpStats(this.ctx, delta);
+    await bumpStats(this.ctx, delta, {
+      deviceId: session.deviceId,
+      deviceName: (typeof body?.deviceName === "string" && body.deviceName.trim()) || session.deviceName || session.deviceId,
+    });
     return json({ ok: true, recordedBy: session.deviceId });
   }
 
@@ -1525,7 +1528,11 @@ export class WorkspaceRelayCore {
     pull.sha256 = /^[0-9a-f]{64}$/.test(shaHeader) ? shaHeader : "";
     pull.readyAt = Date.now();
     await this.ctx.storage.put(`pull:${pullId}`, pull);
-    await bumpStats(this.ctx, { classAOps: 1, objects: 1, bytes: contentLength, r2Bytes: contentLength });
+    await bumpStats(
+      this.ctx,
+      { classAOps: 1, objects: 1, bytes: contentLength, r2Bytes: contentLength },
+      { deviceId: pull.requesterDeviceId, deviceName: pull.requesterName || pull.requesterDeviceId },
+    );
     await adjustR2Active(this.ctx, 1, contentLength);
     this.sendToDevice(pull.requesterDeviceId, { type: "catalog-pull-ready", pullId, size: contentLength, sha256: pull.sha256 });
     return json({ ok: true, pullId, status: "ready", size: contentLength });
@@ -1541,7 +1548,7 @@ export class WorkspaceRelayCore {
     ) {
       return problem(404, "pull_not_ready", "按需原图尚在电脑上传中或不存在");
     }
-    await bumpStats(this.ctx, { classBOps: 1 });
+    await bumpStats(this.ctx, { classBOps: 1 }, { deviceId: session.deviceId, deviceName: session.deviceName || session.deviceId });
     return new Response(null, {
       status: 204,
       headers: {

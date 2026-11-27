@@ -1,3 +1,14 @@
+# DSH-203：智谱免费 CogVideoX-Flash 真网实测、分设备流量统计与 80% R2 预警（2026-11-28 · 已验证并合入候选分支）
+
+- **问题与排查（3 项）**：
+  1. 用户粘贴的 32 位智谱片段密钥 `fababc...deb3` 缺少 `.secret` 后缀，调用 `/api/paas/v4/videos/generations` 返回 `HTTP 401`（令牌已过期或验证不正确）；而本机密钥库 `D:\AICode\AI\secrets\平台服务\智谱AI\智谱AI.md` 中既有完整 `<id>.<secret>` Key（脱敏 `aaba...16XA`）经实测返回 `HTTP 200`。
+  2. Google Flow 账号与积分核实：`gflow auth list` / `gflow credits list` 实查本机仅配置唯一 Profile `profile_default`，真实返回 `Total credits: 50`（账户字段 `unknown`，`auth status` 会话探针报 `InvalidURL` 但积分读取与生成接口正常），并非读错账号；手机端不独立登录 Google Flow 账号，而是经电脑端 `/api/online/live-generate` 网关代理调用。
+  3. 原有团队云端统计未按手机设备拆分今日/本月收发流量，R2 免费额度 80% 预警信号亦未贯通至电脑聚合接口与双端设置页明细弹窗。
+- **修复与增强**：
+  - **智谱秘钥落盘与真网实测**：将秘钥库有效 Key（脱敏 `aaba...16XA`）写入 `%LOCALAPPDATA%\zwm-device-share-hub\zhipu_api_key.txt`（Git 外独立保管），并在 `D:\AICode\AI\secrets\平台服务\智谱AI\智谱AI.md` 补充 `cogvideox-flash` 接口路径与电脑网关接入说明（严禁明文入库）；使用 `D:\江湖有旅人\03-生产车间\05-成品库\A手动制作\20261102_165740_莫干山团建\P1-封面.jpg` 实测 `POST /api/online/live-generate`（`engine="zhipu_first"`）成功封装原画实况照片 `zhipu_live_motion.jpg`（`2,348,501 B`，无损封面 `1086x1448`，嵌入 `1024x1376 30fps 2.2s H.264` 动态流，平台带右下角“AI生成”水印）。
+  - **全链路分设备流量统计 + 80% R2 预警**：`remote-relay/src/extensions.js` 与 `relay-core.js` 增加 `stats:devices:day:*`/`month:*` 与 `r2.quotaAlert80`；`remote_catalog_bridge.py` 扩展 `LocalTransferStatsStore` 分设备汇总；`online_gallery_service.py` 新增 `POST /api/online/transfer-stats/report` 并扩展 `GET /api/online/transfer-stats` 返回 `devices` 与 `quotaAlert80`；Android（`TransferStatsStore.java` / `OnlineGalleryClient.java` / `SettingsActivity.java`）与 iOS（`OnlineGalleryClient.swift` / `SettingsView.swift`）设置页同步展示各手机分台流量统计与 80% 橙色预警横幅。
+- **验证证据**：`pytest` (`test_live_lab.py` + `test_online_live_photo.py` + `test_remote_catalog_bridge.py` `14/14`)、`parity_ios_android.py` (`52/52`)、`test_dsh195_server_directory_fallback.py` (`28/28`)、`test_ios_dsh195_server_directory.py` (`5/5`)、`check-cpp-test-assertions.py`、5 项 `verify-*.mjs`、`remote-relay` `check + typecheck + test` (`16/16`) 全部通过；PC 热重启实测 `/api/online/live-engine-status`（`zhipu.ready=true` / `google_flow.ready=true, credits=50`）与 `/api/online/transfer-stats`（`ok=true`）正常；双端 Android Gradle 9.4.1（`:live-core:testDebugUnitTest :app:testDebugUnitTest :app:assembleRelease :app:lintRelease`）与 `apksigner`（v2/v3）验签通过；最新版 `com.zwm.gallery` `0.8.139(250)` 已于 `2026-11-28 00:21:22` 静默覆盖安装至小米 15（未亮屏打扰）。（注：`remote-relay` Worker 变更已合入候选分支并过单测，待部署至 Cloudflare 后云端同步生效。）
+
 # DSH-202：搜索栏紧凑对齐、全量圆角浮层替换、通用主题命名、传输策略实装与电脑 AI 实况网关（2026-11-27 · 已验证并合入候选分支）
 
 - **问题与反馈（5 项）**：

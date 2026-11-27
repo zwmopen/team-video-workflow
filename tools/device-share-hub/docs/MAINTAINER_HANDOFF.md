@@ -1,3 +1,11 @@
+# 2026-11-28 V4：智谱真网实测、Google Flow 账号核实、分设备流量统计与 80% R2 预警（feature/live-push-drift-20261127）
+
+- **V4 核心交付**：
+  1. **智谱 `cogvideox-flash` 密钥核实与真网生成闭环**：定位用户粘贴密钥片段缺 `.secret` 返回 `HTTP 401` 的原因；校验并启用本机密钥库 `D:\AICode\AI\secrets\平台服务\智谱AI\智谱AI.md` 内有效 Key（脱敏 `aaba...16XA`）写入 `%LOCALAPPDATA%\zwm-device-share-hub\zhipu_api_key.txt`，使用莫干山团建真实封面图跑通 `POST /api/online/live-generate` 生成无损实况图（`1086x1448` 无损静态封面 + `1024x1376 30fps 2.2s H.264` 动态片段，含智谱平台左下/右下角“AI生成”水印）。
+  2. **Google Flow 积分与多端架构核实**：实查本机 `gflow` 仅配置单个 `profile_default`，真实返回 `Total credits: 50`；手机端不独立登录 Google 账号，统一经电脑局域网网关 `/api/online/live-generate` 借用电脑端 `gflow` 会话执行生成。
+  3. **全链路分设备流量统计与 80% R2 免费额度预警**：Cloudflare 中继 DO（`extensions.js` / `relay-core.js`）、PC 桥接与服务（`remote_catalog_bridge.py` / `online_gallery_service.py`）、Android（`TransferStatsStore.java` / `OnlineGalleryClient.java` / `SettingsActivity.java`）及 iOS（`OnlineGalleryClient.swift` / `SettingsView.swift`）同步新增按手机设备拆分的日/月流量统计、`/api/online/transfer-stats/report` 局域网上报与 80% 免费额度预警横幅（PC 接口已热重启生效；Worker 变更待 `wrangler deploy` 上线）。
+- **V4 验证证据**：`pytest` (`14/14`)、`parity_ios_android.py` (`52/52`)、`test_dsh195_server_directory_fallback.py` (`28/28`)、`test_ios_dsh195_server_directory.py` (`5/5`)、`check-cpp-test-assertions.py`、5 项 `verify-*.mjs`、`remote-relay` `check + typecheck + test` (`16/16`) 全过；PC 热重启 `/api/online/live-engine-status` 与 `/api/online/transfer-stats` 实测通过；双端 Android Gradle 9.4.1 单测/Lint/Release 构建与 `apksigner`（v2/v3）验签通过；小米 15 已静默增量更新 `com.zwm.gallery` `0.8.139(250)`（`2026-11-28 00:21:22`）。
+
 # 2026-11-27 V3：全量圆角浮层、搜索栏对齐、传输策略真路由与电脑 AI 实况网关（feature/live-push-drift-20261127）
 
 - **V3 核心交付**：

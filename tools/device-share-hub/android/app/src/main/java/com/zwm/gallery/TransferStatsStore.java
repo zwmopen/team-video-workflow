@@ -3,6 +3,7 @@ package com.zwm.gallery;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
@@ -36,6 +37,13 @@ public final class TransferStatsStore {
                 root.put(scope, b);
             }
             prefs.edit().putString("data", root.toString()).apply();
+            if (bytes > 0 || objects > 0) {
+                try {
+                    OnlineGalleryClient.getInstance(context)
+                            .reportTransferStatsAsync(normalizeChannel(channel), Math.max(0L, bytes), Math.max(0, objects));
+                } catch (Exception ignored) {
+                }
+            }
         } catch (Exception ignored) {
         }
     }
@@ -58,10 +66,36 @@ public final class TransferStatsStore {
     }
 
     public static String formatHumanSummary(Context context, JSONObject remoteStats) {
+        return formatHumanSummary(context, remoteStats, null);
+    }
+
+    public static String formatHumanSummary(Context context, JSONObject remoteStats, JSONObject pcStats) {
         JSONObject local = localSnapshot(context);
         JSONObject lt = local.optJSONObject("today");
         JSONObject lm = local.optJSONObject("month");
+        JSONObject activeRemote = remoteStats;
+        if (activeRemote == null && pcStats != null) {
+            JSONObject cloud = pcStats.optJSONObject("cloud");
+            if (cloud != null) activeRemote = cloud;
+        }
         StringBuilder sb = new StringBuilder();
+
+        JSONArray warnings = null;
+        if (activeRemote != null && activeRemote.optJSONObject("r2") != null) {
+            warnings = activeRemote.optJSONObject("r2").optJSONArray("warnings");
+        }
+        if ((warnings == null || warnings.length() == 0) && pcStats != null) {
+            warnings = pcStats.optJSONArray("warnings");
+        }
+        if (warnings != null && warnings.length() > 0) {
+            sb.append("⚠️ 【R2 免费额度预警（≥ 80%）】\n");
+            for (int i = 0; i < warnings.length(); i++) {
+                String w = warnings.optString(i, "").trim();
+                if (!w.isEmpty()) sb.append("• ").append(w).append("\n");
+            }
+            sb.append("\n");
+        }
+
         sb.append("【本机今日接收统计】\n");
         sb.append("• 合计：").append(fmtBytes(lt != null ? lt.optLong("totalBytes", 0) : 0))
                 .append("（").append(lt != null ? lt.optInt("totalObjects", 0) : 0).append(" 个文件）\n");
@@ -69,10 +103,36 @@ public final class TransferStatsStore {
                 .append(" | 云端 R2：").append(fmtBytes(lt != null ? lt.optLong("r2Bytes", 0) : 0)).append("\n");
         sb.append("• 本机本月累计：").append(fmtBytes(lm != null ? lm.optLong("totalBytes", 0) : 0)).append("\n\n");
 
-        if (remoteStats != null) {
-            JSONObject ct = remoteStats.optJSONObject("today");
-            JSONObject cm = remoteStats.optJSONObject("month");
-            JSONObject r2 = remoteStats.optJSONObject("r2");
+        JSONArray devs = null;
+        if (pcStats != null) {
+            JSONArray pcDevs = pcStats.optJSONArray("devices");
+            if (pcDevs != null && pcDevs.length() > 0) devs = pcDevs;
+        }
+        if ((devs == null || devs.length() == 0) && activeRemote != null) {
+            devs = activeRemote.optJSONArray("devices");
+        }
+        if (devs != null && devs.length() > 0) {
+            sb.append("【各手机设备流量统计（共 ").append(devs.length()).append(" 台）】\n");
+            for (int i = 0; i < devs.length(); i++) {
+                JSONObject d = devs.optJSONObject(i);
+                if (d == null) continue;
+                String name = d.optString("deviceName", "").trim();
+                if (name.isEmpty()) name = d.optString("deviceId", "未知设备");
+                sb.append("• ").append(name)
+                        .append("：今日 ").append(fmtBytes(d.optLong("todayBytes", 0)))
+                        .append("（").append(d.optInt("todayObjects", 0)).append("个）")
+                        .append(" | 本月 ").append(fmtBytes(d.optLong("monthBytes", 0)))
+                        .append("（LAN ").append(fmtBytes(d.optLong("monthLanBytes", 0)))
+                        .append(" / R2 ").append(fmtBytes(d.optLong("monthR2Bytes", 0)))
+                        .append("）\n");
+            }
+            sb.append("\n");
+        }
+
+        if (activeRemote != null) {
+            JSONObject ct = activeRemote.optJSONObject("today");
+            JSONObject cm = activeRemote.optJSONObject("month");
+            JSONObject r2 = activeRemote.optJSONObject("r2");
             sb.append("【团队云端工作区统计】\n");
             if (ct != null) {
                 sb.append("• 今日总流量：").append(fmtBytes(ct.optLong("bytes", 0)))

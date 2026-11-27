@@ -5,6 +5,7 @@ final class SettingsViewController: UITableViewController {
     private let library: WorkLibrary
     private let liveQuickMenu = LiveQuickMenu()
     private var engineStatus: OnlineGalleryClient.LiveEngineStatusSnapshot = .offline
+    private var pcTransferStats: [String: Any]?
 
     init(library: WorkLibrary) {
         self.library = library
@@ -18,11 +19,20 @@ final class SettingsViewController: UITableViewController {
         super.viewDidLoad()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
         refreshLiveEngineStatus(force: false)
+        refreshPcTransferStats()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshLiveEngineStatus(force: false)
+        refreshPcTransferStats()
+    }
+
+    private func refreshPcTransferStats() {
+        OnlineGalleryClient.shared.fetchPcTransferStats { [weak self] stats in
+            self?.pcTransferStats = stats
+            self?.tableView.reloadData()
+        }
     }
 
     private func refreshLiveEngineStatus(force: Bool) {
@@ -102,7 +112,16 @@ final class SettingsViewController: UITableViewController {
             cell.selectionStyle = .default
         case (0, 6):
             cell.textLabel?.text = "流量与 R2 统计"
-            cell.detailTextLabel?.text = RemoteRelayProfile.load() != nil ? "已授权云端中转 · 点击查看配额与流量" : "查看本机与 R2 免费额度估算"
+            let alert80 = (pcTransferStats?["quotaAlert80"] as? Bool) == true
+            let devCount = (pcTransferStats?["devices"] as? [[String: Any]])?.count ?? 0
+            if alert80 {
+                cell.detailTextLabel?.text = "⚠️ R2 免费额度已达 80%！点击查看"
+                cell.detailTextLabel?.textColor = .systemOrange
+            } else if devCount > 0 {
+                cell.detailTextLabel?.text = "已记录 \(devCount) 台设备 · 点击查看各设备与 R2 额度"
+            } else {
+                cell.detailTextLabel?.text = RemoteRelayProfile.load() != nil ? "已授权云端中转 · 查看配额与各设备流量" : "查看各设备与 R2 免费额度估算"
+            }
             cell.selectionStyle = .default
         case (0, 7):
             cell.textLabel?.text = "处理引擎偏好"
@@ -293,41 +312,85 @@ final class SettingsViewController: UITableViewController {
     private func showTransferStatsAlert() {
         let enrolled = RemoteRelayProfile.load() != nil
         let initialMsg = enrolled
-            ? "正在向 Cloudflare 工作区拉取本月用量与 R2 额度估算…"
-            : "当前尚未获取云端工作区凭证（与电脑同一 Wi-Fi 后将自动授权）。\n\n提示：Cloudflare R2 出站下载流量免费，临时中转文件在接收确认后会自动删除。"
-        let alert = UIAlertController(title: "传输流量与 R2 统计", message: initialMsg, preferredStyle: .alert)
+            ? "正在向电脑与 Cloudflare 工作区拉取各设备用量与 R2 额度估算…"
+            : "正在向电脑拉取各手机设备流量统计…\n\n提示：Cloudflare R2 超出免费上限（10GB/100万A/1000万B）不会自动停服，系统已开启 80% 预警并在接收确认后自动删 R2 临时文件。"
+        let alert = UIAlertController(title: "各设备流量与 R2 统计", message: initialMsg, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "确定", style: .default))
         present(alert, animated: true)
 
-        guard enrolled else { return }
         DispatchQueue.global(qos: .utility).async {
-            var summary = "拉取云端统计失败（当前可能离线）。"
-            if let session = try? RemoteRelayClient.ensureSession(),
-               let stats = try? RemoteRelayClient.fetchStats(session) {
+            let group = DispatchGroup()
+            var pcStats: [String: Any]?
+            var cloudStats: [String: Any]?
+            group.enter()
+            OnlineGalleryClient.shared.fetchPcTransferStats { s in
+                pcStats = s
+                group.leave()
+            }
+            if enrolled {
+                group.enter()
+                DispatchQueue.global(qos: .utility).async {
+                    if let session = try? RemoteRelayClient.ensureSession(),
+                       let s = try? RemoteRelayClient.fetchStats(session) {
+                        cloudStats = s
+                    }
+                    group.leave()
+                }
+            }
+            _ = group.wait(timeout: .now() + 12)
+
+            let fmt: (Any?) -> String = { raw in
+                let b = (raw as? NSNumber)?.doubleValue ?? 0
+                if b < 1024 { return "\(Int(b)) B" }
+                if b < 1048576 { return String(format: "%.1f KB", b / 1024.0) }
+                if b < 1073741824 { return String(format: "%.1f MB", b / 1048576.0) }
+                return String(format: "%.2f GB", b / 1073741824.0)
+            }
+            var lines: [String] = []
+            let pcCloud = pcStats?["cloud"] as? [String: Any]
+            let activeStats = cloudStats ?? pcCloud
+            let r2 = activeStats?["r2"] as? [String: Any] ?? [:]
+            let warnings = (r2["warnings"] as? [String]) ?? (pcStats?["warnings"] as? [String]) ?? []
+            if !warnings.isEmpty {
+                lines.append("⚠️ 【R2 免费额度预警（≥ 80%）】")
+                for w in warnings { lines.append("• \(w)") }
+                lines.append("")
+            }
+            let devs = (pcStats?["devices"] as? [[String: Any]]).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (activeStats?["devices"] as? [[String: Any]]) ?? []
+            if !devs.isEmpty {
+                lines.append("【各手机设备流量统计（共 \(devs.count) 台）】")
+                for d in devs {
+                    let name = (d["deviceName"] as? String) ?? (d["deviceId"] as? String) ?? "未知设备"
+                    let tb = fmt(d["todayBytes"])
+                    let to = (d["todayObjects"] as? Int) ?? 0
+                    let mb = fmt(d["monthBytes"])
+                    let mlan = fmt(d["monthLanBytes"])
+                    let mr2 = fmt(d["monthR2Bytes"])
+                    lines.append("• \(name)：今日 \(tb)（\(to)个） | 本月 \(mb)（LAN \(mlan) / R2 \(mr2)）")
+                }
+                lines.append("")
+            }
+            if let stats = activeStats {
                 let today = stats["today"] as? [String: Any] ?? [:]
                 let month = stats["month"] as? [String: Any] ?? [:]
-                let r2 = stats["r2"] as? [String: Any] ?? [:]
                 let quotas = r2["quotas"] as? [String: Any] ?? [:]
-                let fmt: (Any?) -> String = { raw in
-                    let b = (raw as? NSNumber)?.doubleValue ?? 0
-                    if b < 1024 { return "\(Int(b)) B" }
-                    if b < 1048576 { return String(format: "%.1f KB", b / 1024.0) }
-                    if b < 1073741824 { return String(format: "%.1f MB", b / 1048576.0) }
-                    return String(format: "%.2f GB", b / 1073741824.0)
-                }
                 let sPct = ((quotas["storageUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
                 let aPct = ((quotas["classAUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
                 let bPct = ((quotas["classBUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
                 let usd = (r2["estimatedCostUsd"] as? NSNumber)?.doubleValue ?? 0
                 let note = (r2["billingNote"] as? String) ?? "预估费用仅供参考，实际账单以 Cloudflare 控制台为准"
-                summary = String(
-                    format: "今日团队流量：%@（R2 %@ / LAN %@）\n本月总流量：%@\nR2 当前驻留：%@（%d 个对象）\n免费额度占用：存储 %.2f%% · A类 %.2f%% · B类 %.2f%%\n预估超额费用：$%.4f USD（R2 出站下载流量免费）\n%@",
+                lines.append(String(
+                    format: "【团队云端 R2 统计】\n今日总流量：%@（R2 %@ / LAN %@）\n本月总流量：%@\nR2 当前驻留：%@（%d 个对象）\n免费额度占用：存储 %.2f%% · A类 %.2f%% · B类 %.2f%%\n预估超额费用：$%.4f USD（R2 出站下载流量免费）\n%@",
                     fmt(today["bytes"]), fmt(today["r2Bytes"]), fmt(today["lanBytes"]),
                     fmt(month["bytes"]),
                     fmt(r2["activeBytes"]), (r2["activeObjects"] as? Int) ?? 0,
                     sPct, aPct, bPct, usd, note
-                )
+                ))
+            } else if lines.isEmpty {
+                lines.append("暂未获取到统计数据（请确认手机与电脑或云端已连通）。")
             }
+            let summary = lines.joined(separator: "\n")
             DispatchQueue.main.async {
                 alert.message = summary
             }

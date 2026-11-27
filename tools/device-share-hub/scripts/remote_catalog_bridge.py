@@ -109,10 +109,16 @@ class LocalTransferStatsStore:
     def _load(self) -> Dict[str, Any]:
         if self.stats_path.is_file():
             try:
-                return json.loads(self.stats_path.read_text(encoding="utf-8"))
+                loaded = json.loads(self.stats_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    loaded.setdefault("days", {})
+                    loaded.setdefault("months", {})
+                    loaded.setdefault("deviceDays", {})
+                    loaded.setdefault("deviceMonths", {})
+                    return loaded
             except Exception:
                 pass
-        return {"days": {}, "months": {}}
+        return {"days": {}, "months": {}, "deviceDays": {}, "deviceMonths": {}}
 
     def _save_locked(self) -> None:
         self.stats_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,12 +126,23 @@ class LocalTransferStatsStore:
         tmp.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.stats_path)
 
-    def record(self, channel: str, bytes_count: int = 0, objects: int = 1, works: int = 0, success: bool = True, duration_ms: int = 0) -> None:
+    def record(
+        self,
+        channel: str,
+        bytes_count: int = 0,
+        objects: int = 1,
+        works: int = 0,
+        success: bool = True,
+        duration_ms: int = 0,
+        device_id: str = "",
+        device_name: str = "",
+    ) -> None:
         ch = channel.lower().strip()
         if ch not in ("usb", "lan", "p2p", "r2"):
             ch = "lan"
         day_k = time.strftime("%Y-%m-%d", time.gmtime())
         month_k = time.strftime("%Y-%m", time.gmtime())
+        dev_key = (device_id or device_name or "").strip()
         with self._lock:
             for scope_name, key in (("days", day_k), ("months", month_k)):
                 bucket = self._data.setdefault(scope_name, {}).setdefault(key, {})
@@ -135,22 +152,58 @@ class LocalTransferStatsStore:
                 bucket["totalBytes"] = int(bucket.get("totalBytes", 0)) + max(0, int(bytes_count))
                 bucket["totalObjects"] = int(bucket.get("totalObjects", 0)) + max(0, int(objects))
                 bucket["totalWorks"] = int(bucket.get("totalWorks", 0)) + max(0, int(works))
+            if dev_key:
+                for scope_name, key in (("deviceDays", day_k), ("deviceMonths", month_k)):
+                    dev_bucket = self._data.setdefault(scope_name, {}).setdefault(key, {}).setdefault(dev_key, {"deviceId": dev_key})
+                    if device_name and device_name.strip():
+                        dev_bucket["deviceName"] = device_name.strip()
+                    else:
+                        dev_bucket.setdefault("deviceName", dev_key)
+                    dev_bucket[f"{ch}Bytes"] = int(dev_bucket.get(f"{ch}Bytes", 0)) + max(0, int(bytes_count))
+                    dev_bucket["bytes"] = int(dev_bucket.get("bytes", 0)) + max(0, int(bytes_count))
+                    dev_bucket["objects"] = int(dev_bucket.get("objects", 0)) + max(0, int(objects))
+                    dev_bucket["lastActiveAt"] = int(time.time() * 1000)
             # Prune old daily buckets (>45)
-            days = self._data.get("days", {})
-            if len(days) > 45:
-                for old_k in sorted(days.keys())[:-45]:
-                    days.pop(old_k, None)
+            for daily_key in ("days", "deviceDays"):
+                days = self._data.get(daily_key, {})
+                if isinstance(days, dict) and len(days) > 45:
+                    for old_k in sorted(days.keys())[:-45]:
+                        days.pop(old_k, None)
             self._save_locked()
 
     def snapshot(self) -> Dict[str, Any]:
         day_k = time.strftime("%Y-%m-%d", time.gmtime())
         month_k = time.strftime("%Y-%m", time.gmtime())
         with self._lock:
+            d_devs = self._data.get("deviceDays", {}).get(day_k, {}) or {}
+            m_devs = self._data.get("deviceMonths", {}).get(month_k, {}) or {}
+            dev_keys = sorted(set(d_devs.keys()) | set(m_devs.keys()))
+            devices: List[Dict[str, Any]] = []
+            for dk in dev_keys:
+                d = d_devs.get(dk, {})
+                m = m_devs.get(dk, {})
+                devices.append({
+                    "deviceId": dk,
+                    "deviceName": str(m.get("deviceName") or d.get("deviceName") or dk),
+                    "todayBytes": int(d.get("bytes", 0)),
+                    "todayObjects": int(d.get("objects", 0)),
+                    "todayR2Bytes": int(d.get("r2Bytes", 0)),
+                    "todayLanBytes": int(d.get("lanBytes", 0)),
+                    "monthBytes": int(m.get("bytes", 0)),
+                    "monthObjects": int(m.get("objects", 0)),
+                    "monthR2Bytes": int(m.get("r2Bytes", 0)),
+                    "monthLanBytes": int(m.get("lanBytes", 0)),
+                    "monthUsbBytes": int(m.get("usbBytes", 0)),
+                    "monthP2pBytes": int(m.get("p2pBytes", 0)),
+                    "lastActiveAt": int(m.get("lastActiveAt") or d.get("lastActiveAt") or 0),
+                })
+            devices.sort(key=lambda x: x["monthBytes"], reverse=True)
             return {
                 "dayKey": day_k,
                 "monthKey": month_k,
                 "today": dict(self._data.get("days", {}).get(day_k, {})),
                 "month": dict(self._data.get("months", {}).get(month_k, {})),
+                "devices": devices,
             }
 
 
@@ -536,12 +589,44 @@ class RemoteCatalogBridge:
         return self._cached_cloud_stats
 
     def get_combined_transfer_stats(self) -> Dict[str, Any]:
+        local_snap = self.stats_store.snapshot()
+        cloud = self.fetch_cloud_stats()
+        merged_by_id: Dict[str, Dict[str, Any]] = {}
+        for row in local_snap.get("devices") or []:
+            did = str(row.get("deviceId") or "")
+            if did:
+                merged_by_id[did] = dict(row)
+        for row in (cloud or {}).get("devices") or []:
+            if not isinstance(row, dict):
+                continue
+            did = str(row.get("deviceId") or "")
+            if not did:
+                continue
+            cur = merged_by_id.get(did)
+            if cur is None:
+                merged_by_id[did] = dict(row)
+            else:
+                cur["deviceName"] = str(row.get("deviceName") or cur.get("deviceName") or did)
+                cur["todayR2Bytes"] = max(int(cur.get("todayR2Bytes", 0)), int(row.get("todayR2Bytes", 0)))
+                cur["monthR2Bytes"] = max(int(cur.get("monthR2Bytes", 0)), int(row.get("monthR2Bytes", 0)))
+                cur["todayBytes"] = max(int(cur.get("todayBytes", 0)), int(row.get("todayBytes", 0)))
+                cur["monthBytes"] = max(int(cur.get("monthBytes", 0)), int(row.get("monthBytes", 0)))
+                cur["todayObjects"] = max(int(cur.get("todayObjects", 0)), int(row.get("todayObjects", 0)))
+                cur["monthObjects"] = max(int(cur.get("monthObjects", 0)), int(row.get("monthObjects", 0)))
+                cur["lastActiveAt"] = max(int(cur.get("lastActiveAt", 0)), int(row.get("lastActiveAt", 0)))
+        devices = sorted(merged_by_id.values(), key=lambda x: int(x.get("monthBytes", 0)), reverse=True)
+        r2_info = (cloud or {}).get("r2") if isinstance(cloud, dict) else {}
+        warnings = list((r2_info or {}).get("warnings") or [])
+        quota_alert_80 = bool((r2_info or {}).get("quotaAlert80") or warnings)
         return {
             "ok": True,
             "workspaceId": self._workspace_id,
             "endpoint": self.endpoint,
-            "local": self.stats_store.snapshot(),
-            "cloud": self.fetch_cloud_stats(),
+            "local": local_snap,
+            "cloud": cloud,
+            "devices": devices,
+            "warnings": warnings,
+            "quotaAlert80": quota_alert_80,
             "lastError": self._last_error,
         }
 

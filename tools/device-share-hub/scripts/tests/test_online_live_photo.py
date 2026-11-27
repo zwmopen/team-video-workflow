@@ -429,5 +429,30 @@ def test_pc_live_engine_gateway_and_fallback(tmp_path, monkeypatch):
                 fb_res = json.loads(resp.read().decode("utf-8"))
                 assert fb_res["ok"] is False
                 assert fb_res["fallback"] == "local"
+
+            # Per-device transfer stats reporting & aggregation
+            rep_req = Request(
+                f"{base}/api/online/transfer-stats/report",
+                data=json.dumps({
+                    "deviceId": "xiaomi15_test",
+                    "deviceName": "小米 15 主机",
+                    "channel": "lan",
+                    "bytes": 123456,
+                    "objects": 3,
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(rep_req, timeout=5) as resp:
+                assert json.loads(resp.read().decode("utf-8"))["ok"] is True
+
+            with urlopen(f"{base}/api/online/transfer-stats", timeout=5) as resp:
+                ts = json.loads(resp.read().decode("utf-8"))
+                assert ts["ok"] is True
+                assert isinstance(ts["quotaAlert80"], bool)
+                devs = {d["deviceId"]: d for d in ts["devices"]}
+                assert "xiaomi15_test" in devs
+                assert devs["xiaomi15_test"]["deviceName"] == "小米 15 主机"
+                assert devs["xiaomi15_test"]["monthBytes"] >= 123456
         finally:
             server.shutdown()

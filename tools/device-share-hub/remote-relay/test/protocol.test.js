@@ -903,4 +903,25 @@ test("authenticated remote online album enforces device roles, serves thumbs/man
     headers: { Authorization: `Bearer ${adminToken}` },
   }));
   assert.equal((await res.json()).events.length, 1);
+
+  res = await state.relay.fetch(await jsonRequest("/v1/stats/channel", {
+    channel: "lan",
+    bytes: 4096,
+    objects: 2,
+    transfers: 1,
+    deviceName: "测试手机 A",
+  }, state.token));
+  assert.equal(res.status, 200);
+
+  res = await state.relay.fetch(new Request("https://relay.test/v1/stats", {
+    headers: { Authorization: `Bearer ${state.token}` },
+  }));
+  assert.equal(res.status, 200);
+  const stats = await res.json();
+  assert.equal(typeof stats.r2?.quotaAlert80, "boolean");
+  assert.ok(Array.isArray(stats.devices));
+  const myDev = stats.devices.find((d) => d.deviceId === state.memberCertificate.deviceId);
+  assert.ok(myDev, "stats.devices should track per-device traffic");
+  assert.equal(myDev.deviceName, "测试手机 A");
+  assert.ok(myDev.monthBytes >= 4096 + 128);
 });

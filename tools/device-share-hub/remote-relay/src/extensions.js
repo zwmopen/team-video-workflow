@@ -145,8 +145,8 @@ function monthKey(now = Date.now()) {
   return new Date(now).toISOString().slice(0, 7);
 }
 
-/** @param {DurableObjectState} ctx @param {Record<string, number>} delta */
-export async function bumpStats(ctx, delta) {
+/** @param {DurableObjectState} ctx @param {Record<string, number>} delta @param {{ deviceId?: string, deviceName?: string }=} deviceInfo */
+export async function bumpStats(ctx, delta, deviceInfo = null) {
   const now = Date.now();
   const dKey = `stats:day:${todayKey(now)}`;
   const mKey = `stats:month:${monthKey(now)}`;
@@ -157,7 +157,30 @@ export async function bumpStats(ctx, delta) {
     day[k] = Math.max(0, (Number(day[k]) || 0) + v);
     month[k] = Math.max(0, (Number(month[k]) || 0) + v);
   }
-  await Promise.all([ctx.storage.put(dKey, day), ctx.storage.put(mKey, month)]);
+  const puts = [ctx.storage.put(dKey, day), ctx.storage.put(mKey, month)];
+  const devId = deviceInfo && typeof deviceInfo.deviceId === "string" ? deviceInfo.deviceId.trim() : "";
+  if (devId) {
+    const devDayKey = `stats:devices:day:${todayKey(now)}`;
+    const devMonthKey = `stats:devices:month:${monthKey(now)}`;
+    const devDayMap = /** @type {Record<string, any>} */ ((await ctx.storage.get(devDayKey)) || {});
+    const devMonthMap = /** @type {Record<string, any>} */ ((await ctx.storage.get(devMonthKey)) || {});
+    const devName = (deviceInfo.deviceName && String(deviceInfo.deviceName).trim()) || devId;
+    for (const map of [devDayMap, devMonthMap]) {
+      const entry = map[devId] && typeof map[devId] === "object" ? map[devId] : { deviceId: devId };
+      entry.deviceId = devId;
+      if (devName) entry.deviceName = devName;
+      for (const field of ["bytes", "r2Bytes", "lanBytes", "usbBytes", "p2pBytes", "objects", "transfers"]) {
+        const val = delta[field];
+        if (typeof val === "number" && Number.isFinite(val)) {
+          entry[field] = Math.max(0, (Number(entry[field]) || 0) + val);
+        }
+      }
+      entry.lastActiveAt = now;
+      map[devId] = entry;
+    }
+    puts.push(ctx.storage.put(devDayKey, devDayMap), ctx.storage.put(devMonthKey, devMonthMap));
+  }
+  await Promise.all(puts);
 }
 
 /** @param {DurableObjectState} ctx @param {number} objDelta @param {number} bytesDelta */
@@ -208,6 +231,35 @@ export async function buildStatsPayload(ctx) {
   if (classARatio >= 0.8) warnings.push(`R2 Class A 请求已达免费额度 ${(classARatio * 100).toFixed(1)}%`);
   if (classBRatio >= 0.8) warnings.push(`R2 Class B 请求已达免费额度 ${(classBRatio * 100).toFixed(1)}%`);
 
+  const devDayMap = /** @type {Record<string, any>} */ (
+    (await ctx.storage.get(`stats:devices:day:${todayKey(now)}`)) || {}
+  );
+  const devMonthMap = /** @type {Record<string, any>} */ (
+    (await ctx.storage.get(`stats:devices:month:${monthKey(now)}`)) || {}
+  );
+  const allDevIds = new Set([...Object.keys(devDayMap), ...Object.keys(devMonthMap)]);
+  const devices = [...allDevIds]
+    .map((id) => {
+      const d = devDayMap[id] || {};
+      const m = devMonthMap[id] || {};
+      return {
+        deviceId: id,
+        deviceName: String(m.deviceName || d.deviceName || id),
+        todayBytes: Number(d.bytes || 0),
+        todayObjects: Number(d.objects || 0),
+        todayR2Bytes: Number(d.r2Bytes || 0),
+        todayLanBytes: Number(d.lanBytes || 0),
+        monthBytes: Number(m.bytes || 0),
+        monthObjects: Number(m.objects || 0),
+        monthR2Bytes: Number(m.r2Bytes || 0),
+        monthLanBytes: Number(m.lanBytes || 0),
+        monthUsbBytes: Number(m.usbBytes || 0),
+        monthP2pBytes: Number(m.p2pBytes || 0),
+        lastActiveAt: Number(m.lastActiveAt || d.lastActiveAt || 0),
+      };
+    })
+    .sort((a, b) => b.monthBytes - a.monthBytes);
+
   return {
     dayKey: todayKey(now),
     monthKey: monthKey(now),
@@ -250,6 +302,8 @@ export async function buildStatsPayload(ctx) {
       isEstimate: true,
       billingNote: "预估费用仅供参考（不含 Workers/DO 超出免费额度部分），实际账单以 Cloudflare 控制台为准",
       warnings,
+      quotaAlert80: warnings.length > 0,
     },
+    devices,
   };
 }

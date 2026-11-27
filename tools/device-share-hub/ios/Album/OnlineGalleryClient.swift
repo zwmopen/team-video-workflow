@@ -1500,6 +1500,7 @@ public final class OnlineGalleryClient {
             do {
                 try data.write(to: diskURL)
                 maybeTrimAfterWrite()   // DSH-188
+                reportTransferStats(channel: "lan", bytes: data.count, objects: 1)
                 completion(.success(()))
             } catch {
                 completion(.failure(error))
@@ -2279,5 +2280,41 @@ public final class OnlineGalleryClient {
         }.resume()
         _ = sem.wait(timeout: .now() + 190)
         return mp4Out
+    }
+
+    public func reportTransferStats(channel: String, bytes: Int, objects: Int) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/transfer-stats/report") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 4
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "deviceId": DeviceIdentity.id,
+            "deviceName": DeviceIdentity.name,
+            "channel": channel,
+            "bytes": max(0, bytes),
+            "objects": max(0, objects)
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        session.dataTask(with: req) { _, _, _ in }.resume()
+    }
+
+    public func fetchPcTransferStats(completion: @escaping ([String: Any]?) -> Void) {
+        let baseUrl = resolveBaseUrl()
+        guard let url = URL(string: "\(baseUrl)/api/online/transfer-stats") else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 6
+        session.dataTask(with: req) { data, _, _ in
+            guard let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            DispatchQueue.main.async { completion(obj) }
+        }.resume()
     }
 }
