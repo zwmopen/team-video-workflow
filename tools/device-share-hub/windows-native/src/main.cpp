@@ -272,7 +272,6 @@ HWND gSettingsAutoRestockCheck = nullptr;
 HWND gSettingsThresholdEdit = nullptr;
 HWND gSettingsAutoStartCheck = nullptr;
 HWND gSettingsDarkModeCheck = nullptr;
-            gSettingsStrategyButton = nullptr;
 // 在线相册服务：状态每 5 秒在后台线程探一次，探测回来再 PostMessage 回 UI 线程
 HWND gSettingsOnlineHeadline = nullptr;
 HWND gSettingsOnlineDetail = nullptr;

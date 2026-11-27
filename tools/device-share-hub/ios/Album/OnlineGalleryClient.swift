@@ -888,7 +888,7 @@ public final class OnlineGalleryClient {
                 return
             }
             // A slow earlier response must not replace the cache from a newer refresh.
-            self.saveCategoriesSnapshotIfLatest(data, requestID: requestID)
+            self?.saveCategoriesSnapshotIfLatest(data, requestID: requestID)
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                 var categories: [OnlineCategoryItem] = []
@@ -1940,12 +1940,8 @@ public final class OnlineGalleryClient {
                                         userInfo: [NSLocalizedDescriptionKey: "URL 构造失败"])))
             return
         }
-        session.dataTask(with: url) { [weak self] data, _, error in
+        session.dataTask(with: url) { data, _, error in
             if let error = error {
-                if let cached = self?.lastRemoteCategoriesResult {
-                    DispatchQueue.main.async { completion(.success(cached)) }
-                    return
-                }
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
             }
