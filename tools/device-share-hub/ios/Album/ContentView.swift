@@ -51,10 +51,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var toastView: UILabel?
     private var initialFolderPromptShown = false
     private var selectedCategory = WorkCategory.all
+    private var filterContainerView = UIView()
     private var filterScrollView: UIScrollView!
     private var filterStackView: UIStackView!
     private var filterButtons: [String: UIButton] = [:]
     private let onlineStatusLabel = UILabel()
+    private let liveStatusButton = UIButton(type: .system)
+    private let searchRowContainer = UIView()
+    private var filterTopConstraint: NSLayoutConstraint!
+    private var filterHeightConstraint: NSLayoutConstraint!
+    private var searchTopConstraint: NSLayoutConstraint!
+    private var searchHeightConstraint: NSLayoutConstraint!
+    private var collectionTopConstraint: NSLayoutConstraint!
+    private var isWorkHeaderCollapsed = false
+    private var isAnimatingWorkHeader = false
+    private var lastScrollYForHeader: CGFloat = 0
 
     // MARK: - 来源 3 模式（电脑在线 / 手机本地库 / 手机相册）
     private enum SourceTab: String {
@@ -370,6 +381,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        updateLiveStatusButton()
         if activeSourceTab == .phoneGallery {
             phoneGalleryVC.onShown()
         } else if isOnlineMode {
@@ -548,15 +560,21 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func applyPhoneGallerySurface(_ galleryActive: Bool) {
         phoneGalleryVC.view.isHidden = !galleryActive
         onlineStatusLabel.isHidden = galleryActive
+        liveStatusButton.isHidden = galleryActive
+        filterContainerView.isHidden = galleryActive
         filterScrollView.isHidden = galleryActive
+        searchRowContainer.isHidden = galleryActive
         workSearchBar.isHidden = galleryActive
         onlineViewModeButton.isHidden = galleryActive
         onlineFilterButton.isHidden = galleryActive
         onlineSortButton.isHidden = galleryActive
         if galleryActive {
+            setWorkHeaderCollapsed(false, animated: false)
             collectionView.isHidden = true
             emptyStack.isHidden = true
             view.bringSubviewToFront(phoneGalleryVC.view)
+        } else {
+            updateLiveStatusButton()
         }
     }
 
@@ -575,6 +593,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         UserDefaults.standard.set(isOnlineMode, forKey: prefOnlineModeKey)
         updateModeButtonStyle()
         updateFolderItemVisibility()
+        setWorkHeaderCollapsed(false, animated: false)
 
         switch tab {
         case .online:
@@ -682,13 +701,32 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
         view.addSubview(onlineStatusLabel)
 
+        liveStatusButton.translatesAutoresizingMaskIntoConstraints = false
+        liveStatusButton.titleLabel?.font = .systemFont(ofSize: 11.5, weight: .bold)
+        liveStatusButton.layer.cornerRadius = 8
+        liveStatusButton.clipsToBounds = true
+        liveStatusButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        liveStatusButton.setContentHuggingPriority(.required, for: .horizontal)
+        liveStatusButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        liveStatusButton.addTarget(self, action: #selector(liveStatusTapped), for: .touchUpInside)
+        let liveLP = UILongPressGestureRecognizer(target: self, action: #selector(liveStatusLongPressed(_:)))
+        liveLP.minimumPressDuration = 0.35
+        liveStatusButton.addGestureRecognizer(liveLP)
+        view.addSubview(liveStatusButton)
+        updateLiveStatusButton()
+
+        filterContainerView = UIView()
+        filterContainerView.translatesAutoresizingMaskIntoConstraints = false
+        filterContainerView.clipsToBounds = true
+        view.addSubview(filterContainerView)
+
         filterScrollView = UIScrollView()
         filterScrollView.translatesAutoresizingMaskIntoConstraints = false
         filterScrollView.showsHorizontalScrollIndicator = false
         filterScrollView.alwaysBounceHorizontal = false
         filterScrollView.backgroundColor = AppColors.secondaryBackground
         filterScrollView.layer.cornerRadius = 10
-        view.addSubview(filterScrollView)
+        filterContainerView.addSubview(filterScrollView)
 
         filterStackView = UIStackView()
         filterStackView.translatesAutoresizingMaskIntoConstraints = false
@@ -700,15 +738,27 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         filterStackView.layoutMargins = UIEdgeInsets(top: 3, left: 4, bottom: 3, right: 4)
         filterScrollView.addSubview(filterStackView)
 
+        filterTopConstraint = filterContainerView.topAnchor.constraint(equalTo: onlineStatusLabel.bottomAnchor, constant: 6)
+        filterHeightConstraint = filterContainerView.heightAnchor.constraint(equalToConstant: 36)
+
         NSLayoutConstraint.activate([
             onlineStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            onlineStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            onlineStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            onlineStatusLabel.trailingAnchor.constraint(equalTo: liveStatusButton.leadingAnchor, constant: -6),
+            onlineStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
             onlineStatusLabel.heightAnchor.constraint(equalToConstant: 28),
 
-            filterScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            filterScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            filterScrollView.topAnchor.constraint(equalTo: onlineStatusLabel.bottomAnchor, constant: 6),
+            liveStatusButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            liveStatusButton.centerYAnchor.constraint(equalTo: onlineStatusLabel.centerYAnchor),
+            liveStatusButton.heightAnchor.constraint(equalToConstant: 28),
+
+            filterContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            filterContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            filterTopConstraint,
+            filterHeightConstraint,
+
+            filterScrollView.topAnchor.constraint(equalTo: filterContainerView.topAnchor),
+            filterScrollView.leadingAnchor.constraint(equalTo: filterContainerView.leadingAnchor),
+            filterScrollView.trailingAnchor.constraint(equalTo: filterContainerView.trailingAnchor),
             filterScrollView.heightAnchor.constraint(equalToConstant: 36),
 
             filterStackView.leadingAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.leadingAnchor),
@@ -717,6 +767,49 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             filterStackView.bottomAnchor.constraint(equalTo: filterScrollView.contentLayoutGuide.bottomAnchor),
             filterStackView.heightAnchor.constraint(equalTo: filterScrollView.frameLayoutGuide.heightAnchor)
         ])
+    }
+
+    private func updateLiveStatusButton() {
+        let on = AutoLivePreferences.isEnabled
+        if on {
+            liveStatusButton.setTitle("● LIVE 开", for: .normal)
+            liveStatusButton.setTitleColor(AppColors.brandLightText, for: .normal)
+            liveStatusButton.backgroundColor = AppColors.brandLightBg
+        } else {
+            liveStatusButton.setTitle("LIVE 关", for: .normal)
+            liveStatusButton.setTitleColor(AppColors.secondaryText, for: .normal)
+            liveStatusButton.backgroundColor = AppColors.secondaryBackground
+        }
+    }
+
+    @objc private func liveStatusTapped() {
+        let next = !AutoLivePreferences.isEnabled
+        AutoLivePreferences.isEnabled = next
+        updateLiveStatusButton()
+        let modeName = AutoLivePreferences.motionMode.title
+        showToast(next ? "已开启分享自动转实况 · \(modeName)" : "已关闭分享自动转实况")
+    }
+
+    @objc private func liveStatusLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        if #available(iOS 10.0, *) { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        let sheet = UIAlertController(title: "选择分享自动转实况效果", message: nil, preferredStyle: .actionSheet)
+        let cur = AutoLivePreferences.motionMode
+        for mode in AutoLiveMotionMode.allCases {
+            let label = mode.title + (mode == cur && AutoLivePreferences.isEnabled ? "  ✓" : "")
+            sheet.addAction(UIAlertAction(title: label, style: .default) { [weak self] _ in
+                AutoLivePreferences.motionMode = mode
+                AutoLivePreferences.isEnabled = true
+                self?.updateLiveStatusButton()
+                self?.showToast("已启用：\(mode.title)")
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let pop = sheet.popoverPresentationController {
+            pop.sourceView = liveStatusButton
+            pop.sourceRect = liveStatusButton.bounds
+        }
+        present(sheet, animated: true)
     }
 
     private func updateOnlineStatusHint() {
@@ -829,12 +922,16 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let refresh = UIRefreshControl()
         refresh.addTarget(self, action: #selector(refreshPulled(_:)), for: .valueChanged)
         collectionView.refreshControl = refresh
+        searchRowContainer.translatesAutoresizingMaskIntoConstraints = false
+        searchRowContainer.clipsToBounds = true
+        view.addSubview(searchRowContainer)
+
         workSearchBar.translatesAutoresizingMaskIntoConstraints = false
         workSearchBar.delegate = self
         workSearchBar.placeholder = "搜索作品名"
         workSearchBar.searchBarStyle = .minimal
         workSearchBar.autocapitalizationType = .none
-        view.addSubview(workSearchBar)
+        searchRowContainer.addSubview(workSearchBar)
         view.addSubview(collectionView)
         // 视图切换按钮（图标 / 列表 / 对比，与电脑端实时联动）
         onlineViewModeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -846,7 +943,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         let vmLongPress = UILongPressGestureRecognizer(target: self, action: #selector(viewModeButtonLongPressed(_:)))
         vmLongPress.minimumPressDuration = 0.35
         onlineViewModeButton.addGestureRecognizer(vmLongPress)
-        view.addSubview(onlineViewModeButton)
+        searchRowContainer.addSubview(onlineViewModeButton)
         updateViewModeButtonStyle()
 
         // 多选标签筛选按钮（放在视图按钮与排序按钮之间）
@@ -856,7 +953,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineFilterButton.layer.cornerRadius = 8
         onlineFilterButton.accessibilityLabel = "多选标签筛选"
         onlineFilterButton.addTarget(self, action: #selector(onlineTagFilterButtonTapped(_:)), for: .touchUpInside)
-        view.addSubview(onlineFilterButton)
+        searchRowContainer.addSubview(onlineFilterButton)
         updateFilterButtonStyle()
 
         // DSH-112：排序按钮放在搜索框最右侧（与 Android「搜索框右侧排序按钮」同一位置）
@@ -866,15 +963,24 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineSortButton.layer.cornerRadius = 8
         onlineSortButton.accessibilityLabel = "排序方式"
         onlineSortButton.addTarget(self, action: #selector(sortButtonTapped(_:)), for: .touchUpInside)
-        view.addSubview(onlineSortButton)
+        searchRowContainer.addSubview(onlineSortButton)
         updateSortButtonStyle()
 
+        searchTopConstraint = searchRowContainer.topAnchor.constraint(equalTo: filterContainerView.bottomAnchor, constant: 2)
+        searchHeightConstraint = searchRowContainer.heightAnchor.constraint(equalToConstant: 40)
+        collectionTopConstraint = collectionView.topAnchor.constraint(equalTo: searchRowContainer.bottomAnchor, constant: 4)
+
         NSLayoutConstraint.activate([
-            workSearchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            searchRowContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            searchRowContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            searchTopConstraint,
+            searchHeightConstraint,
+
+            workSearchBar.leadingAnchor.constraint(equalTo: searchRowContainer.leadingAnchor, constant: 6),
             // 搜索栏右侧并排：视图切换(48) | 筛选(48) | 排序(48)
             workSearchBar.trailingAnchor.constraint(equalTo: onlineViewModeButton.leadingAnchor, constant: -2),
-            workSearchBar.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 2),
-            workSearchBar.heightAnchor.constraint(equalToConstant: 44),
+            workSearchBar.topAnchor.constraint(equalTo: searchRowContainer.topAnchor),
+            workSearchBar.heightAnchor.constraint(equalToConstant: 40),
 
             onlineViewModeButton.trailingAnchor.constraint(equalTo: onlineFilterButton.leadingAnchor, constant: -4),
             onlineViewModeButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
@@ -886,16 +992,84 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             onlineFilterButton.widthAnchor.constraint(equalToConstant: 48),
             onlineFilterButton.heightAnchor.constraint(equalToConstant: 30),
 
-            onlineSortButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
+            onlineSortButton.trailingAnchor.constraint(equalTo: searchRowContainer.trailingAnchor, constant: -6),
             onlineSortButton.centerYAnchor.constraint(equalTo: workSearchBar.centerYAnchor),
             onlineSortButton.widthAnchor.constraint(equalToConstant: 48),
             onlineSortButton.heightAnchor.constraint(equalToConstant: 30),
 
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.topAnchor.constraint(equalTo: workSearchBar.bottomAnchor, constant: 4),
+            collectionTopConstraint,
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    private func setWorkHeaderCollapsed(_ collapsed: Bool, animated: Bool) {
+        var want = collapsed
+        if want && (activeSourceTab == .phoneGallery || workSearchBar.isFirstResponder) {
+            want = false
+        }
+        guard isWorkHeaderCollapsed != want else { return }
+        isWorkHeaderCollapsed = want
+        filterTopConstraint.constant = want ? 0 : 6
+        filterHeightConstraint.constant = want ? 0 : 36
+        searchTopConstraint.constant = want ? 0 : 2
+        searchHeightConstraint.constant = want ? 0 : 40
+        collectionTopConstraint.constant = want ? 2 : 4
+
+        let applyAlpha = {
+            let a: CGFloat = want ? 0 : 1
+            self.filterContainerView.alpha = a
+            self.searchRowContainer.alpha = a
+            self.filterContainerView.isUserInteractionEnabled = !want
+            self.searchRowContainer.isUserInteractionEnabled = !want
+        }
+        if animated {
+            isAnimatingWorkHeader = true
+            UIView.animate(withDuration: 0.20, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+                applyAlpha()
+                self.view.layoutIfNeeded()
+            }) { _ in
+                self.isAnimatingWorkHeader = false
+                self.lastScrollYForHeader = self.collectionView.contentOffset.y
+            }
+        } else {
+            applyAlpha()
+            view.layoutIfNeeded()
+            isAnimatingWorkHeader = false
+            lastScrollYForHeader = collectionView.contentOffset.y
+        }
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === collectionView else { return }
+        lastScrollYForHeader = scrollView.contentOffset.y
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === collectionView,
+              activeSourceTab != .phoneGallery,
+              !isAnimatingWorkHeader,
+              !workSearchBar.isFirstResponder else { return }
+        let y = scrollView.contentOffset.y
+        let maxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+        if y <= 10 {
+            lastScrollYForHeader = y
+            setWorkHeaderCollapsed(false, animated: true)
+            return
+        }
+        if y > maxOffsetY + 4 {
+            lastScrollYForHeader = y
+            return
+        }
+        let dy = y - lastScrollYForHeader
+        if dy > 14 && y > 48 {
+            lastScrollYForHeader = y
+            setWorkHeaderCollapsed(true, animated: true)
+        } else if dy < -10 {
+            lastScrollYForHeader = y
+            setWorkHeaderCollapsed(false, animated: true)
+        }
     }
 
     // MARK: - 视图模式切换与电脑端实时联动（图标 grid / 列表 list / 对比 compare）
@@ -2487,6 +2661,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     /// DSH-091 C2：搜索框输入回调 —— 本地 / 在线两条列表共用同一个 `searchQuery`。
+    func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
+        setWorkHeaderCollapsed(false, animated: true)
+    }
+
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         noteUserTouch()   // DSH-111：正在打字搜索，先别自动刷新
         searchQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)

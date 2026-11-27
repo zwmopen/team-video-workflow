@@ -7,9 +7,13 @@ final class PhoneGalleryViewController: UIViewController,
     UICollectionViewDelegateFlowLayout,
     UIGestureRecognizerDelegate {
 
+    private static let maxShareLiveCount = 18
+
     private let imageManager = PHCachingImageManager()
     private var assets: [PHAsset] = []
     private var selectedIds: [String] = []
+    private var selectedCollection: PHAssetCollection?
+    private var selectedCollectionTitle: String = "全部照片"
     private var selectionMode = false
 
     private var dragStartIndex: Int?
@@ -22,9 +26,13 @@ final class PhoneGalleryViewController: UIViewController,
 
     private let headerBar = UIView()
     private let cancelSelButton = UIButton(type: .system)
+    private let bucketButton = UIButton(type: .system)
     private let statusChipLabel = UILabel()
     private let effectButton = UIButton(type: .system)
     private let multiSelectButton = UIButton(type: .system)
+
+    private let scrollDatePill = UILabel()
+    private var hideDatePillWorkItem: DispatchWorkItem?
 
     private let permissionCard = UIView()
     private let bottomBar = UIView()
@@ -89,7 +97,17 @@ final class PhoneGalleryViewController: UIViewController,
         statusChipLabel.translatesAutoresizingMaskIntoConstraints = false
         statusChipLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         statusChipLabel.textColor = AppColors.text
-        statusChipLabel.text = "本机相册"
+        statusChipLabel.text = ""
+        statusChipLabel.isHidden = true
+
+        bucketButton.translatesAutoresizingMaskIntoConstraints = false
+        bucketButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+        bucketButton.setTitleColor(AppColors.text, for: .normal)
+        bucketButton.backgroundColor = AppColors.secondaryBackground
+        bucketButton.layer.cornerRadius = 13
+        bucketButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        bucketButton.setTitle("全部照片 ▾", for: .normal)
+        bucketButton.addTarget(self, action: #selector(showBucketPicker), for: .touchUpInside)
 
         effectButton.translatesAutoresizingMaskIntoConstraints = false
         effectButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -108,7 +126,18 @@ final class PhoneGalleryViewController: UIViewController,
         multiSelectButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
         multiSelectButton.addTarget(self, action: #selector(rightCtrlTapped), for: .touchUpInside)
 
+        scrollDatePill.translatesAutoresizingMaskIntoConstraints = false
+        scrollDatePill.font = .systemFont(ofSize: 12, weight: .bold)
+        scrollDatePill.textColor = .white
+        scrollDatePill.backgroundColor = UIColor(red: 24/255, green: 26/255, blue: 31/255, alpha: 0.82)
+        scrollDatePill.layer.cornerRadius = 12
+        scrollDatePill.clipsToBounds = true
+        scrollDatePill.textAlignment = .center
+        scrollDatePill.alpha = 0
+        scrollDatePill.isHidden = true
+
         headerBar.addSubview(cancelSelButton)
+        headerBar.addSubview(bucketButton)
         headerBar.addSubview(statusChipLabel)
         headerBar.addSubview(effectButton)
         headerBar.addSubview(multiSelectButton)
@@ -190,6 +219,7 @@ final class PhoneGalleryViewController: UIViewController,
 
         view.addSubview(headerBar)
         view.addSubview(collectionView)
+        view.addSubview(scrollDatePill)
         view.addSubview(permissionCard)
         view.addSubview(bottomBar)
 
@@ -205,7 +235,11 @@ final class PhoneGalleryViewController: UIViewController,
             cancelSelButton.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor),
             cancelSelButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
-            statusChipLabel.leadingAnchor.constraint(equalTo: cancelSelButton.trailingAnchor, constant: 6),
+            bucketButton.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor),
+            bucketButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            bucketButton.trailingAnchor.constraint(lessThanOrEqualTo: effectButton.leadingAnchor, constant: -6),
+
+            statusChipLabel.leadingAnchor.constraint(equalTo: cancelSelButton.trailingAnchor, constant: 8),
             statusChipLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
             multiSelectButton.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor),
@@ -213,6 +247,11 @@ final class PhoneGalleryViewController: UIViewController,
 
             effectButton.trailingAnchor.constraint(equalTo: multiSelectButton.leadingAnchor, constant: -6),
             effectButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+
+            scrollDatePill.topAnchor.constraint(equalTo: collectionView.topAnchor, constant: 8),
+            scrollDatePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            scrollDatePill.heightAnchor.constraint(equalToConstant: 24),
+            scrollDatePill.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
 
             permissionCard.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 16),
             permissionCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
@@ -277,9 +316,10 @@ final class PhoneGalleryViewController: UIViewController,
         if selectionMode {
             let count = selectedIds.count
             cancelSelButton.isHidden = false
+            bucketButton.isHidden = true
+            statusChipLabel.isHidden = false
             statusChipLabel.text = "已选 \(count) 张"
-            let cap = min(18, assets.count)
-            multiSelectButton.setTitle((count >= cap && cap > 0) ? "取消全选" : "全选", for: .normal)
+            multiSelectButton.setTitle((count >= assets.count && !assets.isEmpty) ? "取消全选" : "全选", for: .normal)
             bottomBar.isHidden = false
             collectionBottomToView.isActive = false
             collectionBottomToBar.isActive = true
@@ -288,10 +328,14 @@ final class PhoneGalleryViewController: UIViewController,
                 $0.isEnabled = enabled
                 $0.alpha = enabled ? 1.0 : 0.45
             }
+            deleteButton.setTitle(count > 0 ? "删除 (\(count))" : "删除", for: .normal)
             shareButton.setTitle(count > 0 ? "分享实况 (\(count))" : "分享实况", for: .normal)
         } else {
             cancelSelButton.isHidden = true
-            statusChipLabel.text = assets.isEmpty ? "手机相册" : "手机相册 · \(assets.count) 张"
+            bucketButton.isHidden = false
+            statusChipLabel.isHidden = true
+            let countSuffix = assets.isEmpty ? "" : " (\(assets.count))"
+            bucketButton.setTitle("\(selectedCollectionTitle)\(countSuffix) ▾", for: .normal)
             multiSelectButton.setTitle("多选", for: .normal)
             bottomBar.isHidden = true
             collectionBottomToBar.isActive = false
@@ -308,11 +352,10 @@ final class PhoneGalleryViewController: UIViewController,
 
     @objc private func rightCtrlTapped() {
         if selectionMode {
-            let cap = min(18, assets.count)
-            if selectedIds.count >= cap && cap > 0 {
+            if selectedIds.count >= assets.count && !assets.isEmpty {
                 selectedIds.removeAll()
             } else {
-                selectedIds = Array(assets.prefix(cap)).map { $0.localIdentifier }
+                selectedIds = assets.map { $0.localIdentifier }
             }
         } else if !assets.isEmpty {
             selectionMode = true
@@ -451,7 +494,6 @@ final class PhoneGalleryViewController: UIViewController,
             while true {
                 let id = assets[i].localIdentifier
                 if !selectedIds.contains(id) {
-                    if selectedIds.count >= 18 { break }
                     selectedIds.append(id)
                 }
                 if i == endIdx { break }
@@ -540,13 +582,74 @@ final class PhoneGalleryViewController: UIViewController,
     private func fetchPhotoAssets() {
         let opts = PHFetchOptions()
         opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        opts.fetchLimit = 500
-        let res = PHAsset.fetchAssets(with: .image, options: opts)
+        opts.fetchLimit = 800
+        let res: PHFetchResult<PHAsset>
+        if let col = selectedCollection {
+            opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+            res = PHAsset.fetchAssets(in: col, options: opts)
+        } else {
+            res = PHAsset.fetchAssets(with: .image, options: opts)
+        }
         var list: [PHAsset] = []
         res.enumerateObjects { asset, _, _ in list.append(asset) }
         self.assets = list
         self.updateChrome()
         self.collectionView.reloadData()
+    }
+
+    @objc private func showBucketPicker() {
+        guard !selectionMode else { return }
+        let countOpts = PHFetchOptions()
+        countOpts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        let allCount = PHAsset.fetchAssets(with: .image, options: nil).count
+
+        var choices: [(title: String, col: PHAssetCollection?, count: Int)] = [
+            ("全部照片", nil, allCount)
+        ]
+        let smartSubtypes: [PHAssetCollectionSubtype] = [
+            .smartAlbumUserLibrary,
+            .smartAlbumFavorites,
+            .smartAlbumLivePhotos,
+            .smartAlbumScreenshots,
+            .smartAlbumSelfies
+        ]
+        for st in smartSubtypes {
+            let fetched = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: st, options: nil)
+            fetched.enumerateObjects { col, _, _ in
+                let cnt = PHAsset.fetchAssets(in: col, options: countOpts).count
+                if cnt > 0, let name = col.localizedTitle, !name.isEmpty {
+                    if !choices.contains(where: { $0.col?.localIdentifier == col.localIdentifier }) {
+                        choices.append((name, col, cnt))
+                    }
+                }
+            }
+        }
+        let userAlbums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+        userAlbums.enumerateObjects { col, _, _ in
+            let cnt = PHAsset.fetchAssets(in: col, options: countOpts).count
+            if cnt > 0, let name = col.localizedTitle, !name.isEmpty {
+                choices.append((name, col, cnt))
+            }
+        }
+
+        let alert = UIAlertController(title: "选择手机相册", message: nil, preferredStyle: .actionSheet)
+        for item in choices {
+            let isCurrent = (item.col == nil && selectedCollection == nil)
+                || (item.col != nil && item.col?.localIdentifier == selectedCollection?.localIdentifier)
+            let label = "\(item.title)（\(item.count)）" + (isCurrent ? "  ✓" : "")
+            alert.addAction(UIAlertAction(title: label, style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.selectedCollection = item.col
+                self.selectedCollectionTitle = item.title
+                self.fetchPhotoAssets()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let pop = alert.popoverPresentationController {
+            pop.sourceView = bucketButton
+            pop.sourceRect = bucketButton.bounds
+        }
+        present(alert, animated: true)
     }
 
     // MARK: - Effects & Actions
@@ -618,24 +721,48 @@ final class PhoneGalleryViewController: UIViewController,
         })
     }
 
+    private func confirmWithinShareLimit(_ targets: [PHAsset], actionTitle: String, proceed: @escaping ([PHAsset]) -> Void) {
+        guard !targets.isEmpty else { return }
+        if targets.count <= Self.maxShareLiveCount {
+            proceed(targets)
+            return
+        }
+        let alert = UIAlertController(
+            title: "单次\(actionTitle)上限 \(Self.maxShareLiveCount) 张",
+            message: "当前已选 \(targets.count) 张（批量删除无张数限制）。\(actionTitle)建议单次最多 \(Self.maxShareLiveCount) 张，是否只处理前 \(Self.maxShareLiveCount) 张？",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "仅处理前 \(Self.maxShareLiveCount) 张", style: .default) { _ in
+            proceed(Array(targets.prefix(Self.maxShareLiveCount)))
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(alert, animated: true)
+    }
+
     @objc private func shareRawTapped() {
         let targets = assets.filter { selectedIds.contains($0.localIdentifier) }
-        requestImages(targets) { [weak self] images in
-            guard let self = self, !images.isEmpty else { return }
-            let ac = UIActivityViewController(activityItems: images, applicationActivities: nil)
-            ac.popoverPresentationController?.sourceView = self.rawButton
-            self.present(ac, animated: true)
+        confirmWithinShareLimit(targets, actionTitle: "分享原图") { [weak self] chosen in
+            self?.requestImages(chosen) { [weak self] images in
+                guard let self = self, !images.isEmpty else { return }
+                let ac = UIActivityViewController(activityItems: images, applicationActivities: nil)
+                ac.popoverPresentationController?.sourceView = self.rawButton
+                self.present(ac, animated: true)
+            }
         }
     }
 
     @objc private func saveOnlyTapped() {
         let targets = assets.filter { selectedIds.contains($0.localIdentifier) }
-        convertSelectedAssets(targets, shareAfter: false)
+        confirmWithinShareLimit(targets, actionTitle: "保存实况") { [weak self] chosen in
+            self?.convertSelectedAssets(chosen, shareAfter: false)
+        }
     }
 
     @objc private func shareTapped() {
         let targets = assets.filter { selectedIds.contains($0.localIdentifier) }
-        convertSelectedAssets(targets, shareAfter: true)
+        confirmWithinShareLimit(targets, actionTitle: "分享实况") { [weak self] chosen in
+            self?.convertSelectedAssets(chosen, shareAfter: true)
+        }
     }
 
     private func requestImages(_ targets: [PHAsset], completion: @escaping ([UIImage]) -> Void) {
@@ -770,7 +897,7 @@ final class PhoneGalleryViewController: UIViewController,
         if let idx = selectedIds.firstIndex(of: id) {
             selectedIds.remove(at: idx)
             if selectedIds.isEmpty { selectionMode = false }
-        } else if selectedIds.count < 18 {
+        } else {
             selectedIds.append(id)
         }
         updateChrome()
@@ -782,24 +909,33 @@ final class PhoneGalleryViewController: UIViewController,
             toggleItem(at: indexPath)
             return
         }
-        let asset = assets[indexPath.item]
-        let preview = GalleryPhotoPreviewVC(asset: asset, imageManager: imageManager)
-        preview.onAction = { [weak self] action in
+        let preview = GalleryPhotoPreviewVC(assets: assets, initialIndex: indexPath.item, imageManager: imageManager)
+        preview.onLongPressSelect = { [weak self] activeAsset in
+            guard let self = self else { return }
+            self.selectionMode = true
+            let id = activeAsset.localIdentifier
+            if !self.selectedIds.contains(id) {
+                self.selectedIds.append(id)
+            }
+            self.updateChrome()
+            self.collectionView.reloadData()
+        }
+        preview.onAction = { [weak self] action, activeAsset in
             guard let self = self else { return }
             switch action {
             case .delete:
-                self.deleteAssets([asset]) {}
+                self.deleteAssets([activeAsset]) {}
             case .shareRaw:
-                self.requestImages([asset]) { imgs in
+                self.requestImages([activeAsset]) { imgs in
                     guard let img = imgs.first else { return }
                     let ac = UIActivityViewController(activityItems: [img], applicationActivities: nil)
                     ac.popoverPresentationController?.sourceView = self.view
                     self.present(ac, animated: true)
                 }
             case .saveLive:
-                self.convertSelectedAssets([asset], shareAfter: false)
+                self.convertSelectedAssets([activeAsset], shareAfter: false)
             case .shareLive:
-                self.convertSelectedAssets([asset], shareAfter: true)
+                self.convertSelectedAssets([activeAsset], shareAfter: true)
             }
         }
         preview.modalPresentationStyle = .fullScreen
@@ -810,47 +946,151 @@ final class PhoneGalleryViewController: UIViewController,
         let side = floor((collectionView.bounds.width - 4) / 3.0)
         return CGSize(width: side, height: side)
     }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === collectionView, (scrollView.isDragging || scrollView.isDecelerating) else { return }
+        let sorted = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        guard let first = sorted.first, first.item < assets.count else { return }
+        let dateStr = formatGalleryDate(assets[first.item].creationDate)
+        guard !dateStr.isEmpty else { return }
+        hideDatePillWorkItem?.cancel()
+        scrollDatePill.text = "  \(dateStr)  "
+        if scrollDatePill.isHidden || scrollDatePill.alpha < 0.95 {
+            scrollDatePill.isHidden = false
+            UIView.animate(withDuration: 0.12) { self.scrollDatePill.alpha = 1 }
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        scheduleHideDatePill()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { scheduleHideDatePill() }
+    }
+
+    private func scheduleHideDatePill() {
+        hideDatePillWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            UIView.animate(withDuration: 0.2, animations: {
+                self.scrollDatePill.alpha = 0
+            }) { _ in
+                if self.scrollDatePill.alpha < 0.05 {
+                    self.scrollDatePill.isHidden = true
+                }
+            }
+        }
+        hideDatePillWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85, execute: item)
+    }
+}
+
+private func formatGalleryDate(_ date: Date?) -> String {
+    guard let date = date else { return "" }
+    let cal = Calendar.current
+    if cal.isDateInToday(date) { return "今天" }
+    if cal.isDateInYesterday(date) { return "昨天" }
+    let df = DateFormatter()
+    df.locale = Locale(identifier: "zh_CN")
+    let sameYear = cal.component(.year, from: date) == cal.component(.year, from: Date())
+    df.dateFormat = sameYear ? "M月d日" : "yyyy年M月d日"
+    return df.string(from: date)
 }
 
 private enum GalleryPreviewAction {
     case delete, shareRaw, saveLive, shareLive
 }
 
-private final class GalleryPhotoPreviewVC: UIViewController {
-    private let asset: PHAsset
-    private let imageManager: PHCachingImageManager
-    var onAction: ((GalleryPreviewAction) -> Void)?
+private final class GalleryPhotoPreviewVC: UIViewController,
+    UICollectionViewDataSource,
+    UICollectionViewDelegateFlowLayout,
+    UIGestureRecognizerDelegate {
 
-    init(asset: PHAsset, imageManager: PHCachingImageManager) {
-        self.asset = asset
+    private let assets: [PHAsset]
+    private var currentIndex: Int
+    private let imageManager: PHCachingImageManager
+    var onAction: ((GalleryPreviewAction, PHAsset) -> Void)?
+    var onLongPressSelect: ((PHAsset) -> Void)?
+
+    private let counterLabel = UILabel()
+    private let liveToggleBtn = UIButton(type: .system)
+    private var userToggledLive = false
+    private var livePreviewOn = false
+    private var liveDisplayLink: CADisplayLink?
+    private var liveAnimStart: CFTimeInterval = 0
+    private var didScrollInitial = false
+
+    private var pagerView: UICollectionView!
+    private var bottomBar: UIStackView!
+    private var dismissPanGesture: UIPanGestureRecognizer!
+
+    init(assets: [PHAsset], initialIndex: Int, imageManager: PHCachingImageManager) {
+        self.assets = assets
+        self.currentIndex = max(0, min(initialIndex, max(0, assets.count - 1)))
         self.imageManager = imageManager
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit {
+        liveDisplayLink?.invalidate()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
 
-        let iv = UIImageView()
-        iv.contentMode = .scaleAspectFit
-        iv.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(iv)
+        counterLabel.translatesAutoresizingMaskIntoConstraints = false
+        counterLabel.font = .systemFont(ofSize: 14, weight: .bold)
+        counterLabel.textColor = .white
+
+        liveToggleBtn.translatesAutoresizingMaskIntoConstraints = false
+        liveToggleBtn.titleLabel?.font = .systemFont(ofSize: 11, weight: .bold)
+        liveToggleBtn.layer.cornerRadius = 12
+        liveToggleBtn.clipsToBounds = true
+        liveToggleBtn.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        liveToggleBtn.addTarget(self, action: #selector(liveToggleTapped), for: .touchUpInside)
 
         let closeBtn = UIButton(type: .system)
-        closeBtn.setTitle("关闭", for: .normal)
+        closeBtn.setTitle("✕", for: .normal)
         closeBtn.setTitleColor(.white, for: .normal)
-        closeBtn.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        closeBtn.titleLabel?.font = .systemFont(ofSize: 18, weight: .bold)
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+
+        view.addSubview(counterLabel)
+        view.addSubview(liveToggleBtn)
         view.addSubview(closeBtn)
 
-        let bar = UIStackView()
-        bar.axis = .horizontal
-        bar.spacing = 8
-        bar.distribution = .fillEqually
-        bar.translatesAutoresizingMaskIntoConstraints = false
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.minimumLineSpacing = 0
+        layout.minimumInteritemSpacing = 0
+        pagerView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        pagerView.translatesAutoresizingMaskIntoConstraints = false
+        pagerView.backgroundColor = .black
+        pagerView.isPagingEnabled = true
+        pagerView.showsHorizontalScrollIndicator = false
+        pagerView.dataSource = self
+        pagerView.delegate = self
+        pagerView.register(GalleryPreviewPageCell.self, forCellWithReuseIdentifier: "PreviewPage")
+        view.addSubview(pagerView)
+
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handlePreviewLongPress(_:)))
+        longPress.minimumPressDuration = 0.42
+        pagerView.addGestureRecognizer(longPress)
+
+        dismissPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
+        dismissPanGesture.delegate = self
+        view.addGestureRecognizer(dismissPanGesture)
+
+        bottomBar = UIStackView()
+        bottomBar.axis = .horizontal
+        bottomBar.spacing = 8
+        bottomBar.distribution = .fillEqually
+        bottomBar.translatesAutoresizingMaskIntoConstraints = false
 
         let delBtn = makeBarButton("删除", bg: UIColor(white: 0.2, alpha: 1), fg: .systemRed)
         delBtn.addTarget(self, action: #selector(delTapped), for: .touchUpInside)
@@ -860,34 +1100,187 @@ private final class GalleryPhotoPreviewVC: UIViewController {
         saveBtn.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
         let shareBtn = makeBarButton("分享实况", bg: AppColors.brandLightText, fg: .white)
         shareBtn.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
-        [delBtn, rawBtn, saveBtn, shareBtn].forEach { bar.addArrangedSubview($0) }
-        view.addSubview(bar)
+        [delBtn, rawBtn, saveBtn, shareBtn].forEach { bottomBar.addArrangedSubview($0) }
+        view.addSubview(bottomBar)
 
         NSLayoutConstraint.activate([
-            closeBtn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            closeBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            counterLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            counterLabel.centerYAnchor.constraint(equalTo: closeBtn.centerYAnchor),
+            counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: liveToggleBtn.leadingAnchor, constant: -8),
 
-            iv.topAnchor.constraint(equalTo: closeBtn.bottomAnchor, constant: 8),
-            iv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            iv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            iv.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -12),
+            liveToggleBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -10),
+            liveToggleBtn.centerYAnchor.constraint(equalTo: closeBtn.centerYAnchor),
 
-            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            bar.heightAnchor.constraint(equalToConstant: 46)
+            closeBtn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            closeBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            closeBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 32),
+
+            pagerView.topAnchor.constraint(equalTo: closeBtn.bottomAnchor, constant: 6),
+            pagerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            pagerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            pagerView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor, constant: -10),
+
+            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            bottomBar.heightAnchor.constraint(equalToConstant: 46)
         ])
 
-        let opts = PHImageRequestOptions()
-        opts.deliveryMode = .highQualityFormat
-        opts.isNetworkAccessAllowed = true
-        imageManager.requestImage(
-            for: asset,
-            targetSize: CGSize(width: 2000, height: 2000),
-            contentMode: .aspectFit,
-            options: opts
-        ) { img, _ in
-            iv.image = img
+        syncHeaderAndLiveState()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if !didScrollInitial && currentIndex < assets.count && pagerView.bounds.width > 0 {
+            didScrollInitial = true
+            let ip = IndexPath(item: currentIndex, section: 0)
+            pagerView.scrollToItem(at: ip, at: .centeredHorizontally, animated: false)
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopLiveAnimation()
+    }
+
+    private func activeAsset() -> PHAsset? {
+        guard currentIndex >= 0 && currentIndex < assets.count else { return nil }
+        return assets[currentIndex]
+    }
+
+    private func syncHeaderAndLiveState() {
+        guard let asset = activeAsset() else { return }
+        let dStr = formatGalleryDate(asset.creationDate)
+        counterLabel.text = dStr.isEmpty
+            ? "\(currentIndex + 1) / \(assets.count)"
+            : "\(currentIndex + 1) / \(assets.count) · \(dStr)"
+        if !userToggledLive {
+            let isLiveAsset = (asset.mediaSubtypes.rawValue & PHAssetMediaSubtype.photoLive.rawValue) != 0
+            livePreviewOn = isLiveAsset || AutoLivePreferences.isEnabled
+        }
+        updateLiveMotionPlayback()
+    }
+
+    @objc private func liveToggleTapped() {
+        userToggledLive = true
+        livePreviewOn.toggle()
+        updateLiveMotionPlayback()
+    }
+
+    private func updateLiveMotionPlayback() {
+        if livePreviewOn {
+            liveToggleBtn.setTitle("● LIVE 动图", for: .normal)
+            liveToggleBtn.setTitleColor(UIColor(red: 167/255, green: 243/255, blue: 208/255, alpha: 1), for: .normal)
+            liveToggleBtn.backgroundColor = UIColor(red: 6/255, green: 95/255, blue: 70/255, alpha: 0.75)
+            startLiveAnimation()
+        } else {
+            liveToggleBtn.setTitle("LIVE 静图", for: .normal)
+            liveToggleBtn.setTitleColor(UIColor(white: 0.85, alpha: 1), for: .normal)
+            liveToggleBtn.backgroundColor = UIColor(white: 0.25, alpha: 0.7)
+            stopLiveAnimation()
+        }
+    }
+
+    private func startLiveAnimation() {
+        stopLiveAnimation()
+        liveAnimStart = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(handleLiveTick))
+        link.add(to: .main, forMode: .common)
+        liveDisplayLink = link
+    }
+
+    private func stopLiveAnimation() {
+        liveDisplayLink?.invalidate()
+        liveDisplayLink = nil
+        for case let cell as GalleryPreviewPageCell in pagerView.visibleCells {
+            cell.clearLiveTransform()
+        }
+    }
+
+    @objc private func handleLiveTick() {
+        let dur = max(1.0, AutoLivePreferences.motionDuration)
+        let elapsed = CACurrentMediaTime() - liveAnimStart
+        let cycle = elapsed.truncatingRemainder(dividingBy: dur * 2.0) / dur
+        let progress = cycle <= 1.0 ? cycle : (2.0 - cycle)
+        let frame = Int(round(progress * 59.0))
+        let baseRatio = AutoLivePreferences.motionRatio
+        let previewRatio = baseRatio < 1.028 ? 1.028 : baseRatio
+        let tf = AutoLivePreferences.motionMode.computeFrame(ratio: previewRatio, frameIndex: frame, totalFrames: 60)
+        if let cell = pagerView.cellForItem(at: IndexPath(item: currentIndex, section: 0)) as? GalleryPreviewPageCell {
+            cell.applyLiveTransform(zoom: CGFloat(tf.zoom), offsetX: CGFloat(tf.offsetX), offsetY: CGFloat(tf.offsetY))
+        }
+    }
+
+    // MARK: - Pager & Swipe Dismiss
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return assets.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "PreviewPage", for: indexPath) as! GalleryPreviewPageCell
+        let asset = assets[indexPath.item]
+        cell.bind(asset: asset, imageManager: imageManager)
+        return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        return collectionView.bounds.size
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === pagerView, pagerView.bounds.width > 0 else { return }
+        let idx = Int(round(pagerView.contentOffset.x / pagerView.bounds.width))
+        let clamped = max(0, min(idx, max(0, assets.count - 1)))
+        if clamped != currentIndex {
+            currentIndex = clamped
+            syncHeaderAndLiveState()
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === dismissPanGesture {
+            if let cell = pagerView.cellForItem(at: IndexPath(item: currentIndex, section: 0)) as? GalleryPreviewPageCell,
+               cell.isZoomed {
+                return false
+            }
+            let vel = dismissPanGesture.velocity(in: view)
+            return vel.y > abs(vel.x) * 1.25 && vel.y > 0
+        }
+        return true
+    }
+
+    @objc private func handleDismissPan(_ gesture: UIPanGestureRecognizer) {
+        let trans = gesture.translation(in: view)
+        let vel = gesture.velocity(in: view)
+        switch gesture.state {
+        case .changed:
+            let dy = max(0, trans.y)
+            pagerView.transform = CGAffineTransform(translationX: 0, y: dy)
+            view.backgroundColor = UIColor.black.withAlphaComponent(max(0.25, 1.0 - dy / 340.0))
+        case .ended, .cancelled:
+            if trans.y > 100 || vel.y > 600 {
+                stopLiveAnimation()
+                dismiss(animated: true)
+            } else {
+                UIView.animate(withDuration: 0.2) {
+                    self.pagerView.transform = .identity
+                    self.view.backgroundColor = .black
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    @objc private func handlePreviewLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let asset = activeAsset() else { return }
+        if let cell = pagerView.cellForItem(at: IndexPath(item: currentIndex, section: 0)) as? GalleryPreviewPageCell, cell.isZoomed {
+            return
+        }
+        if #available(iOS 10.0, *) { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        stopLiveAnimation()
+        dismiss(animated: true) { [weak self] in
+            self?.onLongPressSelect?(asset)
         }
     }
 
@@ -901,11 +1294,131 @@ private final class GalleryPhotoPreviewVC: UIViewController {
         return b
     }
 
-    @objc private func closeTapped() { dismiss(animated: true) }
-    @objc private func delTapped() { dismiss(animated: true) { self.onAction?(.delete) } }
-    @objc private func rawTapped() { dismiss(animated: true) { self.onAction?(.shareRaw) } }
-    @objc private func saveTapped() { dismiss(animated: true) { self.onAction?(.saveLive) } }
-    @objc private func shareTapped() { dismiss(animated: true) { self.onAction?(.shareLive) } }
+    @objc private func closeTapped() { stopLiveAnimation(); dismiss(animated: true) }
+    @objc private func delTapped() {
+        guard let asset = activeAsset() else { return }
+        stopLiveAnimation()
+        dismiss(animated: true) { self.onAction?(.delete, asset) }
+    }
+    @objc private func rawTapped() {
+        guard let asset = activeAsset() else { return }
+        stopLiveAnimation()
+        dismiss(animated: true) { self.onAction?(.shareRaw, asset) }
+    }
+    @objc private func saveTapped() {
+        guard let asset = activeAsset() else { return }
+        stopLiveAnimation()
+        dismiss(animated: true) { self.onAction?(.saveLive, asset) }
+    }
+    @objc private func shareTapped() {
+        guard let asset = activeAsset() else { return }
+        stopLiveAnimation()
+        dismiss(animated: true) { self.onAction?(.shareLive, asset) }
+    }
+}
+
+private final class GalleryPreviewPageCell: UICollectionViewCell, UIScrollViewDelegate {
+    private let scrollView = UIScrollView()
+    private let imageView = UIImageView()
+    private var boundAssetId: String = ""
+
+    var isZoomed: Bool { scrollView.zoomScale > 1.03 }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.minimumZoomScale = 1.0
+        scrollView.maximumZoomScale = 4.0
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.delegate = self
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
+
+        contentView.addSubview(scrollView)
+        scrollView.addSubview(imageView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+
+            imageView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            imageView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            imageView.heightAnchor.constraint(equalTo: scrollView.heightAnchor)
+        ])
+
+        let dbl = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        dbl.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(dbl)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        boundAssetId = ""
+        imageView.transform = .identity
+        scrollView.setZoomScale(1.0, animated: false)
+        imageView.image = nil
+    }
+
+    func bind(asset: PHAsset, imageManager: PHCachingImageManager) {
+        boundAssetId = asset.localIdentifier
+        imageView.transform = .identity
+        scrollView.setZoomScale(1.0, animated: false)
+        let targetId = asset.localIdentifier
+        let opts = PHImageRequestOptions()
+        opts.deliveryMode = .highQualityFormat
+        opts.isNetworkAccessAllowed = true
+        imageManager.requestImage(
+            for: asset,
+            targetSize: CGSize(width: 2000, height: 2000),
+            contentMode: .aspectFit,
+            options: opts
+        ) { [weak self] img, _ in
+            guard let self = self, self.boundAssetId == targetId else { return }
+            self.imageView.image = img
+        }
+    }
+
+    func applyLiveTransform(zoom: CGFloat, offsetX: CGFloat, offsetY: CGFloat) {
+        guard !isZoomed else { return }
+        let tx = (0.5 - offsetX) * contentView.bounds.width * max(0, zoom - 1.0)
+        let ty = (0.5 - offsetY) * contentView.bounds.height * max(0, zoom - 1.0)
+        imageView.transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: zoom, y: zoom)
+    }
+
+    func clearLiveTransform() {
+        imageView.transform = .identity
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        return imageView
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        if scrollView.zoomScale > 1.02 {
+            imageView.transform = .identity
+        }
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        if scrollView.zoomScale > 1.05 {
+            scrollView.setZoomScale(1.0, animated: true)
+        } else {
+            let pt = gesture.location(in: imageView)
+            let w = scrollView.bounds.width / 2.5
+            let h = scrollView.bounds.height / 2.5
+            scrollView.zoom(to: CGRect(x: pt.x - w * 0.5, y: pt.y - h * 0.5, width: w, height: h), animated: true)
+        }
+    }
 }
 
 private final class GalleryThumbCell: UICollectionViewCell {

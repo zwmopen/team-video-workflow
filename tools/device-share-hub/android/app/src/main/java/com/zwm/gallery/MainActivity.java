@@ -52,6 +52,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.animation.LayoutTransition;
+import android.animation.ValueAnimator;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -172,7 +173,15 @@ public final class MainActivity extends Activity {
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private LinearLayout worksContainer;
+    private LinearLayout titleCluster;
+    private LinearLayout statusRow;
     private TextView statusText;
+    private TextView liveStatusPill;
+    private LinearLayout collapsibleHeader;
+    private int collapsibleHeaderExpandedHeight = 0;
+    private boolean workHeaderCollapsed = false;
+    private boolean isAnimatingWorkHeader = false;
+    private ValueAnimator workHeaderAnimator;
     private ImageButton leftModeButton;
     private ImageButton rightModeButton;
     private ImageButton modeButton;
@@ -406,6 +415,10 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (workHeaderAnimator != null) {
+            workHeaderAnimator.cancel();
+            workHeaderAnimator = null;
+        }
         onlineClient.stopBeaconListener();
         if (phoneGalleryPane != null) phoneGalleryPane.destroy();
         worker.shutdownNow();
@@ -488,15 +501,23 @@ public final class MainActivity extends Activity {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        titleRow.setPadding(dp(10), dp(14), dp(10), dp(8));
+        titleRow.setPadding(dp(10), dp(10), dp(10), dp(4));
         titleRow.setBackgroundColor(ThemePalette.getBgPrimary(this));
-        LinearLayout titleCluster = new LinearLayout(this);
+        titleCluster = new LinearLayout(this);
         titleCluster.setOrientation(LinearLayout.HORIZONTAL);
         titleCluster.setGravity(Gravity.CENTER_VERTICAL);
+        titleCluster.setVisibility(View.GONE);
         headingText = text("", 16, true);
         headingText.setSingleLine(true);
         headingText.setAutoSizeTextTypeUniformWithConfiguration(13, 18, 1,
                 android.util.TypedValue.COMPLEX_UNIT_SP);
+        headingText.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override public void afterTextChanged(Editable s) {
+                updateTitleClusterVisibility();
+            }
+        });
         titleCluster.addView(headingText, new LinearLayout.LayoutParams(-2, -2));
         scannedCountText = text("", 12, true);
         scannedCountText.setSingleLine(true);
@@ -616,7 +637,7 @@ public final class MainActivity extends Activity {
 
         categorySelector = new FrameLayout(this);
         categorySelector.setBackground(round(ThemePalette.isDarkMode(this) ? Color.rgb(28, 28, 30) : Color.rgb(232, 234, 233), 11));
-        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(40)));
+        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(36)));
 
         searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -779,25 +800,56 @@ public final class MainActivity extends Activity {
         worksContainerTransition = contentTransition;   // DSH-194：唯一真源，异步分帧链被打断时也能正确恢复
         root.addView(worksContainer);
 
-        statusText = text("局域网接收已开启", 13, false);
+        statusText = text("局域网接收已开启", 12, false);
         statusText.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
-        statusText.setGravity(Gravity.CENTER);
-        statusText.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 16));
-        statusText.setPadding(dp(12), dp(12), dp(12), dp(12));
+        statusText.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        statusText.setSingleLine(true);
+        statusText.setEllipsize(TextUtils.TruncateAt.END);
+        statusText.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 14));
+        statusText.setPadding(dp(10), dp(6), dp(10), dp(6));
+
+        liveStatusPill = text("", 11, true);
+        liveStatusPill.setSingleLine(true);
+        liveStatusPill.setGravity(Gravity.CENTER);
+        liveStatusPill.setPadding(dp(9), dp(6), dp(9), dp(6));
+        liveStatusPill.setContentDescription("实况分享开关（单击开关，长按选动态效果）");
+        liveStatusPill.setOnClickListener(v -> {
+            boolean next = !OnlineService.isAutoLiveOnShareEnabled(MainActivity.this);
+            OnlineService.setAutoLiveOnShareEnabled(MainActivity.this, next);
+            refreshWorkLiveBadge();
+            toast(next
+                    ? ("已开启分享自动转实况 · " + OnlineService.getAutoLiveMotionTitle(OnlineService.getAutoLiveMotionMode(MainActivity.this)))
+                    : "已关闭分享自动转实况（将按原静图分享）");
+        });
+        liveStatusPill.setOnLongClickListener(v -> {
+            showQuickLiveModeDialog();
+            return true;
+        });
+
+        statusRow = new LinearLayout(this);
+        statusRow.setOrientation(LinearLayout.HORIZONTAL);
+        statusRow.setGravity(Gravity.CENTER_VERTICAL);
+        statusRow.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1f));
+        LinearLayout.LayoutParams livePillParams = new LinearLayout.LayoutParams(-2, -2);
+        livePillParams.setMargins(dp(6), 0, 0, 0);
+        statusRow.addView(liveStatusPill, livePillParams);
+        refreshWorkLiveBadge();
         // 【0.8.43 修】statusText 不再 add 到滚动 root 末尾（之前会被作品列表推到底部屏幕外），
         // 改为由 buildUi() 末尾的 frozenLayout.addView 统一加到 titleRow 之下，
         // 做真正的 sticky 顶部状态栏。
 
-        footerNote = text("点击平台按钮会复制对应文案并打开图片分享。自动回收按设置执行，默认手动；两个平台共用一个作品状态。", 12, false);
+        footerNote = text("点平台按钮复制文案并唤起分享 · 长按可预览原图", 11, false);
         footerNote.setTextColor(ThemePalette.getTextMuted(MainActivity.this));
-        root.addView(footerNote, margins(0, dp(12), 0, 0));
+        footerNote.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.addView(footerNote, margins(0, dp(6), 0, dp(4)));
 
         contentScroll = new SpringScrollView(this);
-        // DSH-194：滚动接近底部自动加载更多 —— 「随便划」不再被手动按钮截断。
+        // DSH-194：滚动接近底部自动加载更多 —— 「随便划」不再被手动按钮截断；同时随列表上下滚动收放筛选栏
         contentScroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
             if (scrollY != oldScrollY) {
                 maybeAutoLoadMoreOnline();
                 maybeRecycleOffscreenOnlineThumbs();
+                handleWorkScrollHeader(scrollY, oldScrollY);
             }
         });
         contentScroll.setSwipeListener(new SpringScrollView.SwipeListener() {
@@ -869,26 +921,31 @@ public final class MainActivity extends Activity {
         frozenLayout.setBackgroundColor(ThemePalette.getBgPrimary(this));
         frozenLayout.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams subTitleParams = new LinearLayout.LayoutParams(-1, -2);
-        subTitleParams.setMargins(dp(12), dp(2), dp(12), dp(2));
+        subTitleParams.setMargins(dp(12), dp(1), dp(12), dp(2));
         frozenLayout.addView(titleCluster, subTitleParams);
-        // 【0.8.43 修】把 statusText 提到顶栏下方做 sticky 状态栏：不再被作品列表推到底部屏幕外。
-        // 文案里始终带「💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）」，离线时也保留 snapshot 年龄。
+        // 【0.8.43 修】把 statusRow 提到顶栏下方做 sticky 状态栏：左侧状态 + 右侧轻巧 LIVE 胶囊。
         LinearLayout.LayoutParams statusBarParams = new LinearLayout.LayoutParams(-1, -2);
-        statusBarParams.setMargins(dp(12), dp(4), dp(12), dp(4));
-        frozenLayout.addView(statusText, statusBarParams);
+        statusBarParams.setMargins(dp(12), dp(2), dp(12), dp(4));
+        frozenLayout.addView(statusRow, statusBarParams);
         LinearLayout.LayoutParams recycleTabParams = new LinearLayout.LayoutParams(-1, dp(40));
         recycleTabParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(onlineRecycleTabBar, recycleTabParams);
         LinearLayout.LayoutParams localTrashTabParams = new LinearLayout.LayoutParams(-1, dp(40));
         localTrashTabParams.setMargins(dp(12), 0, dp(12), dp(4));
         frozenLayout.addView(localTrashTabBar, localTrashTabParams);
-        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(40));
+
+        collapsibleHeader = new LinearLayout(this);
+        collapsibleHeader.setOrientation(LinearLayout.VERTICAL);
+        collapsibleHeader.setClipChildren(true);
+        collapsibleHeader.setClipToPadding(true);
+        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(36));
         categoryParams.setMargins(dp(12), 0, dp(12), dp(4));
-        frozenLayout.addView(categorySelector, categoryParams);
+        collapsibleHeader.addView(categorySelector, categoryParams);
         // 【DSH-108】搜索框挪到分类按钮之下，与 iOS「分类文件夹之下才是搜索框」对齐
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(38));
-        searchParams.setMargins(dp(12), 0, dp(12), dp(8));
-        frozenLayout.addView(searchBar, searchParams);
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(36));
+        searchParams.setMargins(dp(12), 0, dp(12), dp(6));
+        collapsibleHeader.addView(searchBar, searchParams);
+        frozenLayout.addView(collapsibleHeader, new LinearLayout.LayoutParams(-1, -2));
         frozenLayout.addView(contentFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout frame = new FrameLayout(this);
         frame.addView(frozenLayout, new FrameLayout.LayoutParams(-1, -1));
@@ -902,6 +959,130 @@ public final class MainActivity extends Activity {
         quickParams.setMargins(0, 0, dp(22), dp(24));
         frame.addView(quickTrashButton, quickParams);
         return frame;
+    }
+
+    private void updateTitleClusterVisibility() {
+        if (titleCluster == null || headingText == null) return;
+        boolean hasText = headingText.getText() != null && !headingText.getText().toString().trim().isEmpty();
+        titleCluster.setVisibility(hasText ? View.VISIBLE : View.GONE);
+    }
+
+    private void refreshWorkLiveBadge() {
+        if (liveStatusPill == null) return;
+        boolean enabled = OnlineService.isAutoLiveOnShareEnabled(this);
+        if (enabled) {
+            liveStatusPill.setText("● LIVE 开");
+            liveStatusPill.setTextColor(ThemePalette.getBrandLightText(this));
+            liveStatusPill.setBackground(round(ThemePalette.getBrandLightBg(this), 14));
+        } else {
+            liveStatusPill.setText("LIVE 关");
+            liveStatusPill.setTextColor(ThemePalette.getTextMuted(this));
+            liveStatusPill.setBackground(round(ThemePalette.getPillBg(this), 14));
+        }
+    }
+
+    private void showQuickLiveModeDialog() {
+        String curMode = OnlineService.getAutoLiveMotionMode(this);
+        int checked = 0;
+        String[] labels = new String[OnlineService.AUTO_LIVE_MODE_IDS.length];
+        for (int i = 0; i < OnlineService.AUTO_LIVE_MODE_IDS.length; i++) {
+            if (OnlineService.AUTO_LIVE_MODE_IDS[i].equals(curMode)) checked = i;
+            labels[i] = OnlineService.AUTO_LIVE_MODE_TITLES[i] + "\n" + OnlineService.AUTO_LIVE_MODE_DESCS[i];
+        }
+        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("选择分享自动转实况效果")
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    OnlineService.setAutoLiveMotionMode(this, OnlineService.AUTO_LIVE_MODE_IDS[which]);
+                    OnlineService.setAutoLiveOnShareEnabled(this, true);
+                    refreshWorkLiveBadge();
+                    toast("已启用：" + OnlineService.AUTO_LIVE_MODE_TITLES[which]);
+                    d.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void handleWorkScrollHeader(int scrollY, int oldScrollY) {
+        if (isAnimatingWorkHeader || collapsibleHeader == null) return;
+        if (activeSourceMode == SOURCE_GALLERY || showingTrash || showingOnlineRecycle || fileMode) return;
+        if (collapsibleHeader.getVisibility() != View.VISIBLE) return;
+        if (searchInput != null && searchInput.isFocused()) return;
+        int dy = scrollY - oldScrollY;
+        if (scrollY <= dp(12)) {
+            setWorkHeaderCollapsed(false, true);
+        } else if (dy > dp(10) && scrollY > dp(52)) {
+            setWorkHeaderCollapsed(true, true);
+        } else if (dy < -dp(8)) {
+            setWorkHeaderCollapsed(false, true);
+        }
+    }
+
+    private void setWorkHeaderCollapsed(boolean collapsed, boolean animate) {
+        if (collapsibleHeader == null) return;
+        if (collapsed && (activeSourceMode == SOURCE_GALLERY || showingTrash || showingOnlineRecycle || fileMode
+                || (searchInput != null && searchInput.isFocused()))) {
+            collapsed = false;
+        }
+        if (workHeaderCollapsed == collapsed && !isAnimatingWorkHeader) return;
+        if (workHeaderAnimator != null) {
+            workHeaderAnimator.cancel();
+            workHeaderAnimator = null;
+        }
+        workHeaderCollapsed = collapsed;
+        if (collapsibleHeaderExpandedHeight <= 0) {
+            int measured = collapsibleHeader.getHeight();
+            if (measured <= 0) {
+                collapsibleHeader.measure(
+                        View.MeasureSpec.makeMeasureSpec(Math.max(1, getResources().getDisplayMetrics().widthPixels), View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                );
+                measured = collapsibleHeader.getMeasuredHeight();
+            }
+            collapsibleHeaderExpandedHeight = Math.max(dp(78), measured);
+        }
+        final int targetH = collapsed ? 0 : collapsibleHeaderExpandedHeight;
+        final float targetAlpha = collapsed ? 0f : 1f;
+        final ViewGroup.LayoutParams lp = collapsibleHeader.getLayoutParams();
+        if (!animate) {
+            lp.height = collapsed ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT;
+            collapsibleHeader.setLayoutParams(lp);
+            collapsibleHeader.setAlpha(targetAlpha);
+            isAnimatingWorkHeader = false;
+            return;
+        }
+        final int startH = Math.max(0, collapsibleHeader.getHeight());
+        final float startAlpha = collapsibleHeader.getAlpha();
+        if (startH == targetH && Math.abs(startAlpha - targetAlpha) < 0.02f) {
+            if (!collapsed) {
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                collapsibleHeader.setLayoutParams(lp);
+            }
+            return;
+        }
+        isAnimatingWorkHeader = true;
+        ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
+        anim.setDuration(180);
+        anim.setInterpolator(new DecelerateInterpolator());
+        anim.addUpdateListener(va -> {
+            float t = (float) va.getAnimatedValue();
+            lp.height = Math.round(startH + (targetH - startH) * t);
+            collapsibleHeader.setLayoutParams(lp);
+            collapsibleHeader.setAlpha(startAlpha + (targetAlpha - startAlpha) * t);
+        });
+        final boolean finalCollapsed = collapsed;
+        anim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                isAnimatingWorkHeader = false;
+                workHeaderAnimator = null;
+                if (!finalCollapsed) {
+                    lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                    collapsibleHeader.setLayoutParams(lp);
+                }
+            }
+        });
+        workHeaderAnimator = anim;
+        anim.start();
     }
 
     private void refreshWorks() {
@@ -972,8 +1153,10 @@ public final class MainActivity extends Activity {
         onlineRecycleWorks.clear();
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.VISIBLE);
         if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
         categorySelector.setVisibility(View.VISIBLE);
+        setWorkHeaderCollapsed(false, false);
         leftModeButton.setImageResource(R.drawable.ic_album_refresh);
         leftModeButton.setContentDescription("刷新作品");
         leftModeButton.setVisibility(View.GONE);
@@ -1000,6 +1183,8 @@ public final class MainActivity extends Activity {
             enteredTrashFromOnline = true;
         }
         showingTrash = true;
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
         if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
         leftModeButton.setImageResource(R.drawable.ic_album_back);
@@ -2454,8 +2639,10 @@ public final class MainActivity extends Activity {
 
     private void leaveFileMode() {
         fileMode = false;
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.VISIBLE);
         if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
         categorySelector.setVisibility(View.VISIBLE);
+        setWorkHeaderCollapsed(false, false);
         fileTree = null;
         filePath.clear();
         modeButton.setImageResource(R.drawable.ic_file_folder);
@@ -2474,6 +2661,8 @@ public final class MainActivity extends Activity {
         quickTrashButton.setVisibility(View.GONE);
         showingTrash = false;
         fileMode = true;
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
         if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
         modeButton.setImageResource(R.drawable.ic_album_share);
@@ -3016,6 +3205,7 @@ public final class MainActivity extends Activity {
         }
         lastThemeMode = currentThemeMode;
         ThemePalette.applySystemBarAppearance(this);
+        refreshWorkLiveBadge();
         UpdateChecker.checkOnResume(this);
         UpdateChecker.reportDownloadProblem(this);
         if (!updateReadyPromptShown) updateReadyPromptShown = UpdateChecker.showReadyInstallPrompt(this);
@@ -3497,11 +3687,13 @@ public final class MainActivity extends Activity {
             contentScroll.setVisibility(galleryActive ? View.GONE : View.VISIBLE);
         }
         if (galleryActive) {
+            setWorkHeaderCollapsed(false, false);
             if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
             if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
+            if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
             if (categorySelector != null) categorySelector.setVisibility(View.GONE);
             if (searchBar != null) searchBar.setVisibility(View.GONE);
-            if (statusText != null) statusText.setVisibility(View.GONE);
+            if (statusRow != null) statusRow.setVisibility(View.GONE);
             if (quickTrashButton != null) quickTrashButton.setVisibility(View.GONE);
             if (headingText != null) headingText.setText("");
             if (scannedCountText != null) scannedCountText.setVisibility(View.GONE);
@@ -3513,9 +3705,12 @@ public final class MainActivity extends Activity {
             }
             if (rightModeButton != null) rightModeButton.setVisibility(View.GONE);
         } else {
-            if (statusText != null) statusText.setVisibility(View.VISIBLE);
+            if (statusRow != null) statusRow.setVisibility(View.VISIBLE);
+            if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.VISIBLE);
             if (categorySelector != null) categorySelector.setVisibility(View.VISIBLE);
             if (searchBar != null) searchBar.setVisibility(View.VISIBLE);
+            setWorkHeaderCollapsed(false, false);
+            refreshWorkLiveBadge();
         }
     }
 
@@ -4293,6 +4488,8 @@ public final class MainActivity extends Activity {
         onlineRecyclePageLimit = 30;
         onlineRecycleWorks.clear();
 
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
+        if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.GONE);
         if (searchBar != null) searchBar.setVisibility(View.GONE);
         categorySelector.setVisibility(View.GONE);
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.VISIBLE);

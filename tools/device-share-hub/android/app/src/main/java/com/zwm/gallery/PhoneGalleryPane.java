@@ -1,6 +1,7 @@
 package com.zwm.gallery;
 
 import android.Manifest;
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -8,13 +9,17 @@ import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.ContentUris;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -23,12 +28,16 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.LruCache;
 import android.util.Size;
+import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.animation.LinearInterpolator;
+import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
@@ -43,7 +52,10 @@ import android.widget.Toast;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -53,25 +65,32 @@ import java.util.concurrent.Executors;
 
 /**
  * Native Phone Gallery mode embedded inside Album:
- * tap for full-screen viewer (edit/delete/share original/save live/share live),
- * long-press or swipe to multi-select with edge auto-scroll, powered by on-device 1440px GPU rendering.
+ * tap for full-screen native-gesture viewer (swipe, pinch/double-tap zoom, swipe-down dismiss, live preview,
+ * edit/delete/share original/save live/share live), long-press or swipe to multi-select with edge auto-scroll,
+ * powered by on-device 1440px GPU rendering.
  */
 final class PhoneGalleryPane {
     static final int REQ_MEDIA_PERMS = 6101;
     static final int REQ_DELETE_MEDIA = 6102;
-    private static final int MAX_SELECT = 18;
+    private static final int MAX_SHARE_LIVE = 18;
+
+    private interface UriListCallback {
+        void run(List<Uri> chosen);
+    }
 
     private static final class GalleryPhoto {
         final long id;
         final Uri uri;
         final String bucket;
         final boolean looksLive;
+        final long dateMillis;
 
-        GalleryPhoto(long id, Uri uri, String bucket, boolean looksLive) {
+        GalleryPhoto(long id, Uri uri, String bucket, boolean looksLive, long dateMillis) {
             this.id = id;
             this.uri = uri;
             this.bucket = bucket;
             this.looksLive = looksLive;
+            this.dateMillis = dateMillis;
         }
     }
 
@@ -116,6 +135,7 @@ final class PhoneGalleryPane {
     private final TextView rightCtrlBtn;
     private final LinearLayout permissionCard;
     private final GridView gridView;
+    private final TextView scrollDatePill;
     private final PhotoGridAdapter adapter = new PhotoGridAdapter();
     private final LinearLayout bottomBar;
     private final Button deleteBtn;
@@ -124,8 +144,21 @@ final class PhoneGalleryPane {
     private final Button shareLiveBtn;
 
     private AlertDialog activePreviewDialog;
+    private ValueAnimator activeLiveAnimator;
     private Runnable pendingDeleteCallback;
     private int pendingDeleteCount = 0;
+    private final Runnable hideDatePillRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (scrollDatePill.getVisibility() == View.VISIBLE) {
+                scrollDatePill.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                    if (scrollDatePill.getAlpha() < 0.05f) {
+                        scrollDatePill.setVisibility(View.GONE);
+                    }
+                }).start();
+            }
+        }
+    };
 
     private final Runnable autoScrollRunnable = new Runnable() {
         @Override
@@ -223,7 +256,8 @@ final class PhoneGalleryPane {
         pcLp.setMargins(dp(14), dp(16), dp(14), dp(12));
         root.addView(permissionCard, pcLp);
 
-        // 3-column thumbnail grid
+        // 3-column thumbnail grid inside FrameLayout with floating scroll-date pill
+        FrameLayout gridContainer = new FrameLayout(activity);
         gridView = new GridView(activity);
         gridView.setNumColumns(3);
         gridView.setHorizontalSpacing(dp(2));
@@ -232,7 +266,39 @@ final class PhoneGalleryPane {
         gridView.setClipToPadding(false);
         gridView.setAdapter(adapter);
         setupGridInteractions();
-        root.addView(gridView, new LinearLayout.LayoutParams(-1, 0, 1f));
+        gridContainer.addView(gridView, new FrameLayout.LayoutParams(-1, -1));
+
+        scrollDatePill = text("", 12, true, Color.WHITE);
+        scrollDatePill.setPadding(dp(12), dp(5), dp(12), dp(5));
+        scrollDatePill.setBackground(roundRect(0xCC181A1F, 14));
+        scrollDatePill.setAlpha(0f);
+        scrollDatePill.setVisibility(View.GONE);
+        FrameLayout.LayoutParams dpLp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        dpLp.setMargins(0, dp(8), 0, 0);
+        gridContainer.addView(scrollDatePill, dpLp);
+
+        gridView.setOnScrollListener(new AbsListView.OnScrollListener() {
+            private boolean scrolling = false;
+
+            @Override
+            public void onScrollStateChanged(AbsListView view, int scrollState) {
+                scrolling = scrollState != SCROLL_STATE_IDLE;
+                if (!scrolling) {
+                    mainHandler.removeCallbacks(hideDatePillRunnable);
+                    mainHandler.postDelayed(hideDatePillRunnable, 850);
+                } else {
+                    updateFloatingDate(view.getFirstVisiblePosition());
+                }
+            }
+
+            @Override
+            public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount, int totalItemCount) {
+                if (scrolling && visibleItemCount > 0) {
+                    updateFloatingDate(firstVisibleItem);
+                }
+            }
+        });
+        root.addView(gridContainer, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         // Sticky bottom multi-select bar
         bottomBar = new LinearLayout(activity);
@@ -249,21 +315,22 @@ final class PhoneGalleryPane {
         bottomBar.addView(deleteBtn, dLp);
 
         shareRawBtn = actionBtn("原图", false);
-        shareRawBtn.setOnClickListener(v -> {
-            if (!selectedUris.isEmpty()) launchSystemShare(new ArrayList<>(selectedUris), "分享原图");
-        });
+        shareRawBtn.setOnClickListener(v -> confirmWithinShareLimit(new ArrayList<>(selectedUris), "分享原图",
+                chosen -> launchSystemShare(chosen, "分享原图")));
         LinearLayout.LayoutParams rLp = new LinearLayout.LayoutParams(0, dp(44), 0.78f);
         rLp.setMargins(0, 0, dp(6), 0);
         bottomBar.addView(shareRawBtn, rLp);
 
         saveLiveBtn = actionBtn("存实况", false);
-        saveLiveBtn.setOnClickListener(v -> startBatchConvert(new ArrayList<>(selectedUris), false));
+        saveLiveBtn.setOnClickListener(v -> confirmWithinShareLimit(new ArrayList<>(selectedUris), "保存实况",
+                chosen -> startBatchConvert(chosen, false)));
         LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(0, dp(44), 0.92f);
         sLp.setMargins(0, 0, dp(6), 0);
         bottomBar.addView(saveLiveBtn, sLp);
 
         shareLiveBtn = actionBtn("分享实况", true);
-        shareLiveBtn.setOnClickListener(v -> startBatchConvert(new ArrayList<>(selectedUris), true));
+        shareLiveBtn.setOnClickListener(v -> confirmWithinShareLimit(new ArrayList<>(selectedUris), "分享实况",
+                chosen -> startBatchConvert(chosen, true)));
         LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(0, dp(44), 1.32f);
         bottomBar.addView(shareLiveBtn, shLp);
 
@@ -313,8 +380,26 @@ final class PhoneGalleryPane {
 
     void destroy() {
         mainHandler.removeCallbacks(autoScrollRunnable);
+        mainHandler.removeCallbacks(hideDatePillRunnable);
+        if (activeLiveAnimator != null) {
+            activeLiveAnimator.cancel();
+            activeLiveAnimator = null;
+        }
         ioExecutor.shutdownNow();
         thumbExecutor.shutdownNow();
+    }
+
+    private void updateFloatingDate(int firstPos) {
+        if (firstPos < 0 || firstPos >= visiblePhotos.size()) return;
+        String label = formatPhotoDate(visiblePhotos.get(firstPos).dateMillis);
+        if (label.isEmpty()) return;
+        mainHandler.removeCallbacks(hideDatePillRunnable);
+        scrollDatePill.setText(label);
+        if (scrollDatePill.getVisibility() != View.VISIBLE || scrollDatePill.getAlpha() < 0.95f) {
+            scrollDatePill.animate().cancel();
+            scrollDatePill.setVisibility(View.VISIBLE);
+            scrollDatePill.animate().alpha(1f).setDuration(120).start();
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -431,7 +516,6 @@ final class PhoneGalleryPane {
             for (int i = dragStartPos; ; i += step) {
                 Uri uri = visiblePhotos.get(i).uri;
                 if (!selectedUris.contains(uri)) {
-                    if (selectedUris.size() >= MAX_SELECT) break;
                     selectedUris.add(uri);
                 }
                 if (i == endPos) break;
@@ -499,7 +583,7 @@ final class PhoneGalleryPane {
 
     private void enterSelectionWith(Uri firstUri) {
         selectionMode = true;
-        if (firstUri != null && !selectedUris.contains(firstUri) && selectedUris.size() < MAX_SELECT) {
+        if (firstUri != null && !selectedUris.contains(firstUri)) {
             selectedUris.add(firstUri);
         }
         updateChrome();
@@ -519,10 +603,6 @@ final class PhoneGalleryPane {
             selectedUris.remove(uri);
             if (selectedUris.isEmpty()) selectionMode = false;
         } else {
-            if (selectedUris.size() >= MAX_SELECT) {
-                toast("单次最多选择 " + MAX_SELECT + " 张");
-                return;
-            }
             selectionMode = true;
             selectedUris.add(uri);
         }
@@ -531,16 +611,12 @@ final class PhoneGalleryPane {
     }
 
     private void toggleSelectAll() {
-        int cap = Math.min(MAX_SELECT, visiblePhotos.size());
-        if (selectedUris.size() >= cap && cap > 0) {
+        if (selectedUris.size() >= visiblePhotos.size() && !visiblePhotos.isEmpty()) {
             selectedUris.clear();
         } else {
             selectedUris.clear();
-            for (int i = 0; i < cap; i++) {
-                selectedUris.add(visiblePhotos.get(i).uri);
-            }
-            if (visiblePhotos.size() > MAX_SELECT) {
-                toast("单次最多全选前 " + MAX_SELECT + " 张");
+            for (GalleryPhoto p : visiblePhotos) {
+                selectedUris.add(p.uri);
             }
         }
         updateChrome();
@@ -553,8 +629,7 @@ final class PhoneGalleryPane {
             leftCtrlBtn.setVisibility(View.VISIBLE);
             bucketChip.setBackground(null);
             bucketChip.setText("已选 " + count + " 张");
-            int cap = Math.min(MAX_SELECT, visiblePhotos.size());
-            rightCtrlBtn.setText(count >= cap && cap > 0 ? "取消全选" : "全选");
+            rightCtrlBtn.setText(count >= visiblePhotos.size() && !visiblePhotos.isEmpty() ? "取消全选" : "全选");
 
             bottomBar.setVisibility(View.VISIBLE);
             boolean hasAny = count > 0;
@@ -563,6 +638,7 @@ final class PhoneGalleryPane {
                 b.setEnabled(hasAny);
                 b.setAlpha(alpha);
             }
+            deleteBtn.setText(hasAny ? "删除 (" + count + ")" : "删除");
             shareLiveBtn.setText(hasAny ? "分享实况 (" + count + ")" : "分享实况");
         } else {
             leftCtrlBtn.setVisibility(View.GONE);
@@ -571,6 +647,21 @@ final class PhoneGalleryPane {
             rightCtrlBtn.setText("多选");
             bottomBar.setVisibility(View.GONE);
         }
+    }
+
+    private void confirmWithinShareLimit(List<Uri> inputs, String actionName, UriListCallback callback) {
+        if (inputs == null || inputs.isEmpty()) return;
+        if (inputs.size() <= MAX_SHARE_LIVE) {
+            callback.run(inputs);
+            return;
+        }
+        new AlertDialog.Builder(activity, ThemePalette.dialogThemeRes(activity))
+                .setTitle("单次" + actionName + "上限 " + MAX_SHARE_LIVE + " 张")
+                .setMessage("当前已选 " + inputs.size() + " 张（批量删除无张数限制）。" + actionName + "单次建议最多 " + MAX_SHARE_LIVE + " 张，是否只处理前 " + MAX_SHARE_LIVE + " 张？")
+                .setPositiveButton("仅处理前 " + MAX_SHARE_LIVE + " 张", (d, w) ->
+                        callback.run(new ArrayList<>(inputs.subList(0, MAX_SHARE_LIVE))))
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private boolean hasFullOrPartialGalleryPermission() {
@@ -622,7 +713,9 @@ final class PhoneGalleryPane {
         String[] projection = {
                 MediaStore.Images.Media._ID,
                 MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-                MediaStore.Images.Media.DISPLAY_NAME
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_TAKEN,
+                MediaStore.Images.Media.DATE_MODIFIED
         };
         String sortOrder = MediaStore.Images.Media.DATE_MODIFIED + " DESC";
         try (Cursor cursor = activity.getContentResolver().query(
@@ -636,6 +729,8 @@ final class PhoneGalleryPane {
             int idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
             int bucketCol = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME);
             int nameCol = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME);
+            int takenCol = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN);
+            int modCol = cursor.getColumnIndex(MediaStore.Images.Media.DATE_MODIFIED);
             int limit = 800;
             while (cursor.moveToNext() && list.size() < limit) {
                 long id = cursor.getLong(idCol);
@@ -643,9 +738,12 @@ final class PhoneGalleryPane {
                 if (bucket == null || bucket.trim().isEmpty()) bucket = "其他";
                 String disp = nameCol >= 0 ? cursor.getString(nameCol) : "";
                 if (disp == null) disp = "";
+                long takenMs = takenCol >= 0 ? cursor.getLong(takenCol) : 0L;
+                long modSec = modCol >= 0 ? cursor.getLong(modCol) : 0L;
+                long dateMs = takenMs > 0L ? takenMs : (modSec > 0L ? modSec * 1000L : 0L);
                 boolean liveHint = disp.startsWith("MVIMG_") || disp.startsWith("LIVE_") || "实况工坊".equals(bucket);
                 Uri contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-                list.add(new GalleryPhoto(id, contentUri, bucket, liveHint));
+                list.add(new GalleryPhoto(id, contentUri, bucket, liveHint, dateMs));
             }
         } catch (Exception ignored) {
         }
@@ -744,6 +842,8 @@ final class PhoneGalleryPane {
     private void showPhotoPreviewDialog(int initialPos) {
         if (visiblePhotos.isEmpty()) return;
         final int[] pos = {Math.max(0, Math.min(initialPos, visiblePhotos.size() - 1))};
+        final boolean[] userToggledLive = {false};
+        final boolean[] livePreviewOn = {false};
 
         LinearLayout container = new LinearLayout(activity);
         container.setOrientation(LinearLayout.VERTICAL);
@@ -755,10 +855,17 @@ final class PhoneGalleryPane {
         vTop.setPadding(dp(14), dp(12), dp(14), dp(10));
 
         TextView counterView = text("", 14, true, Color.WHITE);
+        counterView.setSingleLine(true);
         vTop.addView(counterView, new LinearLayout.LayoutParams(0, -2, 1f));
 
+        TextView liveTogglePill = text("", 11, true, Color.WHITE);
+        liveTogglePill.setPadding(dp(10), dp(5), dp(10), dp(5));
+        LinearLayout.LayoutParams ltLp = new LinearLayout.LayoutParams(-2, -2);
+        ltLp.setMargins(dp(6), 0, dp(4), 0);
+        vTop.addView(liveTogglePill, ltLp);
+
         TextView editBtn = text("编辑", 14, true, Color.rgb(134, 239, 172));
-        editBtn.setPadding(dp(12), dp(4), dp(14), dp(4));
+        editBtn.setPadding(dp(10), dp(4), dp(12), dp(4));
         vTop.addView(editBtn);
 
         TextView closeBtn = text("✕", 18, true, Color.WHITE);
@@ -767,8 +874,7 @@ final class PhoneGalleryPane {
         container.addView(vTop);
 
         FrameLayout stage = new FrameLayout(activity);
-        ImageView bigImage = new ImageView(activity);
-        bigImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        ZoomablePhotoView bigImage = new ZoomablePhotoView(activity, dp(1));
         stage.addView(bigImage, new FrameLayout.LayoutParams(-1, -1));
 
         TextView prevBtn = navArrow("‹", Gravity.START | Gravity.CENTER_VERTICAL);
@@ -814,6 +920,49 @@ final class PhoneGalleryPane {
                 .create();
         activePreviewDialog = dialog;
 
+        Runnable stopLiveAnim = () -> {
+            if (activeLiveAnimator != null) {
+                activeLiveAnimator.cancel();
+                activeLiveAnimator = null;
+            }
+            bigImage.clearLiveOverlay();
+        };
+
+        Runnable syncLiveAnim = () -> {
+            stopLiveAnim.run();
+            if (livePreviewOn[0]) {
+                liveTogglePill.setText("● LIVE 动图");
+                liveTogglePill.setTextColor(Color.rgb(167, 243, 208));
+                liveTogglePill.setBackground(roundRect(0x99065F46, 12));
+                final String mode = OnlineService.getAutoLiveMotionMode(activity);
+                final float baseRatio = OnlineService.getAutoLiveRatio(activity);
+                final float previewRatio = baseRatio < 1.028f ? 1.028f : baseRatio;
+                final long durMs = Math.max(1000L, Math.round(OnlineService.getAutoLiveDuration(activity) * 1000f));
+                ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
+                anim.setDuration(durMs);
+                anim.setRepeatCount(ValueAnimator.INFINITE);
+                anim.setRepeatMode(ValueAnimator.REVERSE);
+                anim.setInterpolator(new LinearInterpolator());
+                anim.addUpdateListener(va -> {
+                    float f = (float) va.getAnimatedValue();
+                    int frame = Math.round(f * 59f);
+                    LiveMotionPreset.FrameTransform tf = LiveMotionPreset.computeFrame(mode, previewRatio, frame, 60);
+                    bigImage.setLiveOverlay(tf.zoom, tf.offsetX, tf.offsetY);
+                });
+                anim.start();
+                activeLiveAnimator = anim;
+            } else {
+                liveTogglePill.setText("LIVE 静图");
+                liveTogglePill.setTextColor(Color.rgb(203, 213, 225));
+                liveTogglePill.setBackground(roundRect(0x66334155, 12));
+            }
+        };
+
+        dialog.setOnDismissListener(d -> {
+            stopLiveAnim.run();
+            if (activePreviewDialog == dialog) activePreviewDialog = null;
+        });
+
         Runnable renderCurrent = () -> {
             if (visiblePhotos.isEmpty()) {
                 dialog.dismiss();
@@ -821,9 +970,18 @@ final class PhoneGalleryPane {
             }
             if (pos[0] >= visiblePhotos.size()) pos[0] = visiblePhotos.size() - 1;
             GalleryPhoto cur = visiblePhotos.get(pos[0]);
-            counterView.setText((pos[0] + 1) + " / " + visiblePhotos.size() + (cur.looksLive ? " · 实况" : ""));
+            bigImage.resetZoom();
+            String dateStr = formatPhotoDate(cur.dateMillis);
+            String title = (pos[0] + 1) + " / " + visiblePhotos.size()
+                    + (dateStr.isEmpty() ? "" : " · " + dateStr);
+            counterView.setText(title);
             prevBtn.setVisibility(pos[0] > 0 ? View.VISIBLE : View.INVISIBLE);
             nextBtn.setVisibility(pos[0] < visiblePhotos.size() - 1 ? View.VISIBLE : View.INVISIBLE);
+            if (!userToggledLive[0]) {
+                livePreviewOn[0] = cur.looksLive || OnlineService.isAutoLiveOnShareEnabled(activity);
+            }
+            syncLiveAnim.run();
+
             final Uri targetUri = cur.uri;
             ioExecutor.execute(() -> {
                 Bitmap bmp = decodeScaledBitmap(activity.getContentResolver(), targetUri, 1600);
@@ -838,33 +996,38 @@ final class PhoneGalleryPane {
             });
         };
 
+        liveTogglePill.setOnClickListener(v -> {
+            userToggledLive[0] = true;
+            livePreviewOn[0] = !livePreviewOn[0];
+            syncLiveAnim.run();
+        });
         closeBtn.setOnClickListener(v -> dialog.dismiss());
         editBtn.setOnClickListener(v -> {
             if (pos[0] < visiblePhotos.size()) {
                 openSystemEditor(visiblePhotos.get(pos[0]).uri);
             }
         });
-        prevBtn.setOnClickListener(v -> {
+        Runnable goPrev = () -> {
             if (pos[0] > 0) {
                 pos[0]--;
                 renderCurrent.run();
             }
-        });
-        nextBtn.setOnClickListener(v -> {
+        };
+        Runnable goNext = () -> {
             if (pos[0] < visiblePhotos.size() - 1) {
                 pos[0]++;
                 renderCurrent.run();
             }
-        });
-        bigImage.setOnLongClickListener(v -> {
+        };
+        prevBtn.setOnClickListener(v -> goPrev.run());
+        nextBtn.setOnClickListener(v -> goNext.run());
+        bigImage.setCallbacks(goPrev, goNext, dialog::dismiss, () -> {
             if (pos[0] < visiblePhotos.size()) {
                 Uri u = visiblePhotos.get(pos[0]).uri;
-                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                bigImage.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                 dialog.dismiss();
                 enterSelectionWith(u);
-                return true;
             }
-            return false;
         });
 
         vRaw.setOnClickListener(v -> {
@@ -919,13 +1082,283 @@ final class PhoneGalleryPane {
     }
 
     private TextView navArrow(String symbol, int gravity) {
-        TextView tv = text(symbol, 28, true, Color.WHITE);
+        TextView tv = text(symbol, 24, true, 0xCCFFFFFF);
         tv.setGravity(Gravity.CENTER);
-        tv.setBackground(roundRect(0x55000000, 20));
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(40), dp(64), gravity);
+        tv.setBackground(roundRect(0x36000000, 18));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(34), dp(54), gravity);
         lp.setMargins(dp(8), 0, dp(8), 0);
         tv.setLayoutParams(lp);
         return tv;
+    }
+
+    private static String formatPhotoDate(long millis) {
+        if (millis <= 0L) return "";
+        Calendar photoCal = Calendar.getInstance();
+        photoCal.setTimeInMillis(millis);
+        Calendar today = Calendar.getInstance();
+        if (photoCal.get(Calendar.YEAR) == today.get(Calendar.YEAR)
+                && photoCal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)) {
+            return "今天";
+        }
+        Calendar yesterday = Calendar.getInstance();
+        yesterday.add(Calendar.DAY_OF_YEAR, -1);
+        if (photoCal.get(Calendar.YEAR) == yesterday.get(Calendar.YEAR)
+                && photoCal.get(Calendar.DAY_OF_YEAR) == yesterday.get(Calendar.DAY_OF_YEAR)) {
+            return "昨天";
+        }
+        String pattern = photoCal.get(Calendar.YEAR) == today.get(Calendar.YEAR) ? "M月d日" : "yyyy年M月d日";
+        return new SimpleDateFormat(pattern, Locale.CHINA).format(new Date(millis));
+    }
+
+    @SuppressLint("AppCompatCustomView")
+    private static final class ZoomablePhotoView extends ImageView {
+        private final float density;
+        private final Matrix drawMatrix = new Matrix();
+        private final Matrix baseMatrix = new Matrix();
+        private final ScaleGestureDetector scaleDetector;
+        private final GestureDetector gestureDetector;
+
+        private float userScale = 1f;
+        private float panX = 0f;
+        private float panY = 0f;
+        private float liveZoom = 1f;
+        private float liveOffsetX = 0.5f;
+        private float liveOffsetY = 0.5f;
+        private boolean liveActive = false;
+
+        private float downX = 0f;
+        private float downY = 0f;
+        private boolean consumedSwipe = false;
+
+        private Runnable onPrev;
+        private Runnable onNext;
+        private Runnable onDismiss;
+        private Runnable onLongPress;
+
+        ZoomablePhotoView(Context ctx, float density) {
+            super(ctx);
+            this.density = Math.max(1f, density);
+            setScaleType(ScaleType.MATRIX);
+
+            this.scaleDetector = new ScaleGestureDetector(ctx, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                @Override
+                public boolean onScale(ScaleGestureDetector d) {
+                    float nextScale = Math.max(1f, Math.min(4.0f, userScale * d.getScaleFactor()));
+                    float factor = nextScale / userScale;
+                    if (Math.abs(factor - 1f) > 0.0005f) {
+                        panX = (panX - (d.getFocusX() - getWidth() * 0.5f)) * factor + (d.getFocusX() - getWidth() * 0.5f);
+                        panY = (panY - (d.getFocusY() - getHeight() * 0.5f)) * factor + (d.getFocusY() - getHeight() * 0.5f);
+                        userScale = nextScale;
+                        if (userScale <= 1.01f) {
+                            userScale = 1f;
+                            panX = 0f;
+                            panY = 0f;
+                        }
+                        applyMatrix();
+                    }
+                    return true;
+                }
+            });
+
+            this.gestureDetector = new GestureDetector(ctx, new GestureDetector.SimpleOnGestureListener() {
+                @Override
+                public boolean onDown(MotionEvent e) {
+                    return true;
+                }
+
+                @Override
+                public boolean onDoubleTap(MotionEvent e) {
+                    if (userScale > 1.05f) {
+                        resetZoom();
+                    } else {
+                        userScale = 2.5f;
+                        panX = (getWidth() * 0.5f - e.getX()) * 1.5f;
+                        panY = (getHeight() * 0.5f - e.getY()) * 1.5f;
+                        clampPan();
+                        applyMatrix();
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
+                    if (userScale > 1.02f) {
+                        panX -= distanceX;
+                        panY -= distanceY;
+                        clampPan();
+                        applyMatrix();
+                        return true;
+                    }
+                    return false;
+                }
+
+                @Override
+                public void onLongPress(MotionEvent e) {
+                    if (userScale <= 1.02f && onLongPress != null) {
+                        consumedSwipe = true;
+                        onLongPress.run();
+                    }
+                }
+
+                @Override
+                public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
+                    if (userScale > 1.02f || e1 == null || e2 == null) return false;
+                    float dx = e2.getX() - e1.getX();
+                    float dy = e2.getY() - e1.getY();
+                    if (Math.abs(vx) > Math.abs(vy) * 1.1f && Math.abs(vx) > 550f && Math.abs(dx) > 28f * ZoomablePhotoView.this.density) {
+                        consumedSwipe = true;
+                        setTranslationX(0f);
+                        setTranslationY(0f);
+                        if (dx < 0 && onNext != null) onNext.run();
+                        else if (dx > 0 && onPrev != null) onPrev.run();
+                        return true;
+                    }
+                    if (dy > Math.abs(dx) * 1.25f && vy > 650f && dy > 36f * ZoomablePhotoView.this.density) {
+                        consumedSwipe = true;
+                        if (onDismiss != null) onDismiss.run();
+                        return true;
+                    }
+                    return false;
+                }
+            });
+        }
+
+        void setCallbacks(Runnable onPrev, Runnable onNext, Runnable onDismiss, Runnable onLongPress) {
+            this.onPrev = onPrev;
+            this.onNext = onNext;
+            this.onDismiss = onDismiss;
+            this.onLongPress = onLongPress;
+        }
+
+        void resetZoom() {
+            userScale = 1f;
+            panX = 0f;
+            panY = 0f;
+            setTranslationX(0f);
+            setTranslationY(0f);
+            applyMatrix();
+        }
+
+        void setLiveOverlay(float zoom, float offsetX, float offsetY) {
+            this.liveZoom = zoom;
+            this.liveOffsetX = offsetX;
+            this.liveOffsetY = offsetY;
+            this.liveActive = true;
+            if (userScale <= 1.02f) {
+                applyMatrix();
+            }
+        }
+
+        void clearLiveOverlay() {
+            this.liveActive = false;
+            this.liveZoom = 1f;
+            this.liveOffsetX = 0.5f;
+            this.liveOffsetY = 0.5f;
+            applyMatrix();
+        }
+
+        @Override
+        public void setImageBitmap(Bitmap bm) {
+            super.setImageBitmap(bm);
+            recomputeBaseMatrix();
+            applyMatrix();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            recomputeBaseMatrix();
+            applyMatrix();
+        }
+
+        private void recomputeBaseMatrix() {
+            Drawable d = getDrawable();
+            int vw = getWidth();
+            int vh = getHeight();
+            if (d == null || vw <= 0 || vh <= 0) return;
+            int dw = d.getIntrinsicWidth();
+            int dh = d.getIntrinsicHeight();
+            if (dw <= 0 || dh <= 0) return;
+            RectF src = new RectF(0, 0, dw, dh);
+            RectF dst = new RectF(0, 0, vw, vh);
+            baseMatrix.reset();
+            baseMatrix.setRectToRect(src, dst, Matrix.ScaleToFit.CENTER);
+        }
+
+        private void clampPan() {
+            int vw = getWidth();
+            int vh = getHeight();
+            float maxX = Math.max(0f, vw * (userScale - 1f) * 0.5f);
+            float maxY = Math.max(0f, vh * (userScale - 1f) * 0.5f);
+            panX = Math.max(-maxX, Math.min(maxX, panX));
+            panY = Math.max(-maxY, Math.min(maxY, panY));
+        }
+
+        private void applyMatrix() {
+            if (getDrawable() == null || getWidth() <= 0 || getHeight() <= 0) return;
+            drawMatrix.set(baseMatrix);
+            float cx = getWidth() * 0.5f;
+            float cy = getHeight() * 0.5f;
+            if (userScale > 1.02f) {
+                clampPan();
+                drawMatrix.postScale(userScale, userScale, cx, cy);
+                drawMatrix.postTranslate(panX, panY);
+            } else if (liveActive && liveZoom > 1.0001f) {
+                drawMatrix.postScale(liveZoom, liveZoom, cx, cy);
+                float maxShiftX = getWidth() * (liveZoom - 1f) * 0.5f;
+                float maxShiftY = getHeight() * (liveZoom - 1f) * 0.5f;
+                drawMatrix.postTranslate((0.5f - liveOffsetX) * 2f * maxShiftX, (0.5f - liveOffsetY) * 2f * maxShiftY);
+            }
+            setImageMatrix(drawMatrix);
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            boolean scaleHandled = scaleDetector.onTouchEvent(event);
+            boolean gestHandled = gestureDetector.onTouchEvent(event);
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = event.getX();
+                    downY = event.getY();
+                    consumedSwipe = false;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (userScale <= 1.02f && !scaleDetector.isInProgress() && event.getPointerCount() == 1) {
+                        float dx = event.getX() - downX;
+                        float dy = event.getY() - downY;
+                        if (Math.abs(dx) > Math.abs(dy) * 1.15f && Math.abs(dx) > 12f * density) {
+                            setTranslationX(dx * 0.35f);
+                            setTranslationY(0f);
+                        } else if (dy > Math.abs(dx) * 1.25f && dy > 12f * density) {
+                            setTranslationX(0f);
+                            setTranslationY(dy * 0.55f);
+                        }
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (!consumedSwipe && userScale <= 1.02f) {
+                        float dx = event.getX() - downX;
+                        float dy = event.getY() - downY;
+                        if (Math.abs(dx) > Math.max(56f * density, getWidth() * 0.22f) && Math.abs(dx) > Math.abs(dy) * 1.1f) {
+                            setTranslationX(0f);
+                            setTranslationY(0f);
+                            if (dx < 0 && onNext != null) onNext.run();
+                            else if (dx > 0 && onPrev != null) onPrev.run();
+                        } else if (dy > 90f * density && dy > Math.abs(dx) * 1.25f) {
+                            if (onDismiss != null) onDismiss.run();
+                        } else {
+                            animate().translationX(0f).translationY(0f).setDuration(140).start();
+                        }
+                    } else {
+                        setTranslationX(0f);
+                        setTranslationY(0f);
+                    }
+                    break;
+            }
+            return scaleHandled || gestHandled || true;
+        }
     }
 
     private void requestDeletePhotos(List<Uri> targets, Runnable onDone) {
