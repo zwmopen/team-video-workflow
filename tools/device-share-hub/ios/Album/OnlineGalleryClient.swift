@@ -897,6 +897,24 @@ public final class OnlineGalleryClient {
         return entries
     }
 
+    private static func downloadRelayThumbnail(_ session: RemoteRelayClient.Session, workId: String,
+                                               fileName: String, diskURL: URL) -> Data? {
+        let key = remoteCatalogThumbKey(workId: workId, fileName: fileName)
+        do {
+            return try RemoteRelayClient.downloadCatalogThumb(session, thumbKey: key)
+        } catch RemoteRelayError.catalogThumbnailMissing where fileName.hasPrefix("__src__:") {
+            let temporary = diskURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            guard (try? RemoteRelayClient.pullCatalogOriginal(session, workId: workId,
+                    fileName: "__preview__:" + fileName, destination: temporary)) != nil,
+                  let size = (try? temporary.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+                  size > 0, size <= 768 * 1024 else { return nil }
+            return try? Data(contentsOf: temporary)
+        } catch {
+            return nil
+        }
+    }
+
     private static func queryParam(_ name: String, from url: URL) -> String? {
         guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return nil }
         return items.first(where: { $0.name == name })?.value
@@ -1133,6 +1151,7 @@ public final class OnlineGalleryClient {
             .replacingOccurrences(of: "\\", with: "_")
             .replacingOccurrences(of: ":", with: "_")
         let diskURL = diskCacheURL.appendingPathComponent("\(safeFileName).jpg")
+        let preferRemoteImage = isUsingRemoteCatalog || shouldTryRemoteFirst()
         imageIOQueue.async { [weak self] in
             guard let self = self, !request.isCancelled else { return }
             if let diskData = try? Data(contentsOf: diskURL), let diskImage = UIImage(data: diskData) {
@@ -1146,14 +1165,12 @@ public final class OnlineGalleryClient {
                 return
             }
             guard !request.isCancelled else { return }
-            if self.shouldTryRemoteFirst(),
+            if preferRemoteImage,
                let wid = Self.queryParam("id", from: url),
-               let file = Self.queryParam("file", from: url),
-               !file.hasPrefix("__src__:") {
+               let file = Self.queryParam("file", from: url) {
                 if let relaySession = try? RemoteRelayClient.ensureSession() {
                     if isThumbnail {
-                        let tkey = Self.remoteCatalogThumbKey(workId: wid, fileName: file)
-                        if let jpg = try? RemoteRelayClient.downloadCatalogThumb(relaySession, thumbKey: tkey),
+                        if let jpg = Self.downloadRelayThumbnail(relaySession, workId: wid, fileName: file, diskURL: diskURL),
                            let img = UIImage(data: jpg) {
                             self.imageCache.setObject(img, forKey: cacheKey)
                             try? jpg.write(to: diskURL)
@@ -1262,14 +1279,12 @@ public final class OnlineGalleryClient {
             guard shouldRetry else {
                 if RemoteRelayProfile.load() != nil,
                    let wid = Self.queryParam("id", from: url),
-                   let file = Self.queryParam("file", from: url),
-                   !file.hasPrefix("__src__:") {
+                   let file = Self.queryParam("file", from: url) {
                     self.imageIOQueue.async { [weak self] in
                         guard let self = self, !request.isCancelled else { return }
                         if let relaySession = try? RemoteRelayClient.ensureSession() {
                             if isThumbnail {
-                                let tkey = Self.remoteCatalogThumbKey(workId: wid, fileName: file)
-                                if let jpg = try? RemoteRelayClient.downloadCatalogThumb(relaySession, thumbKey: tkey),
+                                if let jpg = Self.downloadRelayThumbnail(relaySession, workId: wid, fileName: file, diskURL: diskURL),
                                    let img = UIImage(data: jpg) {
                                     self.imageCache.setObject(img, forKey: cacheKey)
                                     try? jpg.write(to: diskURL)

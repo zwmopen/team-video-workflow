@@ -36,6 +36,18 @@ DEFAULT_RELAY_ENDPOINT = os.environ.get(
     "ALBUM_RELAY_ENDPOINT",
     "https://zwm-device-share-relay.zwmrpg.workers.dev",
 ).rstrip("/")
+SOURCE_TOKEN_PREFIX = "__src__:"
+SOURCE_PREVIEW_PREFIX = "__preview__:"
+
+
+def catalog_source_images(work: Dict[str, Any]) -> List[str]:
+    result = []
+    source_images = work.get("sourceImages") or []
+    for index, image in enumerate(work.get("images") or []):
+        token = SOURCE_TOKEN_PREFIX + str(image).replace("\\", "/").rsplit("/", 1)[-1]
+        result.append(token if len(token) <= 248 and ".." not in token and index < len(source_images)
+                      and source_images[index] == token else "")
+    return result
 
 
 def normalize_backup_endpoint(raw: str) -> str:
@@ -228,6 +240,7 @@ class RemoteCatalogBridge:
         get_works_fn: Optional[Callable[[], Tuple[int, List[Dict[str, Any]], str]]] = None,
         get_thumb_fn: Optional[Callable[[str, str], Optional[bytes]]] = None,
         mark_work_used_fn: Optional[Callable[[str, str], None]] = None,
+        get_source_file_fn: Optional[Callable[[str, str], Optional[str]]] = None,
     ):
         self.state_dir = state_dir
         self.endpoint = endpoint.rstrip("/")
@@ -237,6 +250,7 @@ class RemoteCatalogBridge:
         self.get_works_fn = get_works_fn
         self.get_thumb_fn = get_thumb_fn
         self.mark_work_used_fn = mark_work_used_fn
+        self.get_source_file_fn = get_source_file_fn
 
         self._lock = threading.Lock()
         self._priv, self._pub_jwk, self._device_id, self._workspace_id, self._next_serial = self._load_or_init_identity()
@@ -470,6 +484,19 @@ class RemoteCatalogBridge:
         p = Path(cand)
         return p if p.is_file() else None
 
+    def resolve_catalog_pull(self, library_root: str, work: Dict[str, Any], filename: str) -> Optional[Path]:
+        if not filename or (filename not in (work.get("images") or []) and filename != work.get("videoFilename")):
+            return None
+        folder = work.get("path") or work.get("relativePath") or work.get("folderName")
+        if not folder:
+            return None
+        work_dir = Path(library_root, folder).resolve()
+        candidate = self.resolve_safe_work_file(library_root, "", filename)
+        if candidate is not None and candidate.is_relative_to(work_dir):
+            return candidate
+        candidate = self.resolve_safe_work_file(library_root, folder, filename)
+        return candidate if candidate is not None and candidate.is_relative_to(work_dir) else None
+
     def sync_once(self) -> None:
         if not self.get_works_fn:
             return
@@ -483,11 +510,13 @@ class RemoteCatalogBridge:
                 wid = w.get("id", "")
                 imgs = w.get("images") or []
                 cover = imgs[0] if imgs else ""
+                sources = catalog_source_images(w)
                 compact_works.append({
                     "id": wid,
-                    "name": w.get("name", ""),
-                    "folderName": w.get("folderName", ""),
-                    "category": w.get("category", ""),
+                    "name": w.get("title") or w.get("name") or wid,
+                    "category": w.get("shelf") or w.get("destination") or w.get("category") or "其他",
+                    "pipelineBadge": w.get("pipelineBadge") or "",
+                    "tags": w.get("tags") or [],
                     "workType": w.get("workType", "image"),
                     "videoFilename": w.get("videoFilename", ""),
                     "copyText": w.get("copyText", ""),
@@ -495,6 +524,8 @@ class RemoteCatalogBridge:
                     "dispatchedVersions": w.get("dispatchedVersions") or [],
                     "dispatchedTo": w.get("dispatchedTo") or [],
                     "images": imgs,
+                    "sourceImages": sources,
+                    "hasSourceCompare": any(sources),
                     "livePhotos": w.get("livePhotos") or [],
                     "useCount": int(w.get("useCount", 0)),
                     "updatedAt": int(w.get("updatedAt", 0)),
@@ -507,7 +538,7 @@ class RemoteCatalogBridge:
                 "works": compact_works,
             }
             payload = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
-            st, _, resp = self._http(
+            st, _, _ = self._http(
                 "/v1/catalog",
                 method="PUT",
                 raw_body=payload,
@@ -521,8 +552,12 @@ class RemoteCatalogBridge:
             )
             if st in (200, 201):
                 self._last_synced_revision = rev
+            else:
+                raise RuntimeError(f"Remote catalog upload failed (HTTP {st})")
 
-        # 2. Lazily upload up to 4 missing cover thumbnails per tick (non-blocking)
+        self._fulfill_catalog_pulls(token, works, library_root)
+
+        # Lazily upload up to 4 missing cover thumbnails after serving requested images.
         if self.get_thumb_fn:
             uploaded_this_tick = 0
             for w in works:
@@ -549,7 +584,18 @@ class RemoteCatalogBridge:
                         self._uploaded_thumbs.add(tkey)
                         uploaded_this_tick += 1
 
-        # 3. Fulfill pending on-demand original HD file pulls
+        if self.mark_work_used_fn:
+            st, _, ev_raw = self._http("/v1/catalog/events", method="GET", token=token)
+            if st == 200:
+                events = json.loads(ev_raw.decode("utf-8")).get("events") or []
+                for ev in events:
+                    if ev.get("workId"):
+                        try:
+                            self.mark_work_used_fn(str(ev["workId"]), str(ev.get("platform", "remote")))
+                        except Exception:
+                            pass
+
+    def _fulfill_catalog_pulls(self, token: str, works: List[Dict[str, Any]], library_root: str) -> None:
         st, _, p_raw = self._http("/v1/catalog/pulls/pending", method="GET", token=token)
         if st == 200:
             pulls = json.loads(p_raw.decode("utf-8")).get("pulls") or []
@@ -559,13 +605,26 @@ class RemoteCatalogBridge:
                 wid = p.get("workId", "")
                 fname = p.get("fileName") or p.get("filename") or ""
                 w_item = work_by_id.get(wid)
-                target: Optional[Path] = None
-                if w_item:
-                    rel_dir = w_item.get("relativePath") or w_item.get("folderName") or ""
-                    target = self.resolve_safe_work_file(library_root, rel_dir, fname)
-                if not target:
+                preview = fname.startswith(SOURCE_PREVIEW_PREFIX)
+                selector = fname[len(SOURCE_PREVIEW_PREFIX):] if preview else fname
+                if w_item and selector.startswith(SOURCE_TOKEN_PREFIX):
+                    if selector not in catalog_source_images(w_item):
+                        continue
+                    if preview and self.get_thumb_fn:
+                        file_bytes = self.get_thumb_fn(wid, selector)
+                    elif not preview and self.get_source_file_fn:
+                        source = self.get_source_file_fn(wid, selector)
+                        target = Path(source) if source else None
+                        file_bytes = target.read_bytes() if target and target.is_file() else None
+                    else:
+                        file_bytes = None
+                elif w_item and not preview:
+                    target = self.resolve_catalog_pull(library_root, w_item, fname)
+                    file_bytes = target.read_bytes() if target else None
+                else:
+                    file_bytes = None
+                if not file_bytes:
                     continue
-                file_bytes = target.read_bytes()
                 sha = hashlib.sha256(file_bytes).hexdigest()
                 t_start = time.time()
                 ust, _, _ = self._http(
@@ -586,18 +645,6 @@ class RemoteCatalogBridge:
                         objects=1,
                         duration_ms=int((time.time() - t_start) * 1000),
                     )
-
-        # 4. Consume remote work usage events
-        if self.mark_work_used_fn:
-            st, _, ev_raw = self._http("/v1/catalog/events", method="GET", token=token)
-            if st == 200:
-                events = json.loads(ev_raw.decode("utf-8")).get("events") or []
-                for ev in events:
-                    if ev.get("workId"):
-                        try:
-                            self.mark_work_used_fn(str(ev["workId"]), str(ev.get("platform", "remote")))
-                        except Exception:
-                            pass
 
     def fetch_cloud_stats(self, max_age_sec: float = 20.0) -> Optional[Dict[str, Any]]:
         now = time.time()

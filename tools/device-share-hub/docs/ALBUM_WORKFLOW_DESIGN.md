@@ -297,3 +297,4 @@ copy_missing = not copy_text                      # 文案.txt 没读出实质�
 作品标签优先读取《团队图文元数据规范 V2》的 \`metadata.json\` 中已记录的 \`canonical.production\` 与 \`canonical.classification\`，其次补读 \`manifest.json\`、\`作品标签.json\` 和 \`source-provenance.json\` 的显式字段。引擎与渠道独立。缺失按维度显示未分类。作品文件和既有账本不做批量回填。
 
 Android 0.8.143 (254) 将作品卡底部操作对齐 iOS 等宽三列，文案行居中，并缩小按钮背景，保留触控区域与换行。
+远程作品对比沿用局域网的逐页素材映射。远程只下发页位与素材标识。缩略图和高清原图分别按需获取。详见 [远程传送协议](REMOTE_PROTOCOL_V1.md)。

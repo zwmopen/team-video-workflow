@@ -1,3 +1,5 @@
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -62,3 +64,40 @@ def test_local_transfer_stats_store_records_channels(tmp_path: Path):
     assert snap["today"]["r2Bytes"] == 2048 * 1024
     assert snap["month"]["totalObjects"] == 5
     assert snap["month"]["totalWorks"] == 2
+
+
+def test_catalog_publishes_page_aligned_sources_and_serves_only_advertised_selectors(tmp_path, monkeypatch):
+    source = tmp_path / "original-outside-library.jpg"
+    source.write_bytes(b"original source bytes")
+    work = {"id": "work_a", "images": ["P1.jpg", "P2.jpg", "P3.jpg"],
+            "sourceImages": ["__src__:P1.jpg", "", str(source)]}
+    bridge = RemoteCatalogBridge(
+        state_dir=tmp_path / "state",
+        get_works_fn=lambda: (1, [work], str(tmp_path / "library")),
+        get_source_file_fn=lambda work_id, token: str(source),
+        get_thumb_fn=lambda work_id, token: b"source preview" if token == "__src__:P1.jpg" else None,
+    )
+    monkeypatch.setattr(bridge, "ensure_session", lambda: "offline-test")
+    requests = []
+
+    def http(path, method="GET", raw_body=None, headers=None, **kwargs):
+        requests.append((path, raw_body, headers))
+        if path.endswith("/pending"):
+            selectors = {"original": "__src__:P1.jpg", "preview": "__preview__:__src__:P1.jpg",
+                         "missing": "__src__:P2.jpg", "unlisted": "__src__:P3.jpg"}
+            pulls = [{"pullId": pull_id, "workId": "work_a", "fileName": name}
+                     for pull_id, name in selectors.items()]
+            return 200, {}, json.dumps({"pulls": pulls}).encode()
+        return 200, {}, b"{}"
+
+    monkeypatch.setattr(bridge, "_http", http)
+    bridge.sync_once()
+    manifest = json.loads(requests[0][1])
+    assert manifest["works"][0]["sourceImages"] == ["__src__:P1.jpg", "", ""]
+    assert manifest["works"][0]["hasSourceCompare"] is True
+    assert str(source) not in str(manifest)
+    sent = {path.split("/")[-2]: (data, headers["X-Object-Sha256"])
+            for path, data, headers in requests if path.endswith("/file")}
+    assert set(sent) == {"original", "preview"}
+    for name, data in {"original": source.read_bytes(), "preview": b"source preview"}.items():
+        assert sent[name] == (data, hashlib.sha256(data).hexdigest())

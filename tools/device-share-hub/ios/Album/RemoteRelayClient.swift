@@ -333,7 +333,8 @@ final class RemoteRelayClient {
 
     static func fetchCatalogManifest(_ session: Session) throws -> [String: Any] {
         return try requestJSON(url: "\(session.endpoint)/v1/catalog", method: "GET",
-                               token: session.token, body: nil, workspaceId: session.workspaceId)
+                               token: session.token, body: nil, workspaceId: session.workspaceId,
+                               responseLimit: 16 * 1024 * 1024)
     }
 
     static func downloadCatalogThumb(_ session: Session, thumbKey: String) throws -> Data {
@@ -352,7 +353,11 @@ final class RemoteRelayClient {
             status = (response as? HTTPURLResponse)?.statusCode ?? 0
             sem.signal()
         }.resume()
-        if sem.wait(timeout: .now() + readTimeout + 5) == .timedOut || !(200..<300).contains(status) {
+        if sem.wait(timeout: .now() + readTimeout + 5) == .timedOut {
+            throw RemoteRelayError.endpointUnavailable
+        }
+        if status == 404 || status == 410 { throw RemoteRelayError.catalogThumbnailMissing }
+        if !(200..<300).contains(status) {
             throw RemoteRelayError.remote("远程缩略图拉取失败 HTTP \(status)")
         }
         guard let data = outData, !data.isEmpty else {
@@ -422,7 +427,8 @@ final class RemoteRelayClient {
     }
 
     private static func requestJSON(url: String, method: String, token: String?,
-                                   body: [String: Any]?, workspaceId: String? = nil) throws -> [String: Any] {
+                                   body: [String: Any]?, workspaceId: String? = nil,
+                                   responseLimit: Int = maxResponseBytes) throws -> [String: Any] {
         guard let requestURL = URL(string: url) else { throw RemoteRelayError.invalidURL }
         var request = URLRequest(url: requestURL,
                                  cachePolicy: .reloadIgnoringLocalCacheData,
@@ -467,7 +473,7 @@ final class RemoteRelayClient {
             invalidateFailedEndpoint(token: token)
             throw RemoteRelayError.endpointUnavailable
         }
-        guard responseData.count <= maxResponseBytes else {
+        guard responseData.count <= responseLimit else {
             throw RemoteRelayError.responseTooLarge
         }
         if !(200..<300).contains(responseStatus) {
@@ -514,6 +520,7 @@ enum RemoteRelayError: LocalizedError {
     case invalidTask
     case responseTooLarge
     case endpointUnavailable
+    case catalogThumbnailMissing
     case remote(String)
 
     var errorDescription: String? {
@@ -528,6 +535,7 @@ enum RemoteRelayError: LocalizedError {
         case .invalidTask: return "远程任务内容无效。"
         case .responseTooLarge: return "远程服务响应过大。"
         case .endpointUnavailable: return "远程中继入口暂时不可用。"
+        case .catalogThumbnailMissing: return "远程缩略图尚未准备好。"
         case .remote(let detail): return detail
         }
     }

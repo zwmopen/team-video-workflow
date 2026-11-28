@@ -1167,12 +1167,21 @@ public final class OnlineGalleryClient {
      * - 错误路径必须 Log.w（堆栈）+ DiagnosticLog.write（持久化）双写
      */
     private boolean downloadThumbViaRemoteRelay(String workId, String fileName, File diskFile) {
-        if (fileName != null && fileName.startsWith("__src__:")) return false;
         File tempFile = new File(diskFile.getParentFile(), diskFile.getName() + ".r2.tmp");
         try {
             RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
             String thumbKey = catalogThumbKey(workId, fileName);
-            byte[] jpg = RemoteRelayClient.downloadCatalogThumb(session, thumbKey);
+            byte[] jpg;
+            try {
+                jpg = RemoteRelayClient.downloadCatalogThumb(session, thumbKey);
+            } catch (RemoteRelayClient.HttpStatusException missing) {
+                if ((missing.statusCode != 404 && missing.statusCode != 410)
+                        || fileName == null || !fileName.startsWith("__src__:")) throw missing;
+                RemoteRelayClient.pullCatalogOriginal(session, workId, "__preview__:" + fileName, tempFile);
+                jpg = tempFile.length() <= THUMB_MAX_BYTES
+                        ? java.nio.file.Files.readAllBytes(tempFile.toPath()) : null;
+                tempFile.delete();
+            }
             if (jpg != null && jpg.length > 0 && jpg.length <= THUMB_MAX_BYTES) {
                 File dir = tempFile.getParentFile();
                 if (dir != null && !dir.exists()) dir.mkdirs();
@@ -1192,7 +1201,8 @@ public final class OnlineGalleryClient {
     }
 
     private boolean downloadThumb(String workId, String fileName, File diskFile) throws Exception {
-        if (shouldTryRemoteFirst() && downloadThumbViaRemoteRelay(workId, fileName, diskFile)) {
+        boolean remoteFirst = isRemoteCatalogActive() || shouldTryRemoteFirst();
+        if (remoteFirst && downloadThumbViaRemoteRelay(workId, fileName, diskFile)) {
             return true;
         }
         HttpURLConnection conn = null;
@@ -1260,27 +1270,8 @@ public final class OnlineGalleryClient {
             }
         } catch (Exception e) {
             if (tempFile.exists()) tempFile.delete();
-            if (RemoteRelayProfile.isEnrolled(context)) {
-                try {
-                    RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
-                    String thumbKey = catalogThumbKey(workId, fileName);
-                    byte[] jpg = RemoteRelayClient.downloadCatalogThumb(session, thumbKey);
-                    if (jpg != null && jpg.length > 0 && jpg.length <= THUMB_MAX_BYTES) {
-                        File dir = tempFile.getParentFile();
-                        if (dir != null && !dir.exists()) dir.mkdirs();
-                        try (FileOutputStream out = new FileOutputStream(tempFile)) {
-                            out.write(jpg);
-                            out.flush();
-                        }
-                        if (diskFile.exists()) diskFile.delete();
-                        if (tempFile.renameTo(diskFile)) {
-                            return true;
-                        }
-                    }
-                } catch (Exception ignored) {
-                    if (tempFile.exists()) tempFile.delete();
-                }
-            }
+            if (!remoteFirst && RemoteRelayProfile.isEnrolled(context)
+                    && downloadThumbViaRemoteRelay(workId, fileName, diskFile)) return true;
             Log.w(TAG, "downloadThumb failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()
                     + " | " + workId + "/" + fileName, e);
             DiagnosticLog.write(context, "thumb_failed", workId + "/" + fileName + " | "
@@ -1380,7 +1371,7 @@ public final class OnlineGalleryClient {
             }
 
             // 2. 本地无缓存或损坏，优先按传输策略拉取并原子安全落盘
-            if (shouldTryRemoteFirst()) {
+            if (isRemoteCatalogActive() || shouldTryRemoteFirst()) {
                 try {
                     RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
                     RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, diskFile);
@@ -2170,6 +2161,9 @@ public final class OnlineGalleryClient {
                 item.put("maxUses", 2);
                 item.put("used", w.optInt("useCount", 0) > 0);
                 item.put("images", w.optJSONArray("images") != null ? w.optJSONArray("images") : new JSONArray());
+                if (w.has("sourceImages")) item.put("sourceImages", w.opt("sourceImages"));
+                item.put("hasSourceCompare", w.optBoolean("hasSourceCompare", false));
+                if (w.has("workLabels")) item.put("workLabels", w.opt("workLabels"));
                 item.put("copyText", w.optString("copyText", ""));
                 item.put("updatedAt", w.optLong("updatedAt", 0L));
                 item.put("videoFilename", w.optString("videoFilename", ""));

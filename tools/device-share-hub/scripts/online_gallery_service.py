@@ -5327,7 +5327,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.11",
+                "version": "1.2.12",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -8613,11 +8613,14 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
                 cur = scanner.scan(force=False)
                 return rev, cur, scanner.root
 
-            def _bridge_get_thumb(work_id: str, image_name: str):
+            def _bridge_get_image_path(work_id: str, image_name: str):
                 w_item = scanner.get_work(work_id)
                 if not w_item:
                     return None
-                img_path = scanner.resolve_image_for_work(w_item, image_name)
+                return scanner.resolve_image_for_work(w_item, image_name)
+
+            def _bridge_get_thumb(work_id: str, image_name: str):
+                img_path = _bridge_get_image_path(work_id, image_name)
                 if not img_path or not os.path.isfile(img_path):
                     return None
                 return build_thumbnail_bytes(img_path, os.path.getmtime(img_path))
@@ -8631,6 +8634,7 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
                 get_works_fn=_bridge_get_works,
                 get_thumb_fn=_bridge_get_thumb,
                 mark_work_used_fn=_bridge_mark_used,
+                get_source_file_fn=_bridge_get_image_path,
             )
             OnlineGalleryHandler.bridge = bridge
             bridge.start()

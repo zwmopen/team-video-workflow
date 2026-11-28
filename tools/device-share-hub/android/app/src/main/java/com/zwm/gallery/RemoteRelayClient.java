@@ -353,6 +353,7 @@ public final class RemoteRelayClient {
      * with Range resume, SHA-256 verification, and immediate ACK cleanup.
      */
     public static void pullCatalogOriginal(Session session, String workId, String fileName, File destFile) throws Exception {
+        long startedAt = android.os.SystemClock.elapsedRealtime();
         JSONObject body = new JSONObject();
         body.put("workId", workId);
         body.put("fileName", fileName);
@@ -400,6 +401,11 @@ public final class RemoteRelayClient {
                 session.token,
                 session.workspaceId,
                 "{}");
+        Log.i(TAG, "Catalog R2 pull completed kind="
+                + (fileName.startsWith("__preview__:") ? "source-preview"
+                : fileName.startsWith("__src__:") ? "source-original" : "output-original")
+                + " bytes=" + destFile.length()
+                + " elapsedMs=" + (android.os.SystemClock.elapsedRealtime() - startedAt));
     }
 
     public static void downloadTransferObject(Session session, String transferId, int index,
