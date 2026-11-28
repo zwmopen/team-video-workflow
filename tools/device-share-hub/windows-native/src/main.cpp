@@ -107,6 +107,7 @@ constexpr int IDC_SETTINGS_SHORTCUTS = 425;
 constexpr int IDC_SETTINGS_ONLINE_LOG = 426;
 constexpr int IDC_SETTINGS_IOS_SIGNING_SKILL = 427;
 constexpr int IDC_SETTINGS_TRANSPORT_STRATEGY = 428;
+constexpr int IDC_SETTINGS_DEVICE_PERMISSIONS = 429;
 // 探测结果回传消息：探测走后台线程，探完 PostMessage 回 UI 线程
 constexpr UINT WM_ONLINE_PROBE_DONE = WM_APP + 11;
 // 在线手机面板的结果回传（扫描 / 同步都在后台线程，回来再 PostMessage）
@@ -4754,6 +4755,7 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
                 L"传输策略：自动选择（推荐）", IDC_SETTINGS_TRANSPORT_STRATEGY,
                 480, 968, 224, 34);
 
+            AddSettingsButton(window, L"设备与权限（候选）", IDC_SETTINGS_DEVICE_PERMISSIONS, 40, 1034, 210, 38);
             AddSettingsButton(window, L"关闭", IDC_SETTINGS_CLOSE, 604, 1034, 120, 38);
             // 配置（端口 / 解释器 / 脚本）存在 HKCU 里，第一次打开会自动探测并落盘
             gOnlineConfig = online_service::LoadConfig();
@@ -4853,6 +4855,29 @@ LRESULT CALLBACK SettingsWindowProc(HWND window, UINT message, WPARAM wParam, LP
             }
             if (id == IDC_SETTINGS_IOS_SIGNING_SKILL) {
                 OpenIosSigningSkill(window);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_DEVICE_PERMISSIONS) {
+                std::error_code ec;
+                const auto python = std::filesystem::path(gOnlineConfig.pythonPath);
+                auto script = std::filesystem::path(gOnlineConfig.scriptPath).parent_path() / L"device_permissions_ui.py";
+                if (!std::filesystem::is_regular_file(script, ec)) {
+                    wchar_t exePath[32768]{};
+                    const DWORD n = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(32768));
+                    if (n > 0 && n < 32768) {
+                        script = std::filesystem::path(exePath).parent_path() / L"device-authorization" / L"device_permissions_ui.py";
+                    }
+                }
+                if (!std::filesystem::is_regular_file(python, ec) || !std::filesystem::is_regular_file(script, ec)) {
+                    MessageBoxW(window, L"请先配置在线相册服务的 Python 解释器，并安装候选授权模块。", L"设备与权限", MB_OK | MB_ICONWARNING);
+                    return 0;
+                }
+                const std::wstring args = L"\"" + script.wstring() + L"\"";
+                const auto result = ShellExecuteW(window, L"open", python.c_str(), args.c_str(),
+                                                  script.parent_path().c_str(), SW_SHOWNORMAL);
+                if (reinterpret_cast<INT_PTR>(result) <= 32) {
+                    MessageBoxW(window, L"无法打开设备授权候选面板，请检查 Python/Tkinter 环境。", L"设备与权限", MB_OK | MB_ICONERROR);
+                }
                 return 0;
             }
             if (id == IDC_SETTINGS_TRANSPORT_STRATEGY) {
