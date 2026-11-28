@@ -394,9 +394,6 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         isVisible = true;
-        android.net.ConnectivityManager manager = getSystemService(android.net.ConnectivityManager.class);
-        if (manager != null) manager.registerNetworkCallback(new android.net.NetworkRequest.Builder()
-                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), galleryNetworkCallback);
         IntentFilter filter = new IntentFilter();
         filter.addAction(OnlineService.ACTION_TASK_READY);
         filter.addAction(OnlineService.ACTION_STATUS);
@@ -416,6 +413,9 @@ public final class MainActivity extends Activity {
         } else {
             importSelectedTree(false);
         }
+        android.net.ConnectivityManager manager = getSystemService(android.net.ConnectivityManager.class);
+        if (manager != null) manager.registerNetworkCallback(new android.net.NetworkRequest.Builder()
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), galleryNetworkCallback);
     }
 
     @SuppressWarnings("UnspecifiedRegisterReceiverFlag")
@@ -425,12 +425,12 @@ public final class MainActivity extends Activity {
     protected void onStop() {
         if (liveQuickMenu != null) liveQuickMenu.close();
         isVisible = false;
+        stopOnlineAutoRefresh();           // DSH-111：退后台立刻停表，不在后台空转耗电
         uiHandler.removeCallbacks(refreshOnGalleryNetworkChange);
         android.net.ConnectivityManager manager = getSystemService(android.net.ConnectivityManager.class);
         if (manager != null) {
             try { manager.unregisterNetworkCallback(galleryNetworkCallback); } catch (IllegalArgumentException ignored) {}
         }
-        stopOnlineAutoRefresh();           // DSH-111：退后台立刻停表，不在后台空转耗电
         onlineClient.stopBeaconListener();   // 退到后台停掉信标监听，回到前台会重新开启
         try { unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) { }
         super.onStop();
