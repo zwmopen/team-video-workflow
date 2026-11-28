@@ -162,7 +162,7 @@ struct RemoteRelayProfile {
               (try? RemoteRelayClient.normalizeEndpoint("https://" + primaryAuthority)) == primary,
               let backup = try? RemoteRelayClient.normalizeEndpoint("https://" + backupAuthority),
               backup != primary else { return nil }
-        let fingerprint = SHA256.hash(data: issuerData).map { String(format: "%02x", $0) }.joined()
+        let fingerprint = CryptoKit.SHA256.hash(data: issuerData).map { String(format: "%02x", $0) }.joined()
         guard workspaceId == "ws_" + String(fingerprint.prefix(32)),
               key.isValidSignature(proof, for: routeData) else { return nil }
         return backup
