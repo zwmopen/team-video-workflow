@@ -15,11 +15,11 @@ public final class RemoteRelayProfile {
     public static final String DEFAULT_ENDPOINT = "https://zwm-device-share-relay.zwmrpg.workers.dev";
 
     public enum TransportStrategy {
-        AUTO("auto", "自动选择（推荐）", "USB -> 局域网 -> 远程中继/在线相册"),
-        USB_FIRST("usb_first", "USB 优先", "适合插线传输，失败自动切换 WiFi/云端"),
-        LAN_FIRST("lan_first", "局域网优先", "优先走同一 WiFi 局域网高速通道"),
-        P2P_FIRST("p2p_first", "P2P 优先（失败切 R2）", "跨网优先尝试 P2P 直连，不通自动切 R2"),
-        R2_FIRST("r2_first", "R2 云端优先", "适合跨网/P2P 不稳定环境，直接走 Cloudflare R2");
+        AUTO("auto", "自动选择（推荐）", "按网络情况自动选择连接方式"),
+        USB_FIRST("usb_first", "数据线优先", "优先用数据线，无法连接时自动换其他方式"),
+        LAN_FIRST("lan_first", "同一 Wi-Fi 优先", "在同一 Wi-Fi 下优先直接传输"),
+        P2P_FIRST("p2p_first", "设备直连优先", "不同网络时优先直接传输，失败后自动通过云端转发"),
+        R2_FIRST("r2_first", "云端转发优先", "不同网络下优先通过云端转发");
 
         public final String id;
         public final String title;

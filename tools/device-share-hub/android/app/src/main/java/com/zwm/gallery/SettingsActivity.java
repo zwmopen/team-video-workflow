@@ -88,7 +88,7 @@ public final class SettingsActivity extends Activity {
         root.addView(label("接收"));
         autoReceiveSwitch = settingSwitch(
                 "自动接收",
-                "开启时允许电脑和其他设备投送内容；关闭后只保留在线发现和本机查看",
+                "开启后可接收其他设备发来的文件；关闭后不再自动接收",
                 OnlineService.isAutoReceiveEnabled(this));
         autoReceiveSwitch.setOnCheckedChangeListener((button, enabled) -> {
             OnlineService.setAutoReceiveEnabled(this, enabled);
@@ -97,8 +97,8 @@ public final class SettingsActivity extends Activity {
         root.addView(autoReceiveSwitch, settingMargins(dp(10)));
 
         SettingSwitchRow clipboardSyncSwitch = settingSwitch(
-                "跨设备剪贴板同步",
-                "电脑复制后自动同步至手机系统剪贴板，长按直接粘贴；阅后即焚防残留",
+                "电脑复制到手机",
+                "电脑复制的文字会同步到手机，长按即可粘贴，稍后自动清除",
                 OnlineService.isClipboardSyncEnabled(this));
         clipboardSyncSwitch.setOnCheckedChangeListener((button, enabled) -> {
             OnlineService.setClipboardSyncEnabled(this, enabled);
@@ -118,14 +118,14 @@ public final class SettingsActivity extends Activity {
         autoLiveSwitch.setOnRowBodyClickListener(v -> showAutoLiveModeDialog(autoLiveSwitch));
         root.addView(autoLiveSwitch, settingMargins(dp(20)));
 
-        root.addView(label("跨网传输与统计"));
+        root.addView(label("文件传输"));
         LinearLayout strategyRow = choiceRow(
-                "传输策略",
+                "传输方式",
                 RemoteRelayProfile.getStrategy(this).title);
         strategyRow.setOnClickListener(v -> showTransportStrategyDialog((TextView) strategyRow.getChildAt(1)));
         root.addView(strategyRow, settingMargins(dp(10)));
         Button statsBtn = button(
-                RemoteRelayProfile.isEnrolled(this) ? "流量与 R2 统计（云端已授权）" : "流量与 R2 统计",
+                "传输统计",
                 false);
         statsBtn.setOnClickListener(v -> showTransferStatsDialog());
         root.addView(statsBtn, margins(0, 0, 0, dp(20)));
@@ -294,12 +294,12 @@ public final class SettingsActivity extends Activity {
             labels[i] = all[i].title + "\n" + all[i].detail;
         }
         new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("跨网传输策略")
+                .setTitle("选择传输方式")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                     RemoteRelayProfile.TransportStrategy chosen = all[which];
                     RemoteRelayProfile.setStrategy(this, chosen);
                     valueText.setText(chosen.title);
-                    toast("传输策略已设为：" + chosen.title);
+                    toast("传输方式已设为：" + chosen.title);
                     dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
@@ -307,26 +307,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showTransferStatsDialog() {
-        String initial = TransferStatsStore.formatHumanSummary(this, null);
-        AlertDialog dialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("传输流量与 R2 额度统计")
-                .setMessage(initial + "\n正在向云端刷新团队工作区用量…")
-                .setPositiveButton("确定", null)
-                .show();
-        new Thread(() -> {
-            org.json.JSONObject remoteStats = null;
-            try {
-                if (RemoteRelayProfile.isEnrolled(this)) {
-                    RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(this);
-                    remoteStats = RemoteRelayClient.fetchStats(session);
-                }
-            } catch (Exception ignored) {
-            }
-            final String updated = TransferStatsStore.formatHumanSummary(this, remoteStats);
-            runOnUiThread(() -> {
-                if (dialog.isShowing()) dialog.setMessage(updated);
-            });
-        }, "fetch-transfer-stats").start();
+        startActivity(new Intent(this, TransferStatsActivity.class));
     }
 
     private void showAutoLiveQualityTierDialog(SettingSwitchRow row) {
