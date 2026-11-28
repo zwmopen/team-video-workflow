@@ -54,8 +54,8 @@ final class SettingsViewController: UITableViewController {
             cell.textLabel?.text = "局域网接收"
             cell.detailTextLabel?.text = library.networkStatus
         case (0, 3):
-            cell.textLabel?.text = "跨设备剪贴板同步"
-            cell.detailTextLabel?.text = "电脑复制文案自动同步至手机剪切板，长按粘贴；阅后即焚防残留"
+            cell.textLabel?.text = "电脑复制到手机"
+            cell.detailTextLabel?.text = "电脑复制的文字会同步到手机，长按即可粘贴，稍后自动清除"
             let toggle = UISwitch()
             toggle.isOn = ClipboardSyncPreferences.isEnabled
             toggle.addTarget(self, action: #selector(clipboardSyncSwitchChanged(_:)), for: .valueChanged)
@@ -69,12 +69,12 @@ final class SettingsViewController: UITableViewController {
             toggle.addTarget(self, action: #selector(autoLiveSwitchChanged(_:)), for: .valueChanged)
             cell.accessoryView = toggle
         case (0, 5):
-            cell.textLabel?.text = "跨网传输策略"
+            cell.textLabel?.text = "传输方式"
             cell.detailTextLabel?.text = RemoteRelayProfile.transportStrategy.title
             cell.selectionStyle = .default
         case (0, 6):
-            cell.textLabel?.text = "流量与 R2 统计"
-            cell.detailTextLabel?.text = RemoteRelayProfile.load() != nil ? "已授权云端中转 · 点击查看配额与流量" : "查看本机与 R2 免费额度估算"
+            cell.textLabel?.text = "传输统计"
+            cell.detailTextLabel?.text = "查看团队传输与费用"
             cell.selectionStyle = .default
         case (1, 0):
             cell.textLabel?.text = "当前文件夹"
@@ -176,7 +176,7 @@ final class SettingsViewController: UITableViewController {
 
     private func showTransportStrategyChoices() {
         let alert = UIAlertController(
-            title: "跨网传输策略",
+            title: "传输方式",
             message: "决定电脑与手机在不同网络时的传输通道优先级",
             preferredStyle: .actionSheet
         )
@@ -198,43 +198,55 @@ final class SettingsViewController: UITableViewController {
 
     private func showTransferStatsAlert() {
         let enrolled = RemoteRelayProfile.load() != nil
-        let initialMsg = enrolled
-            ? "正在向 Cloudflare 工作区拉取本月用量与 R2 额度估算…"
-            : "当前尚未获取云端工作区凭证（与电脑同一 Wi-Fi 后将自动授权）。\n\n提示：Cloudflare R2 出站下载流量免费，临时中转文件在接收确认后会自动删除。"
-        let alert = UIAlertController(title: "传输流量与 R2 统计", message: initialMsg, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        let note = "\n\n云端下载不收流量费；其他费用以实际账单为准。"
+        let initial = enrolled ? "正在更新团队统计…" : "尚未建立云端连接"
+        let alert = UIAlertController(title: "传输统计", message: initial + note, preferredStyle: .alert)
+        var latest: [String: Any]?
+        alert.addAction(UIAlertAction(title: "技术详情", style: .default) { [weak self] _ in
+            let r2 = latest?["r2"] as? [String: Any]
+            let quotas = r2?["quotas"] as? [String: Any]
+            var details = "云端服务：Cloudflare R2"
+            if let bytes = r2?["activeBytes"] as? NSNumber {
+                details += "\n当前暂存：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary)
+            }
+            for (key, label, total) in [("storageUsageRatio", "存储额度", "10 GB-month/月"), ("classAUsageRatio", "写入等操作额度", "100万次/月"), ("classBUsageRatio", "读取等操作额度", "1000万次/月")] {
+                if let ratio = (quotas?[key] as? NSNumber)?.doubleValue, ratio.isFinite, ratio >= 0 {
+                    details += String(format: "\n%@：%.2f%% / %@", label, ratio * 100.0, total)
+                } else {
+                    details += "\n\(label)：暂未获取（\(total)）"
+                }
+            }
+            details += "\n\n以上为应用统计与估算，不是账户实际账单。"
+            let info = UIAlertController(title: "技术详情", message: details, preferredStyle: .alert)
+            info.addAction(UIAlertAction(title: "关闭", style: .cancel))
+            self?.present(info, animated: true)
+        })
+        alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
         present(alert, animated: true)
-
         guard enrolled else { return }
         DispatchQueue.global(qos: .utility).async {
-            var summary = "拉取云端统计失败（当前可能离线）。"
+            var fetched: [String: Any]?
             if let session = try? RemoteRelayClient.ensureSession(),
                let stats = try? RemoteRelayClient.fetchStats(session) {
-                let today = stats["today"] as? [String: Any] ?? [:]
-                let month = stats["month"] as? [String: Any] ?? [:]
-                let r2 = stats["r2"] as? [String: Any] ?? [:]
-                let quotas = r2["quotas"] as? [String: Any] ?? [:]
-                let fmt: (Any?) -> String = { raw in
-                    let b = (raw as? NSNumber)?.doubleValue ?? 0
-                    if b < 1024 { return "\(Int(b)) B" }
-                    if b < 1048576 { return String(format: "%.1f KB", b / 1024.0) }
-                    if b < 1073741824 { return String(format: "%.1f MB", b / 1048576.0) }
-                    return String(format: "%.2f GB", b / 1073741824.0)
-                }
-                let sPct = ((quotas["storageUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
-                let aPct = ((quotas["classAUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
-                let bPct = ((quotas["classBUsageRatio"] as? NSNumber)?.doubleValue ?? 0) * 100.0
-                let usd = (r2["estimatedCostUsd"] as? NSNumber)?.doubleValue ?? 0
-                let note = (r2["billingNote"] as? String) ?? "预估费用仅供参考，实际账单以 Cloudflare 控制台为准"
-                summary = String(
-                    format: "今日团队流量：%@（R2 %@ / LAN %@）\n本月总流量：%@\nR2 当前驻留：%@（%d 个对象）\n免费额度占用：存储 %.2f%% · A类 %.2f%% · B类 %.2f%%\n预估超额费用：$%.4f USD（R2 出站下载流量免费）\n%@",
-                    fmt(today["bytes"]), fmt(today["r2Bytes"]), fmt(today["lanBytes"]),
-                    fmt(month["bytes"]),
-                    fmt(r2["activeBytes"]), (r2["activeObjects"] as? Int) ?? 0,
-                    sPct, aPct, bPct, usd, note
-                )
+                fetched = stats
             }
+            let result = fetched
+            var lines = ["团队传输与费用"]
+            if let today = result?["today"] as? [String: Any], let bytes = today["bytes"] as? NSNumber {
+                lines.append("今日传输：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary))
+            }
+            if let month = result?["month"] as? [String: Any], let bytes = month["bytes"] as? NSNumber {
+                lines.append("本月传输：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary))
+            }
+            if lines.count == 1 { lines.append("暂时无法获取团队统计，请稍后再试") }
+            if let r2 = result?["r2"] as? [String: Any], let cost = (r2["estimatedCostUsd"] as? NSNumber)?.doubleValue, cost.isFinite, cost >= 0 {
+                lines.append(String(format: "预估额外费用：$%.4f（美元）", cost))
+            } else {
+                lines.append("预估额外费用：暂未获取")
+            }
+            let summary = lines.joined(separator: "\n") + note
             DispatchQueue.main.async {
+                latest = result
                 alert.message = summary
             }
         }
