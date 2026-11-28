@@ -411,7 +411,9 @@ def main():
     local_files = "localFilesButton.addTarget(self, action: #selector(openFiles)" in cv \
         and "LibraryFilesViewController(rootURL: root, currentURL: root)" in cv
     android_files_and_local_trash = "statusRow.addView(modeButton" in and_main \
-        and 'modeButton.setContentDescription("手机本地回收站")' in and_main
+        and "modeButton.setVisibility(isOnlineMode ? View.GONE : View.VISIBLE)" in and_main \
+        and "worksContainer.addView(recycleLocalTrashEntry()" in and_main \
+        and 'modeButton.setContentDescription("手机本地回收站")' not in and_main
     results.append(check(
         "C24 双端顶栏三入口与本地文件浏览",
         ios_actions == ["plane", "trash", "settings"]

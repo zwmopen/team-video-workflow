@@ -554,13 +554,10 @@ public final class MainActivity extends Activity {
 
         titleRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        modeButton = compactToolbarButton(isOnlineMode ? R.drawable.ic_album_trash : R.drawable.ic_file_folder,
-                isOnlineMode ? "手机本地回收站" : "文件浏览");
-        modeButton.setMinimumWidth(dp(44));
+        modeButton = compactToolbarButton(R.drawable.ic_file_folder, "文件浏览");
+        modeButton.setVisibility(isOnlineMode ? View.GONE : View.VISIBLE);
         modeButton.setOnClickListener(v -> {
-            if (isOnlineMode) {
-                showTrash();
-            } else if (fileMode) {
+            if (fileMode) {
                 showWorksMode();
             } else {
                 showFileMode();
@@ -936,7 +933,7 @@ public final class MainActivity extends Activity {
         collapsibleHeader.setOrientation(LinearLayout.VERTICAL);
         collapsibleHeader.setClipChildren(true);
         collapsibleHeader.setClipToPadding(true);
-        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, dp(36));
+        LinearLayout.LayoutParams categoryParams = new LinearLayout.LayoutParams(-1, -2);
         categoryParams.setMargins(dp(12), 0, dp(12), dp(4));
         collapsibleHeader.addView(categorySelector, categoryParams);
         // 【DSH-108】搜索框挪到分类按钮之下，与 iOS「分类文件夹之下才是搜索框」对齐
@@ -2402,6 +2399,7 @@ public final class MainActivity extends Activity {
         button.setMinWidth(0);
         button.setMinimumWidth(dp(44));
         button.setPadding(dp(10), dp(2), dp(10), dp(2));
+        button.setStateListAnimator(null);
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
         applyCategoryButtonStyle(button, isSelected);
@@ -3817,12 +3815,7 @@ public final class MainActivity extends Activity {
         showingOnlineRecycle = false;
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
-        // 手机回收站在状态行；顶栏回收站直达电脑。
-        if (modeButton != null) {
-            modeButton.setImageResource(R.drawable.ic_album_trash);
-            modeButton.setContentDescription("手机本地回收站");
-            modeButton.setVisibility(View.VISIBLE);
-        }
+        if (modeButton != null) modeButton.setVisibility(View.GONE);
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
         footerNote.setText("💻 电脑在线作品：实时读取电脑首发成品，点击文案复制并唤起分享；长按文案按钮可全屏预览。");
@@ -4380,6 +4373,7 @@ public final class MainActivity extends Activity {
         button.setMinWidth(0);
         button.setMinimumWidth(dp(44));
         button.setPadding(dp(10), dp(2), dp(10), dp(2));
+        button.setStateListAnimator(null);
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
         applyOnlineCategoryButtonStyle(button, isSelected, isPinned);
@@ -4517,6 +4511,7 @@ public final class MainActivity extends Activity {
         footerNote.setText("♻️ 在线回收站：读取电脑端「_已发送」与「_垃圾作品」两个阶段库。"
                 + "点「恢复」即移回「已发送0次」并归零次数、撤销垃圾标记；垃圾样本库电脑端永久保留，不会自动清理。");
         worksContainer.removeAllViews();
+        worksContainer.addView(recycleLocalTrashEntry(), margins(0, 0, 0, dp(10)));
         scannedCountText.setText("0");
 
         loadOnlineRecycle(onlineRecycleTab, false);
@@ -4557,6 +4552,7 @@ public final class MainActivity extends Activity {
         resetOnlineThumbScheduler();
         worksContainer.removeAllViews();
         scannedCountText.setText(String.valueOf(onlineRecycleWorks.size()));
+        worksContainer.addView(recycleLocalTrashEntry(), margins(0, 0, 0, dp(10)));
 
         if (onlineRecycleWorks.isEmpty()) {
             String emptyMsg = "garbage".equals(onlineRecycleTab)
@@ -4568,7 +4564,6 @@ public final class MainActivity extends Activity {
             empty.setPadding(dp(14), dp(28), dp(14), dp(28));
             empty.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 18));
             worksContainer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
-            worksContainer.addView(recycleLocalTrashEntry(), margins(0, dp(10), 0, dp(18)));
             return;
         }
 
@@ -4594,13 +4589,12 @@ public final class MainActivity extends Activity {
             worksContainer.addView(loadMoreBtn, btnParams);
         }
 
-        worksContainer.addView(recycleLocalTrashEntry(), margins(0, dp(6), 0, dp(18)));
     }
 
-    /** 在线回收站底部保留「手机本地回收站」入口，避免在线模式再也进不去本地回收站。 */
+    /** 电脑回收站列表顶部保留「手机本地回收站」入口，避免在线模式再也进不去本地回收站。 */
     private View recycleLocalTrashEntry() {
         Button btn = new Button(this);
-        btn.setText("📱 打开手机本地回收站");
+        btn.setText("切换到手机回收站");
         btn.setAllCaps(false);
         btn.setTextSize(13);
         btn.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
@@ -4618,7 +4612,7 @@ public final class MainActivity extends Activity {
     // 与 recycleLocalTrashEntry 互为镜像。
     private View buildOnlineRecycleEntry() {
         Button btn = new Button(this);
-        btn.setText("💻 打开电脑端回收站（_已发送 + _垃圾作品）");
+        btn.setText("切换到电脑回收站");
         btn.setAllCaps(false);
         btn.setTextSize(13);
         btn.setTextColor(ThemePalette.getInfoBadgeText(MainActivity.this));
