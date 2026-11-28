@@ -97,26 +97,29 @@ public final class TransferStatsStore {
     }
 
     public static String formatTechnicalDetails(JSONObject remoteStats) {
+        StringBuilder sb = new StringBuilder("云端服务：Cloudflare R2（标准存储）\n上传、下载流量均免费\n\n");
         JSONObject r2 = remoteStats == null ? null : remoteStats.optJSONObject("r2");
-        if (r2 == null) return "云端服务：Cloudflare R2\n存储与请求额度：暂未获取";
-        StringBuilder sb = new StringBuilder("云端服务：Cloudflare R2\n");
-        if (r2.has("activeBytes")) sb.append("当前暂存：").append(fmtBytes(r2.optLong("activeBytes"))).append("\n");
-        if (r2.has("activeObjects")) sb.append("暂存对象：").append(r2.optInt("activeObjects")).append(" 个\n");
-        JSONObject q = r2.optJSONObject("quotas");
-        if (q != null) {
-            appendQuota(sb, q, "storageUsageRatio", "存储额度");
-            appendQuota(sb, q, "classAUsageRatio", "写入等操作额度（Class A）");
-            appendQuota(sb, q, "classBUsageRatio", "读取等操作额度（Class B）");
+        JSONObject month = remoteStats == null ? null : remoteStats.optJSONObject("month");
+        if (month != null && month.has("r2Bytes")) {
+            sb.append("本月云端转发：").append(fmtBytes(month.optLong("r2Bytes"))).append("\n");
         }
-        sb.append("\n统计为估算，实际费用以 Cloudflare 账单为准。");
+        if (r2 != null && r2.has("activeBytes")) {
+            sb.append("当前暂存：").append(fmtBytes(r2.optLong("activeBytes"))).append("\n");
+        } else sb.append("当前暂存：暂未获取\n");
+        sb.append("每月免费存储：10 GB-month（按存放时长计）\n");
+        appendOperation(sb, month, "classAOpsEst", 1000000, "写入等操作");
+        appendOperation(sb, month, "classBOpsEst", 10000000, "读取等操作");
+        sb.append("\n以上为本应用统计及估算，不含账户内其他项目和 Workers 等服务。实际账单以 Cloudflare 为准。");
         return sb.toString();
     }
 
-    private static void appendQuota(StringBuilder sb, JSONObject q, String key, String label) {
-        double ratio = q.optDouble(key, Double.NaN);
-        if (!Double.isNaN(ratio) && !Double.isInfinite(ratio) && ratio >= 0) {
-            sb.append(String.format(Locale.US, "%s：%.2f%%\n", label, ratio * 100.0));
-        }
+    private static void appendOperation(StringBuilder sb, JSONObject bucket, String key, long limit, String label) {
+        sb.append(label).append("：");
+        if (bucket != null && bucket.has(key) && !bucket.isNull(key)) {
+            long used = Math.max(0, bucket.optLong(key));
+            sb.append(String.format(Locale.US, "%,d / %,d 次（估算）", used, limit));
+        } else sb.append("暂未获取 / ").append(String.format(Locale.US, "%,d 次", limit));
+        sb.append("\n");
     }
 
     public static String fmtBytes(long b) {
