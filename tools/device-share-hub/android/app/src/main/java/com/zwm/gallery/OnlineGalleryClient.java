@@ -931,9 +931,6 @@ public final class OnlineGalleryClient {
                 OnlineListCache.saveCategories(context, resp);
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
-                if (baseUrl != null && e.getMessage() != null && e.getMessage().startsWith("HTTP 403")) {
-                    RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
-                }
                 if (RemoteRelayProfile.isEnrolled(context)) {
                     try {
                         CategoriesResult cached = lastRemoteCategoriesResult;
@@ -1012,9 +1009,6 @@ public final class OnlineGalleryClient {
                 if (requestSequence == worksRequestSequence.get()) {
                     lastAppliedWorksScanRevision = scanRevision;
                 }
-                if (!RemoteRelayProfile.isEnrolled(context)) {
-                    RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
-                }
                 Log.i(TAG, "fetchWorks parsed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " fullList=" + fullList + " works=" + list.size());
@@ -1026,9 +1020,6 @@ public final class OnlineGalleryClient {
                     callback.onSuccess(list);
                 });
             } catch (Exception e) {
-                if (baseUrl != null && e.getMessage() != null && e.getMessage().startsWith("HTTP 403")) {
-                    RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
-                }
                 if (RemoteRelayProfile.isEnrolled(context) && remotePermissionError == null) {
                     try {
                         List<OnlineWorkEntry> remoteList = fetchRemoteCatalogSnapshot();

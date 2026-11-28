@@ -1098,9 +1098,6 @@ public final class OnlineGalleryClient {
             let httpOK = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
             if let error = error ?? (httpOK ? nil : URLError(.badServerResponse)) {
                 let deniedLocally = (response as? HTTPURLResponse)?.statusCode == 403
-                if deniedLocally {
-                    RemoteRelayProfile.enrollViaLanBestEffort(pcBaseURL: baseUrl)
-                }
                 let lanError: Error = deniedLocally || deniedRemotely ? RemoteRelayError.approvalRequired : error
                 if RemoteRelayProfile.load() != nil, let self = self {
                     DispatchQueue.global(qos: .userInitiated).async {
@@ -1142,7 +1139,6 @@ public final class OnlineGalleryClient {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.isLatestWorksRequest(requestID) else { return }
                     self.isUsingRemoteCatalog = false
-                    RemoteRelayProfile.enrollViaLanBestEffort(pcBaseURL: baseUrl)
                     if let viewState = viewState {
                         self.consumeRemoteViewState(viewState)
                     }

@@ -25,7 +25,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Pure-Java Cloudflare Relay HTTP client for Android:
@@ -41,8 +40,6 @@ public final class RemoteRelayClient {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 25_000;
     private static final int OBJECT_READ_TIMEOUT_MS = 90_000;
-    private static final long ENROLL_COOLDOWN_MS = 10 * 60 * 1000L;
-    private static final AtomicLong lastLanEnrollMs = new AtomicLong(0L);
     private static volatile Session cachedSession;
     private static String unavailableEndpoint = "";
     private static long unavailableUntil;
@@ -221,14 +218,9 @@ public final class RemoteRelayClient {
         cachedSession = null;
     }
 
-    /** Calls PC LAN `/api/online/remote-enroll` silently so connected phones auto-receive ES256 workspace certs. */
-    public static void enrollViaLanBestEffort(Context context, String pcBaseUrl) {
-        if (pcBaseUrl == null || !pcBaseUrl.startsWith("http")) return;
-        long now = System.currentTimeMillis();
-        long prev = lastLanEnrollMs.get();
-        long cooldown = RemoteRelayProfile.isEnrolled(context) ? ENROLL_COOLDOWN_MS : 5000;
-        if (now - prev < cooldown) return;
-        if (!lastLanEnrollMs.compareAndSet(prev, now)) return;
+    public static void requestLanAlbumAccess(Context context, String pcBaseUrl,
+                                             OnlineGalleryClient.Callback<Boolean> callback) {
+        android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
 
         new Thread(() -> {
             HttpURLConnection conn = null;
@@ -237,7 +229,7 @@ public final class RemoteRelayClient {
                 SharedPreferences prefs = context.getApplicationContext()
                         .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
                 String deviceId = prefs.getString("deviceId", "").trim();
-                if (deviceId.isEmpty()) return;
+                if (deviceId.isEmpty()) throw new java.io.IOException("设备身份尚未就绪，请稍后重试");
                 String deviceName = prefs.getString("deviceName", Build.MANUFACTURER + " " + Build.MODEL).trim();
 
                 JSONObject body = new JSONObject();
@@ -247,6 +239,7 @@ public final class RemoteRelayClient {
                 body.put("agreementPublicKey", identity.signingPublicJwk);
 
                 conn = (HttpURLConnection) new URL(pcBaseUrl + "/api/online/remote-enroll").openConnection();
+                conn.setInstanceFollowRedirects(false);
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(4000);
                 conn.setReadTimeout(12000);
@@ -259,20 +252,21 @@ public final class RemoteRelayClient {
                     os.write(out);
                 }
                 int code = conn.getResponseCode();
-                if (code >= 200 && code < 300) {
-                    String resp = readStreamText(conn.getInputStream());
-                    JSONObject parsed = new JSONObject(resp);
-                    if (parsed.optBoolean("ok", false)) {
-                        RemoteRelayProfile.save(context, resp);
-                        cachedSession = null;
-                        DiagnosticLog.write(context, "remote_auto_enroll_ok",
-                                parsed.optString("workspaceId", ""));
-                    }
-                } else if (code == 403) {
-                    Log.i(TAG, "LAN album access application is pending or requires approval");
+                boolean success = code >= 200 && code < 300;
+                InputStream stream = success ? conn.getInputStream() : conn.getErrorStream();
+                String resp = stream == null ? "{}" : readStreamText(stream);
+                JSONObject parsed = new JSONObject(resp);
+                if (success && parsed.optBoolean("ok", false)) {
+                    RemoteRelayProfile.save(context, resp);
+                    cachedSession = null;
+                    main.post(() -> callback.onSuccess(true));
+                } else if (code == 403 && "approval_pending".equals(parsed.optString("code"))) {
+                    main.post(() -> callback.onSuccess(false));
+                } else {
+                    throw new java.io.IOException(parsed.optString("message", parsed.optString("error", "电脑未接受申请")));
                 }
             } catch (Exception e) {
-                Log.w(TAG, "LAN auto-enroll skipped: " + e.getMessage());
+                main.post(() -> callback.onError(e));
             } finally {
                 if (conn != null) {
                     try { conn.disconnect(); } catch (Throwable ignored) {}

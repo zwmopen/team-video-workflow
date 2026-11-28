@@ -41,8 +41,6 @@ struct RemoteRelayProfile {
 
     private static let defaultsKey = "album.remoteRelayProfile.v1"
     private static let strategyKey = "album.transportStrategy.v1"
-    private static var lastEnrollAttemptAt: Date?
-    private static let enrollLock = NSLock()
 
     static var transportStrategy: RemoteTransportStrategy {
         get {
@@ -54,45 +52,60 @@ struct RemoteRelayProfile {
         }
     }
 
-    static func enrollViaLanBestEffort(pcBaseURL: String) {
+    static func requestLANAccess(pcBaseURL: String, completion: @escaping (Result<Bool, Error>) -> Void) {
         guard pcBaseURL.hasPrefix("http"),
-              let url = URL(string: "\(pcBaseURL)/api/online/remote-enroll") else { return }
-        enrollLock.lock()
-        if let prev = lastEnrollAttemptAt, load() != nil, Date().timeIntervalSince(prev) < 600 {
-            enrollLock.unlock()
+              let url = URL(string: "\(pcBaseURL)/api/online/remote-enroll") else {
+            completion(.failure(URLError(.badURL)))
             return
         }
-        lastEnrollAttemptAt = Date()
-        enrollLock.unlock()
 
         DispatchQueue.global(qos: .utility).async {
             guard let keys = try? RemoteIdentity.publicKeys(),
                   let signingKey = keys["signingPublicKey"],
-                  let agreementKey = keys["agreementPublicKey"] else { return }
+                  let agreementKey = keys["agreementPublicKey"] else {
+                DispatchQueue.main.async { completion(.failure(RemoteRelayError.invalidResponse)) }
+                return
+            }
             let body: [String: Any] = [
                 "deviceId": DeviceIdentity.id,
                 "deviceName": DeviceIdentity.name,
                 "signingPublicKey": signingKey,
                 "agreementPublicKey": agreementKey
             ]
-            guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: []) else { return }
+            guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: []) else {
+                DispatchQueue.main.async { completion(.failure(RemoteRelayError.invalidResponse)) }
+                return
+            }
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.timeoutInterval = 10
             req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
             req.httpBody = bodyData
-            URLSession.shared.dataTask(with: req) { data, response, _ in
+            URLSession.shared.dataTask(with: req) { data, response, error in
                 guard let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode),
                       let data = data,
-                      let obj = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                      let obj = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+                    DispatchQueue.main.async { completion(.failure(error ?? RemoteRelayError.invalidResponse)) }
+                    return
+                }
+                if http.statusCode == 403, obj["code"] as? String == "approval_pending" {
+                    DispatchQueue.main.async { completion(.success(false)) }
+                    return
+                }
+                guard (200..<300).contains(http.statusCode),
                       (obj["ok"] as? Bool) == true,
                       let endpoint = obj["endpoint"] as? String,
                       let cert = obj["certificate"] as? [String: Any],
-                      let sig = obj["certificateSignature"] as? String else { return }
-                try? save(endpoint: endpoint, certificate: cert, certificateSignature: sig,
-                          routeProfile: obj)
-                RemoteRelayClient.invalidateCachedSession()
+                      let sig = obj["certificateSignature"] as? String else {
+                    DispatchQueue.main.async { completion(.failure(RemoteRelayError.invalidResponse)) }
+                    return
+                }
+                let result = Result { () -> Bool in
+                    try save(endpoint: endpoint, certificate: cert, certificateSignature: sig, routeProfile: obj)
+                    RemoteRelayClient.invalidateCachedSession()
+                    return true
+                }
+                DispatchQueue.main.async { completion(result) }
             }.resume()
         }
     }

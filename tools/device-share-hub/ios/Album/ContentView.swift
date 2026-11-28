@@ -859,12 +859,26 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     @objc private func showAlbumAccessHelp() {
         guard isOnlineMode, onlineStatusOverride == "○ 设备未授权" else { return }
+        let paired = RemoteRelayProfile.load() != nil
         let sheet = UIAlertController(title: "电脑相册未授权",
-            message: "在电脑相册左上角打开「设备权限」，找到这台手机，批准或恢复访问。完成后回到这里检查。",
+            message: paired ? "在电脑相册左上角打开「设备权限 → 已配对设备」，恢复这台手机的访问。"
+                : "连接电脑所在的 Wi-Fi，点「申请访问」。电脑批准后，再点一次即可连接。",
             preferredStyle: .alert)
         sheet.addAction(UIAlertAction(title: "关闭", style: .cancel))
-        sheet.addAction(UIAlertAction(title: "检查授权", style: .default) { [weak self] _ in
-            self?.loadOnlineData(silent: false)
+        sheet.addAction(UIAlertAction(title: paired ? "检查授权" : "申请访问", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            if paired {
+                self.loadOnlineData(silent: false)
+                return
+            }
+            RemoteRelayProfile.requestLANAccess(pcBaseURL: OnlineGalleryClient.shared.resolveBaseUrl()) { [weak self] result in
+                guard let self = self, self.isOnlineMode else { return }
+                switch result {
+                case .success(true): self.loadOnlineData(silent: false)
+                case .success(false): self.showToast("申请已送达，请在电脑左上角批准")
+                case .failure: self.showToast("申请未完成，请确认电脑在线并连接同一 Wi-Fi")
+                }
+            }
         })
         present(sheet, animated: true)
     }

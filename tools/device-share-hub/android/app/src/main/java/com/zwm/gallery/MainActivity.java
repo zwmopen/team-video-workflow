@@ -824,11 +824,17 @@ public final class MainActivity extends Activity {
         statusText.setPadding(dp(6), dp(4), dp(4), dp(4));
         statusText.setOnClickListener(view -> {
             if (!isOnlineMode || !onlineNeedsApproval) return;
+            boolean paired = RemoteRelayProfile.isEnrolled(this);
             new AlertDialog.Builder(this)
                     .setTitle("电脑相册未授权")
-                    .setMessage("在电脑相册左上角打开「设备权限」，找到这台手机，批准或恢复访问。完成后回到这里检查。")
+                    .setMessage(paired
+                            ? "在电脑相册左上角打开「设备权限 → 已配对设备」，恢复这台手机的访问。"
+                            : "连接电脑所在的 Wi-Fi，点「申请访问」。电脑批准后，再点一次即可连接。")
                     .setNegativeButton("关闭", null)
-                    .setPositiveButton("检查授权", (dialog, which) -> refreshOnlineWorks(true))
+                    .setPositiveButton(paired ? "检查授权" : "申请访问", (dialog, which) -> {
+                        if (paired) refreshOnlineWorks(true);
+                        else requestAlbumAccess();
+                    })
                     .show();
         });
         statusText.setClickable(false);
@@ -986,6 +992,20 @@ public final class MainActivity extends Activity {
         quickParams.setMargins(0, 0, dp(22), dp(24));
         frame.addView(quickTrashButton, quickParams);
         return frame;
+    }
+
+    private void requestAlbumAccess() {
+        RemoteRelayClient.requestLanAlbumAccess(this, onlineClient.resolveBaseUrl(), new OnlineGalleryClient.Callback<Boolean>() {
+            @Override public void onSuccess(Boolean approved) {
+                if (!isOnlineMode || isFinishing()) return;
+                if (approved) refreshOnlineWorks(true);
+                else toast("申请已送达，请在电脑左上角批准");
+            }
+
+            @Override public void onError(Exception error) {
+                if (isOnlineMode && !isFinishing()) toast("申请未完成，请确认电脑在线并连接同一 Wi-Fi");
+            }
+        });
     }
 
     private void updateTitleClusterVisibility() {
