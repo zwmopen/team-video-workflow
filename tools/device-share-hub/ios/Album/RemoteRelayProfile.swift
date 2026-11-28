@@ -11,20 +11,20 @@ enum RemoteTransportStrategy: String, CaseIterable {
     var title: String {
         switch self {
         case .auto: return "自动选择（推荐）"
-        case .usbFirst: return "USB 优先"
-        case .lanFirst: return "局域网优先"
-        case .p2pFirst: return "P2P 优先（失败切 R2）"
-        case .r2First: return "R2 云端优先"
+        case .usbFirst: return "数据线优先"
+        case .lanFirst: return "同一 Wi-Fi 优先"
+        case .p2pFirst: return "设备直连优先"
+        case .r2First: return "云端转发优先"
         }
     }
 
     var detail: String {
         switch self {
-        case .auto: return "按连接情况自动切换 USB / 局域网 / 云端中转"
-        case .usbFirst: return "优先走有线通道，失败自动切换局域网或云端"
-        case .lanFirst: return "优先走同一 Wi-Fi 局域网直传"
-        case .p2pFirst: return "跨网先试 P2P 直连，不通自动切 Cloudflare R2"
-        case .r2First: return "适合 P2P 不稳定环境，直接走 R2 高速原画中转"
+        case .auto: return "按网络情况自动选择连接方式"
+        case .usbFirst: return "优先用数据线，无法连接时自动换其他方式"
+        case .lanFirst: return "在同一 Wi-Fi 下优先直接传输"
+        case .p2pFirst: return "不同网络时优先直接传输，失败后自动通过云端转发"
+        case .r2First: return "不同网络下优先通过云端转发"
         }
     }
 }
