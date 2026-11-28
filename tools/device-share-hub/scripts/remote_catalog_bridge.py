@@ -17,11 +17,13 @@ import base64
 import hashlib
 import json
 import os
+import queue
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -31,6 +33,11 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
 )
+
+try:
+    import websocket
+except ImportError:
+    websocket = None
 
 DEFAULT_RELAY_ENDPOINT = os.environ.get(
     "ALBUM_RELAY_ENDPOINT",
@@ -254,16 +261,23 @@ class RemoteCatalogBridge:
 
         self._lock = threading.Lock()
         self._priv, self._pub_jwk, self._device_id, self._workspace_id, self._next_serial = self._load_or_init_identity()
+        self._session_lock = threading.Lock()
         self._registered = False
         self._token: Optional[str] = None
         self._token_expires_at: float = 0.0
         self._last_synced_revision: int = -1
         self._uploaded_thumbs: set[str] = set()
+        self._thumb_retry_after: Dict[str, float] = {}
         self._cached_cloud_stats: Optional[Dict[str, Any]] = None
         self._cached_cloud_stats_at: float = 0.0
         self._last_error: str = ""
         self._stop_event = threading.Event()
+        self._pull_event = threading.Event()
+        self._notified_pulls = queue.Queue(maxsize=64)
+        self._served_pulls: Dict[str, float] = {}
         self._thread: Optional[threading.Thread] = None
+        self._pull_thread: Optional[threading.Thread] = None
+        self._socket_thread: Optional[threading.Thread] = None
 
     def _load_or_init_identity(self) -> Tuple[ec.EllipticCurvePrivateKey, Dict[str, str], str, str, int]:
         if self.admin_path.is_file():
@@ -430,6 +444,10 @@ class RemoteCatalogBridge:
             return he.code, dict(he.headers), he.read()
 
     def ensure_session(self) -> str:
+        with self._session_lock:
+            return self._ensure_session_locked()
+
+    def _ensure_session_locked(self) -> str:
         now = time.time()
         if self._token and now < self._token_expires_at - 120:
             return self._token
@@ -497,7 +515,7 @@ class RemoteCatalogBridge:
         candidate = self.resolve_safe_work_file(library_root, folder, filename)
         return candidate if candidate is not None and candidate.is_relative_to(work_dir) else None
 
-    def sync_once(self) -> None:
+    def sync_once(self, *, serve_pulls: bool = True) -> None:
         if not self.get_works_fn:
             return
         token = self.ensure_session()
@@ -555,34 +573,11 @@ class RemoteCatalogBridge:
             else:
                 raise RuntimeError(f"Remote catalog upload failed (HTTP {st})")
 
-        self._fulfill_catalog_pulls(token, works, library_root)
+        if serve_pulls:
+            self._fulfill_catalog_pulls(token, works, library_root)
 
-        # Lazily upload up to 4 missing cover thumbnails after serving requested images.
         if self.get_thumb_fn:
-            uploaded_this_tick = 0
-            for w in works:
-                if uploaded_this_tick >= 4:
-                    break
-                imgs = w.get("images") or []
-                if not imgs:
-                    continue
-                wid = w.get("id", "")
-                tkey = catalog_thumb_key(wid, imgs[0])
-                if tkey in self._uploaded_thumbs:
-                    continue
-                jpg = self.get_thumb_fn(wid, imgs[0])
-                if jpg:
-                    st, _, _ = self._http(
-                        f"/v1/catalog/thumbs/{tkey}",
-                        method="PUT",
-                        raw_body=jpg,
-                        headers={"Content-Type": "image/jpeg"},
-                        token=token,
-                        timeout=15,
-                    )
-                    if st in (200, 201):
-                        self._uploaded_thumbs.add(tkey)
-                        uploaded_this_tick += 1
+            self._prewarm_catalog_covers(token, works)
 
         if self.mark_work_used_fn:
             st, _, ev_raw = self._http("/v1/catalog/events", method="GET", token=token)
@@ -595,13 +590,69 @@ class RemoteCatalogBridge:
                         except Exception:
                             pass
 
+    def _prewarm_catalog_covers(self, token: str, works: List[Dict[str, Any]]) -> None:
+        batch = []
+        seen = set()
+        now = time.monotonic()
+        for work in works:
+            images = work.get("images") or []
+            if not images:
+                continue
+            work_id = work.get("id", "")
+            sources = catalog_source_images(work)
+            for image in (sources[0], images[0]):
+                if not image:
+                    continue
+                key = catalog_thumb_key(work_id, image)
+                if (key not in self._uploaded_thumbs and key not in seen
+                        and self._thumb_retry_after.get(key, 0) <= now):
+                    batch.append((work_id, image, key))
+                    seen.add(key)
+            if len(batch) >= 8:
+                break
+        if not batch:
+            return
+
+        def upload(item):
+            work_id, image, key = item
+            try:
+                jpg = self.get_thumb_fn(work_id, image)
+                if jpg:
+                    status, _, _ = self._http(f"/v1/catalog/thumbs/{key}", method="PUT",
+                                              raw_body=jpg, headers={"Content-Type": "image/jpeg"},
+                                              token=token, timeout=15)
+                    return key, status in (200, 201)
+            except (OSError, ValueError):
+                pass
+            return key, False
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for key, success in pool.map(upload, batch):
+                if success:
+                    self._uploaded_thumbs.add(key)
+                    self._thumb_retry_after.pop(key, None)
+                else:
+                    self._thumb_retry_after[key] = now + 60
+
     def _fulfill_catalog_pulls(self, token: str, works: List[Dict[str, Any]], library_root: str) -> None:
         st, _, p_raw = self._http("/v1/catalog/pulls/pending", method="GET", token=token)
         if st == 200:
             pulls = json.loads(p_raw.decode("utf-8")).get("pulls") or []
-            work_by_id = {w.get("id"): w for w in works}
-            for p in pulls:
+            self._serve_catalog_pulls(token, works, library_root, pulls)
+
+    def _serve_catalog_pulls(self, token: str, works: List[Dict[str, Any]],
+                             library_root: str, pulls: List[Dict[str, Any]]) -> None:
+        work_by_id = {work.get("id"): work for work in works}
+        now = time.monotonic()
+        self._served_pulls = {key: expiry for key, expiry in self._served_pulls.items() if expiry > now}
+        for p in pulls:
+            try:
                 pull_id = p.get("pullId", "")
+                if not isinstance(pull_id, str) or not pull_id or not all(
+                        char.isascii() and (char.isalnum() or char in "_-") for char in pull_id):
+                    continue
+                if pull_id in self._served_pulls:
+                    continue
                 wid = p.get("workId", "")
                 fname = p.get("fileName") or p.get("filename") or ""
                 w_item = work_by_id.get(wid)
@@ -639,12 +690,15 @@ class RemoteCatalogBridge:
                     timeout=60,
                 )
                 if ust in (200, 201):
+                    self._served_pulls[pull_id] = time.monotonic() + 90
                     self.stats_store.record(
                         "r2",
                         bytes_count=len(file_bytes),
                         objects=1,
                         duration_ms=int((time.time() - t_start) * 1000),
                     )
+            except (OSError, ValueError):
+                continue
 
     def fetch_cloud_stats(self, max_age_sec: float = 20.0) -> Optional[Dict[str, Any]]:
         now = time.time()
@@ -709,16 +763,80 @@ class RemoteCatalogBridge:
             return
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, name="RemoteCatalogBridge", daemon=True)
+        self._pull_thread = threading.Thread(target=self._run_pulls, name="RemoteCatalogPulls", daemon=True)
         self._thread.start()
+        self._pull_thread.start()
+        if websocket is not None:
+            self._socket_thread = threading.Thread(target=self._listen_for_pulls,
+                                                   name="RemoteCatalogEvents", daemon=True)
+            self._socket_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._pull_event.set()
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                self.sync_once()
+                self.sync_once(serve_pulls=False)
                 self._last_error = ""
             except Exception as exc:
                 self._last_error = str(exc)
             self._stop_event.wait(4.0)
+
+    def _run_pulls(self) -> None:
+        next_poll = 0.0
+        while not self._stop_event.is_set():
+            self._pull_event.clear()
+            pending = []
+            while True:
+                try:
+                    pending.append(self._notified_pulls.get_nowait())
+                except queue.Empty:
+                    break
+            try:
+                token = self.ensure_session()
+                _, works, root = self.get_works_fn()
+                if pending:
+                    self._serve_catalog_pulls(token, works, root, pending)
+                if time.monotonic() >= next_poll:
+                    next_poll = time.monotonic() + 3.0
+                    self._fulfill_catalog_pulls(token, works, root)
+            except Exception:
+                pass  # The fallback poll picks up requests left pending during a disconnect.
+            self._pull_event.wait(max(0.1, min(3.0, next_poll - time.monotonic())) if next_poll else 3.0)
+
+    def _listen_for_pulls(self) -> None:
+        while not self._stop_event.is_set():
+            connection = None
+            try:
+                token = self.ensure_session()
+                url = "wss://" + self.endpoint.removeprefix("https://") + "/v1/socket"
+                connection = websocket.create_connection(
+                    url, timeout=8, redirect_limit=0,
+                    header={"Authorization": "Bearer " + token, "X-Workspace-Id": self.workspace_id},
+                )
+                self._pull_event.set()
+                expires_at = self._token_expires_at - 120
+                while not self._stop_event.is_set() and time.time() < expires_at:
+                    try:
+                        raw = connection.recv()
+                    except websocket.WebSocketTimeoutException:
+                        connection.ping()
+                        continue
+                    if not raw:
+                        break
+                    event = json.loads(raw)
+                    pull = event.get("pull")
+                    if event.get("type") == "catalog-pull-requested" and isinstance(pull, dict):
+                        try:
+                            self._notified_pulls.put_nowait(pull)
+                        except queue.Full:
+                            pass  # The HTTPS poll will recover outstanding requests.
+                        self._pull_event.set()
+            except Exception:
+                pass  # Socket availability is independent of the HTTPS fallback.
+            finally:
+                if connection is not None:
+                    connection.close(timeout=0)
+            self._stop_event.wait(3.0)

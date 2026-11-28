@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from remote_catalog_bridge import (
+    catalog_thumb_key,
     LocalTransferStatsStore,
     RemoteCatalogBridge,
     verify_es256_p1363,
@@ -75,7 +76,9 @@ def test_catalog_publishes_page_aligned_sources_and_serves_only_advertised_selec
         state_dir=tmp_path / "state",
         get_works_fn=lambda: (1, [work], str(tmp_path / "library")),
         get_source_file_fn=lambda work_id, token: str(source),
-        get_thumb_fn=lambda work_id, token: b"source preview" if token == "__src__:P1.jpg" else None,
+        get_thumb_fn=lambda work_id, token: {
+            "__src__:P1.jpg": b"source preview", "P1.jpg": b"output preview",
+        }.get(token),
     )
     monkeypatch.setattr(bridge, "ensure_session", lambda: "offline-test")
     requests = []
@@ -101,3 +104,9 @@ def test_catalog_publishes_page_aligned_sources_and_serves_only_advertised_selec
     assert set(sent) == {"original", "preview"}
     for name, data in {"original": source.read_bytes(), "preview": b"source preview"}.items():
         assert sent[name] == (data, hashlib.sha256(data).hexdigest())
+    cached = {path.rsplit("/", 1)[-1]: data for path, data, _ in requests if "/thumbs/" in path}
+    assert cached == {catalog_thumb_key("work_a", "__src__:P1.jpg"): b"source preview",
+                      catalog_thumb_key("work_a", "P1.jpg"): b"output preview"}
+    bridge._serve_catalog_pulls("offline-test", [work], str(tmp_path / "library"),
+                                [{"pullId": "original", "workId": "work_a", "fileName": "__src__:P1.jpg"}])
+    assert sum(path.endswith("/original/file") for path, _, _ in requests) == 1
