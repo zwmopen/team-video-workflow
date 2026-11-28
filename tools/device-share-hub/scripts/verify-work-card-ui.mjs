@@ -15,7 +15,9 @@ const iosParser = read("ios/Album/PlatformCopyParser.swift");
 
 assert.match(androidMain, /FlowLayout platformRow = new FlowLayout/);
 assert.doesNotMatch(androidMain, /Button preview = compactButton\("预览"/);
-assert.match(androidMain, /delete\.setText\("删除"\)/);
+assert.match(androidMain, /styleAlbumAction\(delete, "[^"]*删除", true\)/);
+assert.match(androidMain, /delete\.setOnClickListener\(v -> confirmDeleteOnlineWork\(work\)\)/);
+assert.match(androidMain, /delete\.setOnClickListener\(v -> confirmMoveWorkToTrash\(work\.id\)\)/);
 assert.match(androidMain, /openPreview\(work, imageIndex\)/);
 assert.match(androidMain, /EXTRA_IMAGE_INDEX/);
 assert.match(androidDetail, /EXTRA_IMAGE_INDEX = "imageIndex"/);
@@ -30,7 +32,7 @@ assert.doesNotMatch(iosContent, /previewButton/);
 // `sizeForItemAt` 的卡片高度预估同源（两边必须来自 `WorkCell` 的同一批常量）。
 assert.match(iosContent, /platformContainer\.addArrangedSubview\(platformRow\)/);
 assert.match(iosContent, /platformRow\.rowHeight = WorkCell\.platformRowHeight/);
-assert.match(iosContent, /static let platformRowHeight: CGFloat = 36/);
+assert.match(iosContent, /static var platformRowHeight: CGFloat \{ max\(36, platformFont\(used: true\)\.lineHeight \+ 10\) \}/);
 // 【2026-09-21 修正】原先这里硬编码 `thumbnailTapped\(_ sender: UIButton\)`，
 // 而 iOS 卡片早就改用 `ThumbnailButton` 子类（`ThumbnailButton(type: .custom)`）承载缩略图，
 // 于是断言与本守卫同名的实现彻底对不上，自 2026-09-14 起长期为红
@@ -54,4 +56,4 @@ assert.doesNotMatch(androidMain, /button\.setMaxLines\(1\)/);
 assert.doesNotMatch(androidParser, /substring\(0, 4\)/);
 assert.doesNotMatch(iosParser, /prefix\(4\)/);
 
-console.log("work-card-ui: 21 checks passed");
+console.log("work-card-ui: 23 checks passed");

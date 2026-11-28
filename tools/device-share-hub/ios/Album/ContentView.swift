@@ -3912,8 +3912,8 @@ private final class WorkCell: UICollectionViewCell {
         let onlineDate = WorkCell.cardDateSuffix(entry.id, entry.title)
         let onlineDatePart = onlineDate.isEmpty ? "" : " · " + onlineDate
 
-        // DSH-170: 纯文字 3 标签（产线 · 图数 · 时间），绝对无 Emoji，单行排布不折行
-        var onlineDetail = "\(entry.pipelineBadge) · \(entry.imageCountText) · \(entry.formattedDate)"
+        // Source and production date are shown from the explicit label projection only.
+        var onlineDetail = entry.imageCountText
 
         if viewMode == .compare {
             if entry.maxSimilarity > 0 {

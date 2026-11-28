@@ -330,7 +330,7 @@ public final class MainActivity extends Activity {
             }
             if (OnlineService.ACTION_STATUS.equals(intent.getAction())) {
                 String message = intent.getStringExtra("message");
-                if (message != null) statusText.setText(message);
+                if (message != null && !isOnlineMode) statusText.setText(message);
             }
             if (UpdateDownloadReceiver.ACTION_UPDATE_READY.equals(intent.getAction())
                     && !updateReadyPromptShown) {
@@ -4099,7 +4099,8 @@ public final class MainActivity extends Activity {
     private void startOnlineBeaconListener() {
         onlineClient.startBeaconListener(() -> {
             if (!isOnlineMode || statusText == null) return;
-            statusText.setText("📡 已同步电脑新地址 " + onlineClient.resolveBaseUrl());
+            statusText.setText("◌ 正在连接电脑");
+            statusText.setContentDescription(null);
             refreshOnlineWorks(false);
         });
     }
@@ -5276,10 +5277,8 @@ public final class MainActivity extends Activity {
         }
 
         StringBuilder detail = new StringBuilder();
-        // DSH-170: 纯文字 3 标签（产线 · 图数 · 时间），绝对无 Emoji，单行排布不折行
-        detail.append(work.pipelineBadge).append(" · ")
-              .append(work.imageCountText).append(" · ")
-              .append(work.formattedDate);
+        // Source and production date are shown from the explicit label projection only.
+        detail.append(work.imageCountText);
 
         if ("compare".equals(currentViewMode)) {
             if (work.similarityTag != null && !work.similarityTag.isEmpty()) {
