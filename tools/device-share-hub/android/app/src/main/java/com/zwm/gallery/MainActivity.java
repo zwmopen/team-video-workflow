@@ -2138,6 +2138,7 @@ public final class MainActivity extends Activity {
             // 【2026-09-23】版本按钮 = 解析结果的**原始顺序**（文案.txt 里版本块的先后顺序），
             // 不排序、不摘项。按钮的 height 用 WRAP_CONTENT：单行时由 `styleNeumorphicButton`
             // 的 `setMinHeight(dp(36))` 兜底 36dp，需要折成两行时自动长高，不会被裁。
+            platformRow.setCenterRows(true);
             platformRow.setHorizontalSpacing(dp(4));
             platformRow.setVerticalSpacing(dp(4));
             List<PlatformCopyParser.AvailableItem> rawPlatforms =
@@ -2187,12 +2188,11 @@ public final class MainActivity extends Activity {
 
             LinearLayout bottomActionRow = new LinearLayout(this);
             bottomActionRow.setOrientation(LinearLayout.HORIZONTAL);
-            bottomActionRow.setGravity(Gravity.CENTER);
+            bottomActionRow.setGravity(Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(-1, -2);
-            bottomParams.setMargins(0, dp(8), 0, dp(2));
-            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            actionParams.setMargins(dp(4), 0, dp(4), 0);
+            bottomParams.setMargins(0, dp(4), 0, dp(2));
+            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(0, -1, 1f);
+            actionParams.setMargins(dp(3), 0, dp(3), 0);
             bottomActionRow.addView(reset, actionParams);
             bottomActionRow.addView(copyPath, actionParams);
             bottomActionRow.addView(delete, actionParams);
@@ -3530,12 +3530,13 @@ public final class MainActivity extends Activity {
         button.setText(used ? "✓ " + label : label);
         button.setContentDescription(label + (used ? "，已使用" : ""));
         button.setAllCaps(false);
-        button.setTextSize(12);
+        button.setTextSize(11.5f);
+        button.setIncludeFontPadding(false);
+        button.setLetterSpacing(0);
         button.setMinWidth(0);
         button.setMinimumWidth(dp(44));
         button.setMinHeight(0);
         button.setMinimumHeight(dp(36));
-        button.setPadding(dp(5), dp(4), dp(5), dp(4));
         button.setStateListAnimator(null);
         boolean dark = ThemePalette.isDarkMode(this);
         boolean xhs = label.startsWith("小红书") || item.platform == PlatformCopyParser.Platform.XHS
@@ -3543,7 +3544,10 @@ public final class MainActivity extends Activity {
         button.setTextColor(xhs ? (dark ? 0xFFF4BCC5 : 0xFF853543) : ThemePalette.getTextPrimary(this));
         int background = xhs ? (dark ? 0xFF482D35 : 0xFFFBECEF) : ThemePalette.getPillBg(this);
         button.setBackground(new android.graphics.drawable.RippleDrawable(
-                ColorStateList.valueOf(0x22000000), round(background, 10), null));
+                ColorStateList.valueOf(0x18000000),
+                new android.graphics.drawable.InsetDrawable(round(background, 8), 0, dp(3), 0, dp(3)),
+                null));
+        button.setPadding(dp(5), dp(6), dp(5), dp(6));
         return button;
     }
 
@@ -3554,7 +3558,9 @@ public final class MainActivity extends Activity {
         button.setMinWidth(0);
         button.setMinimumWidth(0);
         button.setMinHeight(0);
-        button.setMinimumHeight(dp(38));
+        button.setMinimumHeight(dp(36));
+        button.setIncludeFontPadding(false);
+        button.setLetterSpacing(0);
         button.setPadding(dp(3), dp(3), dp(3), dp(3));
         button.setStateListAnimator(null);
         button.setElevation(0);
@@ -5301,6 +5307,7 @@ public final class MainActivity extends Activity {
         platformRow.setClipToPadding(false);
         // 【2026-09-23】同本地作品卡：按钮顺序 = 解析结果原始顺序（文案块先后顺序），
         // 不摘项、不 rank；高度 WRAP_CONTENT，单行靠 minHeight 兜 36dp，多行自动长高。
+        platformRow.setCenterRows(true);
         platformRow.setHorizontalSpacing(dp(4));
         platformRow.setVerticalSpacing(dp(4));
 
@@ -5359,13 +5366,12 @@ public final class MainActivity extends Activity {
 
         LinearLayout bottomActionRow = new LinearLayout(this);
         bottomActionRow.setOrientation(LinearLayout.HORIZONTAL);
-        bottomActionRow.setGravity(Gravity.CENTER);
+        bottomActionRow.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(-1, -2);
-        bottomParams.setMargins(0, dp(8), 0, dp(2));
+        bottomParams.setMargins(0, dp(4), 0, dp(2));
         // DSH-108：bottomActionRow 的子视图需要用 LinearLayout.LayoutParams 才能设置 margin
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        btnParams.setMargins(dp(4), 0, dp(4), 0);
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(0, -1, 1f);
+        btnParams.setMargins(dp(3), 0, dp(3), 0);
         bottomActionRow.addView(reset, btnParams);
         Button copyPath = copyPathButton(work.path, "电脑在线作品");
         styleAlbumAction(copyPath, "▣ 复制路径", false);
