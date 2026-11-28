@@ -39,6 +39,19 @@ class AuthorizationTests(unittest.TestCase):
         self.reg.request(self.token,"test")
         self.assertNotIn(self.token.encode(),self.path.read_bytes())
         self.assertEqual(self.reg.status(self.token)["fingerprint"],fingerprint(digest(self.token)))
+    def test_revoke_all_includes_pending_and_persists(self):
+        another = new_token()
+        self.reg.request(self.token,"one")
+        self.reg.request(another,"two")
+        self.reg.decide(digest(self.token),"approved","manage")
+        self.assertEqual(self.reg.revoke_all(),2)
+        self.assertEqual(self.reg.revoke_all(),0)
+        reloaded=Registry(self.path)
+        for token in (self.token,another):
+            self.assertEqual(reloaded.status(token)["state"],"revoked")
+            self.assertFalse(reloaded.authorize(token,"GET","/api/online/works"))
+        self.assertEqual(sum(x["outcome"]=="revoked" for x in reloaded.audit()),2)
+
     def test_invalid_role_and_token(self):
         with self.assertRaises(ValueError):
             self.reg.request("short","test")
