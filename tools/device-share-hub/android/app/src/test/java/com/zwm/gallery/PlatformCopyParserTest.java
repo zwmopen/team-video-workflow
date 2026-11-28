@@ -367,4 +367,31 @@ public final class PlatformCopyParserTest {
         String normStandard = PlatformCopyParser.normalizeCopyTextForClipboard(standard);
         assertEquals(standard, normStandard);
     }
+    @org.junit.Test
+    public void compactAlbumLabelsKeepMachineTagsAndIndependentUse() {
+        String[] markers = {"小红书1｜自然攻略版", "小红书3｜高密度种草版",
+                "小红书4｜高密度全要素方案版", "抖音｜攻略版", "抖音｜轻分享版"};
+        String[] labels = {"小红书1", "小红书2", "小红书3", "抖音1", "抖音2"};
+        StringBuilder source = new StringBuilder("<<<COPY_FORMAT:MULTI>>>\n");
+        for (int i = 0; i < markers.length; i++) {
+            source.append("<<<VERSION_START:").append(markers[i]).append(">>>\n")
+                    .append("正文样本").append(i).append("\n<<<VERSION_END>>>\n");
+        }
+        java.util.List<PlatformCopyParser.AvailableItem> items = PlatformCopyParser.parseAvailablePlatforms(source.toString());
+        org.junit.Assert.assertEquals(5, items.size());
+        for (int i = 0; i < items.size(); i++) {
+            PlatformCopyParser.AvailableItem item = items.get(i);
+            org.junit.Assert.assertEquals(markers[i], item.buttonLabel);
+            org.junit.Assert.assertEquals(labels[i], PlatformCopyParser.albumLabel(item.buttonLabel));
+            org.junit.Assert.assertEquals("正文样本" + i, item.copyText.trim());
+            for (int used = 0; used < markers.length; used++) {
+                org.junit.Assert.assertEquals(i == used, PlatformCopyParser.isPlatformOrVersionDispatched(
+                        item.buttonLabel, item.platform.code, java.util.Collections.emptySet(),
+                        java.util.Collections.singletonList(markers[used]), java.util.Collections.emptyList()));
+            }
+        }
+        org.junit.Assert.assertEquals("小红书3", PlatformCopyParser.albumLabel("小红书3"));
+        org.junit.Assert.assertEquals("大纲方案版", PlatformCopyParser.albumLabel("大纲方案版"));
+    }
+
 }

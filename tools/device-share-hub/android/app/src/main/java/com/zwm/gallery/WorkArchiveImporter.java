@@ -64,8 +64,17 @@ public final class WorkArchiveImporter {
                 // same category after a remote or LAN import.
                 String sourceRelative = plan.directory != null && !plan.directory.isEmpty()
                         ? plan.directory : plan.name;
-                library.importWork(workId, plan.name, text, images, warning,
-                        "", "", sourceRelative);
+                org.json.JSONObject labels = new org.json.JSONObject();
+                String prefix = plan.directory == null || plan.directory.isEmpty() ? "" : plan.directory + "/";
+                for (String sidecar : AlbumWorkLabels.FILES) {
+                    ZipEntry metadata = zip.getEntry(prefix + sidecar);
+                    if (metadata != null && !metadata.isDirectory() && metadata.getSize() <= 512 * 1024) {
+                        try { AlbumWorkLabels.mergeJson(labels, readText(zip, metadata.getName())); }
+                        catch (IOException ignored) { }
+                    }
+                }
+                library.importWork(workId, plan.name, text, images, warning, "", "",
+                        sourceRelative, WorkCategory.fromPath(sourceRelative), labels.length() == 0 ? "" : labels.toString());
                 imported++;
             }
         } finally {

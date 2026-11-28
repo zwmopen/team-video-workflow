@@ -137,3 +137,7 @@ HTTPS 下载 → 本地大小/SHA-256 校验 → 安全暂存 → ZIP 安全导�
 - Cloudflare Worker、Durable Object 和 R2 已部署；GitHub Ubuntu runner 已通过正式 Worker 的健康检查、设备会话、presence、P2P offer/answer/close、R2 上传/下载、SHA-256、ACK 和对象删除 E2E；
 - Android/iOS/Windows 的 P2P DataChannel 数据面和 HTTPS 兜底代码已接入，但没有实体 Android、iPhone、Windows 三端同时在线时，不能宣称真实跨网络直连、自动回退、权限和文件落库验收完成；
 - `mode: "plain"` 不提供应用层加密；若未来传送私密作品，必须另立加密协议和更新版本，不能把当前公开链路误称为端到端加密。
+
+### 工作相册标签
+
+在线作品和 R2 目录条目可带可选 \`workLabels\` 对象。引擎、渠道、季节、流量定位、内容类型分别为 \`generationEngine\`、\`productionChannel\`、\`seasons\`、\`flowType\`、\`contentType\` 字符串数组，\`applicableMonths\` 为 1 至 12 的整数数组，真实记录的 \`producedAt\` 为日期字符串。投影不包含账户或运行凭证。缺失字段可省略，旧客户端照常读取原字段。R2 同步原 \`dispatchedVersions\` 与 \`dispatchedTo\`，以保留分版本显示。

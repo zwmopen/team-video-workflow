@@ -44,6 +44,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageView;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -231,6 +232,14 @@ final class PhoneGalleryPane {
                 adapter.notifyDataSetChanged();
             }
         });
+        ImageButton refreshBtn = new ImageButton(activity);
+        refreshBtn.setImageResource(R.drawable.ic_album_refresh);
+        refreshBtn.setImageTintList(android.content.res.ColorStateList.valueOf(ThemePalette.getTextSecondary(activity)));
+        refreshBtn.setBackgroundColor(Color.TRANSPARENT);
+        refreshBtn.setContentDescription("刷新本机相册");
+        refreshBtn.setPadding(dp(10), dp(10), dp(10), dp(10));
+        refreshBtn.setOnClickListener(v -> refresh());
+        subHeader.addView(refreshBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
         subHeader.addView(rightCtrlBtn, new LinearLayout.LayoutParams(-2, -2));
         root.addView(subHeader);
 

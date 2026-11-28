@@ -11,14 +11,14 @@ public final class WorkCategoryTest {
         assertEquals(WorkCategory.UNCATEGORIZED, WorkCategory.fromPath("作品集_004/笔记"));
     }
 
-    @Test public void formatsFolderLabelsWithAdaptiveTruncation() {
+    @Test public void formatsFolderLabelsAtFullLength() {
         assertEquals("全部", MainActivity.formatFolderLabel("全部"));
         assertEquals("全部", MainActivity.formatFolderLabel(null));
         assertEquals("全部", MainActivity.formatFolderLabel(""));
         assertEquals("全部", MainActivity.formatFolderLabel("all"));
         assertEquals("安吉站", MainActivity.formatFolderLabel("安吉站"));
         assertEquals("12345", MainActivity.formatFolderLabel("12345"));
-        assertEquals("作品集_1...", MainActivity.formatFolderLabel("作品集_100"));
-        assertEquals("超过五个字...", MainActivity.formatFolderLabel("超过五个字的内容"));
+        assertEquals("作品集_100", MainActivity.formatFolderLabel("作品集_100"));
+        assertEquals("超过五个字的内容", MainActivity.formatFolderLabel("超过五个字的内容"));
     }
 }

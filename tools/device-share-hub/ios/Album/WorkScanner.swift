@@ -86,7 +86,9 @@ final class WorkScanner {
                         douyinShareCount: saved?.douyinShareCount ?? 0,
                         used: saved?.used ?? false,
                         category: WorkCategory.from(path: relativePath),
-                        deleteScheduledAtMs: saved?.deleteScheduledAtMs
+                        deleteScheduledAtMs: saved?.deleteScheduledAtMs,
+                        usedCopyVersions: saved?.usedCopyVersions ?? [],
+                        workLabels: AlbumWorkLabels.read(folder: folder)
                     ))
                     return
                 }

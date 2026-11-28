@@ -78,6 +78,24 @@ struct AvailableCopyPlatform: Equatable {
 /// **一个「发布」按钮 + 含全部 `<<<VERSION_START:…>>>` 标记的整段原文**，
 /// 表现为「点文案按钮只有一段乱码、没有其他版本按钮」。
 enum PlatformCopyParser {
+    static func albumSlot(_ marker: String) -> Int {
+        switch marker.replacingOccurrences(of: "｜", with: "|")
+            .replacingOccurrences(of: " ", with: "").trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "小红书1|自然攻略版": return 1
+        case "小红书3|高密度种草版": return 2
+        case "小红书4|高密度全要素方案版": return 3
+        case "抖音|攻略版": return 4
+        case "抖音|轻分享版": return 5
+        default: return 0
+        }
+    }
+
+    static func albumLabel(_ marker: String) -> String {
+        let slot = albumSlot(marker)
+        guard slot != 0 else { return marker }
+        return slot <= 3 ? "小红书\(slot)" : "抖音\(slot - 3)"
+    }
+
     static let headerV2 = "<<<COPY_FORMAT:2>>>"
     static let headerV3 = "<<<COPY_FORMAT:3>>>"
     static let headerMulti = "<<<COPY_FORMAT:MULTI>>>"
@@ -462,21 +480,26 @@ enum PlatformCopyParser {
         let targetTag = !trimmedLabel.isEmpty ? trimmedLabel : (platformCode ?? "")
         if targetTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
 
+        let slot = albumSlot(targetTag)
+        func matches(_ candidate: String) -> Bool {
+            slot == 0 ? isVersionTagMatched(targetTag, candidate) : albumSlot(candidate) == slot
+        }
+
         // 1. 本地分发记录
         for local in localDispatched {
-            if isVersionTagMatched(targetTag, local) { return true }
+            if matches(local) { return true }
         }
         // 2. 服务端返回的 dispatchedVersions
         for ver in dispatchedVersions {
-            if isVersionTagMatched(targetTag, ver) { return true }
+            if matches(ver) { return true }
         }
         // 3. 服务端返回的 dispatchedTo（如 "设备名 (版本 @ 时间)"）
         for tag in dispatchedTo {
             let extracted = extractVersionFromRecord(tag)
             if !extracted.isEmpty {
-                if isVersionTagMatched(targetTag, extracted) { return true }
+                if matches(extracted) { return true }
             } else {
-                if isVersionTagMatched(targetTag, tag) { return true }
+                if matches(tag) { return true }
             }
         }
         return false

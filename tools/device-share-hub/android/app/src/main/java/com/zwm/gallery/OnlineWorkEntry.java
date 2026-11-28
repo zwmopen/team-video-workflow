@@ -53,6 +53,7 @@ public final class OnlineWorkEntry {
     public final String season;
     public final String flowType;
     public final List<String> tags;
+    AlbumWorkLabels workLabels = AlbumWorkLabels.EMPTY;
     public final List<String> sourceImages;
     public final List<String> sourceNames;
     public final boolean hasSourceCompare;
@@ -334,6 +335,7 @@ public final class OnlineWorkEntry {
                 json.optString("path", ""), firstSharedAtMs, expireAtMs, lastUsedAtMs, originDevice, dispatchedVersions,
                 season, flowType, tags, sourceImages, sourceNames, hasSourceCompare, maxSimilarity, similarityTag,
                 pipelineBadge, formattedDate, imageCountText);
+        entry.workLabels = new AlbumWorkLabels(json.optJSONObject("workLabels"));
         entry.videoFilename = json.optString("videoFilename", "");
         JSONObject liveObj = json.optJSONObject("livePhotos");
         if (liveObj != null && liveObj.length() > 0) {

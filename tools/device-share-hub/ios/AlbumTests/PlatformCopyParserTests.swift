@@ -326,4 +326,28 @@ final class PlatformCopyParserTests: XCTestCase {
         let normStandard = PlatformCopyParser.normalizeCopyTextForClipboard(standard)
         XCTAssertEqual(normStandard, standard)
     }
+    func testCompactAlbumLabelsKeepMachineTagsAndIndependentUse() {
+        let markers = ["小红书1｜自然攻略版", "小红书3｜高密度种草版",
+                       "小红书4｜高密度全要素方案版", "抖音｜攻略版", "抖音｜轻分享版"]
+        let labels = ["小红书1", "小红书2", "小红书3", "抖音1", "抖音2"]
+        let blocks = markers.enumerated().map { index, marker in
+            "<<<VERSION_START:\(marker)>>>\n正文样本\(index)\n<<<VERSION_END>>>"
+        }
+        let items = PlatformCopyParser.parseAvailablePlatforms(
+            (["<<<COPY_FORMAT:MULTI>>>"] + blocks).joined(separator: "\n"))
+        XCTAssertEqual(items.count, 5)
+        for (index, item) in items.enumerated() {
+            XCTAssertEqual(item.buttonLabel, markers[index])
+            XCTAssertEqual(PlatformCopyParser.albumLabel(item.buttonLabel), labels[index])
+            XCTAssertEqual(item.copyText, "正文样本\(index)")
+            for (used, marker) in markers.enumerated() {
+                XCTAssertEqual(index == used, PlatformCopyParser.isPlatformOrVersionDispatched(
+                    buttonLabel: item.buttonLabel, platformCode: item.platform.code, localDispatched: [],
+                    dispatchedVersions: [marker], dispatchedTo: []))
+            }
+        }
+        XCTAssertEqual(PlatformCopyParser.albumLabel("小红书3"), "小红书3")
+        XCTAssertEqual(PlatformCopyParser.albumLabel("大纲方案版"), "大纲方案版")
+    }
+
 }

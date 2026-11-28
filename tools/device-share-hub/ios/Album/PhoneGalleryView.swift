@@ -76,6 +76,11 @@ final class PhoneGalleryViewController: UIViewController,
         loadGallery()
     }
 
+    @objc private func pullToRefreshGallery() {
+        refreshGallery()
+        collectionView.refreshControl?.endRefreshing()
+    }
+
     func refreshGallery() {
         refreshAppearance()
         loadGallery()
@@ -211,6 +216,10 @@ final class PhoneGalleryViewController: UIViewController,
         }
         bottomDock.isHidden = true
 
+        let refreshControl = UIRefreshControl()
+        refreshControl.addTarget(self, action: #selector(pullToRefreshGallery), for: .valueChanged)
+        collectionView.refreshControl = refreshControl
+        collectionView.alwaysBounceVertical = true
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(headerBar)
         view.addSubview(collectionView)

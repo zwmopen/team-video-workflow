@@ -1,5 +1,6 @@
 # 文件收发中控（最新正式发布：Windows V4.3.33 / Android 0.8.109 / iPhone 0.8.109）
 
+> 团队工作相册紧凑化 UI 精修 V1.0 候选源码为 Android/iOS 0.8.142 (253)。界面沿用原有大图对比、LIVE、文案和卡片操作；标签按制作来源与作品定位分维度展示。
 > 当前维护交接以 `docs/MAINTAINER_HANDOFF.md` 为准。
 > LIVE 菜单及引擎偏好候选设计：[LIVE_QUICK_MENU_ENGINE_DESIGN.md](docs/LIVE_QUICK_MENU_ENGINE_DESIGN.md)，当前仅本地处理，未发布。
 > 2026-11-27 LIVE 胶囊轻量交互为云端源码候选，未发布；长按滑选与普通点击兼容待实机验收。

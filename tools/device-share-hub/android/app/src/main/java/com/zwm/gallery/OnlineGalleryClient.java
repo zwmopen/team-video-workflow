@@ -965,8 +965,10 @@ public final class OnlineGalleryClient {
             if (shouldTryRemoteFirst()) {
                 try {
                     List<OnlineWorkEntry> remoteList = filterRemoteWorks(fetchRemoteCatalogSnapshot(), category, query);
-                    remoteCatalogActive = true;
-                    mainHandler.post(() -> callback.onSuccess(remoteList));
+                    mainHandler.post(() -> {
+                        remoteCatalogActive = true;
+                        callback.onSuccess(remoteList);
+                    });
                     return;
                 } catch (Exception remoteErr) {
                     Log.w(TAG, "R2_FIRST fetchWorks failed, falling back to LAN: " + remoteErr.getMessage());
@@ -991,11 +993,11 @@ public final class OnlineGalleryClient {
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
                 List<OnlineWorkEntry> list = parseWorks(resp);
                 JSONObject responseJson = new JSONObject(resp);
+                if (responseJson.optJSONArray("works") == null) throw new java.io.IOException("在线相册响应缺少作品列表");
                 long scanRevision = responseJson.optLong("scanRevision", -1L);
                 if (requestSequence == worksRequestSequence.get()) {
                     lastAppliedWorksScanRevision = scanRevision;
                 }
-                remoteCatalogActive = false;
                 RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
                 Log.i(TAG, "fetchWorks parsed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
@@ -1003,14 +1005,19 @@ public final class OnlineGalleryClient {
                 // 只有「全量列表」才值得做快照：带分类/关键词的响应是子集，
                 // 存下去会让下次秒开时看到一个不完整的列表。
                 if (fullList) OnlineListCache.saveWorks(context, resp);
-                mainHandler.post(() -> callback.onSuccess(list));
+                mainHandler.post(() -> {
+                    remoteCatalogActive = false;
+                    callback.onSuccess(list);
+                });
             } catch (Exception e) {
                 if (RemoteRelayProfile.isEnrolled(context)) {
                     try {
                         List<OnlineWorkEntry> remoteList = fetchRemoteCatalogSnapshot();
                         if (remoteList != null) {
-                            remoteCatalogActive = true;
-                            mainHandler.post(() -> callback.onSuccess(remoteList));
+                            mainHandler.post(() -> {
+                                remoteCatalogActive = true;
+                                callback.onSuccess(remoteList);
+                            });
                             return;
                         }
                     } catch (Exception remoteErr) {

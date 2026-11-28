@@ -4074,6 +4074,7 @@ class WorkScanner:
         # 来源迁移后的旁车文件是非破坏性的溯源补充：不改写原 manifest，
         # 但让手机端读取到统一的原素材地址和逐页对照。metadata.json 作为旧包兜底。
         provenance_data: Dict[str, Any] = {}
+        work_metadata: Dict[str, Any] = {}
         finished_package_work_id = ""
         for aux_name in ("source-provenance.json", "metadata.json"):
             aux_file = os.path.join(dir_path, aux_name)
@@ -4086,6 +4087,8 @@ class WorkScanner:
                     continue
                 if aux_name == "source-provenance.json":
                     provenance_data = aux
+                elif aux_name == "metadata.json":
+                    work_metadata = aux
                 if aux_name == "metadata.json" and aux.get("metadataContract", {}).get("name") == "jianghu-finished-product":
                     canonical = aux.get("canonical", {})
                     finished_package_work_id = str(canonical.get("identity", {}).get("workId") or "")
@@ -4527,6 +4530,7 @@ class WorkScanner:
             "season": manifest_data.get("season") or ("秋季" if any(k in folder_name for k in ["秋", "中秋", "国庆"]) else ("夏季" if any(k in folder_name for k in ["夏", "避暑", "溯溪"]) else ("冬季" if any(k in folder_name for k in ["冬", "年会", "滑雪", "温泉"]) else "四季通用"))),
             "flowType": manifest_data.get("flowType") or ("泛流量游戏攻略" if any(k in folder_name for k in ["游戏", "桌游", "破冰", "冷场"]) else "精准流量团建"),
             "tags": manifest_data.get("tags") or [],
+            "workLabels": project_work_labels(work_metadata, manifest_data, tag_data, provenance_data),
             "pipeline": manifest_data.get("pipeline") or ("CDP双浏览器产线" if "CDP" in folder_name else ("Codex-API产线" if "Codex" in folder_name else "GPT扩展+本地脚本产线")),
             "pipelineBadge": _format_pipeline_badge(folder_name, manifest_data),
             "formattedDate": _format_work_date(created_at_ms),
@@ -4543,6 +4547,73 @@ class WorkScanner:
         }
         self._inspect_cache[cache_key] = (dir_stamp, work_result, slot_diag)
         return dict(work_result)
+
+
+# V1 compact album: a read-only projection of recorded production/classification metadata.
+def project_work_labels(*documents: Any) -> Dict[str, Any]:
+    def obj(value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def values(value: Any) -> List[str]:
+        items = value if isinstance(value, list) else [value]
+        return list(dict.fromkeys(
+            item.strip() for item in items if isinstance(item, str)
+            and 0 < len(item.strip()) <= 80
+            and not re.search(r"[:][/][/]|[\r\n=]|(?:sk-|Bearer\s)", item, re.I)
+        ))
+
+    output: Dict[str, Any] = {}
+    for raw in documents:
+        doc = obj(raw)
+        canonical = obj(doc.get("canonical"))
+        production = obj(canonical.get("production"))
+        classification = obj(canonical.get("classification"))
+        candidates = {
+            "generationEngine": (production.get("engineId"), production.get("generationEngine"),
+                                 doc.get("generationEngine")),
+            "productionChannel": (production.get("channelId"), production.get("productionChannel"),
+                                  doc.get("productionChannel")),
+            "seasons": (classification.get("seasons"), classification.get("season"),
+                        doc.get("seasons"), doc.get("season")),
+            "applicableMonths": (classification.get("applicableMonths"), doc.get("applicableMonths")),
+            "flowType": (classification.get("flowType"), doc.get("flowType")),
+            "contentType": (classification.get("contentType"), doc.get("contentType")),
+            "producedAt": (production.get("generatedAt"), production.get("producedAt"),
+                           doc.get("producedAt"), doc.get("completedAt"), doc.get("completedAtUtc")),
+        }
+        for dimension, alternatives in candidates.items():
+            if dimension in output:
+                continue
+            for value in alternatives:
+                if dimension == "applicableMonths":
+                    items = value if isinstance(value, list) else [value]
+                    months = set()
+                    for item in items:
+                        raw_month = str(item).removesuffix("月")
+                        if re.fullmatch(r"0?[1-9]|1[0-2]", raw_month):
+                            months.add(int(raw_month))
+                    if months:
+                        output[dimension] = sorted(months)
+                        break
+                    continue
+                labels = values(value)
+                if not labels:
+                    continue
+                aliases = {
+                    "generationEngine": {"magpie-http": "Magpie", "trueapi-image-direct": "True API",
+                                         "codex-native-imagegen": "Codex 原生"},
+                    "productionChannel": {"Codex native": "Codex"},
+                    "flowType": {"精准流量团建": "精准流量", "泛流量游戏攻略": "泛流量"},
+                }.get(dimension, {})
+                if dimension == "producedAt":
+                    date = next((label for label in labels if re.match(r"^\d{4}-\d{2}-\d{2}(?:$|[T ])", label)), None)
+                    if not date:
+                        continue
+                    output[dimension] = date
+                else:
+                    output[dimension] = list(dict.fromkeys(aliases.get(label, label) for label in labels))
+                break
+    return output
 
 
 # DSH-109：在线相册列表排序键（服务端 /api/online/works?sort=）
@@ -5256,7 +5327,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.8",
+                "version": "1.2.11",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,

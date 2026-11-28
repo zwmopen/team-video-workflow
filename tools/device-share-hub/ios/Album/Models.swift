@@ -13,10 +13,13 @@ struct WorkItem: Identifiable, Hashable {
     let used: Bool
     let category: String
     let deleteScheduledAtMs: Double?
+    let usedCopyVersions: Set<String>
+    let workLabels: AlbumWorkLabels
 
     init(key: String, name: String, relativePath: String, folderURL: URL, textURL: URL,
          imageURLs: [URL], shareCount: Int, xhsShareCount: Int, douyinShareCount: Int,
-         used: Bool, category: String, deleteScheduledAtMs: Double? = nil) {
+         used: Bool, category: String, deleteScheduledAtMs: Double? = nil,
+         usedCopyVersions: Set<String> = [], workLabels: AlbumWorkLabels = AlbumWorkLabels()) {
         self.key = key
         self.name = name
         self.relativePath = relativePath
@@ -29,6 +32,8 @@ struct WorkItem: Identifiable, Hashable {
         self.used = used
         self.category = category
         self.deleteScheduledAtMs = deleteScheduledAtMs
+        self.usedCopyVersions = usedCopyVersions
+        self.workLabels = workLabels
     }
 
     var id: String { key }
@@ -78,6 +83,7 @@ struct LibraryState: Codable {
 
 struct WorkState: Codable {
     var shareCount = 0
+    var usedCopyVersions: Set<String> = []
     var xhsShareCount = 0
     var douyinShareCount = 0
     var used = false
@@ -97,6 +103,7 @@ struct WorkState: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         shareCount = try container.decodeIfPresent(Int.self, forKey: .shareCount) ?? 0
+        usedCopyVersions = try container.decodeIfPresent(Set<String>.self, forKey: .usedCopyVersions) ?? []
         xhsShareCount = try container.decodeIfPresent(Int.self, forKey: .xhsShareCount) ?? 0
         douyinShareCount = try container.decodeIfPresent(Int.self, forKey: .douyinShareCount) ?? 0
         lastShareDate = try container.decodeIfPresent(String.self, forKey: .lastShareDate)

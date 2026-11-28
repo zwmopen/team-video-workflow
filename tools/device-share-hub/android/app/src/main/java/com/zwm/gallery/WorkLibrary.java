@@ -92,6 +92,14 @@ public final class WorkLibrary {
             String sourceParentDocumentId,
             String sourceRelativePath,
             String category) throws IOException {
+        return importWork(id, name, text, sourceImages, warning, sourceDocumentId,
+                sourceParentDocumentId, sourceRelativePath, category, "");
+    }
+
+    public synchronized WorkEntry importWork(
+            String id, String name, String text, List<File> sourceImages, String warning,
+            String sourceDocumentId, String sourceParentDocumentId, String sourceRelativePath,
+            String category, String labelProjection) throws IOException {
         validateId(id);
         if (sourceImages == null || sourceImages.isEmpty()) {
             throw new IOException("作品中没有可导入的图片");
@@ -146,11 +154,13 @@ public final class WorkLibrary {
                 meta.setProperty("sourceParentDocumentId", valueOrEmpty(sourceParentDocumentId));
                 meta.setProperty("sourceRelativePath", valueOrEmpty(sourceRelativePath));
                 meta.setProperty("category", normalizeCategory(category));
+                if (!labelProjection.isEmpty()) meta.setProperty("workLabels", labelProjection);
                 Properties history = loadHistory(id);
                 copyIfPresent(meta, history, "used");
                 copyIfPresent(meta, history, "xhsShareCount");
                 copyIfPresent(meta, history, "douyinShareCount");
                 copyIfPresent(meta, history, "shareCount");
+                copyIfPresent(meta, history, "usedCopyVersions");
                 copyIfPresent(meta, history, "sharedDate");
                 copyIfPresent(meta, history, "firstSharedAtMs");
                 copyIfPresent(meta, history, "firstUsedAtMs");
@@ -319,6 +329,13 @@ public final class WorkLibrary {
         }
         int count = parseCount(meta.getProperty("shareCount", "0"));
         meta.setProperty("shareCount", Integer.toString(count + 1));
+        if (PlatformCopyParser.albumSlot(platform) != 0) {
+            java.util.Set<String> versions = new java.util.LinkedHashSet<>(
+                    java.util.Arrays.asList(meta.getProperty("usedCopyVersions", "").split("\\n")));
+            versions.remove("");
+            versions.add(platform);
+            meta.setProperty("usedCopyVersions", String.join("\n", versions));
+        }
         if ("xhs".equals(platform) || "xhs2".equals(platform) || "xhs_2".equals(platform)) {
             int xhs = parseCount(meta.getProperty("xhsShareCount", "0"));
             meta.setProperty("xhsShareCount", Integer.toString(xhs + 1));
@@ -338,6 +355,7 @@ public final class WorkLibrary {
         Properties meta = loadMeta(entry.directory);
         meta.setProperty("used", "false");
         meta.setProperty("shareCount", "0");
+        meta.remove("usedCopyVersions");
         meta.setProperty("xhsShareCount", "0");
         meta.setProperty("douyinShareCount", "0");
         meta.remove("sharedDate");
@@ -345,9 +363,8 @@ public final class WorkLibrary {
         meta.setProperty("firstUsedAtMs", "0");
         meta.setProperty("deleteScheduledAtMs", "0");
         saveMeta(entry.directory, meta);
-        WorkEntry updated = readEntry(entry.directory);
-        saveHistory(updated);
-        return updated;
+        Files.deleteIfExists(child(historyRoot, id + ".properties").toPath());
+        return readEntry(entry.directory);
     }
 
     /**
@@ -1049,6 +1066,8 @@ public final class WorkLibrary {
                 normalizeCategory(meta.getProperty("category",
                         WorkCategory.fromPath(meta.getProperty("sourceRelativePath", "")))),
                 meta.getProperty("garbageRemark", ""),
+                meta.getProperty("usedCopyVersions", ""),
+                meta.getProperty("workLabels", ""),
                 directory.getCanonicalFile());
     }
 
@@ -1093,6 +1112,7 @@ public final class WorkLibrary {
         Properties history = new Properties();
         history.setProperty("used", Boolean.toString(entry.used));
         history.setProperty("shareCount", Integer.toString(entry.shareCount));
+        history.setProperty("usedCopyVersions", String.join("\n", entry.usedCopyVersions));
         history.setProperty("xhsShareCount", Integer.toString(entry.xhsShareCount));
         history.setProperty("douyinShareCount", Integer.toString(entry.douyinShareCount));
         history.setProperty("firstSharedAtMs", Long.toString(entry.firstSharedAtMs));
@@ -1229,6 +1249,8 @@ public final class WorkLibrary {
         /** 本地「备注并删除」写入的垃圾原因（手机本地 .meta；与在线版 quality_tag.json 语义对齐） */
         public final String garbageRemark;
         public final File directory;
+        public final java.util.Set<String> usedCopyVersions;
+        final AlbumWorkLabels workLabels;
 
         private WorkEntry(String id, String name, String text, String warning,
                           List<String> images, LocalDate sharedDate, LocalDate trashedDate,
@@ -1238,7 +1260,7 @@ public final class WorkLibrary {
                           String sourceDocumentId, String sourceParentDocumentId,
                           String sourceRelativePath, String trashDocumentId, String externalTrashName,
                           String category,
-                          String garbageRemark,
+                          String garbageRemark, String usedCopyVersions, String workLabels,
                           File directory) {
             this.id = id;
             this.name = name;
@@ -1262,6 +1284,11 @@ public final class WorkLibrary {
             this.externalTrashName = externalTrashName;
             this.category = category;
             this.garbageRemark = garbageRemark == null ? "" : garbageRemark;
+            this.workLabels = AlbumWorkLabels.fromStored(workLabels, directory);
+            java.util.Set<String> copyVersions = new java.util.HashSet<>(
+                    java.util.Arrays.asList(usedCopyVersions.split("\n")));
+            copyVersions.remove("");
+            this.usedCopyVersions = Collections.unmodifiableSet(copyVersions);
             this.directory = directory;
         }
 

@@ -555,6 +555,7 @@ public final class MainActivity extends Activity {
         titleRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
         modeButton = compactToolbarButton(R.drawable.ic_file_folder, "切换到文件浏览");
+        modeButton.setMinimumWidth(dp(44));
         modeButton.setOnClickListener(v -> {
             if (isOnlineMode) {
                 showTrash();
@@ -564,13 +565,16 @@ public final class MainActivity extends Activity {
                 showFileMode();
             }
         });
-        titleRow.addView(modeButton, compactIconParams(false));
+        LinearLayout topActions = new LinearLayout(this);
+        topActions.setGravity(Gravity.CENTER_VERTICAL);
+        topActions.setBackground(round(ThemePalette.getPillBg(this), 22));
+        titleRow.addView(topActions, new LinearLayout.LayoutParams(-2, -2));
         ImageButton transfer = compactToolbarButton(R.drawable.ic_album_transfer, "传送文件");
         transfer.setOnClickListener(v -> {
             toast("文件传输");
             startActivity(new Intent(this, TransferActivity.class));
         });
-        titleRow.addView(transfer, compactIconParams(true));
+        topActions.addView(transfer, compactIconParams(false));
 
         leftModeButton = compactToolbarButton(R.drawable.ic_album_refresh, "刷新作品");
         leftModeButton.setVisibility(View.GONE);
@@ -591,11 +595,13 @@ public final class MainActivity extends Activity {
                 importSelectedTree(true);
             }
         });
-        titleRow.addView(leftModeButton, compactIconParams(true));
         rightModeButton = compactToolbarButton(R.drawable.ic_album_trash, "回收站");
         rightModeButton.setVisibility(View.VISIBLE);
         rightModeButton.setOnClickListener(v -> {
-            if (fileMode) {
+            if (activeSourceMode == SOURCE_GALLERY) {
+                selectSourceMode(SOURCE_LOCAL);
+                showTrash();
+            } else if (fileMode) {
                 leaveFileMode();
                 toast("回收站");
                 showTrash();
@@ -612,39 +618,36 @@ public final class MainActivity extends Activity {
                 showTrash();
             }
         });
-        titleRow.addView(rightModeButton, compactIconParams(true));
+        topActions.addView(rightModeButton, compactIconParams(false));
         ImageButton settings = compactToolbarButton(R.drawable.ic_album_settings, "设置");
         settings.setOnClickListener(v -> {
             toast("设置");
             startActivity(new Intent(this, SettingsActivity.class));
         });
-        titleRow.addView(settings, compactIconParams(true));
+        topActions.addView(settings, compactIconParams(false));
         categoryBar = new LinearLayout(this);
         categoryBar.setOrientation(LinearLayout.HORIZONTAL);
         categoryBar.setGravity(Gravity.CENTER_VERTICAL);
         categoryBar.setClipChildren(false);
-        categoryBar.setPadding(dp(4), dp(4), dp(4), dp(4));
+        categoryBar.setPadding(dp(2), 0, dp(2), 0);
 
         categoryScrollView = new HorizontalScrollView(this);
         categoryScrollView.setHorizontalScrollBarEnabled(false);
         categoryScrollView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         categoryScrollView.setClipChildren(false);
         categoryScrollView.setClipToPadding(false);
-        categoryScrollView.addView(categoryBar, new FrameLayout.LayoutParams(-2, -1));
+        categoryScrollView.addView(categoryBar, new FrameLayout.LayoutParams(-2, -2));
 
         categorySelector = new FrameLayout(this);
         categorySelector.setClipChildren(false);
         categorySelector.setClipToPadding(false);
-        categorySelector.setBackground(ThemePalette.isFlClashGlassStyle(this)
-                ? roundWithStroke(ThemePalette.getGlassTrackBg(this), 13, ThemePalette.getGlassTrackStroke(this))
-                : round(ThemePalette.isDarkMode(this) ? Color.rgb(28, 28, 30) : Color.rgb(232, 234, 233), 13));
-        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, dp(42)));
+        categorySelector.addView(categoryScrollView, new FrameLayout.LayoutParams(-1, -2));
 
         searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
         searchBar.setGravity(Gravity.CENTER_VERTICAL);
         searchBar.setMinimumHeight(dp(38));
-        searchBar.setBackground(roundWithStroke(ThemePalette.getCardBg(this), 12, ThemePalette.getCardStroke(this)));
+        searchBar.setBackground(round(ThemePalette.getCardBg(this), 12));
         searchBar.setPadding(dp(10), dp(4), dp(6), dp(4));
 
         ImageView searchIcon = new ImageView(this);
@@ -798,8 +801,7 @@ public final class MainActivity extends Activity {
         statusText.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         statusText.setSingleLine(true);
         statusText.setEllipsize(TextUtils.TruncateAt.END);
-        statusText.setBackground(round(ThemePalette.getPillBg(MainActivity.this), 14));
-        statusText.setPadding(dp(10), dp(6), dp(10), dp(6));
+        statusText.setPadding(dp(6), dp(4), dp(4), dp(4));
 
         liveStatusPill = text("", 11, true);
         liveStatusPill.setSingleLine(true);
@@ -821,6 +823,8 @@ public final class MainActivity extends Activity {
         statusRow = new LinearLayout(this);
         statusRow.setOrientation(LinearLayout.HORIZONTAL);
         statusRow.setGravity(Gravity.CENTER_VERTICAL);
+        statusRow.addView(leftModeButton, compactIconParams(false));
+        statusRow.addView(modeButton, compactIconParams(false));
         statusRow.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout.LayoutParams livePillParams = new LinearLayout.LayoutParams(-2, -2);
         livePillParams.setMargins(dp(6), 0, 0, 0);
@@ -2129,14 +2133,15 @@ public final class MainActivity extends Activity {
         } else if (selecting) {
             card.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
         } else {
+            card.addView(albumLabelRow(work.workLabels, work.images.size()));
             FlowLayout platformRow = new FlowLayout(this);
             platformRow.setClipChildren(false);
             platformRow.setClipToPadding(false);
             // 【2026-09-23】版本按钮 = 解析结果的**原始顺序**（文案.txt 里版本块的先后顺序），
             // 不排序、不摘项。按钮的 height 用 WRAP_CONTENT：单行时由 `styleNeumorphicButton`
             // 的 `setMinHeight(dp(36))` 兜底 36dp，需要折成两行时自动长高，不会被裁。
-            platformRow.setHorizontalSpacing(dp(8));
-            platformRow.setVerticalSpacing(dp(8));
+            platformRow.setHorizontalSpacing(dp(4));
+            platformRow.setVerticalSpacing(dp(4));
             List<PlatformCopyParser.AvailableItem> rawPlatforms =
                     PlatformCopyParser.parseAvailablePlatforms(work.text);
             List<PlatformCopyParser.AvailableItem> availablePlatforms =
@@ -2150,37 +2155,34 @@ public final class MainActivity extends Activity {
                         || item.platform == PlatformCopyParser.Platform.XHS_3) {
                     clickCount = work.xhsShareCount;
                 }
-                Button btn = compactButton(item.buttonLabel, clickCount == 0);
-                btn.setContentDescription(item.buttonLabel + "，已使用 " + clickCount + " 次");
-                final int finalClickCount = clickCount;
+                boolean numbered = PlatformCopyParser.albumSlot(item.buttonLabel) != 0;
+                Button btn = albumCopyButton(item, numbered
+                        ? work.usedCopyVersions.contains(item.buttonLabel) : clickCount > 0);
                 final String copyForPlatform = (item.copyText != null && !item.copyText.isEmpty())
                         ? item.copyText : PlatformCopyParser.extractPlatformCopy(work.text, item.platform);
                 btn.setOnClickListener(v -> {
-                    markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
                     openShare(work, item.buttonLabel, copyForPlatform);
                 });
                 btn.setOnLongClickListener(v -> {
                     showCopyPreviewDialog(work.name, item.buttonLabel, copyForPlatform, () -> {
-                        markPlatformButtonClicked(btn, item.buttonLabel, finalClickCount);
-                        openShare(work, item.buttonLabel, copyForPlatform);
+                            openShare(work, item.buttonLabel, copyForPlatform);
                     });
                     return true;
                 });
                 platformRow.addView(btn, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             }
             Button reset = new Button(this);
-            reset.setText("重置状态");
-            styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
+            styleAlbumAction(reset, "↺ 重置状态", false);
             reset.setContentDescription("重置作品状态为未发布");
             reset.setOnClickListener(v -> confirmResetWork(work.id));
             Button delete = new Button(this);
-            delete.setText("删除");
-            styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
+            styleAlbumAction(delete, "× 删除", true);
             delete.setContentDescription("删除作品，移到回收站");
             delete.setOnClickListener(v -> confirmMoveWorkToTrash(work.id));
             // 本地作品底部三按钮与在线卡片保持同一顺序与居中布局。
             String localPath = work.directory != null ? work.directory.getAbsolutePath() : "";
             Button copyPath = copyPathButton(localPath, "手机本地作品");
+            styleAlbumAction(copyPath, "▣ 复制路径", false);
             LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
             platformRowParams.setMargins(0, dp(8), 0, dp(2));
             card.addView(platformRow, platformRowParams);
@@ -2309,12 +2311,7 @@ public final class MainActivity extends Activity {
         if (name == null || name.trim().isEmpty() || WorkCategory.ALL.equals(name)) {
             return "全部";
         }
-        String trimmed = name.trim();
-        if (trimmed.codePointCount(0, trimmed.length()) > 5) {
-            int offset = trimmed.offsetByCodePoints(0, 5);
-            return trimmed.substring(0, offset) + "...";
-        }
-        return trimmed;
+        return name.trim();
     }
 
     private void updateCategoryCounts(List<WorkLibrary.WorkEntry> entries) {
@@ -2397,8 +2394,10 @@ public final class MainActivity extends Activity {
         button.setText(buttonText);
         button.setAllCaps(false);
         button.setTextSize(12);
-        button.setMinHeight(dp(34));
-        button.setMinimumHeight(dp(34));
+        button.setSingleLine(true);
+        button.setEllipsize(null);
+        button.setMinHeight(dp(36));
+        button.setMinimumHeight(dp(36));
         button.setMinimumWidth(dp(48));
         button.setPadding(dp(12), dp(2), dp(12), dp(2));
         button.setElevation(0);
@@ -2406,24 +2405,16 @@ public final class MainActivity extends Activity {
         applyCategoryButtonStyle(button, isSelected);
 
         button.setOnClickListener(v -> selectCategory(folderKey, true));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
         params.setMargins(dp(2), 0, dp(2), 0);
         button.setLayoutParams(params);
         return button;
     }
 
     private void applyCategoryButtonStyle(Button button, boolean isSelected) {
-        if (isSelected) {
-            button.setBackground(round(ThemePalette.getCardBg(MainActivity.this), 10));
-            button.setTextColor(ThemePalette.getTextPrimary(MainActivity.this));
-            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            button.setElevation(dp(1));
-        } else {
-            button.setBackgroundColor(Color.TRANSPARENT);
-            button.setTextColor(ThemePalette.getTextSecondary(MainActivity.this));
-            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
-            button.setElevation(0);
-        }
+        button.setBackground(isSelected ? round(ThemePalette.getBrandLightBg(this), 14) : null);
+        button.setTextColor(isSelected ? ThemePalette.getBrandLightText(this) : ThemePalette.getTextSecondary(this));
+        button.setTypeface(Typeface.DEFAULT, isSelected ? Typeface.BOLD : Typeface.NORMAL);
     }
 
     private void showPullProgress(float progress, boolean ready) {
@@ -3504,10 +3495,75 @@ public final class MainActivity extends Activity {
         return button;
     }
 
-    private void markPlatformButtonClicked(Button button, String label, int previousCount) {
-        styleNeumorphicButton(button, STYLE_MUTED_GRAY);
-        button.setContentDescription(label + "，已使用 " + Math.max(1, previousCount + 1) + " 次");
-        button.setEnabled(true);
+    private View albumLabelRow(AlbumWorkLabels labels, int imageCount) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        ImageButton icon = compactToolbarButton(R.drawable.ic_album_tag, "查看作品标签");
+        row.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        icon.setPadding(dp(9), dp(9), dp(9), dp(9));
+
+        List<String> core = labels.core();
+        int visibleCount = Math.min(core.size(), 4);
+        String summary = visibleCount == 0 ? "未分类" : String.join(" · ", core.subList(0, visibleCount));
+        TextView title = text(summary, 11, false);
+        title.setTextColor(ThemePalette.getTextSecondary(this));
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        row.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (core.size() > visibleCount) {
+            TextView more = text("+" + (core.size() - visibleCount), 11, true);
+            row.addView(more, new LinearLayout.LayoutParams(-2, -2));
+        }
+        View.OnClickListener details = v -> new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
+                .setTitle("作品标签")
+                .setMessage(labels.detail(imageCount))
+                .setPositiveButton("关闭", null)
+                .show();
+        icon.setOnClickListener(details);
+        row.setOnClickListener(details);
+        return row;
+    }
+
+    private Button albumCopyButton(PlatformCopyParser.AvailableItem item, boolean used) {
+        String label = PlatformCopyParser.albumLabel(item.buttonLabel);
+        Button button = new Button(this);
+        button.setText(used ? "✓ " + label : label);
+        button.setContentDescription(label + (used ? "，已使用" : ""));
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setMinWidth(0);
+        button.setMinimumWidth(dp(44));
+        button.setMinHeight(0);
+        button.setMinimumHeight(dp(36));
+        button.setPadding(dp(5), dp(4), dp(5), dp(4));
+        button.setStateListAnimator(null);
+        boolean dark = ThemePalette.isDarkMode(this);
+        boolean xhs = label.startsWith("小红书") || item.platform == PlatformCopyParser.Platform.XHS
+                || item.platform == PlatformCopyParser.Platform.XHS_2 || item.platform == PlatformCopyParser.Platform.XHS_3;
+        button.setTextColor(xhs ? (dark ? 0xFFF4BCC5 : 0xFF853543) : ThemePalette.getTextPrimary(this));
+        int background = xhs ? (dark ? 0xFF482D35 : 0xFFFBECEF) : ThemePalette.getPillBg(this);
+        button.setBackground(new android.graphics.drawable.RippleDrawable(
+                ColorStateList.valueOf(0x22000000), round(background, 10), null));
+        return button;
+    }
+
+    private void styleAlbumAction(Button button, String label, boolean destructive) {
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(dp(38));
+        button.setPadding(dp(3), dp(3), dp(3), dp(3));
+        button.setStateListAnimator(null);
+        button.setElevation(0);
+        TypedValue feedback = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, feedback, true);
+        button.setBackgroundResource(feedback.resourceId);
+        button.setTextColor(destructive
+                ? (ThemePalette.isDarkMode(this) ? 0xFFF0AFAF : 0xFF9D4E51)
+                : ThemePalette.getTextSecondary(this));
     }
 
     private LinearLayout.LayoutParams compactButtonRowParams(boolean withLeftMargin) {
@@ -3574,15 +3630,17 @@ public final class MainActivity extends Activity {
         ImageButton button = new ImageButton(this);
         button.setImageResource(imageResource);
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        button.setImageTintList(ColorStateList.valueOf(ThemePalette.getBrandLightText(this)));
-        button.setBackground(round(ThemePalette.getBrandLightBg(this), 19));
-        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        button.setImageTintList(ColorStateList.valueOf(ThemePalette.getTextSecondary(this)));
+        TypedValue feedback = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, feedback, true);
+        button.setBackgroundResource(feedback.resourceId);
+        button.setPadding(dp(11), dp(11), dp(11), dp(11));
         button.setContentDescription(description);
         return button;
     }
 
     private LinearLayout.LayoutParams compactIconParams(boolean withLeftMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(38), dp(38));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(44));
         if (withLeftMargin) params.setMargins(dp(4), 0, 0, 0);
         return params;
     }
@@ -3683,7 +3741,7 @@ public final class MainActivity extends Activity {
                 leftModeButton.setContentDescription("刷新本机相册");
                 leftModeButton.setVisibility(View.VISIBLE);
             }
-            if (rightModeButton != null) rightModeButton.setVisibility(View.GONE);
+            if (rightModeButton != null) rightModeButton.setVisibility(View.VISIBLE);
         } else {
             if (statusRow != null) statusRow.setVisibility(View.VISIBLE);
             if (collapsibleHeader != null) collapsibleHeader.setVisibility(View.VISIBLE);
@@ -3728,7 +3786,11 @@ public final class MainActivity extends Activity {
         updateSourceModeButtonStyle();
         selectedWorkIds.clear();
         quickTrashButton.setVisibility(View.GONE);
-        if (modeButton != null) modeButton.setVisibility(View.VISIBLE);
+        if (modeButton != null) {
+            modeButton.setImageResource(R.drawable.ic_file_folder);
+            modeButton.setContentDescription("文件浏览");
+            modeButton.setVisibility(View.VISIBLE);
+        }
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
         footerNote.setText("📱 手机本地作品：点击文案复制并唤起分享；长按文案按钮可全屏预览。");
@@ -3755,7 +3817,11 @@ public final class MainActivity extends Activity {
         if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
         // DSH-188：DSH-097 明确要求 folderItem 双模式可见（在线模式点击进回收站）；
         // 这里原先写 GONE，导致进出一次回收站后该按钮永久消失。
-        if (modeButton != null) modeButton.setVisibility(View.VISIBLE);
+        if (modeButton != null) {
+            modeButton.setImageResource(R.drawable.ic_album_trash);
+            modeButton.setContentDescription("手机本地回收站");
+            modeButton.setVisibility(View.VISIBLE);
+        }
         leftModeButton.setVisibility(View.GONE);
         rightModeButton.setVisibility(View.VISIBLE);
         footerNote.setText("💻 电脑在线作品：实时读取电脑首发成品，点击文案复制并唤起分享；长按文案按钮可全屏预览。");
@@ -3769,39 +3835,11 @@ public final class MainActivity extends Activity {
             // 秒开：先把已有数据（内存或开机预热好的磁盘快照）直接铺满屏幕，
             // 状态栏只说「正在后台刷新…」，不再出现阻塞感的「正在连接…」
             applyOnlineCategoryFilter(selectedOnlineCategory);
-            statusText.setText(onlineStatusLine("正在刷新…"));
+            statusText.setText("◌ 正在连接电脑");
             refreshOnlineWorks(false);
         } else {
             refreshOnlineWorks(true);
         }
-    }
-
-    /** 在线模式下状态栏左侧的统一前缀（「💻 电脑在线相册 (url)」）。 */
-    private String onlineSourceLabel() {
-        return "💻 电脑在线相册 (" + onlineClient.resolveBaseUrl() + ")";
-    }
-
-    /**
-     * 状态栏里的「数据来源后缀」。
-     * 当前展示的是本地快照时，明确告诉用户数据新鲜度 ——
-     * 否则「秒开」会被误读成「电脑已经连上了」，电脑真关机时反而更像故障。
-     */
-    private String onlineDataSuffix() {
-        if (!onlineListFromSnapshot) return "";
-        String age = snapshotAgeText();
-        return age != null ? "（本地快照 · " + age + "）" : "（本地快照）";
-    }
-
-    /**
-     * 在线列表状态栏的统一起草：`💻 电脑在线相册 (url) · 共 N 套（本地快照 · X 分钟前）`。
-     * @param tail 追加在末尾的短语（如「正在刷新…」），可为 null。
-     */
-    private String onlineStatusLine(String tail) {
-        StringBuilder sb = new StringBuilder(onlineSourceLabel())
-                .append(" · 共 ").append(onlineWorks.size()).append(" 套")
-                .append(onlineDataSuffix());
-        if (tail != null) sb.append(" · ").append(tail);
-        return sb.toString();
     }
 
     /**
@@ -3845,7 +3883,7 @@ public final class MainActivity extends Activity {
                     // 离线或 categories 快照缺失时用户连「全部 N」都看不到。
                     updateOnlineCategoryCounts(lastCategoriesResult, onlineWorks);
                     applyOnlineCategoryFilter(selectedOnlineCategory);
-                    statusText.setText(onlineStatusLine("正在后台刷新…"));
+                    statusText.setText("◌ 正在连接电脑");
                 }
             });
         });
@@ -3943,11 +3981,9 @@ public final class MainActivity extends Activity {
      *    电脑关机时用户连上次的内容都看不到。
      */
     private void refreshOnlineWorks(boolean userInitiated) {
-        final boolean hadData = !onlineWorks.isEmpty();
-        if (hadData) {
-            statusText.setText(onlineStatusLine("正在刷新…"));
-        } else {
-            statusText.setText("正在连接电脑在线相册…");
+        if (userInitiated || onlineWorks.isEmpty() || onlineListFromSnapshot) {
+            statusText.setText("◌ 正在连接电脑");
+            statusText.setContentDescription(null);
         }
 
         onlineClient.fetchWorks(null, null, currentSortKey, userInitiated, new OnlineGalleryClient.Callback<List<OnlineWorkEntry>>() {
@@ -3995,6 +4031,7 @@ public final class MainActivity extends Activity {
                             );
                             mergedEntry.videoFilename = w.videoFilename;
                             mergedEntry.livePhotos = w.livePhotos;
+                            mergedEntry.workLabels = w.workLabels;
                             onlineWorks.add(mergedEntry);
                         } else {
                             onlineWorks.add(w);
@@ -4011,9 +4048,9 @@ public final class MainActivity extends Activity {
                 }
                 applyOnlineCategoryFilter(selectedOnlineCategory);
                 String modeBanner = onlineClient.isRemoteCatalogActive()
-                        ? ("☁️ 云端在线相册 · 共 " + onlineWorks.size() + " 套")
-                        : ("已同步电脑在线作品 · 共 " + onlineWorks.size() + " 套");
+                        ? "● 远程已连接" : "● 局域网已连接";
                 statusText.setText(modeBanner);
+                statusText.setContentDescription(null);
                 finishVisibleRefresh(modeBanner);
                 refreshOnlineCategoriesAfterWorks(userInitiated);
             }
@@ -4024,7 +4061,8 @@ public final class MainActivity extends Activity {
                 if (!onlineWorks.isEmpty()) {
                     // 有快照/旧数据：保留用户已经看到的列表，只做软提示
                     String msg = OnlineGalleryClient.userFacingErrorMessage(error);
-                    statusText.setText("💻 离线快照 · 共 " + onlineWorks.size() + " 套 · 刷新失败：" + msg);
+                    statusText.setText("○ 电脑离线");
+                    statusText.setContentDescription("电脑离线，保留快照：" + msg);
                     finishVisibleRefresh("已保留本地快照（刷新失败）");
                 } else {
                     handleOnlineError("读取作品列表失败", error);
@@ -4086,7 +4124,7 @@ public final class MainActivity extends Activity {
         if (!force && now - lastAutoDiscoverAtMs < autoDiscoverRetryDelayMs) return;
         lastAutoDiscoverAtMs = now;
         autoDiscovering = true;
-        statusText.setText("正在自动搜索局域网内的电脑在线相册…");
+        statusText.setText("◌ 正在连接电脑");
         onlineClient.discoverPcServer(new OnlineGalleryClient.Callback<String>() {
             @Override
             public void onSuccess(String baseUrl) {
@@ -4105,11 +4143,12 @@ public final class MainActivity extends Activity {
                         AUTO_DISCOVER_MAX_RETRY_DELAY_MS);
                 if (!isOnlineMode) return;
                 // 【0.8.43 修】不再覆盖 snapshot 状态条；改成在底部悄悄提示，让顶部状态栏继续显示「本地快照 · X 分钟前」。
+                statusText.setText("○ 电脑离线");
                 String snapNote = snapshotAgeText();
                 if (snapNote != null) {
                     toast("⚠️ 暂时连不上电脑（本地快照 · " + snapNote + " 仍可秒开）");
                 } else {
-                    statusText.setText("暂未搜索到电脑在线相册，可稍后点「重试连接」再次搜索");
+                    statusText.setContentDescription("电脑离线，可稍后点重试连接");
                 }
             }
         });
@@ -4118,7 +4157,8 @@ public final class MainActivity extends Activity {
     private void handleOnlineError(String prefix, Exception error) {
         finishVisibleRefresh("连接失败");
         String msg = OnlineGalleryClient.userFacingErrorMessage(error);
-        statusText.setText(prefix + " (" + msg + ")");
+        statusText.setText("○ 电脑离线");
+        statusText.setContentDescription(prefix + "：" + msg);
         worksContainer.removeAllViews();
         scannedCountText.setText("0");
 
@@ -4331,8 +4371,10 @@ public final class MainActivity extends Activity {
         button.setText(finalLabel);
         button.setAllCaps(false);
         button.setTextSize(12);
-        button.setMinHeight(dp(34));
-        button.setMinimumHeight(dp(34));
+        button.setSingleLine(true);
+        button.setEllipsize(null);
+        button.setMinHeight(dp(36));
+        button.setMinimumHeight(dp(36));
         button.setMinimumWidth(dp(48));
         button.setPadding(dp(12), dp(2), dp(12), dp(2));
         button.setElevation(0);
@@ -4352,32 +4394,14 @@ public final class MainActivity extends Activity {
             });
         }
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(34));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
         params.setMargins(dp(2), 0, dp(2), 0);
         button.setLayoutParams(params);
         return button;
     }
 
     private void applyOnlineCategoryButtonStyle(Button button, boolean isSelected, boolean isPinned) {
-        boolean dark = ThemePalette.isDarkMode(this);
-        if (isSelected) {
-            button.setBackground(round(dark ? Color.rgb(50, 50, 54) : Color.WHITE, 10));
-            button.setTextColor(dark ? Color.WHITE : Color.rgb(24, 25, 24));
-            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            button.setElevation(dp(1));
-        } else if (isPinned) {
-            button.setBackground(roundWithStroke(
-                    dark ? Color.rgb(22, 56, 38) : Color.rgb(242, 248, 244), 10,
-                    dark ? Color.rgb(35, 95, 65) : Color.rgb(180, 222, 202)));
-            button.setTextColor(dark ? Color.rgb(75, 215, 140) : Color.rgb(16, 120, 80));
-            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
-            button.setElevation(0);
-        } else {
-            button.setBackgroundColor(Color.TRANSPARENT);
-            button.setTextColor(dark ? Color.rgb(142, 142, 147) : Color.rgb(104, 108, 106));
-            button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
-            button.setElevation(0);
-        }
+        applyCategoryButtonStyle(button, isSelected);
     }
 
     private void selectOnlineCategory(String catKey, boolean showToast) {
@@ -5275,14 +5299,15 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.setMargins(0, dp(3), 0, dp(5));
         card.addView(meta, metaParams);
+        card.addView(albumLabelRow(work.workLabels, work.imageCount));
 
         FlowLayout platformRow = new FlowLayout(this);
         platformRow.setClipChildren(false);
         platformRow.setClipToPadding(false);
         // 【2026-09-23】同本地作品卡：按钮顺序 = 解析结果原始顺序（文案块先后顺序），
         // 不摘项、不 rank；高度 WRAP_CONTENT，单行靠 minHeight 兜 36dp，多行自动长高。
-        platformRow.setHorizontalSpacing(dp(8));
-        platformRow.setVerticalSpacing(dp(8));
+        platformRow.setHorizontalSpacing(dp(4));
+        platformRow.setVerticalSpacing(dp(4));
 
         List<PlatformCopyParser.AvailableItem> rawPlatforms = PlatformCopyParser.parseAvailablePlatforms(work.copyText);
         List<PlatformCopyParser.AvailableItem> platforms = enrichPlatformSuite(rawPlatforms, work.copyText, work.title);
@@ -5314,12 +5339,7 @@ public final class MainActivity extends Activity {
                     work.dispatchedVersions,
                     work.dispatchedTo
             );
-            String btnLabel = isVersionDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel;
-            Button btn = compactButton(btnLabel, isVersionDispatched || work.useCount == 0);
-            if (isVersionDispatched) {
-                // 已分发的版本：专属翡翠绿高亮激活态（带 ✓ 打勾）
-                styleNeumorphicButton(btn, STYLE_PRIMARY_GREEN);
-            }
+            Button btn = albumCopyButton(item, isVersionDispatched);
             btn.setOnClickListener(v -> handleOnlineWorkUse(work, item.platform.code, item.buttonLabel, extracted));
             btn.setOnLongClickListener(v -> {
                 showCopyPreviewDialog(work.id, work.title, item.buttonLabel, extracted,
@@ -5333,14 +5353,12 @@ public final class MainActivity extends Activity {
         // 三按钮从 platformRow 拆出，单独一行横排在平台按钮下方。
         // 重置按钮 DSH-108 同步去掉 useCount>0 守卫（与 DSH-105 iOS 对齐），常驻可见。
         Button reset = new Button(this);
-        reset.setText("重置状态");
-        styleNeumorphicButton(reset, STYLE_MUTED_GRAY);
+        styleAlbumAction(reset, "↺ 重置状态", false);
         reset.setContentDescription("重置电脑在线作品使用记录");
         reset.setOnClickListener(v -> confirmResetOnlineWork(work.id));
 
         Button delete = new Button(this);
-        delete.setText("删除");
-        styleNeumorphicButton(delete, STYLE_DANGER_WHITE);
+        styleAlbumAction(delete, "× 删除", true);
         delete.setContentDescription("删除电脑在线作品");
         delete.setOnClickListener(v -> confirmDeleteOnlineWork(work));
 
@@ -5354,7 +5372,9 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         btnParams.setMargins(dp(4), 0, dp(4), 0);
         bottomActionRow.addView(reset, btnParams);
-        bottomActionRow.addView(copyPathButton(work.path, "电脑在线作品"), btnParams);
+        Button copyPath = copyPathButton(work.path, "电脑在线作品");
+        styleAlbumAction(copyPath, "▣ 复制路径", false);
+        bottomActionRow.addView(copyPath, btnParams);
         bottomActionRow.addView(delete, btnParams);
 
         LinearLayout.LayoutParams platformRowParams = new LinearLayout.LayoutParams(-1, -2);
@@ -5422,6 +5442,7 @@ public final class MainActivity extends Activity {
                                         );
                                         updated.videoFilename = old.videoFilename;
                                         updated.livePhotos = old.livePhotos;
+                                        updated.workLabels = old.workLabels;
                                         onlineWorks.set(i, updated);
                                         break;
                                     }
@@ -7127,6 +7148,7 @@ public final class MainActivity extends Activity {
                 );
                 updatedEntry.videoFilename = old.videoFilename;
                 updatedEntry.livePhotos = old.livePhotos;
+                updatedEntry.workLabels = old.workLabels;
                 break;
             }
         }
@@ -7405,6 +7427,7 @@ public final class MainActivity extends Activity {
                 onlineWorks.remove(i);
                 updated.videoFilename = old.videoFilename;
                 updated.livePhotos = old.livePhotos;
+                updated.workLabels = old.workLabels;
                 onlineWorks.add(0, updated);
                 break;
             }
@@ -7441,6 +7464,7 @@ public final class MainActivity extends Activity {
                 );
                 updated.videoFilename = old.videoFilename;
                 updated.livePhotos = old.livePhotos;
+                updated.workLabels = old.workLabels;
                 onlineWorks.set(i, updated);
                 break;
             }

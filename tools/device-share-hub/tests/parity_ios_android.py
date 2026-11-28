@@ -404,19 +404,20 @@ def main():
         "变量齐全=%s 行内应用=%s 旧左对齐已删=%s"
         % (c23_var, c23_apply, c23_no_naive)))
 
-    # C24 iOS folderItem 双模式可见 + openFiles 模式分发。
-    # 改前实测：`folderItem?.customView?.isHidden = isOnlineMode` + openFiles 无模式分发。
-    # 改后：`isHidden = false` + openFiles 首行 `if isOnlineMode { openTrash(); return }`。
-    c24_no_hide = ("folderItem?.customView?.isHidden = false" in cv
-                   or "folderToolbarButton?.isHidden = hideInGallery" in cv) \
-        and "isHidden = isOnlineMode" not in cv
-    c24_mode_branch = "if isOnlineMode {\n            openTrash()\n            return" in cv
-    c24_library = "LibraryFilesViewController(rootURL: root, currentURL: root)" in cv
+    # Compact toolbar: keep the three direct actions and local file browsing reachable.
+    ios_toolbar = cv.split("let rightRow = UIStackView(arrangedSubviews: [", 1)[-1].split("])", 1)[0]
+    ios_actions = re.findall(r"toolbarButton\(\.(\w+)", ios_toolbar)
+    android_actions = re.findall(r"topActions\.addView\((\w+),", and_main)
+    local_files = "localFilesButton.addTarget(self, action: #selector(openFiles)" in cv \
+        and "LibraryFilesViewController(rootURL: root, currentURL: root)" in cv
+    android_files_and_local_trash = "statusRow.addView(modeButton" in and_main \
+        and 'modeButton.setContentDescription("手机本地回收站")' in and_main
     results.append(check(
-        "C24 iOS folderItem 双模式可见 + openFiles 模式分发",
-        c24_no_hide and c24_mode_branch and c24_library,
-        "不隐藏=%s openFiles模式分发=%s LibraryFiles入口保留=%s"
-        % (c24_no_hide, c24_mode_branch, c24_library)))
+        "C24 双端顶栏三入口与本地文件浏览",
+        ios_actions == ["plane", "trash", "settings"]
+        and android_actions == ["transfer", "rightModeButton", "settings"]
+        and local_files and android_files_and_local_trash,
+        "iOS=%s Android=%s 本地入口=%s/%s" % (ios_actions, android_actions, local_files, android_files_and_local_trash)))
 
     print()
     print("=== DSH-102: 服务端 image endpoint ?id+?file 双键（绕开 image_name_index 同名冲突） ===")
@@ -555,7 +556,7 @@ def main():
     a7_and_split = "bottomActionRow" in and_main
     a7_and_order = re.search(
         r"bottomActionRow\.addView\(reset[,\s]"
-        r".*?bottomActionRow\.addView\(copyPathButton"
+        r".*?bottomActionRow\.addView\(copyPath(?:Button)?[,\s]"
         r".*?bottomActionRow\.addView\(delete[,\s]",
         and_main, re.DOTALL) is not None
     # 强校验：onlineWorkCard 内的 platformRow 不再混 reset/delete/copyPathButton（已拆出）

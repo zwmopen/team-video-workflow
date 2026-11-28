@@ -289,3 +289,9 @@ copy_missing = not copy_text                      # 文案.txt 没读出实质�
 | 2026-10-11 | Codex | Record 0.8.94 compare preview centering, label placement, loading states, and device acceptance boundary. |
 | 2026-10-11 12:08 | 手机端GPT | improve mobile feedback with minimal guarded states |
 | 2026-10-11 | Codex | 更新 Android/iOS `.92/203` 源码候选，并补记在线列表首字节超时已验证路径与未确认根因。 |
+
+## 紧凑化 UI 精修 V1.0
+
+三模式滑块继续支持直切及已有手势。发送、回收站、设置共享右侧胶囊。分类按文字宽度横滑。日常连接提示显示当前请求状态，完整地址与测试仍从已有服务设置进入。在线和本地作品卡保留文案按钮、原图对比、标签入口与重置、复制路径、删除。五个编号文案的标题从完整机标映射，具体正文与使用记录仍走原回调。长历史按钮和大字体按可用宽度换行。
+
+作品标签优先读取《团队图文元数据规范 V2》的 \`metadata.json\` 中已记录的 \`canonical.production\` 与 \`canonical.classification\`，其次补读 \`manifest.json\`、\`作品标签.json\` 和 \`source-provenance.json\` 的显式字段。引擎与渠道独立。缺失按维度显示未分类。作品文件和既有账本不做批量回填。

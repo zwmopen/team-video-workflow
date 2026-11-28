@@ -68,6 +68,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
     public let flowType: String
     /// 完整标签数组
     public let tags: [String]
+    public let workLabels: AlbumWorkLabels
     /// 对比视图专用：每页成品图对应的原素材请求标识（如 "__src__:P1_封面.png"）
     public let sourceImages: [String]
     /// 对比视图专用：每页原素材原始文件名（如 "cover.jpg"）
@@ -92,6 +93,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
                 lastUsedAtMs: Double = 0,
                 originDevice: String = "", dispatchedVersions: [String] = [],
                 season: String = "四季通用", flowType: String = "精准流量团建", tags: [String] = [],
+                workLabels: AlbumWorkLabels = AlbumWorkLabels(),
                 sourceImages: [String] = [], sourceNames: [String] = [],
                 hasSourceCompare: Bool = false, maxSimilarity: Double = 0, similarityTag: String = "",
                 pipelineBadge: String = "网页GPT", formattedDate: String = "2026-10-20-10:20", imageCountText: String = "",
@@ -125,6 +127,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
         self.season = season
         self.flowType = flowType
         self.tags = tags
+        self.workLabels = workLabels
         self.sourceImages = sourceImages
         self.sourceNames = sourceNames
         self.hasSourceCompare = hasSourceCompare || sourceImages.contains(where: { !$0.isEmpty })
@@ -284,6 +287,7 @@ public struct OnlineWorkEntry: Identifiable, Hashable {
             lastUsedAtMs: lastUsedAtMs,
             originDevice: originDevice, dispatchedVersions: dispatchedVersions,
             season: season, flowType: flowType, tags: tags,
+            workLabels: AlbumWorkLabels(projection: dict["workLabels"] as? [String: Any] ?? [:]),
             sourceImages: sourceImages, sourceNames: sourceNames,
             hasSourceCompare: hasSourceCompare, maxSimilarity: maxSimilarity,
             similarityTag: similarityTag,
@@ -997,8 +1001,10 @@ public final class OnlineGalleryClient {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 if let self = self, let remoteWorks = try? self.fetchRemoteCatalogWorks() {
                     let filtered = self.filterRemoteWorks(remoteWorks, category: category, query: query)
-                    self.isUsingRemoteCatalog = true
-                    DispatchQueue.main.async { completion(.success(filtered)) }
+                    DispatchQueue.main.async {
+                        self.isUsingRemoteCatalog = true
+                        completion(.success(filtered))
+                    }
                     return
                 }
                 self?.performFetchWorksLanTask(url: url, category: category, query: query, requestID: requestID, baseUrl: baseUrl, completion: completion)
@@ -1009,13 +1015,16 @@ public final class OnlineGalleryClient {
     }
 
     private func performFetchWorksLanTask(url: URL, category: String?, query: String?, requestID: UInt64, baseUrl: String, completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
-        session.dataTask(with: url) { [weak self] data, _, error in
-            if let error = error {
+        session.dataTask(with: url) { [weak self] data, response, error in
+            let httpOK = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+            if let error = error ?? (httpOK ? nil : URLError(.badServerResponse)) {
                 if RemoteRelayProfile.load() != nil, let self = self {
                     DispatchQueue.global(qos: .userInitiated).async {
                         if let remoteWorks = try? self.fetchRemoteCatalogWorks() {
-                            self.isUsingRemoteCatalog = true
-                            DispatchQueue.main.async { completion(.success(remoteWorks)) }
+                            DispatchQueue.main.async {
+                                self.isUsingRemoteCatalog = true
+                                completion(.success(remoteWorks))
+                            }
                             return
                         }
                         DispatchQueue.main.async { completion(.failure(error)) }
@@ -1026,26 +1035,23 @@ public final class OnlineGalleryClient {
                 return
             }
             guard let data = data else {
-                DispatchQueue.main.async { completion(.success([])) }
+                DispatchQueue.main.async { completion(.failure(URLError(.badServerResponse))) }
                 return
             }
             // 只有「全量列表」才值得做快照：带分类/关键词的响应是子集，
             // 存下去会让下次秒开时看到一个不完整的列表（与 Android 同步）。
             let isFullList = (category ?? "").isEmpty && (query ?? "").isEmpty
-            if isFullList {
-                self?.saveWorksSnapshotIfLatest(data, requestID: requestID)
-            }
             do {
-                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let works = json["works"] as? [[String: Any]] else {
+                    throw URLError(.cannotParseResponse)
+                }
+                if isFullList { self?.saveWorksSnapshotIfLatest(data, requestID: requestID) }
                 let viewState = json["viewState"] as? [String: Any]
                 let scanRevision = json["scanRevision"] as? Int ?? -1
                 var entries: [OnlineWorkEntry] = []
-                if let arr = json["works"] as? [[String: Any]] {
-                    for w in arr {
-                        if let entry = OnlineWorkEntry.from(dict: w) {
-                            entries.append(entry)
-                        }
-                    }
+                for work in works {
+                    if let entry = OnlineWorkEntry.from(dict: work) { entries.append(entry) }
                 }
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.isLatestWorksRequest(requestID) else { return }

@@ -3842,3 +3842,7 @@ totalWorks = 472
 - 原启动器使用 Invoke-RestMethod 做本地健康检查，在当前系统代理存在时可能得到 502，即使 LAN 服务已经正常监听。
 - 已改为 HttpWebRequest + Proxy = null，并在隔离端口 4549 绑定 192.168.10.225 完成 /health、/latest.json 直接回读；测试进程已按精确端口停止，未触碰生产服务。
 - 证据：D:\Backups\江湖有旅人迁移\20261113\preflight-evidence\lan-update-host-separation-sandbox-20261117\lan-update-host-separation-runtime-20261117.json（SHA-256 C6B63B0D3F109941809ACBB66D8E73B9B8C9F55251B7DC836CE045849C386A6A）。
+
+## 紧凑化 UI V1.0 候选验收
+
+以前的分类显示截断由两端格式化函数主动截短，并叠加固定容器。候选改为按原标签内容测量，去掉外层装饰，与原筛选和置顶逻辑共存。真机验收时同时核对带数量的长标签以及滑动后的末项。

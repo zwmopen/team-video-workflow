@@ -275,7 +275,7 @@ final class WorkLibrary {
     /// 多版本文案（`<<<COPY_FORMAT:MULTI>>>`）下，按钮上显示的正文由解析器**逐版本**给出，
     /// 不能再按 platform 回查 —— 11 个版本里有 10 个 `platform` 都是 `.general`，
     /// 回查会永远命中第一条，点任何版本都复制到同一个内容。
-    func prepareShare(_ work: WorkItem, images: [URL], platform: CopyPlatform, copyText: String) throws -> [Any] {
+    func prepareShare(_ work: WorkItem, images: [URL], platform: CopyPlatform, copyText: String, versionTag: String = "") throws -> [Any] {
         let resolved = copyText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !resolved.isEmpty else { throw LibraryError.unreadableCopy }
         let allowed = Set(work.imageURLs.map { $0.standardizedFileURL })
@@ -285,6 +285,7 @@ final class WorkLibrary {
         var record = state.works[work.key] ?? state.history[work.key] ?? WorkState()
         state.history.removeValue(forKey: work.key)
         record.shareCount += 1
+        if PlatformCopyParser.albumSlot(versionTag) != 0 { record.usedCopyVersions.insert(versionTag) }
         record.used = true
         // DSH-093 C13：三个小红书槽位（种草版 / 大纲方案版 / 短文精选版）都要计入，
         // 对齐 Android 的 `XHS || XHS_2 || XHS_3`。漏了 .xhs3 会让两端数字逐步分叉。
@@ -322,6 +323,7 @@ final class WorkLibrary {
             return
         }
         record.shareCount = 0
+        record.usedCopyVersions.removeAll()
         record.xhsShareCount = 0
         record.douyinShareCount = 0
         record.used = false

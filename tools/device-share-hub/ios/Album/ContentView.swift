@@ -81,8 +81,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private var onlineStages: [OnlineCategoryItem] = []
     private var selectedOnlineCategory: String = "全部"
     private let modeSlidingBar = SlidingGlassBar(dockMode: false)
-    private var folderToolbarButton: UIButton!
-    private var folderItem: UIBarButtonItem?
+    private var localFilesButton: UIButton!
     private lazy var phoneGalleryVC = PhoneGalleryViewController()
     /// 顶部状态条的短暂过程文案。成功同步后清空，统一回到“已同步…共 N 套”。
     private var onlineStatusOverride: String?
@@ -477,48 +476,44 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         ])
         updateModeButtonStyle()
 
-        folderToolbarButton = toolbarButton(.folder, label: "文件浏览", action: #selector(openFiles))
-        let trashBtn = toolbarButton(.trash, label: "回收站", action: #selector(openTrash))
-        folderItem = UIBarButtonItem(customView: folderToolbarButton)
         let rightRow = UIStackView(arrangedSubviews: [
-            folderToolbarButton,
-            toolbarButton(.plane, label: "传送文件", action: #selector(openTransfer)),
-            toolbarButton(.refresh, label: "刷新作品", action: #selector(refreshCurrent)),
-            trashBtn,
+            toolbarButton(.plane, label: "发送", action: #selector(openTransfer)),
+            toolbarButton(.trash, label: "回收站", action: #selector(openTrash)),
             toolbarButton(.settings, label: "设置", action: #selector(openSettings))
         ])
         rightRow.axis = .horizontal
-        rightRow.spacing = 5
         rightRow.alignment = .center
-        rightRow.distribution = .fill
+        let capsule = UIView()
+        capsule.backgroundColor = AppColors.secondaryBackground
+        capsule.layer.cornerRadius = 22
+        rightRow.translatesAutoresizingMaskIntoConstraints = false
+        capsule.addSubview(rightRow)
+        NSLayoutConstraint.activate([
+            capsule.widthAnchor.constraint(equalToConstant: 132),
+            capsule.heightAnchor.constraint(equalToConstant: 44),
+            rightRow.leadingAnchor.constraint(equalTo: capsule.leadingAnchor),
+            rightRow.trailingAnchor.constraint(equalTo: capsule.trailingAnchor),
+            rightRow.centerYAnchor.constraint(equalTo: capsule.centerYAnchor)
+        ])
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(customView: modeSlidingBar)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: rightRow)
-        updateFolderItemVisibility()
-    }
-
-    /// DSH-097：folderItem 双模式可见 —— 本地模式进本地文件分发，在线模式进回收站，手机相册隐藏。
-    private func updateFolderItemVisibility() {
-        let hideInGallery = (activeSourceTab == .phoneGallery)
-        folderToolbarButton?.isHidden = hideInGallery
-        folderItem?.accessibilityLabel = isOnlineMode
-            ? "在线模式：打开电脑端回收站（_已发送 + _垃圾作品）"
-            : "本地模式：打开本地文件浏览"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: capsule)
+        modeSlidingBar.accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "刷新当前相册", target: self,
+                                        selector: #selector(refreshFromAccessibility))
+        ]
     }
 
     private func toolbarButton(_ symbol: AlbumToolbarSymbol, label: String, action: Selector) -> UIButton {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        // DSH-097：顶栏按钮与安卓 ImageButton 42dp 半圆对齐 —— 34pt → 38pt、cornerRadius 11 → 19、浅绿实色 RGB(226,244,236)、图标 RGB(15,135,88) 深绿。
-        button.backgroundColor = AppColors.brandLightBg
-        button.layer.cornerRadius = 19
-        button.setImage(AlbumToolbarIcon.image(symbol, color: AppColors.brandLightText), for: .normal)
+        button.setImage(AlbumToolbarIcon.image(symbol, color: AppColors.secondaryText), for: .normal)
         button.imageView?.contentMode = .scaleAspectFit
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 36),
-            button.heightAnchor.constraint(equalToConstant: 36)
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44)
         ])
         return button
     }
@@ -571,6 +566,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func applyPhoneGallerySurface(_ galleryActive: Bool) {
         phoneGalleryVC.view.isHidden = !galleryActive
         onlineStatusLabel.isHidden = galleryActive
+        localFilesButton.isHidden = activeSourceTab != .localWork
         liveStatusButton.isHidden = galleryActive
         filterContainerView.isHidden = galleryActive
         filterScrollView.isHidden = galleryActive
@@ -603,14 +599,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         UserDefaults.standard.set(tab.rawValue, forKey: prefSourceTabKey)
         UserDefaults.standard.set(isOnlineMode, forKey: prefOnlineModeKey)
         updateModeButtonStyle()
-        updateFolderItemVisibility()
         setWorkHeaderCollapsed(false, animated: false)
 
         switch tab {
         case .online:
             applyPhoneGallerySurface(false)
             primeOnlineDataFromSnapshot()
-            onlineStatusOverride = "正在同步电脑在线作品…"
+            onlineStatusOverride = "◌ 正在连接电脑"
             updateOnlineStatusHint()
             renderOnlineUI()
             showToast("已切换到：💻 电脑在线相册")
@@ -636,6 +631,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     /// 顶栏「刷新」按钮 —— 按当前 3 模式分流。
+    @objc private func refreshFromAccessibility() -> Bool {
+        refreshCurrent()
+        return true
+    }
+
     @objc private func refreshCurrent() {
         switch activeSourceTab {
         case .phoneGallery:
@@ -703,14 +703,22 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineStatusLabel.backgroundColor = AppColors.brandLightBg
         onlineStatusLabel.layer.cornerRadius = 6
         onlineStatusLabel.clipsToBounds = true
-        onlineStatusLabel.textAlignment = .center
+        onlineStatusLabel.textAlignment = .left
         onlineStatusLabel.numberOfLines = 1
         onlineStatusLabel.adjustsFontSizeToFitWidth = true
         onlineStatusLabel.minimumScaleFactor = 0.78
         onlineStatusLabel.isAccessibilityElement = true
         onlineStatusLabel.accessibilityIdentifier = "online-status-label"
-        onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
+        onlineStatusLabel.text = "◌ 正在连接电脑"
         view.addSubview(onlineStatusLabel)
+        localFilesButton = UIButton(type: .system)
+        localFilesButton.translatesAutoresizingMaskIntoConstraints = false
+        localFilesButton.setTitle("文件浏览", for: .normal)
+        localFilesButton.setTitleColor(AppColors.secondaryText, for: .normal)
+        localFilesButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        localFilesButton.addTarget(self, action: #selector(openFiles), for: .touchUpInside)
+        localFilesButton.isHidden = activeSourceTab != .localWork
+        view.addSubview(localFilesButton)
 
         liveStatusButton.translatesAutoresizingMaskIntoConstraints = false
         liveStatusButton.titleLabel?.font = .systemFont(ofSize: 11.5, weight: .bold)
@@ -735,8 +743,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         filterScrollView.translatesAutoresizingMaskIntoConstraints = false
         filterScrollView.showsHorizontalScrollIndicator = false
         filterScrollView.alwaysBounceHorizontal = false
-        filterScrollView.backgroundColor = AppColors.secondaryBackground
-        filterScrollView.layer.cornerRadius = 10
         filterContainerView.addSubview(filterScrollView)
 
         filterStackView = UIStackView()
@@ -754,7 +760,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
         NSLayoutConstraint.activate([
             onlineStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            onlineStatusLabel.trailingAnchor.constraint(equalTo: liveStatusButton.leadingAnchor, constant: -6),
+            onlineStatusLabel.trailingAnchor.constraint(equalTo: localFilesButton.leadingAnchor, constant: -4),
+            localFilesButton.trailingAnchor.constraint(equalTo: liveStatusButton.leadingAnchor, constant: -8),
+            localFilesButton.centerYAnchor.constraint(equalTo: onlineStatusLabel.centerYAnchor),
+            localFilesButton.widthAnchor.constraint(equalToConstant: 58),
+            localFilesButton.heightAnchor.constraint(equalToConstant: 36),
             onlineStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
             onlineStatusLabel.heightAnchor.constraint(equalToConstant: 28),
 
@@ -823,20 +833,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
 
     private func updateOnlineStatusHint() {
         onlineStatusLabel.isHidden = false
+        onlineStatusLabel.backgroundColor = .clear
         if isOnlineMode {
-            if let override = onlineStatusOverride, !override.isEmpty {
-                onlineStatusLabel.text = override
-                onlineStatusLabel.textColor = AppColors.statusWarningText
-                onlineStatusLabel.backgroundColor = AppColors.statusWarningBg
-            } else {
-                onlineStatusLabel.text = "🟢 已同步电脑在线作品 · 共 \(onlineWorks.count) 套"
-                onlineStatusLabel.textColor = AppColors.brandLightText
-                onlineStatusLabel.backgroundColor = AppColors.brandLightBg
-            }
+            let state = onlineStatusOverride ?? "◌ 正在连接电脑"
+            onlineStatusLabel.text = state
+            onlineStatusLabel.textColor = state.hasPrefix("●") ? AppColors.brandLightText : AppColors.secondaryText
         } else {
-            onlineStatusLabel.text = "📱 手机本地作品 · 共 \(library.works.count) 套"
-            onlineStatusLabel.textColor = AppColors.statusLocalText
-            onlineStatusLabel.backgroundColor = AppColors.statusLocalBg
+            onlineStatusLabel.text = "手机本地作品 · \(library.works.count) 套"
+            onlineStatusLabel.textColor = AppColors.secondaryText
         }
     }
 
@@ -1450,7 +1454,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         // 页面已有可用作品时，后台自动刷新不覆盖稳定的“已同步”状态。
         // 首次加载仍显示进度；用户主动下拉/点刷新也仍显示“正在同步”。
         if !silent || onlineWorks.isEmpty {
-            onlineStatusOverride = "正在同步电脑在线作品…"
+            onlineStatusOverride = "◌ 正在连接电脑"
             updateOnlineStatusHint()
         }
         OnlineGalleryClient.shared.fetchCategories(refresh: !silent) { [weak self] result in
@@ -1508,7 +1512,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         updatedAt: w.updatedAt, garbage: w.garbage, garbageRemark: w.garbageRemark,
                         path: w.path, firstSharedAtMs: firstShared, expireAtMs: expireAt,
                         originDevice: w.originDevice, dispatchedVersions: mergedVers,
-                        season: w.season, flowType: w.flowType, tags: w.tags,
+                        season: w.season, flowType: w.flowType, tags: w.tags, workLabels: w.workLabels,
                         sourceImages: w.sourceImages, sourceNames: w.sourceNames,
                         hasSourceCompare: w.hasSourceCompare, maxSimilarity: w.maxSimilarity,
                         similarityTag: w.similarityTag,
@@ -1521,7 +1525,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 var finalWorks = mergedWorks
                 self.sortOnlineWorksLocally(&finalWorks, sortKey: self.currentSortKey)
                 self.onlineWorks = finalWorks
-                self.onlineStatusOverride = nil
+                self.onlineStatusOverride = OnlineGalleryClient.shared.isUsingRemoteCatalog
+                    ? "● 远程已连接" : "● 局域网已连接"
                 self.renderOnlineUI()
             case .failure(let err):
                 // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
@@ -1542,13 +1547,13 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     // 实测证据：把 customPcServerUrl 写成旧网段 192.168.0.107 后冷启动，
                     // 屏幕无弹窗、列表照旧，30 秒后缓存地址**纹丝不动**。
                     self.showToast("⚠️ 刷新失败：\(msg)（已保留上次内容）")
-                    self.onlineStatusOverride = "🟡 离线快照 · 共 \(self.onlineWorks.count) 套 · 刷新失败"
+                    self.onlineStatusOverride = "○ 电脑离线"
                     self.renderOnlineUI()
                     self.tryAutoDiscoverPc()
                 } else {
                     // 完全没有数据（首次冷启动或快照损坏）：先走**非阻塞**提示并立刻自愈，
                     // 只有自愈也失败才升级为阻塞弹窗 —— 电脑换网段/IP 这一常见场景从此不再弹错。
-                    self.onlineStatusOverride = "⚪ 尚未同步电脑在线作品"
+                    self.onlineStatusOverride = "○ 电脑离线"
                     self.renderOnlineUI()
                     if silent {
                         // 静默刷新（viewWillAppear / 定时器）：连 toast 都不发，但自愈照跑。
@@ -1738,10 +1743,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         if trimmed.isEmpty || trimmed == WorkCategory.all {
             return "全部"
         }
-        if trimmed.count > 5 {
-            let prefix = String(trimmed.prefix(5))
-            return prefix + "..."
-        }
         return trimmed
     }
 
@@ -1794,6 +1795,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         button.isPinned = isPinned
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(fullTitle, for: .normal)
+        button.titleLabel?.lineBreakMode = .byClipping
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         applyFilterButtonStyle(button, isSelected: isSelected, isPinned: isPinned)
         button.addTarget(self, action: #selector(filterButtonTapped(_:)), for: .touchUpInside)
@@ -1807,31 +1810,10 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     private func applyFilterButtonStyle(_ button: UIButton, isSelected: Bool, isPinned: Bool = false) {
-        if isSelected {
-            button.backgroundColor = AppColors.background
-            button.setTitleColor(AppColors.text, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
-            button.layer.cornerRadius = 8
-            button.layer.shadowColor = UIColor.black.cgColor
-            button.layer.shadowOpacity = 0.08
-            button.layer.shadowOffset = CGSize(width: 0, height: 1)
-            button.layer.shadowRadius = 2
-            button.layer.borderWidth = 0
-        } else if isPinned {
-            button.backgroundColor = AppColors.pinnedTabBg
-            button.setTitleColor(AppColors.pinnedTabText, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
-            button.layer.cornerRadius = 8
-            button.layer.borderWidth = 1
-            button.layer.borderColor = AppColors.pinnedTabBorder.cgColor
-            button.layer.shadowOpacity = 0
-        } else {
-            button.backgroundColor = .clear
-            button.setTitleColor(AppColors.secondaryText, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .regular)
-            button.layer.shadowOpacity = 0
-            button.layer.borderWidth = 0
-        }
+        button.backgroundColor = isSelected ? AppColors.brandLightBg : .clear
+        button.setTitleColor(isSelected ? AppColors.brandLightText : AppColors.secondaryText, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+        button.layer.cornerRadius = 14
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
@@ -1865,6 +1847,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             cell.onOnlineReset = { [weak self] in
                 self?.confirmResetOnline(entry)
             }
+            cell.onLabels = { [weak self] in self?.showWorkLabels(entry.workLabels, imageCount: entry.imageCount) }
             cell.onOnlineCopyPath = { [weak self] in
                 self?.copyOnlineWorkPath(entry)
             }
@@ -1902,6 +1885,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             preview.modalTransitionStyle = .crossDissolve
             self.present(preview, animated: true)
         }
+        cell.onLabels = { [weak self] in self?.showWorkLabels(work.workLabels, imageCount: work.imageURLs.count) }
         cell.onReset = { [weak self] in self?.confirmResetWork(work) }
         cell.onDelete = { [weak self] in self?.confirmMoveToTrash(work) }
         cell.onCopyPath = { [weak self] in self?.copyLocalWorkPath(work) }
@@ -1970,7 +1954,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             path: old.path, firstSharedAtMs: firstShared, expireAtMs: expireAt,
             originDevice: old.originDevice.isEmpty ? UIDevice.current.name : old.originDevice,
             dispatchedVersions: newVers,
-            season: old.season, flowType: old.flowType, tags: old.tags,
+            season: old.season, flowType: old.flowType, tags: old.tags, workLabels: old.workLabels,
             sourceImages: old.sourceImages, sourceNames: old.sourceNames,
             hasSourceCompare: old.hasSourceCompare, maxSimilarity: old.maxSimilarity,
             similarityTag: old.similarityTag,
@@ -2418,7 +2402,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     dispatchedVersions: w.dispatchedVersions,
                     season: w.season,
                     flowType: w.flowType,
-                    tags: w.tags,
+                    tags: w.tags, workLabels: w.workLabels,
                     sourceImages: w.sourceImages,
                     sourceNames: w.sourceNames,
                     hasSourceCompare: w.hasSourceCompare,
@@ -2512,7 +2496,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     private func share(_ work: WorkItem, item: AvailableCopyPlatform, source: UIView?) {
         do {
             let preparedItems = try library.prepareShare(
-                work, images: work.imageURLs, platform: item.platform, copyText: item.copyText)
+                work, images: work.imageURLs, platform: item.platform, copyText: item.copyText,
+                versionTag: item.buttonLabel)
             if !AutoLivePreferences.isEnabled {
                 let controller = UIActivityViewController(activityItems: preparedItems, applicationActivities: nil)
                 controller.popoverPresentationController?.sourceView = source
@@ -2586,7 +2571,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                         dispatchedVersions: entry.dispatchedVersions,
                         dispatchedTo: entry.dispatchedTo
                     )
-                    return isDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel
+                    return WorkCell.platformTitle(item, used: isDispatched)
                 }
             }
             if currentViewMode != .list {
@@ -2611,14 +2596,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
             let allPlatforms = CopyParserCache.platforms(for: work.textURL)
             let count = allPlatforms.count
             labels = allPlatforms.enumerated().map { index, item in
-                let isDispatched: Bool
-                switch index {
-                case 0: isDispatched = (count <= 1 ? work.shareCount > 0 : work.xhsShareCount > 0)
-                case 1: isDispatched = (count == 2 ? (work.shareCount > 0 && work.xhsShareCount == 0) : false)
-                case 2: isDispatched = (count >= 3 ? work.douyinShareCount > 0 : false)
-                default: isDispatched = false
-                }
-                return isDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel
+                WorkCell.platformTitle(item, used: WorkCell.localCopyUsed(item, at: index, count: count, work: work))
             }
             if currentViewMode != .list && work.shareCount > 0 { extraDetailLines += 1 }
         }
@@ -2632,8 +2610,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         case .compare:
             baseH = WorkCell.compareBaseHeight
         }
-        let height = baseH
+        let height = baseH + 37
             + CGFloat(max(rows, 1) - 1) * (WorkCell.platformRowHeight + WorkCell.platformSpacing)
+            + max(0, WorkCell.platformRowHeight - 36)
             + CGFloat(extraDetailLines) * WorkCell.cardDetailLineStep
         return CGSize(width: width, height: height)
     }
@@ -2642,7 +2621,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     /// 保证「预估的卡片高度」与「实际渲染出来的行数」一致（不一致就会裁切或大片留白）。
     private func platformRowCount(labels: [String], width: CGFloat) -> Int {
         guard !labels.isEmpty, width > 0 else { return 1 }
-        let font = UIFont.systemFont(ofSize: 13, weight: .bold)
+        let font = WorkCell.platformFont(used: true)
         var x: CGFloat = 0
         var rows = 1
         for label in labels {
@@ -2751,6 +2730,12 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
     }
 
+    private func showWorkLabels(_ labels: AlbumWorkLabels, imageCount: Int) {
+        let alert = UIAlertController(title: "作品标签", message: labels.detail(imageCount: imageCount), preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
+        present(alert, animated: true)
+    }
+
     /// 「复制路径」（本地）：复制手机上该作品文件夹的绝对路径。
     private func copyLocalWorkPath(_ work: WorkItem) {
         copyFolderPath(work.folderURL.path, origin: "手机本地作品")
@@ -2803,11 +2788,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 
     @objc private func openFiles() {
-        // DSH-097：folderItem 双模式分发 —— 本地进 LibraryFilesViewController，在线进回收站（DSH-095）。
-        if isOnlineMode {
-            openTrash()
-            return
-        }
+        guard activeSourceTab == .localWork else { return }
         guard let root = library.receivingRootURL else {
             showError("请先在设置中选择作品文件夹。")
             return
@@ -2878,7 +2859,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
     }
 }
 
-enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder, phone, computer, gallery }
+enum AlbumToolbarSymbol { case plane, share, refresh, trash, settings, folder, phone, computer, gallery, tag }
 
 enum AlbumToolbarIcon {
     static func image(_ symbol: AlbumToolbarSymbol, color: UIColor) -> UIImage {
@@ -2933,6 +2914,12 @@ enum AlbumToolbarIcon {
                 path.move(to: CGPoint(x: 11.5 + cos(angle) * 6.2, y: 11.5 + sin(angle) * 6.2))
                 path.addLine(to: CGPoint(x: 11.5 + cos(angle) * 8.2, y: 11.5 + sin(angle) * 8.2))
             }
+            path.stroke()
+        case .tag:
+            path.move(to: CGPoint(x: 3, y: 4)); path.addLine(to: CGPoint(x: 12, y: 4))
+            path.addLine(to: CGPoint(x: 21, y: 13)); path.addLine(to: CGPoint(x: 13, y: 21))
+            path.addLine(to: CGPoint(x: 3, y: 11)); path.close()
+            path.move(to: CGPoint(x: 7.5, y: 8)); path.addLine(to: CGPoint(x: 8.5, y: 8))
             path.stroke()
         case .folder:
             path.move(to: CGPoint(x: 2.5, y: 7.2)); path.addLine(to: CGPoint(x: 8.8, y: 7.2))
@@ -3665,6 +3652,9 @@ private final class WorkCell: UICollectionViewCell {
     /// 平台按钮区（**换行全展开**，DSH-091 C3 对齐 Android FlowLayout）。
     private let platformRow = PlatformFlowView()
     /// 操作行：重置 / 删除 / 复制路径。数量固定，不随平台数变化。
+    private let workLabelsButton = UIButton(type: .system)
+    private let moreTagsLabel = UILabel()
+    var onLabels: (() -> Void)?
     private let actionRow = UIStackView()
     private let platformContainer = UIStackView()
     /// 当前卡片上每个平台按钮对应的解析结果，下标 = `button.tag`。
@@ -3673,15 +3663,35 @@ private final class WorkCell: UICollectionViewCell {
     private var platformItems: [AvailableCopyPlatform] = []
     /// 平台按钮左右 `contentEdgeInsets` 之和（15 + 15）—— 与 `rebuildPlatformButtons` 保持一致，
     /// `sizeForItemAt` 预估行数时要用到，两边必须同源。
-    static let platformButtonPadding: CGFloat = 30
+    static let platformButtonPadding: CGFloat = 10
     /// 平台按钮间距（对齐 Android `FlowLayout` 的 dp(8)）
-    static let platformSpacing: CGFloat = 8
+    static let platformSpacing: CGFloat = 4
     /// 平台按钮行高（对齐 Android `compactButton` 的 dp(36)）
-    static let platformRowHeight: CGFloat = 36
+    static var platformRowHeight: CGFloat { max(36, platformFont(used: true).lineHeight + 10) }
+    static func platformFont(used: Bool) -> UIFont {
+        UIFontMetrics(forTextStyle: .caption1).scaledFont(
+            for: .systemFont(ofSize: 12, weight: used ? .bold : .semibold))
+    }
+
+    static func platformTitle(_ item: AvailableCopyPlatform, used: Bool) -> String {
+        (used ? "✓ " : "") + PlatformCopyParser.albumLabel(item.buttonLabel)
+    }
+
+    static func localCopyUsed(_ item: AvailableCopyPlatform, at index: Int,
+                              count: Int, work: WorkItem) -> Bool {
+        let slot = PlatformCopyParser.albumSlot(item.buttonLabel)
+        if slot != 0 { return work.usedCopyVersions.contains(item.buttonLabel) }
+        switch index {
+        case 0: return count <= 1 ? work.shareCount > 0 : work.xhsShareCount > 0
+        case 1: return count == 2 && work.shareCount > 0 && work.xhsShareCount == 0
+        case 2: return count >= 3 && work.douyinShareCount > 0
+        default: return false
+        }
+    }
     /// 卡片基准高度（平台按钮 1 行时）。
     static let cardBaseHeight: CGFloat = 276
-    /// 列表视图卡片基准高度（紧凑小缩略图 + 隐藏底部重置/删除操作行）
-    static let listBaseHeight: CGFloat = 152
+    /// 列表视图卡片基准高度（紧凑小缩略图与底部操作行）
+    static let listBaseHeight: CGFloat = 188
     /// 对比视图卡片基准高度（自适应 3:4 双图区 + 底部操作行）
     static var compareBaseHeight: CGFloat { ComparePairThumbView.cardHeight + 172 }
     /// 元信息行每多一行（⇢ ✓ 平台明细）增加的高度（单行约 18pt）
@@ -3778,7 +3788,21 @@ private final class WorkCell: UICollectionViewCell {
         actionRow.setContentCompressionResistancePriority(.required, for: .vertical)
         platformContainer.setContentCompressionResistancePriority(.required, for: .vertical)
 
-        let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, platformContainer])
+        workLabelsButton.setImage(AlbumToolbarIcon.image(.tag, color: AppColors.secondaryText), for: .normal)
+        workLabelsButton.setTitleColor(AppColors.secondaryText, for: .normal)
+        workLabelsButton.titleLabel?.font = .systemFont(ofSize: 11)
+        workLabelsButton.titleLabel?.lineBreakMode = .byTruncatingTail
+        workLabelsButton.contentHorizontalAlignment = .leading
+        workLabelsButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        workLabelsButton.addTarget(self, action: #selector(labelsTapped), for: .touchUpInside)
+        moreTagsLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        moreTagsLabel.textColor = AppColors.secondaryText
+        moreTagsLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let labelRow = UIStackView(arrangedSubviews: [workLabelsButton, moreTagsLabel])
+        labelRow.alignment = .center
+        labelRow.spacing = 4
+        labelRow.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        let stack = UIStackView(arrangedSubviews: [name, previewScroll, detail, labelRow, platformContainer])
         stack.axis = .vertical
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -3830,7 +3854,7 @@ private final class WorkCell: UICollectionViewCell {
             actionRow.isHidden = false
         case .list:
             previewScrollHeightConstraint?.constant = 44
-            actionRow.isHidden = true
+            actionRow.isHidden = false
         case .compare:
             previewScrollHeightConstraint?.constant = ComparePairThumbView.cardHeight
             actionRow.isHidden = false
@@ -3871,6 +3895,7 @@ private final class WorkCell: UICollectionViewCell {
 
     func configureOnline(_ entry: OnlineWorkEntry, viewMode: LibraryViewController.GalleryViewMode = .grid) {
         isOnlineCard = true
+        configureLabels(entry.workLabels)
         applyViewModeLayout(viewMode, hasSourceCompare: entry.hasSourceCompare)
         contentView.backgroundColor = AppColors.secondaryBackground
         // 对比缩略图自身负责层次和留白，外层不再加浅色矩形框。
@@ -4119,14 +4144,18 @@ private final class WorkCell: UICollectionViewCell {
         for (index, item) in platforms.enumerated() {
             let button = UIButton(type: .system)
             let isDispatched = isOptimistic(index)
-            let title = isDispatched ? ("✓ " + item.buttonLabel) : item.buttonLabel
-            button.setTitle(title, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 13, weight: isDispatched ? .bold : .semibold)
-            button.layer.cornerRadius = 8
-            button.contentEdgeInsets = UIEdgeInsets(top: 5, left: 15, bottom: 5, right: 15)
+            button.setTitle(Self.platformTitle(item, used: isDispatched), for: .normal)
+            button.titleLabel?.font = Self.platformFont(used: isDispatched)
+            button.layer.cornerRadius = 10
+            let inset = Self.platformButtonPadding / 2
+            button.contentEdgeInsets = UIEdgeInsets(top: 5, left: inset, bottom: 5, right: inset)
             button.tag = index
-            button.accessibilityLabel = item.buttonLabel
-            applyPlatformStyle(button, isOptimistic: isDispatched)
+            let label = PlatformCopyParser.albumLabel(item.buttonLabel)
+            button.accessibilityLabel = label
+            button.accessibilityValue = isDispatched ? "已使用" : nil
+            let isXHS = label.hasPrefix("小红书") || [.xhs, .xhs2, .xhs3].contains(item.platform)
+            button.backgroundColor = isXHS ? AppColors.albumCopyRedBackground : AppColors.actionGrayBg
+            button.setTitleColor(isXHS ? AppColors.albumCopyRedText : AppColors.text, for: .normal)
             button.addTarget(self, action: action, for: .touchUpInside)
             // DSH-091 C1：长按 = 预览文案（零副作用），与 Android 对齐。
             let lp = UILongPressGestureRecognizer(target: self,
@@ -4172,6 +4201,7 @@ private final class WorkCell: UICollectionViewCell {
 
     func configure(_ work: WorkItem, viewMode: LibraryViewController.GalleryViewMode = .grid) {
         isOnlineCard = false
+        configureLabels(work.workLabels)
         applyViewModeLayout(viewMode)
         contentView.backgroundColor = AppColors.secondaryBackground
         contentView.layer.borderWidth = 1
@@ -4236,6 +4266,17 @@ private final class WorkCell: UICollectionViewCell {
         onPreview?(sender.tag)
     }
 
+    private func configureLabels(_ labels: AlbumWorkLabels) {
+        let core = labels.core
+        let summary = core.isEmpty ? "未分类" : core.prefix(4).joined(separator: " · ")
+        workLabelsButton.setTitle("  " + summary, for: .normal)
+        workLabelsButton.accessibilityLabel = "查看作品标签，" + summary
+        moreTagsLabel.text = core.count > 4 ? "+\(core.count - 4)" : nil
+        moreTagsLabel.isHidden = core.count <= 4
+    }
+
+    @objc private func labelsTapped() { onLabels?() }
+
     private func configureButtons(_ work: WorkItem) {
         let platforms = CopyParserCache.platforms(for: work.textURL)
         let count = platforms.count
@@ -4243,16 +4284,7 @@ private final class WorkCell: UICollectionViewCell {
         // 只有 1 个按钮时看整体分享次数；2 个按钮时第 2 个看小红书是否已发；
         // 3 个及以上时第 3 个看抖音次数；新增的版本按钮不做置灰。
         rebuildPlatformButtons(platforms, isOptimistic: { index in
-            switch index {
-            case 0:
-                return count <= 1 ? work.shareCount > 0 : work.xhsShareCount > 0
-            case 1:
-                return count == 2 ? (work.shareCount > 0 && work.xhsShareCount == 0) : false
-            case 2:
-                return count >= 3 ? work.douyinShareCount > 0 : false
-            default:
-                return false
-            }
+            Self.localCopyUsed(platforms[index], at: index, count: count, work: work)
         }, action: #selector(platformButtonTapped(_:)))
 
         rebuildActionRow()
@@ -4272,9 +4304,9 @@ private final class WorkCell: UICollectionViewCell {
 
     private func configureResetButton() {
         // DSH-097：撤销 DSH-096 高对比（橙底橙字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
-        resetButton.setTitle("重置状态", for: .normal)
+        resetButton.setTitle("↺ 重置状态", for: .normal)
         resetButton.setTitleColor(AppColors.actionGrayText, for: .normal)
-        resetButton.backgroundColor = AppColors.actionGrayBg
+        resetButton.backgroundColor = .clear
         resetButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         resetButton.layer.cornerRadius = 8
         resetButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -4284,9 +4316,9 @@ private final class WorkCell: UICollectionViewCell {
 
     private func configureDeleteButton() {
         // DSH-097：撤销 DSH-096 高对比（红底红字），与 Android 行动行「重置/删除/复制路径」统一浅灰。
-        deleteButton.setTitle("删除", for: .normal)
-        deleteButton.setTitleColor(AppColors.actionGrayText, for: .normal)
-        deleteButton.backgroundColor = AppColors.actionGrayBg
+        deleteButton.setTitle("× 删除", for: .normal)
+        deleteButton.setTitleColor(AppColors.albumCopyRedText, for: .normal)
+        deleteButton.backgroundColor = .clear
         deleteButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         deleteButton.layer.cornerRadius = 8
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
@@ -4297,29 +4329,15 @@ private final class WorkCell: UICollectionViewCell {
     /// 与 Android 的「重置/删除/复制路径」行动行同色系（拟态灰底灰字）。
     private func configureCopyPathButton() {
         // DSH-097：保持浅灰（与重置/删除同色），与 Android 行动行三件套统一。
-        copyPathButton.setTitle("复制路径", for: .normal)
+        copyPathButton.setTitle("▣ 复制路径", for: .normal)
         copyPathButton.setTitleColor(AppColors.actionGrayText, for: .normal)
-        copyPathButton.backgroundColor = AppColors.actionGrayBg
+        copyPathButton.backgroundColor = .clear
         copyPathButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         copyPathButton.layer.cornerRadius = 8
         copyPathButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
         copyPathButton.translatesAutoresizingMaskIntoConstraints = false
         copyPathButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
         copyPathButton.accessibilityLabel = "复制作品文件夹路径"
-    }
-
-    private func applyPlatformStyle(_ button: UIButton, isOptimistic: Bool) {
-        if isOptimistic {
-            // 已分发状态：翡翠绿深绿 + 浅绿高亮底，带清爽边框
-            button.setTitleColor(AppColors.platformChipActiveText, for: .normal)
-            button.backgroundColor = AppColors.platformChipActiveBg
-            button.layer.borderWidth = 1
-            button.layer.borderColor = AppColors.platformChipActiveBorder.cgColor
-        } else {
-            button.setTitleColor(AppColors.platformChipIdleText, for: .normal)
-            button.backgroundColor = AppColors.platformChipIdleBg
-            button.layer.borderWidth = 0
-        }
     }
 
     @objc private func resetTapped() { onReset?() }
@@ -4621,7 +4639,7 @@ final class OnlineImagePreviewController: UIViewController, UIScrollViewDelegate
                     dispatchedVersions: self.entry.dispatchedVersions,
                     season: self.entry.season,
                     flowType: self.entry.flowType,
-                    tags: self.entry.tags,
+                    tags: self.entry.tags, workLabels: self.entry.workLabels,
                     sourceImages: self.entry.sourceImages,
                     sourceNames: self.entry.sourceNames,
                     hasSourceCompare: self.entry.hasSourceCompare,

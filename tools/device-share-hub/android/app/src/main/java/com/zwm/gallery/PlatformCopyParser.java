@@ -64,6 +64,24 @@ final class PlatformCopyParser {
         }
     }
 
+    static int albumSlot(String marker) {
+        if (marker == null) return 0;
+        switch (marker.trim().replace('｜', '|').replace(" ", "")) {
+            case "小红书1|自然攻略版": return 1;
+            case "小红书3|高密度种草版": return 2;
+            case "小红书4|高密度全要素方案版": return 3;
+            case "抖音|攻略版": return 4;
+            case "抖音|轻分享版": return 5;
+            default: return 0;
+        }
+    }
+
+    static String albumLabel(String marker) {
+        int slot = albumSlot(marker);
+        if (slot == 0) return marker;
+        return slot <= 3 ? "小红书" + slot : "抖音" + (slot - 3);
+    }
+
     static String friendlyLabelForMarker(String marker) {
         if (marker == null || marker.trim().isEmpty()) return "参考文案";
         String trimmed = marker.trim();
@@ -431,14 +449,18 @@ final class PlatformCopyParser {
         String targetTag = hasLabel ? buttonLabel : platformCode;
         if (targetTag == null || targetTag.trim().isEmpty()) return false;
 
+        int slot = albumSlot(targetTag);
+        java.util.function.Predicate<String> matches = candidate -> slot == 0
+                ? isVersionTagMatched(targetTag, candidate) : albumSlot(candidate) == slot;
+
         if (localDispatched != null) {
             for (String local : localDispatched) {
-                if (isVersionTagMatched(targetTag, local)) return true;
+                if (matches.test(local)) return true;
             }
         }
         if (dispatchedVersions != null) {
             for (String ver : dispatchedVersions) {
-                if (isVersionTagMatched(targetTag, ver)) return true;
+                if (matches.test(ver)) return true;
             }
         }
         if (dispatchedTo != null) {
@@ -446,9 +468,9 @@ final class PlatformCopyParser {
                 if (tag == null) continue;
                 String extracted = extractVersionFromRecord(tag);
                 if (!extracted.isEmpty()) {
-                    if (isVersionTagMatched(targetTag, extracted)) return true;
+                    if (matches.test(extracted)) return true;
                 } else {
-                    if (isVersionTagMatched(targetTag, tag)) return true;
+                    if (matches.test(tag)) return true;
                 }
             }
         }

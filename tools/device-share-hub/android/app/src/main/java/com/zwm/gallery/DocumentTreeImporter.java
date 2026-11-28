@@ -62,8 +62,17 @@ final class DocumentTreeImporter {
                 String warning = work.textCount > 1
                         ? "检测到多个 TXT，已使用“" + work.caption.name + "”" : "";
                 try {
-                    library.importWork(id, work.name, text, images, warning,
-                            work.documentId, work.parentDocumentId, work.relativePath, work.category);
+                    org.json.JSONObject labels = new org.json.JSONObject();
+                    for (String sidecar : AlbumWorkLabels.FILES) {
+                        for (Item file : work.metadata) {
+                            if (!sidecar.equals(file.name)) continue;
+                            try { AlbumWorkLabels.mergeJson(labels, readMetadata(resolver, file.uri)); }
+                            catch (IOException ignored) { }
+                        }
+                    }
+                    library.importWork(id, work.name, text, images, warning, work.documentId,
+                            work.parentDocumentId, work.relativePath, work.category,
+                            labels.length() == 0 ? "" : labels.toString());
                     imported++;
                 } catch (IOException error) {
                     if (error.getMessage() != null && error.getMessage().contains("作品已存在")) {
@@ -115,7 +124,9 @@ final class DocumentTreeImporter {
         ArrayList<String> textNames = new ArrayList<>();
         ArrayList<Item> texts = new ArrayList<>();
         Item marker = null;
+        ArrayList<Item> metadata = new ArrayList<>();
         for (Item file : files) {
+            if (java.util.Arrays.asList(AlbumWorkLabels.FILES).contains(file.name)) metadata.add(file);
             if (".zwm-work-id".equals(file.name)) {
                 marker = file;
                 continue;
@@ -147,7 +158,7 @@ final class DocumentTreeImporter {
             for (Item text : texts) if (captionName.equals(text.name)) caption = text;
             if (caption != null) {
                 if (childWorks == 0) {
-                    works.add(new Folder(documentId, displayName, images, caption, marker,
+                    works.add(new Folder(documentId, displayName, images, caption, marker, metadata,
                             WorkRules.countCaptionCandidates(textNames), parentDocumentId, category, currentPath));
                     return 1;
                 }
@@ -160,6 +171,20 @@ final class DocumentTreeImporter {
     static boolean isTrashFolderName(String name) {
         return name != null && name.matches("_?相册回收站(?: \\(\\d+\\))?");
     }
+    private static String readMetadata(ContentResolver resolver, Uri uri) throws IOException {
+        try (InputStream input = resolver.openInputStream(uri);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) return "";
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (output.size() + count > 512 * 1024) return "";
+                output.write(buffer, 0, count);
+            }
+            return new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
     private static String readText(ContentResolver resolver, Uri uri) throws IOException {
         try (InputStream input = resolver.openInputStream(uri);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -283,17 +308,19 @@ final class DocumentTreeImporter {
         final ArrayList<Item> images;
         final Item caption;
         final Item marker;
+        final List<Item> metadata;
         final int textCount;
         final String parentDocumentId;
         final String category;
         final String relativePath;
-        Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker,
+        Folder(String documentId, String name, ArrayList<Item> images, Item caption, Item marker, List<Item> metadata,
                int textCount, String parentDocumentId, String category, String relativePath) {
             this.documentId = documentId;
             this.name = name;
             this.images = images;
             this.caption = caption;
             this.marker = marker;
+            this.metadata = metadata;
             this.textCount = textCount;
             this.parentDocumentId = parentDocumentId;
             this.category = category;

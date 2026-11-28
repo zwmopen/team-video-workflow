@@ -1,6 +1,24 @@
 import UIKit
 
 enum AppColors {
+    static var albumCopyRedBackground: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { $0.userInterfaceStyle == .dark
+                ? UIColor(red: 0.28, green: 0.18, blue: 0.21, alpha: 1)
+                : UIColor(red: 0.98, green: 0.92, blue: 0.94, alpha: 1) }
+        }
+        return UIColor(red: 0.98, green: 0.92, blue: 0.94, alpha: 1)
+    }
+
+    static var albumCopyRedText: UIColor {
+        if #available(iOS 13.0, *) {
+            return UIColor { $0.userInterfaceStyle == .dark
+                ? UIColor(red: 0.95, green: 0.74, blue: 0.77, alpha: 1)
+                : UIColor(red: 0.52, green: 0.21, blue: 0.26, alpha: 1) }
+        }
+        return UIColor(red: 0.52, green: 0.21, blue: 0.26, alpha: 1)
+    }
+
     static var groupedTableStyle: UITableView.Style {
         if #available(iOS 13.0, *) { return .insetGrouped }
         return .grouped
