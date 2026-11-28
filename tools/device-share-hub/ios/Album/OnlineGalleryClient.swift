@@ -634,11 +634,11 @@ public final class OnlineGalleryClient {
         let time = Int64(Date().timeIntervalSince1970 * 1000)
         let nonce = UUID().uuidString
         let target = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
-        let targetHash = SHA256.hash(data: Data(target.utf8)).map { String(format: "%02x", $0) }.joined()
+        let targetHash = CryptoKit.SHA256.hash(data: Data(target.utf8)).map { String(format: "%02x", $0) }.joined()
         var proof: [String: Any] = ["method": body == nil ? "GET" : "POST", "targetHash": targetHash,
                                     "deviceId": device, "time": time, "nonce": nonce]
         if let body = body {
-            proof["bodyHash"] = SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
+            proof["bodyHash"] = CryptoKit.SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
         }
         guard let signature = try? RemoteIdentity.sign(proof) else { return request }
         request.setValue(device, forHTTPHeaderField: "X-Album-Device")
