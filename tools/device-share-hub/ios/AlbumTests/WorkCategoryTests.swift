@@ -16,14 +16,14 @@ final class WorkCategoryTests: XCTestCase {
         XCTAssertEqual(WorkCategory.from(path: "作品/普通案例"), WorkCategory.uncategorized)
     }
 
-    func testFormatsFolderLabelsWithAdaptiveTruncation() {
+    func testFormatsFolderLabelsAtFullLength() {
         XCTAssertEqual(LibraryViewController.formatFolderLabel("全部"), "全部")
         XCTAssertEqual(LibraryViewController.formatFolderLabel(""), "全部")
         XCTAssertEqual(LibraryViewController.formatFolderLabel("all"), "全部")
         XCTAssertEqual(LibraryViewController.formatFolderLabel("安吉站"), "安吉站")
         XCTAssertEqual(LibraryViewController.formatFolderLabel("12345"), "12345")
-        XCTAssertEqual(LibraryViewController.formatFolderLabel("作品集_100"), "作品集_1...")
-        XCTAssertEqual(LibraryViewController.formatFolderLabel("超过五个字的内容"), "超过五个字...")
+        XCTAssertEqual(LibraryViewController.formatFolderLabel("作品集_100"), "作品集_100")
+        XCTAssertEqual(LibraryViewController.formatFolderLabel("超过五个字的内容"), "超过五个字的内容")
     }
 
     func testExtractsFolderNameFromWorkItem() {
