@@ -709,6 +709,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineStatusLabel.minimumScaleFactor = 0.78
         onlineStatusLabel.isAccessibilityElement = true
         onlineStatusLabel.accessibilityIdentifier = "online-status-label"
+        onlineStatusLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showAlbumAccessHelp)))
         onlineStatusLabel.text = "◌ 正在连接电脑"
         view.addSubview(onlineStatusLabel)
         localFilesButton = UIButton(type: .system)
@@ -836,12 +837,29 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         onlineStatusLabel.backgroundColor = .clear
         if isOnlineMode {
             let state = onlineStatusOverride ?? "◌ 正在连接电脑"
-            onlineStatusLabel.text = state
+            let denied = state == "○ 设备未授权"
+            onlineStatusLabel.isUserInteractionEnabled = denied
+            onlineStatusLabel.accessibilityTraits = denied ? .button : .staticText
+            onlineStatusLabel.text = denied ? "\(state) · 查看" : state
             onlineStatusLabel.textColor = state.hasPrefix("●") ? AppColors.brandLightText : AppColors.secondaryText
         } else {
+            onlineStatusLabel.isUserInteractionEnabled = false
+            onlineStatusLabel.accessibilityTraits = .staticText
             onlineStatusLabel.text = "手机本地作品 · \(library.works.count) 套"
             onlineStatusLabel.textColor = AppColors.secondaryText
         }
+    }
+
+    @objc private func showAlbumAccessHelp() {
+        guard isOnlineMode, onlineStatusOverride == "○ 设备未授权" else { return }
+        let sheet = UIAlertController(title: "电脑相册未授权",
+            message: "在电脑相册左上角打开「设备权限」，找到这台手机，批准或恢复访问。完成后回到这里检查。",
+            preferredStyle: .alert)
+        sheet.addAction(UIAlertAction(title: "关闭", style: .cancel))
+        sheet.addAction(UIAlertAction(title: "检查授权", style: .default) { [weak self] _ in
+            self?.loadOnlineData(silent: false)
+        })
+        present(sheet, animated: true)
     }
 
     private final class CategoryFilterButton: UIButton {

@@ -176,6 +176,7 @@ public final class MainActivity extends Activity {
     private LinearLayout titleCluster;
     private LinearLayout statusRow;
     private TextView statusText;
+    private boolean onlineNeedsApproval;
     private TextView liveStatusPill;
     private com.zwm.livecore.LiveQuickMenu liveQuickMenu;
     private LinearLayout collapsibleHeader;
@@ -800,6 +801,16 @@ public final class MainActivity extends Activity {
         statusText.setSingleLine(true);
         statusText.setEllipsize(TextUtils.TruncateAt.END);
         statusText.setPadding(dp(6), dp(4), dp(4), dp(4));
+        statusText.setOnClickListener(view -> {
+            if (!isOnlineMode || !onlineNeedsApproval) return;
+            new AlertDialog.Builder(this)
+                    .setTitle("电脑相册未授权")
+                    .setMessage("在电脑相册左上角打开「设备权限」，找到这台手机，批准或恢复访问。完成后回到这里检查。")
+                    .setNegativeButton("关闭", null)
+                    .setPositiveButton("检查授权", (dialog, which) -> refreshOnlineWorks(true))
+                    .show();
+        });
+        statusText.setClickable(false);
 
         liveStatusPill = text("", 11, true);
         liveStatusPill.setSingleLine(true);
@@ -3981,6 +3992,8 @@ public final class MainActivity extends Activity {
      *    电脑关机时用户连上次的内容都看不到。
      */
     private void refreshOnlineWorks(boolean userInitiated) {
+        onlineNeedsApproval = false;
+        statusText.setClickable(false);
         if (userInitiated || onlineWorks.isEmpty() || onlineListFromSnapshot) {
             statusText.setText("◌ 正在连接电脑");
             statusText.setContentDescription(null);
@@ -4059,8 +4072,10 @@ public final class MainActivity extends Activity {
             public void onError(Exception error) {
                 if (!isOnlineMode) return;
                 if (OnlineGalleryClient.isApprovalRequired(error)) {
-                    statusText.setText("○ 设备未授权");
-                    statusText.setContentDescription("请在电脑相册的设备权限中批准");
+                    onlineNeedsApproval = true;
+                    statusText.setText("○ 设备未授权 · 查看");
+                    statusText.setContentDescription("设备未授权，点按查看授权步骤");
+                    statusText.setClickable(true);
                     finishVisibleRefresh(onlineWorks.isEmpty() ? "设备未授权，请在电脑相册批准"
                             : "设备未授权 · 正在查看本地快照");
                     return;
