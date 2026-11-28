@@ -204,19 +204,23 @@ final class SettingsViewController: UITableViewController {
         var latest: [String: Any]?
         alert.addAction(UIAlertAction(title: "技术详情", style: .default) { [weak self] _ in
             let r2 = latest?["r2"] as? [String: Any]
-            let quotas = r2?["quotas"] as? [String: Any]
-            var details = "云端服务：Cloudflare R2"
+            let month = latest?["month"] as? [String: Any]
+            var details = "云端服务：Cloudflare R2（标准存储）\n上传、下载流量均免费"
+            if let bytes = month?["r2Bytes"] as? NSNumber {
+                details += "\n本月云端转发：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary)
+            }
             if let bytes = r2?["activeBytes"] as? NSNumber {
                 details += "\n当前暂存：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary)
+            } else {
+                details += "\n当前暂存：暂未获取"
             }
-            for (key, label, total) in [("storageUsageRatio", "存储额度", "10 GB-month/月"), ("classAUsageRatio", "写入等操作额度", "100万次/月"), ("classBUsageRatio", "读取等操作额度", "1000万次/月")] {
-                if let ratio = (quotas?[key] as? NSNumber)?.doubleValue, ratio.isFinite, ratio >= 0 {
-                    details += String(format: "\n%@：%.2f%% / %@", label, ratio * 100.0, total)
-                } else {
-                    details += "\n\(label)：暂未获取（\(total)）"
-                }
+            details += "\n每月免费存储：10 GB-month（按存放时长计）"
+            for (key, label, total) in [("classAOpsEst", "写入等操作", "1,000,000"), ("classBOpsEst", "读取等操作", "10,000,000")] {
+                let used = (month?[key] as? NSNumber)?.int64Value
+                let text = used.map { NumberFormatter.localizedString(from: NSNumber(value: max(0, $0)), number: .decimal) } ?? "暂未获取"
+                details += "\n\(label)：\(text) / \(total) 次（估算）"
             }
-            details += "\n\n以上为应用统计与估算，不是账户实际账单。"
+            details += "\n\n以上为本应用统计及估算，不含账户内其他项目和 Workers 等服务。实际账单以 Cloudflare 为准。"
             let info = UIAlertController(title: "技术详情", message: details, preferredStyle: .alert)
             info.addAction(UIAlertAction(title: "关闭", style: .cancel))
             self?.present(info, animated: true)
