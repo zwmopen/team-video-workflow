@@ -265,8 +265,15 @@ public final class OnlineGalleryClient {
     }
 
     public boolean shouldTryRemoteFirst() {
-        return RemoteRelayProfile.getStrategy(context) == RemoteRelayProfile.TransportStrategy.R2_FIRST
-                && RemoteRelayProfile.isEnrolled(context);
+        android.net.ConnectivityManager manager = context.getSystemService(android.net.ConnectivityManager.class);
+        if (manager != null) {
+            for (android.net.Network connected : manager.getAllNetworks()) {
+                android.net.NetworkCapabilities network = manager.getNetworkCapabilities(connected);
+                if (network != null && (network.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                        || network.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET))) return false;
+            }
+        }
+        return RemoteRelayProfile.isEnrolled(context);
     }
 
     private static List<OnlineWorkEntry> filterRemoteWorks(List<OnlineWorkEntry> works, String category, String query) {
@@ -1005,7 +1012,9 @@ public final class OnlineGalleryClient {
                 if (requestSequence == worksRequestSequence.get()) {
                     lastAppliedWorksScanRevision = scanRevision;
                 }
-                RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
+                if (!RemoteRelayProfile.isEnrolled(context)) {
+                    RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
+                }
                 Log.i(TAG, "fetchWorks parsed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " fullList=" + fullList + " works=" + list.size());
@@ -1223,7 +1232,7 @@ public final class OnlineGalleryClient {
             String baseUrl = resolveBaseUrl();
             String uStr = baseUrl + "/api/online/image?id=" + URLEncoder.encode(workId, "UTF-8")
                     + "&file=" + URLEncoder.encode(fileName, "UTF-8") + "&thumb=1&w=" + thumbDisplayPx;
-            conn = (HttpURLConnection) new URL(uStr).openConnection();
+            conn = openGalleryRead(new URL(uStr));
             conn.setRequestProperty("Connection", "close");
             conn.setConnectTimeout(THUMB_CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(THUMB_READ_TIMEOUT_MS);
@@ -1412,7 +1421,7 @@ public final class OnlineGalleryClient {
                         // 2.7MB 原图只留给「下载到相册/分享」链路（downloadOneImageToFile）。
                         + "&w=1600";
                 URL url = new URL(uStr);
-                conn = (HttpURLConnection) url.openConnection();
+                conn = openGalleryRead(url);
                 conn.setRequestProperty("Connection", "close");
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(20000);
@@ -1549,7 +1558,7 @@ public final class OnlineGalleryClient {
                 URL url = new URL(baseUrl + "/api/online/reset-work");
                 JSONObject body = new JSONObject();
                 body.put("workId", workId);
-                String resp = httpPost(url, body.toString());
+                String resp = rawHttpPost(url, body.toString());
                 JSONObject json = new JSONObject(resp);
                 boolean ok = json.optBoolean("ok", false);
                 String msg = json.optString("message", ok ? "已重置为待首发状态" : "重置失败");
@@ -1940,7 +1949,7 @@ public final class OnlineGalleryClient {
                     throw new java.io.IOException("无法创建视频缓存目录");
                 }
                 URL url = new URL(resolveBaseUrl() + "/api/online/video?id=" + URLEncoder.encode(workId, "UTF-8"));
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                HttpURLConnection conn = openGalleryRead(url);
                 conn.setConnectTimeout(TIMEOUT_MS);
                 conn.setReadTimeout(TIMEOUT_MS * 3);
                 java.io.File temporary = null;
@@ -2069,7 +2078,7 @@ public final class OnlineGalleryClient {
                 + (isLive ? "&live=motion" : "");
         try {
             URL url = new URL(uStr);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            HttpURLConnection conn = openGalleryRead(url);
             conn.setConnectTimeout(TIMEOUT_MS);
             conn.setReadTimeout(TIMEOUT_MS * 3);
             if (isLive) {
@@ -2232,7 +2241,38 @@ public final class OnlineGalleryClient {
         }
     }
 
-    private static String rawHttpGet(URL url) throws Exception {
+    private HttpURLConnection openGalleryRead(URL url) throws Exception {
+        return openGalleryRequest(url, "GET", null);
+    }
+
+    private HttpURLConnection openGalleryRequest(URL url, String method, byte[] body) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        String host = url.getHost();
+        if (host.matches("10\\.[0-9.]+|192\\.168\\.[0-9.]+|172\\.(1[6-9]|2[0-9]|3[01])\\.[0-9.]+")
+                && url.getPath().startsWith("/api/online/")) {
+            RemoteRelayProfile.Stored profile = RemoteRelayProfile.load(context);
+            if (profile != null) {
+                String nonce = java.util.UUID.randomUUID().toString();
+                long time = System.currentTimeMillis();
+                JSONObject proof = new JSONObject();
+                proof.put("method", method);
+                proof.put("targetHash", RemoteProtocol.sha256Hex(url.getFile().getBytes(StandardCharsets.UTF_8)));
+                if (body != null) proof.put("bodyHash", RemoteProtocol.sha256Hex(body));
+                proof.put("deviceId", profile.deviceId);
+                proof.put("time", time);
+                proof.put("nonce", nonce);
+                connection.setInstanceFollowRedirects(false);
+                connection.setRequestProperty("X-Album-Device", profile.deviceId);
+                connection.setRequestProperty("X-Album-Time", Long.toString(time));
+                connection.setRequestProperty("X-Album-Nonce", nonce);
+                connection.setRequestProperty("X-Album-Signature", RemoteProtocol.signEs256P1363(
+                        RemoteIdentity.loadOrCreate(context).signingPrivateKey, proof));
+            }
+        }
+        return connection;
+    }
+
+    private String rawHttpGet(URL url) throws Exception {
         return rawHttpGet(url, TIMEOUT_MS, TIMEOUT_MS);
     }
 
@@ -2240,7 +2280,7 @@ public final class OnlineGalleryClient {
      * 带超时参数的 GET。列表/分类走 {@link #LIST_CONNECT_TIMEOUT_MS} 等更短的值，
      * 其余调用沿用原来的 {@link #TIMEOUT_MS}，行为不变。
      */
-    private static String rawHttpGet(URL url, int connectTimeoutMs, int readTimeoutMs) throws Exception {
+    private String rawHttpGet(URL url, int connectTimeoutMs, int readTimeoutMs) throws Exception {
         final String path = url.getPath();
         final boolean listEndpoint = "/api/online/works".equals(path)
                 || "/api/online/categories".equals(path);
@@ -2249,7 +2289,7 @@ public final class OnlineGalleryClient {
         int code = -1;
         long responseBytes = 0L;
         try {
-            conn = (HttpURLConnection) url.openConnection();
+            conn = openGalleryRead(url);
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(connectTimeoutMs);
             conn.setReadTimeout(readTimeoutMs);
@@ -2348,14 +2388,15 @@ public final class OnlineGalleryClient {
         }
     }
 
-    private static String rawHttpPost(URL url, String jsonBody) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+    private String rawHttpPost(URL url, String jsonBody) throws Exception {
+        byte[] data = jsonBody.getBytes(StandardCharsets.UTF_8);
+        boolean reset = "/api/online/reset-work".equals(url.getPath());
+        HttpURLConnection conn = reset ? openGalleryRequest(url, "POST", data) : (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setConnectTimeout(TIMEOUT_MS);
         conn.setReadTimeout(TIMEOUT_MS);
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-        byte[] data = jsonBody.getBytes(StandardCharsets.UTF_8);
         conn.setFixedLengthStreamingMode(data.length);
         OutputStream out = conn.getOutputStream();
         out.write(data);
@@ -2364,6 +2405,10 @@ public final class OnlineGalleryClient {
 
         int code = conn.getResponseCode();
         if (code < 200 || code >= 300) {
+            if (reset && code == 403) {
+                conn.disconnect();
+                throw new java.io.IOException("请确认这台手机已获电脑相册授权，并连接电脑所在的 Wi-Fi");
+            }
             throw new Exception("HTTP " + code + " " + conn.getResponseMessage());
         }
         InputStream in = new BufferedInputStream(conn.getInputStream());

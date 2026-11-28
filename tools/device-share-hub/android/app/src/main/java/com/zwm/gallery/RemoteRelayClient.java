@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class RemoteRelayClient {
     private static final String TAG = "RemoteRelayClient";
-    private static final String PREFS = "album_prefs";
+    private static final String PREFS = "device_share";
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 25_000;
     private static final int OBJECT_READ_TIMEOUT_MS = 90_000;
@@ -226,7 +226,8 @@ public final class RemoteRelayClient {
         if (pcBaseUrl == null || !pcBaseUrl.startsWith("http")) return;
         long now = System.currentTimeMillis();
         long prev = lastLanEnrollMs.get();
-        if (RemoteRelayProfile.isEnrolled(context) && (now - prev) < ENROLL_COOLDOWN_MS) return;
+        long cooldown = RemoteRelayProfile.isEnrolled(context) ? ENROLL_COOLDOWN_MS : 5000;
+        if (now - prev < cooldown) return;
         if (!lastLanEnrollMs.compareAndSet(prev, now)) return;
 
         new Thread(() -> {
@@ -267,6 +268,8 @@ public final class RemoteRelayClient {
                         DiagnosticLog.write(context, "remote_auto_enroll_ok",
                                 parsed.optString("workspaceId", ""));
                     }
+                } else if (code == 403) {
+                    Log.i(TAG, "LAN album access application is pending or requires approval");
                 }
             } catch (Exception e) {
                 Log.w(TAG, "LAN auto-enroll skipped: " + e.getMessage());

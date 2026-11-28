@@ -1,4 +1,6 @@
 import UIKit
+import Network
+import CryptoKit
 
 public struct OnlineCategoryItem: Codable, Hashable {
     public let name: String
@@ -369,6 +371,7 @@ public final class ImageLoadRequest {
 }
 
 public final class OnlineGalleryClient {
+    static let routeChanged = Notification.Name("albumGalleryRouteChanged")
     public static let shared = OnlineGalleryClient()
     public static let defaultPort = 45835
     private let prefs = UserDefaults.standard
@@ -389,6 +392,7 @@ public final class OnlineGalleryClient {
     /// 并发也收敛到 3 条 —— 手机实测 10 张 30MB 用了 131 秒，就是 20 条并发把上行打满后
     /// 各自只剩十几 KB/s，超时重试又从 0 开始，越重试越卡。
     private let fullImageSession: URLSession
+    private let galleryNetwork = NWPathMonitor()
     /// 同时在飞的图片请求上限
     private static let fullImageConcurrency = 3
     private let thumbnailMaxAttempts = 3
@@ -426,6 +430,17 @@ public final class OnlineGalleryClient {
         self.session = URLSession(configuration: config)
         self.fullImageSession = URLSession(configuration: fullConfig)
         self.diskCacheURL = cacheDirectory
+        var lastRoute: String?
+        galleryNetwork.pathUpdateHandler = { path in
+            let route = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
+                ? "lan" : path.usesInterfaceType(.cellular) ? "cellular" : "other"
+            defer { lastRoute = route }
+            guard lastRoute != nil, lastRoute != route else { return }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Self.routeChanged, object: nil)
+            }
+        }
+        galleryNetwork.start(queue: DispatchQueue(label: "album.gallery-network"))
         imageCache.countLimit = 500
         imageCache.totalCostLimit = 120 * 1024 * 1024 // 120MB 内存缓存
         trimDiskCacheIfNeeded()   // DSH-188：目录原本只写不淘汰，实测已膨胀到 881MB
@@ -600,7 +615,37 @@ public final class OnlineGalleryClient {
     }
 
     public func shouldTryRemoteFirst() -> Bool {
-        return RemoteRelayProfile.transportStrategy == .r2First && RemoteRelayProfile.load() != nil
+        let path = galleryNetwork.currentPath
+        if path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet) { return false }
+        return RemoteRelayProfile.load() != nil
+    }
+
+    private func galleryRead(_ url: URL, body: Data? = nil) -> URLRequest {
+        var request = URLRequest(url: url)
+        if let body = body {
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        guard let host = url.host, let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              host.range(of: #"^(10\.[0-9.]+|192\.168\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+)$"#,
+                         options: .regularExpression) != nil,
+              let device = RemoteRelayProfile.load()?.certificate["deviceId"] as? String else { return request }
+        let time = Int64(Date().timeIntervalSince1970 * 1000)
+        let nonce = UUID().uuidString
+        let target = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
+        let targetHash = SHA256.hash(data: Data(target.utf8)).map { String(format: "%02x", $0) }.joined()
+        var proof: [String: Any] = ["method": body == nil ? "GET" : "POST", "targetHash": targetHash,
+                                    "deviceId": device, "time": time, "nonce": nonce]
+        if let body = body {
+            proof["bodyHash"] = SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
+        }
+        guard let signature = try? RemoteIdentity.sign(proof) else { return request }
+        request.setValue(device, forHTTPHeaderField: "X-Album-Device")
+        request.setValue(String(time), forHTTPHeaderField: "X-Album-Time")
+        request.setValue(nonce, forHTTPHeaderField: "X-Album-Nonce")
+        request.setValue(signature, forHTTPHeaderField: "X-Album-Signature")
+        return request
     }
 
     private func filterRemoteWorks(_ works: [OnlineWorkEntry], category: String?, query: String?) -> [OnlineWorkEntry] {
@@ -929,7 +974,8 @@ public final class OnlineGalleryClient {
             return
         }
         let runLan = { [weak self] in
-            self?.session.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self else { return }
+            self.session.dataTask(with: self.galleryRead(url)) { [weak self] data, _, error in
                 if let error = error {
                     if let cached = self?.lastRemoteCategoriesResult {
                         DispatchQueue.main.async { completion(.success(cached)) }
@@ -1043,7 +1089,7 @@ public final class OnlineGalleryClient {
     }
 
     private func performFetchWorksLanTask(url: URL, category: String?, query: String?, requestID: UInt64, baseUrl: String, deniedRemotely: Bool = false, completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
-        session.dataTask(with: url) { [weak self] data, response, error in
+        session.dataTask(with: galleryRead(url)) { [weak self] data, response, error in
             let httpOK = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
             if let error = error ?? (httpOK ? nil : URLError(.badServerResponse)) {
                 let deniedLocally = (response as? HTTPURLResponse)?.statusCode == 403
@@ -1241,7 +1287,7 @@ public final class OnlineGalleryClient {
         guard !request.isCancelled else { return }
         let attemptStartedAt = Date()
         var observation: NSKeyValueObservation?
-        let task = session.dataTask(with: url) { [weak self] data, response, error in
+        let task = session.dataTask(with: galleryRead(url)) { [weak self] data, response, error in
             observation?.invalidate()
             request.clearTask()
             guard let self = self, !request.isCancelled else { return }
@@ -1485,7 +1531,7 @@ public final class OnlineGalleryClient {
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         // DSH-201：原图走 fullImageSession（180 秒资源超时 / 3 条并发）。
-        let task = fullImageSession.dataTask(with: url) { [weak self] data, response, error in
+        let task = fullImageSession.dataTask(with: galleryRead(url)) { [weak self] data, response, error in
             guard let self = self else { return }
             let statusCode = (response as? HTTPURLResponse)?.statusCode
             let isRetryable = error != nil || statusCode == nil || statusCode == 408 || statusCode == 429 || (statusCode.map { $0 >= 500 } ?? false) || (data != nil && (data?.count ?? 0) <= 1024)
@@ -2061,13 +2107,15 @@ public final class OnlineGalleryClient {
             completion?(false, "URL 错误")
             return
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: Any] = ["workId": workId]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-
-        session.dataTask(with: request) { data, _, _ in
+        guard let body = try? JSONSerialization.data(withJSONObject: ["workId": workId]) else {
+            completion?(false, "重置请求格式无效")
+            return
+        }
+        session.dataTask(with: galleryRead(url, body: body)) { data, response, _ in
+            if (response as? HTTPURLResponse)?.statusCode == 403 {
+                DispatchQueue.main.async { completion?(false, "请确认这台手机已获电脑相册授权，并连接电脑所在的 Wi-Fi") }
+                return
+            }
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 DispatchQueue.main.async { completion?(false, "请求失败") }

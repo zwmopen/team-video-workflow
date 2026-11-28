@@ -275,6 +275,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         }
         NotificationCenter.default.addObserver(self, selector: #selector(handleAppWillEnterForeground),
                                                name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleGalleryRouteChange),
+                                               name: OnlineGalleryClient.routeChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleThemeStyleDidChange),
                                                name: NSNotification.Name("AppThemeStyleDidChange"), object: nil)
         view.backgroundColor = AppColors.background
@@ -411,6 +413,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
         } else if isOnlineMode {
             loadOnlineData(silent: true)
         }
+    }
+
+    @objc private func handleGalleryRouteChange() {
+        guard isOnlineMode, viewIfLoaded?.window != nil, UIApplication.shared.applicationState == .active else { return }
+        loadOnlineData(silent: true)
     }
 
     deinit {

@@ -4922,6 +4922,63 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     _phone_sync_last: Dict[str, float] = {}
     PHONE_SYNC_COOLDOWN = 300.0
     pairing_csrf = secrets.token_urlsafe(32)
+    lan_read_routes = frozenset({
+        "/api/online/works", "/api/online/categories", "/api/online/filter-options",
+        "/api/online/image", "/api/online/video", "/api/online/live-video",
+        "/api/online/recycle", "/api/online/view-state",
+    })
+    lan_permissions_lock = threading.Lock()
+    lan_members_expires = 0
+    lan_members = {}
+    lan_nonces = {}
+
+    def _approved_lan_request(self, method, body=None):
+        # Authenticate the specific request without sending a reusable relay token over HTTP.
+        from remote_catalog_bridge import verify_es256_p1363
+        device_id = self.headers.get("X-Album-Device", "")
+        nonce = self.headers.get("X-Album-Nonce", "")
+        signature = self.headers.get("X-Album-Signature", "")
+        timestamp = self.headers.get("X-Album-Time", "")
+        if (not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", device_id)
+                or not re.fullmatch(r"[A-Fa-f0-9-]{36}", nonce)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{86}", signature)
+                or not re.fullmatch(r"[0-9]{13}", timestamp)):
+            return False
+        now = int(time.time() * 1000)
+        if abs(int(timestamp) - now) > 30000:
+            return False
+        cls = type(self)
+        key = (device_id, nonce)
+        with cls.lan_permissions_lock:
+            if cls.lan_members_expires <= now:
+                cls.lan_members = {}
+                cls.lan_members_expires = now + 2000
+                if self.bridge:
+                    try:
+                        status, _, raw = self.bridge._http("/v1/devices",
+                            token=self.bridge.ensure_session(), timeout=4)
+                        if status == 200:
+                            cls.lan_members = {d["deviceId"]: d["signingPublicKey"] for d in json.loads(raw)["devices"]
+                                if d.get("role") == "member" and d.get("remoteAllowed")
+                                and not d.get("revoked") and d.get("signingPublicKey")}
+                            cls.lan_members_expires = now + 15000
+                    except (OSError, ValueError, KeyError, RuntimeError):
+                        pass
+            pub = cls.lan_members.get(device_id)
+            if not pub or key in cls.lan_nonces:
+                return False
+            payload = {"method": method, "targetHash": hashlib.sha256(self.path.encode("utf-8")).hexdigest(), "deviceId": device_id,
+                       "time": int(timestamp), "nonce": nonce}
+            if body is not None:
+                payload["bodyHash"] = hashlib.sha256(body).hexdigest()
+            if not verify_es256_p1363(pub, payload, signature):
+                return False
+            if len(cls.lan_nonces) >= 1024:
+                cls.lan_nonces = {k: expiry for k, expiry in cls.lan_nonces.items() if expiry > now}
+                if len(cls.lan_nonces) >= 4096:
+                    return False
+            cls.lan_nonces[key] = now + 65000
+            return True
 
     def _local_admin_request(self):
         from ipaddress import ip_address
@@ -4940,6 +4997,12 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
                 and self._is_trusted_lan_client()):
             return True
         if self._local_admin_request():
+            return True
+        if (method == "GET" and path in self.lan_read_routes and self._is_trusted_lan_client()
+                and self._approved_lan_request("GET")):
+            return True
+        # Reset must additionally authenticate its body before reading or modifying work state.
+        if method == "POST" and path == "/api/online/reset-work" and self._is_trusted_lan_client():
             return True
         if method == "GET" and path in ("/", "/api/online/status"):
             self.send_json(200, {"ok": True, "server": "DeviceShareHub-OnlineGallery", "approvalRequired": True})
@@ -5036,6 +5099,8 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             if device and device.get("approval_key"):
                 device["approved_at"] = int(time.time()) if action == "approve" else 0
                 save_authorized_devices(devices)
+        with type(self).lan_permissions_lock:
+            type(self).lan_members_expires = 0
         self.send_response(303)
         self.send_header("Location", "/device-permissions")
         self.end_headers()
@@ -5451,7 +5516,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.15",
+                "version": "1.2.17",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -7403,13 +7468,22 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/online/reset-work":
-            content_length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
             try:
-                req = json.loads(raw_body)
-            except Exception:
-                self.send_error(400, "Invalid JSON")
-                return
+                content_length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                content_length = 0
+            if not 0 < content_length <= 8192:
+                return self.send_json(400, {"ok": False, "message": "重置请求格式无效"})
+            body = self.rfile.read(content_length)
+            if not self._local_admin_request() and not self._approved_lan_request("POST", body):
+                return self.send_json(403, {"ok": False, "code": "device_approval_required",
+                                            "message": "请在电脑相册批准这台手机，再重置作品状态"})
+            try:
+                req = json.loads(body)
+            except (ValueError, UnicodeError):
+                req = None
+            if not isinstance(req, dict) or not isinstance(req.get("workId"), str):
+                return self.send_json(400, {"ok": False, "message": "重置请求缺少作品编号"})
 
             work_id = req.get("workId", "").strip()
             if not work_id:
