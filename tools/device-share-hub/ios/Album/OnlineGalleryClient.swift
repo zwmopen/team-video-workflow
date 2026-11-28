@@ -1,6 +1,5 @@
 import UIKit
 import Network
-import CryptoKit
 
 public struct OnlineCategoryItem: Codable, Hashable {
     public let name: String
@@ -634,11 +633,11 @@ public final class OnlineGalleryClient {
         let time = Int64(Date().timeIntervalSince1970 * 1000)
         let nonce = UUID().uuidString
         let target = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
-        let targetHash = CryptoKit.SHA256.hash(data: Data(target.utf8)).map { String(format: "%02x", $0) }.joined()
+        let targetHash = Self.galleryProofHash(Data(target.utf8))
         var proof: [String: Any] = ["method": body == nil ? "GET" : "POST", "targetHash": targetHash,
                                     "deviceId": device, "time": time, "nonce": nonce]
         if let body = body {
-            proof["bodyHash"] = CryptoKit.SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
+            proof["bodyHash"] = Self.galleryProofHash(body)
         }
         guard let signature = try? RemoteIdentity.sign(proof) else { return request }
         request.setValue(device, forHTTPHeaderField: "X-Album-Device")
@@ -646,6 +645,12 @@ public final class OnlineGalleryClient {
         request.setValue(nonce, forHTTPHeaderField: "X-Album-Nonce")
         request.setValue(signature, forHTTPHeaderField: "X-Album-Signature")
         return request
+    }
+
+    private static func galleryProofHash(_ data: Data) -> String {
+        var digest = SHA256.State()
+        digest.update(data)
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private func filterRemoteWorks(_ works: [OnlineWorkEntry], category: String?, query: String?) -> [OnlineWorkEntry] {
