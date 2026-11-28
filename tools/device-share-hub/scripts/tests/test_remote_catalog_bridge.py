@@ -13,8 +13,10 @@ from cryptography.hazmat.primitives import serialization
 from remote_catalog_bridge import jwk_from_public_key
 
 
-def test_mobile_enrollment_issues_valid_es256_certificate(tmp_path: Path):
+def test_mobile_enrollment_issues_valid_es256_certificate(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("ALBUM_RELAY_BACKUP_ENDPOINT", "https://backup.example/")
     bridge = RemoteCatalogBridge(state_dir=tmp_path)
+    monkeypatch.setattr(bridge, "ensure_session", lambda: "local-test")
     mobile_priv = ec.generate_private_key(ec.SECP256R1())
     mobile_jwk = jwk_from_public_key(mobile_priv.public_key())
 
@@ -28,6 +30,12 @@ def test_mobile_enrollment_issues_valid_es256_certificate(tmp_path: Path):
 
     admin_cert, _ = bridge.admin_certificate()
     assert verify_es256_p1363(admin_cert["signingPublicKey"], cert, enrolled["certificateSignature"])
+    routes = enrolled["relayRoutes"]
+    assert routes["backupAuthority"] == "backup.example"
+    assert routes["workspaceId"] == bridge.workspace_id
+    assert verify_es256_p1363(enrolled["relayRoutesIssuerKey"], routes, enrolled["relayRoutesSignature"])
+    assert not verify_es256_p1363(enrolled["relayRoutesIssuerKey"], dict(routes, backupAuthority="modified.example"),
+                                  enrolled["relayRoutesSignature"])
 
 
 def test_resolve_safe_work_file_rejects_traversal(tmp_path: Path):

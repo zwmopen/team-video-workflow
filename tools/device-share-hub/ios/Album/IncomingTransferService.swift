@@ -563,7 +563,8 @@ final class IncomingTransferService: P2PTransferEngine.Delegate {
             throw TransferServiceError.forbidden("远程登记资料不是发给本机的")
         }
         try RemoteRelayProfile.save(endpoint: endpoint, certificate: certificate,
-                                    certificateSignature: signature)
+                                    certificateSignature: signature,
+                                    routeProfile: object)
         updateStatus("远程传送已开启，等待电脑连接")
         return HTTPResponse(status: 200, object: ["ok": true])
     }

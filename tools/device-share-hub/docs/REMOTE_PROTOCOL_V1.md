@@ -2,6 +2,13 @@
 
 状态：Cloudflare Worker、Durable Object 和 R2 已部署。Android 候选已通过蜂窝相册、独立 R2 收件，以及 Windows 协议测试发送器发起的蜂窝 WebRTC 直传。Windows 原生面板的自动回退和 iPhone 蜂窝仍需实测。
 
+## 同工作区 HTTPS 备用入口
+
+- 电脑服务通过 `ALBUM_RELAY_BACKUP_ENDPOINT` 配置同一个 Worker 或同一后端工作区的 HTTPS 源站。新一轮现有局域网自动授权会下发 `relayRoutes`、`relayRoutesSignature` 和 `relayRoutesIssuerKey`。路由使用主备 authority、工作区 ID 与 ES256 签名。
+- Android 和 iOS 13 及以上会检查签名、签发公钥指纹和工作区 ID。旧版或无备用入口的授权资料仍可使用原入口。
+- 主入口会话建立遇网络故障或服务端 5xx 时，使用备用入口重新取得挑战和会话。已认证 JSON 请求遇到上述故障后，下次调用会重建会话，不自动重放刚失败的有副作用请求。鉴权拒绝沿用原处理。
+- 两个入口需核对到同一工作区。部署备用入口后验收实际手机蜂窝：用 Windows 正式界面验证目录、设备心跳、P2P、同次自动回落 R2 及最终回执。只有局域网时仍从原发现与本地传送入口使用。
+
 ## 普通公开作品模式（当前产品选择）
 
 用户已明确作品均为公开内容，因此当前远程传送使用 `mode: "plain"`，不生成、不上传应用层密钥包，也不做 AES/E2E 文件加密。HTTPS 仍是强制传输层，设备签名会话仍用于限制谁可以创建或接收任务。

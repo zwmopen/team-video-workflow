@@ -44,6 +44,8 @@ public final class RemoteRelayClient {
     private static final long ENROLL_COOLDOWN_MS = 10 * 60 * 1000L;
     private static final AtomicLong lastLanEnrollMs = new AtomicLong(0L);
     private static volatile Session cachedSession;
+    private static String unavailableEndpoint = "";
+    private static long unavailableUntil;
     private static final Object SESSION_LOCK = new Object();
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -139,15 +141,42 @@ public final class RemoteRelayClient {
             if (s != null && !s.isExpired()
                     && s.workspaceId.equals(profile.workspaceId)
                     && s.deviceId.equals(profile.deviceId)
-                    && s.endpoint.equals(profile.endpoint)) {
+                    && (s.endpoint.equals(profile.endpoint) || s.endpoint.equals(profile.backupEndpoint))) {
                 return s;
             }
+            boolean backupFirst = !profile.backupEndpoint.isEmpty()
+                    && profile.endpoint.equals(unavailableEndpoint)
+                    && android.os.SystemClock.elapsedRealtime() < unavailableUntil;
+            String first = backupFirst ? profile.backupEndpoint : profile.endpoint;
+            String second = backupFirst ? profile.endpoint : profile.backupEndpoint;
+            cachedSession = authenticateWithFallback(first, second,
+                    endpoint -> createSession(context, profile, endpoint));
+            return cachedSession;
+        }
+    }
+
+    interface SessionAuthenticator {
+        Session authenticate(String endpoint) throws Exception;
+    }
+
+    static Session authenticateWithFallback(String first, String second, SessionAuthenticator authenticator)
+            throws Exception {
+        try {
+            return authenticator.authenticate(first);
+        } catch (Exception failure) {
+            if (second.isEmpty() || !endpointUnavailable(failure)) throw failure;
+            return authenticator.authenticate(second);
+        }
+    }
+
+    private static Session createSession(Context context, RemoteRelayProfile.Stored profile, String endpoint)
+            throws Exception {
             RemoteIdentity id = RemoteIdentity.loadOrCreate(context);
             JSONObject chReq = new JSONObject();
             chReq.put("workspaceId", profile.workspaceId);
             chReq.put("deviceId", profile.deviceId);
             JSONObject challenge = requestJson(
-                    profile.endpoint + "/v1/challenges",
+                    endpoint + "/v1/challenges",
                     "POST",
                     null,
                     profile.workspaceId,
@@ -162,15 +191,29 @@ public final class RemoteRelayClient {
             sesReq.put("challengeId", chId);
             sesReq.put("challengeSignature", chSig);
             JSONObject sesJson = requestJson(
-                    profile.endpoint + "/v1/sessions",
+                    endpoint + "/v1/sessions",
                     "POST",
                     null,
                     profile.workspaceId,
                     sesReq.toString());
             String token = sesJson.getString("token");
             long exp = sesJson.optLong("expiresAt", System.currentTimeMillis() + 3600_000L);
-            cachedSession = new Session(profile.endpoint, profile.workspaceId, profile.deviceId, token, exp);
-            return cachedSession;
+            return new Session(endpoint, profile.workspaceId, profile.deviceId, token, exp);
+    }
+
+    private static boolean endpointUnavailable(Exception failure) {
+        return failure instanceof java.io.IOException
+                || (failure instanceof HttpStatusException && ((HttpStatusException) failure).statusCode >= 500);
+    }
+
+    private static void markEndpointUnavailable(String token) {
+        Session current = cachedSession;
+        if (current == null || token == null || !token.equals(current.token)) return;
+        synchronized (SESSION_LOCK) {
+            if (cachedSession != current) return;
+            unavailableUntil = android.os.SystemClock.elapsedRealtime() + 45_000L;
+            unavailableEndpoint = current.endpoint;
+            cachedSession = null;
         }
     }
 
@@ -464,13 +507,16 @@ public final class RemoteRelayClient {
         Request.Builder request = relayRequest(urlStr, token, workspaceId).header("Accept", "application/json");
         RequestBody body = jsonBody == null ? null : RequestBody.create(jsonBody, JSON);
         Request call = request.method(method, body).build();
-        try (Response response = relayHttp(call, false).newCall(call).execute()) {
+        okhttp3.Call exchange = relayHttp(call, false).newCall(call);
+        if (token == null) exchange.timeout().timeout(8, java.util.concurrent.TimeUnit.SECONDS);
+        try (Response response = exchange.execute()) {
             int code = response.code();
             String respText = response.body() == null ? "{}" : response.body().string();
             if (code == 401) {
                 cachedSession = null;
             }
             if (code < 200 || code >= 300) {
+                if (code >= 500) markEndpointUnavailable(token);
                 String msg = respText;
                 try {
                     msg = new JSONObject(respText).optString("message", msg);
@@ -479,6 +525,9 @@ public final class RemoteRelayClient {
             }
             if (respText.trim().isEmpty()) return new JSONObject();
             return new JSONObject(respText);
+        } catch (java.io.IOException failure) {
+            markEndpointUnavailable(token);
+            throw failure;
         }
     }
 

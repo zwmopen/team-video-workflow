@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Selectable cross-network transport strategy (mirrors PC & Android).
 enum RemoteTransportStrategy: String, CaseIterable {
@@ -33,6 +34,7 @@ enum RemoteTransportStrategy: String, CaseIterable {
 struct RemoteRelayProfile {
     struct Stored {
         let endpoint: String
+        let backupEndpoint: String?
         let certificate: [String: Any]
         let certificateSignature: String
     }
@@ -88,24 +90,31 @@ struct RemoteRelayProfile {
                       let endpoint = obj["endpoint"] as? String,
                       let cert = obj["certificate"] as? [String: Any],
                       let sig = obj["certificateSignature"] as? String else { return }
-                try? save(endpoint: endpoint, certificate: cert, certificateSignature: sig)
+                try? save(endpoint: endpoint, certificate: cert, certificateSignature: sig,
+                          routeProfile: obj)
                 RemoteRelayClient.invalidateCachedSession()
             }.resume()
         }
     }
 
     static func save(endpoint: String, certificate: [String: Any],
-                     certificateSignature: String) throws {
+                     certificateSignature: String, routeProfile: [String: Any] = [:]) throws {
         let normalized = try RemoteRelayClient.normalizeEndpoint(endpoint)
         try validate(certificate: certificate)
         guard !certificateSignature.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw RemoteRelayError.invalidCertificate
         }
-        let object: [String: Any] = [
+        var object: [String: Any] = [
             "endpoint": normalized,
             "certificate": certificate,
             "certificateSignature": certificateSignature.trimmingCharacters(in: .whitespacesAndNewlines)
         ]
+        if let workspaceId = certificate["workspaceId"] as? String,
+           verifiedBackup(routeProfile, primary: normalized, workspaceId: workspaceId) != nil {
+            for key in ["relayRoutes", "relayRoutesSignature", "relayRoutesIssuerKey"] {
+                object[key] = routeProfile[key]
+            }
+        }
         let data = try JSONSerialization.data(withJSONObject: object, options: [])
         UserDefaults.standard.set(String(data: data, encoding: .utf8), forKey: defaultsKey)
     }
@@ -118,17 +127,52 @@ struct RemoteRelayProfile {
               let endpoint = profile["endpoint"] as? String,
               let certificate = profile["certificate"] as? [String: Any],
               let signature = profile["certificateSignature"] as? String,
+              let workspaceId = certificate["workspaceId"] as? String,
               let normalizedEndpoint = try? RemoteRelayClient.normalizeEndpoint(endpoint),
               (try? validate(certificate: certificate)) != nil,
               !signature.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        return Stored(endpoint: normalizedEndpoint, certificate: certificate,
+        return Stored(endpoint: normalizedEndpoint,
+                      backupEndpoint: verifiedBackup(profile, primary: normalizedEndpoint,
+                                                     workspaceId: workspaceId),
+                      certificate: certificate,
                       certificateSignature: signature)
     }
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+    }
+
+    private static func verifiedBackup(_ profile: [String: Any], primary: String, workspaceId: String) -> String? {
+        guard #available(iOS 13.0, *),
+              let routes = profile["relayRoutes"] as? [String: String],
+              let issuer = profile["relayRoutesIssuerKey"] as? [String: String],
+              issuer["kty"] == "EC", issuer["crv"] == "P-256",
+              let x = base64URLData(issuer["x"]), x.count == 32,
+              let y = base64URLData(issuer["y"]), y.count == 32,
+              let signature = base64URLData(profile["relayRoutesSignature"] as? String),
+              let key = try? P256.Signing.PublicKey(x963Representation: Data([4]) + x + y),
+              let proof = try? P256.Signing.ECDSASignature(rawRepresentation: signature),
+              let issuerData = try? RemoteProtocol.canonicalData(issuer),
+              let routeData = try? RemoteProtocol.canonicalData(routes),
+              routes["workspaceId"] == workspaceId,
+              let primaryAuthority = routes["primaryAuthority"],
+              let backupAuthority = routes["backupAuthority"],
+              (try? RemoteRelayClient.normalizeEndpoint("https://" + primaryAuthority)) == primary,
+              let backup = try? RemoteRelayClient.normalizeEndpoint("https://" + backupAuthority),
+              backup != primary else { return nil }
+        let fingerprint = SHA256.hash(data: issuerData).map { String(format: "%02x", $0) }.joined()
+        guard workspaceId == "ws_" + String(fingerprint.prefix(32)),
+              key.isValidSignature(proof, for: routeData) else { return nil }
+        return backup
+    }
+
+    private static func base64URLData(_ value: String?) -> Data? {
+        guard let value = value else { return nil }
+        let normal = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        return Data(base64Encoded: normal.padding(toLength: (normal.count + 3) / 4 * 4,
+                                                 withPad: "=", startingAt: 0))
     }
 
     private static func validate(certificate: [String: Any]) throws {

@@ -43,14 +43,16 @@ public final class RemoteRelayProfile {
 
     public static final class Stored {
         public final String endpoint;
+        public final String backupEndpoint;
         public final String workspaceId;
         public final String deviceId;
         public final JSONObject certificate;
         public final String certificateSignature;
 
-        Stored(String endpoint, String workspaceId, String deviceId,
+        Stored(String endpoint, String backupEndpoint, String workspaceId, String deviceId,
                JSONObject certificate, String certificateSignature) {
             this.endpoint = endpoint;
+            this.backupEndpoint = backupEndpoint;
             this.workspaceId = workspaceId;
             this.deviceId = deviceId;
             this.certificate = certificate;
@@ -76,6 +78,11 @@ public final class RemoteRelayProfile {
         }
         JSONObject normalized = new JSONObject();
         normalized.put("endpoint", endpoint);
+        if (!backupEndpoint(obj, endpoint, wsId).isEmpty()) {
+            normalized.put("relayRoutes", obj.getJSONObject("relayRoutes"));
+            normalized.put("relayRoutesSignature", obj.getString("relayRoutesSignature"));
+            normalized.put("relayRoutesIssuerKey", obj.getJSONObject("relayRoutesIssuerKey"));
+        }
         normalized.put("certificate", cert);
         normalized.put("certificateSignature", sig);
         context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -97,7 +104,7 @@ public final class RemoteRelayProfile {
             String wsId = cert.getString("workspaceId").trim();
             String devId = cert.getString("deviceId").trim();
             if (wsId.isEmpty() || devId.isEmpty() || sig.isEmpty()) return null;
-            return new Stored(endpoint, wsId, devId, cert, sig);
+            return new Stored(endpoint, backupEndpoint(obj, endpoint, wsId), wsId, devId, cert, sig);
         } catch (Exception e) {
             return null;
         }
@@ -118,9 +125,29 @@ public final class RemoteRelayProfile {
     public static String normalizeEndpoint(String raw) {
         String s = raw == null ? "" : raw.trim();
         while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
-        if (!s.startsWith("https://")) {
+        okhttp3.HttpUrl url = okhttp3.HttpUrl.parse(s);
+        if (url == null || !url.isHttps() || !url.username().isEmpty() || !url.password().isEmpty()
+                || !"/".equals(url.encodedPath()) || url.query() != null || url.fragment() != null) {
             throw new IllegalArgumentException("远程中继地址必须使用 HTTPS");
         }
-        return s;
+        return url.toString().substring(0, url.toString().length() - 1);
+    }
+
+    static String backupEndpoint(JSONObject profile, String primary, String workspaceId) {
+        try {
+            JSONObject routes = profile.getJSONObject("relayRoutes");
+            JSONObject issuer = profile.getJSONObject("relayRoutesIssuerKey");
+            if (!"EC".equals(issuer.getString("kty")) || !"P-256".equals(issuer.getString("crv"))
+                    || !workspaceId.equals("ws_" + RemoteProtocol.sha256Hex(
+                            RemoteProtocol.canonicalBytes(issuer)).substring(0, 32))
+                    || !workspaceId.equals(routes.getString("workspaceId"))
+                    || !primary.equals(normalizeEndpoint("https://" + routes.getString("primaryAuthority")))
+                    || !RemoteProtocol.verifyEs256P1363(issuer.getString("x"), issuer.getString("y"),
+                            routes, profile.getString("relayRoutesSignature"))) return "";
+            String backup = normalizeEndpoint("https://" + routes.getString("backupAuthority"));
+            return backup.equals(primary) ? "" : backup;
+        } catch (Exception invalid) {
+            return "";
+        }
     }
 }

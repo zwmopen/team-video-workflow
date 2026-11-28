@@ -2,6 +2,14 @@ import Foundation
 
 /// HTTPS control-plane client for relay login, presence and remote task polling.
 final class RemoteRelayClient {
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
     private static let connectTimeout: TimeInterval = 8
     private static let readTimeout: TimeInterval = 20
     private static let objectTimeout: TimeInterval = 30 * 60
@@ -12,7 +20,7 @@ final class RemoteRelayClient {
         configuration.timeoutIntervalForRequest = readTimeout
         configuration.timeoutIntervalForResource = objectTimeout
         configuration.waitsForConnectivity = false
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }()
 
     private init() {}
@@ -132,6 +140,8 @@ final class RemoteRelayClient {
     }
 
     private static var cachedSession: Session?
+    private static var unavailableEndpoint: String?
+    private static var unavailableUntil: TimeInterval = 0
     private static let sessionLock = NSLock()
 
     static func ensureSession() throws -> Session {
@@ -142,14 +152,44 @@ final class RemoteRelayClient {
         defer { sessionLock.unlock() }
         if let existing = cachedSession,
            !existing.expired,
-           existing.endpoint == profile.endpoint {
+           existing.workspaceId == profile.certificate["workspaceId"] as? String,
+           existing.deviceId == profile.certificate["deviceId"] as? String,
+           existing.endpoint == profile.endpoint || existing.endpoint == profile.backupEndpoint {
             return existing
         }
-        let session = try createSession(endpoint: profile.endpoint,
-                                          certificate: profile.certificate,
-                                          certificateSignature: profile.certificateSignature)
-        cachedSession = session
-        return session
+        var endpoints = [profile.endpoint]
+        if let backup = profile.backupEndpoint {
+            endpoints.append(backup)
+            if unavailableEndpoint == profile.endpoint && ProcessInfo.processInfo.systemUptime < unavailableUntil {
+                endpoints.reverse()
+            }
+        }
+        for (index, endpoint) in endpoints.enumerated() {
+            do {
+                let session = try createSession(endpoint: endpoint, certificate: profile.certificate,
+                                                certificateSignature: profile.certificateSignature)
+                cachedSession = session
+                return session
+            } catch {
+                guard index + 1 < endpoints.count, isEndpointUnavailable(error) else { throw error }
+            }
+        }
+        throw RemoteRelayError.invalidURL
+    }
+
+    private static func isEndpointUnavailable(_ error: Error) -> Bool {
+        if let relayError = error as? RemoteRelayError, case .endpointUnavailable = relayError { return true }
+        return error is URLError
+    }
+
+    private static func invalidateFailedEndpoint(token: String?) {
+        guard let token = token else { return }
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        guard let current = cachedSession, current.token == token else { return }
+        unavailableEndpoint = current.endpoint
+        unavailableUntil = ProcessInfo.processInfo.systemUptime + 45
+        cachedSession = nil
     }
 
     static func invalidateCachedSession() {
@@ -386,7 +426,7 @@ final class RemoteRelayClient {
         guard let requestURL = URL(string: url) else { throw RemoteRelayError.invalidURL }
         var request = URLRequest(url: requestURL,
                                  cachePolicy: .reloadIgnoringLocalCacheData,
-                                 timeoutInterval: readTimeout)
+                                 timeoutInterval: token == nil ? connectTimeout : readTimeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token = token, !token.isEmpty {
@@ -416,9 +456,17 @@ final class RemoteRelayClient {
         // 无超时会把整个 relay 链路（列目录 / 取状态 / 提交）拖成假死。
         if semaphore.wait(timeout: waitDeadline) == .timedOut {
             task.cancel()
-            throw RemoteRelayError.remote("中继请求超时（\(Int(connectTimeout + readTimeout) + 15) 秒无响应）")
+            invalidateFailedEndpoint(token: token)
+            throw RemoteRelayError.endpointUnavailable
         }
-        if let error = responseError { throw error }
+        if let error = responseError {
+            if isEndpointUnavailable(error) { invalidateFailedEndpoint(token: token) }
+            throw error
+        }
+        if (500..<600).contains(responseStatus) {
+            invalidateFailedEndpoint(token: token)
+            throw RemoteRelayError.endpointUnavailable
+        }
         guard responseData.count <= maxResponseBytes else {
             throw RemoteRelayError.responseTooLarge
         }
@@ -465,6 +513,7 @@ enum RemoteRelayError: LocalizedError {
     case invalidTransferId
     case invalidTask
     case responseTooLarge
+    case endpointUnavailable
     case remote(String)
 
     var errorDescription: String? {
@@ -478,6 +527,7 @@ enum RemoteRelayError: LocalizedError {
         case .invalidTransferId: return "远程任务标识无效。"
         case .invalidTask: return "远程任务内容无效。"
         case .responseTooLarge: return "远程服务响应过大。"
+        case .endpointUnavailable: return "远程中继入口暂时不可用。"
         case .remote(let detail): return detail
         }
     }

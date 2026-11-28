@@ -20,6 +20,7 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -35,6 +36,18 @@ DEFAULT_RELAY_ENDPOINT = os.environ.get(
     "ALBUM_RELAY_ENDPOINT",
     "https://zwm-device-share-relay.zwmrpg.workers.dev",
 ).rstrip("/")
+
+
+def normalize_backup_endpoint(raw: str) -> str:
+    if not raw.strip():
+        return ""
+    endpoint = urllib.parse.urlsplit(raw.strip().rstrip("/"))
+    if (endpoint.scheme != "https" or not endpoint.hostname or endpoint.username is not None
+            or endpoint.password is not None or endpoint.path or endpoint.query or endpoint.fragment
+            or any(char.isspace() for char in endpoint.netloc)):
+        raise ValueError("备用中继入口必须是 HTTPS 源站地址")
+    endpoint.port  # Validate the port if explicitly present.
+    return endpoint.geturl()
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -218,6 +231,7 @@ class RemoteCatalogBridge:
     ):
         self.state_dir = state_dir
         self.endpoint = endpoint.rstrip("/")
+        self.backup_endpoint = normalize_backup_endpoint(os.environ.get("ALBUM_RELAY_BACKUP_ENDPOINT", ""))
         self.admin_path = state_dir / "remote_catalog_admin.json"
         self.stats_store = LocalTransferStatsStore(state_dir / "transfer_stats.json")
         self.get_works_fn = get_works_fn
@@ -348,13 +362,23 @@ class RemoteCatalogBridge:
             self.ensure_session()
         except Exception:
             pass
-        return {
+        profile = {
             "ok": True,
             "endpoint": self.endpoint,
             "workspaceId": self._workspace_id,
             "certificate": cert,
             "certificateSignature": cert_sig,
         }
+        if self.backup_endpoint and self.backup_endpoint != self.endpoint:
+            routes = {
+                "workspaceId": self._workspace_id,
+                "primaryAuthority": urllib.parse.urlsplit(self.endpoint).netloc,
+                "backupAuthority": urllib.parse.urlsplit(self.backup_endpoint).netloc,
+            }
+            profile["relayRoutes"] = routes
+            profile["relayRoutesSignature"] = sign_es256_p1363(self._priv, routes)
+            profile["relayRoutesIssuerKey"] = self._pub_jwk
+        return profile
 
     def _http(
         self,
