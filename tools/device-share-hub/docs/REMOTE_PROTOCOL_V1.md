@@ -1,6 +1,6 @@
 # 远程传送协议 V1
 
-状态：普通公开作品链路已实现并有本地协议闭环测试；Android/iOS 已接入对象下载、作品库导入、分类库存心跳和 ACK，Windows 原生面板已接入 P2P 优先与 HTTPS 中继兜底，Cloudflare Worker/Durable Object/R2 已正式部署。真实 Android/iPhone/Windows 跨网络传送仍待真机验收。
+状态：Cloudflare Worker、Durable Object 和 R2 已部署。Android 候选已通过蜂窝相册、独立 R2 收件，以及 Windows 协议测试发送器发起的蜂窝 WebRTC 直传。Windows 原生面板的自动回退和 iPhone 蜂窝仍需实测。
 
 ## 普通公开作品模式（当前产品选择）
 

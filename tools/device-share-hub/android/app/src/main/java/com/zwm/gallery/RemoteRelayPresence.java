@@ -2,6 +2,8 @@ package com.zwm.gallery;
 
 import android.util.Log;
 
+import android.os.SystemClock;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -36,6 +38,9 @@ public final class RemoteRelayPresence {
 
     private void runLoop() {
         long lastHeartbeatAt = 0L;
+        long lastInboxPollAt = 0L;
+        AndroidP2pReceiver p2p = null;
+        String lastP2pId = "";
         while (active && service.isServiceRunning()) {
             try {
                 if (!RemoteRelayProfile.isEnrolled(service)) {
@@ -43,16 +48,39 @@ public final class RemoteRelayPresence {
                     continue;
                 }
                 RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(service);
-                long now = System.currentTimeMillis();
-                if (now - lastHeartbeatAt >= 20_000L) {
+                long now = SystemClock.elapsedRealtime();
+                if (lastHeartbeatAt == 0L || now - lastHeartbeatAt >= 12_000L) {
                     JSONObject info = service.buildPublicDeviceInfo();
                     RemoteRelayClient.heartbeat(session, info);
                     lastHeartbeatAt = now;
                 }
                 if (OnlineService.isAutoReceiveEnabled(service)) {
-                    RemoteRelayTask.processInbox(service, session);
+                    if (p2p == null || p2p.isClosed()) {
+                        JSONArray pending = RemoteRelayClient.p2pRequest(session, "", null).optJSONArray("sessions");
+                        for (int i = 0; pending != null && i < pending.length(); i++) {
+                            JSONObject item = pending.getJSONObject(i);
+                            String id = item.optString("sessionId");
+                            if (AndroidP2pReceiver.safeId(id) && !id.equals(lastP2pId)
+                                    && session.deviceId.equals(item.optString("responderDeviceId"))
+                                    && "webrtc-datachannel-v1".equals(item.optString("protocol"))
+                                    && "work".equals(item.optString("contentKind", "work"))
+                                    && !"closed".equals(item.optString("state"))
+                                    && !"failed".equals(item.optString("state"))) {
+                                p2p = new AndroidP2pReceiver(service, session, item);
+                                lastP2pId = id;
+                                break;
+                            }
+                        }
+                    }
+                    if (lastInboxPollAt == 0L || now - lastInboxPollAt >= 8_000L) {
+                        RemoteRelayTask.processInbox(service, session);
+                        lastInboxPollAt = now;
+                    }
+                } else if (p2p != null) {
+                    p2p.cancel();
+                    p2p = null;
                 }
-                Thread.sleep(8_000L);
+                Thread.sleep(1_500L);
             } catch (InterruptedException ie) {
                 break;
             } catch (Exception e) {
@@ -64,5 +92,6 @@ public final class RemoteRelayPresence {
                 }
             }
         }
+        if (p2p != null) p2p.cancel();
     }
 }

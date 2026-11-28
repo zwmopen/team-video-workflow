@@ -6,15 +6,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const read = relative => fs.readFileSync(path.join(root, relative), "utf8");
 
-const androidFile = "android/app/src/main/java/com/zwm/gallery/P2PTransferEngine.java";
-const androidExists = fs.existsSync(path.join(root, androidFile));
-const android = androidExists ? read(androidFile) : null;
+const android = read("android/app/src/main/java/com/zwm/gallery/AndroidP2pReceiver.java");
+const androidPresence = read("android/app/src/main/java/com/zwm/gallery/RemoteRelayPresence.java");
 const ios = read("ios/Album/P2PTransferEngine.swift");
 const windows = read("windows-native/src/remote_relay.cpp");
 const windowsP2P = read("windows-native/src/p2p_transport.cpp");
 const windowsMain = read("windows-native/src/main.cpp");
 const protocol = read("docs/REMOTE_PROTOCOL_V1.md");
-const androidShutdown = android ? android.slice(android.indexOf("private void shutdown")) : "";
 const iosShutdown = ios.slice(ios.indexOf("private func shutdown"));
 
 const requireText = (source, text, label) => {
@@ -23,10 +21,10 @@ const requireText = (source, text, label) => {
 
 // Both mobile responders must serialize the SDP/ICE handoff. This is the
 // boundary where a candidate can otherwise be lost between callback threads.
-if (android) {
-  requireText(android, "private final Object iceLock = new Object();", "Android ICE lock");
-  requireText(android, "synchronized (iceLock)", "Android ICE synchronization");
-}
+requireText(android, "new ScheduledThreadPoolExecutor(1)", "Android serial SDP and channel worker");
+requireText(android, "if (remoteReady) peer.addIceCandidate(ice)", "Android SDP/ICE handoff");
+requireText(android, "for (IceCandidate candidate : pending)", "Android ICE queue drain");
+requireText(androidPresence, "new AndroidP2pReceiver", "Android foreground service responder");
 requireText(ios, "private let iceLock = NSLock()", "iOS ICE lock");
 requireText(ios, "self.iceLock.lock()", "iOS SDP queue drain lock");
 requireText(ios, "iceLock.lock()", "iOS candidate enqueue lock");
@@ -34,10 +32,11 @@ requireText(ios, "iceLock.lock()", "iOS candidate enqueue lock");
 // A successful import must leave time for the ACK to cross SCTP before the
 // responder closes the peer; otherwise Windows intentionally falls back to a
 // duplicate relay transfer.
-if (android) {
-  requireText(android, "ACK_FLUSH_DELAY_MS", "Android ACK flush delay");
-  requireText(androidShutdown, "transport.close()", "Android signaling session cleanup");
-}
+requireText(android, '"/" + id + "/close"', "Android signaling session cleanup");
+requireText(android, "worker.schedule(this::close, ACK_FLUSH_DELAY_MS", "Android ACK flush delay");
+const commit = android.indexOf("RemoteRelayTask.commitReceived(");
+const ack = android.indexOf("sendAck(true)");
+if (commit === -1 || ack <= commit) throw new Error("Android must commit before acknowledging");
 requireText(ios, "ackFlushDelay", "iOS ACK flush delay");
 requireText(iosShutdown, "transport.close()", "iOS signaling session cleanup");
 requireText(windows, "closeSession", "Windows P2P session cleanup");

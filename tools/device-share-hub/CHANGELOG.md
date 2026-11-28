@@ -1,3 +1,8 @@
+## 2026-11-28 · Android 0.8.145 (256) · 蜂窝 P2P 接收候选
+
+- 恢复安装包内的 WebRTC 作品接收，使用已有认证信令、文件帧及作品库导入。验证身份、大小、偏移与 SHA-256，落盘后回 ACK，结束时关闭信令会话。关闭自动接收后停止 P2P 收件。
+- 影响文档：P2P_DATA_PROTOCOL、REMOTE_PROTOCOL_V1、MAINTAINER_HANDOFF、BUG_LEDGER、README。
+
 ## 2026-11-28 · Android 0.8.144 (255) · 蜂窝远程相册与中继
 
 - 安卓默认 Cloudflare 中继域名通过 HTTPS DNS 获取 IPv4 地址，查不到时回退系统 DNS。HTTPS 主机名、证书校验和远程身份认证保持原口径。默认中继直连探活失败时，可使用经同域 HTTPS 探活确认的现有本机 HTTP CONNECT 代理。

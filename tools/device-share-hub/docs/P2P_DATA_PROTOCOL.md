@@ -1,6 +1,6 @@
 # P2P DataChannel 文件传输协议
 
-状态：开发中。此协议用于认证后的 `webrtc-datachannel-v1` 会话；P2P 建连失败时，发送端必须回退到现有 HTTPS 中继。
+此协议用于认证后的 `webrtc-datachannel-v1` 会话。Windows 原生发送端的自动模式在 P2P 失败后进入现有 HTTPS 中继。Android 0.8.145 (256) 恢复 `work` 收件，应用更新沿用 HTTPS 中继。
 
 ## 传输顺序
 
@@ -28,7 +28,7 @@ Cloudflare 只转发短时 SDP/ICE 信令，不接收文件字节。DataChannel 
 {"v":1,"kind":"complete","transferId":"p2p_..."}
 ```
 
-接收端写入缓存并完成全部大小/SHA-256 校验后回复：
+接收端写入缓存、完成全部大小/SHA-256 校验并保存到作品库后回复：
 
 ```json
 {"v":1,"kind":"ack","transferId":"p2p_...","ok":true,"objects":1,"bytes":123}
@@ -54,10 +54,10 @@ Cloudflare 只转发短时 SDP/ICE 信令，不接收文件字节。DataChannel 
 
 ## 去重与回退
 
-`transferId` 由发送端生成，接收端在本地短期去重账本中记录成功导入的 ID，避免 P2P ACK 丢失后回退中继造成重复作品。P2P 会话的最长协商时间为 20 秒；ICE failed、DataChannel closed、manifest/校验错误均触发中继兜底。
+`transferId` 由发送端生成，接收端记录成功导入的 ID，同一 ID 重试只补 ACK。当前 Windows 的直传 ID 和新建 R2 传输 ID 可能不同，跨路径去重仍待验证。ICE failed、DataChannel closed、manifest/校验错误会让发送端进入中继兜底。
 
 ## 当前明确边界
 
 - 不做应用层端到端加密；作品是用户明确指定的公开内容。
 - 不使用截图、剪贴板、悬浮窗或无障碍权限。
-- 没有真实 Android/iPhone 跨网络设备验收前，不能把 CI 编译通过称为 P2P 业务通过。
+- Android 候选已用 Windows Wi-Fi 的协议测试发送器和小米蜂窝完成 DataChannel、作品库导入及 ACK。Windows 原生面板、iPhone 蜂窝和同次发送自动回退仍需单独验证。

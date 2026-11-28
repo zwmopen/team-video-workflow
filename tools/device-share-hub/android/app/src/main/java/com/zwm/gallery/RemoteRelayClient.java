@@ -453,6 +453,12 @@ public final class RemoteRelayClient {
         }
     }
 
+    static JSONObject p2pRequest(Session session, String suffix, JSONObject body) throws Exception {
+        return requestJson(session.endpoint + "/v1/p2p/sessions" + suffix,
+                body == null ? "GET" : "POST", session.token, session.workspaceId,
+                body == null ? null : body.toString());
+    }
+
     private static JSONObject requestJson(String urlStr, String method, String token,
                                           String workspaceId, String jsonBody) throws Exception {
         Request.Builder request = relayRequest(urlStr, token, workspaceId).header("Accept", "application/json");

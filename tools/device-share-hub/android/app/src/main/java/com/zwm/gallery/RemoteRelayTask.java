@@ -57,7 +57,6 @@ public final class RemoteRelayTask {
                 List<File> downloadedFiles = new ArrayList<>();
                 List<String> names = new ArrayList<>();
                 List<String> mimes = new ArrayList<>();
-                List<File> imageFiles = new ArrayList<>();
 
                 for (int idx = 0; idx < objects.length(); idx++) {
                     JSONObject obj = objects.getJSONObject(idx);
@@ -76,60 +75,9 @@ public final class RemoteRelayTask {
                     names.add(safeName);
                     mimes.add(obj.optString("mime", "application/octet-stream"));
                     totalBytesDownloaded += dest.length();
-                    if (WorkRules.isSupportedImage(safeName)) imageFiles.add(dest);
                 }
 
-                WorkLibrary library = new WorkLibrary(new File(service.getFilesDir(), "work-library"));
-                int imported = 0;
-                if ("android-update".equals(contentKind) && downloadedFiles.size() == 1
-                        && downloadedFiles.get(0).getName().toLowerCase(Locale.US).endsWith(".apk")) {
-                    service.stageExternalUpdateApk(downloadedFiles.get(0));
-                    imported = 1;
-                } else {
-                    String treeValue = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                            .getString("libraryTreeUri", "");
-                    if (!treeValue.isEmpty()) {
-                        Uri tree = Uri.parse(treeValue);
-                        ArrayList<File> directFiles = new ArrayList<>();
-                        ArrayList<String> directNames = new ArrayList<>();
-                        ArrayList<String> directMimes = new ArrayList<>();
-                        for (int k = 0; k < downloadedFiles.size(); k++) {
-                            File f = downloadedFiles.get(k);
-                            if (f.getName().toLowerCase(Locale.US).endsWith(".zip")) {
-                                DocumentTreeExporter.exportZip(
-                                        service.getContentResolver(), tree, f, "remote-" + transferId + "-" + k);
-                            } else {
-                                directFiles.add(f);
-                                directNames.add(names.get(k));
-                                directMimes.add(mimes.get(k));
-                            }
-                        }
-                        if (!directFiles.isEmpty()) {
-                            DocumentTreeExporter.exportBundle(
-                                    service.getContentResolver(), tree, "云端接收-" + transferId,
-                                    directFiles, directNames, directMimes, "");
-                        }
-                        DocumentTreeImporter.ImportResult res = DocumentTreeImporter.importTree(
-                                service.getContentResolver(), tree, library,
-                                new File(service.getCacheDir(), "tree-import-remote"));
-                        imported = res.imported;
-                    } else if (downloadedFiles.size() == 1
-                            && downloadedFiles.get(0).getName().toLowerCase(Locale.US).endsWith(".zip")) {
-                        imported = WorkArchiveImporter.importZip(downloadedFiles.get(0), library, "remote_" + transferId);
-                    } else if (!imageFiles.isEmpty()) {
-                        library.importWork("remote_" + transferId, "云端中转作品", "", imageFiles, "");
-                        imported = 1;
-                    }
-                }
-
-                // Durable local import succeeded -> record stats, mark committed, ACK & clean staging
-                TransferStatsStore.record(service, "r2", totalBytesDownloaded, downloadedFiles.size());
-                JSONObject receipt = new JSONObject()
-                        .put("taskId", "remote_" + transferId)
-                        .put("committed", true)
-                        .put("imported", imported);
-                service.rememberExternalCommittedTask("remote_" + transferId, receipt);
-                OnlineService.publishWorkInventory(service, library.listActive());
+                commitReceived(service, transferId, contentKind, downloadedFiles, names, mimes, "r2");
                 RemoteRelayClient.ackTransfer(session, transferId);
                 service.updateRemoteStatus("已收到云端作品（" + downloadedFiles.size() + " 个文件）");
                 DiagnosticLog.write(service, "remote_relay_received",
@@ -143,6 +91,74 @@ public final class RemoteRelayTask {
                 deleteDir(taskDir);
             }
         }
+    }
+
+    static synchronized void commitReceived(OnlineService service, String transferId, String contentKind,
+                                            List<File> downloadedFiles, List<String> names, List<String> mimes,
+                                            String channel) throws Exception {
+        if (service.hasCommittedTaskReceipt("remote_" + transferId)) return;
+        List<File> imageFiles = new ArrayList<>();
+        long totalBytesDownloaded = 0;
+        for (int i = 0; i < downloadedFiles.size(); i++) {
+            File file = downloadedFiles.get(i);
+            totalBytesDownloaded += file.length();
+            if (WorkRules.isSupportedImage(names.get(i))) imageFiles.add(file);
+        }
+        WorkLibrary library = new WorkLibrary(new File(service.getFilesDir(), "work-library"));
+        int imported = 0;
+        int exported = 0;
+        if ("android-update".equals(contentKind) && downloadedFiles.size() == 1
+                && downloadedFiles.get(0).getName().toLowerCase(Locale.US).endsWith(".apk")) {
+            service.stageExternalUpdateApk(downloadedFiles.get(0));
+            imported = 1;
+        } else {
+            String treeValue = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString("libraryTreeUri", "");
+            if (!treeValue.isEmpty()) {
+                Uri tree = Uri.parse(treeValue);
+                ArrayList<File> directFiles = new ArrayList<>();
+                ArrayList<String> directNames = new ArrayList<>();
+                ArrayList<String> directMimes = new ArrayList<>();
+                for (int k = 0; k < downloadedFiles.size(); k++) {
+                    File f = downloadedFiles.get(k);
+                    if (f.getName().toLowerCase(Locale.US).endsWith(".zip")) {
+                        exported += DocumentTreeExporter.exportZip(
+                                service.getContentResolver(), tree, f, "remote-" + transferId + "-" + k).files;
+                    } else {
+                        directFiles.add(f);
+                        directNames.add(names.get(k));
+                        directMimes.add(mimes.get(k));
+                    }
+                }
+                if (!directFiles.isEmpty()) {
+                    exported += DocumentTreeExporter.exportBundle(
+                            service.getContentResolver(), tree, "云端接收-" + transferId,
+                            directFiles, directNames, directMimes, "").files;
+                }
+                DocumentTreeImporter.ImportResult res = DocumentTreeImporter.importTree(
+                        service.getContentResolver(), tree, library,
+                        new File(service.getCacheDir(), "tree-import-remote"));
+                imported = res.imported;
+            } else if (downloadedFiles.size() == 1
+                    && downloadedFiles.get(0).getName().toLowerCase(Locale.US).endsWith(".zip")) {
+                imported = WorkArchiveImporter.importZip(downloadedFiles.get(0), library, "remote_" + transferId);
+            } else if (!imageFiles.isEmpty()) {
+                library.importWork("remote_" + transferId, "云端中转作品", "", imageFiles, "");
+                imported = 1;
+            }
+        }
+
+        // Durable local import succeeded -> record stats, mark committed, ACK & clean staging
+        if ("p2p".equals(channel) && imported == 0 && exported == 0) {
+            throw new IllegalStateException("P2P 未保存任何文件");
+        }
+        TransferStatsStore.record(service, channel, totalBytesDownloaded, downloadedFiles.size());
+        JSONObject receipt = new JSONObject()
+                .put("taskId", "remote_" + transferId)
+                .put("committed", true)
+                .put("imported", imported);
+        service.rememberExternalCommittedTask("remote_" + transferId, receipt);
+        OnlineService.publishWorkInventory(service, library.listActive());
     }
 
     private static void deleteDir(File dir) {

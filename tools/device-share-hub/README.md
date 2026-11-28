@@ -210,7 +210,7 @@
 
 Android 设置页提供“自动接收”开关。关闭后手机仍可被电脑发现、查看已有作品和检查版本，但会拒绝局域网 HTTP、P2P 与远程中继投送，并清理正在接收的临时任务；重新打开后恢复接收。默认开启。
 
-Cloudflare Worker、Durable Objects、R2 和 P2P 信令的云端检查已通过；实体手机跨网 DataChannel、HTTPS 回退、作品实际落库/ACK 和精准库存自动补货，仍需设备上线后现场验证。
+Android 0.8.145 (256) 候选已在小米蜂窝上验证远程相册、R2 收件及 WebRTC DataChannel 作品落库与 ACK。直传由 Windows Wi-Fi 上的协议测试发送器发起。Windows 原生面板自动回退、iPhone 蜂窝和精准库存自动补货仍需现场验证。
 
 以下内容为历史版本记录。
 
