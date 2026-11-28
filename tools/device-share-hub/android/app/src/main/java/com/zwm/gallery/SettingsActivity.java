@@ -307,36 +307,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showTransferStatsDialog() {
-        final boolean enrolled = RemoteRelayProfile.isEnrolled(this);
-        final org.json.JSONObject[] latest = {null};
-        String status = enrolled ? "正在更新团队统计…" : "尚未建立云端连接";
-        AlertDialog dialog = new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                .setTitle("传输统计")
-                .setMessage(TransferStatsStore.formatHumanSummary(this, null, status))
-                .setPositiveButton("关闭", null)
-                .setNeutralButton("技术详情", (d, which) ->
-                        new AlertDialog.Builder(this, ThemePalette.dialogThemeRes(this))
-                                .setTitle("技术详情")
-                                .setMessage(TransferStatsStore.formatTechnicalDetails(latest[0]))
-                                .setPositiveButton("返回", (detail, ignored) -> showTransferStatsDialog())
-                                .show())
-                .show();
-        if (!enrolled) return;
-        new Thread(() -> {
-            org.json.JSONObject remoteStats = null;
-            try {
-                RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(this);
-                remoteStats = RemoteRelayClient.fetchStats(session);
-            } catch (Exception ignored) {
-            }
-            final org.json.JSONObject result = remoteStats;
-            final String updated = TransferStatsStore.formatHumanSummary(this, result,
-                    "暂时无法获取团队统计，请稍后再试");
-            runOnUiThread(() -> {
-                latest[0] = result;
-                if (dialog.isShowing()) dialog.setMessage(updated);
-            });
-        }, "fetch-transfer-stats").start();
+        startActivity(new Intent(this, TransferStatsActivity.class));
     }
 
     private void showAutoLiveQualityTierDialog(SettingSwitchRow row) {
