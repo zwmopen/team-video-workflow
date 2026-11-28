@@ -129,6 +129,23 @@ class Registry:
             self._record(db, device_id, "decision", role if state=="approved" else state)
         return True
 
+    def revoke_all(self):
+        """Atomically revoke all active/pending grants, including old tokens."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id FROM devices WHERE state IN ('approved','pending')").fetchall()
+            db.execute("UPDATE devices SET state='revoked',role=NULL,updated=? WHERE state IN ('approved','pending')",
+                       (int(time.time()),))
+            for row in rows:
+                self._record(db, row["id"], "decision", "revoked")
+            return len(rows)
+
+    def audit(self, limit=100):
+        with self._db() as db:
+            rows = db.execute("SELECT at,device_id,action,outcome FROM audit ORDER BY seq DESC LIMIT ?",
+                              (max(1,min(int(limit),1000)),)).fetchall()
+            return [dict(row) for row in rows]
+
     def authorize(self, token, method, path):
         required = ROUTE_ROLES.get((method, path))
         if required is None:
