@@ -197,62 +197,11 @@ final class SettingsViewController: UITableViewController {
     }
 
     private func showTransferStatsAlert() {
-        let enrolled = RemoteRelayProfile.load() != nil
-        let note = "\n\n云端下载不收流量费；其他费用以实际账单为准。"
-        let initial = enrolled ? "正在更新团队统计…" : "尚未建立云端连接"
-        let alert = UIAlertController(title: "传输统计", message: initial + note, preferredStyle: .alert)
-        var latest: [String: Any]?
-        alert.addAction(UIAlertAction(title: "技术详情", style: .default) { [weak self] _ in
-            let r2 = latest?["r2"] as? [String: Any]
-            let month = latest?["month"] as? [String: Any]
-            var details = "云端服务：Cloudflare R2（标准存储）\n上传、下载流量均免费"
-            if let bytes = month?["r2Bytes"] as? NSNumber {
-                details += "\n本月云端转发：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary)
-            }
-            if let bytes = r2?["activeBytes"] as? NSNumber {
-                details += "\n当前暂存：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary)
-            } else {
-                details += "\n当前暂存：暂未获取"
-            }
-            details += "\n每月免费存储：10 GB-month（按存放时长计）"
-            for (key, label, total) in [("classAOpsEst", "写入等操作", "1,000,000"), ("classBOpsEst", "读取等操作", "10,000,000")] {
-                let used = (month?[key] as? NSNumber)?.int64Value
-                let text = used.map { NumberFormatter.localizedString(from: NSNumber(value: max(0, $0)), number: .decimal) } ?? "暂未获取"
-                details += "\n\(label)：\(text) / \(total) 次（估算）"
-            }
-            details += "\n\n以上为本应用统计及估算，不含账户内其他项目和 Workers 等服务。实际账单以 Cloudflare 为准。"
-            let info = UIAlertController(title: "技术详情", message: details, preferredStyle: .alert)
-            info.addAction(UIAlertAction(title: "关闭", style: .cancel))
-            self?.present(info, animated: true)
-        })
-        alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
-        present(alert, animated: true)
-        guard enrolled else { return }
-        DispatchQueue.global(qos: .utility).async {
-            var fetched: [String: Any]?
-            if let session = try? RemoteRelayClient.ensureSession(),
-               let stats = try? RemoteRelayClient.fetchStats(session) {
-                fetched = stats
-            }
-            let result = fetched
-            var lines = ["团队传输与费用"]
-            if let today = result?["today"] as? [String: Any], let bytes = today["bytes"] as? NSNumber {
-                lines.append("今日传输：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary))
-            }
-            if let month = result?["month"] as? [String: Any], let bytes = month["bytes"] as? NSNumber {
-                lines.append("本月传输：" + ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .binary))
-            }
-            if lines.count == 1 { lines.append("暂时无法获取团队统计，请稍后再试") }
-            if let r2 = result?["r2"] as? [String: Any], let cost = (r2["estimatedCostUsd"] as? NSNumber)?.doubleValue, cost.isFinite, cost >= 0 {
-                lines.append(String(format: "预估额外费用：$%.4f（美元）", cost))
-            } else {
-                lines.append("预估额外费用：暂未获取")
-            }
-            let summary = lines.joined(separator: "\n") + note
-            DispatchQueue.main.async {
-                latest = result
-                alert.message = summary
-            }
+        let page = TransferOverviewViewController()
+        if let navigation = navigationController {
+            navigation.pushViewController(page, animated: true)
+        } else {
+            present(UINavigationController(rootViewController: page), animated: true)
         }
     }
 
@@ -480,5 +429,202 @@ final class SettingsViewController: UITableViewController {
             }
         })
         present(alert, animated: true)
+    }
+}
+
+
+// Standalone statistics page. Keep cloud estimates separate from actual billing.
+private final class TransferOverviewViewController: UIViewController {
+    private let stack = UIStackView()
+    private var remote: [String: Any]?
+    private var loading = false
+    private var expanded = false
+    private var connection = ""
+    private var refreshItem: UIBarButtonItem!
+
+    private var background: UIColor {
+        if #available(iOS 13.0, *) { return .systemGroupedBackground }
+        return UIColor(white: 0.95, alpha: 1)
+    }
+    private var surface: UIColor {
+        if #available(iOS 13.0, *) { return .secondarySystemGroupedBackground }
+        return .white
+    }
+    private var primary: UIColor {
+        if #available(iOS 13.0, *) { return .label }
+        return .black
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "传输统计"
+        view.backgroundColor = background
+        refreshItem = UIBarButtonItem(title: "刷新", style: .plain, target: self, action: #selector(load))
+        navigationItem.rightBarButtonItem = refreshItem
+        if navigationController?.viewControllers.first === self {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(closePage))
+        }
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scroll)
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(stack)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
+        ])
+        load()
+    }
+
+    @objc private func closePage() { dismiss(animated: true) }
+
+    @objc private func load() {
+        guard !loading else { return }
+        remote = nil
+        guard RemoteRelayProfile.load() != nil else {
+            connection = "尚未建立云端连接"
+            render()
+            return
+        }
+        loading = true
+        connection = "正在更新团队统计…"
+        render()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var value: [String: Any]?
+            if let session = try? RemoteRelayClient.ensureSession() {
+                value = try? RemoteRelayClient.fetchStats(session)
+            }
+            let result = value
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.remote = result
+                self.loading = false
+                self.connection = result == nil ? "暂时无法获取团队统计，点击刷新重试" : "团队统计已更新"
+                self.render()
+            }
+        }
+    }
+
+    private func render() {
+        refreshItem.isEnabled = !loading
+        for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
+        let today = remote?["today"] as? [String: Any]
+        let month = remote?["month"] as? [String: Any]
+        let r2 = remote?["r2"] as? [String: Any]
+
+        // This client does not yet expose a reliable local reception counter.
+        // Do not replace it with the team counter or fabricate local totals.
+        let overview = card("团队 · 今日传输")
+        overview.addArrangedSubview(label(bytes(today, "bytes"), size: 32, bold: true))
+        note(overview, "本机接收统计暂不可用")
+        row(overview, "本月团队传输", bytes(month, "bytes"))
+        let channels = [("usbBytes", "数据线"), ("lanBytes", "同一 Wi-Fi"), ("p2pBytes", "设备直连"), ("r2Bytes", "云端转发")]
+        for (key, name) in channels {
+            if let n = (today?[key] as? NSNumber)?.int64Value, n > 0 { row(overview, name, bytes(today, key)) }
+        }
+
+        let cloud = card("云端用量 · 团队")
+        row(cloud, "本月上传", "—")
+        row(cloud, "本月下载", "—")
+        note(cloud, "上传和下载不收流量费。现有统计尚未分别记录上传与下载。")
+        row(cloud, "本月云端转发", bytes(month, "r2Bytes"))
+        row(cloud, "当前暂存", bytes(r2, "activeBytes"))
+        row(cloud, "每月免费存储", "10 GB-month")
+        note(cloud, "按文件存放时长计费，不是下载流量上限。")
+        quota(cloud, month, "classAOpsEst", "写入等操作", 1_000_000)
+        quota(cloud, month, "classBOpsEst", "读取等操作", 10_000_000)
+
+        let cost = card("本月预估额外费用")
+        let amount = (r2?["estimatedCostUsd"] as? NSNumber)?.doubleValue
+        let money = amount.flatMap { $0.isFinite && $0 >= 0 ? String(format: "$%.4f", $0) : nil } ?? "暂未获取"
+        cost.addArrangedSubview(label(money, size: 26, bold: true))
+        note(cost, "仅为本应用的 R2 估算，不含其他项目及服务；实际费用以账单为准。")
+
+        let info = card("连接与详情")
+        note(info, connection)
+        let button = UIButton(type: .system)
+        button.setTitle(expanded ? "收起技术详情" : "查看技术详情", for: .normal)
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        button.addTarget(self, action: #selector(toggleDetails), for: .touchUpInside)
+        info.addArrangedSubview(button)
+        if expanded {
+            note(info, "云端服务：Cloudflare R2（标准存储）\n统计范围：当前团队，不代表整个 Cloudflare 账户。\n上传、下载流量免费；存储与操作次数单独计费。")
+        }
+    }
+
+    @objc private func toggleDetails() { expanded.toggle(); render() }
+
+    private func card(_ title: String) -> UIStackView {
+        let wrapper = UIView()
+        wrapper.backgroundColor = surface
+        wrapper.layer.cornerRadius = 20
+        let content = UIStackView()
+        content.axis = .vertical
+        content.spacing = 8
+        content.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 16),
+            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -16),
+            content.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 16),
+            content.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -16)
+        ])
+        stack.addArrangedSubview(wrapper)
+        note(content, title)
+        return content
+    }
+
+    private func label(_ value: String, size: CGFloat = 15, bold: Bool = false) -> UILabel {
+        let l = UILabel()
+        l.text = value
+        l.font = UIFontMetrics.default.scaledFont(for: .systemFont(ofSize: size, weight: bold ? .semibold : .regular))
+        l.adjustsFontForContentSizeCategory = true
+        l.textColor = primary
+        l.numberOfLines = 0
+        return l
+    }
+    private func note(_ parent: UIStackView, _ value: String) {
+        let l = label(value, size: 13)
+        l.textColor = AppColors.secondaryText
+        parent.addArrangedSubview(l)
+    }
+    private func row(_ parent: UIStackView, _ name: String, _ value: String) {
+        let r = UIStackView()
+        r.axis = .horizontal
+        r.alignment = .center
+        r.spacing = 10
+        let title = label(name, size: 14)
+        let v = label(value, size: 14, bold: true)
+        v.textAlignment = .right
+        v.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        r.addArrangedSubview(title)
+        r.addArrangedSubview(v)
+        parent.addArrangedSubview(r)
+    }
+    private func bytes(_ value: [String: Any]?, _ key: String) -> String {
+        guard let number = value?[key] as? NSNumber else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: number.int64Value, countStyle: .binary)
+    }
+    private func quota(_ parent: UIStackView, _ value: [String: Any]?, _ key: String, _ name: String, _ limit: Int64) {
+        let n = (value?[key] as? NSNumber)?.int64Value
+        let total = NumberFormatter.localizedString(from: NSNumber(value: limit), number: .decimal)
+        let used = n.map { NumberFormatter.localizedString(from: NSNumber(value: max(0, $0)), number: .decimal) } ?? "—"
+        row(parent, name, used + " / " + total)
+        if let count = n {
+            let progress = UIProgressView(progressViewStyle: .default)
+            progress.progress = Float(min(1, max(0, Double(count) / Double(limit))))
+            progress.progressTintColor = view.tintColor
+            parent.addArrangedSubview(progress)
+        }
     }
 }
