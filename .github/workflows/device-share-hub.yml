@@ -178,6 +178,11 @@ jobs:
             if ([string]::IsNullOrWhiteSpace($version)) { throw "Windows APP_VERSION not found" }
             Copy-Item "tools/device-share-hub/windows-native/build/Release/素材投送中控.exe" "tools/device-share-hub/windows-native/out/文件收发中控-Windows-V$version.exe"
             Copy-Item "tools/device-share-hub/README.md" "tools/device-share-hub/windows-native/out/使用说明.md"
+            $authOut = "tools/device-share-hub/windows-native/out/device-authorization"
+            New-Item -ItemType Directory -Force -Path $authOut | Out-Null
+            Copy-Item "tools/device-share-hub/scripts/device_authorization.py" "$authOut/device_authorization.py"
+            Copy-Item "tools/device-share-hub/scripts/device_permissions_ui.py" "$authOut/device_permissions_ui.py"
+            Copy-Item "tools/device-share-hub/docs/DEVICE_AUTHORIZATION.md" "$authOut/DEVICE_AUTHORIZATION.md"
             if (Test-Path "tools/ios-sideload-automation") {
               $skillOut = "tools/device-share-hub/windows-native/out/ios-sideload-automation"
               New-Item -ItemType Directory -Force -Path "$skillOut/references" | Out-Null

@@ -1,0 +1,24 @@
+name: Device authorization preview checks
+on:
+  pull_request:
+    paths:
+      - 'tools/device-share-hub/scripts/device_authorization.py'
+      - 'tools/device-share-hub/scripts/device_permissions_ui.py'
+      - 'tools/device-share-hub/scripts/authorized_gallery_preview.py'
+      - 'tools/device-share-hub/scripts/tests/test_device_authorization.py'
+      - '.github/workflows/device-authorization-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  authorization:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/device-share-hub
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Check authorization source and unit tests
+        run: |
+          python3 -m py_compile scripts/device_authorization.py scripts/device_permissions_ui.py scripts/authorized_gallery_preview.py
+          python3 -m unittest discover -s scripts/tests -p test_device_authorization.py -v
