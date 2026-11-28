@@ -911,8 +911,9 @@ public final class OnlineGalleryClient {
                 } catch (Exception ignored) {
                 }
             }
+            String baseUrl = null;
             try {
-                String baseUrl = resolveBaseUrl();
+                baseUrl = resolveBaseUrl();
                 URL url = new URL(baseUrl + "/api/online/categories" + (refresh ? "?refresh=1" : ""));
                 String resp = rawHttpGet(url, LIST_CONNECT_TIMEOUT_MS, LIST_READ_TIMEOUT_MS);
                 CategoriesResult result = parseCategories(resp);
@@ -923,6 +924,9 @@ public final class OnlineGalleryClient {
                 OnlineListCache.saveCategories(context, resp);
                 mainHandler.post(() -> callback.onSuccess(result));
             } catch (Exception e) {
+                if (baseUrl != null && e.getMessage() != null && e.getMessage().startsWith("HTTP 403")) {
+                    RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
+                }
                 if (RemoteRelayProfile.isEnrolled(context)) {
                     try {
                         CategoriesResult cached = lastRemoteCategoriesResult;
@@ -974,8 +978,9 @@ public final class OnlineGalleryClient {
                     Log.w(TAG, "R2_FIRST fetchWorks failed, falling back to LAN: " + remoteErr.getMessage());
                 }
             }
+            String baseUrl = null;
             try {
-                String baseUrl = resolveBaseUrl();
+                baseUrl = resolveBaseUrl();
                 StringBuilder sb = new StringBuilder(baseUrl).append("/api/online/works?");
                 if (refresh) {
                     sb.append("refresh=1&");
@@ -1010,6 +1015,9 @@ public final class OnlineGalleryClient {
                     callback.onSuccess(list);
                 });
             } catch (Exception e) {
+                if (baseUrl != null && e.getMessage() != null && e.getMessage().startsWith("HTTP 403")) {
+                    RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
+                }
                 if (RemoteRelayProfile.isEnrolled(context)) {
                     try {
                         List<OnlineWorkEntry> remoteList = fetchRemoteCatalogSnapshot();

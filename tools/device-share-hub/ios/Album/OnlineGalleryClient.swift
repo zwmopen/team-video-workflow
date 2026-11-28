@@ -1036,6 +1036,9 @@ public final class OnlineGalleryClient {
         session.dataTask(with: url) { [weak self] data, response, error in
             let httpOK = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
             if let error = error ?? (httpOK ? nil : URLError(.badServerResponse)) {
+                if (response as? HTTPURLResponse)?.statusCode == 403 {
+                    RemoteRelayProfile.enrollViaLanBestEffort(pcBaseURL: baseUrl)
+                }
                 if RemoteRelayProfile.load() != nil, let self = self {
                     DispatchQueue.global(qos: .userInitiated).async {
                         if let remoteWorks = try? self.fetchRemoteCatalogWorks() {

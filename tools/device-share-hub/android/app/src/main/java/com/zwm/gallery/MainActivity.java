@@ -4058,6 +4058,13 @@ public final class MainActivity extends Activity {
             @Override
             public void onError(Exception error) {
                 if (!isOnlineMode) return;
+                String message = error.getMessage();
+                if (message != null && message.startsWith("HTTP 403 ")) {
+                    statusText.setText("○ 设备未授权");
+                    statusText.setContentDescription("请在电脑的设备权限页面批准");
+                    finishVisibleRefresh("设备未授权，请在电脑端批准");
+                    return;
+                }
                 if (!onlineWorks.isEmpty()) {
                     // 有快照/旧数据：保留用户已经看到的列表，只做软提示
                     String msg = OnlineGalleryClient.userFacingErrorMessage(error);

@@ -46,6 +46,9 @@ class CatalogDirect:
             session = json.loads(raw)["p2p"]
             if session.get("responderDeviceId") != self.bridge._device_id:
                 return
+            requester = session.get("initiatorDeviceId", "")
+            if not self.bridge.catalog_direct_allowed(requester):
+                return
             requests = asyncio.Queue(maxsize=6)
 
             @peer.on("datachannel")
@@ -64,7 +67,7 @@ class CatalogDirect:
                     if isinstance(raw_message, str) and len(raw_message) <= 2048 and not requests.full():
                         requests.put_nowait(raw_message)
 
-                send_task = asyncio.create_task(self._send_requested(channel, requests))
+                send_task = asyncio.create_task(self._send_requested(channel, requests, requester))
 
             @peer.on("connectionstatechange")
             def on_state():
@@ -87,10 +90,13 @@ class CatalogDirect:
             await peer.close()
             self.sessions.discard(session_id)
 
-    async def _send_requested(self, channel, requests):
+    async def _send_requested(self, channel, requests, requester):
         while channel.readyState != "closed":
             try:
                 message = json.loads(await asyncio.wait_for(requests.get(), 100))
+                if not self.bridge.catalog_direct_allowed(requester):
+                    channel.close()
+                    return
                 request_id = message.get("id", "")
                 if not re.fullmatch(r"[a-f0-9]{32}", request_id):
                     continue

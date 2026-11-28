@@ -18,6 +18,8 @@ import os
 import sys
 import threading
 import time
+import html
+import secrets
 
 # ------------------------------ 日志轮转（DSH-126） ------------------------------
 #
@@ -4919,6 +4921,124 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     _phone_sync_lock = threading.Lock()
     _phone_sync_last: Dict[str, float] = {}
     PHONE_SYNC_COOLDOWN = 300.0
+    pairing_csrf = secrets.token_urlsafe(32)
+
+    def _local_admin_request(self):
+        from ipaddress import ip_address
+        host = self.headers.get("Host", "").lower()
+        port = getattr(self.server, "server_port", DEFAULT_PORT)
+        origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}", f"http://[::1]:{port}"}
+        return (ip_address(self.client_address[0]).is_loopback
+                and "http://" + host in origins
+                and self.headers.get("Origin", "http://" + host) in origins
+                and self.headers.get("Sec-Fetch-Site", "") not in ("cross-site", "same-site"))
+
+    def _allow_gallery_request(self, path, method):
+        if method == "GET" and path == "/api/online/ping":
+            return True
+        if (method == "POST" and path == "/api/online/remote-enroll"
+                and self._is_trusted_lan_client()):
+            return True
+        if self._local_admin_request():
+            return True
+        if method == "GET" and path in ("/", "/api/online/status"):
+            self.send_json(200, {"ok": True, "server": "DeviceShareHub-OnlineGallery", "approvalRequired": True})
+        else:
+            self.send_json(403, {"ok": False, "code": "device_approval_required",
+                                 "message": "此设备需经电脑批准，通过远程相册访问作品"})
+        return False
+
+    def _pairing_page(self):
+        with AUTHORIZED_DEVICES_LOCK:
+            devices = load_authorized_devices()
+        cloud_status = ""
+        cloud_devices = {}
+        if self.bridge:
+            try:
+                status, _, raw = self.bridge._http("/v1/devices", token=self.bridge.ensure_session(), timeout=5)
+                if status != 200:
+                    raise OSError(f"HTTP {status}")
+                cloud_devices = {item["deviceId"]: item for item in json.loads(raw)["devices"]
+                                 if item.get("role") == "member" and not item.get("revoked")}
+            except (OSError, ValueError, KeyError, RuntimeError):
+                cloud_status = '<p role="status">暂时无法读取云端授权，请刷新重试。</p>'
+        rows = []
+        for device_id in dict.fromkeys((*cloud_devices, *devices)):
+            item = devices.get(device_id, {})
+            cloud = cloud_devices.get(device_id)
+            key = item.get("approval_key")
+            if not key and cloud is None:
+                continue
+            checked = bool(cloud.get("remoteAllowed")) if cloud is not None else bool(item.get("approved_at"))
+            button = "暂停授权" if checked else "批准"
+            action = "disable" if checked else "approve"
+            name = html.escape(str((cloud or {}).get("name") or item.get("device_name", "手机相册")))
+            fingerprint = html.escape(key[:12]) if key else "历史配对"
+            state = "已授权" if checked else ("未授权" if cloud is not None else "待批准")
+            kind = "cloud" if cloud is not None else "local"
+            form = (
+                '<form method="post" action="/device-permissions">'
+                f'<input type="hidden" name="csrf" value="{self.pairing_csrf}">'
+                f'<input type="hidden" name="device" value="{html.escape(device_id, quote=True)}">'
+                f'<input type="hidden" name="kind" value="{kind}">'
+                f'<input type="hidden" name="action" value="{action}"><button>{button}</button></form>'
+            )
+            rows.append(f"<tr><td>{name}</td><td>{fingerprint}</td>"
+                        f"<td>{state}</td><td>{form}</td></tr>")
+        body = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+                '<title>团队工作相册 · 设备权限</title><style>body{font:16px system-ui;margin:3rem auto;'
+                'max-width:48rem;padding:0 1rem;color:#202723}table{width:100%;border-collapse:collapse}'
+                'th,td{padding:.8rem;text-align:left;border-bottom:1px solid #e3e8e5}button{padding:.45rem .8rem}'
+                '</style><h1>设备权限</h1><p>请核对本人设备再批准。已配对设备可暂停或恢复远程访问。</p>'
+                + cloud_status +
+                '<table><thead><tr><th>设备</th><th>公钥指纹</th><th>状态</th><th>操作</th></tr></thead>'
+                '<tbody>' + ("".join(rows) or '<tr><td colspan="4">暂无配对申请</td></tr>') + '</tbody></table>')
+        data = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _pairing_change(self):
+        try:
+            count = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            return self.send_json(400, {"ok": False})
+        if not 0 < count <= 2048:
+            return self.send_json(400, {"ok": False})
+        form = urllib.parse.parse_qs(self.rfile.read(count).decode("utf-8", "replace"))
+        if not secrets.compare_digest(form.get("csrf", [""])[0], self.pairing_csrf):
+            return self.send_json(403, {"ok": False})
+        device_id = form.get("device", [""])[0]
+        is_cloud_device = form.get("kind", [""])[0] == "cloud"
+        action = form.get("action", [""])[0]
+        if action not in ("approve", "disable"):
+            return self.send_json(400, {"ok": False})
+        with AUTHORIZED_DEVICES_LOCK:
+            devices = load_authorized_devices()
+            device = devices.get(device_id)
+            if not is_cloud_device and (not device or not device.get("approval_key")):
+                return self.send_json(404, {"ok": False})
+            if self.bridge:
+                quote = urllib.parse.quote(device_id, safe="")
+                try:
+                    status, _, _ = self.bridge._http(f"/v1/devices/{quote}/remote", "POST",
+                        json_body={"allowed": action == "approve"}, token=self.bridge.ensure_session(), timeout=5)
+                except (OSError, RuntimeError):
+                    status = 0
+                if status != 200 and (is_cloud_device or status != 404):
+                    return self.send_json(502, {"ok": False, "message": "暂时无法更新云端授权，请重试"})
+            elif is_cloud_device:
+                return self.send_json(503, {"ok": False, "message": "云端授权服务不可用"})
+            if device and device.get("approval_key"):
+                device["approved_at"] = int(time.time()) if action == "approve" else 0
+                save_authorized_devices(devices)
+        self.send_response(303)
+        self.send_header("Location", "/device-permissions")
+        self.end_headers()
 
     def address_string(self):
         # 彻底消除内网 DNS 反解造成的 9.5 秒网络雪崩与假死！
@@ -5274,6 +5394,10 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
+        if not self._allow_gallery_request(path, "GET"):
+            return
+        if path == "/device-permissions":
+            return self._pairing_page()
 
         if path == "/api/online/ping":
             # 极速轻量探活端点：纯内存响应，完全与耗时图片 I/O 与全盘扫描隔离
@@ -5327,7 +5451,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.14",
+                "version": "1.2.15",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,
@@ -6822,20 +6946,54 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        if not self._allow_gallery_request(path, "POST"):
+            return
+        if path == "/device-permissions":
+            return self._pairing_change()
 
         if path == "/api/online/remote-enroll":
             if OnlineGalleryHandler.bridge is None:
                 self.send_json(503, {"ok": False, "error": "远程中继桥接未启动"})
                 return
             content_length = int(self.headers.get("Content-Length", 0))
+            if not 0 < content_length <= 8192:
+                return self.send_json(400, {"ok": False, "error": "申请格式无效"})
             raw_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
             try:
                 req = json.loads(raw_body) if raw_body.strip() else {}
+                device_id = str(req.get("deviceId") or "").strip()
+                device_name = str(req.get("deviceName") or "手机相册").strip()[:48]
+                signing_key = req.get("signingPublicKey")
+                if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", device_id) or not isinstance(signing_key, dict):
+                    return self.send_json(400, {"ok": False, "error": "设备身份无效"})
+                if (set(signing_key) != {"kty", "crv", "x", "y"} or signing_key.get("kty") != "EC"
+                        or signing_key.get("crv") != "P-256" or any(not isinstance(signing_key.get(k), str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{43}", signing_key[k]) for k in ("x", "y"))):
+                    return self.send_json(400, {"ok": False, "error": "设备公钥无效"})
+                key = hashlib.sha256(json.dumps(signing_key, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                with AUTHORIZED_DEVICES_LOCK:
+                    devices = load_authorized_devices()
+                    item = devices.get(device_id, {})
+                    if item.get("approval_key") and item["approval_key"] != key:
+                        return self.send_json(403, {"ok": False, "error": "设备公钥与申请不匹配"})
+                    if not item.get("approval_key"):
+                        cutoff = int(time.time()) - 24 * 60 * 60
+                        devices = {did: device for did, device in devices.items()
+                                   if not device.get("approval_key") or device.get("approved_at")
+                                   or device.get("requested_at", 0) >= cutoff}
+                        if sum(bool(device.get("approval_key")) for device in devices.values()) >= 128:
+                            return self.send_json(429, {"ok": False, "error": "待审批设备已达上限"})
+                        devices[device_id] = {"device_name": device_name, "approval_key": key, "approved_at": 0,
+                                              "requested_at": int(time.time())}
+                        save_authorized_devices(devices)
+                    if not item.get("approved_at"):
+                        return self.send_json(403, {"ok": False, "code": "approval_pending",
+                                                    "message": "请在电脑的设备权限页面批准"})
                 enrolled = OnlineGalleryHandler.bridge.enroll_mobile_device(
-                    device_id=str(req.get("deviceId") or "").strip(),
-                    device_name=str(req.get("deviceName") or "手机相册").strip(),
-                    signing_pub_jwk=req.get("signingPublicKey"),
-                    agreement_pub_jwk=req.get("agreementPublicKey"),
+                    device_id=device_id,
+                    device_name=device_name,
+                    signing_pub_jwk=signing_key,
+                    agreement_pub_jwk=signing_key,
                 )
                 self.send_json(200, enrolled)
             except ValueError as ve:
@@ -8591,7 +8749,8 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
     serve_thread.start()
 
     # 启动纯静默 ADB 隧道守护（0 弹窗 0 黑框）
-    start_adb_reverse_daemon(port)
+    if enable_adb:
+        start_adb_reverse_daemon(port)
 
     # 启动局域网信标广播：手机端零扫描、秒级发现，IP 变化自动跟随
     start_lan_beacon(port)
@@ -8635,6 +8794,9 @@ def run_service(port: int = DEFAULT_PORT, library_root: str = DEFAULT_LIBRARY_RO
                 get_thumb_fn=_bridge_get_thumb,
                 mark_work_used_fn=_bridge_mark_used,
                 get_source_file_fn=_bridge_get_image_path,
+            )
+            bridge.catalog_direct_allowed = lambda device_id: bool(
+                load_authorized_devices().get(device_id, {}).get("approved_at")
             )
             OnlineGalleryHandler.bridge = bridge
             bridge.start()

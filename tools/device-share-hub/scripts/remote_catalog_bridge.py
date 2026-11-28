@@ -280,6 +280,7 @@ class RemoteCatalogBridge:
         self._pull_thread: Optional[threading.Thread] = None
         self._socket_thread: Optional[threading.Thread] = None
         self._catalog_direct = None
+        self.catalog_direct_allowed = lambda device_id: False
 
     def _load_or_init_identity(self) -> Tuple[ec.EllipticCurvePrivateKey, Dict[str, str], str, str, int]:
         if self.admin_path.is_file():
