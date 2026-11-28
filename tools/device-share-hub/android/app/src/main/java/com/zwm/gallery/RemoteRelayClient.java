@@ -8,6 +8,12 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -39,6 +45,67 @@ public final class RemoteRelayClient {
     private static final AtomicLong lastLanEnrollMs = new AtomicLong(0L);
     private static volatile Session cachedSession;
     private static final Object SESSION_LOCK = new Object();
+
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    private static final OkHttpClient HTTP = new OkHttpClient.Builder()
+            .connectTimeout(CONNECT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(READ_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .dns(new RelayDns())
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build();
+    private static final OkHttpClient OBJECT_HTTP = HTTP.newBuilder()
+            .readTimeout(OBJECT_READ_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build();
+
+    private static final OkHttpClient LOCAL_PROXY = HTTP.newBuilder()
+            .proxy(new java.net.Proxy(java.net.Proxy.Type.HTTP,
+                    new java.net.InetSocketAddress("127.0.0.1", 7890)))
+            .build();
+    private static final OkHttpClient LOCAL_PROXY_OBJECT = LOCAL_PROXY.newBuilder()
+            .readTimeout(OBJECT_READ_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build();
+    private static final OkHttpClient DIRECT_PROBE = HTTP.newBuilder()
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build();
+    private static final OkHttpClient PROXY_PROBE = LOCAL_PROXY.newBuilder()
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build();
+    private static final Object ROUTE_LOCK = new Object();
+    private static long routeExpiresAt;
+    private static boolean useExistingLocalProxy;
+
+    private static OkHttpClient relayHttp(Request request, boolean object) {
+        String defaultHost = okhttp3.HttpUrl.get(RemoteRelayProfile.DEFAULT_ENDPOINT).host();
+        if (!request.url().isHttps() || !defaultHost.equals(request.url().host())) {
+            return object ? OBJECT_HTTP : HTTP;
+        }
+        synchronized (ROUTE_LOCK) {
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now >= routeExpiresAt) {
+                Request health = new Request.Builder().url(RemoteRelayProfile.DEFAULT_ENDPOINT + "/v1/health").build();
+                boolean direct = probeRelay(DIRECT_PROBE, health);
+                useExistingLocalProxy = !direct && probeRelay(PROXY_PROBE, health);
+                routeExpiresAt = now + (direct || useExistingLocalProxy ? 60_000L : 10_000L);
+            }
+            if (useExistingLocalProxy) return object ? LOCAL_PROXY_OBJECT : LOCAL_PROXY;
+            return object ? OBJECT_HTTP : HTTP;
+        }
+    }
+
+    private static boolean probeRelay(OkHttpClient client, Request health) {
+        try (Response response = client.newCall(health).execute()) {
+            return response.isSuccessful();
+        } catch (java.io.IOException unavailable) {
+            return false;
+        }
+    }
+
+    private static Request.Builder relayRequest(String url, String token, String workspaceId) {
+        Request.Builder request = new Request.Builder().url(url)
+                .header("User-Agent", "DeviceShareHub-Android");
+        if (workspaceId != null && !workspaceId.isEmpty()) request.header("X-Workspace-Id", workspaceId);
+        if (token != null && !token.isEmpty()) request.header("Authorization", "Bearer " + token);
+        return request;
+    }
 
     public static final class Session {
         public final String endpoint;
@@ -312,19 +379,11 @@ public final class RemoteRelayClient {
                 partFile.delete();
                 existingLen = 0L;
             }
-            HttpURLConnection conn = null;
-            try {
-                conn = (HttpURLConnection) new URL(urlStr).openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-                conn.setReadTimeout(OBJECT_READ_TIMEOUT_MS);
-                conn.setRequestProperty("User-Agent", "DeviceShareHub-Android/0.8.139");
-                conn.setRequestProperty("Authorization", "Bearer " + token);
-                conn.setRequestProperty("X-Workspace-Id", workspaceId);
-                if (existingLen > 0) {
-                    conn.setRequestProperty("Range", "bytes=" + existingLen + "-");
-                }
-                int code = conn.getResponseCode();
+            Request.Builder request = relayRequest(urlStr, token, workspaceId);
+            if (existingLen > 0) request.header("Range", "bytes=" + existingLen + "-");
+            Request call = request.build();
+            try (Response response = relayHttp(call, true).newCall(call).execute()) {
+                int code = response.code();
                 if (code == 416) {
                     partFile.delete();
                     continue;
@@ -332,12 +391,12 @@ public final class RemoteRelayClient {
                 if (code != 200 && code != 206) {
                     throw new HttpStatusException(code, "HTTP " + code);
                 }
-                String headerSha = conn.getHeaderField("X-Object-Sha256");
+                String headerSha = response.header("X-Object-Sha256");
                 String wantSha = (expectedSha256 != null && !expectedSha256.isEmpty())
                         ? expectedSha256
                         : (headerSha != null ? headerSha.trim() : "");
                 boolean append = (code == 206 && existingLen > 0);
-                try (InputStream in = new BufferedInputStream(conn.getInputStream());
+                try (InputStream in = new BufferedInputStream(response.body().byteStream());
                      FileOutputStream out = new FileOutputStream(partFile, append)) {
                     byte[] buf = new byte[64 * 1024];
                     int n;
@@ -368,29 +427,18 @@ public final class RemoteRelayClient {
             } catch (Exception e) {
                 if (attempt >= 3) throw e;
                 Thread.sleep(600L * attempt);
-            } finally {
-                if (conn != null) {
-                    try { conn.disconnect(); } catch (Throwable ignored) {}
-                }
             }
         }
     }
 
     private static byte[] downloadSmallBytes(String urlStr, String token, String workspaceId, int maxBytes) throws Exception {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(READ_TIMEOUT_MS);
-            conn.setRequestProperty("User-Agent", "DeviceShareHub-Android/0.8.139");
-            conn.setRequestProperty("Authorization", "Bearer " + token);
-            conn.setRequestProperty("X-Workspace-Id", workspaceId);
-            int code = conn.getResponseCode();
+        Request request = relayRequest(urlStr, token, workspaceId).build();
+        try (Response response = relayHttp(request, false).newCall(request).execute()) {
+            int code = response.code();
             if (code < 200 || code >= 300) {
                 throw new HttpStatusException(code, "HTTP " + code);
             }
-            try (InputStream in = new BufferedInputStream(conn.getInputStream());
+            try (InputStream in = new BufferedInputStream(response.body().byteStream());
                  ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
                 byte[] buf = new byte[16 * 1024];
                 int n;
@@ -402,41 +450,17 @@ public final class RemoteRelayClient {
                 }
                 return bos.toByteArray();
             }
-        } finally {
-            if (conn != null) {
-                try { conn.disconnect(); } catch (Throwable ignored) {}
-            }
         }
     }
 
     private static JSONObject requestJson(String urlStr, String method, String token,
                                           String workspaceId, String jsonBody) throws Exception {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod(method);
-            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(READ_TIMEOUT_MS);
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setRequestProperty("User-Agent", "DeviceShareHub-Android/0.8.139");
-            if (workspaceId != null && !workspaceId.isEmpty()) {
-                conn.setRequestProperty("X-Workspace-Id", workspaceId);
-            }
-            if (token != null && !token.isEmpty()) {
-                conn.setRequestProperty("Authorization", "Bearer " + token);
-            }
-            if (jsonBody != null) {
-                conn.setDoOutput(true);
-                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                byte[] bytes = jsonBody.getBytes(StandardCharsets.UTF_8);
-                conn.setFixedLengthStreamingMode(bytes.length);
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(bytes);
-                }
-            }
-            int code = conn.getResponseCode();
-            InputStream stream = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-            String respText = stream == null ? "{}" : readStreamText(stream);
+        Request.Builder request = relayRequest(urlStr, token, workspaceId).header("Accept", "application/json");
+        RequestBody body = jsonBody == null ? null : RequestBody.create(jsonBody, JSON);
+        Request call = request.method(method, body).build();
+        try (Response response = relayHttp(call, false).newCall(call).execute()) {
+            int code = response.code();
+            String respText = response.body() == null ? "{}" : response.body().string();
             if (code == 401) {
                 cachedSession = null;
             }
@@ -449,10 +473,6 @@ public final class RemoteRelayClient {
             }
             if (respText.trim().isEmpty()) return new JSONObject();
             return new JSONObject(respText);
-        } finally {
-            if (conn != null) {
-                try { conn.disconnect(); } catch (Throwable ignored) {}
-            }
         }
     }
 

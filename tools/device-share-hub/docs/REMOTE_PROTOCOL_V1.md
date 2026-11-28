@@ -141,3 +141,7 @@ HTTPS 下载 → 本地大小/SHA-256 校验 → 安全暂存 → ZIP 安全导�
 ### 工作相册标签
 
 在线作品和 R2 目录条目可带可选 \`workLabels\` 对象。引擎、渠道、季节、流量定位、内容类型分别为 \`generationEngine\`、\`productionChannel\`、\`seasons\`、\`flowType\`、\`contentType\` 字符串数组，\`applicableMonths\` 为 1 至 12 的整数数组，真实记录的 \`producedAt\` 为日期字符串。投影不包含账户或运行凭证。缺失字段可省略，旧客户端照常读取原字段。R2 同步原 \`dispatchedVersions\` 与 \`dispatchedTo\`，以保留分版本显示。
+
+Android 0.8.144 仅对默认中继主机使用 HTTPS DNS 查询，短期缓存应答。自定义中继使用系统解析。默认主机无法得到可信应答时回退系统解析，HTTPS 始终校验原域名。
+
+默认中继的直连健康探测失败时，Android 可对已运行的本机 127.0.0.1:7890 HTTP CONNECT 代理执行同域 HTTPS 健康探测。只有探测成功才临时选用，且只应用于默认中继 HTTPS 请求。自定义中继、局域网请求与系统代理配置不受影响。
