@@ -1529,6 +1529,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                     ? "● 远程已连接" : "● 局域网已连接"
                 self.renderOnlineUI()
             case .failure(let err):
+                if OnlineGalleryClient.requiresApproval(err) {
+                    self.onlineStatusOverride = "○ 设备未授权"
+                    if !silent {
+                        self.showToast(self.onlineWorks.isEmpty ? "请在电脑相册批准设备" : "设备未授权 · 正在查看本地快照")
+                    }
+                    self.renderOnlineUI()
+                    return
+                }
                 // 【DSH-081】「算不算已经有数据」必须在**回包这一刻**采样，不能在发起请求前采样。
                 // 冷启动时本地快照 `loadOnlineSnapshot()` 是**异步后到**的：请求发出瞬间
                 // onlineWorks 还是空的，快照随后才填上并渲染出列表。旧写法把判定提前到了
@@ -1617,14 +1625,6 @@ final class LibraryViewController: UIViewController, UICollectionViewDataSource,
                 showToast("暂未搜索到电脑在线相册，可稍后再试")
             }
             return
-        }
-        let currentResolved = OnlineGalleryClient.shared.resolveBaseUrl()
-        let cleanCurrent = currentResolved.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).lowercased()
-        let cleanUrl = url.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).lowercased()
-        let isNewHost = (cleanUrl != cleanCurrent && !cleanCurrent.contains(cleanUrl) && !cleanUrl.contains(cleanCurrent))
-        // 关键防护：如果已经定位到相同电脑地址，静默刷新即可，绝不频繁弹「已定位电脑相册服务」Toast 刷屏！
-        if isNewHost && !cleanCurrent.isEmpty && !cleanCurrent.contains("127.0.0.1") {
-            showToast(viaBeacon ? "✅ 已定位电脑相册服务 \(url)" : "✅ 已自动发现电脑相册服务 \(url)")
         }
         OnlineGalleryClient.shared.setCustomBaseUrl(url)
         loadOnlineData(silent: true)

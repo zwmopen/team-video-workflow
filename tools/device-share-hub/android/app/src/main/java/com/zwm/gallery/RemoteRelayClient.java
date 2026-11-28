@@ -524,10 +524,13 @@ public final class RemoteRelayClient {
             if (code < 200 || code >= 300) {
                 if (code >= 500) markEndpointUnavailable(token);
                 String msg = respText;
+                String errorCode = "";
                 try {
-                    msg = new JSONObject(respText).optString("message", msg);
+                    JSONObject errorBody = new JSONObject(respText);
+                    msg = errorBody.optString("message", msg);
+                    errorCode = errorBody.optString("code", errorBody.optString("error"));
                 } catch (Exception ignored) {}
-                throw new HttpStatusException(code, msg);
+                throw new HttpStatusException(code, msg, errorCode);
             }
             if (respText.trim().isEmpty()) return new JSONObject();
             return new JSONObject(respText);
@@ -551,10 +554,16 @@ public final class RemoteRelayClient {
 
     public static final class HttpStatusException extends Exception {
         public final int statusCode;
+        public final String errorCode;
 
         public HttpStatusException(int statusCode, String message) {
+            this(statusCode, message, "");
+        }
+
+        public HttpStatusException(int statusCode, String message, String errorCode) {
             super(message);
             this.statusCode = statusCode;
+            this.errorCode = errorCode;
         }
     }
 }

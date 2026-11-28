@@ -4058,11 +4058,11 @@ public final class MainActivity extends Activity {
             @Override
             public void onError(Exception error) {
                 if (!isOnlineMode) return;
-                String message = error.getMessage();
-                if (message != null && message.startsWith("HTTP 403 ")) {
+                if (OnlineGalleryClient.isApprovalRequired(error)) {
                     statusText.setText("○ 设备未授权");
-                    statusText.setContentDescription("请在电脑的设备权限页面批准");
-                    finishVisibleRefresh("设备未授权，请在电脑端批准");
+                    statusText.setContentDescription("请在电脑相册的设备权限中批准");
+                    finishVisibleRefresh(onlineWorks.isEmpty() ? "设备未授权，请在电脑相册批准"
+                            : "设备未授权 · 正在查看本地快照");
                     return;
                 }
                 if (!onlineWorks.isEmpty()) {
@@ -4139,7 +4139,6 @@ public final class MainActivity extends Activity {
                 autoDiscovering = false;
                 lastAutoDiscoverAtMs = System.currentTimeMillis();
                 if (!isOnlineMode) return;
-                toast("✅ 已自动发现电脑相册服务 " + baseUrl);
                 refreshOnlineWorks(false);
             }
 

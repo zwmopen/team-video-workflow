@@ -1017,42 +1017,56 @@ public final class OnlineGalleryClient {
 
         if shouldTryRemoteFirst() {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                if let self = self, let remoteWorks = try? self.fetchRemoteCatalogWorks() {
+                guard let self = self else { return }
+                do {
+                    let remoteWorks = try self.fetchRemoteCatalogWorks()
                     let filtered = self.filterRemoteWorks(remoteWorks, category: category, query: query)
                     DispatchQueue.main.async {
                         self.isUsingRemoteCatalog = true
                         completion(.success(filtered))
                     }
-                    return
+                } catch {
+                    self.performFetchWorksLanTask(url: url, category: category, query: query,
+                        requestID: requestID, baseUrl: baseUrl,
+                        deniedRemotely: Self.requiresApproval(error), completion: completion)
                 }
-                self?.performFetchWorksLanTask(url: url, category: category, query: query, requestID: requestID, baseUrl: baseUrl, completion: completion)
             }
             return
         }
         performFetchWorksLanTask(url: url, category: category, query: query, requestID: requestID, baseUrl: baseUrl, completion: completion)
     }
 
-    private func performFetchWorksLanTask(url: URL, category: String?, query: String?, requestID: UInt64, baseUrl: String, completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
+    static func requiresApproval(_ error: Error) -> Bool {
+        guard let relayError = error as? RemoteRelayError else { return false }
+        if case .approvalRequired = relayError { return true }
+        return false
+    }
+
+    private func performFetchWorksLanTask(url: URL, category: String?, query: String?, requestID: UInt64, baseUrl: String, deniedRemotely: Bool = false, completion: @escaping (Result<[OnlineWorkEntry], Error>) -> Void) {
         session.dataTask(with: url) { [weak self] data, response, error in
             let httpOK = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
             if let error = error ?? (httpOK ? nil : URLError(.badServerResponse)) {
-                if (response as? HTTPURLResponse)?.statusCode == 403 {
+                let deniedLocally = (response as? HTTPURLResponse)?.statusCode == 403
+                if deniedLocally {
                     RemoteRelayProfile.enrollViaLanBestEffort(pcBaseURL: baseUrl)
                 }
+                let lanError: Error = deniedLocally || deniedRemotely ? RemoteRelayError.approvalRequired : error
                 if RemoteRelayProfile.load() != nil, let self = self {
                     DispatchQueue.global(qos: .userInitiated).async {
-                        if let remoteWorks = try? self.fetchRemoteCatalogWorks() {
+                        do {
+                            let remoteWorks = try self.fetchRemoteCatalogWorks()
                             DispatchQueue.main.async {
                                 self.isUsingRemoteCatalog = true
                                 completion(.success(remoteWorks))
                             }
-                            return
+                        } catch {
+                            let failure = Self.requiresApproval(error) ? error : lanError
+                            DispatchQueue.main.async { completion(.failure(failure)) }
                         }
-                        DispatchQueue.main.async { completion(.failure(error)) }
                     }
                     return
                 }
-                DispatchQueue.main.async { completion(.failure(error)) }
+                DispatchQueue.main.async { completion(.failure(lanError)) }
                 return
             }
             guard let data = data else {

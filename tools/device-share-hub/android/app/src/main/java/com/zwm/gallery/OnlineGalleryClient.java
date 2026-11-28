@@ -966,6 +966,7 @@ public final class OnlineGalleryClient {
         final long queuedAt = SystemClock.elapsedRealtime();
         executor.execute(() -> {
             final long startedAt = SystemClock.elapsedRealtime();
+            Exception remotePermissionError = null;
             if (shouldTryRemoteFirst()) {
                 try {
                     List<OnlineWorkEntry> remoteList = filterRemoteWorks(fetchRemoteCatalogSnapshot(), category, query);
@@ -975,6 +976,7 @@ public final class OnlineGalleryClient {
                     });
                     return;
                 } catch (Exception remoteErr) {
+                    if (isApprovalRequired(remoteErr)) remotePermissionError = remoteErr;
                     Log.w(TAG, "R2_FIRST fetchWorks failed, falling back to LAN: " + remoteErr.getMessage());
                 }
             }
@@ -1018,7 +1020,7 @@ public final class OnlineGalleryClient {
                 if (baseUrl != null && e.getMessage() != null && e.getMessage().startsWith("HTTP 403")) {
                     RemoteRelayClient.enrollViaLanBestEffort(context, baseUrl);
                 }
-                if (RemoteRelayProfile.isEnrolled(context)) {
+                if (RemoteRelayProfile.isEnrolled(context) && remotePermissionError == null) {
                     try {
                         List<OnlineWorkEntry> remoteList = fetchRemoteCatalogSnapshot();
                         if (remoteList != null) {
@@ -1029,13 +1031,15 @@ public final class OnlineGalleryClient {
                             return;
                         }
                     } catch (Exception remoteErr) {
+                        if (isApprovalRequired(remoteErr)) remotePermissionError = remoteErr;
                         Log.w(TAG, "Remote catalog fallback failed: " + remoteErr.getMessage());
                     }
                 }
                 Log.w(TAG, "fetchWorks failed queueMs=" + (startedAt - queuedAt)
                         + " elapsedMs=" + (SystemClock.elapsedRealtime() - startedAt)
                         + " fullList=" + fullList + " reason=" + diagnosticErrorKind(e));
-                mainHandler.post(() -> callback.onError(e));
+                final Exception failure = remotePermissionError != null ? remotePermissionError : e;
+                mainHandler.post(() -> callback.onError(failure));
             }
         });
     }
@@ -2305,6 +2309,15 @@ public final class OnlineGalleryClient {
         }
         if (lower.contains("timeout") || lower.contains("timed out")) return "连接超时";
         return "网络异常";
+    }
+
+    static boolean isApprovalRequired(Exception error) {
+        if (error instanceof RemoteRelayClient.HttpStatusException) {
+            RemoteRelayClient.HttpStatusException relayError = (RemoteRelayClient.HttpStatusException) error;
+            return relayError.statusCode == 403 && ("remote_disabled".equals(relayError.errorCode)
+                    || "device_revoked".equals(relayError.errorCode));
+        }
+        return error != null && error.getMessage() != null && error.getMessage().startsWith("HTTP 403 ");
     }
 
     private String httpPost(URL url, String jsonBody) throws Exception {

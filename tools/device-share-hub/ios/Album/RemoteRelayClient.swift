@@ -477,6 +477,12 @@ final class RemoteRelayClient {
             throw RemoteRelayError.responseTooLarge
         }
         if !(200..<300).contains(responseStatus) {
+            if responseStatus == 403,
+               let body = (try? JSONSerialization.jsonObject(with: responseData)) as? [String: Any],
+               let code = (body["code"] ?? body["error"]) as? String,
+               ["remote_disabled", "device_revoked"].contains(code) {
+                throw RemoteRelayError.approvalRequired
+            }
             let detail = String(data: responseData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw RemoteRelayError.remote(detail?.isEmpty == false ? detail! : "远程服务返回错误 \(responseStatus)")
@@ -520,11 +526,13 @@ enum RemoteRelayError: LocalizedError {
     case invalidTask
     case responseTooLarge
     case endpointUnavailable
+    case approvalRequired
     case catalogThumbnailMissing
     case remote(String)
 
     var errorDescription: String? {
         switch self {
+        case .approvalRequired: return "设备未授权，请在电脑相册的设备权限中批准"
         case .httpsRequired: return "远程服务必须使用 HTTPS。"
         case .invalidURL: return "远程服务地址无效。"
         case .invalidCertificate: return "远程设备凭证不完整。"
