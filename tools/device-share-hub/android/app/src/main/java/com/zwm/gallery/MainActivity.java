@@ -554,7 +554,8 @@ public final class MainActivity extends Activity {
 
         titleRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        modeButton = compactToolbarButton(R.drawable.ic_file_folder, "切换到文件浏览");
+        modeButton = compactToolbarButton(isOnlineMode ? R.drawable.ic_album_trash : R.drawable.ic_file_folder,
+                isOnlineMode ? "手机本地回收站" : "文件浏览");
         modeButton.setMinimumWidth(dp(44));
         modeButton.setOnClickListener(v -> {
             if (isOnlineMode) {
@@ -2398,8 +2399,9 @@ public final class MainActivity extends Activity {
         button.setEllipsize(null);
         button.setMinHeight(dp(36));
         button.setMinimumHeight(dp(36));
-        button.setMinimumWidth(dp(48));
-        button.setPadding(dp(12), dp(2), dp(12), dp(2));
+        button.setMinWidth(0);
+        button.setMinimumWidth(dp(44));
+        button.setPadding(dp(10), dp(2), dp(10), dp(2));
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
         applyCategoryButtonStyle(button, isSelected);
@@ -3815,8 +3817,7 @@ public final class MainActivity extends Activity {
         showingOnlineRecycle = false;
         if (onlineRecycleTabBar != null) onlineRecycleTabBar.setVisibility(View.GONE);
         if (localTrashTabBar != null) localTrashTabBar.setVisibility(View.GONE);
-        // DSH-188：DSH-097 明确要求 folderItem 双模式可见（在线模式点击进回收站）；
-        // 这里原先写 GONE，导致进出一次回收站后该按钮永久消失。
+        // 手机回收站在状态行；顶栏回收站直达电脑。
         if (modeButton != null) {
             modeButton.setImageResource(R.drawable.ic_album_trash);
             modeButton.setContentDescription("手机本地回收站");
@@ -4375,8 +4376,9 @@ public final class MainActivity extends Activity {
         button.setEllipsize(null);
         button.setMinHeight(dp(36));
         button.setMinimumHeight(dp(36));
-        button.setMinimumWidth(dp(48));
-        button.setPadding(dp(12), dp(2), dp(12), dp(2));
+        button.setMinWidth(0);
+        button.setMinimumWidth(dp(44));
+        button.setPadding(dp(10), dp(2), dp(10), dp(2));
         button.setElevation(0);
         button.setGravity(Gravity.CENTER);
         applyOnlineCategoryButtonStyle(button, isSelected, isPinned);
