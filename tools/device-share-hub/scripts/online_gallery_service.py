@@ -5327,7 +5327,7 @@ class OnlineGalleryHandler(BaseHTTPRequestHandler):
             data = {
                 "ok": True,
                 "server": "DeviceShareHub-OnlineGallery",
-                "version": "1.2.13",
+                "version": "1.2.14",
                 "ip": ip,
                 "port": self.server.server_port,
                 "totalWorks": total_works,

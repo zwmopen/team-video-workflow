@@ -1374,8 +1374,7 @@ public final class OnlineGalleryClient {
             if (isRemoteCatalogActive() || shouldTryRemoteFirst()) {
                 try {
                     RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
-                    RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, diskFile);
-                    TransferStatsStore.record(context, "r2", diskFile.length(), 1);
+                    pullFullImageFromRemote(session, workId, fileName, diskFile);
                     BitmapFactory.Options opts = new BitmapFactory.Options();
                     opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
                     Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
@@ -1445,8 +1444,7 @@ public final class OnlineGalleryClient {
                 if (RemoteRelayProfile.isEnrolled(context)) {
                     try {
                         RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
-                        RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, diskFile);
-                        TransferStatsStore.record(context, "r2", diskFile.length(), 1);
+                        pullFullImageFromRemote(session, workId, fileName, diskFile);
                         BitmapFactory.Options opts = new BitmapFactory.Options();
                         opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
                         Bitmap bmp = BitmapFactory.decodeFile(diskFile.getAbsolutePath(), opts);
@@ -2142,6 +2140,7 @@ public final class OnlineGalleryClient {
     private List<OnlineWorkEntry> fetchRemoteCatalogSnapshot() throws Exception {
         RemoteRelayClient.Session session = RemoteRelayClient.ensureSession(context);
         JSONObject manifest = RemoteRelayClient.fetchCatalogManifest(session);
+        CatalogDirectClient.prewarm(context, session, manifest.optString("catalogDirectDeviceId"));
         JSONArray rawWorks = manifest.optJSONArray("works");
         JSONArray normWorks = new JSONArray();
         java.util.Map<String, Integer> catCounts = new java.util.LinkedHashMap<>();
@@ -2179,6 +2178,17 @@ public final class OnlineGalleryClient {
         }
         lastRemoteCategoriesResult = new CategoriesResult(cats, Collections.emptyList(), parsedWorks.size(), "{}");
         return parsedWorks;
+    }
+
+    private void pullFullImageFromRemote(RemoteRelayClient.Session session, String workId, String fileName,
+                                         File destination) throws Exception {
+        if (RemoteRelayProfile.getStrategy(context) != RemoteRelayProfile.TransportStrategy.R2_FIRST
+                && CatalogDirectClient.download(session, workId, fileName, destination)) {
+            TransferStatsStore.record(context, "p2p", destination.length(), 1);
+            return;
+        }
+        RemoteRelayClient.pullCatalogOriginal(session, workId, fileName, destination);
+        TransferStatsStore.record(context, "r2", destination.length(), 1);
     }
 
 

@@ -1,3 +1,7 @@
+# 2026-11-28 · 安卓远程原图优先直连
+
+电脑服务 1.2.14 和安卓 0.8.148 (259)。本机隔离依赖目录为 `%LOCALAPPDATA%/DeviceShareHub/remote_catalog/webrtc`，实测 aiortc 1.17.0。Worker 沿用现有 WebRTC 信令。小米 15 开蜂窝、关 Wi-Fi 后收到了同一页的两张未压缩原图。
+
 # 2026-11-28 · 远程首屏对比加速
 
 电脑 1.2.13 使用同一 R2 缩略图键预热首张素材和成品。原图独立处理，接收 Worker 现有 WebSocket 通知并用短轮询兜底，无需升级 Worker 或移动 App。

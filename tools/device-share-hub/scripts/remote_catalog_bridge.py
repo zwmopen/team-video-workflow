@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import queue
+import sys
 import threading
 import time
 import urllib.error
@@ -278,6 +279,7 @@ class RemoteCatalogBridge:
         self._thread: Optional[threading.Thread] = None
         self._pull_thread: Optional[threading.Thread] = None
         self._socket_thread: Optional[threading.Thread] = None
+        self._catalog_direct = None
 
     def _load_or_init_identity(self) -> Tuple[ec.EllipticCurvePrivateKey, Dict[str, str], str, str, int]:
         if self.admin_path.is_file():
@@ -555,6 +557,8 @@ class RemoteCatalogBridge:
                 "updatedAt": int(time.time() * 1000),
                 "works": compact_works,
             }
+            if self._catalog_direct is not None:
+                manifest["catalogDirectDeviceId"] = self._device_id
             payload = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
             st, _, _ = self._http(
                 "/v1/catalog",
@@ -762,6 +766,16 @@ class RemoteCatalogBridge:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        try:
+            # Keep native media dependencies isolated from the system Python environment.
+            direct_packages = self.state_dir / "webrtc"
+            if direct_packages.is_dir() and str(direct_packages) not in sys.path:
+                sys.path.append(str(direct_packages))
+            from catalog_direct import CatalogDirect
+            if websocket is not None:
+                self._catalog_direct = CatalogDirect(self)
+        except ImportError:
+            pass  # WebRTC is optional; the catalog still uses HTTPS.
         self._thread = threading.Thread(target=self._run_loop, name="RemoteCatalogBridge", daemon=True)
         self._pull_thread = threading.Thread(target=self._run_pulls, name="RemoteCatalogPulls", daemon=True)
         self._thread.start()
@@ -827,6 +841,8 @@ class RemoteCatalogBridge:
                     if not raw:
                         break
                     event = json.loads(raw)
+                    if self._catalog_direct is not None and event.get("type") == "p2p-signal":
+                        self._catalog_direct.receive_offer(event)
                     pull = event.get("pull")
                     if event.get("type") == "catalog-pull-requested" and isinstance(pull, dict):
                         try:

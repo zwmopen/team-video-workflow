@@ -110,3 +110,30 @@ def test_catalog_publishes_page_aligned_sources_and_serves_only_advertised_selec
     bridge._serve_catalog_pulls("offline-test", [work], str(tmp_path / "library"),
                                 [{"pullId": "original", "workId": "work_a", "fileName": "__src__:P1.jpg"}])
     assert sum(path.endswith("/original/file") for path, _, _ in requests) == 1
+
+
+def test_direct_original_reader_accepts_only_the_registered_image(tmp_path):
+    import pytest
+    pytest.importorskip("aiortc")
+    from catalog_direct import CatalogDirect
+
+    folder = tmp_path / "works" / "work-one"
+    folder.mkdir(parents=True)
+    original = folder / "P1.jpg"
+    original.write_bytes(b"untouched output bytes")
+    (folder / "private.txt").write_bytes(b"unlisted")
+    source = tmp_path / "source.jpg"
+    source.write_bytes(b"untouched source bytes")
+    work = {"id": "work-one", "path": str(folder), "images": ["P1.jpg"],
+            "sourceImages": ["__src__:P1.jpg"]}
+    bridge = RemoteCatalogBridge(
+        state_dir=tmp_path / "state",
+        get_works_fn=lambda: (1, [work], str(folder.parent)),
+        get_source_file_fn=lambda *args: str(source),
+    )
+    direct = CatalogDirect.__new__(CatalogDirect)
+    direct.bridge = bridge
+    assert direct._read_original({"workId": "work-one", "fileName": "P1.jpg"}) == original.read_bytes()
+    assert direct._read_original({"workId": "work-one", "fileName": "__src__:P1.jpg"}) == source.read_bytes()
+    assert direct._read_original({"workId": "work-one", "fileName": "private.txt"}) is None
+    assert direct._read_original({"workId": "work-one", "fileName": "__src__:unknown.jpg"}) is None

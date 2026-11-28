@@ -12,6 +12,8 @@ Cloudflare 只转发短时 SDP/ICE 信令，不接收文件字节。DataChannel 
 
 ## 文本帧
 
+作品投送沿用以下格式。远程相册中的按需高清取图使用独立 DataChannel，见 [远程传送协议](REMOTE_PROTOCOL_V1.md#远程相册素材对比)。
+
 所有文本帧都是 UTF-8 JSON，必须有 `v: 1` 和 `kind`：
 
 ```json

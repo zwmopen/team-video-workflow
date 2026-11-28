@@ -64,7 +64,7 @@ final class AndroidP2pReceiver {
         catch (java.util.concurrent.RejectedExecutionException ignored) {}
     }
 
-    private static synchronized PeerConnectionFactory factory(OnlineService service) {
+    static synchronized PeerConnectionFactory factory(android.content.Context service) {
         if (factory == null) {
             PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions
                     .builder(service.getApplicationContext()).createInitializationOptions());
